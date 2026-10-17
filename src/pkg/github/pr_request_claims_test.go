@@ -79,6 +79,37 @@ func TestValidatePRRequestClaims_RejectsMissingClaimedArtifact(t *testing.T) {
 	}
 }
 
+func TestValidatePRRequestClaims_PagesCompareFilesForClaimedArtifact(t *testing.T) {
+	var srv *httptest.Server
+	pages := 0
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		pages++
+		names := make([]map[string]string, 0, githubCompareFileLimit)
+		if r.URL.Query().Get("page") == "2" {
+			names = append(names, map[string]string{"filename": ".github/workflows/ci.yml", "status": "added"})
+		} else {
+			w.Header().Set("Link", "<"+srv.URL+"/repos/o/r/compare/main...agent/change?per_page=300&page=2>; rel=\"next\"")
+			for i := 0; i < githubCompareFileLimit; i++ {
+				names = append(names, map[string]string{"filename": "docs/f.md", "status": "modified"})
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ahead", "files": names})
+	}))
+	defer srv.Close()
+	c := claimValidationClient(t, srv)
+
+	_, _, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+		Repo: "o/r", Base: "main", Head: "agent/change", Title: "ci: add workflow",
+	})
+	if err != nil {
+		t.Fatalf("workflow on page 2 must satisfy the claim: %v", err)
+	}
+	if pages != 2 {
+		t.Fatalf("pages requested = %d, want 2", pages)
+	}
+}
+
 func TestPRRequestWatcher_QuarantinesArtifactClaimMismatch(t *testing.T) {
 	created := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -191,7 +191,10 @@ type ContributorLaneVerdict struct {
 	// merge-eligible.
 	Approved bool
 	// Verdict is the raw aggregate verdict for the audit comment, if any.
-	Verdict string
+	Verdict           string
+	DecisionRequested bool
+	DecisionQuestion  string
+	HumanSummaries    []string
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at
@@ -651,6 +654,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
@@ -660,7 +664,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
-	c.noteStageAuthor(owner, repo, number, stagelabels.AuthorFromTier(claim.ObservedTier, policy.RequireTiers))
+	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
 	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, headSHA))
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
@@ -714,10 +718,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	var headPushedAt time.Time
-	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
-		headPushedAt = updatedAt.Time
-	}
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err

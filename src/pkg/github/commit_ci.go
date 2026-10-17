@@ -101,6 +101,13 @@ type CommitCIState struct {
 	SkippedByDesign []string
 	// Observed names every status context/check-run name seen on the SHA.
 	Observed map[string]bool
+	// FailingNonRequired names the completed-red statuses/check runs on the
+	// SHA that the required-only gate skipped (RequiredKnown and not in the
+	// required set; meta contexts excepted), sorted. They never block the
+	// merge, but a PR carrying one is not "all green" to a reader of the
+	// check rollup, so the stage engine keeps it out of the merge-queue
+	// stage (hivecommons/hive#12457).
+	FailingNonRequired []string
 	// InFlight counts every pending commit status and every not-yet-completed
 	// check run on the SHA, gating or not. Unlike Reason it includes the
 	// non-required checks skipped when RequiredKnown, so a caller can tell
@@ -369,6 +376,37 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 	return func() { sharedRequiredChecksForbiddenCache = old }
 }
 
+// HeadCommitPushedAt is the CommitCIOptions.HeadPushedAt source for the
+// min_head_age gate (hivecommons/hive#12557): the committer date of the head
+// commit sha, never the PR's updated_at. updated_at bumps on every label,
+// comment and review — including the hive's own stage-regressed comments — so
+// measuring head age from it let the gate reset its own clock forever.
+//
+// A committer date can predate the push (an old branch opened as a PR), so
+// the result is clamped to no earlier than the PR's created_at. A lookup
+// failure or a commit without a committer date returns an error and the zero
+// time; callers choose their own fallback.
+func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha string, pr *gh.PullRequest) (time.Time, error) {
+	if client == nil {
+		return time.Time{}, ErrNoGitHubClient
+	}
+	if strings.TrimSpace(sha) == "" {
+		return time.Time{}, errors.New("head commit time: empty head SHA")
+	}
+	commit, _, err := client.Git.GetCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: %w", owner, repo, shortSHA(sha), err)
+	}
+	at := commit.GetCommitter().GetDate().Time
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: commit has no committer date", owner, repo, shortSHA(sha))
+	}
+	if created := pr.GetCreatedAt().Time; at.Before(created) {
+		at = created
+	}
+	return at, nil
+}
+
 // EvaluateCommitCI walks every commit status and check run on sha and reports
 // the CommitCIState. required/requiredKnown come from
 // RequiredStatusCheckContexts. When requiredKnown is false and
@@ -397,6 +435,15 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
 	st.Observed = seen
+	failingNonRequired := make(map[string]bool)
+	rememberFailingNonRequired := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || failingNonRequired[name] || isMetaCheck(name) {
+			return
+		}
+		failingNonRequired[name] = true
+		st.FailingNonRequired = append(st.FailingNonRequired, name)
+	}
 	rememberIgnoredMeta := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" || ignoredMeta[name] {
@@ -463,6 +510,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			// Required-checks-only gating: skip anything not on the
 			// branch's actual required list, no matter its state.
 			if !required[ctxName] {
+				if state := s.GetState(); state == "failure" || state == "error" {
+					rememberFailingNonRequired(ctxName)
+				}
 				continue
 			}
 		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, ignoreMetaContexts, dcoSatisfied) {
@@ -503,6 +553,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		if requiredKnown {
 			if !required[name] {
+				if cr.GetStatus() == "completed" && checkConclusionIsRed(cr.GetConclusion()) {
+					rememberFailingNonRequired(name)
+				}
 				if opts.FailOnAnyFailedCheck && cr.GetStatus() == "completed" && !isIgnorableCICheck(name) {
 					if c := cr.GetConclusion(); c == "failure" || c == "timed_out" {
 						block("check-failing:" + name)
@@ -582,6 +635,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		block("ci-unverified")
 	}
 	sort.Strings(st.IgnoredMetaContexts)
+	sort.Strings(st.FailingNonRequired)
 
 	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {
 		now := opts.Now
@@ -599,6 +653,16 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+// checkConclusionIsRed reports whether a completed check-run conclusion
+// renders as a red ✗ in GitHub's check rollup.
+func checkConclusionIsRed(conclusion string) bool {
+	switch conclusion {
+	case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		return true
+	}
+	return false
 }
 
 func dcoContextSucceeded(statuses []*gh.RepoStatus, checkRuns []*gh.CheckRun) bool {

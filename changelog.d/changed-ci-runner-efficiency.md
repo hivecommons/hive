@@ -1,1 +1,0 @@
-- Reduced CI runner waste by adding job timeouts, cancelling superseded pull request runs, and moving lightweight checks to GitHub-hosted runners.

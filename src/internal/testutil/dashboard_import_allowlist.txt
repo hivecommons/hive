@@ -33,6 +33,7 @@ github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
 github.com/hivecommons/hive/pkg/notify
+github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/planning
 github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
@@ -44,6 +45,7 @@ github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/scheduler
 github.com/hivecommons/hive/pkg/skillreg
 github.com/hivecommons/hive/pkg/spokebackup
+github.com/hivecommons/hive/pkg/stagelabels
 github.com/hivecommons/hive/pkg/terminalassert
 github.com/hivecommons/hive/pkg/timeline
 github.com/hivecommons/hive/pkg/tokens

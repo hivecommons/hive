@@ -174,6 +174,7 @@ func TestRenderCommentDefault(t *testing.T) {
 		"Fixes #42", "git commit -s", "- scoped to one package (pkg/paginate)", "- has clear steps or acceptance criteria",
 		"Paste this to your agent", "AGENTS.md", "acme-hive picked this issue",
 		DefaultDocsBase + "/contributor-relay.md", "hive-merge.md#contributor-lane-auto-merge",
+		"Run your own hive (we call them clankers)", "leaderboard place: see https://hive.example/contribute.",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("comment lacks %q:\n%s", want, out)

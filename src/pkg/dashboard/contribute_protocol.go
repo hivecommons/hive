@@ -160,6 +160,10 @@ const (
 // trusted for a security decision (server-side policy still governs what a
 // contributor may do — see the Restrictions reservation in contribute_ws.go).
 type ContributorCapabilities struct {
+	// ParallelSessions is the total session capacity INCLUDING the primary.
+	// Zero/omitted means no parallel capability. This declaration is groundwork
+	// for fix-pr scheduling (#12436), not permission to launch extra sessions.
+	ParallelSessions int `json:"parallel_sessions,omitempty"`
 	// ContainerRuntime is the container runtime the relay found available:
 	// "docker", "podman", or "none". Advisory only.
 	ContainerRuntime string `json:"container_runtime,omitempty"`
@@ -246,7 +250,15 @@ const capabilityFieldMaxLen = 64
 // still accepted and still authenticates. Declaring badly must never cost a
 // client its connection or its work.
 func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
+	parallel := c.ParallelSessions
+	if parallel < 0 {
+		parallel = 0
+	}
+	if parallel > 64 {
+		parallel = 64
+	}
 	return ContributorCapabilities{
+		ParallelSessions:     parallel,
 		ContainerRuntime:     sanitizeCapabilityField(c.ContainerRuntime),
 		OS:                   sanitizeCapabilityField(c.OS),
 		Arch:                 sanitizeCapabilityField(c.Arch),

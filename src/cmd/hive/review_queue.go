@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // stampReviewQueue ranks this cycle's enumerated PRs into the PR review
@@ -36,12 +37,15 @@ func stampReviewQueue(cfg *config.Config, actionable *github.ActionableResult, l
 		dispatch = review.DispatchState{}
 	}
 	return github.StampReviewQueue(actionable, github.ReviewQueueOptions{
-		Org:          cfg.Project.Org,
-		AIAuthor:     cfg.EffectiveAIAuthor(),
-		Verdicts:     artifact,
-		Dispatch:     dispatch,
-		ChangedPaths: github.CachedPRChangedPaths,
-		Now:          time.Now(),
+		Org:                      cfg.Project.Org,
+		AIAuthor:                 cfg.EffectiveAIAuthor(),
+		Verdicts:                 artifact,
+		Dispatch:                 dispatch,
+		ChangedPaths:             github.CachedPRChangedPaths,
+		StageStore:               stagelabels.Shared(),
+		StageDwell:               cfg.Governor.Labels.Stage.DwellOverrides(),
+		StageStalledRequireQuiet: cfg.Governor.Labels.Stage.Stalled.RequireQuiet,
+		Now:                      time.Now(),
 	})
 }
 

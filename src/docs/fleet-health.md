@@ -360,8 +360,11 @@ rounded to whole percent and are `null`/absent when no check has been decided.
 ## Evidence summary heartbeat (#12114)
 
 Every spoke adds an `evidence` block to its hub heartbeat: a 90-day summary of
-its [review evidence](review-evidence.md) bundles (newest bundle per PR, the
-same store behind `GET /api/evidence/summary`):
+its [review evidence](review-evidence.md) bundles. Every bundle of a PR is
+folded into one row and windowed on PR open time with the same
+`evidence.FoldPRs` behind `GET /api/evidence/summary` (#12516), so a PR with a
+live and a backfilled bundle counts once, with the live verdicts and the
+forge outcome:
 
 ```json
 {"evidence": {"verdicts_90d": 30, "false_approve_90d": 2, "false_block_90d": 3,
@@ -390,9 +393,15 @@ same store behind `GET /api/evidence/summary`):
   → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
   have done versus how the PR turned out). A spoke predating #12370 sends none
   of them and the hub shows "not reported", never zero.
+- `time_to_merge` ([#12464](https://github.com/hivecommons/hive/issues/12464))
+  — `{median_s, n}`: the median time from PR opened to merged, in seconds,
+  over the `n` merged PRs that recorded `merge.opened_at`. Omitted when no
+  merged PR in the window recorded it (and by older spokes); the hub shows
+  "not reported", never zero. The hub reports the median of hive medians per
+  ACMM level (see [review evidence](review-evidence.md#median-time-to-merge-per-autonomy-level)).
 - `windows` ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)) —
   the same counts (verdicts, false approves/blocks, merged, reverted,
-  calibration, author-kind outcomes, shadow gates) re-counted over trailing
+  calibration, author-kind outcomes, shadow gates, time to merge) re-counted over trailing
   windows keyed `24h`, `7d` and `30d`, so the hub evidence view can switch
   between windows. The field names keep their `_90d` suffix for wire
   compatibility; `write_counters` (lifetime) and `automerge_self_authored`

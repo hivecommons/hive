@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -29,7 +31,11 @@ type stageAPI struct {
 	edits    []string
 	creates  []string
 	lists    int
+	gets     int
 	url      string
+	// extra handles routes beyond labels/comments (returns true when it
+	// served the request); the adoption tests use it for refs and pulls.
+	extra func(w http.ResponseWriter, r *http.Request) bool
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -41,6 +47,9 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		path := r.URL.Path
+		if api.extra != nil && api.extra(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && path == "/repos/acme/widget/labels":
 			api.lists++
@@ -59,9 +68,22 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/labels/"):
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if old := strings.TrimPrefix(path, "/repos/acme/widget/labels/"); old != body["name"] {
+				delete(api.labels, old) // rename in place
+			}
 			api.labels[body["name"]] = body["color"]
 			api.edits = append(api.edits, body["name"]+"="+body["color"])
 			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && !strings.Contains(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/"):
+			n, _ := strconv.Atoi(strings.TrimPrefix(path, "/repos/acme/widget/issues/"))
+			api.gets++
+			stagePRTruthMu.Lock()
+			labels := make([]map[string]string, 0)
+			for _, l := range stagePRTruth[n] {
+				labels = append(labels, map[string]string{"name": l})
+			}
+			stagePRTruthMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/labels"):
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -91,10 +113,31 @@ func (a *stageAPI) writes() int {
 	return len(a.added) + len(a.removed) + len(a.comments)
 }
 
+func (a *stageAPI) getCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gets
+}
+
 func (a *stageAPI) reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.added, a.removed, a.comments, a.edits, a.creates = nil, nil, nil, nil, nil
+}
+
+// stagePRTruth is what GET /issues/N answers: the fresh read Enforce takes
+// before writing (hivecommons/hive#12512). stagePR seeds it with the labels
+// the fixture carries so the read agrees with the observation unless a test
+// drifts it on purpose (see TestApplyStageLabels_HealsDuplicateStage).
+var (
+	stagePRTruthMu sync.Mutex
+	stagePRTruth   = map[int][]string{}
+)
+
+func setStagePRTruth(number int, labels ...string) {
+	stagePRTruthMu.Lock()
+	defer stagePRTruthMu.Unlock()
+	stagePRTruth[number] = append([]string(nil), labels...)
 }
 
 func stagePR(number int, labels ...string) *gh.PullRequest {
@@ -102,7 +145,15 @@ func stagePR(number int, labels ...string) *gh.PullRequest {
 	for _, l := range labels {
 		pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr(l)})
 	}
+	setStagePRTruth(number, labels...)
 	return pr
+}
+
+// greenChecks is the default head digest for stage-engine tests: every
+// gating check green, DCO signed. Tests that need another picture swap
+// Engine.checkSummary.
+func greenChecks(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
+	return hgithub.CommitChecksSummary{Total: 3, Green: 3, DCO: 1}, nil
 }
 
 func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*Engine, *StageTracker, *stagelabels.Store) {
@@ -113,9 +164,10 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 	store := stagelabels.NewStore(filepath.Join(t.TempDir(), "stage.json"), clock.now)
 	e := New(client, Options{
 		Now:              clock.now,
-		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, StalledRequireQuiet: true} },
 		StageTracker:     tracker,
 		StageStore:       store,
+		CheckSummary:     greenChecks,
 	})
 	return e, tracker, store
 }
@@ -123,45 +175,97 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 func TestClassifyStageMapping(t *testing.T) {
 	approve := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}}
 	reject := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}
+	incomplete := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "incomplete"}}
+	human := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
+	decision := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "approve", DecisionRequested: true, DecisionQuestion: "@clubanderson should decide."}}
 	cases := []struct {
-		name string
-		obs  stageObservation
-		want stagelabels.Stage
-		rank int
-		term bool
+		name   string
+		obs    stageObservation
+		want   stagelabels.Stage
+		rank   int
+		term   bool
+		reason string
 	}{
-		{"merged", stageObservation{Lane: stageLaneSelf, Merged: true}, stagelabels.None, 2, true},
-		{"closed", stageObservation{Lane: stageLaneSelf, Reason: "closed"}, stagelabels.None, 2, true},
-		{"draft", stageObservation{Lane: stageLaneSelf, Reason: "draft"}, stagelabels.None, 2, false},
-		{"handoff", stageObservation{Lane: stageLaneSelf, Reason: "not-app-authored"}, stagelabels.None, 0, false},
-		{"error", stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true}, stagelabels.None, 0, false},
-		{"review pending", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict}, stagelabels.ReviewPending, 2, false},
-		{"ci pending no verdict", stageObservation{Lane: stageLaneSelf, Reason: "check-pending"}, stagelabels.ReviewPending, 2, false},
-		{"required check pending no verdict", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test"}, stagelabels.ReviewPending, 2, false},
-		{"required check pending approved", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"ci pending approved", stageObservation{Lane: stageLaneSelf, Reason: "required-check-missing:unit", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"self ci red", stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, stagelabels.Fixing, 2, false},
-		{"contributor ci red", stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, stagelabels.ReturnedToContributor, 2, false},
-		{"trusted conflicting", stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, stagelabels.ReturnedToContributor, 2, false},
-		{"self changes requested", stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, stagelabels.Fixing, 2, false},
-		{"contributor changes requested", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, stagelabels.ReturnedToContributor, 2, false},
-		{"soaking", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, stagelabels.MergeQueue, 2, false},
-		{"merge pool", stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, stagelabels.MergeQueue, 2, false},
-		{"hold", stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, stagelabels.NeedsHuman, 2, false},
-		{"needs-rebase hold", stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, stagelabels.Fixing, 2, false},
-		{"no claim", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, stagelabels.NeedsHuman, 2, false},
-		{"untrusted role weak", stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, stagelabels.NeedsHuman, 1, false},
-		{"human merge path", stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, stagelabels.NeedsHuman, 2, false},
-		{"approved green unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
-		{"approved green lane error", stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
-		{"unapproved unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new"}, stagelabels.None, 0, false},
-		{"approved but ci pending stays reviewed", stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"approved soaking is merge queue", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, stagelabels.MergeQueue, 2, false},
+		{name: "merged", obs: stageObservation{Lane: stageLaneSelf, Merged: true}, rank: stageRankOwned, term: true},
+		{name: "closed", obs: stageObservation{Lane: stageLaneSelf, Reason: "closed"}, rank: stageRankOwned, term: true},
+		{name: "draft", obs: stageObservation{Lane: stageLaneSelf, Reason: "draft"}, rank: stageRankOwned},
+		{name: "handoff", obs: stageObservation{Lane: stageLaneSelf, Reason: "not-app-authored"}},
+		{name: "error", obs: stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true}},
+		{name: "review pending", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "incomplete verdict is still pending", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: incomplete}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "requires_human behind no-verdict hands off to a person", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: human}, want: stagelabels.NeedsDecision, rank: stageRankOwned, reason: "reviewer-verdict:requires_human"},
+		{name: "decision request behind no-verdict hands off to a person", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: decision}, want: stagelabels.NeedsDecision, rank: stageRankOwned, reason: stageReasonDecisionRequested},
+		{name: "decision request behind pending ci still hands off to a person", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-pending:unit", Detail: decision}, want: stagelabels.NeedsDecision, rank: stageRankOwned, reason: stageReasonDecisionRequested},
+		{name: "ci pending no verdict", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "required check pending no verdict", obs: stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "required check pending approved", obs: stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "ci pending approved", obs: stageObservation{Lane: stageLaneSelf, Reason: "required-check-missing:unit", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "tide pending is not red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-pending:tide"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "head too young is pending", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 33s ago (< min_head_age)"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "self ci red", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, want: stagelabels.Fixing, rank: stageRankOwned},
+		{name: "contributor ci red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "trusted conflicting", obs: stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "self changes requested", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, want: stagelabels.Fixing, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "changes requested while head too young", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "changes requested behind no-verdict", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "contributor changes requested", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
+		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
+		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
+		{name: "no claim but needs-rebase", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
+		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "approved green unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
+		{name: "approved green lane error", obs: stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
+		{name: "unapproved unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new"}},
+		{name: "approved but ci pending stays reviewed", obs: stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "approved soaking is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 	}
 	for _, tc := range cases {
 		got := classifyStage(tc.obs)
-		if got.Stage != tc.want || got.Rank != tc.rank || got.Terminal != tc.term {
-			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v", tc.name, got, tc.want, tc.rank, tc.term)
+		if got.Stage != tc.want || got.Rank != tc.rank || got.Terminal != tc.term || got.Reason != tc.reason {
+			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v reason=%q", tc.name, got, tc.want, tc.rank, tc.term, tc.reason)
+		}
+	}
+	// requires_human is a human hand-off too, so routeHuman posts the 085
+	// entry comment for it like every other needs-decision arrival.
+	if got := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: human}); !got.Human {
+		t.Fatalf("requires_human=%+v want human", got)
+	}
+}
+
+// TestClassifyCIReasonNeverRedForPendingOrInconclusive pins the CI reason
+// classes: a pending, missing, too-young or inconclusive (neutral/skipped)
+// check is waiting, never failing (hivecommons/hive#12403: 54/55 checks
+// green with `tide` pending must not read as red).
+func TestClassifyCIReasonNeverRedForPendingOrInconclusive(t *testing.T) {
+	cases := map[string]ciReasonKind{
+		"":                                      ciReasonNone,
+		"required-check-pending:tide":           ciReasonPending,
+		"required-check-pending:build-and-test": ciReasonPending,
+		"required-check-missing:build-and-test": ciReasonPending,
+		"status-pending":                        ciReasonPending,
+		"check-pending":                         ciReasonPending,
+		"ci-unverified":                         ciReasonPending,
+		"pending: head pushed 33s ago (< min_head_age)": ciReasonPending,
+		"pending: unit has not started":                 ciReasonPending,
+		"check-neutral":                                 ciReasonPending,
+		"check-skipped":                                 ciReasonPending,
+		"required-check-failing:tide":                   ciReasonRed,
+		"check-failing:unit":                            ciReasonRed,
+		"status-failure":                                ciReasonRed,
+		"status-error":                                  ciReasonRed,
+		"check-cancelled":                               ciReasonRed,
+		"check-timed_out":                               ciReasonRed,
+		"contributor-lane:no-claim":                     ciReasonNone,
+	}
+	for reason, want := range cases {
+		if got := classifyCIReason(reason); got != want {
+			t.Errorf("%q: got %d want %d", reason, got, want)
 		}
 	}
 }
@@ -170,23 +274,101 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	// Trusted-author lane says "not trusted"; contributor lane refines it.
 	v, author, _ := resolveStage([]stageObservation{
 		{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
-		{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Author: stagelabels.AuthorContributor}},
+		{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}},
 	})
-	if v.Stage != stagelabels.ReviewPending || author != stagelabels.AuthorContributor {
+	if v.Stage != stagelabels.ReviewPending || author != stagelabels.RoleContributor {
 		t.Fatalf("got %v/%v", v.Stage, author)
 	}
-	// Only the weak opinion: needs-human + author/untrusted.
+	// Only the weak opinion: needs-human + role/untrusted.
 	v, author, _ = resolveStage([]stageObservation{{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}})
-	if v.Stage != stagelabels.NeedsHuman || author != stagelabels.AuthorUntrusted {
+	if v.Stage != stagelabels.ReadyForHumanMerge || author != stagelabels.RoleUntrusted {
 		t.Fatalf("weak-only got %v/%v", v.Stage, author)
 	}
 	// Self lane outranks the contributor lane's hand-off.
 	v, _, _ = resolveStage([]stageObservation{
-		{Lane: stageLaneSelf, Reason: "check-failing:unit", Detail: stageDetail{Author: stagelabels.AuthorTrusted}},
+		{Lane: stageLaneSelf, Reason: "check-failing:unit", Detail: stageDetail{Role: stagelabels.RoleTrusted}},
 		{Lane: stageLaneContributor, Reason: contributorLaneReasonAppAuthored},
 	})
 	if v.Stage != stagelabels.Fixing {
 		t.Fatalf("self lane got %v", v.Stage)
+	}
+}
+
+// TestResolveStageAdmissionOpinions covers the weak "cannot vouch for the
+// author" opinions (hivecommons/hive#12403, #12497): a lane that does not
+// admit the author only says needs-human when no lane admits them.
+func TestResolveStageAdmissionOpinions(t *testing.T) {
+	trusted := stageDetail{Role: stagelabels.RoleTrusted}
+	cases := []struct {
+		name   string
+		list   []stageObservation
+		stage  stagelabels.Stage
+		rank   int
+		author stagelabels.Role
+		lane   string
+	}{
+		{
+			// #12403: registry-trusted author; the trusted-author lane's role
+			// check must not flip the PR to 090 while the contributor lane has
+			// no classified opinion (unmapped reason, transient error).
+			name: "registry-trusted author with role check and no contributor opinion",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: "something-new", Detail: trusted},
+			},
+			rank: stageRankNone, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
+		},
+		{
+			// #12497: maintainer PR; the trusted-author lane owns it, the
+			// contributor lane's no-claim is only its own inability to admit.
+			name: "maintainer with trusted lane error and contributor no-claim",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "fetch-pr", Err: true, Detail: trusted},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Role: stagelabels.RoleUntrusted}},
+			},
+			rank: stageRankNone, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
+		},
+		{
+			name: "maintainer ci pending beats contributor no-claim",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "required-check-pending:golangci-lint", Detail: trusted},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: trusted},
+			},
+			stage: stagelabels.ReviewPending, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
+		},
+		{
+			// Contributor tier below require_tiers: nobody admits, 090 is right
+			// and the contributor lane's reason is the one to show.
+			name: "contributor tier is needs-human from the contributor lane",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Role: stagelabels.RoleContributor}},
+			},
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission, author: stagelabels.RoleContributor, lane: stageLaneContributor,
+		},
+		{
+			name: "unknown author with no claim is needs-human untrusted",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Role: stagelabels.RoleUntrusted}},
+			},
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission, author: stagelabels.RoleUntrusted, lane: stageLaneContributor,
+		},
+		{
+			// A hold-class reason applies whoever the author is.
+			name: "trusted author sentinel-blocked is needs-decision",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
+			},
+			stage: stagelabels.NeedsDecision, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneContributor,
+		},
+	}
+	for _, tc := range cases {
+		v, author, obs := resolveStage(tc.list)
+		if v.Stage != tc.stage || v.Rank != tc.rank || author != tc.author || obs.Lane != tc.lane {
+			t.Errorf("%s: got stage=%v rank=%d author=%v lane=%s; want stage=%v rank=%d author=%v lane=%s", tc.name, v.Stage, v.Rank, author, obs.Lane, tc.stage, tc.rank, tc.author, tc.lane)
+		}
 	}
 }
 
@@ -204,11 +386,11 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 
 		trusted := func() {
 			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(12484), "required-check-pending:build-and-test", false, nil)
-			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorTrusted)
+			e.noteStageRole("acme", "widget", 12484, stagelabels.RoleTrusted)
 		}
 		contributor := func() {
 			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12484), contributorLaneReasonNoLinkedIssue, false, nil)
-			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorFromTier("", map[string]bool{"trusted": true}))
+			e.noteStageRole("acme", "widget", 12484, stagelabels.RoleFromTier("", map[string]bool{"trusted": true}))
 		}
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12484), "not-app-authored", false, nil)
 		if trustedFirst {
@@ -221,10 +403,85 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/trusted", "stage/050-review-pending"}) {
+		if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", "role/trusted", "stage/050-review-pending"}) {
 			t.Fatalf("trustedFirst=%v added %v", trustedFirst, api.added)
 		}
 		srv.Close()
+	}
+}
+
+// TestApplyStageLabelsWeakOpinionWaitsForEveryLane reproduces the split
+// drain seen on the hive spoke: two drivers share one tracker, so a
+// maintainer PR's trusted-author observation (050, author trusted) is
+// drained by one pass and the contributor lane's `no-claim` for the same
+// PR lands alone in the next. The weak admission opinion must not be
+// written while a lane that is enabled for the repo has not reported;
+// once the trusted-author lane's observation is in the same drain, the
+// owned stage wins as before.
+func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{Enabled: true} }
+	ctx := context.Background()
+	const number = 12561
+	pr := func() *gh.PullRequest {
+		return stagePR(number, "role/trusted", "author/human", "stage/050-review-pending")
+	}
+
+	// Drain 1: only the contributor lane's weak opinion → nothing written,
+	// nothing recorded; the labels the trusted-author lane wrote stand.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr(), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageRole("acme", "widget", number, stagelabels.RoleUntrusted)
+	res, err := e.ApplyStageLabels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || res.Writes != 0 || api.writes() != 0 {
+		t.Fatalf("contributor-only drain: res=%+v writes=%d added=%v removed=%v", res, api.writes(), api.added, api.removed)
+	}
+	if _, ok := store.Get(stageKey("acme", "widget", number)); ok {
+		t.Fatal("weak opinion from an incomplete drain must not be recorded")
+	}
+
+	// Drain 2: only the trusted-author lane, with an owned stage → written.
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(number, "role/trusted", "author/human"), "required-check-pending:build-and-test", false, nil)
+	e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/050-review-pending"}}) || len(api.removed) != 0 {
+		t.Fatalf("trusted-only drain: added=%v removed=%v", api.added, api.removed)
+	}
+
+	// Drain 3: both lanes present, both weak (outside author) → the human
+	// hand-off is written; completeness, not weakness, is the gate. With no
+	// reviewer configured RouteHuman lands it at 085 (#12531).
+	api.reset()
+	setStagePRTruth(77)
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(77), "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(77), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageRole("acme", "widget", 77, stagelabels.RoleUntrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/untrusted", "stage/085-needs-decision"}}) {
+		t.Fatalf("complete drain: added=%v", api.added)
+	}
+
+	// A lane disabled for the repo is not waited for.
+	api.reset()
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{} }
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(78), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageRole("acme", "widget", 78, stagelabels.RoleUntrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/untrusted", "stage/085-needs-decision"}}) {
+		t.Fatalf("trusted lane disabled: added=%v", api.added)
 	}
 }
 
@@ -237,7 +494,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	ctx := context.Background()
 
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "claimed", "🐝 covered by PR"), contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	res, err := e.ApplyStageLabels(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +502,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	if res.Items != 1 || res.Writes != 3 {
 		t.Fatalf("result %+v", res)
 	}
-	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/contributor", "stage/050-review-pending"}) {
+	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", "role/contributor", "stage/050-review-pending"}) {
 		t.Fatalf("added %v", api.added)
 	}
 	sort.Strings(api.removed)
@@ -263,32 +520,45 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 
 	// Same state next cycle (labels now as written): no writes, no re-list.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	if res, err = e.ApplyStageLabels(ctx); err != nil || res.Writes != 0 || api.writes() != 0 || api.lists != 1 {
 		t.Fatalf("idempotent pass: res=%+v err=%v writes=%d lists=%d", res, err, api.writes(), api.lists)
 	}
 
-	// Hold applied by a human → needs-human replaces review-pending; the
-	// human's hold label is left alone.
+	// Hold applied by a human → needs-decision (085) replaces review-pending
+	// (no reviewer is configured here, which is itself a decision); the
+	// human's hold label is left alone and the entry comment names both.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/050-review-pending"), "excluded-label:hold", false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "role/contributor", "author/human", "stage/050-review-pending"), "excluded-label:hold", false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/090-needs-human"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
 		t.Fatalf("hold transition added=%v removed=%v", api.added, api.removed)
 	}
-
-	// Merged → every owned label removed, record forgotten.
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) || !strings.Contains(api.comments[0], "the `hold` label is set") || !strings.Contains(api.comments[0], "no reviewer agent is configured") {
+		t.Fatalf("085 entry comments = %q", api.comments)
+	}
+	// Same state again: no second entry comment.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/090-needs-human", "stage/stalled"), "", true, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "role/contributor", "author/human", "stage/085-needs-decision"), "excluded-label:hold", false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err = e.ApplyStageLabels(ctx); err != nil || len(api.comments) != 0 || api.writes() != 0 {
+		t.Fatalf("085 dedupe: err=%v comments=%q writes=%d", err, api.comments, api.writes())
+	}
+
+	// Merged → every pipeline label removed, record forgotten. The
+	// author/<kind> label stays: who wrote the PR is a fact about it, not
+	// pipeline state, and the hub's revert-rate-by-author-kind reads it.
+	api.reset()
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "role/contributor", "author/human", "stage/085-needs-decision", "stage/stalled"), "", true, nil)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(api.removed)
-	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"author/contributor", "stage/090-needs-human", "stage/stalled"}) {
+	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"role/contributor", "stage/085-needs-decision", "stage/stalled"}) {
 		t.Fatalf("terminal added=%v removed=%v", api.added, api.removed)
 	}
 	if _, ok := store.Get(stageKey("acme", "widget", 7)); ok {
@@ -296,7 +566,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	}
 }
 
-func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
+func TestApplyStageLabelsStalledAndRegressionHistory(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}}
 	for _, d := range stagelabels.AllLabelDefs() {
 		api.labels[d.Name] = d.Color
@@ -304,11 +574,12 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	srv := newStageAPI(t, api)
 	defer srv.Close()
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
-	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e, _, store := newStageEngine(t, srv.URL, clock)
 	ctx := context.Background()
+	key := stageKey("acme", "widget", 9)
 	observe := func(labels []string, reason string) {
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(9, labels...), reason, false, nil)
-		e.noteStageAuthor("acme", "widget", 9, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 9, stagelabels.RoleTrusted)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -316,47 +587,326 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 
 	observe(nil, "head-changed-since-eval") // → merge-queue
 	api.reset()
-	// Dwell for merge-queue is 3h: nothing at 2h59, stalled at 3h.
+	// Dwell for merge-queue is 3h: nothing at 2h59, stalled at 3h of quiet.
 	clock.advance(3*time.Hour - time.Minute)
-	observe([]string{"stage/100-merge-queue", "author/trusted"}, "head-changed-since-eval")
+	observe([]string{"stage/100-merge-queue", "role/trusted", "author/human"}, "head-changed-since-eval")
 	if api.writes() != 0 {
 		t.Fatalf("stalled too early: added=%v", api.added)
 	}
 	clock.advance(time.Minute)
-	observe([]string{"stage/100-merge-queue", "author/trusted"}, "head-changed-since-eval")
+	observe([]string{"stage/100-merge-queue", "role/trusted", "author/human"}, "head-changed-since-eval")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled not set: %v", api.added)
 	}
 
-	// New head goes red: 80 → 70, regressed replaces stalled, one comment.
+	// New head goes red: 100 → 070. The backward move is one comment and a
+	// history hop, not a label (stage/regressed is retired, #12534); the CI
+	// change is activity, so stalled clears.
 	api.reset()
-	observe([]string{"stage/100-merge-queue", "stage/stalled", "author/trusted"}, "check-failing:unit")
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/070-fixing", "stage/regressed"}}) {
-		t.Fatalf("regressed added=%v", api.added)
+	observe([]string{"stage/100-merge-queue", "stage/stalled", "role/trusted", "author/human"}, "check-failing:unit")
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/070-fixing"}}) {
+		t.Fatalf("regression added=%v", api.added)
 	}
 	sort.Strings(api.removed)
 	if !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue", "stage/stalled"}) {
-		t.Fatalf("regressed removed=%v", api.removed)
+		t.Fatalf("regression removed=%v", api.removed)
 	}
 	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 070-fixing: check-failing:unit") {
 		t.Fatalf("comments=%v", api.comments)
 	}
-	// Repeat observation: no second comment, no writes.
+	rec, _ := store.Get(key)
+	if n := len(rec.History); n == 0 || !rec.History[n-1].Regressed || rec.History[n-1].From != stagelabels.MergeQueue {
+		t.Fatalf("history = %+v", rec.History)
+	}
+	if !rec.LastActivityAt.Equal(clock.at) {
+		t.Fatalf("CI change must count as activity: last=%v now=%v", rec.LastActivityAt, clock.at)
+	}
+	// Repeat observation: no second comment, no writes; the hive's own
+	// comment did not read as outside activity.
 	api.reset()
-	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "check-failing:unit")
+	observe([]string{"stage/070-fixing", "role/trusted", "author/human"}, "check-failing:unit")
 	if api.writes() != 0 {
 		t.Fatalf("regression re-posted: comments=%v added=%v", api.comments, api.added)
 	}
-	// Partial recovery (70 → 60) keeps regressed; full recovery clears it.
+	if rec2, _ := store.Get(key); !rec2.LastActivityAt.Equal(rec.LastActivityAt) {
+		t.Fatal("hive's own regression comment moved the quiet clock")
+	}
+	// A stale stage/regressed left by an older hive is stripped on sight.
 	api.reset()
-	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "required-check-missing:unit")
+	observe([]string{"stage/070-fixing", "stage/regressed", "role/trusted", "author/human"}, "required-check-missing:unit")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/050-review-pending"}}) || len(api.comments) != 0 {
 		t.Fatalf("partial recovery added=%v comments=%v", api.added, api.comments)
 	}
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/070-fixing", "stage/regressed"}) {
+		t.Fatalf("retired label not stripped: removed=%v", api.removed)
+	}
 	api.reset()
-	observe([]string{"stage/050-review-pending", "stage/regressed", "author/trusted"}, "head-changed-since-eval")
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending", "stage/regressed"}) {
+	observe([]string{"stage/050-review-pending", "role/trusted", "author/human"}, "head-changed-since-eval")
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
 		t.Fatalf("recovery added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// hivecommons/hive#12417: a trusted-author PR sat at 050-review-pending for
+// 6h with CI green and no reviewer verdict, and the engine marked it
+// stalled. The wait was on the hive's reviewer, not on a person, so
+// stage/stalled must never be applied there; once the verdict exists and
+// nobody acts for the dwell it may, and any activity clears it.
+func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 13, 33, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 12417)
+	observe := func(labels []string, reason string, verdict *ContributorLaneVerdict, comments int) {
+		pr := stagePR(12417, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, reason, false, nil)
+		e.noteStageRole("acme", "widget", 12417, stagelabels.RoleTrusted)
+		pr.Comments = gh.Ptr(comments)
+		e.noteStagePR("acme", "widget", 12417, pr)
+		if verdict != nil {
+			e.noteStageVerdict("acme", "widget", 12417, *verdict)
+		}
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at050 := []string{"stage/050-review-pending", "role/trusted", "author/human"}
+
+	observe(nil, contributorLaneReasonNoVerdict, nil, 0)
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/trusted", "stage/050-review-pending"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	// Six hours, CI green, still no verdict: not stalled, not a comment.
+	// Past the 1h dwell the hive-side alert fires instead (HiveHeld count,
+	// one warn log), because the holder is the hive's reviewer lane.
+	var hiveHeld int
+	for i := 0; i < 6; i++ {
+		api.reset()
+		clock.advance(time.Hour)
+		pr := stagePR(12417, at050...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", 12417, stagelabels.RoleTrusted)
+		e.noteStagePR("acme", "widget", 12417, pr)
+		res, err := e.ApplyStageLabels(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if api.writes() != 0 {
+			t.Fatalf("hour %d: review-pending without a verdict must never stall: added=%v comments=%v", i+1, api.added, api.comments)
+		}
+		hiveHeld += res.HiveHeld
+	}
+	if hiveHeld != 6 {
+		t.Fatalf("hive-held alert count = %d, want one per cycle past the dwell", hiveHeld)
+	}
+	rec, _ := store.Get(key)
+	if !rec.WaitingOnHive || !rec.HiveHeldWarned {
+		t.Fatalf("record should be waiting on the hive with the alert logged once: %+v", rec)
+	}
+	if stagelabels.Stalled(rec, nil, clock.at) || !stagelabels.HiveHeld(rec, nil, clock.at) {
+		t.Fatal("rule inverted: hive-held, not stalled")
+	}
+	// Checks running is likewise waiting on the hive.
+	api.reset()
+	clock.advance(2 * time.Hour)
+	observe(at050, "required-check-pending:unit", nil, 0)
+	if api.writes() != 0 {
+		t.Fatalf("checks pending must not stall: added=%v", api.added)
+	}
+	// A verdict lands that keeps the head at 050 (an incomplete swarm
+	// aggregate): the hive has answered, so the PR is no longer waiting on
+	// it. Quiet for the 1h dwell → stalled; not a minute before.
+	human := ContributorLaneVerdict{Configured: true, Verdict: "incomplete"}
+	api.reset()
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if api.writes() != 0 {
+		t.Fatalf("verdict arrival is activity, not a stall: added=%v", api.added)
+	}
+	clock.advance(59 * time.Minute)
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if api.writes() != 0 {
+		t.Fatalf("stalled before the quiet dwell: added=%v", api.added)
+	}
+	clock.advance(time.Minute)
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("stalled expected after a quiet dwell with the verdict present: added=%v", api.added)
+	}
+	// A human comment is activity: stalled clears immediately.
+	api.reset()
+	clock.advance(time.Minute)
+	observe([]string{"stage/050-review-pending", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonNoVerdict, &human, 1)
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) || len(api.added) != 0 {
+		t.Fatalf("comment must clear stalled: added=%v removed=%v", api.added, api.removed)
+	}
+	// requires_human (as on #12417: four approves, intent-alignment
+	// requires_human) is a hand-off to a person, not a 050 stall: the PR
+	// moves to 085-needs-decision at once (hivecommons/hive#12561) and 085
+	// has no dwell, so it never stalls however long it sits.
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	api.reset()
+	clock.advance(time.Minute)
+	observe(at050, contributorLaneReasonNoVerdict, &requiresHuman, 1)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
+		t.Fatalf("requires_human must hand off to 085: added=%v", api.added)
+	}
+	api.reset()
+	clock.advance(48 * time.Hour)
+	observe([]string{"stage/085-needs-decision", "role/trusted", "author/human"}, contributorLaneReasonNoVerdict, &requiresHuman, 1)
+	if api.writes() != 0 {
+		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
+	}
+}
+
+// The sweep's own comments (Dependabot rebase request, stale-approval note,
+// hold release) land after the lane's deep fetch and before
+// ApplyStageLabels, so the credit must go on this cycle's observation, not
+// on the store's last count (which ApplyStageLabels overwrites with the
+// pre-comment fetch). Otherwise the next cycle reads N+1 > N as a person
+// acting and stage/stalled slips by a dwell after every hive comment.
+func TestApplyStageLabelsOwnSweepCommentDoesNotRestartQuietClock(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, tracker, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 42)
+	// An incomplete swarm aggregate keeps the head at 050 without the PR
+	// waiting on the hive (requires_human would move it to 085, which has
+	// no dwell).
+	human := ContributorLaneVerdict{Configured: true, Verdict: "incomplete"}
+	cycle := func(labels []string, comments int, ownComment bool) {
+		pr := stagePR(42, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", 42, stagelabels.RoleTrusted)
+		pr.Comments = gh.Ptr(comments)
+		e.noteStagePR("acme", "widget", 42, pr)
+		e.noteStageVerdict("acme", "widget", 42, human)
+		if ownComment {
+			e.noteOwnStageComment("acme", "widget", 42)
+		}
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at050 := []string{"stage/050-review-pending", "role/trusted", "author/human"}
+	cycle(nil, 3, false)
+	quiet0, _ := store.Get(key)
+
+	// Cycle 2: the fetch saw 3 comments, then the sweep posted one.
+	clock.advance(10 * time.Minute)
+	cycle(at050, 3, true)
+	rec, _ := store.Get(key)
+	if rec.ActivityComments != 4 {
+		t.Fatalf("stored count = %d, want the fetched 3 plus the hive's own comment", rec.ActivityComments)
+	}
+	if !rec.LastActivityAt.Equal(quiet0.LastActivityAt) {
+		t.Fatalf("hive's own comment moved the quiet clock: %v → %v", quiet0.LastActivityAt, rec.LastActivityAt)
+	}
+	// Cycle 3: the fetch now includes the hive's comment: not activity.
+	clock.advance(10 * time.Minute)
+	cycle(at050, 4, false)
+	rec, _ = store.Get(key)
+	if !rec.LastActivityAt.Equal(quiet0.LastActivityAt) {
+		t.Fatalf("hive's own comment read as outside activity on the next fetch: %v → %v", quiet0.LastActivityAt, rec.LastActivityAt)
+	}
+	// Quiet for the dwell from the original activity: stalled on time.
+	api.reset()
+	clock.advance(41 * time.Minute)
+	cycle(at050, 4, false)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("stalled must not slip by a dwell after the hive's own comment: added=%v", api.added)
+	}
+	// Without a fetch this cycle the credit has nowhere to go but the store.
+	e.noteOwnStageComment("acme", "widget", 42)
+	rec, _ = store.Get(key)
+	if rec.ActivityComments != 5 {
+		t.Fatalf("store credit = %d, want 5", rec.ActivityComments)
+	}
+	if tracker.creditOwnComment(key) {
+		t.Fatal("no observation this cycle: tracker must decline the credit")
+	}
+	// A person's comment on top of it is still activity.
+	api.reset()
+	clock.advance(time.Minute)
+	cycle([]string{"stage/050-review-pending", "stage/stalled", "role/trusted"}, 6, false)
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) {
+		t.Fatalf("outside comment must clear stalled: removed=%v", api.removed)
+	}
+}
+
+// A maintainer's body-only Approve / Request-changes adds nothing to the
+// comment counts (review_comments is inline only), so the review walk's
+// count is what clears stage/stalled; the hive app's own reviews do not.
+func TestApplyStageLabelsBodyOnlyReviewIsActivity(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 43)
+	human := ContributorLaneVerdict{Configured: true, Verdict: "incomplete"}
+	review := func(login, state string) *gh.PullRequestReview {
+		return &gh.PullRequestReview{User: &gh.User{Login: gh.Ptr(login)}, State: gh.Ptr(state), Body: gh.Ptr("looks fine")}
+	}
+	cycle := func(labels []string, reviews ...*gh.PullRequestReview) {
+		pr := stagePR(43, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", 43, stagelabels.RoleTrusted)
+		pr.Comments = gh.Ptr(0)
+		e.noteStagePR("acme", "widget", 43, pr)
+		e.noteStageVerdict("acme", "widget", 43, human)
+		e.noteStageReviews("acme", "widget", 43, reviews)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hiveReview := review(testHiveAppBotLogin, "APPROVED")
+	cycle(nil, hiveReview)
+	rec, _ := store.Get(key)
+	if rec.ActivityReviews != 0 {
+		t.Fatalf("hive app review counted as a person's: %d", rec.ActivityReviews)
+	}
+	at050 := []string{"stage/050-review-pending", "role/trusted", "author/human"}
+	clock.advance(time.Hour)
+	api.reset()
+	cycle(at050, hiveReview)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("quiet dwell must stall: added=%v", api.added)
+	}
+	stalledAt := clock.at
+	// A body-only approve from a maintainer: activity, stalled clears.
+	api.reset()
+	clock.advance(time.Minute)
+	cycle([]string{"stage/050-review-pending", "stage/stalled", "role/trusted"}, hiveReview, review("maintainer", "APPROVED"))
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) {
+		t.Fatalf("body-only review must clear stalled: removed=%v added=%v", api.removed, api.added)
+	}
+	rec, _ = store.Get(key)
+	if rec.ActivityReviews != 1 || !rec.LastActivityAt.After(stalledAt) {
+		t.Fatalf("review not recorded as activity: %+v", rec)
+	}
+	// The same review seen again is not new activity.
+	clock.advance(time.Minute)
+	cycle(at050, hiveReview, review("maintainer", "APPROVED"))
+	rec2, _ := store.Get(key)
+	if !rec2.LastActivityAt.Equal(rec.LastActivityAt) {
+		t.Fatal("re-observing the same review moved the quiet clock")
 	}
 }
 
@@ -376,33 +926,33 @@ func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
 	observe := func(labels []string, reason string, err error) {
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(11, labels...), reason, false, err)
 		e.noteStageVerdict("acme", "widget", 11, approve)
-		e.noteStageAuthor("acme", "widget", 11, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 11, stagelabels.RoleTrusted)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	observe(nil, "review-state-check", errors.New("boom"))
-	if !reflect.DeepEqual(api.added, [][]string{{"author/trusted", "stage/080-awaiting-merge-admission"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/trusted", "stage/080-awaiting-merge-admission"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
 	api.reset()
 	clock.advance(30 * time.Minute)
-	observe([]string{"stage/080-awaiting-merge-admission", "author/trusted"}, "review-state-check", errors.New("boom"))
+	observe([]string{"stage/080-awaiting-merge-admission", "role/trusted", "author/human"}, "review-state-check", errors.New("boom"))
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled added=%v", api.added)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 080-awaiting-merge-admission stalled after 30m0s: review-state-check") {
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 080-awaiting-merge-admission: no activity for 30m0s: review-state-check") {
 		t.Fatalf("stall note=%v", api.comments)
 	}
 	api.reset()
 	clock.advance(time.Hour)
-	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, "review-state-check", errors.New("boom"))
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, "review-state-check", errors.New("boom"))
 	if api.writes() != 0 || len(api.comments) != 0 {
 		t.Fatalf("stall note must be posted once: added=%v comments=%v", api.added, api.comments)
 	}
 	// Lane admits the PR: forward to the merge queue, stalled cleared, no note.
 	api.reset()
-	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, contributorLaneReasonSoaking+"(10m)", nil)
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonSoaking+"(10m)", nil)
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || len(api.comments) != 0 {
 		t.Fatalf("admission added=%v comments=%v", api.added, api.comments)
 	}
@@ -420,5 +970,456 @@ func TestApplyStageLabelsDisabledIsSilent(t *testing.T) {
 	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(1), "check-failing:x", false, nil)
 	if res, err := e.ApplyStageLabels(context.Background()); err != nil || res.Items != 0 {
 		t.Fatalf("disabled: %+v %v", res, err)
+	}
+}
+
+// TestApplyStageLabelsRecordsVerdictReason reproduces hivecommons/hive#12403:
+// the swarm requested changes at the head while the lane's own reason was a
+// CI wait, so the PR is 072 — and the stored reason, the regression
+// comment and the log must say so rather than quoting the CI wait.
+func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	reject := ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
+
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403), "head-changed-since-eval", false, nil)
+	e.noteStageRole("acme", "widget", 12403, stagelabels.RoleTrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	api.reset()
+	e.recordStage(stageLaneTrusted, "acme", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "role/trusted", "author/human"), "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "role/trusted", "author/human"), "pending: head pushed 1m0s ago (< min_head_age)", false, nil)
+	e.noteStageRole("acme", "widget", 12403, stagelabels.RoleTrusted)
+	e.noteStageVerdict("acme", "widget", 12403, reject)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	rec, _ := store.Get(stageKey("acme", "widget", 12403))
+	if rec.Reason != "reviewer-verdict:changes_requested" {
+		t.Fatalf("stored reason %q", rec.Reason)
+	}
+	if len(api.comments) == 0 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: reviewer-verdict:changes_requested") {
+		t.Fatalf("comments=%v", api.comments)
+	}
+}
+
+// hivecommons/hive#12538 (seen on #12457): the lane gates on required
+// checks only, so it soaks a PR whose rollup still shows a red optional
+// check and its reason reads as queued/pending. Any red check on the head
+// is red CI: 070/072, never 080 or 100. A red required check is already the
+// lane's reason; a red optional one is named; a note left for an older head
+// does not bind the new one.
+func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
+	approve := stageDetail{Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}, VerdictKnown: true}
+	red := approve
+	red.RedChecks, red.RedChecksHead = []string{"relative links and anchors resolve"}, "sha"
+	named := "optional-check-failing:relative links and anchors resolve"
+	cases := []struct {
+		name   string
+		obs    stageObservation
+		want   stagelabels.Stage
+		reason string
+	}{
+		// would be 100
+		{name: "soaking with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "merge-failed with red optional", obs: stageObservation{Lane: stageLaneTrusted, HeadSHA: "sha", Reason: "merge-failed", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "self-authored release-hold with red optional", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "release-hold", Detail: red}, want: stagelabels.Fixing, reason: named},
+		// would be 080
+		{name: "author side done with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		// would be 050/060
+		{name: "pending with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:lint", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "no verdict with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		// red required: the lane's own reason
+		{name: "red required", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.ReturnedToContributor},
+		{name: "red required self-authored", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: approve}, want: stagelabels.Fixing},
+		// green
+		{name: "soaking all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: approve}, want: stagelabels.MergeQueue},
+		{name: "author side done all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: approve}, want: stagelabels.AwaitingMergeAdmission},
+		{name: "note for an older head does not bind", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha2", Reason: contributorLaneReasonSoaking + "(1h)", Detail: red}, want: stagelabels.MergeQueue},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := classifyStage(tc.obs)
+			if got.Stage != tc.want || got.Reason != tc.reason {
+				t.Fatalf("classifyStage=%+v want stage %v reason %q", got, tc.want, tc.reason)
+			}
+			if tc.want != stagelabels.AwaitingMergeAdmission && got.Rank != stageRankOwned {
+				t.Fatalf("rank=%d want owned", got.Rank)
+			}
+		})
+	}
+	// Modifiers that park the PR still outrank a red optional check.
+	held := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "label:hold", Detail: red})
+	if held.Stage != stagelabels.NeedsDecision || !held.Human {
+		t.Fatalf("held=%+v want needs-decision (human)", held)
+	}
+}
+
+// hivecommons/hive#12538 end to end: a PR soaking behind a red optional
+// check moves 100 → 072 (regressed, check named in the comment and store
+// reason); a PR awaiting admission moves 080 → 072 the same way; once the
+// check is green the same soaking reason yields 100; and a head push drops
+// the old head's note.
+func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	approve := ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	soaking := contributorLaneReasonSoaking + "(remaining=1h39m0s)"
+	redName := "relative links and anchors resolve"
+	key := stageKey("acme", "widget", 12457)
+	cycle := func(pr *gh.PullRequest, reason string, red []string) {
+		t.Helper()
+		api.reset()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
+		e.noteStageRole("acme", "widget", 12457, stagelabels.RoleTrusted)
+		e.noteStageVerdict("acme", "widget", 12457, approve)
+		e.noteStageRedChecks("acme", "widget", 12457, "sha", red)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Earlier cycle: all green, soaking → 100 (already on the PR).
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, nil)
+	if len(api.added) != 0 || len(api.removed) != 0 {
+		t.Fatalf("green soak changed labels: added=%v removed=%v", api.added, api.removed)
+	}
+
+	// An optional check on the same head went red: 100 → 072, named.
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, []string{redName})
+	// Retired label: the backward hop is recorded as history + comment, never as stage/regressed.
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	rec, _ := store.Get(key)
+	if n := len(rec.History); n == 0 || !rec.History[n-1].Regressed {
+		t.Fatalf("expected a regressed history hop, got %+v", rec.History)
+	}
+	if rec.Reason != "optional-check-failing:"+redName {
+		t.Fatalf("stored reason %q", rec.Reason)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: optional-check-failing:"+redName) {
+		t.Fatalf("comments=%v", api.comments)
+	}
+
+	// Same head, check re-run green: the lane's soaking reason is 100 again.
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "role/trusted", "author/human"), soaking, nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+
+	// Red again while the lane stops on a reason no stage claims (would be
+	// 080): still 072.
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), "review-state-check", []string{redName})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	cycle(stagePR(12457, "stage/080-awaiting-merge-admission", "role/trusted", "author/human"), "review-state-check", []string{redName})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) || !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission"}) {
+		t.Fatalf("080 with red CI: added=%v removed=%v", api.added, api.removed)
+	}
+
+	// New head pushed: a note recorded for the old head does not bind it.
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "role/trusted", "author/human"), soaking, nil)
+	pr := stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human")
+	pr.Head.SHA = gh.Ptr("sha2")
+	cycle(pr, soaking, []string{redName})
+	if len(api.added) != 0 || len(api.removed) != 0 {
+		t.Fatalf("stale note changed labels: added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// hivecommons/hive#12502: every observation records the PR author on the
+// stage store so the dashboard can list "PRs returned to this contributor".
+func TestApplyStageLabelsRecordsAuthor(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+
+	pr := stagePR(21)
+	pr.User = &gh.User{Login: gh.Ptr("Alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := store.Get(stageKey("acme", "widget", 21))
+	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Author != "alice" {
+		t.Fatalf("record %+v ok=%v", rec, ok)
+	}
+	if got := store.ByAuthor("alice", stagelabels.ReturnedToContributor); len(got) != 1 {
+		t.Fatalf("ByAuthor = %+v", got)
+	}
+}
+
+// hivecommons/hive#12512: the lane's snapshot of the PR is from the start of
+// the cycle; by the time the labels are written another writer may have put
+// a second stage on it. Enforce plans from a fresh read, so the write
+// leaves exactly one stage and the result counts the heal.
+func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 19, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+
+	// Snapshot: 050 + contributor. Truth drifted: 020 landed as well.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
+	setStagePRTruth(21, "role/contributor", "author/human", "stage/050-review-pending", "stage/020-claimed")
+	// Snapshot says nothing changes for 050/contributor, so without a
+	// reason to write there is no read: the duplicate waits for a write.
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gets := api.getCount(); gets != 0 || res.Healed != 0 {
+		t.Fatalf("no planned write must mean no read; gets=%d res=%+v", gets, res)
+	}
+
+	// Now the lane moves it to 072: the write re-reads and strips 020 too.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "role/contributor", "author/human", "stage/050-review-pending"), "changes-requested", false, nil)
+	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
+	setStagePRTruth(21, "role/contributor", "author/human", "stage/050-review-pending", "stage/020-claimed")
+	api.reset()
+	res, err = e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gets := api.getCount(); res.Healed != 1 || gets != 1 {
+		t.Fatalf("healed=%d gets=%d, want one heal from one fresh read (%+v)", res.Healed, gets, res)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/020-claimed", "stage/050-review-pending"}) {
+		t.Fatalf("removed %v, want both 020 and 050", api.removed)
+	}
+	if len(api.added) != 1 || strings.Join(api.added[0], ",") != "stage/072-returned-to-contributor" {
+		t.Fatalf("added %v, want only 072", api.added)
+	}
+}
+
+// hivecommons/hive#12545: agent/<lane> (routing) and hive/<id> (provenance)
+// mean "the hive owns / authored this PR". A review-fix kick's `gh pr edit
+// --body` on a contributor's PR stamped both onto it; the reconciler strips
+// them from any PR the App did not author, and leaves self-authored PRs alone.
+func TestStrayOwnershipLabels(t *testing.T) {
+	labels := []string{"agent/scanner", "hive/oke-11", "stage/050-review-pending", "role/trusted", "hive/other-hive"}
+	got := strayOwnershipLabels(labels, "mendezr", "kubestellar-hive[bot]", "oke-11")
+	if !reflect.DeepEqual(got, []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("contributor PR: stray = %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "kubestellar-hive[bot]", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("self-authored PR must keep its labels, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "kubestellar-hive", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("[bot] suffix must be tolerated, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("unknown author must fail closed, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "mendezr", "", "oke-11"); got != nil {
+		t.Fatalf("unknown App login must fail closed, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "mendezr", "kubestellar-hive[bot]", ""); !reflect.DeepEqual(got, []string{"agent/scanner"}) {
+		t.Fatalf("no hive id: only agent/* is stray, got %v", got)
+	}
+}
+
+func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, HiveID: "oke-11"} }
+
+	pr := stagePR(12495, "role/trusted", "author/human", "stage/050-review-pending", "agent/scanner", "hive/oke-11")
+	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 12495, stagelabels.RoleTrusted)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	removed := append([]string(nil), api.removed...)
+	api.mu.Unlock()
+	sort.Strings(removed)
+	if !reflect.DeepEqual(removed, []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("removed %v, want the two stray ownership labels (res %+v)", removed, res)
+	}
+	if res.Writes < 2 {
+		t.Fatalf("writes = %d, want the removals counted (%+v)", res.Writes, res)
+	}
+
+	// Self-authored PR with the same labels: nothing is stripped.
+	api.reset()
+	pr = stagePR(7, "stage/050-review-pending", "agent/scanner", "hive/oke-11")
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-pending", false, nil)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	for _, l := range api.removed {
+		if strings.HasPrefix(l, "agent/") || strings.HasPrefix(l, "hive/") {
+			t.Fatalf("self-authored PR lost %q", l)
+		}
+	}
+}
+
+// hivecommons/hive#12557: a gate flapping between merge-queue and a pending
+// stage on one unchanged head used to post a stage-regressed comment every
+// sweep, because each recover re-armed the dedupe. One comment per head.
+func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 17, 15, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	observe := func(labels []string, reason string) {
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12423, labels...), reason, false, nil)
+		e.noteStageRole("acme", "widget", 12423, stagelabels.RoleTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := []string{"stage/100-merge-queue", "role/trusted", "author/human"}
+	held := []string{"stage/050-review-pending", "role/trusted", "author/human"}
+
+	observe(nil, "head-changed-since-eval")
+	api.reset()
+	comments := 0
+	for i := 0; i < 4; i++ {
+		clock.advance(6 * time.Minute)
+		observe(queued, "pending: head pushed 54s ago (< min_head_age)")
+		comments += len(api.comments)
+		api.reset()
+		clock.advance(6 * time.Minute)
+		observe(held, "head-changed-since-eval")
+		comments += len(api.comments)
+		api.reset()
+	}
+	if comments != 1 {
+		t.Fatalf("regression comments across 4 flaps on one head = %d, want 1", comments)
+	}
+}
+
+// hivecommons/hive#12581: the trust axis is role/<tier>; author/<kind> says
+// who wrote the PR. A relay-trailered PR under a trusted login carries both
+// role/trusted and author/clanker; the App's own PR is author/hive; a
+// hand-pushed PR is author/human. The pre-rename author/<tier> spelling is
+// migrated in the same write, and a mis-stamped agent/<lane> on a human PR
+// (a stray, #12545) never reads as author/hive.
+func TestApplyStageLabelsAuthorKind(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		return StageLabelPolicy{Enabled: true, HiveID: "oke-11", RelayKnown: func(login string) bool { return login == "registered" }}
+	}
+	ctx := context.Background()
+	run := func(number int, login, body string, labels ...string) {
+		t.Helper()
+		pr := stagePR(number, labels...)
+		pr.User = &gh.User{Login: gh.Ptr(login)}
+		pr.Body = gh.Ptr(body)
+		api.reset()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	added := func() []string {
+		var out []string
+		for _, a := range api.added {
+			out = append(out, a...)
+		}
+		sort.Strings(out)
+		return out
+	}
+	removed := func() []string { out := append([]string(nil), api.removed...); sort.Strings(out); return out }
+
+	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/trusted")
+	if !reflect.DeepEqual(added(), []string{"author/clanker", "role/trusted", "stage/050-review-pending"}) || !reflect.DeepEqual(removed(), []string{"author/trusted"}) {
+		t.Fatalf("clanker: added=%v removed=%v", api.added, api.removed)
+	}
+	run(32, testHiveAppBotLogin, "Adds y.\n\n— hive: agent=scanner backend=copilot\n")
+	if !reflect.DeepEqual(added(), []string{"author/hive", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("hive: added=%v", api.added)
+	}
+	run(33, "clubanderson", "Adds z by hand.\n", "agent/scanner", "hive/oke-11")
+	if !reflect.DeepEqual(added(), []string{"author/human", "role/trusted", "stage/050-review-pending"}) || !reflect.DeepEqual(removed(), []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("human with stray stamps: added=%v removed=%v", api.added, api.removed)
+	}
+	run(34, "registered", "No marker at all.\n")
+	if !reflect.DeepEqual(added(), []string{"author/clanker", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("registry fallback: added=%v", api.added)
+	}
+	run(35, "mendezr", "<!-- hive:origin hive=oke-11 -->\n")
+	if !reflect.DeepEqual(added(), []string{"author/hive", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("local origin marker: added=%v", api.added)
+	}
+	// Steady state under the labels just written: nothing to do.
+	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/clanker", "role/trusted", "stage/050-review-pending")
+	if api.writes() != 0 {
+		t.Fatalf("steady state wrote added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// Configured author/<kind> names are written and provisioned instead of
+// the defaults, and a default-named label left from before the rename is
+// swapped out.
+func TestApplyStageLabelsConfiguredKindNames(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	names := authorkind.Names{Clanker: "author/relay"}
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, AuthorKindLabels: names} }
+	pr := stagePR(41, "author/clanker")
+	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
+	pr.Body = gh.Ptr("— hive: backend=pi\n")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 41, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/relay", "role/contributor", "stage/050-review-pending"}}) || !reflect.DeepEqual(api.removed, []string{"author/clanker"}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	if _, ok := api.labels["author/relay"]; !ok {
+		t.Fatalf("configured name not provisioned: %v", api.labels)
+	}
+	if _, ok := api.labels["author/clanker"]; ok {
+		t.Fatal("default clanker name provisioned despite override")
 	}
 }

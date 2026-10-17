@@ -28,6 +28,10 @@ func (a SelfFlagAssignment) Validate() error {
 // assignment. Replacing rather than merging assignments makes withdrawal,
 // opt-out, and switching experiments revoke the previous behaviour immediately.
 // A process restart starts off; assignments are deliberately not persisted here.
+// There is no assignment TTL: failed or unverified heartbeats leave the last
+// assignment active. The next successful verified heartbeat replaces it (and
+// withdraws it if no assignment is returned). Local opt-out clears it on the
+// next heartbeat attempt, even when the hub is unreachable.
 type SelfFlagGate struct {
 	mu         sync.RWMutex
 	assignment SelfFlagAssignment

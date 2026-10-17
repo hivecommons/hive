@@ -213,6 +213,9 @@ type boot struct {
 	lastGFISweep           time.Time
 	// gfi is good-first-issue curation state (good_first_issue.*).
 	gfi *gfiState
+	// firstTimer is first-time contributor welcome state
+	// (governor.first_timer_welcome.*).
+	firstTimer *firstTimerState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).

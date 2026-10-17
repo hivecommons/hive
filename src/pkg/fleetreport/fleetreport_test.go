@@ -110,6 +110,40 @@ func TestAnonymousInstanceAndScrubbing(t *testing.T) {
 	}
 }
 
+func TestBuildObservationReportContainsHiveMetadataAndSeriesOnly(t *testing.T) {
+	r := BuildObservationReport(ObservationFinding{
+		Kind:           "queue-growth",
+		Title:          "Queue depth is growing",
+		Evidence:       "p90 depth 30 versus 15",
+		SuspectedCause: "intake is outpacing throughput",
+		NextStep:       "review the oldest queue items",
+		Fingerprint:    "h1:queue-growth",
+		Series:         []float64{15, 18, 30},
+	}, ObservationMetadata{
+		HiveID:     "h1",
+		HiveSlug:   "hosted-h1",
+		ProjectOrg: "acme",
+		ACMMLevel:  3,
+		Version:    "v5.1.0",
+		ClusterID:  "oke-11",
+		Now:        time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+	})
+	for _, want := range []string{"h1", "hosted-h1", "acme", "L3", "v5.1.0", "oke-11", "[15,18,30]"} {
+		if !strings.Contains(r.Body, want) {
+			t.Fatalf("observation body missing %q:\n%s", want, r.Body)
+		}
+	}
+	if strings.Contains(r.Body, "acme/widgets") || strings.Contains(r.Body, "foo.go") {
+		t.Fatalf("observation body leaked project repository identity:\n%s", r.Body)
+	}
+	if r.Trigger != TriggerObservation || r.Class != TriggerObservation || r.Observation == nil || r.Observation.Kind != "queue-growth" {
+		t.Fatalf("observation report = %#v", r)
+	}
+	if !contains(r.Labels, LabelObservation) {
+		t.Fatalf("observation labels = %v", r.Labels)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {

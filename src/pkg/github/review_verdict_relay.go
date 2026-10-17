@@ -73,6 +73,7 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 			slog.String("agent", req.Agent), slog.String("error", err.Error()))
 		return nil
 	}
+	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
@@ -80,11 +81,61 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 	}
 	var recorded []review.PerspectiveReport
 	for _, report := range reports {
+		if decisionRequested {
+			report.DecisionRequested = true
+			report.DecisionQuestion = decisionQuestion
+			report.Verdict = review.VerdictRequiresHuman
+		}
 		if written, ok := c.writeOneVerdict(req, report, dir); ok {
 			recorded = append(recorded, written)
 		}
 	}
 	return recorded
+}
+
+func reviewDecisionRequestFromBody(body string) (bool, string) {
+	const (
+		verdictMarker  = "<!-- hive-verdict: needs-decision -->"
+		questionPrefix = "<!-- hive-decision-question:"
+	)
+	var requested bool
+	var question string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if lower == verdictMarker {
+			requested = true
+			continue
+		}
+		if strings.HasPrefix(lower, questionPrefix) && strings.HasSuffix(trimmed, "-->") {
+			question = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[len(questionPrefix):]), "-->"))
+		}
+	}
+	if requested {
+		return true, question
+	}
+	if fallback := maintainerCallQuestion(body); fallback != "" {
+		return true, fallback
+	}
+	return false, ""
+}
+
+func maintainerCallQuestion(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.Contains(lower, "maintainer call") || !strings.Contains(trimmed, "@") {
+			continue
+		}
+		if strings.Contains(lower, "not a maintainer call") ||
+			strings.Contains(lower, "is not a maintainer call") ||
+			strings.Contains(lower, "isn't a maintainer call") ||
+			strings.Contains(lower, "no maintainer call") {
+			continue
+		}
+		return trimmed
+	}
+	return ""
 }
 
 // writeOneVerdict commits a single perspective's verdict where review.Collect
@@ -107,7 +158,7 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	// several verdicts, so each element is checked on its own: the dispatch is
 	// recorded per perspective, and a perspective nothing dispatched is refused
 	// here exactly as it would be for a single-object verdict.
-	ok, reason, dispatchHead := c.verdictDispatchAuthorized(report, req)
+	ok, reason, dispatchHead, dispatchBodyDigest := c.verdictDispatchAuthorized(report, req)
 	if !ok {
 		c.logger.Warn("review-request watcher: verdict does not match a review dispatch, discarded",
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
@@ -118,6 +169,22 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	}
 	if strings.TrimSpace(report.HeadSHA) == "" && strings.TrimSpace(dispatchHead) != "" {
 		report.HeadSHA = strings.TrimSpace(dispatchHead)
+	}
+	if strings.TrimSpace(dispatchBodyDigest) != "" {
+		if strings.TrimSpace(report.BodyDigest) == "" {
+			c.logger.Warn("review-request watcher: verdict missing review body digest, discarded",
+				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
+				slog.String("perspective", string(report.Perspective)),
+				slog.String("agent", req.Agent))
+			return report, false
+		}
+		if strings.TrimSpace(report.BodyDigest) != strings.TrimSpace(dispatchBodyDigest) {
+			c.logger.Warn("review-request watcher: verdict body digest does not match review dispatch, discarded",
+				slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
+				slog.String("perspective", string(report.Perspective)),
+				slog.String("agent", req.Agent))
+			return report, false
+		}
 	}
 
 	// Re-marshalled from the validated struct rather than written through from
@@ -161,13 +228,13 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 	return report, true
 }
 
-func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string, string) {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return c.advisoryVerdictAuthorized(report, req)
 		}
-		return false, "dispatch_state_unavailable", ""
+		return false, "dispatch_state_unavailable", "", ""
 	}
 	now := time.Now().UTC()
 	for _, p := range state.Pending {
@@ -175,9 +242,9 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 			continue
 		}
 		if sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
-			return false, "author_self_approval", ""
+			return false, "author_self_approval", "", ""
 		}
-		return true, "", p.HeadSHA
+		return true, "", p.HeadSHA, p.BodyDigest
 	}
 	cutoff := now.Add(-review.RecentDispatchTTL)
 	for _, r := range state.Recent {
@@ -188,9 +255,9 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 			continue
 		}
 		if sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
-			return false, "author_self_approval", ""
+			return false, "author_self_approval", "", ""
 		}
-		return true, "", r.HeadSHA
+		return true, "", r.HeadSHA, r.BodyDigest
 	}
 	// Queue-mode reviewer prompts can reach the relay through the ordinary
 	// PR-list comment path rather than a review-swarm dispatch. That still is
@@ -208,18 +275,18 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 // recommends closing a PR, so the submitting lane must be one this hive
 // reviews with: any other lane that can reach the relay could otherwise
 // approve or veto any PR it did not author.
-func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string) {
+func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string, string) {
 	head := strings.TrimSpace(report.HeadSHA)
 	if head == "" {
-		return false, "missing_head_sha_without_dispatch", ""
+		return false, "missing_head_sha_without_dispatch", "", ""
 	}
 	if !c.isReviewerAgent(req.Agent) {
-		return false, "non_reviewer_without_dispatch", ""
+		return false, "non_reviewer_without_dispatch", "", ""
 	}
 	if sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
-		return false, "author_self_approval", ""
+		return false, "author_self_approval", "", ""
 	}
-	return true, "", head
+	return true, "", head, strings.TrimSpace(report.BodyDigest)
 }
 
 func pendingReviewMatchesVerdict(p review.PendingReview, report review.PerspectiveReport, req ReviewRequest) bool {

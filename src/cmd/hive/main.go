@@ -2294,9 +2294,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
-	if hub := b.dashSrv.ContributeHub(); hub != nil {
-		autoMergeOpts.ContributorNudge = hub
-	}
+	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
+	// here (see lateContributorNudgeSink).
+	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -2694,6 +2694,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	intent.SetEvaluationAuditSink(func(o intent.Observation) {
 		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
 	})
+	if err := intent.MigrateCounters(intent.LegacyCountersPath, intent.CountersPath, time.Now()); err != nil {
+		b.logger.Warn("intent counters: legacy file not migrated", "error", err)
+	}
 	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
@@ -3208,6 +3211,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 
 			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
+
+		b.installBeadSynthPublisher()
 
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {
 			b.logger.Warn("vault cleanup failed", "error", err)
@@ -4105,6 +4110,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
 		// Durable attempted-vs-blocked write counters (#12069); observation only.
+		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
+			b.logger.Warn("write counters: legacy file not migrated", "error", err)
+		}
 		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
 		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
@@ -5864,10 +5872,11 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			Logger: b.logger,
 		}); err != nil {
 			// No fail-closed fallback is possible here: the legacy hold label
-			// hive/<id> IS the provenance label on every claimed item, and
-			// github.HasHoldLabelWith never treats provenance labels as holds
-			// (#9371 - treating it as one parked every claimed item). Items
-			// still carrying only the legacy label are therefore NOT held.
+			// hive/<id> was the provenance label on every claimed item (now
+			// retired, #12539), and github.HasHoldLabelWith never treats
+			// provenance labels as holds (#9371 - treating it as one parked
+			// every claimed item). Items still carrying only the legacy
+			// label are therefore NOT held.
 			// Say so loudly, in the log and on the dashboard, instead of
 			// pretending to fail closed (#9614).
 			reportPath := ""
@@ -5887,6 +5896,14 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		// open items; the marker is not written and the next boot retries.
 		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
 			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyFromReviewLabel, "error", err)
+		}
+		// The hive/<hive-id> provenance label is retired (#12539): the origin
+		// marker in every agent-written body carries the same fact. Runs
+		// after the hold migration so that migration still sees the label
+		// on an upgrade straight from a pre-#9371 hive. Provenance only, so
+		// a failure leaves stale labels and retries next boot.
+		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
+			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
 		}
 	}
 	b.evalCycles++
@@ -5996,6 +6013,52 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 
+	// Continuous re-kick wake: a continuous agent's NextKick (set when its
+	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
+	// so with eval_interval_webhook_s=900 the reviewer sat idle at its prompt
+	// for up to 15 minutes after every "kick turn ended". The wake fires an
+	// early tick when the earliest NextKick elapses, bounded by
+	// continuousWakeMinGap, and otherwise re-checks every continuousWakePoll.
+	// When a wake-driven cycle leaves the due re-kick untouched (the agent was
+	// gated outside the governor: dashboard pause, first-scan deferral,
+	// provider budget, upgrade drain) wakeHold backs the wake off that re-kick
+	// so a gated agent does not turn the cadence into one eval per 30s.
+	wakeNow := deps.now
+	if wakeNow == nil {
+		wakeNow = time.Now
+	}
+	var (
+		wakeTimer    loopTicker
+		wakeCh       <-chan time.Time
+		lastWake     time.Time
+		wakeArmedFor time.Time
+		wakeHold     continuousWakeHold
+	)
+	armContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil {
+			return
+		}
+		next, who := b.gov.NextContinuousKickAt()
+		delay, _ := continuousWakeDecision(next, wakeNow(), lastWake, wakeHold.untilFor(next, who))
+		if delay <= 0 {
+			delay = continuousWakeMinDelay
+		}
+		if wakeTimer == nil {
+			wakeTimer = deps.newWakeTimer(delay)
+			wakeCh = wakeTimer.Chan()
+		} else {
+			wakeTimer.Stop()
+			wakeTimer.Reset(delay)
+		}
+		wakeArmedFor = next
+	}
+	armContinuousWake()
+	defer func() {
+		if wakeTimer != nil {
+			wakeTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -6004,9 +6067,31 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			return
 		case <-ticker.Chan():
 			tick()
+			armContinuousWake()
 		case <-b.reviewWake:
 			b.logger.Info("review webhook wake: running an early eval cycle")
 			tick()
+			armContinuousWake()
+		case <-wakeCh:
+			now := wakeNow()
+			next, who := b.gov.NextContinuousKickAt()
+			if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
+				idleFor := time.Duration(0)
+				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+					idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
+				}
+				b.logger.Info("continuous re-kick wake: running an early eval cycle",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+				lastWake = now
+				tick()
+				after, afterWho := b.gov.NextContinuousKickAt()
+				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+						"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+				}
+			}
+			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
@@ -6689,6 +6774,7 @@ func runEvalCycle(
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
 	lastActionable.Store(actionable)
+	publishStageSharedCIIncidents(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
 	}
@@ -7078,6 +7164,21 @@ func runEvalCycle(
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
+			startStoppedAgent: func(agentName string) error {
+				if !agentMgr.GovernorMayStart(agentName) {
+					return nil
+				}
+				agentMgr.MarkStartupLaunchQueued([]string{agentName})
+				if err := agentMgr.Start(ctx, agentName); err != nil {
+					if stoppedAgentStartErrorIsBenign(err) {
+						logger.Info("stopped agent start raced with existing launch before governor kick", "agent", agentName, "error", err)
+						return nil
+					}
+					return fmt.Errorf("start stopped agent: %w", err)
+				}
+				logger.Info("started stopped agent before governor kick", "agent", agentName)
+				return nil
+			},
 			startKickSpan: func(agentName string) func(error) {
 				agentCfg := cfg.Agents[agentName]
 				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
@@ -8708,7 +8809,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
 		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
 	} else if stageResult.Writes+stageResult.Comments > 0 {
-		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments, "healed", stageResult.Healed)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9158,7 +9259,7 @@ func applyDuplicatePRGuard(
 	// decision about each open issue onto its stage/NNN label (and strip the
 	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
 	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
-		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments)
+		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
@@ -9630,13 +9731,15 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
 		prs = append(prs, review.PullRequest{
-			Repo:    pr.Repo,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			Author:  pr.Author,
-			HeadSHA: pr.HeadSHA,
-			URL:     pr.URL,
-			Lane:    string(lane),
+			Repo:       pr.Repo,
+			Number:     pr.Number,
+			Title:      pr.Title,
+			Author:     pr.Author,
+			HeadSHA:    pr.HeadSHA,
+			UpdatedAt:  pr.UpdatedAt,
+			BodyDigest: pr.BodyDigest,
+			URL:        pr.URL,
+			Lane:       string(lane),
 			// Authorship signal for the fix gate (#8421): a PR an agent opened
 			// on a person's credentials is still the hive's own work.
 			HiveAttributed: pr.HiveAttributed,
@@ -9981,11 +10084,12 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 
 func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
-		Mode:   "observe",
-		Scope:  dashboard.NousScopeRepo,
-		Phase:  "collecting",
-		Status: make(map[string]interface{}),
-		Config: make(map[string]interface{}),
+		Mode:        "observe",
+		Scope:       dashboard.NousScopeRepo,
+		Phase:       "collecting",
+		Status:      make(map[string]interface{}),
+		Config:      make(map[string]interface{}),
+		GovernorDir: governorDir,
 	}
 
 	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {

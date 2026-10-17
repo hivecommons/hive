@@ -119,6 +119,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	if err := c.Governor.Labels.Author.Validate(); err != nil {
+		return err
+	}
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
@@ -167,6 +170,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateGoodFirstIssue(c.GoodFirstIssue); err != nil {
 		return err
 	}
+	if err := ValidateFirstTimerWelcome(c.Governor.FirstTimerWelcome); err != nil {
+		return err
+	}
 	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}
@@ -181,7 +187,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
-	if normalized, err := ValidateSnapshotURL(c.Hub.SnapshotURL); err != nil {
+	if normalized, err := validateSnapshotURL(c.Hub.SnapshotURL, true); err != nil {
 		return err
 	} else {
 		c.Hub.SnapshotURL = normalized

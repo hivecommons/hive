@@ -285,6 +285,7 @@ func (c *Engine) nudgeDependabotRebase(ctx context.Context, displayRepo, owner, 
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
 		}
+		c.noteOwnStageComment(owner, repo, number)
 		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
 	})
 	if err != nil {

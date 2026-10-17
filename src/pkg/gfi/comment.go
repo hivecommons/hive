@@ -92,6 +92,8 @@ Hi! This repository is maintained with [hive]({{ .Docs }}/README.md) and welcome
 ` + "```" + `
 </details>
 
+Prefer not to drive the loop by hand? Run your own hive (we call them clankers) — a relay on your machine that claims, opens the PR and handles review fixes for you, and earns you a contributor profile and a leaderboard place: see {{ .RelayURL }}.
+
 If nobody claims it, hive may pick it up itself — claiming first prevents that. Docs: [contributor relay]({{ .Docs }}/contributor-relay.md) · [contributor lane auto-merge]({{ .Docs }}/hive-merge.md#contributor-lane-auto-merge) · [trust tiers]({{ .Docs }}/contributor-trust-and-roles.md){{ if .AgentsMDURL }} · [AGENTS.md]({{ .AgentsMDURL }}){{ end }}.
 `
 

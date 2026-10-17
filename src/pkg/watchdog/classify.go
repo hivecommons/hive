@@ -221,6 +221,9 @@ func Classify(obs Observation, now time.Time, s Settings) Classification {
 		if booting {
 			return Classification{ClassUnknown, "pane shows login chrome inside boot grace"}
 		}
+		if obs.Backend == "copilot" {
+			return Classification{ClassAuthRequired, "pane shows a login/credential screen; /login is not actionable in a hosted agent, recovery: operator dashboard device-flow login (Copilot Login)"}
+		}
 		return Classification{ClassAuthRequired, "pane shows a login/credential screen"}
 	}
 	stale := func(after time.Duration) bool {

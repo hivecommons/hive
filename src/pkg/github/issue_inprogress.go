@@ -121,13 +121,22 @@ func InProgressCommentBody(agent, hiveID string, started, expires time.Time) str
 }
 
 // inProgressLabelsForClaim returns the labels a `claim` request applies: the
-// per-agent ownership label and, when enabled, hive/in-progress.
+// per-agent ownership label and, when enabled, stage/030-pr-in-progress.
 func (c *Client) inProgressLabelsForClaim(agent string) []string {
-	labels := []string{claimLabelPrefix + sanitizeAgentName(agent)}
+	labels := []string{claims.ClaimedByLabel(claims.Claim{Holder: agent, Kind: claims.KindAgent})}
 	if c.inProgressSetting().Enabled {
 		labels = append(labels, InProgressLabel)
 	}
 	return labels
+}
+
+// claimStage is the stage a `claim` request enforces: pr-in-progress when
+// the in-progress mark is on, else no opinion.
+func (c *Client) claimStage() stagelabels.Stage {
+	if c.inProgressSetting().Enabled {
+		return stagelabels.PRInProgress
+	}
+	return stagelabels.None
 }
 
 // markInProgressStarted is the post-label half of a `claim` request: it seeds
@@ -155,7 +164,7 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 // clearInProgressForPR moves every issue a freshly opened PR names from the
 // claimed / pr-in-progress stage to covered-by-pr. Best-effort and off the
 // request path: the PR is the stronger signal and the stage reconciler
-// converges the labels (and mirrors the PR's stage) on the next cycle anyway.
+// converges the labels on the next cycle anyway.
 func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues []int) {
 	if !c.inProgressSetting().Enabled || len(issues) == 0 {
 		return
@@ -164,19 +173,17 @@ func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues [
 		if n <= 0 {
 			continue
 		}
-		for _, l := range inProgressTriggerLabels {
-			if err := c.RemoveLabel(ctx, repo, n, l); err != nil && c.logger != nil {
-				c.logger.Warn("in-progress: removing label after PR open failed", "repo", repo, "issue", n, "label", l, "error", err)
-			}
-		}
 		if err := c.EnsureCoveredByPRLabel(ctx, repo); err != nil {
 			if c.logger != nil {
 				c.logger.Warn("in-progress: ensuring covered-by-pr label after PR open failed", "repo", repo, "issue", n, "error", err)
 			}
 			continue
 		}
-		if err := c.AddLabels(ctx, repo, n, []string{CoveredByPRLabel}); err != nil && c.logger != nil {
-			c.logger.Warn("in-progress: adding covered-by-pr label after PR open failed", "repo", repo, "issue", n, "error", err)
+		// One enforced write: re-reads the issue, takes the claimed /
+		// pr-in-progress (and retired) labels off and puts 040 on, journaled
+		// against that read so a later PR on the same issue can do it again.
+		if _, err := c.ApplyStageLabel(ctx, repo, n, stagelabels.CoveredByPR); err != nil && c.logger != nil {
+			c.logger.Warn("in-progress: moving issue to covered-by-pr after PR open failed", "repo", repo, "issue", n, "error", err)
 		}
 	}
 }
@@ -270,7 +277,10 @@ func (c *Client) removeInProgressLabel(ctx context.Context, issue *Issue, why st
 		if c.client == nil {
 			continue
 		}
-		if err := c.RemoveLabel(ctx, issue.Repo, issue.Number, l); err != nil {
+		// Journaled against the list payload's updated_at: the same label
+		// removed from the same issue once before (a lapsed earlier mark)
+		// must not replay as "already applied" and stay on the issue.
+		if err := c.removeLabelObserved(ctx, issue.Repo, issue.Number, l, observedState(issue.UpdatedAt)); err != nil {
 			if logger != nil {
 				logger.Warn("in-progress: removing label failed", "repo", issue.Repo, "issue", issue.Number, "label", l, "why", why, "error", err)
 			}

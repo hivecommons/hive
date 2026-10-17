@@ -188,3 +188,66 @@ func TestKickUndeliverableDuringLiveTurnIsNotSelfReported(t *testing.T) {
 	}
 	t.Fatal("no kick_failed_repeatedly evidence once the transcript went silent")
 }
+
+func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
+	now := time.Date(2026, 10, 16, 18, 52, 0, 0, time.UTC)
+	working := "◉ Working (12m 3s · esc interrupt)"
+	stuck := func() *AgentProcess {
+		return &AgentProcess{
+			Name:                   "quality",
+			KicksUndeliverable:     14,
+			BusySince:              now.Add(-65 * time.Minute),
+			LastTranscriptActivity: now.Add(-95 * time.Minute),
+		}
+	}
+
+	reason := busyNoActivityStall(stuck(), working, now)
+	if !strings.Contains(reason, busyNoActivityCondition) || !strings.Contains(reason, "14 kicks undeliverable") {
+		t.Fatalf("wedged pane reason = %q, want busy-no-activity restart reason", reason)
+	}
+
+	// No transcript cache (non-Copilot backends): silence is measured from
+	// the first undeliverable kick.
+	noCache := stuck()
+	noCache.LastTranscriptActivity = time.Time{}
+	noCache.BusySince = now.Add(-61 * time.Minute)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("no-transcript wedged pane did not escalate")
+	}
+
+	cases := map[string]func(a *AgentProcess) string{
+		"too few kicks": func(a *AgentProcess) string {
+			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
+			return working
+		},
+		"transcript recently active": func(a *AgentProcess) string {
+			a.LastTranscriptActivity = now.Add(-45 * time.Minute)
+			return working
+		},
+		"longer configured threshold": func(a *AgentProcess) string {
+			a.Config.BusyNoActivityThreshold = time.Hour
+			return working
+		},
+		"pane no longer working": func(a *AgentProcess) string {
+			return "❯ "
+		},
+		"within restart cooldown": func(a *AgentProcess) string {
+			a.lastSessionStallRestart = now.Add(-time.Minute)
+			return working
+		},
+		"no busy episode": func(a *AgentProcess) string {
+			a.LastTranscriptActivity = time.Time{}
+			a.BusySince = time.Time{}
+			return working
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := stuck()
+			pane := mutate(a)
+			if got := busyNoActivityStall(a, pane, now); got != "" {
+				t.Fatalf("busyNoActivityStall = %q, want no escalation", got)
+			}
+		})
+	}
+}

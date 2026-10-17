@@ -135,3 +135,20 @@ func TestPRLists_AnnotateForkPRs(t *testing.T) {
 		}
 	}
 }
+
+// Stage 074 in-place adoption (hivecommons/hive#12527): a fork PR the hive
+// adopted IS listed — maintainer_can_modify lets the fixer push to the
+// contributor's branch — with a line saying so; other fork PRs stay withheld.
+func TestFormatRedPRFixData_AdoptedForkPRIsYours(t *testing.T) {
+	fixture := `{"ci_failing":[
+  {"number":12527,"repo":"o/r","title":"adopted","author":"karibhou","head_repo":"karibhou/r","from_fork":true,"adopted":true,"reachable_action":"push","agent":"scanner","conflict":true,"mergeable_state":"dirty"},
+  {"number":839,"repo":"o/r","title":"fork","author":"alice","head_repo":"alice/r","from_fork":true,"reachable_action":"comment-only","failing_checks":["build"]}
+]}`
+	out := formatRedPRFixData([]byte(fixture), "scanner")
+	if !strings.Contains(out, "#12527 ") || !strings.Contains(out, "ADOPTED contributor PR (stage 074, head repo karibhou/r)") {
+		t.Errorf("adopted fork PR must be listed with the adoption note:\n%s", out)
+	}
+	if strings.Contains(out, "#839 ") || !strings.Contains(out, "1 red PR(s) from forks are NOT listed") {
+		t.Errorf("non-adopted fork PR must stay withheld:\n%s", out)
+	}
+}

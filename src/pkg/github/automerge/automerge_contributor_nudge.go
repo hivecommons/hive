@@ -89,20 +89,76 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		checks = append(checks, strings.TrimPrefix(r, "required-check-failing:"))
 	case strings.HasPrefix(r, "check-failing:"):
 		checks = append(checks, strings.TrimPrefix(r, "check-failing:"))
+	case strings.HasPrefix(r, stageReasonOptionalCheckFailing):
+		// Every red optional check on the head, not just the first one
+		// the stage reason names (hivecommons/hive#12538).
+		if len(d.RedChecks) > 0 {
+			checks = append(checks, d.RedChecks...)
+		} else {
+			checks = append(checks, strings.TrimPrefix(r, stageReasonOptionalCheckFailing))
+		}
 	case classifyCIReason(r) == ciReasonRed:
 		checks = append(checks, r)
 	case r == "changes-requested":
 		asks = append(asks, "a reviewer requested changes")
 		human = true
-	case r == contributorLaneReasonChangesRequested:
+	case r == contributorLaneReasonChangesRequested, r == stagelabels.LaneReasonChangesRequested:
 		asks = append(asks, "the review swarm requested changes")
+	case r == stagelabels.LaneReasonDCOMissing:
+		asks = append(asks, "the DCO sign-off is missing (`git commit -s`, then force-push)")
 	case r == "conflicting" || r == "not-mergeable" || r == "label:needs-rebase":
 		asks = append(asks, "the branch conflicts with the base and needs a rebase")
 	case r != "":
 		asks = append(asks, r)
 	}
-	if verdictBlocks(d) && r != contributorLaneReasonChangesRequested {
+	if verdictBlocks(d) && r != contributorLaneReasonChangesRequested && r != stagelabels.LaneReasonChangesRequested {
 		asks = append(asks, "the review swarm requested changes")
+	}
+	return checks, asks, human
+}
+
+// nudgeDiagnosisRouted extends nudgeDiagnosis with the evidence the human
+// routing gathered (hivecommons/hive#12528): every red check, a missing DCO
+// sign-off, the conflict — so the 072 entry comment lists the concrete
+// reasons even when the lane itself stopped at admission.
+func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route) (checks, asks []string, human bool) {
+	checks, asks, human = nudgeDiagnosis(reason, d)
+	if route == nil {
+		return checks, asks, human
+	}
+	seenCheck := map[string]bool{}
+	for _, c := range checks {
+		seenCheck[c] = true
+	}
+	seenAsk := map[string]bool{}
+	for _, a := range asks {
+		seenAsk[a] = true
+	}
+	for _, r := range route.Reasons {
+		switch {
+		case strings.HasPrefix(r, "red checks: "):
+			for _, name := range strings.Split(strings.TrimPrefix(r, "red checks: "), ", ") {
+				if name = strings.TrimSpace(name); name != "" && !seenCheck[name] {
+					seenCheck[name] = true
+					checks = append(checks, name)
+				}
+			}
+		case strings.HasPrefix(r, "verdict changes_requested"):
+			if a := "the review swarm requested changes"; !seenAsk[a] {
+				seenAsk[a] = true
+				asks = append(asks, a)
+			}
+		case r == "DCO sign-off missing":
+			if a := "the DCO sign-off is missing (`git commit -s`, then force-push)"; !seenAsk[a] {
+				seenAsk[a] = true
+				asks = append(asks, a)
+			}
+		case strings.HasPrefix(r, "merge conflict"):
+			if a := "the branch conflicts with the base and needs a rebase"; !seenAsk[a] {
+				seenAsk[a] = true
+				asks = append(asks, a)
+			}
+		}
 	}
 	return checks, asks, human
 }
@@ -187,7 +243,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	if !due {
 		return 0, nil
 	}
-	checks, asks, human := nudgeDiagnosis(obs.Reason, obs.Detail)
+	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
 	n := ContributorNudge{
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
@@ -203,7 +259,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err
 	}
-	store.MarkNudged(key, obs.HeadSHA, ordinal, now)
+	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt" || out.Mode == "queued", now)
 	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "reason", obs.Reason)
 	return 1, nil
 }

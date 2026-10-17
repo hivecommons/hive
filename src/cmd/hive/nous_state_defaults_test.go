@@ -85,6 +85,9 @@ func TestLoadNousStateFromPathsLoadsHermeticArtifacts(t *testing.T) {
 	}
 
 	state := loadNousStateFromPaths(restoreTestLogger(), governorDir, snapshotDir)
+	if state.GovernorDir != governorDir {
+		t.Fatalf("GovernorDir = %q, want %q so the lab can tell whether the experiment loop runs", state.GovernorDir, governorDir)
+	}
 	if state.Phase != "observing" || len(state.Ledger) != 2 {
 		t.Fatalf("phase/ledger = %q/%d, want observing/2", state.Phase, len(state.Ledger))
 	}

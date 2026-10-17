@@ -211,6 +211,7 @@ type PendingReview struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
 	HeadSHA     string      `json:"head_sha,omitempty"`
+	BodyDigest  string      `json:"body_digest,omitempty"`
 	Perspective Perspective `json:"perspective"`
 	Agent       string      `json:"agent"`
 	AuthorAgent string      `json:"author_agent,omitempty"`
@@ -221,6 +222,7 @@ type RecentReview struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
 	HeadSHA     string      `json:"head_sha,omitempty"`
+	BodyDigest  string      `json:"body_digest,omitempty"`
 	Perspective Perspective `json:"perspective"`
 	Agent       string      `json:"agent"`
 	AuthorAgent string      `json:"author_agent,omitempty"`
@@ -262,6 +264,7 @@ type DispatchKick struct {
 	Repo        string
 	Number      int
 	HeadSHA     string
+	BodyDigest  string
 	Perspective Perspective
 	AuthorAgent string
 	// Perspectives is every perspective this kick covers. It is set only by
@@ -367,13 +370,13 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		}
 		revisiting := false
 		var delivered map[Perspective]Verdict
-		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
+		if agg, ok := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest); ok {
 			// A verdict normally settles a PR until its head moves. That is
 			// right while the reviewer is sound, and a trap once a
 			// reviewer-side defect is found: without this, verdicts produced
 			// by a known-broken reviewer stay frozen until someone happens to
 			// push a commit.
-			if !staleVerdictRevisitable(pr.Repo, agg, opts) {
+			if !staleVerdictRevisitable(pr.Repo, agg, opts) && !bodyEditedVerdictRevisitable(pr, agg) {
 				if agg.Verdict == VerdictIncomplete {
 					// Every perspective that reported approved; some never
 					// reported. The head is not settled, it is under-asked:
@@ -451,9 +454,9 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
 			for _, p := range missing {
-				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
+				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
 			}
 			availableSlots--
 			continue
@@ -501,8 +504,8 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
-			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
+			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
 			availableSlots--
 		}
 	}
@@ -540,6 +543,19 @@ func (p *DispatchPlan) holdForHuman(pr PullRequest, agg Aggregate, now time.Time
 		reason = agg.Reasons[0]
 	}
 	p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: reason, UpdatedAt: now})
+}
+
+func bodyEditedVerdictRevisitable(pr PullRequest, agg Aggregate) bool {
+	if agg.Verdict == VerdictApprove || agg.Verdict == VerdictIncomplete {
+		return false
+	}
+	if strings.TrimSpace(pr.BodyDigest) != "" && strings.TrimSpace(agg.BodyDigest) != "" {
+		return strings.TrimSpace(pr.BodyDigest) != strings.TrimSpace(agg.BodyDigest)
+	}
+	if strings.TrimSpace(pr.BodyDigest) != "" && strings.TrimSpace(agg.BodyDigest) == "" {
+		return true
+	}
+	return !pr.UpdatedAt.IsZero() && !agg.RecordedAt.IsZero() && pr.UpdatedAt.After(agg.RecordedAt)
 }
 
 // effectivePendingTTL resolves PendingTTL: zero is the default, negative
@@ -760,7 +776,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, Perspective: p, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
 			}
 		}
 	}
@@ -880,14 +896,28 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 }
 
 func (a Artifact) AggregateFor(repo string, number int, headSHA string) (Aggregate, bool) {
+	return a.AggregateForBody(repo, number, headSHA, "")
+}
+
+func (a Artifact) AggregateForBody(repo string, number int, headSHA, bodyDigest string) (Aggregate, bool) {
 	wantRepo := strings.TrimSpace(repo)
 	wantSHA := strings.TrimSpace(headSHA)
+	wantBody := strings.TrimSpace(bodyDigest)
+	var fallback Aggregate
+	var haveFallback bool
 	for _, item := range a.Items {
-		if item.Number == number && strings.TrimSpace(item.Repo) == wantRepo && strings.TrimSpace(item.HeadSHA) == wantSHA {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
+			continue
+		}
+		if wantBody != "" && strings.TrimSpace(item.BodyDigest) == wantBody {
 			return item, true
 		}
+		if !haveFallback || item.RecordedAt.After(fallback.RecordedAt) {
+			fallback = item
+			haveFallback = true
+		}
 	}
-	return Aggregate{}, false
+	return fallback, haveFallback
 }
 
 // effectiveMaxPerspectivesPerPR returns the per-PR perspective cap, or 0 for
@@ -1021,7 +1051,7 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 	openPRs := map[string]bool{}
 	for _, pr := range prs {
 		repo := fullRepoName(pr.Repo, org)
-		key := reviewKey(repo, pr.Number, pr.HeadSHA)
+		key := reviewKey(repo, pr.Number, pr.HeadSHA, "")
 		openHeads[key] = true
 		if strings.TrimSpace(pr.AuthorAgent) != "" {
 			authorAgents[key] = pr.AuthorAgent
@@ -1030,7 +1060,7 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 	}
 	var pending []PendingReview
 	for _, p := range state.Pending {
-		key := reviewKey(p.Repo, p.Number, p.HeadSHA)
+		key := reviewKey(p.Repo, p.Number, p.HeadSHA, "")
 		if openHeads[key] {
 			if strings.TrimSpace(p.AuthorAgent) == "" {
 				p.AuthorAgent = authorAgents[key]
@@ -1052,21 +1082,21 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 	state.Fixes = fixes
 	var human []HumanReviewHold
 	for _, h := range state.Human {
-		if openHeads[reviewKey(h.Repo, h.Number, h.HeadSHA)] {
+		if openHeads[reviewKey(h.Repo, h.Number, h.HeadSHA, "")] {
 			human = append(human, h)
 		}
 	}
 	state.Human = human
 	var withheld []WithheldFix
 	for _, w := range state.Withheld {
-		if openHeads[reviewKey(w.Repo, w.Number, w.HeadSHA)] {
+		if openHeads[reviewKey(w.Repo, w.Number, w.HeadSHA, "")] {
 			withheld = append(withheld, w)
 		}
 	}
 	state.Withheld = withheld
 	var redispatches []RedispatchCount
 	for _, r := range state.Redispatches {
-		if openHeads[reviewKey(r.Repo, r.Number, r.HeadSHA)] {
+		if openHeads[reviewKey(r.Repo, r.Number, r.HeadSHA, "")] {
 			redispatches = append(redispatches, r)
 		}
 	}

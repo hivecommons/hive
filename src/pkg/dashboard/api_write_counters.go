@@ -9,11 +9,11 @@ import (
 
 // writeCountersPath is proxy.WriteCountersPath, the durable attempted-vs-blocked
 // agent write counters (#12069). It is written only by the hive process.
-var writeCountersPath = "/var/run/hive-metrics/write-counters.json"
+var writeCountersPath = "/data/hive-metrics/write-counters.json"
 
 // intentCountersPath is intent.CountersPath, the durable evaluated-vs-would-block
 // intent counters (#12362). It is written only by the hive process.
-var intentCountersPath = "/var/run/hive-metrics/intent-counters.json"
+var intentCountersPath = "/data/hive-metrics/intent-counters.json"
 
 // handleWriteCounters serves GET /api/evidence/write-counters: the durable
 // counters by intent tier and block reason, with a weekly series. Read-only

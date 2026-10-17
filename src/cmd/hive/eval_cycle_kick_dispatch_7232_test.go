@@ -18,11 +18,13 @@ type kickDispatchRecorder struct {
 	spanErrs   []error
 	probeStamp []time.Time
 	sendErr    map[string]error
+	startErr   map[string]error
+	started    []string
 	backoff    map[string]bool
 }
 
 func newKickDispatchRecorder() *kickDispatchRecorder {
-	return &kickDispatchRecorder{sendErr: map[string]error{}, backoff: map[string]bool{}}
+	return &kickDispatchRecorder{sendErr: map[string]error{}, startErr: map[string]error{}, backoff: map[string]bool{}}
 }
 
 func (r *kickDispatchRecorder) deps() kickDispatchDeps {
@@ -42,6 +44,14 @@ func (r *kickDispatchRecorder) deps() kickDispatchDeps {
 				return err
 			}
 			r.sent = append(r.sent, agent)
+			return nil
+		},
+		startStoppedAgent: func(agent string) error {
+			r.calls = append(r.calls, "start:"+agent)
+			if err := r.startErr[agent]; err != nil {
+				return err
+			}
+			r.started = append(r.started, agent)
 			return nil
 		},
 		startKickSpan: func(agent string) func(error) {
@@ -117,6 +127,62 @@ func TestDispatchAgentKicks_FailedSendPerformsNoDeliveredEffects(t *testing.T) {
 	}
 	if len(r.spanErrs) != 2 || r.spanErrs[0] != nil || !errors.Is(r.spanErrs[1], boom) {
 		t.Fatalf("span errors = %v, want [nil, tmux pane gone]", r.spanErrs)
+	}
+}
+
+func TestDispatchAgentKicks_StartsStoppedAgentBeforeSend(t *testing.T) {
+	r := newKickDispatchRecorder()
+
+	delivered := dispatchAgentKicks(kickMsgs("alpha"), false, r.deps(), discardLogger())
+
+	if !equalStrings(delivered, []string{"alpha"}) {
+		t.Fatalf("delivered = %v, want alpha", delivered)
+	}
+	if !equalStrings(r.started, []string{"alpha"}) {
+		t.Fatalf("started = %v, want alpha", r.started)
+	}
+	if want := []string{"backoff-miss:alpha", "span-start:alpha", "start:alpha", "send:alpha"}; !hasOrderedPrefix(r.calls, want) {
+		t.Fatalf("calls = %v, want prefix %v", r.calls, want)
+	}
+}
+
+func TestDispatchAgentKicks_StartFailurePerformsNoDeliveredEffects(t *testing.T) {
+	r := newKickDispatchRecorder()
+	boom := errors.New("tmux unavailable")
+	r.startErr["alpha"] = boom
+
+	delivered := dispatchAgentKicks(kickMsgs("alpha"), false, r.deps(), discardLogger())
+
+	if len(delivered) != 0 {
+		t.Fatalf("delivered = %v, want none", delivered)
+	}
+	for _, c := range r.calls {
+		if c == "send:alpha" || c == "review:alpha" || c == "delivered:alpha" {
+			t.Fatalf("a start failure must perform no kick or delivered-effects, calls were %v", r.calls)
+		}
+	}
+	if len(r.spanErrs) != 1 || !errors.Is(r.spanErrs[0], boom) {
+		t.Fatalf("span errors = %v, want start error", r.spanErrs)
+	}
+}
+
+func TestStoppedAgentStartErrorIsBenign(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", want: true},
+		{name: "already running", err: errors.New("agent reviewer already running"), want: true},
+		{name: "launch in progress", err: errors.New("agent reviewer launch already in progress"), want: true},
+		{name: "tmux failure", err: errors.New("tmux unavailable"), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stoppedAgentStartErrorIsBenign(tc.err); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -202,6 +268,7 @@ func TestDispatchAgentKicks_EffectOrderIsPreserved(t *testing.T) {
 	want := []string{
 		"backoff-miss:alpha",
 		"span-start:alpha",
+		"start:alpha",
 		"send:alpha",
 		"review:alpha",
 		"span-end:alpha",
@@ -242,6 +309,18 @@ func equalStrings(a, b []string) bool {
 	}
 	for i := range a {
 		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func hasOrderedPrefix(a, prefix []string) bool {
+	if len(a) < len(prefix) {
+		return false
+	}
+	for i := range prefix {
+		if a[i] != prefix[i] {
 			return false
 		}
 	}

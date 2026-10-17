@@ -152,6 +152,8 @@ evidence.complexity.static_analysis # TODO #11854
 github.additional_bot_logins[] # TODO #11854
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
+governor.first_timer_welcome.enabled # first-time contributor welcome; yaml-only
+governor.first_timer_welcome.template_path # first-time contributor welcome; yaml-only
 governor.backup.key_env # TODO #11854
 governor.backup.key_file # TODO #11854
 governor.backup.key_name # TODO #11854
@@ -173,6 +175,9 @@ governor.gateways[].name # TODO #11854
 governor.gateways[].project_id # TODO #11854
 governor.gateways[].region # TODO #11854
 governor.health.healthcheck_interval # TODO #11854
+governor.labels.author.clanker # label-name override; yaml-only (#12581)
+governor.labels.author.hive # label-name override; yaml-only (#12581)
+governor.labels.author.human # label-name override; yaml-only (#12581)
 governor.labels.exempt[] # TODO #11854
 governor.litellm.api_key_env # TODO #11854
 governor.litellm.api_key_file # TODO #11854
