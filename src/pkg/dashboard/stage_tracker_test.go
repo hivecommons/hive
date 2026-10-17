@@ -141,6 +141,11 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 		ActionableIssues: []any{
 			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/100-merge-queue"}},
 			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner", "origin/scanner"}},
+			// GitHub's issues feed returns pull requests too. These are copies
+			// of PRs 101 (also in OpenPrs) and 106 (URL says /pull/, not in the
+			// PR set); neither may become an issue row.
+			github.Issue{Number: 101, Title: "Fix redirect", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/072-returned-to-contributor"}},
+			github.Issue{Number: 106, Title: "Closed-feed PR", Author: "pat", URL: "https://github.com/acme/console/pull/106", Labels: []string{"stage/050-review-pending"}},
 		},
 		OpenPrs: []any{
 			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-returned-to-contributor", "author/contributor", "needs-rebase"}}},
@@ -213,7 +218,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("header: hive=%q stages=%d labels=%v", resp.HiveID, len(resp.Stages), resp.AuthorKindLabels)
 	}
 	if len(resp.Items) != 7 {
-		t.Fatalf("items = %d, want 7 (2 issues + 4 open PRs + 1 held PR)", len(resp.Items))
+		t.Fatalf("items = %d, want 7 (2 issues + 4 open PRs + 1 held PR; issue-feed PR copies dropped)", len(resp.Items))
 	}
 
 	// needs-rebase always lands a PR in 070/072; a sample at 050/060 with the
@@ -367,5 +372,46 @@ func TestStageTrackerClaimantKind(t *testing.T) {
 		if got := s.stageTrackerClaimantKind("acme/console", issue); got != kind {
 			t.Errorf("issue %d: got %q, want %q", issue, got, kind)
 		}
+	}
+}
+
+// TestStageTrackerIssueFeedPRsAreNotIssues pins the fix for "every PR renders
+// twice as its own parent issue": the issues feed also lists pull requests,
+// and a PR must never be an issue row, pair with itself or nest under itself.
+func TestStageTrackerIssueFeedPRsAreNotIssues(t *testing.T) {
+	now := time.Date(2026, 10, 17, 11, 0, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	resp := s.buildStageTracker(status, store, now)
+	for _, it := range resp.Items {
+		if it.Kind == "issue" && (it.Number == 101 || it.Number == 106) {
+			t.Fatalf("PR #%d rendered as an issue row: %+v", it.Number, it)
+		}
+		if it.Kind == "pr" && it.NestedUnder == it.Number {
+			t.Fatalf("PR #%d nested under itself", it.Number)
+		}
+		for _, lp := range it.LinkedPRs {
+			if lp.Number == it.Number {
+				t.Fatalf("%s #%d links to itself", it.Kind, it.Number)
+			}
+		}
+	}
+	pr := trackerItem(t, resp, "pr", 101)
+	if pr.NestedUnder != 0 || pr.AuthorKind == "" {
+		t.Fatalf("PR #101 should be a standalone PR row with PR info: %+v", pr)
+	}
+	// Direct guard on the pairing: an issue whose reason names its own number.
+	items := []StageTrackerItem{
+		{Repo: "acme/console", Number: 9, Kind: "issue", LinkedPR: 9, LinkedPRs: []StageTrackerLinkedPR{{Number: 9}, {Number: 10}}},
+		{Repo: "acme/console", Number: 10, Kind: "pr", Title: "Real PR"},
+	}
+	stageTrackerResolveLinkedPRs(items)
+	if len(items[0].LinkedPRs) != 1 || items[0].LinkedPRs[0].Number != 10 || items[0].LinkedPRs[0].Title != "Real PR" {
+		t.Fatalf("self-link not dropped: %+v", items[0].LinkedPRs)
+	}
+	if items[1].NestedUnder != 9 {
+		t.Fatalf("PR #10 should nest under issue #9, got %d", items[1].NestedUnder)
 	}
 }

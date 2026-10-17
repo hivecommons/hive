@@ -1340,6 +1340,7 @@
        them, so the PR cell starts at the PR in progress chevron; the PR cell takes what
        is left and gives way to the chip, which lives in the cap cell. */
     .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
+    .ham-head-cols .ham-seg.ham-head-lead.ham-head-wide { flex: 1 1 0; }
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; }
     .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
@@ -12757,7 +12758,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the given refs, and the since column the time on the current step
     // (the chip sits in the cap cell, to its left).
     function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead">${leadHtml || ''}</li><li class="ham-seg ham-head-pr">${prRefs.join('')}</li><li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
+      const wide = !(prRefs && prRefs.length);
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -12826,13 +12828,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
         }
-      } else {
-        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title)];
       }
+      // A PR is never its own parent: a standalone PR is named once, on the
+      // left, with its author-kind icon; the PR column stays empty and the
+      // title may run across it.
+      const ak = !isIssue ? (item.author_kind || 'hive') : '';
+      const who = ak ? ak + (item.author ? ' · @' + item.author : '') : '';
       return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(shown, nowMs))}">
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
-            ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}
+            ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
           </div>`, stageTrackerChipsHtml(shown))}

@@ -633,8 +633,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
+	// Keyed on (repo, kind, number): the cross-kind collision (a PR echoed by
+	// the issues feed) is resolved before add, with the PR record winning.
 	add := func(it StageTrackerItem) {
-		key := it.Repo + "#" + strconv.Itoa(it.Number)
+		key := it.Repo + "/" + it.Kind + "#" + strconv.Itoa(it.Number)
 		if seen[key] {
 			return
 		}
@@ -695,8 +697,26 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	for _, repo := range status.Repos {
 		repoName := overviewRepoName(repo)
+		// GitHub's issues feed also returns pull requests. A PR is never an
+		// issue in the tracker: when a number is in the repo's PR set, the PR
+		// record wins and the issue-feed copy is dropped, otherwise the PR
+		// would pair with itself and render as its own parent issue.
+		prNumbers := map[int]bool{}
+		for _, held := range []bool{false, true} {
+			for _, fp := range frontendRepoPRs(repo, held) {
+				prNumbers[fp.pr.Number] = true
+			}
+		}
+		for _, raw := range repo.NonActionablePrs {
+			if w, ok := repoWorkPR(raw); ok {
+				prNumbers[w.Number] = true
+			}
+		}
 		for _, held := range []bool{false, true} {
 			for _, issue := range frontendRepoIssues(repo, held) {
+				if prNumbers[issue.Number] || strings.Contains(issue.URL, "/pull/") {
+					continue
+				}
 				addIssue(repoName, issue, "", "")
 			}
 			for _, fp := range frontendRepoPRs(repo, held) {
@@ -708,6 +728,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// are the open items the first tracker never showed.
 		for _, raw := range repo.NonActionableIssues {
 			if w, ok := repoWorkIssue(raw); ok {
+				if prNumbers[w.Number] || strings.Contains(w.URL, "/pull/") {
+					continue
+				}
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
 					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext}, w.Bucket, w.Reason)
 			}
@@ -901,7 +924,9 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 		seen := map[int]bool{}
 		out := make([]StageTrackerLinkedPR, 0, len(it.LinkedPRs)+1)
 		add := func(lp StageTrackerLinkedPR) {
-			if lp.Number == 0 || seen[lp.Number] {
+			// Pairing is keyed on (repo, kind, number): an issue never links
+			// to its own number, so nothing can become its own parent.
+			if lp.Number == 0 || lp.Number == it.Number || seen[lp.Number] {
 				return
 			}
 			seen[lp.Number] = true
