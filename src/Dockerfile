@@ -327,10 +327,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # complete the interactive OAuth flow itself). This enables a self-hosted Hive
 # controller to use its configured agy fallback rung without pretending that
 # generic contributor containers can bootstrap Google login.
-ARG AGY_VERSION=1.3.0
-ARG AGY_BUILD=6233328509124608
-ARG AGY_SHA512_AMD64=f6f5e16f356ae8a345fd6ab265ad2a4e4dc8d0b7f4ac345249d0e250a06edd496677b8ac0193b258971feb7ccfbba2fccc2f482db1d62cc650498e352ef85280
-ARG AGY_SHA512_ARM64=8a880575accf28b03de00e748209dc735c11e59847de8b137cba07aaaab166c892836574cacd9a0d6fa1e24d6e19197d25f36b7e0a49fd84d64ea84ee26ab21d
+ARG AGY_VERSION=1.4.0
+ARG AGY_BUILD=5281842794987520
+ARG AGY_SHA512_AMD64=6c4b298c2a69b6bd0f58567031cc56d8097a32be54c4b633aa80ad395871b389618ab3860d4ba0a12599831b8226b51b03e258ee2ec7fae105a45b8e0fce2188
+ARG AGY_SHA512_ARM64=64dfb2a9665ebd19b6e9d687c094673b61ca9f5ffdebc81391cea8e3858773e1c88154f088e8a8691208561d946a7aea9acbec7a3bdca9e5d8a48fa197b0a308
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \
