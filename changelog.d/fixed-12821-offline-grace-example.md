@@ -1,0 +1,1 @@
+- Correct the offline contributor grace example to match its 15-minute default (#12821).
