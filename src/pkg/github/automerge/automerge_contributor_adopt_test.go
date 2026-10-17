@@ -658,6 +658,143 @@ func TestAdoptionInPlaceWhenMaintainerCanModify(t *testing.T) {
 	}
 }
 
+// Adoption is an ownership state, not a CI state (hivecommons/hive#12736):
+// once the hive owns a PR in place, its own pushes going pending, green or
+// red again all read 074 — never 050/060/072 — until the merge gate takes
+// the PR; a contributor push releases the adoption even on a green head.
+func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("not adopted in place at 074: %+v", rec)
+	}
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	stageIs := func(want stagelabels.Stage, step string) {
+		t.Helper()
+		if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != want {
+			t.Fatalf("%s: stage %s, want %s (added=%v removed=%v)", step, rec.Stage, want, h.api.added, h.api.removed)
+		}
+	}
+
+	// The hive's fixer pushes and CI is pending: still 074, nothing written.
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), "check-pending")
+	stageIs(stagelabels.AdoptedByHive, "ci pending")
+	if h.api.writes() != 0 {
+		t.Fatalf("ci pending churn: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+
+	// Green, awaiting a verdict (the lane says 050): still 074.
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.AdoptedByHive, "green no-verdict")
+	if h.api.writes() != 0 {
+		t.Fatalf("green churn: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+
+	// Approved but CI still running (the lane says 060): still 074.
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+	h.observe(adoptPR(7, "bbb", adopted...), "check-pending")
+	stageIs(stagelabels.AdoptedByHive, "approved ci pending")
+
+	// Red again: 074, not 072 — no nudge to the contributor the hive stood in for.
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
+	h.observe(adoptPR(7, "bbb", adopted...), "check-failing:unit")
+	stageIs(stagelabels.AdoptedByHive, "red again")
+	if h.api.writes() != 0 || len(nudgeComments(h.api)) != 0 {
+		t.Fatalf("red churn: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+
+	// The label drifted to 050 (the bug this test pins): the reconciler
+	// writes 074 back and removes 050.
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/050-review-pending", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.AdoptedByHive, "drifted label")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/050-review-pending" {
+		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+
+	// The merge gate takes it: approved and soaking is 100, the adoption
+	// record stays (it is released by the yield / close paths, not here).
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(5m)")
+	stageIs(stagelabels.MergeQueue, "merge gate")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/100-merge-queue" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074 → 100: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() {
+		t.Fatalf("adoption dropped at the merge gate: %+v", rec)
+	}
+
+	// The contributor pushes over a green head: the hive yields even though
+	// the lane never saw red — one yield note, then the normal pipeline.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "ccc", "stage/100-merge-queue", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	stageIs(stagelabels.ReviewPending, "released")
+	var yields int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionYieldMarker) {
+			yields++
+		}
+	}
+	if yields != 1 {
+		t.Fatalf("yield on green head: comments=%v", h.api.comments)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/050-review-pending" {
+		t.Fatalf("released → 050: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.YieldedHead != "ccc" {
+		t.Fatalf("adoption not released: %+v", rec)
+	}
+}
+
+// A superseding adoption is bound to the adopted head: the original going
+// green at that head stays 074 (the superseder carries it); a new head from
+// the author is the author's again.
+func TestAdoptionSupersedePersistsAtAdoptedHead(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	returned := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.clock.advance(2 * time.Hour)
+	h.observe(adoptPR(7, "aaa", returned...), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("not superseded: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", "stage/050-review-pending", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("green at adopted head: stage %s", rec.Stage)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/050-review-pending" {
+		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.ReviewPending {
+		t.Fatalf("author's new head: stage %s", rec.Stage)
+	}
+}
+
 // In-place requested but the fork forbids maintainer edits: supersede.
 func TestAdoptionInPlaceFallsBackToSupersede(t *testing.T) {
 	p := adoptPolicy()

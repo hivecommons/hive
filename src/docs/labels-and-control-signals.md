@@ -216,7 +216,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/070-fixing` | PR | hive-authored (App/taken-over) PR: CI red, changes requested or needs-rebase; a hive agent is reworking it | 2h |
 | `stage/071-needs-author` | PR | human-authored PR (`author/human`): CI red / changes requested / conflicting; the hive posted its diagnosis, the author must act. No nudge, no adoption — the person pushes or comments | 24h |
 | `stage/072-returned-to-contributor` | PR | clanker PR (`author/clanker`, relay or external hive): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the contributor hive's court. (Briefly spelled `stage/072-needs-author` by [#12713](https://github.com/hivecommons/hive/pull/12713); the engine renames that label back in place) | 24h |
-| `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it, then the normal `050 → 100` path), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). A push by the contributor on an in-place adoption hands the PR back (072) | 3h |
+| `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). Adoption is an **ownership** state, not a CI state: the PR reads 074 for as long as the hive owns it — through its fixes going pending, green, reviewed or red again (074 outranks 050/060/070/071/072) — and leaves 074 only at the merge gate (080/085/090/100) or when the adoption is released. A push by the contributor on an in-place adoption hands the PR back (072 if red, else the normal path) | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/085-needs-decision` | PR, issue | on an issue: **the** park-for-a-maintainer-ruling signal ([#12683](https://github.com/hivecommons/hive/issues/12683); it replaced `needs-direction` and `needs-decision`) — an input the enumeration hard-suppresses on, written by the relay (`hive-open-issue --needs-decision`, or `label … stage/085-needs-decision`, the one stage label an agent may add), by the dedupe/selfreport relays, and derived by the reconciler for the other hard-suppress labels (`needs-human`, `needs-spec`); it is outside the agent work queue until a maintainer replies `/hive approve` / `/hive decision <text>`, which removes it (but leaves `needs-human`, which keeps deriving 085); once `approved-direction` is on the issue the relay refuses an agent's re-park on 085 while the recorded decision is unchanged — the agent adds `needs-human` and `/unclaim`s instead; a lapsed claim on a parked issue never shows 030. On a PR: a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
 | `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `role/*` and `author/*` labels. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
@@ -261,9 +261,10 @@ stateDiagram-v2
     s070 --> s050: fixed head pushed
     s072 --> s050: author pushes a new head
     s072 --> s074: clanker unavailable (offline / unregistered / grace), adopted in place or superseded
-    s074 --> s050: in-place fix green (normal path resumes)
+    s074 --> s080: in-place fix green and approved (adoption outranks 050/060; the merge gate takes it)
+    s074 --> s100: lane admits the hive's head (soak / merge-eligible)
     s074 --> [*]: superseder merged (original closed)
-    s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back)
+    s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back; 050 if that head is green)
     s050 --> s085: hold / sentinel / human-only lane rule
     s060 --> s090: untrusted tier, head otherwise mergeable, soak elapsed
     s085 --> s090: hold lifted / alert cleared, head mergeable
@@ -674,8 +675,10 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      push`, conflicted rows included — ordinarily only hive-authored
      conflict PRs are listed) so the scanner's FIX-BEFORE-NEW kick rebases
      and fixes CI **on the PR's branch**. No superseding PR, no `hive/adopt-<n>`
-     branch; the PR then runs the normal `050 → 100` path. The hive's own
-     pushes keep the adoption (the stage stays 074). A push by anyone else
+     branch. The hive's own pushes keep the adoption and the stage stays
+     074 whatever CI or the review swarm say of them — pending, green,
+     approved or red again — until the merge gate (080/085/090/100) takes
+     the head (hivecommons/hive#12736). A push by anyone else
      means the contributor is back: the hive yields — ONE
      `<!-- hive:adoption-yield head=<sha> -->` note, the adoption is forgotten
      and the PR is back on the ordinary 072 flow (a fresh nudge for the new
@@ -699,7 +702,8 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    existing machinery takes over: it lands in `ci-failing.json` and the
    scanner's FIX-BEFORE-NEW kick (the route every red hive-authored PR takes,
    [hive-merge.md](hive-merge.md#stage-labels)) rebases and fixes it on
-   `hive/adopt-<n>`; it then runs the normal `050 → 100` path. No second
+   `hive/adopt-<n>`; it then runs the normal `050 → 100` path, while the
+   original stays 074 at the adopted head whatever its own CI says. No second
    takeover mechanism exists. One adoption attempt per contributor head,
    whatever the outcome. While in 074 the hive polls the superseder at most
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the

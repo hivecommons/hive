@@ -975,3 +975,60 @@ func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
 		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", NeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
 	}
 }
+
+// Adoption is an ownership state, not a CI state: a live adoption replaces
+// every review-side stage with 074 and gives way only at the merge gate
+// (hivecommons/hive#12736).
+func TestYieldsToAdoption(t *testing.T) {
+	for _, tc := range []struct {
+		stage Stage
+		want  bool
+	}{
+		{None, false},
+		{Actionable, true},
+		{ReviewPending, true},
+		{Reviewed, true},
+		{Fixing, true},
+		{NeedsAuthor, true},
+		{ReturnedToContributor, true},
+		{AdoptedByHive, true},
+		{AwaitingMergeAdmission, false},
+		{NeedsDecision, false},
+		{ReadyForHumanMerge, false},
+		{MergeQueue, false},
+	} {
+		if got := tc.stage.YieldsToAdoption(); got != tc.want {
+			t.Errorf("%s.YieldsToAdoption() = %v, want %v", tc.stage, got, tc.want)
+		}
+	}
+}
+
+func TestRecordAdoptionLive(t *testing.T) {
+	clock := func() time.Time { return time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC) }
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), clock)
+	key := "acme/widget#7"
+	st.Observe(key, ReturnedToContributor, "check-failing:unit")
+	if rec, _ := st.Get(key); rec.AdoptionLive("aaa") {
+		t.Fatal("live before adoption")
+	}
+	// Supersede: bound to the adopted head only.
+	st.MarkAdopted(key, "aaa", 99, clock())
+	rec, _ := st.Get(key)
+	if !rec.AdoptionLive("aaa") || rec.AdoptionLive("bbb") || rec.AdoptionLive("") {
+		t.Fatalf("supersede: %+v", rec)
+	}
+	st.ClearAdoption(key)
+	if rec, _ = st.Get(key); rec.AdoptionLive("aaa") {
+		t.Fatal("live after ClearAdoption")
+	}
+	// In place: the hive's pushes move the head, the adoption follows.
+	st.MarkAdoptedInPlace(key, "aaa", "contributor-offline", clock())
+	st.MarkAdoptedHead(key, "bbb")
+	if rec, _ = st.Get(key); !rec.AdoptionLive("bbb") || !rec.AdoptionLive("ccc") {
+		t.Fatalf("in-place: %+v", rec)
+	}
+	st.MarkYielded(key, "ccc")
+	if rec, _ = st.Get(key); rec.AdoptionLive("ccc") || rec.YieldedHead != "ccc" {
+		t.Fatalf("yielded: %+v", rec)
+	}
+}

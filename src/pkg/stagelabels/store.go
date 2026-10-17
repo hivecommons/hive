@@ -648,6 +648,16 @@ func (r Record) AdoptedInPlace() bool {
 	return r.AdoptedHead != "" && r.AdoptMode == AdoptModeInPlace
 }
 
+// AdoptionLive reports whether the hive currently owns this PR (stage 074):
+// an in-place adoption that was not yielded, or a superseding adoption of
+// exactly this head. Adoption is an ownership state, not a CI state — it
+// holds across CI going green or a verdict arriving, until the adoption is
+// released (ClearAdoption / MarkYielded) or the PR reaches the merge gate
+// (Stage.YieldsToAdoption; hivecommons/hive#12736).
+func (r Record) AdoptionLive(head string) bool {
+	return r.AdoptedInPlace() || r.Adopted(head)
+}
+
 // MarkAdoptedInPlace records an in-place adoption of head for reason.
 func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	s.mu.Lock()
