@@ -65,7 +65,7 @@ func adoptionGrace(rec stagelabels.Record, policy StageLabelPolicy) time.Duratio
 	if policy.GraceOffline > 0 {
 		return policy.GraceOffline
 	}
-	return time.Hour
+	return 15 * time.Minute
 }
 
 // ContributorPresence is what the hub knows about a contributor's relay:
@@ -131,7 +131,7 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 	case presence.Registered:
 		wait := policy.AdoptAfterOffline
 		if wait <= 0 {
-			wait = 30 * time.Minute
+			wait = 15 * time.Minute
 		}
 		since := start
 		if presence.LastSeen.After(since) {
@@ -141,7 +141,7 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 	default:
 		wait := policy.AdoptAfterUnregistered
 		if wait <= 0 {
-			wait = 2 * time.Hour
+			wait = 15 * time.Minute
 		}
 		return now.Sub(start) >= wait, AdoptReasonUnregistered
 	}

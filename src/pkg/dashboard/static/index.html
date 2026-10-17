@@ -1293,7 +1293,11 @@
        their own words, so every strip is the same width. */
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
-    .ham-toolbar .hv-select, .ham-toolbar select { font-size: var(--fs-sm); }
+    .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
+    .ham-select { appearance: auto; box-sizing: border-box; height: auto; min-height: 0; min-width: 0; max-width: 16em; margin: 0 0 0 var(--sp-2); border: var(--line-width) solid var(--line); outline: none; box-shadow: none; background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font: inherit; font-size: var(--fs-xs); line-height: inherit; cursor: pointer; }
+    .ham-select:hover { color: var(--text); border-color: var(--line-strong); }
+    .ham-select:focus-visible { outline: var(--line-width) solid var(--line-strong); outline-offset: 1px; }
+    .ham-select option { color: var(--text); background: var(--panel); }
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
@@ -6518,7 +6522,7 @@
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">Pull requests</button>
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
         </span>
-        <label><span>Repo</span> <select id="activity-monitor-repo" class="hv-btn btn-secondary btn" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
+        <label class="ham-repo-filter"><span>Repo</span><select id="activity-monitor-repo" class="ham-select" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
         
       </div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>

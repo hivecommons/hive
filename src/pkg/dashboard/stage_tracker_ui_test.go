@@ -16,7 +16,9 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`data-section="activity-monitor-section" data-action="ocNavigate"`,
 		`📍 Hive activity monitor`,
 		`id="activity-monitor-panel"`,
-		`id="activity-monitor-repo"`,
+		`<label class="ham-repo-filter"><span>Repo</span><select id="activity-monitor-repo" class="ham-select"`,
+		`.ham-select {`,
+		`.ham-repo-filter {`,
 		`id="activity-monitor-sidebar-badge"`,
 		`'activity-monitor-section': { title: '📍 Hive activity monitor'`,
 		`'activity-monitor-section': { heading: 'Hive activity monitor'`,
@@ -36,6 +38,11 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 	}
 	if strings.Contains(jsConstBlock(t, html, "DASHBOARD_DEFAULT_COLLAPSED_SECTIONS"), "'activity-monitor-section'") {
 		t.Fatalf("activity-monitor-section must be expanded for a new browser: it answers 'is the hive moving?'")
+	}
+	// The repo filter must not inherit the button chrome (#12599 follow-up):
+	// hv-btn brings control-height padding and a heavy border that dwarfs the chips.
+	if strings.Contains(html, `id="activity-monitor-repo" class="hv-btn`) {
+		t.Fatalf("activity monitor repo select must use .ham-select, not .hv-btn")
 	}
 }
 

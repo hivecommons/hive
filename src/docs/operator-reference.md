@@ -500,10 +500,10 @@ the relay task off. The nudge and the adoption below apply to `author/clanker`
 PRs only; human- and hive-authored PRs just wait at 072. A red PR whose author
 is unavailable is adopted (`governor.labels.stage.adoption.enabled`, default
 on) — judged against live hub presence each sweep: relay offline for
-`governor.labels.stage.adoption.after_offline` (default 30m) since its last
+`governor.labels.stage.adoption.after_offline` (default 15m) since its last
 heartbeat, no contributor profile here for `adoption.after_unregistered`
 (default 2h) since the first nudge, or online but silent for
-`contributor_grace_online` (default 2h; `contributor_grace_offline`, 1h, when
+`contributor_grace_online` (default 2h; `contributor_grace_offline`, 15m, when
 the hub reports no presence). `hold`/`do-not-merge` blocks adoption. When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in

@@ -60,7 +60,7 @@ type Record struct {
 	NudgeCount  int       `json:"nudge_count,omitempty"`
 	LastNudgeAt time.Time `json:"last_nudge_at,omitempty"`
 	// FirstNudgeAt is when the first nudge for NudgeHead went out: the
-	// adoption grace (online 2h / offline 1h) counts from here.
+	// adoption grace (online 2h / offline 15m) counts from here.
 	FirstNudgeAt time.Time `json:"first_nudge_at,omitempty"`
 	// NudgeOnline records whether the author's relay was online at the first
 	// nudge for NudgeHead (selects the online vs offline grace).
