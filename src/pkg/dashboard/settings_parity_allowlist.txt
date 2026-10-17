@@ -379,6 +379,9 @@ runs.spektacular.recheck.sources[].name # TODO #11854
 runs.spektacular.recheck.sources[].url # TODO #11854
 runs.triage.fix_labels[] # TODO #11854
 runs.triage.spec_labels[] # TODO #11854
+self_experiments.scheduler.enabled # TODO #11854
+self_experiments.scheduler.interval_s # TODO #11854
+self_experiments.scheduler.mode # TODO #11854
 shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854

@@ -191,6 +191,9 @@ type Config struct {
 	// ReleaseSentinel is the opt-in bounded repair loop for failed release CI
 	// (hivecommons/hive#9585). Default off → nothing is watched or dispatched.
 	ReleaseSentinel ReleaseSentinelConfig `yaml:"release_sentinel,omitempty" json:"release_sentinel,omitempty"`
+	// SelfExperiments gates the background-only Hive-self experiment
+	// scheduler (hivecommons/hive#12397). Default off → no tick runs.
+	SelfExperiments SelfExperimentsConfig `yaml:"self_experiments,omitempty" json:"self_experiments,omitempty"`
 	// Classification mirrors the Go-consumed subset of hive-project.yaml's
 	// `classification:` block (currently review_bots, hivecommons/hive#7360).
 	// Default empty → the review-thread reconciler is off.
