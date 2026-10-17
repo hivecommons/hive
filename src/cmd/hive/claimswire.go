@@ -112,6 +112,12 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						_, err := gh.ApplyStageLabel(ctx, c.Repo, c.Issue, claimStageFor(c))
 						return err
 					})
+					// The "who" modifier: login of the principal, agent name for
+					// a hive-agent claim, never a backend name (claims.ClaimedByPrefix).
+					run("claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
+						_, _, err := gh.ApplyClaimedByLabel(ctx, c.Repo, c.Issue, c)
+						return err
+					})
 				}
 			}()
 		},
@@ -129,6 +135,10 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						}
 						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.PreemptedLabel(previous.Holder)})
 					})
+					run("claimed-by label", now, func(ctx context.Context, gh *github.Client) error {
+						_, _, err := gh.ApplyClaimedByLabel(ctx, now.Repo, now.Issue, now)
+						return err
+					})
 				}
 			}()
 		},
@@ -137,6 +147,9 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				if label {
 					run("remove claimed label", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.LabelClaimed)
+					})
+					run("remove claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
+						return gh.RemoveClaimedByLabel(ctx, c.Repo, c.Issue, c)
 					})
 					if c.Kind == claims.KindAgent {
 						run("remove in-progress label", c, func(ctx context.Context, gh *github.Client) error {

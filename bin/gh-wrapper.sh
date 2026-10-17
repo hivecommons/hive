@@ -1383,14 +1383,23 @@ if [[ -n "$AGENT_NAME" ]]; then
   # PR, which is self-authored and gets the labels by this same rule; the
   # adopted contributor PR keeps its own authorship. Unresolvable author or
   # identity → no labels: provenance is metadata and must fail closed, never
-  # mislabel. Cached per PR for the session (authorship never changes).
+  # mislabel.
+  #
+  # The cache under LABEL_CACHE_BASE sits in world-writable /tmp (see the
+  # mode_unrecognized arm for who can write there: any agent UID in the pod,
+  # or a managed-repo PR whose tests run in this sandbox). It therefore only
+  # ever records, and only ever honours, the fail-closed answer: a cached
+  # "no" skips the lookup, anything else — including a planted "yes" — goes
+  # back to the API oracle. A positive verdict is re-verified on every call;
+  # the cost is one `gh pr view` per label stamp on an own PR.
   _hive_owns_pr() {
     local num="$1" repo="$2" cache author self owned
     cache="${LABEL_CACHE_BASE}-owner-${repo//\//_}-${num:-current}"
     if [[ -f "$cache" ]]; then
       owned="$(tr -d '[:space:]' < "$cache" 2>/dev/null || true)"
-      [[ "$owned" = "yes" ]]
-      return
+      if [[ "$owned" = "no" ]]; then
+        return 1
+      fi
     fi
     local view_args=(pr view)
     [[ -n "$num" ]] && view_args+=("$num")
@@ -1401,7 +1410,11 @@ if [[ -n "$AGENT_NAME" ]]; then
     if [[ -n "$author" && -n "$self" ]] && _author_matches_login "$author" "$self"; then
       owned=yes
     fi
-    printf '%s\n' "$owned" >"$cache" 2>/dev/null || true
+    if [[ "$owned" = "no" ]]; then
+      printf '%s\n' no >"$cache" 2>/dev/null || true
+    else
+      rm -f "$cache" 2>/dev/null || true
+    fi
     [[ "$owned" = "yes" ]]
   }
 

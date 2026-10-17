@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/claims"
 )
 
 func TestOriginMarkerRoundTrip(t *testing.T) {
@@ -63,7 +65,7 @@ func TestLegacyHiveIDLabelExcludesEverySignalLabel(t *testing.T) {
 		LikelyDoneLabel, PartiallyAddressedLabel, AlreadyDoneLabel, VerifiedOpenLabel,
 		SupersededLabel, SupersessionKeepOpenLabel, issueHandoffLabel,
 		"hive/selfreport", "hive/advisory", "hive/in-progress", "hive/covered-by-pr",
-		claimLabelPrefix + "scanner",
+		claims.ClaimedByPrefix + "scanner",
 	}
 	for _, l := range signals {
 		if !strings.HasPrefix(l, LegacyHiveIDLabelPrefix) {

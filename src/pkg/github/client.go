@@ -3692,8 +3692,10 @@ type RepoWorkIssue struct {
 	URL       string    `json:"url,omitempty"`
 	Bucket    string    `json:"bucket"`
 	Reason    string    `json:"reason,omitempty"`
-	// ClaimKind is Issue.ClaimKind, copied for the issue stage reconciler.
+	// ClaimKind and ClaimedBy are Issue.ClaimKind / Issue.ClaimedBy, copied
+	// for the issue stage reconciler.
 	ClaimKind string `json:"claim_kind,omitempty"`
+	ClaimedBy string `json:"claimed_by,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -3717,6 +3719,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Bucket:       bucket,
 		Reason:       reason,
 		ClaimKind:    issue.ClaimKind,
+		ClaimedBy:    issue.ClaimedBy,
 		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext: issue.ClaimContext,
 	}

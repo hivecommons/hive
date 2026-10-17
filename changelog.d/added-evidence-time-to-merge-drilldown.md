@@ -1,0 +1,1 @@
+- The hub evidence drill-down now shows median time-to-merge per autonomy level (the median of each hive's own median, labelled as such); hives on older builds and PRs merged before open times were recorded show "not reported", never 0. Reporting only.

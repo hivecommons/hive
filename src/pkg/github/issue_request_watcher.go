@@ -119,12 +119,6 @@ type IssueRequest struct {
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
 }
 
-// claimLabelPrefix is the label namespace applied for a "claim" request. The
-// full label is claimLabelPrefix + <sanitized agent name>, e.g.
-// "hive/claimed-by-scanner". Namespaced so it is easy to filter/sweep and never
-// collides with a project's own labels.
-const claimLabelPrefix = "hive/claimed-by-"
-
 // IssueResponse is written next to a consumed request as <name>.result.json.
 type IssueResponse struct {
 	OK             bool   `json:"ok"`

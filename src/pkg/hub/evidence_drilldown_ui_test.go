@@ -106,6 +106,9 @@ func evidenceHarness(t *testing.T) string {
 		jsFunc(t, "evidenceFilterHives"),
 		jsFunc(t, "evidenceOutcomeAdd"),
 		jsFunc(t, "evidenceOutcomeZero"),
+		jsFunc(t, "evidenceLevelTimeToMerge"),
+		jsFunc(t, "evidenceDuration"),
+		jsFunc(t, "evidenceTimeToMergeCell"),
 		jsFunc(t, "evidenceRepool"),
 		jsFunc(t, "evidenceChip"),
 		jsFunc(t, "evidenceChipsHTML"),
@@ -301,7 +304,10 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		// Sections #12117 lists that spokes do not report yet are collapsed
 		// into one "Waiting on hives" list at the bottom, with no issue numbers.
 		"Waiting on hives",
-		"<li>Median time-to-merge per autonomy level — not reported by any hive build yet.</li>",
+		"<li>Median time-to-merge per autonomy level — no selected hive reports it yet (it needs a build that records when each merged PR was opened).</li>",
+		// The autonomy table carries the column; a level without it says so, never 0.
+		"<th title=\"Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.\">Median time-to-merge (median of hive medians)</th>",
+		`<span class="evidence-rate-main">10.0% of 30</span><span class="evidence-rate-margin" title="Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.">margin 3.5% – 25.6%</span></td><td class="evidence-empty">not reported</td></tr>`,
 		"<li>Revert rate by author kind per hive — not reported by any hive build yet.</li>",
 		"<li>Per-axis criteria table — not reported by any hive build yet.</li>",
 		"Evidence coverage", "Reviewer confidence", "Autonomy level × outcome",

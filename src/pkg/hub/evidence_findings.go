@@ -342,8 +342,8 @@ func evidenceFindings(v EvidenceView) []string {
 }
 
 // evidenceWaiting lists, in user terms, what the selected hives do not report
-// yet and why. Panels are listed when absent from the view; the four
-// never-emitted items are always listed.
+// yet and why. Panels and the time-to-merge column are listed when absent
+// from the view; the three never-emitted items are always listed.
 func evidenceWaiting(v EvidenceView) []string {
 	upgrade := "hives report this once upgraded to the " + evidenceUpgradeBuild + " or later"
 	var out []string
@@ -358,8 +358,24 @@ func evidenceWaiting(v EvidenceView) []string {
 	}
 	out = append(out,
 		"Per-axis criteria table — not reported by any hive build yet.",
-		"Claim-vs-verdict totals — not reported by any hive build yet.",
-		"Median time-to-merge per autonomy level — not reported by any hive build yet.",
+		"Claim-vs-verdict totals — not reported by any hive build yet.")
+	if !evidenceHasTimeToMerge(v) {
+		out = append(out, evidenceWaitingTimeToMerge)
+	}
+	out = append(out,
 		"Revert rate by author kind per hive — not reported by any hive build yet.")
 	return out
+}
+
+// evidenceWaitingTimeToMerge is the waiting item while no selected level
+// reports a median time-to-merge.
+const evidenceWaitingTimeToMerge = "Median time-to-merge per autonomy level — no selected hive reports it yet (it needs a build that records when each merged PR was opened)."
+
+func evidenceHasTimeToMerge(v EvidenceView) bool {
+	for _, a := range v.ByACMMLevel {
+		if a.TimeToMerge != nil {
+			return true
+		}
+	}
+	return false
 }

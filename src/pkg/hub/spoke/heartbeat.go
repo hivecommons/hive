@@ -1180,6 +1180,13 @@ type HeartbeatEvidence struct {
 	WriteCounters        map[string]HeartbeatEvidenceWriteCount `json:"write_counters,omitempty"`
 	ShadowGate           *HeartbeatEvidenceShadow               `json:"shadow_gate,omitempty"`
 
+	// TimeToMerge is the median time-to-merge (merge.at minus
+	// merge.opened_at) of the merged PRs in the window that recorded an open
+	// time, with that sample size. nil when none did, including every bundle
+	// written before opened_at was captured: the hub shows "not reported",
+	// never a zero median.
+	TimeToMerge *HeartbeatEvidenceTimeToMerge `json:"time_to_merge,omitempty"`
+
 	// Windows carries the same counts over shorter trailing windows, keyed by
 	// HeartbeatEvidenceWindowKeys ("24h", "7d", "30d"), so the hub can offer
 	// a window selector without a per-PR feed (RFC #12062). Field names keep
@@ -1209,6 +1216,13 @@ type HeartbeatEvidenceOutcome struct {
 	N        int `json:"n"`
 	Merged   int `json:"merged"`
 	Reverted int `json:"reverted"`
+}
+
+// HeartbeatEvidenceTimeToMerge is one window's median time-to-merge in
+// whole seconds over N merged PRs with a recorded open time.
+type HeartbeatEvidenceTimeToMerge struct {
+	MedianSeconds int64 `json:"median_s"`
+	N             int   `json:"n"`
 }
 
 // HeartbeatEvidenceWriteCount is one tier's attempted and proxy-blocked

@@ -123,7 +123,7 @@ func InProgressCommentBody(agent, hiveID string, started, expires time.Time) str
 // inProgressLabelsForClaim returns the labels a `claim` request applies: the
 // per-agent ownership label and, when enabled, hive/in-progress.
 func (c *Client) inProgressLabelsForClaim(agent string) []string {
-	labels := []string{claimLabelPrefix + sanitizeAgentName(agent)}
+	labels := []string{claims.ClaimedByLabel(claims.Claim{Holder: agent, Kind: claims.KindAgent})}
 	if c.inProgressSetting().Enabled {
 		labels = append(labels, InProgressLabel)
 	}

@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/claims"
 )
 
 // Origin marker: which hive filed or touched an item.
@@ -132,7 +134,7 @@ var hiveSignalLabels = []string{
 // hiveSignalLabelPrefixes are hive/* families with a variable suffix that
 // are still read as signals.
 var hiveSignalLabelPrefixes = []string{
-	claimLabelPrefix, // hive/claimed-by-<agent>
+	claims.ClaimedByPrefix, // hive/claimed-by-<who>
 }
 
 func isHiveSignalLabel(lower string) bool {

@@ -266,6 +266,12 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 			Policy:           c.reviewEvidencePolicy(policy),
 			CreatedAt:        now,
 		}
+		// A bundle started after the PR already merged (the merge path ran
+		// before the first review wrote one, or someone else merged) would
+		// otherwise never gain a merge record and read as "outcome unknown".
+		// Record what the fetched PR already knows. Record-only: nothing
+		// here is read back into merge eligibility.
+		b.Merge = reviewEvidenceMergeFromPR(pr, head, now)
 	default:
 		// An unreadable bundle is still evidence. Overwriting it with a fresh
 		// one would silently replace the record, so it is left for a person.
@@ -317,6 +323,39 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 		slog.Int("posted_reviews", len(b.PostedReviews)), slog.Int("sentinel", len(b.Sentinel)),
 		slog.Bool("signed", b.Signed),
 		slog.String("path", path))
+}
+
+// reviewEvidenceMergeObservedMethod marks a merge event taken from the PR
+// as GitHub reports it: the API says who merged and when, not how. It is the
+// same value `hivectl evidence backfill` writes, so readers treat both alike.
+const reviewEvidenceMergeObservedMethod = "unrecorded"
+
+// reviewEvidenceMergeFromPR returns the merge event GitHub already reports
+// for pr, or nil when it has not merged. The merge SHA falls back to head and
+// the time to now so the event always validates.
+func reviewEvidenceMergeFromPR(pr *gh.PullRequest, head string, now time.Time) *evidence.MergeEvent {
+	if pr == nil || !pr.GetMerged() {
+		return nil
+	}
+	m := &evidence.MergeEvent{
+		Actor:  strings.TrimSpace(pr.GetMergedBy().GetLogin()),
+		Method: reviewEvidenceMergeObservedMethod,
+		At:     pr.GetMergedAt().Time.UTC(),
+		SHA:    strings.TrimSpace(pr.GetMergeCommitSHA()),
+	}
+	if m.Actor == "" {
+		m.Actor = reviewEvidenceMergeObservedMethod
+	}
+	if m.At.IsZero() {
+		m.At = now
+	}
+	if m.SHA == "" {
+		m.SHA = head
+	}
+	if opened := pr.GetCreatedAt().Time.UTC(); !opened.IsZero() && !opened.After(m.At) {
+		m.OpenedAt = opened
+	}
+	return m
 }
 
 // recordReviewEvidenceSentinel adds the findings the sentinel sweep just
