@@ -29,8 +29,10 @@ deleting the fragments in the same release commit.
   `a fragment must start with a '- ' entry bullet (or a '<!-- release: ... -->' marker) — it IS the entry; the compiler owns the ### headings`.
 - **What qualifies:** the same rule as always (top of `CHANGELOG.md`):
   user-visible features, fixes, security changes, migrations, deprecations,
-  breaking changes. Auto-exempt: changes under `src/docs/`, `src/changelog.d/`,
-  `*_test.go` files, and `src/{deploy,scripts}/test[-_]*.sh`. All other changes
+  breaking changes. Auto-exempt: anything outside `src/` (root-level docs,
+  this directory, `.github/`), plus `src/docs/`, `*_test.go` files, and
+  `src/{deploy,scripts}/test[-_]*.sh` — `src/scripts/check-changelog-fragment.sh`
+  is the source of truth for the exact set. All other changes
   need no fragment only if non-user-visible (routine refactors, dependency churn,
   or test-adjacent code like `testdata/` or non-`_test.go` test helpers) — put
   a `no-changelog` label on such PRs.
