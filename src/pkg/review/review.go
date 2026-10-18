@@ -903,6 +903,12 @@ func CollectAndWrite(dir, path string, opts AggregateOptions) (Artifact, error) 
 // short enough that the file does not grow without bound as PRs close.
 const VerdictRetention = 30 * 24 * time.Hour
 
+// retainsOverIncomplete reports whether a prior aggregate verdict is a settled
+// non-approve decision that a partial re-review must not displace.
+func retainsOverIncomplete(v Verdict) bool {
+	return v == VerdictRequiresHuman || v == VerdictChangesRequested || v == VerdictReject
+}
+
 // CollectAndMerge refreshes the durable verdict artifact without losing
 // verdicts whose per-perspective reports have aged out of the report dir.
 //
@@ -914,7 +920,8 @@ const VerdictRetention = 30 * 24 * time.Hour
 //
 // Merging keeps the union. Freshly collected verdicts win for a given
 // repo/number/head-SHA/body-digest, except that incomplete coverage cannot
-// replace a settled human decision. Previously recorded verdicts survive,
+// replace a settled non-approve verdict (requires_human,
+// changes_requested, reject). Previously recorded verdicts survive,
 // and anything not re-confirmed within VerdictRetention is dropped.
 func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Artifact, error) {
 	fresh, err := Collect(dir, opts)
@@ -945,10 +952,11 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
 		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
-		if prior, ok := merged[key]; ok && prior.Verdict == VerdictRequiresHuman && item.Verdict == VerdictIncomplete {
+		if prior, ok := merged[key]; ok && retainsOverIncomplete(prior.Verdict) && item.Verdict == VerdictIncomplete {
 			// A re-review can arrive one perspective at a time. Missing
-			// reports do not withdraw the previous human decision or its
-			// question: doing so sends 085 back to 050 on the same head.
+			// reports do not withdraw a settled non-approve verdict (human
+			// decision and its question, fix cycle, or reject): doing so sends
+			// 085 back to 050 on the same head.
 			// Keep its timestamp too, so partial coverage cannot extend the
 			// retention window or make a deliberate revisit look complete.
 			continue

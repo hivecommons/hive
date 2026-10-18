@@ -171,6 +171,48 @@ func TestCollectAndMergeKeepsHumanDecisionDuringIncompleteReview(t *testing.T) {
 	}
 }
 
+func TestCollectAndMergeKeepsSettledVerdictsDuringIncompleteReview(t *testing.T) {
+	for _, verdict := range []Verdict{VerdictChangesRequested, VerdictReject} {
+		t.Run(string(verdict), func(t *testing.T) {
+			root := t.TempDir()
+			reportDir := filepath.Join(root, "reports")
+			artifactPath := filepath.Join(root, ReviewVerdictsFile)
+			now := time.Now().UTC().Truncate(time.Second)
+			prior := Aggregate{
+				Repo: "acme/hive", Number: 7, HeadSHA: "sha1",
+				Verdict:      verdict,
+				Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: verdict},
+				RecordedAt:   now.Add(-time.Hour),
+			}
+			if err := WriteArtifact(artifactPath, Artifact{Items: []Aggregate{prior}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(reportDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			report := baseReport(PerspectiveCorrectness, VerdictApprove)
+			report.Repo, report.Number, report.HeadSHA = prior.Repo, prior.Number, prior.HeadSHA
+			raw, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(reportDir, ReviewReportFilePrefix+"correctness"+ReviewReportFileSuffix), raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, now); err != nil {
+				t.Fatal(err)
+			}
+			persisted, err := LoadArtifact(artifactPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(persisted.Items) != 1 || !reflect.DeepEqual(persisted.Items[0], prior) {
+				t.Fatalf("incomplete review displaced %s: %+v", verdict, persisted.Items)
+			}
+		})
+	}
+}
+
 func TestCollectAndMergeIncompleteReviewIsolation(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

@@ -1,0 +1,1 @@
+- Review aggregation: a partial (incomplete) re-review no longer displaces a prior `changes_requested` or `reject` aggregate for the same repo/number/head/body-digest, extending the `requires_human` retention from #12909. PRs mid fix-cycle stay on the fix path instead of being sent back to re-ask missing perspectives, and the original `RecordedAt` is preserved. Fixes #12911.
