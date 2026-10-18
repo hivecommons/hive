@@ -56,6 +56,16 @@ own enabling conditions. See `classifyMergeEligibility` in
 [review dispatch](../pkg/review/dispatch.go), and
 [sweep](../pkg/github/automerge/automerge_sweep.go).
 
+On Hive-authored PRs the default `review.self_authored_decision_policy: resolve`
+keeps low-stakes reviewer questions advisory: sequencing, naming, config-shape,
+scope, and "land now vs later" calls are the hive's own decision, so the
+aggregate can approve while preserving the question in the audit reason. Set
+the policy to `escalate` to restore the older behavior where every
+`needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk
+questions still escalate either way: security, data loss, irreversible or
+public-facing behavior, policy/governance, licensing, spend, or unreadable
+diffs.
+
 The [policy matrix](acmm-policy-matrix.md) describes the same distinction: reviewer verdicts alone are not universal merge stops, and promotion does not automatically release level holds. Use GitHub rules or an actual hold for a safety guarantee.
 
 ### Label discipline

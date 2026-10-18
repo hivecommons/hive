@@ -17,7 +17,9 @@ const (
 	// duplicated here to avoid a config→review import cycle.
 	DefaultPendingReviewTTL = 45 * time.Minute
 	// DefaultMaxRedispatch matches review.DefaultMaxRedispatch.
-	DefaultMaxRedispatch = 3
+	DefaultMaxRedispatch               = 3
+	ReviewSelfAuthoredDecisionResolve  = "resolve"
+	ReviewSelfAuthoredDecisionEscalate = "escalate"
 )
 
 // ReviewEventDrivenEnabled reports whether pull_request webhooks may trigger
@@ -74,6 +76,13 @@ func (r ReviewConfig) EffectiveMaxRedispatch() int {
 		return DefaultMaxRedispatch
 	}
 	return r.MaxRedispatch
+}
+
+func (r ReviewConfig) EffectiveSelfAuthoredDecisionPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(r.SelfAuthoredDecisionPolicy), ReviewSelfAuthoredDecisionEscalate) {
+		return ReviewSelfAuthoredDecisionEscalate
+	}
+	return ReviewSelfAuthoredDecisionResolve
 }
 
 // ValidatePendingReviewTTL rejects a review.pending_ttl that is not a Go

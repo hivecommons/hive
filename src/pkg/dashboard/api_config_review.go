@@ -70,6 +70,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		} `json:"contributor_prs"`
 		AcknowledgeNoFind  *bool   `json:"acknowledge_no_findings"`
 		HumanDecisionLabel *string `json:"human_decision_label"`
+		SelfDecisionPolicy *string `json:"self_authored_decision_policy"`
 		ConfidenceScore    *bool   `json:"confidence_score"`
 		PriorityLabels     *bool   `json:"priority_labels"`
 		MaxReviewsPerHead  *int    `json:"max_reviews_per_head"`
@@ -382,6 +383,18 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	// time, where the review marker still carries the signal.
 	if body.HumanDecisionLabel != nil {
 		cfg.Review.HumanDecisionLabel = strings.TrimSpace(*body.HumanDecisionLabel)
+	}
+	if body.SelfDecisionPolicy != nil {
+		policy := strings.ToLower(strings.TrimSpace(*body.SelfDecisionPolicy))
+		switch policy {
+		case "", config.ReviewSelfAuthoredDecisionResolve:
+			cfg.Review.SelfAuthoredDecisionPolicy = ""
+		case config.ReviewSelfAuthoredDecisionEscalate:
+			cfg.Review.SelfAuthoredDecisionPolicy = policy
+		default:
+			jsonError(w, "self_authored_decision_policy must be resolve or escalate", http.StatusBadRequest)
+			return
+		}
 	}
 	if body.ConfidenceScore != nil {
 		cfg.Review.ConfidenceScore = *body.ConfidenceScore

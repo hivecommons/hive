@@ -80,6 +80,7 @@ func TestPendingReviewTTL(t *testing.T) {
 		{" 2h ", 2 * time.Hour},
 		{"-1s", -time.Second},
 	}
+
 	for _, tc := range cases {
 		if got := (ReviewConfig{PendingTTL: tc.raw}).PendingReviewTTL(); got != tc.want {
 			t.Fatalf("PendingReviewTTL(%q) = %v, want %v", tc.raw, got, tc.want)
@@ -94,7 +95,20 @@ func TestPendingReviewTTL(t *testing.T) {
 	if got := (ReviewConfig{}).EffectiveMaxRedispatch(); got != DefaultMaxRedispatch {
 		t.Fatalf("EffectiveMaxRedispatch() = %d, want %d", got, DefaultMaxRedispatch)
 	}
+
 	if got := (ReviewConfig{MaxRedispatch: 5}).EffectiveMaxRedispatch(); got != 5 {
 		t.Fatalf("EffectiveMaxRedispatch(5) = %d", got)
+	}
+}
+
+func TestEffectiveSelfAuthoredDecisionPolicy(t *testing.T) {
+	if got := (ReviewConfig{}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionResolve {
+		t.Fatalf("unset policy = %q, want resolve", got)
+	}
+	if got := (ReviewConfig{SelfAuthoredDecisionPolicy: "escalate"}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionEscalate {
+		t.Fatalf("escalate policy = %q", got)
+	}
+	if got := (ReviewConfig{SelfAuthoredDecisionPolicy: "unknown"}).EffectiveSelfAuthoredDecisionPolicy(); got != ReviewSelfAuthoredDecisionResolve {
+		t.Fatalf("unknown policy = %q, want resolve", got)
 	}
 }

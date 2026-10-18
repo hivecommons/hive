@@ -342,7 +342,7 @@ func (c *Client) acceptedReviewBacklogReports(req ReviewRequest, reports []revie
 		if !strings.EqualFold(strings.TrimSpace(report.Repo), strings.TrimSpace(req.Repo)) || report.Number != req.Number {
 			continue
 		}
-		ok, _, _, _ := c.verdictDispatchAuthorized(report, req)
+		ok, _, _, _, _ := c.verdictDispatchAuthorized(report, req)
 		if !ok {
 			continue
 		}

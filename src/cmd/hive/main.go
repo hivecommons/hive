@@ -9874,8 +9874,9 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		// Unanimity is judged against what a PR was eligible to receive. Without
 		// this the cap makes approve unreachable and every PR aggregates to
 		// requires_human.
-		MaxPerspectivesPerPR: cfg.Review.MaxPerspectivesPerPR,
-		Perspectives:         reviewPerspectiveSet(cfg, logger),
+		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
+		Perspectives:               reviewPerspectiveSet(cfg, logger),
+		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {

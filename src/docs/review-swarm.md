@@ -173,6 +173,7 @@ review:
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
+  self_authored_decision_policy: resolve    # resolve (default) or escalate low-risk Hive-authored decision questions
   all_authors: true                         # optional; review every open PR, not only agent-authored ones
   fix_human_prs: false                      # optional; let the fixer push commits to PRs Hive did not open (default off)
   contributor_prs:
@@ -220,6 +221,15 @@ When `block_at` is set and `backlog_below` is on, every cited in-scope finding (
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
+
+For Hive-authored PRs, `review.self_authored_decision_policy: resolve` (default)
+keeps low-risk reviewer decision questions advisory. Sequencing, naming,
+config-shape, scope, and "land now vs later" calls are resolved by the reviewer
+itself and recorded as audit reasons on an approving aggregate. Security, data
+loss, irreversible/public-facing behavior, policy/governance, licensing, spend,
+or unreadable-diff questions still aggregate to `requires_human`. Set the policy
+to `escalate` to preserve the older behavior where every decision marker parks
+the PR for a person.
 
 `review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 

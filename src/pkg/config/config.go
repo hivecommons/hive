@@ -8854,6 +8854,11 @@ type ReviewConfig struct {
 	// resolves nowhere for most hives while looking configured. Each hive
 	// names a label its own governed repos already maintain.
 	HumanDecisionLabel string `yaml:"human_decision_label,omitempty" json:"human_decision_label,omitempty"`
+	// SelfAuthoredDecisionPolicy controls maintainer-call review markers on
+	// Hive-authored PRs. "resolve" (default) lets the reviewer treat
+	// sequencing/naming/config-shape questions as advisory and approve; "escalate"
+	// preserves the old behavior where every decision question parks the PR.
+	SelfAuthoredDecisionPolicy string `yaml:"self_authored_decision_policy,omitempty" json:"self_authored_decision_policy,omitempty"`
 	// ConfidenceScore appends a one-line 0–5 mergeability score to each review
 	// comment the hive posts (hivecommons/hive#8182): "**Confidence: 4/5**
 	// (safe) — 1 medium finding". The score is derived from the verdicts and

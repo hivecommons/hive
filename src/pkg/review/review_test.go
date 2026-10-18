@@ -97,6 +97,64 @@ func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
 	}
 }
 
+func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing.T) {
+	cases := []string{
+		"@hanthor should decide whether the contribution-preset loader should land before any hivectl command consumes it",
+		"accept `self_experiments.scheduler` as a new top-level config namespace vs nesting, and a fixed ledger path?",
+	}
+	for _, question := range cases {
+		t.Run(question, func(t *testing.T) {
+			r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+			r.HiveAuthored = true
+			r.DecisionRequested = true
+			r.DecisionQuestion = question
+
+			got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested {
+				t.Fatalf("aggregate = %+v, want resolved approve", got)
+			}
+			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "advisory") || !strings.Contains(got.Reasons[0], question) {
+				t.Fatalf("Reasons = %v, want advisory audit line with question", got.Reasons)
+			}
+		})
+	}
+}
+
+func TestAggregateReportsEscalatesRiskDecisionQuestions(t *testing.T) {
+	for _, question := range []string{
+		"Should we accept this public-facing auth behavior change?",
+		"Can this data deletion migration run without data loss?",
+		"Is the added dependency license acceptable?",
+	} {
+		t.Run(question, func(t *testing.T) {
+			r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+			r.HiveAuthored = true
+			r.DecisionRequested = true
+			r.DecisionQuestion = question
+
+			got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+			if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+				t.Fatalf("aggregate = %+v, want risk escalation", got)
+			}
+		})
+	}
+}
+
+func TestAggregateReportsEscalatePolicyKeepsSelfAuthoredDecisionHold(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "Should this groundwork land before its consumer?"
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{SelfAuthoredDecisionPolicy: "escalate"})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want configured escalation", got)
+	}
+}
+
 func TestAggregateReportsCarriesRequiresHumanSummary(t *testing.T) {
 	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
 	r.Summary = "Trust-surface file by location; a relay owner should confirm before merge."

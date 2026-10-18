@@ -119,14 +119,15 @@ var LegacyReviewVerdictsPath = filepath.Join(outputschema.AgentReportDir, Review
 
 type PerspectiveReport struct {
 	outputschema.AgentReport
-	Perspective Perspective `json:"perspective"`
-	Verdict     Verdict     `json:"verdict"`
-	Repo        string      `json:"repo"`
-	Number      int         `json:"number"`
-	HeadSHA     string      `json:"head_sha,omitempty"`
-	BodyDigest  string      `json:"body_digest,omitempty"`
-	AuthorModel string      `json:"author_model,omitempty"`
-	ReviewModel string      `json:"review_model,omitempty"`
+	Perspective  Perspective `json:"perspective"`
+	Verdict      Verdict     `json:"verdict"`
+	Repo         string      `json:"repo"`
+	Number       int         `json:"number"`
+	HeadSHA      string      `json:"head_sha,omitempty"`
+	BodyDigest   string      `json:"body_digest,omitempty"`
+	HiveAuthored bool        `json:"hive_authored,omitempty"`
+	AuthorModel  string      `json:"author_model,omitempty"`
+	ReviewModel  string      `json:"review_model,omitempty"`
 	// DecisionRequested means the review found no code defect it can route
 	// to the author, but explicitly deferred a maintainer/product decision.
 	DecisionRequested bool   `json:"decision_requested,omitempty"`
@@ -143,6 +144,10 @@ type AggregateOptions struct {
 	HumanThreshold outputschema.Severity
 	FixAttempts    int
 	MaxFixAttempts int
+	// SelfAuthoredDecisionPolicy is "resolve" (default) or "escalate".
+	// Resolve lets Hive-authored PRs keep moving when the only human hold is
+	// a non-risk design/sequence/config-shape decision question.
+	SelfAuthoredDecisionPolicy string
 	// MaxPerspectivesPerPR mirrors DispatchOptions.MaxPerspectivesPerPR. A
 	// perspective the dispatcher never hands out cannot approve, so unanimity
 	// must be judged against what the PR was eligible to receive. Zero means
@@ -272,6 +277,8 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
 	var decisionQuestion string
+	var decisionQuestions []string
+	var hasReject, hasChanges, humanWithoutDecision, riskFinding bool
 	for i, r := range reports {
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
@@ -298,11 +305,22 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 		agg.Perspectives[r.Perspective] = effective.Verdict
 		seenVerdicts[effective.Verdict] = true
+		switch effective.Verdict {
+		case VerdictReject:
+			hasReject = true
+		case VerdictChangesRequested:
+			hasChanges = true
+		case VerdictRequiresHuman:
+			if !r.DecisionRequested {
+				humanWithoutDecision = true
+			}
+		}
 		if r.DecisionRequested {
 			decisionRequested = true
 			if decisionQuestion == "" {
 				decisionQuestion = strings.TrimSpace(r.DecisionQuestion)
 			}
+			decisionQuestions = append(decisionQuestions, strings.TrimSpace(r.DecisionQuestion))
 			agg.Reasons = append(agg.Reasons, decisionReason(r.DecisionQuestion))
 		}
 		if effective.Verdict == VerdictRequiresHuman {
@@ -314,6 +332,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
 			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
+				riskFinding = true
 				agg.Reasons = append(agg.Reasons, fmt.Sprintf("%s finding %q is %s (threshold %s)", r.Perspective, f.Title, f.Severity, threshold))
 			}
 		}
@@ -322,6 +341,15 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	sort.Strings(agg.HumanSummaries)
 
 	if decisionRequested {
+		if resolveSelfAuthoredDecisionQuestions(reports, opts, decisionQuestions, hasReject || hasChanges || humanWithoutDecision || riskFinding) {
+			agg.Verdict = VerdictApprove
+			agg.MergeEligible = true
+			agg.RequiresHuman = false
+			agg.DecisionRequested = false
+			agg.DecisionQuestion = ""
+			agg.Reasons = []string{selfAuthoredDecisionAdvisory(decisionQuestions)}
+			return agg
+		}
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true
 		agg.DecisionRequested = true
@@ -368,6 +396,77 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts AggregateOptions, questions []string, blocked bool) bool {
+	if blocked || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+		return false
+	}
+	if len(questions) == 0 || !reportsHiveAuthored(reports) {
+		return false
+	}
+	for _, q := range questions {
+		if !nonRiskSelfAuthoredDecisionQuestion(q) {
+			return false
+		}
+	}
+	return true
+}
+
+func reportsHiveAuthored(reports []PerspectiveReport) bool {
+	if len(reports) == 0 {
+		return false
+	}
+	for _, r := range reports {
+		if !r.HiveAuthored {
+			return false
+		}
+	}
+	return true
+}
+
+func nonRiskSelfAuthoredDecisionQuestion(question string) bool {
+	q := strings.ToLower(strings.TrimSpace(question))
+	if q == "" {
+		return false
+	}
+	riskTerms := []string{
+		"security", "vulnerab", "secret", "credential", "auth", "permission", "privilege",
+		"data loss", "delete", "destructive", "irreversible", "migration", "public-facing",
+		"breaking", "policy", "governance", "license", "licensing", "copyright", "legal",
+		"spend", "cost", "billing", "privacy", "compliance",
+	}
+	for _, term := range riskTerms {
+		if strings.Contains(q, term) {
+			return false
+		}
+	}
+	nonRiskTerms := []string{
+		"land before", "land now", "land later", "sequenc", "groundwork", "dead-code",
+		"dead code", "loader", "consumer", "naming", "namespace", "nesting", "top-level",
+		"config shape", "configuration shape", "config namespace", "fixed ledger path",
+		"scope", "placement", "organize", "organisation", "organization",
+	}
+	for _, term := range nonRiskTerms {
+		if strings.Contains(q, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func selfAuthoredDecisionAdvisory(questions []string) string {
+	var cleaned []string
+	for _, q := range questions {
+		if q = strings.TrimSpace(q); q != "" {
+			cleaned = append(cleaned, q)
+		}
+	}
+	sort.Strings(cleaned)
+	if len(cleaned) == 0 {
+		return "self-authored non-risk decision question resolved by reviewer policy"
+	}
+	return "self-authored non-risk decision question recorded as advisory: " + strings.Join(cleaned, " | ")
 }
 
 func decisionReason(question string) string {
