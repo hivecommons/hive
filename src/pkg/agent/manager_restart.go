@@ -73,7 +73,10 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	var crashed []crashCandidate
 	var consentStuck, consentCleared []string
 	var stallChecks []inferencePaneCheck
-	type sessionRestart struct{ name, message, reason string }
+	type sessionRestart struct {
+		name, message, reason string
+		busyNoActivity        bool
+	}
 	var hungSessions []sessionRestart
 	for name, agent := range m.agents {
 		if agent.State != StateRunning {
@@ -147,11 +150,11 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		// it is not "crashed" — but it is stuck. Restarting would loop back
 		// to the same screen; re-running prompt dismissal recovers it.
 		if reason := m.sessionStalled(agent, pane, time.Now()); reason != "" {
-			hungSessions = append(hungSessions, sessionRestart{name, agent.LastKickMessage, reason})
+			hungSessions = append(hungSessions, sessionRestart{name: name, message: agent.LastKickMessage, reason: reason})
 		} else if reason := busyNoActivityStall(agent, pane, time.Now()); reason != "" {
 			// No replayed kick: the governor re-kicks once the pane is
 			// idle, and the storm breaker bounds repeat restarts.
-			hungSessions = append(hungSessions, sessionRestart{name, "", reason})
+			hungSessions = append(hungSessions, sessionRestart{name: name, reason: reason, busyNoActivity: true})
 		}
 		if IsInferenceBackend(effectiveBackend(agent)) {
 			if paneShowsConsentScreen(pane) {
@@ -188,6 +191,12 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		if agent, ok := m.agents[h.name]; ok {
 			agent.lastSessionStallRestart = time.Now()
 			agent.LastError = "stalled: " + h.reason
+			if h.busyNoActivity {
+				// Marked before the restart so the teardown's reset keeps
+				// it; kick_failed_repeatedly is only self-reported while
+				// this is set (#12787).
+				m.markBusyNoActivityRestartLocked(agent, time.Now())
+			}
 		}
 		m.mu.Unlock()
 		var err error
@@ -198,6 +207,9 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		}
 		if err != nil {
 			m.logger.Error("failed to restart stalled session", "name", h.name, "error", err)
+			if h.busyNoActivity {
+				m.reportBusyNoActivityRestartFailed(h.name, h.reason, err)
+			}
 		}
 	}
 

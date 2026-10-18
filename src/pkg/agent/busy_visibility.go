@@ -88,7 +88,8 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	// itself the moment the turn ended. Only self-report once the agent's own
 	// transcript has been silent for the busy-no-activity threshold, the same
 	// bar busyCondition applies before it calls the pane stuck.
-	if silentFor, live := kickUndeliverableTranscriptLiveness(agent, now); live {
+	silentFor, live := kickUndeliverableTranscriptLiveness(agent, now)
+	if live {
 		if m.logger != nil {
 			m.logger.Info("kick undeliverable while agent turn in progress; not self-reporting",
 				"agent", agent.Name,
@@ -100,9 +101,63 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	} else if silentFor > 0 {
 		reason = fmt.Sprintf("%s; transcript silent for %s", reason, roundDurationForHumans(silentFor))
 	}
+	// Decision B on #12787: a stall that busyNoActivityStall is about to
+	// restart is not yet a defect worth a fleet issue — most self-recover.
+	// Until that restart has been attempted the condition stays a dashboard
+	// warning (BusyCondition) and a log line; only kicks that keep failing
+	// after the restart are self-reported.
+	if agent.busyNoActivityRestartAt.IsZero() {
+		if m.logger != nil {
+			m.logger.Warn("kick undeliverable; busy-no-activity restart not yet attempted, not self-reporting",
+				"agent", agent.Name,
+				"reason", reason,
+				"kicks_undeliverable", agent.KicksUndeliverable,
+				"transcript_silent_for", roundDurationForHumans(silentFor))
+		}
+		return
+	}
 	// Self-report (#11868): the tracker applies the ≥3-consecutive threshold.
 	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, agent.Name,
-		fmt.Sprintf("kick undeliverable %d times in a row (%s)", agent.KicksUndeliverable, reason), "")
+		busyNoActivityRestartFailedMessage(agent, now, reason), "")
+}
+
+// busyNoActivityRestartFailedMessage is the kick_failed_repeatedly self-report
+// text once the stall restart has been attempted and kicks still fail. It
+// carries the restart time and count so the fleet issue says the recovery
+// already ran and did not help, not merely that kicks are failing.
+func busyNoActivityRestartFailedMessage(agent *AgentProcess, now time.Time, reason string) string {
+	restartAgo := now.Sub(agent.busyNoActivityRestartAt)
+	if restartAgo < 0 {
+		restartAgo = 0
+	}
+	return fmt.Sprintf("kick undeliverable %d times in a row after busy-no-activity restart did not recover the session (%s; restarted %s ago at %s, %d restart(s) this episode)",
+		agent.KicksUndeliverable, reason, roundDurationForHumans(restartAgo),
+		agent.busyNoActivityRestartAt.UTC().Format(time.RFC3339), agent.busyNoActivityRestarts)
+}
+
+// markBusyNoActivityRestartLocked records that busyNoActivityStall restarted
+// the agent at now. Caller holds m.mu.
+func (m *Manager) markBusyNoActivityRestartLocked(agent *AgentProcess, now time.Time) {
+	agent.busyNoActivityRestartAt = now
+	agent.busyNoActivityRestarts++
+}
+
+// reportBusyNoActivityRestartFailed self-reports a stall restart that itself
+// errored: the recovery never ran, so there is nothing left to wait for.
+func (m *Manager) reportBusyNoActivityRestartFailed(name, reason string, err error) {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	var kicks, restarts int
+	if ok {
+		kicks, restarts = agent.KicksUndeliverable, agent.busyNoActivityRestarts
+	}
+	m.mu.RUnlock()
+	if !ok {
+		return
+	}
+	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, name,
+		fmt.Sprintf("kick undeliverable %d times in a row and busy-no-activity restart failed: %v (%s; %d restart(s) this episode)",
+			kicks, err, reason, restarts), "")
 }
 
 // kickUndeliverableTranscriptLiveness reports how long the agent's transcript
@@ -135,12 +190,28 @@ func (m *Manager) markCopilotQuestionFormLocked(agent *AgentProcess, now time.Ti
 	agent.busyConditionWarned = copilotQuestionFormCondition
 }
 
-// resetBusyVisibilityLocked clears the busy-delivery episode. Caller holds
-// m.mu.
+// resetBusyVisibilityLocked clears the busy-delivery episode because a kick
+// was delivered (or cancelled): the session is active again, so any
+// kick_failed_repeatedly condition is cleared and the stall-restart marker
+// dropped. Caller holds m.mu.
 func (m *Manager) resetBusyVisibilityLocked(agent *AgentProcess) {
-	if agent.KicksUndeliverable > 0 {
+	if agent.KicksUndeliverable > 0 || !agent.busyNoActivityRestartAt.IsZero() {
 		fleetreport.Clear(fleetreport.ClassKickFailedRepeatedly, agent.Name)
 	}
+	agent.busyNoActivityRestartAt = time.Time{}
+	agent.busyNoActivityRestarts = 0
+	m.resetBusyCountersLocked(agent)
+}
+
+// resetBusyVisibilityForRestartLocked is the restart teardown's variant: the
+// counters start over for the new session, but the stall-restart marker and
+// any open self-report stay until a kick is actually delivered — a restart is
+// the recovery attempt, not proof that it worked. Caller holds m.mu.
+func (m *Manager) resetBusyVisibilityForRestartLocked(agent *AgentProcess) {
+	m.resetBusyCountersLocked(agent)
+}
+
+func (m *Manager) resetBusyCountersLocked(agent *AgentProcess) {
 	agent.KicksUndeliverable = 0
 	agent.BusySince = time.Time{}
 	agent.BusyCondition = ""

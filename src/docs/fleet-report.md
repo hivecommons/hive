@@ -83,7 +83,7 @@ title is `[selfreport] <class>: <short message>`.
 | Class | Fires when | Severity |
 |---|---|---|
 | `restart_storm` | the restart-storm breaker pauses an agent | high |
-| `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent | medium |
+| `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent *after* the busy-no-activity stall restart has been attempted (or that restart itself errored) — i.e. the recovery did not bring the session back; kicks that fail before the restart are a dashboard/log warning only | medium |
 | `panic_recovered` | a dashboard handler recovered from a panic | high |
 | `model_discovery_degraded` | model discovery has been failing for >1h | medium |
 | `inference_auth_failed` | 401/403 from an inference backend (LiteLLM, Copilot) | high |
