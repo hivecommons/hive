@@ -271,9 +271,9 @@ func TestF13_DiscoverAcceptsPublicEndpoint(t *testing.T) {
 // real deployment discover it.
 func TestF13_UpsertStillAcceptsInClusterEndpoint(t *testing.T) {
 	for _, ep := range []string{
-		"http://127.0.0.1:18445",                                     // bundled local litellm proxy
+		"http://127.0.0.1:18445", // bundled local litellm proxy
 		"http://hive-vllm-svc.hive-inference.svc.cluster.local:8000", // explicit in-cluster vLLM endpoint
-		"http://10.0.0.5:4000",                                       // in-cluster LiteLLM
+		"http://10.0.0.5:4000", // in-cluster LiteLLM
 	} {
 		if err := validateGatewayEndpoint(ep); err != nil {
 			t.Errorf("validateGatewayEndpoint(%q) = %v, want nil — in-cluster gateways "+
