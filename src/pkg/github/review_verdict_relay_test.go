@@ -162,6 +162,37 @@ func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 	}
 }
 
+func TestRecordReviewVerdictMarksConcreteRemediationFromBody(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "requires_human", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		AuthorAgent: "scanner",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "The new LaneQueuedWork field is plumbed but never populated. Add the producer in AgentActivityFor or reword the changelog."
+
+	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+
+	if len(recorded) != 1 || !recorded[0].HiveAuthored || !recorded[0].ConcreteRemediation {
+		t.Fatalf("recorded = %+v, want hive-authored concrete remediation", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	if got.Verdict != review.VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want fixer route", got)
+	}
+}
+
 func TestRecordReviewVerdictRejectsMissingBodyDigestForBodyBoundDispatch(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}

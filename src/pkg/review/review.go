@@ -138,6 +138,11 @@ type PerspectiveReport struct {
 	// treats it as approve for unanimity and the confidence score drops it
 	// from the expected count, so it neither helps nor hurts.
 	NotApplicable bool `json:"not_applicable,omitempty"`
+	// ConcreteRemediation is set by the relay when the posted review body names
+	// an agent-actionable fix. It lets self-authored decision policy route
+	// mislabeled requires_human engineering findings back to the fixer lane
+	// without storing the whole PR review body in the durable verdict file.
+	ConcreteRemediation bool `json:"concrete_remediation,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -278,7 +283,8 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	var decisionRequested bool
 	var decisionQuestion string
 	var decisionQuestions []string
-	var hasReject, hasChanges, humanWithoutDecision, riskFinding bool
+	var hasReject, hasChanges, unresolvedRequiresHuman, riskFinding bool
+	var selfAuthoredHumanWithConcreteRemediation, selfAuthoredHumanWithoutRemediation bool
 	for i, r := range reports {
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
@@ -311,8 +317,14 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		case VerdictChangesRequested:
 			hasChanges = true
 		case VerdictRequiresHuman:
-			if !r.DecisionRequested {
-				humanWithoutDecision = true
+			if selfAuthoredRequiresHumanReportIsResolvable(r, opts) {
+				if reportHasConcreteRemediation(r) {
+					selfAuthoredHumanWithConcreteRemediation = true
+				} else {
+					selfAuthoredHumanWithoutRemediation = true
+				}
+			} else {
+				unresolvedRequiresHuman = true
 			}
 		}
 		if r.DecisionRequested {
@@ -341,7 +353,23 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	sort.Strings(agg.HumanSummaries)
 
 	if decisionRequested {
-		if resolveSelfAuthoredDecisionQuestions(reports, opts, decisionQuestions, hasReject || hasChanges || humanWithoutDecision || riskFinding) {
+		if resolveSelfAuthoredDecisionQuestions(reports, opts, decisionQuestions, hasReject || riskFinding || unresolvedRequiresHuman) {
+			if hasChanges || selfAuthoredHumanWithConcreteRemediation {
+				if opts.FixAttempts >= maxFix {
+					agg.Verdict = VerdictRequiresHuman
+					agg.RequiresHuman = true
+					agg.Reasons = []string{fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)}
+					return agg
+				}
+				agg.Verdict = VerdictChangesRequested
+				agg.FixCycle = true
+				agg.RequiresHuman = false
+				agg.DecisionRequested = false
+				agg.DecisionQuestion = ""
+				agg.Reasons = append(append([]string{}, agg.Reasons...), selfAuthoredDecisionAdvisory(decisionQuestions))
+				sortReasons(agg.Reasons)
+				return agg
+			}
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
 			agg.RequiresHuman = false
@@ -363,6 +391,25 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 
 	if len(agg.Reasons) > 0 || seenVerdicts[VerdictRequiresHuman] {
+		if !riskFinding && selfAuthoredHumanWithConcreteRemediation {
+			if opts.FixAttempts >= maxFix {
+				agg.Verdict = VerdictRequiresHuman
+				agg.RequiresHuman = true
+				agg.Reasons = []string{fmt.Sprintf("fix cycle cap reached (%d/%d)", opts.FixAttempts, maxFix)}
+				return agg
+			}
+			agg.Verdict = VerdictChangesRequested
+			agg.FixCycle = true
+			agg.RequiresHuman = false
+			return agg
+		}
+		if !riskFinding && !hasChanges && selfAuthoredHumanWithoutRemediation && !selfAuthoredHumanWithConcreteRemediation && selfAuthoredResolvableRequiresHumanOnly(reports, opts) {
+			agg.Verdict = VerdictApprove
+			agg.MergeEligible = true
+			agg.RequiresHuman = false
+			agg.Reasons = []string{"self-authored non-risk requires_human recorded as advisory"}
+			return agg
+		}
 		agg.Verdict = VerdictRequiresHuman
 		agg.RequiresHuman = true
 		return agg
@@ -398,6 +445,104 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	return agg
 }
 
+func selfAuthoredRequiresHumanReportIsResolvable(r PerspectiveReport, opts AggregateOptions) bool {
+	if !r.HiveAuthored || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
+		return false
+	}
+	if r.Verdict != VerdictRequiresHuman || reportRequiresRiskEscalation(r) {
+		return false
+	}
+	if r.DecisionRequested {
+		return nonRiskSelfAuthoredDecisionQuestion(r.DecisionQuestion)
+	}
+	return true
+}
+
+func selfAuthoredResolvableRequiresHumanOnly(reports []PerspectiveReport, opts AggregateOptions) bool {
+	found := false
+	for _, r := range reports {
+		if r.Verdict != VerdictRequiresHuman {
+			continue
+		}
+		if !selfAuthoredRequiresHumanReportIsResolvable(r, opts) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func reportHasConcreteRemediation(r PerspectiveReport) bool {
+	if r.ConcreteRemediation || ConcreteRemediationText(r.Summary) {
+		return true
+	}
+	for _, f := range r.Findings {
+		if !InScopeFinding(f) {
+			continue
+		}
+		if strings.TrimSpace(f.File) != "" || f.Line > 0 || ConcreteRemediationText(f.Title) || ConcreteRemediationText(f.Summary) {
+			return true
+		}
+	}
+	return false
+}
+
+func reportRequiresRiskEscalation(r PerspectiveReport) bool {
+	if containsRiskEscalationTerm(r.DecisionQuestion) || containsRiskEscalationTerm(r.Summary) {
+		return true
+	}
+	for _, f := range r.Findings {
+		if containsRiskEscalationTerm(f.Title) || containsRiskEscalationTerm(f.Summary) {
+			return true
+		}
+	}
+	return false
+}
+
+// ConcreteRemediationText reports whether review prose names an actionable
+// engineering fix instead of merely saying a person should decide.
+func ConcreteRemediationText(text string) bool {
+	q := strings.ToLower(strings.TrimSpace(text))
+	if q == "" {
+		return false
+	}
+	terms := []string{
+		"add ", "set ", "populate", "wire", "plumb", "compute", "copy", "reword",
+		"rename", "remove", "update", "route", "fix ", "use ", "producer",
+		"changelog", "instead", "either add", "either adding", "file:", ".go:", ".ts:", ".tsx:",
+	}
+	for _, term := range terms {
+		if strings.Contains(q, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRiskEscalationTerm(text string) bool {
+	q := strings.ToLower(strings.TrimSpace(text))
+	if q == "" {
+		return false
+	}
+	for _, term := range riskEscalationTerms() {
+		if strings.Contains(q, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func riskEscalationTerms() []string {
+	return []string{
+		"security", "vulnerab", "secret", "credential", "authentication", "authorization", "permission", "privilege",
+		"data loss", "delete", "destructive", "irreversible", "migration", "public-facing",
+		"breaking", "policy", "governance", "license", "licensing", "copyright", "legal",
+		"spend", "cost", "billing", "privacy", "compliance", "unreadable", "could not read",
+		"cannot read", "can't read", "could not judge", "cannot judge", "missing context",
+		"unfamiliar subsystem", "ambiguous", "cannot test", "can't test", "high-risk",
+	}
+}
+
 func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts AggregateOptions, questions []string, blocked bool) bool {
 	if blocked || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {
 		return false
@@ -430,16 +575,8 @@ func nonRiskSelfAuthoredDecisionQuestion(question string) bool {
 	if q == "" {
 		return false
 	}
-	riskTerms := []string{
-		"security", "vulnerab", "secret", "credential", "auth", "permission", "privilege",
-		"data loss", "delete", "destructive", "irreversible", "migration", "public-facing",
-		"breaking", "policy", "governance", "license", "licensing", "copyright", "legal",
-		"spend", "cost", "billing", "privacy", "compliance",
-	}
-	for _, term := range riskTerms {
-		if strings.Contains(q, term) {
-			return false
-		}
+	if containsRiskEscalationTerm(q) {
+		return false
 	}
 	nonRiskTerms := []string{
 		"land before", "land now", "land later", "sequenc", "groundwork", "dead-code",

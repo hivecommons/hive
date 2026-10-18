@@ -171,6 +171,9 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 		report.HeadSHA = strings.TrimSpace(dispatchHead)
 	}
 	report.HiveAuthored = hiveAuthored
+	if review.ConcreteRemediationText(req.Body) {
+		report.ConcreteRemediation = true
+	}
 	if strings.TrimSpace(dispatchBodyDigest) != "" {
 		if strings.TrimSpace(report.BodyDigest) == "" {
 			c.logger.Warn("review-request watcher: verdict missing review body digest, discarded",

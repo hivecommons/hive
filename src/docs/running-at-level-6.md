@@ -60,8 +60,11 @@ own enabling conditions. See `classifyMergeEligibility` in
 On Hive-authored PRs the default `review.self_authored_decision_policy: resolve`
 keeps low-stakes reviewer questions advisory: sequencing, naming, config-shape,
 scope, and "land now vs later" calls are the hive's own decision, so the
-aggregate can approve while preserving the question in the audit reason. Set
-the policy to `escalate` to restore the older behavior where every
+aggregate can approve while preserving the question in the audit reason. A
+non-risk incomplete-fix review that names concrete remediation is different:
+it is downgraded from `requires_human` to `changes_requested` so the PR enters
+the fixer lane (`stage/070-fixing`) instead of parking for a person. Set the
+policy to `escalate` to restore the older behavior where every
 `needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk
 questions still escalate either way: security, data loss, irreversible or
 public-facing behavior, policy/governance, licensing, spend, or unreadable

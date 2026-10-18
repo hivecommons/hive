@@ -123,6 +123,22 @@ func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing
 	}
 }
 
+func TestAggregateReportsDecisionQuestionDoesNotMaskRiskHumanHold(t *testing.T) {
+	decision := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	decision.HiveAuthored = true
+	decision.DecisionRequested = true
+	decision.DecisionQuestion = "Should this groundwork land before its consumer?"
+	risk := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	risk.HiveAuthored = true
+	risk.Summary = "Could not read the diff for an authorization change."
+
+	got := AggregateReports([]PerspectiveReport{decision, risk}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want risk human hold", got)
+	}
+}
+
 func TestAggregateReportsEscalatesRiskDecisionQuestions(t *testing.T) {
 	for _, question := range []string{
 		"Should we accept this public-facing auth behavior change?",
@@ -141,6 +157,42 @@ func TestAggregateReportsEscalatesRiskDecisionQuestions(t *testing.T) {
 				t.Fatalf("aggregate = %+v, want risk escalation", got)
 			}
 		})
+	}
+}
+
+func TestAggregateReportsRoutesSelfAuthoredConcreteRequiresHumanToFixer(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor or reword the changelog."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want changes_requested fixer route", got)
+	}
+}
+
+func TestAggregateReportsAdvisesSelfAuthoredNonRiskHumanWithoutRemediation(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "This sequencing question is low stakes but worth noting for maintainers."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want advisory approval", got)
+	}
+}
+
+func TestAggregateReportsKeepsSelfAuthoredRiskRequiresHuman(t *testing.T) {
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.Summary = "Could not read the diff, so a human must check this public-facing authorization change."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want risk escalation", got)
 	}
 }
 
