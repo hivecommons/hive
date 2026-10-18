@@ -603,6 +603,20 @@ type alertHive struct {
 	AdvisoryStale       bool
 	AdvisoryStaleReason string
 
+	// StatsStale is the entry's own "this beat carried cached or minimal
+	// stats" marker (collect timed out on the spoke). Spoke-reported facts
+	// such as advisoryLastPostedAt are then the LAST-GOOD values, not fresh
+	// ones, so rules that judge their age must not fire on them (#12842).
+	StatsStale bool
+
+	// ZeroTokenSpendExplained is true when a zero 24h token spend is expected
+	// or already explained by a stronger signal on the entry (all agents
+	// paused, no queued work and no expected-active agents, fresh advisory
+	// output, a precondition-red health verdict, ...). Precomputed by
+	// zeroTokenSpendExplained so the evaluator stays constructible without a
+	// whole MyHiveEntry (#12844).
+	ZeroTokenSpendExplained bool
+
 	// InactiveAgents / InactiveAgentsReason are carried through verbatim from
 	// the entry rather than recomputed, exactly as the advisory pair above is:
 	// evaluateInactiveAgents owns the thresholds and the paused/on-demand
@@ -665,6 +679,9 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
 
+		StatsStale:              h.StatsStale,
+		ZeroTokenSpendExplained: zeroTokenSpendExplained(h),
+
 		InactiveAgents:       h.InactiveAgents,
 		InactiveAgentsReason: h.InactiveAgentsReason,
 
@@ -681,6 +698,56 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 // placeholderOrgPrefix is the org-name prefix a pre-provisioned pool slot
 // carries before it is claimed.
 const placeholderOrgPrefix = "available-"
+
+// zeroTokenSpendExplained reports whether a claimed hive spending no tokens in
+// 24h is expected, or already explained by a stronger signal, so the zero-spend
+// token-burn info alert would only duplicate it (#12844). Every arm is POSITIVE
+// evidence the entry already carries; nothing here guesses.
+//
+//   - the beat carried cached/minimal stats, so the zero is not an observation;
+//   - every agent is deliberately quiet (paused or off-schedule), or every
+//     expected-active agent is paused — the operator's choice;
+//   - no spend is expected: no queued work and no unpaused expected-active
+//     agents;
+//   - advisory/issue output is fresh, so the hive is visibly producing;
+//   - the health verdict is all-paused, or a precondition red (App broken,
+//     budget, login-stuck, agents down, ...) that already names the cause.
+func zeroTokenSpendExplained(h MyHiveEntry) bool {
+	if h.StatsStale || h.AllAgentsQuiet || h.PendingGitHubAppInstall {
+		return true
+	}
+	r := h.FleetRollup
+	if r != nil && r.Expected > 0 && r.Paused >= r.Expected {
+		return true
+	}
+	expectedActive := r != nil && r.Expected > r.Paused
+	if h.ActionableIssues+h.ActionablePRs <= 0 && !expectedActive {
+		return true
+	}
+	if h.AdvisoryIssueActivity.Bucket == advisoryIssueBucketFresh {
+		return true
+	}
+	if v := h.HealthVerdict; v != nil {
+		if v.cause == causeAllPaused {
+			return true
+		}
+		if v.State == HealthStateRed && !v.staleOutput {
+			return true
+		}
+	}
+	return false
+}
+
+// zeroTokensAlreadyExplained reports whether the zero-spend token-burn alert
+// would be noise for this hive: the entry already explains it, or a stronger
+// alert evaluated from the same snapshot (inference auth, GitHub App required,
+// inactive agents) names the real cause.
+func zeroTokensAlreadyExplained(h alertHive) bool {
+	return h.ZeroTokenSpendExplained ||
+		strings.TrimSpace(h.InferenceAuthError) != "" ||
+		h.GitHubAppRequired ||
+		h.InactiveAgents > 0
+}
 
 // failingHealthChecks extracts the names of checks reporting "fail" from the
 // spoke-reported Health map.
@@ -801,6 +868,13 @@ const (
 	// spoke version may report (e.g. a future github_app_key). Every check in
 	// that family verifies credentials a placeholder cannot have yet.
 	healthCheckGitHubAppPrefix = "github_app"
+
+	// healthCheckProjectOrg is the spoke's placeholder-org setup check
+	// (pkg/dashboard/health_placeholder_org.go). It fails while project.org is
+	// still a slot placeholder paired with a bare repo — which is exactly how
+	// an UNCLAIMED available pool slot is seeded, so it is only meaningful once
+	// the slot is claimed (#12843).
+	healthCheckProjectOrg = "project_org"
 )
 
 // isAuthClassHealthCheck reports whether a named health check verifies GitHub
@@ -815,12 +889,15 @@ func isAuthClassHealthCheck(name string) bool {
 
 // withoutAuthClassChecks filters auth-class names out of a failing-checks list.
 // Used only for placeholders; a claimed hive's list passes through untouched.
-func withoutAuthClassChecks(names []string) []string {
+// An AVAILABLE (unclaimed) pool slot also drops project_org: its placeholder
+// org/repo is the pool's seed, not a misconfiguration (#12843).
+func withoutAuthClassChecks(names []string, available bool) []string {
 	kept := names[:0:0]
 	for _, n := range names {
-		if !isAuthClassHealthCheck(n) {
-			kept = append(kept, n)
+		if isAuthClassHealthCheck(n) || (available && n == healthCheckProjectOrg) {
+			continue
 		}
+		kept = append(kept, n)
 	}
 	return kept
 }
@@ -1046,9 +1123,12 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 		// claimed-hive concern"): an unassigned slot has no GitHub auth by
 		// design, and every live placeholder alerting github_auth was burying
 		// a real alert under pool noise. A claimed hive's list is untouched.
+		// An available (unclaimed) slot additionally drops project_org: it is
+		// seeded with a placeholder org/repo, which the check flags by design
+		// until the slot is claimed (#12843).
 		failing := failingHealthChecks(h.Health)
 		if h.IsPlaceholder {
-			failing = withoutAuthClassChecks(failing)
+			failing = withoutAuthClassChecks(failing, h.ProvStatus == statusAvailable)
 		}
 		if len(failing) > 0 {
 			shown := failing
@@ -1072,7 +1152,13 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 		// placeholder guard every claimed-hive rule applies. Severity is
 		// warning, not critical: the hive is still running and doing work, but
 		// the digest path a human relies on has quietly wedged.
-		if !h.IsPlaceholder && h.AdvisoryStale {
+		//
+		// A StatsStale beat is skipped: the spoke's collect timed out and it
+		// resent cached (or identity-only) stats, so advisoryLastPostedAt is
+		// the last-good value, not proof the digest stopped posting — the same
+		// "never claim health for a hive we can't see" rule the health verdict
+		// applies (#12842).
+		if !h.IsPlaceholder && h.AdvisoryStale && !h.StatsStale {
 			reason := h.AdvisoryStaleReason
 			if reason == "" {
 				// Only reached if a spoke reports the flag without a reason.
@@ -1186,14 +1272,17 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 		}
 
 		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
-		// placeholder has no agents and therefore legitimately spends nothing. ---
+		// placeholder has no agents and therefore legitimately spends nothing.
+		// The zero-spend arm fires only when spend is expected and nothing
+		// stronger already explains its absence (#12844). ---
 		if !h.IsPlaceholder {
 			if fleetSize >= alertTokenBurnMinFleetSize && medianTokens >= alertTokenBurnMinMedian &&
 				h.TotalTokens24h > medianTokens*alertTokenBurnMedianMultiple {
 				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
 					"Burned "+itoa64(h.TotalTokens24h)+" tokens in 24h, over "+
 						itoa(alertTokenBurnMedianMultiple)+"x the fleet median of "+itoa64(medianTokens))
-			} else if h.Online && h.TotalTokens24h <= 0 && registeredLongerThan(h.RegisteredAt, alertZeroTokenMinAge, now) {
+			} else if h.Online && h.TotalTokens24h <= 0 && registeredLongerThan(h.RegisteredAt, alertZeroTokenMinAge, now) &&
+				!zeroTokensAlreadyExplained(h) {
 				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
 					"Online but has spent no tokens in 24h")
 			}
