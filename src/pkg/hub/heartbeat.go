@@ -13,20 +13,23 @@ import (
 )
 
 type AgentSummary struct {
-	Name                 string                `json:"name"`
-	State                string                `json:"state"`
-	Mode                 string                `json:"mode,omitempty"`
-	Paused               bool                  `json:"paused,omitempty"`
-	PausedTrigger        string                `json:"pausedTrigger,omitempty"`
-	PausedReason         string                `json:"pausedReason,omitempty"`
-	PausedBy             string                `json:"pausedBy,omitempty"`
-	PausedAt             string                `json:"pausedAt,omitempty"`
-	NeedsLogin           bool                  `json:"needsLogin,omitempty"`
-	QuotaExhausted       bool                  `json:"quotaExhausted,omitempty"`
-	SessionMissing       bool                  `json:"sessionMissing,omitempty"`
-	StartedAt            string                `json:"startedAt,omitempty"`
-	LastActivityAt       string                `json:"lastActivityAt,omitempty"`
-	KickIntervalSec      int64                 `json:"kickIntervalSec,omitempty"`
+	Name            string `json:"name"`
+	State           string `json:"state"`
+	Mode            string `json:"mode,omitempty"`
+	Paused          bool   `json:"paused,omitempty"`
+	PausedTrigger   string `json:"pausedTrigger,omitempty"`
+	PausedReason    string `json:"pausedReason,omitempty"`
+	PausedBy        string `json:"pausedBy,omitempty"`
+	PausedAt        string `json:"pausedAt,omitempty"`
+	NeedsLogin      bool   `json:"needsLogin,omitempty"`
+	QuotaExhausted  bool   `json:"quotaExhausted,omitempty"`
+	SessionMissing  bool   `json:"sessionMissing,omitempty"`
+	StartedAt       string `json:"startedAt,omitempty"`
+	LastActivityAt  string `json:"lastActivityAt,omitempty"`
+	KickIntervalSec int64  `json:"kickIntervalSec,omitempty"`
+	// LaneQueuedWork is the actionable backlog in this agent's own lane, when
+	// the spoke reports it. nil (older spokes) falls back to the hive-wide count.
+	LaneQueuedWork       *int                  `json:"laneQueuedWork,omitempty"`
 	ExpectedActive       bool                  `json:"expectedActive,omitempty"`
 	CanOpenIssue         bool                  `json:"canOpenIssue,omitempty"`
 	CanOpenPR            bool                  `json:"canOpenPR,omitempty"`

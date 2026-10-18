@@ -108,6 +108,33 @@ func TestIdleAgentNotReportedWithoutQueuedWork(t *testing.T) {
 	}
 }
 
+func TestIdleRuleUsesLaneScopedQueueWhenReported(t *testing.T) {
+	now := time.Now()
+	intPtr := func(n int) *int { return &n }
+	tests := []struct {
+		name string
+		lane *int
+		want agentInactivityKind
+	}{
+		{"unreported falls back to hive-wide queue", nil, agentInactiveIdleWithWork},
+		{"empty lane is intentionally idle", intPtr(0), agentInactiveNone},
+		{"lane with work is flagged", intPtr(2), agentInactiveIdleWithWork},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := AgentSummary{
+				Name: "adjudicator", State: "running",
+				StartedAt:      settled(now),
+				LastActivityAt: activeAt(now, inactiveAgentIdleThreshold+time.Hour),
+				LaneQueuedWork: tt.lane,
+			}
+			if got := classifyInactiveAgent(a, 9, now); got != tt.want {
+				t.Fatalf("classified %v; want %v", got.label(), tt.want.label())
+			}
+		})
+	}
+}
+
 func TestIdleRuleRespectsThresholdAndOnDemand(t *testing.T) {
 	now := time.Now()
 	base := AgentSummary{Name: "sec-check", State: "running", StartedAt: settled(now)}

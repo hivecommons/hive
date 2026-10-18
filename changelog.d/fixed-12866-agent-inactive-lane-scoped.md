@@ -1,0 +1,1 @@
+- Fix the hub agents-inactive alert flagging an intentionally idle lane as "idle with work queued" because of work in other lanes: when a spoke reports a lane-scoped queue depth, the idle rule now uses it instead of the hive-wide backlog ([#12866](https://github.com/hivecommons/hive/issues/12866)).

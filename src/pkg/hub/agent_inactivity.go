@@ -83,7 +83,9 @@ func (k agentInactivityKind) label() string {
 // and why.
 //
 // queuedWork is the hive's actionable issue+PR backlog; it gates the idle rule
-// only. now is passed in so the whole evaluation is deterministic under test.
+// only. When the agent reports its own lane queue depth (LaneQueuedWork) that
+// narrower figure is used instead, so an intentionally idle lane is not
+// flagged because of work waiting in other lanes. now is passed in so the whole evaluation is deterministic under test.
 //
 // Returns agentInactiveNone for every agent that is fine — including every
 // paused one, which is checked first and unconditionally.
@@ -138,6 +140,9 @@ func classifyInactiveAgent(a AgentSummary, queuedWork int, now time.Time) agentI
 	// This is the rule most likely to produce noise, so it carries the most
 	// gating: an empty queue means idleness is correct, an on-demand agent is
 	// supposed to be idle, and an unknown activity time is not evidence.
+	if a.LaneQueuedWork != nil {
+		queuedWork = *a.LaneQueuedWork
+	}
 	if onDemand || queuedWork < inactiveAgentMinQueued {
 		return agentInactiveNone
 	}
