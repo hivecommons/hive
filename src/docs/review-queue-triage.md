@@ -104,7 +104,7 @@ Where it shows up:
 
 The queue ranks contributor PRs, but ranking is not reviewing: whether the
 review swarm reviews a contributor PR is still governed by
-`review.all_authors` ([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-versus-fix_human_prs)).
+`review.all_authors` ([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-and-the-retired-fix_human_prs-push)).
 
 ## Mechanism options (maintainer decision, cheapest first)
 

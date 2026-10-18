@@ -697,13 +697,14 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 
 // fixPushAllowed is the authorship check in front of every fix kick. A fix
 // kick tells an agent to push a commit onto the PR branch, so it is only ever
-// dispatched for a PR the hive itself opened — unless the operator turned on
-// review.fix_human_prs, which grants exactly that for everyone else's PRs.
-// AllAuthors is deliberately not consulted: it widens what is REVIEWED, and
-// reviewing a contributor's PR is not a reason to rewrite it
-// (hivecommons/hive#8421).
+// dispatched for a PR the hive itself opened. AllAuthors is deliberately not
+// consulted: it widens what is REVIEWED, and reviewing a contributor's PR is
+// not a reason to rewrite it (hivecommons/hive#8421). review.fix_human_prs is
+// now ignored for branch pushes: a hive-authored follow-up commit on a
+// non-App-authored PR cannot carry a sign-off that survives GitHub's squash
+// attribution without forging the PR author's identity.
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
-	return opts.FixHumanPRs || hiveAuthored(pr, opts)
+	return hiveAuthored(pr, opts)
 }
 
 // withholdFix records that a changes_requested PR got no fix kick because

@@ -199,11 +199,12 @@ type stageDetail struct {
 	// DCO, DCOTotal and DCOUnsigned are the stage pass's own commit check
 	// for the head (hivecommons/hive#12542); filled by ApplyStageLabels,
 	// not by the lanes.
-	DCO              stagelabels.DCOState
-	DCOTotal         int
-	DCOUnsigned      int
-	DCOUnsignedHive  int
-	DCOUnsignedOther int
+	DCO                 stagelabels.DCOState
+	DCOTotal            int
+	DCOUnsigned         int
+	DCOUnsignedHive     int
+	DCOUnsignedOther    int
+	DCOSquashUnsafeHive int
 	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
 	// on the head (required-check set or reported status/check run): the
 	// detected "this repo enforces DCO" signal the 072 override needs when
@@ -1102,6 +1103,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Detail.DCOUnsigned = stats.unsigned
 			obs.Detail.DCOUnsignedHive = stats.unsignedHive
 			obs.Detail.DCOUnsignedOther = stats.unsignedOther
+			obs.Detail.DCOSquashUnsafeHive = stats.squashUnsafeHive
 			want.DCO = obs.Detail.DCO
 			// The label is written everywhere; the 072 override only where
 			// the repo actually enforces DCO (config, else detected gate).
@@ -1109,6 +1111,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Stage = fixingStage(obs)
 				verdict.Rank = stageRankOwned
 				obs.Reason = stagelabels.LaneReasonDCOMissing
+			} else if stats.squashUnsafeHive > 0 && normalizeBotLogin(obs.Author) != normalizeBotLogin(c.transport.AppBotLogin()) {
+				verdict.Stage = stagelabels.Fixing
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
 			} else if want.DCO == stagelabels.DCONo {
 				// Not enforced here: keep the lane's stage and do not ask
 				// the author to rebase in the nudge.
@@ -1143,7 +1149,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
 			if dcoRead {
-				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive)
+				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive, obs.Detail.DCOSquashUnsafeHive)
 			}
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)

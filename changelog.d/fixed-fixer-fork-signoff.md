@@ -1,0 +1,1 @@
+- Prevented reviewer/fixer follow-up commits from being pushed to non-App-authored PR branches, and keep hive-caused squash sign-off failures in the hive-owned fixing lane instead of returning them to contributors.

@@ -229,6 +229,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Excerpt          string   `json:"excerpt"`
 		Escalated        bool     `json:"escalated"`
 		FromFork         bool     `json:"from_fork"`
+		ReachableAction  string   `json:"reachable_action"`
 		Adopted          bool     `json:"adopted"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`

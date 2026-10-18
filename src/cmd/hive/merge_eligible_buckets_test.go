@@ -543,10 +543,12 @@ func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
 			FailingChecks: []string{"build"}, HeadRef: "sec-check-dashboard", HeadRepo: "alice/testsuite", FromFork: true},
 		{Repo: "testsuite", Number: 840, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f2",
 			FailingChecks: []string{"build"}, HeadRef: "hive/fix-840", HeadRepo: "projectbluefin/testsuite"},
+		{Repo: "testsuite", Number: 841, CIStatus: "failure", Mergeable: github.MergeableYes, HeadSHA: "f3",
+			FailingChecks: []string{"signoff"}, HeadRef: "arteeh/fix", HeadRepo: "arteeh/testsuite", FromFork: true, MaintainerCanModify: true},
 	}
 	_, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "projectbluefin"})
-	if len(failing) != 2 {
-		t.Fatalf("failing = %+v, want both PRs", failing)
+	if len(failing) != 3 {
+		t.Fatalf("failing = %+v, want all PRs", failing)
 	}
 	byNum := map[int]failingEntry{}
 	for _, f := range failing {
@@ -557,6 +559,9 @@ func TestWriteMergeEligible_FailingEntryCarriesForkOrigin(t *testing.T) {
 	}
 	if f := byNum[840]; f.FromFork || f.HeadRepo != "projectbluefin/testsuite" || f.ReachableAction != github.ReachableActionPush {
 		t.Errorf("same-repo PR entry = %+v, want reachable_action=push", f)
+	}
+	if f := byNum[841]; !f.FromFork || f.HeadRepo != "arteeh/testsuite" || f.ReachableAction != github.ReachableActionPush {
+		t.Errorf("maintainer-editable fork PR entry = %+v, want reachable_action=push", f)
 	}
 }
 

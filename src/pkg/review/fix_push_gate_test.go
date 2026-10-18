@@ -8,8 +8,8 @@ import (
 
 // The fix gate (hivecommons/hive#8421): a review-fix kick tells an agent to
 // push onto the PR branch, so it may only follow a changes_requested verdict
-// on a PR the hive itself opened, unless review.fix_human_prs is on.
-// all_authors widens what is REVIEWED and must never imply pushing.
+// on a PR the hive itself opened. all_authors widens what is REVIEWED and
+// must never imply pushing.
 
 func changesRequestedFor(pr PullRequest) Aggregate {
 	return Aggregate{Repo: "acme/" + pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: VerdictChangesRequested,
@@ -78,20 +78,19 @@ func TestHumanPRFixWithheldWhenFixHumanPRsOff(t *testing.T) {
 	}
 }
 
-// TestHumanPRFixDispatchedWhenFixHumanPRsOn is the opt-in: the operator
-// granted the push, so the fixer is kicked exactly as for the hive's own PRs.
-func TestHumanPRFixDispatchedWhenFixHumanPRsOn(t *testing.T) {
+// TestHumanPRFixWithheldEvenWhenFixHumanPRsOn pins the DCO-squash rule: the
+// hive may not push follow-up commits to someone else's PR branch because the
+// only sign-off that survives the squash is the PR author's, which the hive
+// must not forge.
+func TestHumanPRFixWithheldEvenWhenFixHumanPRsOn(t *testing.T) {
 	pr := humanPR("sha1")
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(true))
 
-	if len(plan.FixKicks) != 1 || plan.FixKicks[0].Agent != DefaultFixerAgent {
-		t.Fatalf("fix kick with fix_human_prs on = %+v, want one to %s", plan.FixKicks, DefaultFixerAgent)
+	if len(plan.FixKicks) != 0 {
+		t.Fatalf("fix kick dispatched for a human-authored PR with fix_human_prs on: %+v", plan.FixKicks)
 	}
-	if len(plan.WithheldFixes) != 0 || len(plan.State.Withheld) != 0 {
-		t.Fatalf("nothing should be withheld when the push is permitted: %+v", plan.State.Withheld)
-	}
-	if !strings.Contains(plan.FixKicks[0].Message, "push a new commit to the PR branch") {
-		t.Fatalf("fix prompt no longer asks for the push:\n%s", plan.FixKicks[0].Message)
+	if len(plan.WithheldFixes) != 1 || len(plan.State.Withheld) != 1 {
+		t.Fatalf("withheld = plan %d / state %d, want 1 / 1", len(plan.WithheldFixes), len(plan.State.Withheld))
 	}
 }
 

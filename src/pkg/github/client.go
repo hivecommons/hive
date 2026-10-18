@@ -769,8 +769,9 @@ type PullRequest struct {
 	HeadRepo string `json:"head_repo,omitempty"`
 	FromFork bool   `json:"from_fork,omitempty"`
 	// MaintainerCanModify mirrors GitHub's "allow edits by maintainers"
-	// switch. It is what lets the update-branch API sync a fork PR without
-	// giving Hive direct push access to the contributor's branch.
+	// switch. It is what lets the hive's App token update a fork PR branch
+	// through the same branch-push surface used by in-place adoption and
+	// check-report repair decisions.
 	MaintainerCanModify bool `json:"maintainer_can_modify,omitempty"`
 	// BaseRef is the branch the PR targets. Display only: the merge-verdict
 	// reason names it ("has merge conflicts with v4 — needs a rebase") so a
@@ -2621,20 +2622,23 @@ func extractAssignees(users []*gh.User) []string {
 // Reachable actions for a PR in a kick work list (hivecommons/hive#7386):
 // what an agent holding the hive's App token can actually do to it.
 const (
-	// ReachableActionPush: the head branch is in the base repository, so the
-	// agent can check it out, commit, and push a repair.
+	// ReachableActionPush: the head branch is in the base repository, or it
+	// is a fork branch that allows maintainer edits, so the agent can check
+	// it out, commit, and push a repair when policy says the hive owns that
+	// repair.
 	ReachableActionPush = "push"
 	// ReachableActionCommentOnly: the head branch lives in a fork (or a
-	// deleted repository). The agent can review and comment; it cannot push,
-	// and must never push to a branch of the base repo named after the
-	// fork's head ref.
+	// deleted repository) without maintainer edits. The agent can review and
+	// comment; it cannot push, and must never push to a branch of the base
+	// repo named after the fork's head ref.
 	ReachableActionCommentOnly = "comment-only"
 )
 
 // ReachableAction classifies a PR for the repair queue: push-repairable, or
-// comment-only because its head is not in the base repository.
+// comment-only because its head is not in the base repository and the fork
+// did not grant maintainer edits.
 func ReachableAction(pr PullRequest) string {
-	if pr.FromFork {
+	if pr.FromFork && !pr.MaintainerCanModify {
 		return ReachableActionCommentOnly
 	}
 	return ReachableActionPush

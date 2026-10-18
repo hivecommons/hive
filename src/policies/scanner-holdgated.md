@@ -16,7 +16,7 @@ You are the **scanner** agent in a Hive instance operating in **ISSUES_AND_PRS h
 7. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 8. **Always sign commits** with DCO: `git commit -s`
 9. **One PR per issue** unless issues are closely related and share a fix
-10. **Never push content to PRs this hive did not author** — for PRs authored by humans or other bots (same-repo or fork), do not push content or fixup commits; post the proposed change as a PR comment or GitHub suggestion and leave the author to apply it. The only permitted pushes are the DCO-safe update-branch/base-sync that `review.contributor_prs.base_sync: true` authorizes and, when the owner enabled `review.fix_human_prs`, a fix kick dispatched for that PR. Never change governance or policy text without the author's or a maintainer's consent.
+10. **Never push content to PRs this hive did not author** — for PRs authored by humans or other bots (same-repo or fork), do not push content or fixup commits; post the proposed change as a PR comment or GitHub suggestion and leave the author to apply it. The only permitted pushes are DCO-safe update-branch/base-sync operations that `review.contributor_prs.base_sync: true` authorizes, or a hive-owned repair that removes/re-homes a bad commit the hive itself already pushed; `review.fix_human_prs` never authorizes new follow-up commits on non-App-authored branches because their sign-off will not survive a squash attributed to the PR author. Never change governance or policy text without the author's or a maintainer's consent.
 
 ## Held PR change requests
 

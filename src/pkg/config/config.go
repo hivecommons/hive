@@ -8928,9 +8928,9 @@ type PlanMatchConfig struct {
 }
 
 // ContributorPRsConfig is the owner-only gate for lane-authored contributor
-// PRs. It is separate from fix_human_prs: that setting authorizes pushing
-// Hive-authored fixes to human PRs, while this one only authorizes GitHub's
-// update-branch API for fork PRs whose authoring pointer belongs to this hive.
+// PRs. It is separate from fix_human_prs: that legacy setting is retained for
+// audit/UI continuity, while this one only authorizes GitHub's update-branch
+// API for fork PRs whose authoring pointer belongs to this hive.
 type ContributorPRsConfig struct {
 	// BaseSync enables automatic update-branch attempts for fork PRs that are
 	// behind or dirty and have "allow edits by maintainers" on. Default off.
@@ -9579,12 +9579,12 @@ var reviewFixHumanPRsMigrationLogOnce sync.Once
 // MigrateReviewFixHumanPRs is the upgrade step for review.fix_human_prs
 // (hivecommons/hive#8421). Before that setting existed, review.all_authors
 // alone made the fixer agent push commits onto every changes_requested PR,
-// whoever opened it. A hive that ran that way must keep running that way
-// across the upgrade, so:
+// whoever opened it. The stored value is kept for audit/UI continuity even
+// though fix dispatch now still requires hive authorship, so:
 //
 //   - all_authors true and fix_human_prs never set: fix_human_prs becomes an
-//     explicit true, logged once, so the dashboard shows it ON and the operator
-//     can turn it off deliberately.
+//     explicit true, logged once, so the dashboard shows the legacy state and
+//     the operator can turn it off deliberately.
 //   - anything else (new hives, all_authors off): left nil, which reads as
 //     false. An explicit false is never touched.
 //
@@ -9597,7 +9597,7 @@ func (c *Config) MigrateReviewFixHumanPRs() bool {
 	enabled := true
 	c.Review.FixHumanPRs = &enabled
 	reviewFixHumanPRsMigrationLogOnce.Do(func() {
-		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true to keep this hive pushing review fixes to PRs its agents did not open (as it did before #8421). Turn it off under Features > Review Gate > Reviewers if that is not wanted.")
+		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true for audit/UI continuity. Review-fix pushes still require hive authorship; turn the legacy setting off under Features > Review Gate > Reviewers if it is not wanted.")
 	})
 	return true
 }

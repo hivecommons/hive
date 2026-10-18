@@ -165,10 +165,11 @@ type Route struct {
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
 const (
-	LaneReasonChangesRequested = "reviewer-verdict:changes_requested"
-	LaneReasonDCOMissing       = "dco-missing"
-	LaneReasonConflicting      = "conflicting"
-	laneReasonCheckFailing     = "check-failing:"
+	LaneReasonChangesRequested       = "reviewer-verdict:changes_requested"
+	LaneReasonDCOMissing             = "dco-missing"
+	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
+	LaneReasonConflicting            = "conflicting"
+	laneReasonCheckFailing           = "check-failing:"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.

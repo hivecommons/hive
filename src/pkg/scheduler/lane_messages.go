@@ -505,6 +505,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		HeadRef          string   `json:"head_ref"`
 		HeadRepo         string   `json:"head_repo"`
 		FromFork         bool     `json:"from_fork"`
+		ReachableAction  string   `json:"reachable_action"`
 		Held             bool     `json:"held"`
 		FailingChecks    []string `json:"failing_checks"`
 		Excerpt          string   `json:"excerpt"`
@@ -553,16 +554,18 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		kept = append(kept, pr)
 	}
 	payload.Items = kept
-	// Two queues, not one (hivecommons/hive#7386): a red PR whose head lives
-	// in a fork is comment-only for every agent — the App token pushes to the
-	// base repository and nowhere else. Rendering the two together as one
-	// "repair queue" sent a scanner through 107 PRs of which 66 were forks;
-	// it found out by pushing, and the push landed a stray branch on the base
-	// repo under the fork's head-ref name. The split keeps the push queue
-	// honest about its size and takes the discovery cost off the agent.
+	// Two queues, not one (hivecommons/hive#7386): a red PR whose head branch
+	// is not reachable by this App token is comment-only. Rendering those
+	// together as one "repair queue" sent a scanner through 107 PRs of which
+	// 66 were unreachable forks; it found out by pushing, and the push landed
+	// a stray branch on the base repo under the fork's head-ref name. The
+	// split keeps the push queue honest about its size and takes the discovery
+	// cost off the agent. Forks that allow maintainer edits report
+	// reachable_action=push and stay in the pushable section only when the
+	// policy that produced the row says the hive owns the repair.
 	var pushable, forks []ciFailingRow
 	for _, pr := range payload.Items {
-		if pr.FromFork {
+		if pr.ReachableAction == "comment-only" || (pr.FromFork && pr.ReachableAction != "push") {
 			forks = append(forks, pr)
 		} else {
 			pushable = append(pushable, pr)

@@ -81,11 +81,13 @@ type Record struct {
 	// the App bot (the hive's own to rewrite with sign-off) and the rest
 	// (re-home); records cached before the split existed have neither (see
 	// Record.DCOSplitKnown). One commits GET per head, never per cycle.
-	DCOHead          string `json:"dco_head,omitempty"`
-	DCOTotal         int    `json:"dco_total,omitempty"`
-	DCOUnsigned      int    `json:"dco_unsigned,omitempty"`
-	DCOUnsignedHive  int    `json:"dco_unsigned_hive,omitempty"`
-	DCOUnsignedOther int    `json:"dco_unsigned_other,omitempty"`
+	DCOHead              string `json:"dco_head,omitempty"`
+	DCOTotal             int    `json:"dco_total,omitempty"`
+	DCOUnsigned          int    `json:"dco_unsigned,omitempty"`
+	DCOUnsignedHive      int    `json:"dco_unsigned_hive,omitempty"`
+	DCOUnsignedOther     int    `json:"dco_unsigned_other,omitempty"`
+	DCOSquashUnsafeHive  int    `json:"dco_squash_unsafe_hive,omitempty"`
+	DCOSquashUnsafeKnown bool   `json:"dco_squash_unsafe_known,omitempty"`
 	// EntryCommented records that the stage's entry comment (085 "needs a
 	// decision", 090 "ready for a human merge") was posted for the current
 	// stage visit; reset on every stage change so each transition explains
@@ -903,19 +905,21 @@ func (s *Store) NoteAuthor(key, login string) {
 // NoteDCO caches the commit check for head on an existing record:
 // unsignedHive is the App-linked share of the unsigned commits, the rest
 // is recorded as other.
-func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive int) {
+func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive, squashUnsafeHive int) {
 	if head == "" {
 		return
 	}
 	unsignedHive = max(0, min(unsignedHive, unsigned))
+	squashUnsafeHive = max(0, squashUnsafeHive)
 	other := unsigned - unsignedHive
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other) {
+	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other && r.DCOSquashUnsafeHive == squashUnsafeHive && r.DCOSquashUnsafeKnown) {
 		return
 	}
-	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther = head, total, unsigned, unsignedHive, other
+	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther, r.DCOSquashUnsafeHive = head, total, unsigned, unsignedHive, other, squashUnsafeHive
+	r.DCOSquashUnsafeKnown = true
 	s.items[key] = r
 	s.dirty = true
 }
