@@ -108,7 +108,7 @@ func TestBrokerRejectsProtectedPathsWithQuotedNames(t *testing.T) {
 			}
 			runGit(t, dir, "add", rel)
 		}
-		runGit(t, dir, "commit", "-m", "quoted names")
+		runGit(t, dir, "commit", "-s", "-m", "quoted names")
 		res, err := b.Run(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "protected paths changed") {
 			t.Fatalf("withBase=%v: Run error = %v, want protected path rejection", withBase, err)
@@ -134,7 +134,7 @@ func TestSplitNUL(t *testing.T) {
 
 func TestBrokerRejectsEmptyOutgoingCommitBeforePush(t *testing.T) {
 	dir := initRepo(t)
-	runGit(t, dir, "commit", "--allow-empty", "-m", "ci: retrigger tests")
+	runGit(t, dir, "commit", "--allow-empty", "-s", "-m", "ci: retrigger tests")
 	r := &recordingRunner{}
 
 	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
@@ -165,7 +165,7 @@ func TestBrokerRejectsCommitMadeEmptyByNormalisation(t *testing.T) {
 
 func TestBrokerFirstPushEmptyGuardChecksOnlyHead(t *testing.T) {
 	dir := initRepo(t)
-	runGit(t, dir, "commit", "--allow-empty", "-m", "historical empty commit")
+	runGit(t, dir, "commit", "--allow-empty", "-s", "-m", "historical empty commit")
 	writeCommit(t, dir, "safe.txt", "new branch work\n")
 	r := &recordingRunner{}
 
@@ -358,7 +358,7 @@ func TestRejectForgedLaneSignoffsSurfacesConfigAndLogFailures(t *testing.T) {
 					"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
 				},
 				fails: map[string]error{
-					"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": errors.New("bad log"),
+					"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": errors.New("bad log"),
 				},
 			},
 			wantErr: "reading outgoing commits for sign-off guard",
@@ -395,14 +395,14 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 			name: "malformed log record",
 			replies: map[string]string{
 				"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
-				"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "not-enough-fields\x1e",
+				"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "not-enough-fields\x1e",
 			},
 		},
 		{
 			name: "own authored commit",
 			replies: map[string]string{
 				"var GIT_AUTHOR_IDENT": "Hive Test <hive@example.com> 1700000000 +0000\n",
-				"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc\x00Hive Test\x00hive@example.com\x00Hive Test\x00hive@example.com\x00Signed-off-by: Hive Test <hive@example.com>\x1e",
+				"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc\x00Hive Test\x00hive@example.com\x00Hive Test\x00hive@example.com\x00Signed-off-by: Hive Test <hive@example.com>\x1e",
 			},
 		},
 	}
@@ -419,7 +419,7 @@ func TestRejectForgedLaneSignoffsSkipsUncheckableRecords(t *testing.T) {
 func TestRejectForgedLaneSignoffsUsesAgentIdentityInsteadOfGitConfig(t *testing.T) {
 	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
 	git := &scriptedGit{replies: map[string]string{
-		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00Human Author\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+		"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00Human Author\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
 	}}
 
 	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false)
@@ -434,7 +434,7 @@ func TestRejectForgedLaneSignoffsUsesAgentIdentityInsteadOfGitConfig(t *testing.
 func TestRejectForgedLaneSignoffsAllowsAgentAuthoredCommit(t *testing.T) {
 	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
 	git := &scriptedGit{replies: map[string]string{
-		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+		"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
 	}}
 
 	if err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false); err != nil {
@@ -445,10 +445,46 @@ func TestRejectForgedLaneSignoffsAllowsAgentAuthoredCommit(t *testing.T) {
 	}
 }
 
+func TestRejectForgedLaneSignoffsRejectsUnsignedAgentAuthoredCommit(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
+	git := &scriptedGit{replies: map[string]string{
+		"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00scanner\x00scanner@bots.example.org\x00fix without signoff\x1e",
+	}}
+
+	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false)
+	if err == nil || !strings.Contains(err.Error(), "without scanner's Signed-off-by trailer") || !strings.Contains(err.Error(), "git commit -s") {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want unsigned own-commit rejection", err)
+	}
+}
+
+// `git merge origin/<base>` (allowed for conflict resolution) produces an
+// unsigned merge commit; the guard skips merges as the DCO checkers do.
+func TestRejectForgedLaneSignoffsSkipsUnsignedMergeCommits(t *testing.T) {
+	dir := initRepo(t)
+	writeCommit(t, dir, "base.txt", "base\n")
+	runGit(t, dir, "update-ref", "refs/remotes/origin/work", "HEAD")
+	runGit(t, dir, "checkout", "-q", "-b", "side")
+	runGit(t, dir, "commit", "--allow-empty", "-s", "-m", "side work")
+	runGit(t, dir, "checkout", "-q", "work")
+	runGit(t, dir, "commit", "--allow-empty", "-s", "-m", "lane work")
+	runGit(t, dir, "merge", "--no-ff", "--no-edit", "side")
+	if out := runGitOutput(t, dir, "log", "-1", "--format=%P %B", "HEAD"); !strings.Contains(out, " ") || strings.Contains(out, "Signed-off-by") {
+		t.Fatalf("fixture should end on an unsigned merge commit: %q", out)
+	}
+
+	if err := (&Broker{Workspace: dir}).rejectForgedLaneSignoffs(context.Background(), "refs/remotes/origin/work", true); err != nil {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want unsigned merge commit tolerated", err)
+	}
+	runGit(t, dir, "commit", "--allow-empty", "-m", "unsigned lane work")
+	if err := (&Broker{Workspace: dir}).rejectForgedLaneSignoffs(context.Background(), "refs/remotes/origin/work", true); err == nil || !strings.Contains(err.Error(), "without Hive Test's Signed-off-by trailer") {
+		t.Fatalf("rejectForgedLaneSignoffs = %v, want unsigned non-merge commit rejected", err)
+	}
+}
+
 func TestRejectForgedLaneSignoffsRejectsLaneSignoffWithDifferentCommitter(t *testing.T) {
 	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example.org")
 	git := &scriptedGit{replies: map[string]string{
-		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00Human Committer\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
+		"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00scanner\x00scanner@bots.example.org\x00Human Committer\x00human@example.com\x00fix\n\nSigned-off-by: scanner <scanner@bots.example.org>\x1e",
 	}}
 
 	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git}).rejectForgedLaneSignoffs(context.Background(), "", false)
@@ -462,7 +498,7 @@ func TestRejectForgedLaneSignoffsLogsAuthorMismatchWithoutLaneSignoff(t *testing
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	git := &scriptedGit{replies: map[string]string{
-		"log -1 --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: Human Author <human@example.com>\x1e",
+		"log -1 --no-merges --format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e HEAD": "abc123\x00Human Author\x00human@example.com\x00scanner\x00scanner@bots.example.org\x00fix\n\nSigned-off-by: Human Author <human@example.com>\x1e",
 	}}
 
 	err := (&Broker{Workspace: fakeGitWorkspace(t), AgentName: "scanner", Runner: git, Logger: logger}).rejectForgedLaneSignoffs(context.Background(), "", false)
@@ -730,7 +766,7 @@ func TestBrokerLeavesBinaryFileWithTrailingNewlinesAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "add", "blob.bin")
-	runGit(t, dir, "commit", "-m", "binary")
+	runGit(t, dir, "commit", "-s", "-m", "binary")
 	r := &recordingRunner{}
 	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
@@ -789,7 +825,7 @@ func TestBrokerDetectsBinaryWithinLeadingSample(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "add", "blob.bin")
-	runGit(t, dir, "commit", "-m", "large binary")
+	runGit(t, dir, "commit", "-s", "-m", "large binary")
 	r := &recordingRunner{}
 	res, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_pushbroker"}, Runner: r}).Run(context.Background())
 	if err != nil {
@@ -992,7 +1028,7 @@ func writeCommit(t *testing.T, dir, rel, content string) {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "add", rel)
-	runGit(t, dir, "commit", "-m", "test")
+	runGit(t, dir, "commit", "-s", "-m", "test")
 }
 
 func runGit(t *testing.T, dir string, args ...string) {
@@ -1132,7 +1168,7 @@ func TestBrokerNormalisationSkipsSymlinks(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	runGit(t, dir, "add", "link.txt")
-	runGit(t, dir, "commit", "-m", "add link")
+	runGit(t, dir, "commit", "-s", "-m", "add link")
 	r := &recordingRunner{}
 	if _, err := (&Broker{Workspace: dir, Branch: "work", Repo: "hivecommons/hive", Minter: fakeMinter{"ghs_tok"}, Runner: r}).Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)

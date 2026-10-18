@@ -855,6 +855,39 @@ func TestLabelDefsForUsesConfiguredKindNames(t *testing.T) {
 // keep the hive's ownership across its own pushes; MarkHivePushedHead records
 // local push evidence; MarkYielded releases it and remembers the contributor's
 // head so the yield note is posted once.
+func TestStoreNoteDCOSplitAndAdoptReason(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	key := Key("acme/widget", 7)
+	s.NoteDCO(key, "a", 3, 2, 1)
+	s.NoteAdoptReason(key, "dco-rehome")
+	if _, ok := s.Get(key); ok {
+		t.Fatal("NoteDCO/NoteAdoptReason created a record")
+	}
+	s.Observe(key, ReturnedToContributor, "check-failing:dco")
+	s.NoteDCO(key, "a", 3, 2, 1)
+	r, _ := s.Get(key)
+	if t0, u, ok := r.DCOFor("a"); !ok || t0 != 3 || u != 2 || r.DCOUnsignedHive != 1 || r.DCOUnsignedOther != 1 || !r.DCOSplitKnown("a") || r.DCOSplitKnown("b") {
+		t.Fatalf("cached split: %+v", r)
+	}
+	s.NoteDCO(key, "a", 3, 2, 2)
+	if r, _ = s.Get(key); r.DCOUnsignedHive != 2 || r.DCOUnsignedOther != 0 || !r.DCOSplitKnown("a") {
+		t.Fatalf("hive share not updated: %+v", r)
+	}
+	if (Record{DCOHead: "a", DCOTotal: 3, DCOUnsigned: 2}).DCOSplitKnown("a") {
+		t.Fatal("legacy record without split must not claim one")
+	}
+	if (Record{DCOHead: "a", DCOTotal: 3}).DCOSplitKnown("a") {
+		t.Fatal("signed head has no split")
+	}
+	s.MarkAdoptedInPlace(key, "a", "contributor-offline", now)
+	s.MarkAdopted(key, "a", 0, now)
+	s.NoteAdoptReason(key, "dco-rehome")
+	if r, _ = s.Get(key); r.AdoptReason != "dco-rehome" || r.AdoptMode != AdoptModeSupersede || r.AdoptedBy != 0 {
+		t.Fatalf("adopt reason: %+v", r)
+	}
+}
+
 func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })

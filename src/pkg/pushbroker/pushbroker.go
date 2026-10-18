@@ -552,12 +552,14 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 		return nil
 	}
 
+	// Merge commits (e.g. `git merge origin/<base>` for conflict resolution)
+	// are skipped, as the DCO App and Prow's plugin skip them.
 	var logArgs []string
 	if baseExists {
 		rangeSpec := base + "..HEAD"
-		logArgs = []string{"log", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", rangeSpec}
+		logArgs = []string{"log", "--no-merges", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", rangeSpec}
 	} else {
-		logArgs = []string{"log", "-1", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", "HEAD"}
+		logArgs = []string{"log", "-1", "--no-merges", "--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e", "HEAD"}
 	}
 	out, err := b.git(ctx, logArgs...)
 	if err != nil {
@@ -578,7 +580,17 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 		msg := parts[5]
 		authorMatches := sameIdentity(authorName, authorEmail, laneName, laneEmail)
 		committerMatches := sameIdentity(committerName, committerEmail, laneName, laneEmail)
+		laneSigned := false
+		for _, match := range signedOffByRE.FindAllStringSubmatch(msg, -1) {
+			if len(match) == 3 && sameIdentity(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), laneName, laneEmail) {
+				laneSigned = true
+				break
+			}
+		}
 		if authorMatches && committerMatches {
+			if !laneSigned {
+				return fmt.Errorf("pushbroker: refusing to push commit %s authored and committed by %s <%s> without %s's Signed-off-by trailer; use git commit -s or amend with --signoff before pushing", shortSHA(sha), authorName, authorEmail, laneName)
+			}
 			continue
 		}
 		if !authorMatches && b.Logger != nil {
@@ -587,10 +599,8 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 				"author", fmt.Sprintf("%s <%s>", authorName, authorEmail),
 				"lane", fmt.Sprintf("%s <%s>", laneName, laneEmail))
 		}
-		for _, match := range signedOffByRE.FindAllStringSubmatch(msg, -1) {
-			if len(match) == 3 && sameIdentity(strings.TrimSpace(match[1]), strings.TrimSpace(match[2]), laneName, laneEmail) {
-				return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName)
-			}
+		if laneSigned {
+			return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName)
 		}
 	}
 	return nil

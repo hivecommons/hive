@@ -76,11 +76,16 @@ type Record struct {
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
-	// and how many lacked a Signed-off-by trailer. One commits GET per head,
-	// never per cycle.
-	DCOHead     string `json:"dco_head,omitempty"`
-	DCOTotal    int    `json:"dco_total,omitempty"`
-	DCOUnsigned int    `json:"dco_unsigned,omitempty"`
+	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
+	// DCOUnsignedOther split the unsigned ones into those GitHub links to
+	// the App bot (the hive's own to rewrite with sign-off) and the rest
+	// (re-home); records cached before the split existed have neither (see
+	// Record.DCOSplitKnown). One commits GET per head, never per cycle.
+	DCOHead          string `json:"dco_head,omitempty"`
+	DCOTotal         int    `json:"dco_total,omitempty"`
+	DCOUnsigned      int    `json:"dco_unsigned,omitempty"`
+	DCOUnsignedHive  int    `json:"dco_unsigned_hive,omitempty"`
+	DCOUnsignedOther int    `json:"dco_unsigned_other,omitempty"`
 	// EntryCommented records that the stage's entry comment (085 "needs a
 	// decision", 090 "ready for a human merge") was posted for the current
 	// stage visit; reset on every stage change so each transition explains
@@ -224,6 +229,14 @@ func (r Record) DCOFor(head string) (total, unsigned int, ok bool) {
 		return 0, 0, false
 	}
 	return r.DCOTotal, r.DCOUnsigned, true
+}
+
+// DCOSplitKnown reports whether the cached commit check for head carries
+// the hive/other ownership split of its unsigned commits (false for a
+// signed head, a different head, or a record cached before the split).
+func (r Record) DCOSplitKnown(head string) bool {
+	_, unsigned, ok := r.DCOFor(head)
+	return ok && unsigned > 0 && r.DCOUnsignedHive+r.DCOUnsignedOther == unsigned
 }
 
 // DCO is the cached verdict for head (DCOUnknown when not cached).
@@ -778,6 +791,20 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 	s.dirty = true
 }
 
+// NoteAdoptReason records why the current adoption happened (the marker's
+// reason=<r>) on an existing record.
+func (s *Store) NoteAdoptReason(key, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptReason == reason {
+		return
+	}
+	r.AdoptReason = reason
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkAdoptChecked records that the superseding PR was polled at now.
 func (s *Store) MarkAdoptChecked(key string, now time.Time) {
 	s.mu.Lock()
@@ -865,18 +892,22 @@ func (s *Store) NoteAuthor(key, login string) {
 	s.dirty = true
 }
 
-// NoteDCO caches the commit check for head on an existing record.
-func (s *Store) NoteDCO(key, head string, total, unsigned int) {
+// NoteDCO caches the commit check for head on an existing record:
+// unsignedHive is the App-linked share of the unsigned commits, the rest
+// is recorded as other.
+func (s *Store) NoteDCO(key, head string, total, unsigned, unsignedHive int) {
 	if head == "" {
 		return
 	}
+	unsignedHive = max(0, min(unsignedHive, unsigned))
+	other := unsigned - unsignedHive
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned) {
+	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned && r.DCOUnsignedHive == unsignedHive && r.DCOUnsignedOther == other) {
 		return
 	}
-	r.DCOHead, r.DCOTotal, r.DCOUnsigned = head, total, unsigned
+	r.DCOHead, r.DCOTotal, r.DCOUnsigned, r.DCOUnsignedHive, r.DCOUnsignedOther = head, total, unsigned, unsignedHive, other
 	s.items[key] = r
 	s.dirty = true
 }

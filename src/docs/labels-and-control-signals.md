@@ -706,7 +706,12 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      unanswered for `governor.labels.stage.contributor_grace_online` (default
      2h); and, on a hub that reports no presence at all, the nudge-time
      graces (`contributor_grace_online` 2h / `contributor_grace_offline` 15m
-     after a comment-only nudge).
+     after a comment-only nudge);
+   - `reason=dco-rehome` (always `mode=supersede`) — not a fresh adoption
+     but the one second takeover that exists: an in-place-adopted head stayed
+     DCO-red with unsigned commits the hive cannot rewrite on the contributor
+     branch (see the DCO paragraph below). The stage record's `adopt_reason`
+     moves to `dco-rehome` as well.
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    How the hive takes over depends on whether it can push to the PR's own
@@ -720,7 +725,9 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      push`, conflicted rows included — ordinarily only hive-authored
      conflict PRs are listed) so the scanner's FIX-BEFORE-NEW kick rebases
      and fixes CI **on the PR's branch**. No superseding PR, no `hive/adopt-<n>`
-     branch. The hive's own pushes keep the adoption and the stage stays
+     branch — with one exception, the DCO re-home described below, which
+     converts the in-place adoption into a supersession. The hive's own
+     pushes keep the adoption and the stage stays
      074 whatever CI or the review swarm say of them — pending, green,
      approved or red again — until the merge gate (080/085/090/100) takes
      the head (hivecommons/hive#12736). A later head keeps that ownership
@@ -763,14 +770,31 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    scanner's FIX-BEFORE-NEW kick (the route every red hive-authored PR takes,
    [hive-merge.md](hive-merge.md#stage-labels)) rebases and fixes it on
    `hive/adopt-<n>`; it then runs the normal `050 → 100` path, while the
-   original stays 074 at the adopted head whatever its own CI says. No second
-   takeover mechanism exists. One adoption attempt per contributor head,
-   whatever the outcome. While in 074 the hive polls the superseder at most
+   original stays 074 at the adopted head whatever its own CI says. The only
+   second takeover is the DCO re-home of an in-place adoption (below); a
+   superseded PR is never re-homed again. One adoption attempt per
+   contributor head, whatever the outcome — the DCO re-home likewise records
+   its attempt before touching GitHub, so a failed `hive/adopt-<n>` push is
+   not retried on the next sweep. While in 074 the hive polls the superseder at most
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
    original is closed; closed unmerged (a maintainer declined) → the adoption
    is forgotten and the original returns to 072 (not a regression).
-   If the superseder exists because DCO cannot be repaired in place, the fix
-   agent must first re-home the diff onto a hive-owned branch from the base:
+   If an adopted head is DCO-red, an empty signed commit is never enough.
+   "Hive-authored" is decided the same way as head attribution above: an
+   unsigned commit is the hive's own only when GitHub links its author or
+   committer to the App bot; git author/committer names and emails — even a
+   lane-looking `<lane>@<HIVE_GIT_BOT_EMAIL_DOMAIN>` address — are
+   contributor-controlled and never count. The stage pass caches that split
+   with the commit check (`dco_unsigned_hive`), so the decision does not
+   depend on which labels the PR currently carries. When every unsigned
+   commit is App-linked and the branch is still pushable (base-repo head, or
+   `maintainer_can_modify` re-checked with one `GET pulls/N`), an in-place
+   adoption stays in place and the fixer rewrites just that unsigned range
+   with `-s` and force-pushes with lease. If any unsigned commit is
+   contributor-authored or unknown, or the branch cannot be pushed, the
+   adoption converts to `mode=supersede` (`reason=dco-rehome`): the hive
+   pushes `hive/adopt-<n>` at the head, opens the superseding PR and the fix
+   agent re-homes the diff onto that hive-owned branch from the base:
    cherry-pick each original commit with `git cherry-pick -s`, or squash with
    `git commit --author=<original author> -s`, preserving authorship/credits
    while adding the hive submitter sign-off. The replacement PR keeps the

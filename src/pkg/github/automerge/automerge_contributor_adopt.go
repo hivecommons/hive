@@ -92,6 +92,10 @@ const (
 	AdoptReasonOffline      = "contributor-offline"
 	AdoptReasonUnregistered = "contributor-unregistered"
 	AdoptReasonGrace        = "grace-elapsed"
+	// AdoptReasonDCORehome marks a second takeover: an in-place adoption
+	// whose head stayed DCO-red with unsigned commits the hive cannot
+	// rewrite on the contributor branch, re-homed onto hive/adopt-<n>.
+	AdoptReasonDCORehome = "dco-rehome"
 )
 
 // contributorPresence asks the sink for live presence; ok is false when the
@@ -199,7 +203,30 @@ func adoptionCloses(body string) []string {
 }
 
 func adoptionNeedsDCORehome(obs stageObservation, canPushInPlace bool) bool {
-	return obs.Detail.DCO == stagelabels.DCONo && obs.Detail.DCOUnsigned > 0 && !canPushInPlace
+	return adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeSupersede
+}
+
+func adoptionDCORepairMode(obs stageObservation, canPushInPlace bool) string {
+	if obs.Detail.DCO != stagelabels.DCONo || obs.Detail.DCOUnsigned <= 0 {
+		return ""
+	}
+	if canPushInPlace && obs.Detail.DCOUnsignedHive == obs.Detail.DCOUnsigned && obs.Detail.DCOUnsignedOther == 0 {
+		return stagelabels.AdoptModeInPlace
+	}
+	return stagelabels.AdoptModeSupersede
+}
+
+// adoptedHeadDCORed reports whether an in-place-adopted PR's head carries
+// unsigned commits at all (the cheap pre-check before resolving push access).
+func adoptedHeadDCORed(obs stageObservation, rec stagelabels.Record) bool {
+	return rec.AdoptedInPlace() && obs.Detail.DCO == stagelabels.DCONo && obs.Detail.DCOUnsigned > 0
+}
+
+// adoptedHeadNeedsDCORehome decides, for an in-place-adopted PR, whether the
+// unsigned commits can be rewritten on the contributor branch (all App-linked
+// and the branch still pushable) or the work must be re-homed.
+func adoptedHeadNeedsDCORehome(obs stageObservation, rec stagelabels.Record, canPushInPlace bool) bool {
+	return adoptedHeadDCORed(obs, rec) && adoptionDCORepairMode(obs, canPushInPlace) == stagelabels.AdoptModeSupersede
 }
 
 func adoptionRehomeCommitMessage(obs stageObservation) string {
@@ -219,6 +246,11 @@ func adoptionRehomeCommitMessage(obs stageObservation) string {
 		fmt.Fprintf(&b, "\nCredit: original work by @%s.\n", author)
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func AdoptionDCORehomeComment(obs stageObservation, hiveID string, superseding int) string {
+	return fmt.Sprintf("%s by=%s reason=%s mode=%s superseded_by=%d head=%s -->\n@%s this adopted PR still has unsigned commits, so the hive is re-homing it as #%d on a hive-owned DCO-clean branch. Closing this PR so DCO does not stall the adopted work in place.",
+		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), AdoptReasonDCORehome, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, superseding)
 }
 
 // AdoptionPRBody is the superseding App PR's body.
@@ -341,6 +373,10 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		return 1, nil
 	}
 
+	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, rec.NudgeOnline, dcoRehome, now)
+}
+
+func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
@@ -394,10 +430,19 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch)
 
-	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, rec.NudgeOnline)
+	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, online)
+	if dcoRehome {
+		body = AdoptionDCORehomeComment(obs, policy.HiveID, superseding)
+	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", number, "superseded_by", superseding, "error", err)
 		return 0, err
+	}
+	if dcoRehome {
+		if _, _, err := c.gh.PullRequests.Edit(ctx, owner, repo, number, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+			c.warn("stage labels: closing DCO re-homed PR failed", "repo", obs.Display, "pr", number, "superseded_by", superseding, "error", err)
+			return 1, err
+		}
 	}
 	return 1, nil
 }
@@ -405,9 +450,23 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 // settleAdoption polls the superseding App PR for a PR in stage 074 (at
 // most every adoptCheckInterval): merged → close the original with a note;
 // closed unmerged → forget the adoption so the original returns to 072.
-func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (int, error) {
+func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
-	if !ok || rec.AdoptedBy <= 0 {
+	if !ok {
+		return 0, nil
+	}
+	if adoptedHeadDCORed(obs, rec) {
+		canPushInPlace := c.canPushToPRBranch(ctx, obs)
+		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
+			c.info("stage labels: re-homing adopted PR for DCO repair", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "unsigned", obs.Detail.DCOUnsigned, "unsigned_hive", obs.Detail.DCOUnsignedHive, "can_push", canPushInPlace)
+			// Record the attempt first, as adoptContributorPR does: this
+			// head is re-homed once, whatever the API says below.
+			store.MarkAdopted(key, obs.HeadSHA, 0, now)
+			store.NoteAdoptReason(key, AdoptReasonDCORehome)
+			return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, AdoptReasonDCORehome, 0, false, true, now)
+		}
+	}
+	if rec.AdoptedBy <= 0 {
 		return 0, nil
 	}
 	if !rec.AdoptCheckedAt.IsZero() && now.Sub(rec.AdoptCheckedAt) < adoptCheckInterval {

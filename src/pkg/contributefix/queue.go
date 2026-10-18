@@ -185,7 +185,7 @@ func (q *Queue) Dispatch(now time.Time, online bool, parallelSessions, maxParall
 		}
 		q.nextID++
 		t := Task{ID: q.nextID, Kind: Kind, Priority: Priority, Action: action,
-			Instruction: "Fix the listed feedback. Push a new head to each existing PR branch with the same Signed-off-by identity; do not open replacement PRs or merge them.",
+			Instruction: "Fix the listed feedback. Push a new head to each existing PR branch; every hive-authored commit MUST be created with git commit -s (or amended with --signoff) so the Signed-off-by trailer matches the lane identity. Do not use unsigned or empty DCO fixup commits. Do not open replacement PRs or merge them.",
 			PRs:         []Feedback{clone(f)}}
 		used[f.key()] = true
 		if !f.ChangesRequested && f.Check != "" && f.ErrorSignature != "" {
