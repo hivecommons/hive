@@ -433,7 +433,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	originalAddLabels := append([]string(nil), addLabels...)
 	removeLabels := normalizeLabelList(req.RemoveLabels)
 	var issueDecisionDowngrade issueDecisionDowngrade
-	if kind == "label" && containsDecisionParkLabel(addLabels, c.needsDecisionLabel()) {
+	if kind == "label" && containsConfiguredDecisionParkLabel(addLabels, c.needsDecisionLabel()) {
 		var dErr error
 		issueDecisionDowngrade, dErr = c.issueDecisionDowngradeForLabel(ctx, req, addLabels)
 		if dErr != nil {
@@ -828,6 +828,19 @@ func hiveDecisionDowngradeNote(question string) string {
 func replaceDecisionParkWithActionable(labels []string, configured string) []string {
 	labels = removeDecisionParkLabels(labels, configured)
 	return appendLabelIfMissing(labels, stagelabels.Actionable.Label())
+}
+
+func containsConfiguredDecisionParkLabel(labels []string, configured string) bool {
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return false
+	}
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), configured) {
+			return true
+		}
+	}
+	return false
 }
 
 func removeDecisionParkLabels(labels []string, configured string) []string {
