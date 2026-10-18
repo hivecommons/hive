@@ -357,6 +357,9 @@ type AgentSummary struct {
 	// is correctly idle between kicks (flashsystems/ess: 2h/4h cadences looked
 	// idle after the generic 45-minute pane-activity threshold).
 	KickIntervalSec int64 `json:"kickIntervalSec,omitempty"`
+	// LaneQueuedWork is the actionable backlog in this agent's own lane, when
+	// the spoke reports it. nil (older spokes) falls back to the hive-wide count.
+	LaneQueuedWork *int `json:"laneQueuedWork,omitempty"`
 
 	// --- Fleet-divergence signals (the EXPECTED and ABLE legs) ---
 	// These let the hub show the gap between what the GOVERNOR expects running,
@@ -451,6 +454,7 @@ type AgentActivity struct {
 	StartedAt      time.Time
 	LastActivityAt time.Time
 	KickInterval   time.Duration
+	LaneQueuedWork *int
 	// Fleet-divergence signals — see the matching AgentSummary fields.
 	ExpectedActive bool
 	CanOpenIssue   bool
@@ -526,6 +530,7 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 	if act.KickInterval > 0 {
 		as.KickIntervalSec = int64(act.KickInterval / time.Second)
 	}
+	as.LaneQueuedWork = act.LaneQueuedWork
 	return as
 }
 

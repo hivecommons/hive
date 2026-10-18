@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 // bootHeartbeatFake records what bootHeartbeatWith asked for. The collector
@@ -345,3 +346,38 @@ func TestBootHeartbeatWith_TaskStatusSwitchPreservesControlPlane(t *testing.T) {
 }
 
 func heartbeatTaskPushBool(v bool) *bool { return &v }
+
+// #12876: heartbeatAgents must carry the governor's per-lane queue depth on
+// both the full and the inline paths; an agent outside the reviewer lane stays
+// nil so the hub falls back to the hive-wide backlog.
+func TestHeartbeatAgents_CarriesLaneQueuedWork(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	level := 5
+	cfg.ACMMLevel = &level
+	cfg.Agents = map[string]config.AgentConfig{
+		"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
+		"scanner":     {Mode: "ISSUES_AND_PRS"},
+	}
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.sched = scheduler.New(cfg, b.logger)
+	b.agentMgr.AddAgent("adjudicator", cfg.Agents["adjudicator"])
+	b.agentMgr.AddAgent("scanner", cfg.Agents["scanner"])
+
+	for _, blocking := range []bool{true, false} {
+		byName := map[string]spoke.AgentSummary{}
+		for _, a := range b.heartbeatAgents(governor.State{}, "busy", blocking) {
+			byName[a.Name] = a
+		}
+		lane, ok := byName["adjudicator"]
+		if !ok {
+			t.Fatalf("blocking=%v: adjudicator missing from heartbeat agents", blocking)
+		}
+		if lane.LaneQueuedWork == nil {
+			t.Errorf("blocking=%v: reviewer-lane agent must report a lane depth", blocking)
+		}
+		if other := byName["scanner"]; other.LaneQueuedWork != nil {
+			t.Errorf("blocking=%v: non-lane agent reported lane depth %d, want nil", blocking, *other.LaneQueuedWork)
+		}
+	}
+}

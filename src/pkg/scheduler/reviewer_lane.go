@@ -137,6 +137,23 @@ func (s *Scheduler) ReviewerLaneIdleReason(agentName string) string {
 	return idleReason
 }
 
+// ReviewerLaneQueuedWork reports how many escalated PRs await agentName in
+// its reviewer lane, using the same routing and gates as ReviewerLaneIdleReason.
+// nil means the agent's kick does not route to the reviewer lane, so its lane
+// depth is unknown here.
+func (s *Scheduler) ReviewerLaneQueuedWork(agentName string) *int {
+	if !s.routesToReviewerLane(agentName) {
+		return nil
+	}
+	n := 0
+	if level, _, idleReason := s.reviewerLaneGate(); idleReason == "" && level >= reviewerLaneMinACMMLevel {
+		if data, err := os.ReadFile(ciFailingPath); err == nil {
+			n = len(reviewerWorkRows(data))
+		}
+	}
+	return &n
+}
+
 // routesToReviewerLane mirrors buildAgentMessage's resolution chain without
 // its logging: a reviewer-role agent reaches the lane only when no prompt
 // source, config kick_template, ACMM pack template, or convention template
@@ -336,39 +353,30 @@ func (s *Scheduler) buildReviewerWorkList() string {
 	return formatReviewerWorkList(data)
 }
 
-// formatReviewerWorkList renders the reviewer work list from raw
-// ci-failing.json bytes: the escalated rows of "ci_failing" plus the
-// "escalated" list, which carries escalated PRs that are NOT red — conflicted
-// (CI never runs), green or pending ones (hivecommons/hive#9477). Without it
-// such a PR dropped out of the lane the moment its checks stopped failing.
-// Rows are ESCALATED hive-authored PRs only —
-// writeMergeEligible builds the file exclusively from the hive's own PR
-// enumeration with per-agent attribution, so every row is hive work; rows
-// whose Labels carry ReviewerPassedLabel or ReviewerRecommendCloseLabel are
-// excluded (one reviewer pass per PR, ever — whatever the verdict was).
-// Output is capped at reviewerMaxPRsPerKick rows, oldest first by the PR's
-// real forge creation time; rows written by a hub that recorded none fall back
-// to the old (repo, number) proxy and sort last (#5617 item 4).
-func formatReviewerWorkList(data []byte) string {
-	type ciFailingRow struct {
-		Number        int       `json:"number"`
-		Repo          string    `json:"repo"`
-		Title         string    `json:"title"`
-		Agent         string    `json:"agent"`
-		Labels        []string  `json:"labels"`
-		FailingChecks []string  `json:"failing_checks"`
-		Excerpt       string    `json:"excerpt"`
-		Escalated     bool      `json:"escalated"`
-		CreatedAt     time.Time `json:"created_at"`
-		Mergeable     string    `json:"mergeable"`
-		CIStatus      string    `json:"ci_status"`
-	}
+type ciFailingRow struct {
+	Number        int       `json:"number"`
+	Repo          string    `json:"repo"`
+	Title         string    `json:"title"`
+	Agent         string    `json:"agent"`
+	Labels        []string  `json:"labels"`
+	FailingChecks []string  `json:"failing_checks"`
+	Excerpt       string    `json:"excerpt"`
+	Escalated     bool      `json:"escalated"`
+	CreatedAt     time.Time `json:"created_at"`
+	Mergeable     string    `json:"mergeable"`
+	CIStatus      string    `json:"ci_status"`
+}
+
+// reviewerWorkRows returns the adjudicable escalated rows of raw
+// ci-failing.json bytes, unsorted; formatReviewerWorkList renders them and
+// ReviewerLaneQueuedWork counts them, so the two cannot disagree.
+func reviewerWorkRows(data []byte) []ciFailingRow {
 	var payload struct {
 		Items     []ciFailingRow `json:"ci_failing"`
 		Escalated []ciFailingRow `json:"escalated"`
 	}
 	if json.Unmarshal(data, &payload) != nil {
-		return ""
+		return nil
 	}
 	var rows []ciFailingRow
 	seen := make(map[string]bool, len(payload.Items)+len(payload.Escalated))
@@ -397,6 +405,24 @@ func formatReviewerWorkList(data []byte) string {
 		}
 		rows = append(rows, pr)
 	}
+	return rows
+}
+
+// formatReviewerWorkList renders the reviewer work list from raw
+// ci-failing.json bytes: the escalated rows of "ci_failing" plus the
+// "escalated" list, which carries escalated PRs that are NOT red — conflicted
+// (CI never runs), green or pending ones (hivecommons/hive#9477). Without it
+// such a PR dropped out of the lane the moment its checks stopped failing.
+// Rows are ESCALATED hive-authored PRs only —
+// writeMergeEligible builds the file exclusively from the hive's own PR
+// enumeration with per-agent attribution, so every row is hive work; rows
+// whose Labels carry ReviewerPassedLabel or ReviewerRecommendCloseLabel are
+// excluded (one reviewer pass per PR, ever — whatever the verdict was).
+// Output is capped at reviewerMaxPRsPerKick rows, oldest first by the PR's
+// real forge creation time; rows written by a hub that recorded none fall back
+// to the old (repo, number) proxy and sort last (#5617 item 4).
+func formatReviewerWorkList(data []byte) string {
+	rows := reviewerWorkRows(data)
 	if len(rows) == 0 {
 		return ""
 	}

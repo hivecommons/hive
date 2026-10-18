@@ -544,3 +544,34 @@ func TestReviewerLaneIdleReason(t *testing.T) {
 		})
 	}
 }
+
+// #12876: the heartbeat reports the reviewer lane's own depth, nil when the
+// agent's kick does not route there.
+func TestReviewerLaneQueuedWork(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		level   int
+		fixture string
+		agent   string
+		want    *int
+	}{
+		{name: "empty escalated queue", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", want: intPtr(0)},
+		{name: "below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: intPtr(0)},
+		{name: "lane has work", level: 5, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: intPtr(1)},
+		{name: "missing queue file", level: 5, fixture: "", agent: "adjudicator", want: intPtr(0)},
+		{name: "non-reviewer agent", level: 5, fixture: reviewerOneEscalatedFixture, agent: "scanner", want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerTestScheduler(t, tc.level, tc.fixture)
+			got := s.ReviewerLaneQueuedWork(tc.agent)
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("ReviewerLaneQueuedWork(%q) = %d, want nil", tc.agent, *got)
+			case tc.want != nil && (got == nil || *got != *tc.want):
+				t.Errorf("ReviewerLaneQueuedWork(%q) = %v, want %d", tc.agent, got, *tc.want)
+			}
+		})
+	}
+}
+
+func intPtr(n int) *int { return &n }

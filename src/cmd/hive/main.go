@@ -1278,9 +1278,14 @@ func (b *boot) wireBootClosures() {
 			if ac, ok := b.cfg.Agents[name]; (ok && ac.OnDemand) || b.onDemandFromPack[name] {
 				mode = "on_demand"
 			}
+			var laneQueued *int
+			if b.sched != nil {
+				laneQueued = b.sched.ReviewerLaneQueuedWork(name)
+			}
 			if includeBlockingChecks {
-				agents = append(agents, spoke.NewAgentSummary(name, string(proc.State), mode,
-					spoke.AgentActivityFor(b.agentMgr, b.cfg, govState, currentMode, name, proc, b.onDemandFromPack)))
+				full := spoke.AgentActivityFor(b.agentMgr, b.cfg, govState, currentMode, name, proc, b.onDemandFromPack)
+				full.LaneQueuedWork = laneQueued
+				agents = append(agents, spoke.NewAgentSummary(name, string(proc.State), mode, full))
 				continue
 			}
 			act := spoke.AgentActivity{
@@ -1293,6 +1298,7 @@ func (b *boot) wireBootClosures() {
 				QuotaExhausted: proc.QuotaExhausted,
 				LastActivityAt: proc.LastPaneChange,
 				KickInterval:   spoke.HeartbeatKickInterval(govState, name, proc, b.onDemandFromPack),
+				LaneQueuedWork: laneQueued,
 				Backend:        proc.Config.Backend,
 				Enabled:        proc.Config.Enabled,
 				CanOpenIssue:   proc.LaunchedMode.CanCreateIssues(),
