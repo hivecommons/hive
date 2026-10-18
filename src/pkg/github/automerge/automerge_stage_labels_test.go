@@ -619,6 +619,124 @@ func TestApplyStageLabelsRoleOwnerStableAcrossLaneOrder(t *testing.T) {
 	}
 }
 
+func TestApplyStageLabelsAppAuthoredRoleDoesNotFlapAcrossLanes(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 17, 20, 30, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{} }
+	ctx := context.Background()
+	const number = 12808
+	decision := ContributorLaneVerdict{Configured: true, Verdict: "approve", DecisionRequested: true, DecisionQuestion: "@hanthor should decide whether the contribution-preset loader should land before any hivectl command consumes it"}
+	appPR := func(labels ...string) *gh.PullRequest {
+		pr := stagePR(number, labels...)
+		pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+		return pr
+	}
+
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", appPR(), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+	e.noteStageVerdict("acme", "widget", number, decision)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/hive", "role/trusted", "stage/085-needs-decision"}}) {
+		t.Fatalf("initial self-authored write added=%v removed=%v", api.added, api.removed)
+	}
+
+	labels := []string{"author/hive", "role/trusted", "stage/085-needs-decision"}
+	for i := 0; i < 3; i++ {
+		api.reset()
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", appPR(labels...), "untrusted-author-role", false, nil)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if api.writes() != 0 {
+			t.Fatalf("trusted-author observation %d flapped labels: added=%v removed=%v comments=%d", i, api.added, api.removed, len(api.comments))
+		}
+
+		api.reset()
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", appPR(labels...), contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+		e.noteStageVerdict("acme", "widget", number, decision)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if api.writes() != 0 {
+			t.Fatalf("self-authored observation %d flapped labels: added=%v removed=%v comments=%d", i, api.added, api.removed, len(api.comments))
+		}
+	}
+}
+
+func TestApplyStageLabelsNonOwningLaneKeepsRecordedRole(t *testing.T) {
+	cases := []struct {
+		name          string
+		lane          string
+		reason        string
+		role          stagelabels.Role
+		labels        []string
+		trustedPolicy bool
+		contribPolicy bool
+	}{
+		{
+			name:          "trusted human seen by contributor lane",
+			lane:          stageLaneContributor,
+			reason:        contributorLaneReasonNoClaim,
+			role:          stagelabels.RoleUntrusted,
+			labels:        []string{"author/human", "role/trusted", "stage/050-review-pending"},
+			contribPolicy: true,
+		},
+		{
+			name:          "untrusted contributor seen by trusted lane",
+			lane:          stageLaneTrusted,
+			reason:        "untrusted-author-role",
+			labels:        []string{"author/human", "role/untrusted", "stage/085-needs-decision"},
+			trustedPolicy: true,
+		},
+	}
+	ctx := context.Background()
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &stageAPI{}
+			srv := newStageAPI(t, api)
+			defer srv.Close()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 17, 21, i, 0, 0, time.UTC)}
+			e, _, _ := newStageEngine(t, srv.URL, clock)
+			e.trustedAuthorPolicy = func() TrustedAuthorPolicy {
+				if tc.trustedPolicy {
+					return TrustedAuthorPolicy{Enabled: true}
+				}
+				return TrustedAuthorPolicy{}
+			}
+			e.contributorLanePolicy = func() ContributorLanePolicy {
+				if tc.contribPolicy {
+					return ContributorLanePolicy{Enabled: true}
+				}
+				return ContributorLanePolicy{}
+			}
+			pr := stagePR(12900+i, tc.labels...)
+			pr.User = &gh.User{Login: gh.Ptr("maintainer")}
+			e.recordStage(tc.lane, "acme/widget", "acme", "widget", pr, tc.reason, false, nil)
+			if tc.role != stagelabels.RoleNone {
+				e.noteStageRole("acme", "widget", pr.GetNumber(), tc.role)
+			}
+			if _, err := e.ApplyStageLabels(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, add := range api.added {
+				if slices.Contains(add, "role/trusted") || slices.Contains(add, "role/untrusted") {
+					t.Fatalf("non-owning lane changed role: added=%v removed=%v", api.added, api.removed)
+				}
+			}
+			if slices.Contains(api.removed, "role/trusted") || slices.Contains(api.removed, "role/untrusted") {
+				t.Fatalf("non-owning lane removed role: added=%v removed=%v", api.added, api.removed)
+			}
+		})
+	}
+}
+
 func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{"stage/050-review-pending": "0000ff", "bug": "ff0000"}}
 	srv := newStageAPI(t, api)

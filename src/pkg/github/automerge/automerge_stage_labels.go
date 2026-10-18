@@ -872,6 +872,12 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 		if v.Rank > best.Rank {
 			best, bestObs = v, o
 		}
+		if o.AuthorKind == authorkind.Hive || hasLabelFold(o.Labels, "author/hive") {
+			role = role.Merge(stagelabels.RoleTrusted)
+		}
+		if v.Rank < stageRankOwned {
+			role = role.Merge(stagelabels.RoleOf(o.Labels))
+		}
 		// The most specific tier wins: the contributor lane knows
 		// registry/claim tiers the trusted-author lane cannot see, so a
 		// trusted-author "trusted" is kept but its absence is refined.

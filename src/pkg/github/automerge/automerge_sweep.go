@@ -1720,10 +1720,13 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
 	c.noteStagePR(owner, repo, number, pr)
+	author := hgithub.SafeGetLogin(pr.GetUser())
+	if lane, _ := c.sweepLaneForAuthor(author); lane == "self-authored" {
+		return AutoMergeSweepEvent{}, contributorLaneReasonAppAuthored, nil
+	}
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	author := hgithub.SafeGetLogin(pr.GetUser())
 	decision := c.trustedAuthorDecision(author, policy.RequireRole)
 	if !decision.Allowed {
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
