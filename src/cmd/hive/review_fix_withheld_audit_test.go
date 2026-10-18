@@ -54,3 +54,18 @@ func TestAuditWithheldReviewFixesNoEntriesNoAuditor(t *testing.T) {
 	// A nil auditor (no dashboard) must not panic; the log line still fires.
 	auditWithheldReviewFixes(review.DispatchPlan{WithheldFixes: []review.WithheldFix{{Repo: "acme/x", Number: 1, Setting: review.WithheldFixSetting}}}, nil, logger)
 }
+
+// TestAuditWithheldReviewFixesRecordsSettingOn: with fix_human_prs on the
+// push is still withheld (hivecommons/hive#12897), and the audit entry must
+// say the setting was on rather than claim it was off.
+func TestAuditWithheldReviewFixesRecordsSettingOn(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	plan := review.DispatchPlan{WithheldFixes: []review.WithheldFix{
+		{Repo: "acme/chairlift", Number: 303, HeadSHA: "b91fee3", Author: "contributor", Setting: review.WithheldFixSetting, SettingEnabled: true, Withheld: time.Now().UTC()},
+	}}
+	auditor := &recordingFixAuditor{}
+	auditWithheldReviewFixes(plan, auditor, logger)
+	if len(auditor.entries) != 1 || !strings.Contains(auditor.entries[0], "setting=review.fix_human_prs=true") {
+		t.Fatalf("audit entry must record the setting as on: %v", auditor.entries)
+	}
+}

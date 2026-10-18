@@ -118,11 +118,14 @@ type DispatchOptions struct {
 	// AllAuthors lifts the agent-authored restriction so every open PR is
 	// eligible for review, whoever opened it.
 	AllAuthors bool
-	// FixHumanPRs lets a changes_requested verdict dispatch a fix kick — an
-	// agent checking out the PR branch and PUSHING to it — on a PR this
-	// hive's agents did not open. Off, such a PR gets its review published
-	// and nothing more: the author decides what to change. AllAuthors never
-	// implies this (hivecommons/hive#8421).
+	// FixHumanPRs mirrors review.fix_human_prs. It no longer lets a fix kick
+	// push onto a PR this hive's agents did not open: that commit would be
+	// signed off by the hive, not the PR author, and the squash sign-off gate
+	// rejects it as bot-signoff — a red only the author can clear
+	// (hivecommons/hive#12897). Such a PR gets its review published with the
+	// fix as a suggestion or patch block whichever way this is set; the value
+	// is kept so the withheld-fix audit can say which way it was. AllAuthors
+	// never implies pushing either (hivecommons/hive#8421).
 	FixHumanPRs bool
 	// AcknowledgeNoFindings carries config.ReviewConfig.AcknowledgeNoFindings
 	// into the prompt builder, so a clean review still leaves a record.
@@ -155,7 +158,7 @@ type DispatchState struct {
 	FixAttempts []FixAttempt      `json:"fix_attempts,omitempty"`
 	Human       []HumanReviewHold `json:"requires_human,omitempty"`
 	// Withheld records the PR heads whose fix kick was refused because the PR
-	// is not hive-authored and FixHumanPRs is off. Keyed by head SHA like
+	// is not hive-authored. Keyed by head SHA like
 	// Fixes, so each refusal is reported (and audited) once per head rather
 	// than on every eval cycle, and a new push earns a fresh decision.
 	Withheld []WithheldFix `json:"withheld_fixes,omitempty"`
@@ -192,15 +195,19 @@ type ExpiredPending struct {
 
 // WithheldFix is a fix kick the planner declined to dispatch. It carries what
 // the audit trail needs to explain the silence: which PR, who opened it, and
-// the setting that would have allowed the push.
+// the setting that once allowed the push.
 type WithheldFix struct {
-	Repo     string    `json:"repo"`
-	Number   int       `json:"number"`
-	HeadSHA  string    `json:"head_sha,omitempty"`
-	Author   string    `json:"author,omitempty"`
-	Setting  string    `json:"setting"`
-	Reason   string    `json:"reason"`
-	Withheld time.Time `json:"withheld_at"`
+	Repo    string `json:"repo"`
+	Number  int    `json:"number"`
+	HeadSHA string `json:"head_sha,omitempty"`
+	Author  string `json:"author,omitempty"`
+	Setting string `json:"setting"`
+	// SettingEnabled is the value Setting had when the fix was withheld. On
+	// is still withheld: the push would fail the squash sign-off gate
+	// (hivecommons/hive#12897).
+	SettingEnabled bool      `json:"setting_enabled,omitempty"`
+	Reason         string    `json:"reason"`
+	Withheld       time.Time `json:"withheld_at"`
 }
 
 // WithheldFixSetting names the config key an operator turns on to let the
@@ -397,7 +404,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 						if fixPushAllowed(pr, opts) {
 							plan.dispatchFix(pr, agg, opts, now)
 						} else {
-							plan.withholdFix(pr, now)
+							plan.withholdFix(pr, opts, now)
 						}
 					case VerdictRequiresHuman:
 						plan.holdForHuman(pr, agg, now)
@@ -700,9 +707,11 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 // dispatched for a PR the hive itself opened. AllAuthors is deliberately not
 // consulted: it widens what is REVIEWED, and reviewing a contributor's PR is
 // not a reason to rewrite it (hivecommons/hive#8421). review.fix_human_prs is
-// now ignored for branch pushes: a hive-authored follow-up commit on a
-// non-App-authored PR cannot carry a sign-off that survives GitHub's squash
-// attribution without forging the PR author's identity.
+// not consulted either: the fixer's commit is signed off by the hive, the
+// squash merge is attributed to the PR author, and the squash sign-off gate
+// rejects that pair as bot-signoff — a red the hive cannot repair, since it
+// cannot sign off for the author. Everyone else's PRs get the fix as a
+// suggestion in the review instead (hivecommons/hive#12897).
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 	return hiveAuthored(pr, opts)
 }
@@ -711,20 +720,25 @@ func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 // fixPushAllowed refused it. Once per head: the state entry is what stops
 // the next cycle re-reporting the same refusal, and the plan entry is what
 // the caller audits this cycle.
-func (p *DispatchPlan) withholdFix(pr PullRequest, now time.Time) {
+func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now time.Time) {
 	for _, w := range p.State.Withheld {
 		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			return
 		}
 	}
+	reason := "PR was not opened by a hive agent; review published, fix not pushed"
+	if opts.FixHumanPRs {
+		reason = "PR was not opened by a hive agent; a hive-signed fix commit would fail the squash sign-off gate, so the fix was proposed in the review, not pushed"
+	}
 	w := WithheldFix{
-		Repo:     pr.Repo,
-		Number:   pr.Number,
-		HeadSHA:  pr.HeadSHA,
-		Author:   strings.TrimSpace(pr.Author),
-		Setting:  WithheldFixSetting,
-		Reason:   "PR was not opened by a hive agent; review published, fix not pushed",
-		Withheld: now,
+		Repo:           pr.Repo,
+		Number:         pr.Number,
+		HeadSHA:        pr.HeadSHA,
+		Author:         strings.TrimSpace(pr.Author),
+		Setting:        WithheldFixSetting,
+		SettingEnabled: opts.FixHumanPRs,
+		Reason:         reason,
+		Withheld:       now,
 	}
 	p.State.Withheld = append(p.State.Withheld, w)
 	p.WithheldFixes = append(p.WithheldFixes, w)

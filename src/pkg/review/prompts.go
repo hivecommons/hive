@@ -209,8 +209,9 @@ type PromptOptions struct {
 	Perspectives PerspectiveSet
 	Revise       bool
 	// ProposeFixesOnly tells the reviewer that no agent will push to this
-	// PR's branch — it was opened by someone outside the hive and
-	// the PR is not hive-authored — so every fix it wants has to travel in
+	// PR's branch — it was opened by someone outside the hive, and a
+	// hive-signed commit on it would fail the squash sign-off gate whatever
+	// review.fix_human_prs says (hivecommons/hive#12897) — so every fix it wants has to travel in
 	// the review comment itself, as a suggestion or a patch the author can
 	// apply. Without this a changes_requested verdict on such a PR would
 	// name a problem and then leave the author to guess at the fix the
@@ -282,7 +283,7 @@ func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
 	}
 	var b strings.Builder
 	b.WriteString("\nPROPOSE FIXES, DO NOT PUSH THEM.\n")
-	fmt.Fprintf(&b, "PR %s#%d was opened by someone this hive does not speak for, so NO agent will push to its branch after your review; the legacy review.fix_human_prs setting does not permit non-App follow-up pushes. Do not check out, commit to, or push to this PR's branch yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number)
+	fmt.Fprintf(&b, "PR %s#%d was opened by someone this hive does not speak for, so NO agent will push to its branch after your review, whatever review.fix_human_prs says: a commit signed off by the hive instead of the PR author fails the squash sign-off gate, and only the author could clear it. Do not check out, commit to, or push to this PR's branch yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number)
 	b.WriteString("For every finding you would have asked an agent to fix, put the fix in the review comment so the author can apply it: a ```suggestion block for a change that fits in a few lines at one location, or a ```diff patch block for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
 	b.WriteString("changes_requested still means what it says — the verdict is recorded and the PR waits on the author, not on the hive.\n")
 	return b.String()

@@ -52,8 +52,9 @@ type ReviewThreadPR struct {
 	// HumanOpened is true when this PR is here only because
 	// review.fix_human_prs is on (hivecommons/hive#9361): neither the author
 	// nor the `— hive:` trailer says the hive is answerable for it. The kick
-	// builder forces resolve_after_fix off for these regardless of the
-	// global setting — an agent may reply and push a fix, but per #9361's
+	// builder tells the agent never to push to these (hivecommons/hive#12897)
+	// and forces resolve_after_fix off for them regardless of the global
+	// setting — an agent may reply with a suggested fix, but per #9361's
 	// open question, a person decides whether the thread is actually closed,
 	// since the bot's finding may be disputing a deliberate decision the PR's
 	// own author made.
@@ -333,11 +334,12 @@ func (c *Client) isHiveMediatedPR(pr PullRequest) bool {
 // ones every other kick input already has (fetchPRs applies them). This
 // function keeps HIVE-MEDIATED PRs (isHiveMediatedPR: a hive login as author,
 // or the attribution trailer in the body) always, and additionally keeps
-// every OTHER open PR when review.fix_human_prs is on (hivecommons/hive#9361):
-// that setting already lets the fixer push to PRs the hive did not open, so
-// the reconciler follows the same PRs rather than leaving their bot threads
-// unanswered. Those PRs are marked HumanOpened so the kick builder can force
-// resolve_after_fix off for them regardless of the global setting. Either way
+// every OTHER open PR when review.fix_human_prs is on (hivecommons/hive#9361),
+// so their bot threads are not left unanswered. Those PRs are marked
+// HumanOpened so the kick builder tells the agent to answer with a
+// suggestion instead of pushing (a hive-signed commit fails the squash
+// sign-off gate, hivecommons/hive#12897) and forces resolve_after_fix off for
+// them regardless of the global setting. Either way
 // this skips the GraphQL round trip entirely when review_bots is off. A PR
 // whose thread fetch fails is logged and omitted (omission means "no attempt
 // this pass", the safe direction); it is not an error for the report as a

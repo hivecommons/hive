@@ -9,7 +9,9 @@ import (
 // The fix gate (hivecommons/hive#8421): a review-fix kick tells an agent to
 // push onto the PR branch, so it may only follow a changes_requested verdict
 // on a PR the hive itself opened. all_authors widens what is REVIEWED and
-// must never imply pushing.
+// must never imply pushing; review.fix_human_prs no longer does either,
+// because the hive-signed commit fails the squash sign-off gate
+// (hivecommons/hive#12897).
 
 func changesRequestedFor(pr PullRequest) Aggregate {
 	return Aggregate{Repo: "acme/" + pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Verdict: VerdictChangesRequested,
@@ -78,10 +80,11 @@ func TestHumanPRFixWithheldWhenFixHumanPRsOff(t *testing.T) {
 	}
 }
 
-// TestHumanPRFixWithheldEvenWhenFixHumanPRsOn pins the DCO-squash rule: the
-// hive may not push follow-up commits to someone else's PR branch because the
-// only sign-off that survives the squash is the PR author's, which the hive
-// must not forge.
+// TestHumanPRFixWithheldEvenWhenFixHumanPRsOn is hivecommons/hive#12897: a
+// fix pushed onto a contributor's PR is signed off by the hive, and the
+// squash sign-off gate rejects it as bot-signoff. So fix_human_prs on still
+// withholds the push, and the audit entry records that the setting was on
+// and why the fix went into the review instead.
 func TestHumanPRFixWithheldEvenWhenFixHumanPRsOn(t *testing.T) {
 	pr := humanPR("sha1")
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(true))
@@ -91,6 +94,18 @@ func TestHumanPRFixWithheldEvenWhenFixHumanPRsOn(t *testing.T) {
 	}
 	if len(plan.WithheldFixes) != 1 || len(plan.State.Withheld) != 1 {
 		t.Fatalf("withheld = plan %d / state %d, want 1 / 1", len(plan.WithheldFixes), len(plan.State.Withheld))
+	}
+	w := plan.WithheldFixes[0]
+	if !w.SettingEnabled || w.Setting != WithheldFixSetting {
+		t.Fatalf("withheld entry must record %s as on: %+v", WithheldFixSetting, w)
+	}
+	if !strings.Contains(w.Reason, "squash sign-off gate") {
+		t.Fatalf("withheld reason must name the sign-off gate, got %q", w.Reason)
+	}
+
+	off := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(false))
+	if len(off.WithheldFixes) != 1 || off.WithheldFixes[0].SettingEnabled {
+		t.Fatalf("fix_human_prs off must be recorded as off: %+v", off.WithheldFixes)
 	}
 }
 
@@ -140,7 +155,8 @@ func TestWithheldFixPrunedWhenHeadMoves(t *testing.T) {
 
 // TestHumanPRReviewPromptProposesFixesInComment: with the push withheld, the
 // reviewer is told to carry the fix in the comment as a suggestion or patch,
-// and not to touch the branch. The hive's own PRs get the ordinary prompt.
+// and not to touch the branch — with fix_human_prs on too
+// (hivecommons/hive#12897). The hive's own PRs get the ordinary prompt.
 func TestHumanPRReviewPromptProposesFixesInComment(t *testing.T) {
 	const marker = "PROPOSE FIXES, DO NOT PUSH THEM."
 	cases := []struct {
@@ -153,7 +169,9 @@ func TestHumanPRReviewPromptProposesFixesInComment(t *testing.T) {
 		{name: "human_off", pr: humanPR("sha1"), want: true},
 		{name: "human_off_combined", pr: humanPR("sha1"), combined: true, want: true},
 		{name: "human_on", pr: humanPR("sha1"), on: true, want: true},
+		{name: "human_on_combined", pr: humanPR("sha1"), on: true, combined: true, want: true},
 		{name: "agent_off", pr: dispatchPR("sha1")},
+		{name: "agent_on", pr: dispatchPR("sha1"), on: true},
 	}
 	for _, tc := range cases {
 		opts := fixGateOpts(tc.on)

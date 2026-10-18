@@ -442,9 +442,14 @@ func formatReviewThreadFixData(data []byte, agent string, resolveAfterFix bool) 
 		// resolveAfterFix (the global setting) already covers every PR when
 		// pr.HumanOpened is false; only a human-opened PR (hivecommons/
 		// hive#9361) can DISAGREE with the global setting, and only in the
-		// direction of withholding resolution, never granting it.
-		if pr.HumanOpened && resolveAfterFix {
-			b.WriteString("    step 3: DO NOT resolve — this PR is not yours (fix_human_prs), a person closes its threads (hivecommons/hive#9361). Reply and push the fix only.\n")
+		// direction of withholding resolution, never granting it. Nor is
+		// step 1's push allowed there: a hive-signed commit on someone
+		// else's PR fails the squash sign-off gate (hivecommons/hive#12897).
+		if pr.HumanOpened {
+			b.WriteString("    step 1: DO NOT check out, commit to, or push this branch — this PR is not yours (fix_human_prs), and a commit signed off by the hive fails its squash sign-off gate (hivecommons/hive#12897). Put the fix in your in-thread reply as a ```suggestion block (or a ```diff patch) for the author to apply.\n")
+			if resolveAfterFix {
+				b.WriteString("    step 3: DO NOT resolve — a person closes its threads (hivecommons/hive#9361).\n")
+			}
 		}
 		for _, t := range pr.Threads {
 			loc := t.Path

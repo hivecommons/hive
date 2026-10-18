@@ -8789,15 +8789,17 @@ type ReviewConfig struct {
 	// reviewer is no less stuck than an agent's, and it is the one with a
 	// person waiting on the other end.
 	AllAuthors bool `yaml:"all_authors,omitempty" json:"all_authors,omitempty"`
-	// FixHumanPRs lets the review-fix kick push commits onto PRs that this
-	// hive's agents did NOT open: a contributor's fork branch (through "allow
-	// edits by maintainers"), a maintainer's branch in the upstream repo, or
-	// another bot's PR. AllAuthors alone never implies it. AllAuthors promises
-	// that every PR is REVIEWED; a changes_requested verdict on a PR the hive
-	// did not author then stops at the published review, and the author
-	// decides what to change. Only with this on does the fixer agent
-	// (FixerAgent, then the PR lane, then scanner) check out someone else's
-	// branch and push to it (hivecommons/hive#8421).
+	// FixHumanPRs once let the review-fix kick push commits onto PRs that
+	// this hive's agents did NOT open: a contributor's fork branch (through
+	// "allow edits by maintainers"), a maintainer's branch in the upstream
+	// repo, or another bot's PR (hivecommons/hive#8421). It no longer does:
+	// the pushed commit is signed off by the hive, not the PR author, and the
+	// squash sign-off gate rejects it as bot-signoff, a red only the author
+	// can clear (hivecommons/hive#12897). A changes_requested verdict on such
+	// a PR stops at the published review, with the fix proposed there as a
+	// suggestion or patch block, whichever way this is set. On still makes
+	// the review-thread reconciler answer review-bot threads on those PRs,
+	// again with suggestions rather than pushes. AllAuthors never implies it.
 	//
 	// Pointer so "never set" is distinguishable from an explicit false: a hive
 	// that already ran with all_authors on was pushing fixes to every PR, and
@@ -9564,8 +9566,9 @@ func (r ReviewConfig) EffectiveMaxParallelReviews() int {
 	return DefaultMaxParallelReviews
 }
 
-// FixHumanPRsEnabled reports whether the review-fix kick may push to PRs the
-// hive's own agents did not open. Nil (never set) and an explicit false both
+// FixHumanPRsEnabled reports whether review.fix_human_prs is on for PRs the
+// hive's own agents did not open (see FixHumanPRs: it no longer permits a
+// push). Nil (never set) and an explicit false both
 // mean no: pushing to someone else's branch is a power to grant deliberately.
 func (r ReviewConfig) FixHumanPRsEnabled() bool {
 	return r.FixHumanPRs != nil && *r.FixHumanPRs

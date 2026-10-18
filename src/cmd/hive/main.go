@@ -10067,18 +10067,19 @@ type reviewFixAuditor interface {
 // auditWithheldReviewFixes puts every fix the planner refused this cycle on
 // the audit trail (#8421). A refusal is silent by design — the PR just does
 // not get a bot commit — and silence is the one thing an operator cannot
-// investigate, so each one names the PR, who opened it, and the setting
-// that would have allowed the push. The planner reports each head once, so
+// investigate, so each one names the PR, who opened it, and the
+// review.fix_human_prs value at the time (on no longer permits the push:
+// hivecommons/hive#12897). The planner reports each head once, so
 // this does not repeat on every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
 	for _, w := range plan.WithheldFixes {
-		logger.Info("review fix withheld: PR not hive-authored and "+w.Setting+" is off; review published, nothing pushed",
-			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting)
+		logger.Info("review fix withheld: PR not hive-authored; review published, nothing pushed",
+			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)
 		if auditor == nil {
 			continue
 		}
 		auditor.AuditLog("governor", "review_fix_withheld",
-			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=false reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.Reason), "")
+			fmt.Sprintf("pr=%s#%d head=%s author=%s setting=%s=%t reason=%s", w.Repo, w.Number, w.HeadSHA, w.Author, w.Setting, w.SettingEnabled, w.Reason), "")
 	}
 }
 
