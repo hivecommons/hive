@@ -2185,7 +2185,13 @@ function parseContributorEnvFile(file) {
     if (!line || line.startsWith('#')) continue;
     const idx = line.indexOf('=');
     if (idx <= 0) continue;
-    out[line.slice(0, idx)] = line.slice(idx + 1);
+    let value = line.slice(idx + 1).trim();
+    // WriteEnvProjection single-quotes HIVE_REPO_SCOPE so the file can be shell-sourced;
+    // strip one matching outer pair like `source` would.
+    if (value.length >= 2 && (value[0] === "'" || value[0] === '"') && value[value.length - 1] === value[0]) {
+      value = value.slice(1, -1);
+    }
+    out[line.slice(0, idx)] = value;
   }
   return out;
 }

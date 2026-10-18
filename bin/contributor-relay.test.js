@@ -3580,6 +3580,28 @@ test('an idle non-active hub cannot assign work until the poll slot reaches it',
   } finally { teardown(relay); }
 });
 
+test('parseContributorEnvFile strips matching outer shell quotes only', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const file = path.join(fs.mkdtempSync(path.join(scratchRoot, 'env-quotes-')), 'contributor.env');
+  fs.writeFileSync(file, [
+    "HIVE_REPO_SCOPE='*,github/github.com/org/a;github/github.com/org/b'",
+    'HIVE_HUB="https://a.example"',
+    'PLAIN=value',
+    "EMPTY=''",
+    "ODD='abc",
+  ].join('\n') + '\n');
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    const env = relay.parseContributorEnvFile(file);
+    assert.strictEqual(env.HIVE_REPO_SCOPE, '*,github/github.com/org/a;github/github.com/org/b');
+    assert.strictEqual(env.HIVE_HUB, 'https://a.example');
+    assert.strictEqual(env.PLAIN, 'value');
+    assert.strictEqual(env.EMPTY, '');
+    assert.strictEqual(env.ODD, "'abc");
+  } finally { teardown(relay); }
+});
+
 test('disabled flags are optional for legacy projections but otherwise strictly position-aligned', () => {
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {

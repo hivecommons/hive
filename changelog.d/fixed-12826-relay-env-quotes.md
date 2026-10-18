@@ -1,0 +1,1 @@
+- contributor-relay: strip the matching shell quotes `hivectl` writes around values in `contributor.env`, so `HIVE_REPO_SCOPE` reads back as written (#12826)
