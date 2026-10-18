@@ -78,15 +78,17 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 			return automerge.ContributorLanePolicy{}
 		}
 		p := cfg.AutoMerge.ContributorLane
+		tier := cfg.AutoMerge.ContributorTier
 		return automerge.ContributorLanePolicy{
-			Enabled:                 p.IsEnabled(),
-			HiveID:                  cfg.HiveID,
-			Soak:                    time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
-			RequireReviewerVerdict:  p.EffectiveRequireReviewerVerdict(),
-			Repos:                   p.RepoSet(),
-			ExcludeLabels:           p.ExcludeLabelSet(),
-			RequireTiers:            p.RequireTierSet(),
-			RegistryTiersSufficient: p.EffectiveRegistryTiersSufficient(),
+			Enabled:                  p.IsEnabled(),
+			HiveID:                   cfg.HiveID,
+			Soak:                     time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict:   p.EffectiveRequireReviewerVerdict(),
+			Repos:                    p.RepoSet(),
+			ExcludeLabels:            p.ExcludeLabelSet(),
+			RequireTiers:             p.RequireTierSet(),
+			RegistryTiersSufficient:  p.EffectiveRegistryTiersSufficient(),
+			AutoPromoteAfterMergedPR: tier.EffectiveAutoPromoteAfterMerged(),
 		}
 	}
 }

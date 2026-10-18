@@ -15,7 +15,7 @@ func TestContributorLanePolicyFuncReadsConfig(t *testing.T) {
 	}
 	cfg := &config.Config{HiveID: "hive-prod"}
 	policy := contributorLanePolicyFunc(cfg)()
-	if !policy.Enabled || policy.HiveID != "hive-prod" || policy.Soak != time.Duration(config.DefaultContributorLaneSoakMinutes)*time.Minute || !policy.RequireReviewerVerdict {
+	if !policy.Enabled || policy.HiveID != "hive-prod" || policy.Soak != time.Duration(config.DefaultContributorLaneSoakMinutes)*time.Minute || !policy.RequireReviewerVerdict || policy.AutoPromoteAfterMergedPR != config.DefaultContributorTierAutoPromoteAfterMerged {
 		t.Fatalf("default policy = %+v", policy)
 	}
 	for _, label := range config.DefaultContributorLaneExcludeLabels {
@@ -28,8 +28,9 @@ func TestContributorLanePolicyFuncReadsConfig(t *testing.T) {
 	}
 	off := false
 	cfg.AutoMerge.ContributorLane = config.ContributorLaneAutoMergeConfig{Enabled: &off, SoakMinutes: 15, RequireReviewerVerdict: &off, Repos: []string{"Widget"}, RequireTiers: []string{"Advisor"}}
+	cfg.AutoMerge.ContributorTier = config.ContributorTierAutoMergeConfig{AutoPromoteAfterMerged: 9}
 	policy = contributorLanePolicyFunc(cfg)()
-	if policy.Enabled || policy.Soak != 15*time.Minute || policy.RequireReviewerVerdict || !policy.Repos["widget"] {
+	if policy.Enabled || policy.Soak != 15*time.Minute || policy.RequireReviewerVerdict || !policy.Repos["widget"] || policy.AutoPromoteAfterMergedPR != 9 {
 		t.Fatalf("explicit policy = %+v", policy)
 	}
 	if !policy.RequireTiers["advisor"] || len(policy.RequireTiers) != 1 {

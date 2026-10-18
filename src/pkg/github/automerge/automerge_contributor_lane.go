@@ -157,6 +157,8 @@ const (
 // being observed and must not pin memory forever.
 const contributorSoakPruneAfter = 7 * 24 * time.Hour
 
+const contributorAutoPromotionMarkerPrefix = "<!-- hive:contributor-auto-promoted"
+
 // ContributorLanePolicy is the live auto_merge.contributor_lane.* policy.
 type ContributorLanePolicy struct {
 	Enabled bool
@@ -175,6 +177,9 @@ type ContributorLanePolicy struct {
 	// tier in the contributor registry without a linked issue or claim
 	// marker (auto_merge.contributor_lane.registry_tiers_sufficient).
 	RegistryTiersSufficient bool
+	// AutoPromoteAfterMergedPRs admits the author after this many recent
+	// merged PRs in the repo have no revert or sentinel-alert evidence.
+	AutoPromoteAfterMergedPR int
 }
 
 // ContributorRegistryTierFunc looks up the operator-set trust tier of a
@@ -470,6 +475,7 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 type contributorClaimMatch struct {
 	Issue        int
 	RegistryTier string
+	AutoPromoted int
 	Reason       string
 	// ObservedTier is the raw tier the lane saw for the author (registry
 	// profile or this hive's claim marker), admitted or not. It feeds the
@@ -480,6 +486,10 @@ type contributorClaimMatch struct {
 // admittedByRegistry reports whether the registry path admitted the author.
 func (m contributorClaimMatch) admittedByRegistry() bool {
 	return m.RegistryTier != ""
+}
+
+func (m contributorClaimMatch) admittedByAutoPromotion() bool {
+	return m.AutoPromoted > 0
 }
 
 // admittedRegistryTier returns the PR author's registry tier when the
@@ -519,6 +529,21 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if match.ObservedTier == "" {
 		match.ObservedTier = c.observedRegistryTier(author)
 	}
+	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 {
+		clean, checked, reason, promoteErr := c.contributorCleanMergedHistory(ctx, owner, repo, author, policy.AutoPromoteAfterMergedPR)
+		if promoteErr != nil {
+			return contributorClaimMatch{Reason: "contributor-lane:auto-promote-history"}, promoteErr
+		}
+		if clean {
+			if commentErr := c.commentContributorAutoPromotion(ctx, owner, repo, pr.GetNumber(), author, checked); commentErr != nil {
+				c.warn("contributor-lane auto-promotion audit comment failed", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "author", author, "error", commentErr)
+			}
+			return contributorClaimMatch{AutoPromoted: checked, ObservedTier: "trusted"}, nil
+		}
+		if reason != "" {
+			c.debug("contributor-lane auto-promotion skipped", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "author", author, "reason", reason, "clean_merged", checked)
+		}
+	}
 	return match, err
 }
 
@@ -537,6 +562,66 @@ func (c *Engine) observedRegistryTier(author string) string {
 		return ""
 	}
 	return strings.ToLower(strings.TrimSpace(tier))
+}
+
+func (c *Engine) contributorCleanMergedHistory(ctx context.Context, owner, repo, author string, need int) (bool, int, string, error) {
+	if c == nil || c.gh == nil || need <= 0 || strings.TrimSpace(author) == "" {
+		return false, 0, "disabled", nil
+	}
+	opts := &gh.PullRequestListOptions{State: "closed", Sort: "updated", Direction: "desc", ListOptions: gh.ListOptions{PerPage: 100}}
+	prs, _, err := c.gh.PullRequests.List(ctx, owner, repo, opts)
+	if err != nil {
+		return false, 0, "list-merged-prs", err
+	}
+	clean := 0
+	for _, old := range prs {
+		if old == nil || !strings.EqualFold(hgithub.SafeGetLogin(old.GetUser()), author) || old.GetMergedAt().IsZero() {
+			continue
+		}
+		if contributorPromotionBlockedByHistory(old) {
+			return false, clean, "revert-or-sentinel", nil
+		}
+		clean++
+		if clean >= need {
+			return true, clean, "", nil
+		}
+	}
+	return false, clean, "insufficient-clean-merges", nil
+}
+
+func contributorPromotionBlockedByHistory(pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	title := strings.ToLower(strings.TrimSpace(pr.GetTitle()))
+	if strings.HasPrefix(title, "revert") || strings.Contains(strings.ToLower(pr.GetBody()), "this reverts commit") {
+		return true
+	}
+	for _, label := range labelNames(pr.Labels) {
+		if strings.EqualFold(strings.TrimSpace(label), defaultSentinelLabel) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Engine) commentContributorAutoPromotion(ctx context.Context, owner, repo string, number int, author string, merged int) error {
+	if c == nil || c.gh == nil || number <= 0 {
+		return nil
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return err
+	}
+	for _, comment := range comments {
+		if comment != nil && strings.HasPrefix(comment.GetBody(), contributorAutoPromotionMarkerPrefix) {
+			return nil
+		}
+	}
+	body := fmt.Sprintf("%s author=%s merged=%d -->\n@%s is auto-promoted for contributor-lane merging on this PR: the last %d merged PRs by this author in this repository have no revert or sentinel-alert evidence. CI, reviewer verdict, diff fences, soak, holds and branch protection still apply.",
+		contributorAutoPromotionMarkerPrefix, strings.TrimPrefix(author, "@"), merged, strings.TrimPrefix(author, "@"), merged)
+	_, _, err = c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
 }
 
 // verifyContributorClaim finds the linked issue whose App-authored
@@ -730,6 +815,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if claim.admittedByRegistry() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
 	}
+	if claim.admittedByAutoPromotion() {
+		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", "contributor-lane:auto-promoted", "merged_prs", claim.AutoPromoted)
+	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
 	if err != nil {
 		return AutoMergeSweepEvent{}, contributorLaneReasonFilesEvidence, err
@@ -870,6 +958,9 @@ func contributorLaneAdmitPath(claim contributorClaimMatch) string {
 	if claim.admittedByRegistry() {
 		return contributorLaneReasonRegistryTrusted
 	}
+	if claim.admittedByAutoPromotion() {
+		return "contributor-lane:auto-promoted"
+	}
 	return "claim"
 }
 
@@ -888,6 +979,10 @@ func contributorLaneMergeComment(author string, claim contributorClaimMatch, soa
 	if claim.admittedByRegistry() {
 		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s holds the %s tier in this hive's contributor registry.",
 			int(soak.Minutes()), verdictText, login, claim.RegistryTier)
+	}
+	if claim.admittedByAutoPromotion() {
+		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s was auto-promoted after %d clean merged PRs in this repository.",
+			int(soak.Minutes()), verdictText, login, claim.AutoPromoted)
 	}
 	return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, claim by @%s on #%d verified.",
 		int(soak.Minutes()), verdictText, login, claim.Issue)

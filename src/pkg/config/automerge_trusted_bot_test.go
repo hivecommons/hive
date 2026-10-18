@@ -162,3 +162,18 @@ func TestContributorLaneAutoMergeConfigRegistryTiersSufficient(t *testing.T) {
 		t.Fatal("explicit registry_tiers_sufficient: false must turn the registry path off")
 	}
 }
+
+func TestContributorTierAutoMergeConfigAutoPromoteDefault(t *testing.T) {
+	var cfg ContributorTierAutoMergeConfig
+	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != DefaultContributorTierAutoPromoteAfterMerged {
+		t.Fatalf("default auto_promote_after_merged = %d, want %d", got, DefaultContributorTierAutoPromoteAfterMerged)
+	}
+	cfg.AutoPromoteAfterMerged = 7
+	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != 7 {
+		t.Fatalf("configured auto_promote_after_merged = %d, want 7", got)
+	}
+	cfg.AutoPromoteAfterMerged = -1
+	if got := cfg.EffectiveAutoPromoteAfterMerged(); got != 0 {
+		t.Fatalf("disabled auto_promote_after_merged = %d, want 0", got)
+	}
+}

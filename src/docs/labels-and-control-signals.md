@@ -399,7 +399,7 @@ stage but written only on change:
 
 | Label | Source |
 |---|---|
-| `role/trusted` | App-authored or self-authored lane; trusted-author lane allowed the author; registry/claim tier in the contributor lane's `require_tiers` (default `trusted`, `merger`) → auto-merge eligible |
+| `role/trusted` | App-authored or self-authored lane; trusted-author lane allowed the author; registry/claim tier in the contributor lane's `require_tiers` (default `trusted`, `merger`); or contributor-lane auto-promotion after `auto_merge.contributor_tier.auto_promote_after_merged` clean merged PRs with no reverts or sentinel alerts → auto-merge eligible |
 | `role/contributor` | registry/claim tier `contributor` → needs human lgtm/approve |
 | `role/newcomer` | registry/claim tier `newcomer` |
 | `role/untrusted` | no claim and no registry profile (external PR), `revoked`, or not a trusted author |

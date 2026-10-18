@@ -54,6 +54,7 @@ type contributorLaneFixture struct {
 	recheckHeadSHA  string
 	issueComments   []map[string]any // comments on the linked issue
 	prComments      []map[string]any // comments on the PR
+	mergedHistory   []map[string]any
 	issueCommentsSt int
 	reviews         []map[string]any
 	mergeStatus     int
@@ -114,6 +115,10 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
 			if fx.listStatus != 0 {
 				http.Error(w, "list error", fx.listStatus)
+				return
+			}
+			if r.URL.Query().Get("state") == "closed" {
+				json.NewEncoder(w).Encode(fx.mergedHistory)
 				return
 			}
 			json.NewEncoder(w).Encode([]map[string]any{pull("sha7")})
@@ -515,6 +520,21 @@ func registryTiers(tiers map[string]string) ContributorRegistryTierFunc {
 	}
 }
 
+func mergedHistoryPR(author, title string, labels ...string) map[string]any {
+	outLabels := make([]map[string]string, 0, len(labels))
+	for _, label := range labels {
+		outLabels = append(outLabels, map[string]string{"name": label})
+	}
+	return map[string]any{
+		"number":    100,
+		"title":     title,
+		"body":      "Done.",
+		"merged_at": "2026-10-15T12:00:00Z",
+		"user":      map[string]string{"login": author},
+		"labels":    outLabels,
+	}
+}
+
 // Regression for the contributor-lane registry admission path: an operator
 // marked mrbobbytables `trusted` in the contributor registry, yet #12045
 // (`Part of #12002`, a reference not a closing keyword) skipped with
@@ -693,6 +713,59 @@ func TestTrySweepContributorLanePRRegistryAdmission(t *testing.T) {
 			case "claim":
 				if !strings.Contains(fx.lastComment, "claim by @"+contributorLaneTestAuthor+" on #42 verified") {
 					t.Fatalf("comment = %q, want claim admission", fx.lastComment)
+				}
+			}
+		})
+	}
+}
+
+func TestTrySweepContributorLanePRAutoPromotion(t *testing.T) {
+	cleanHistory := func(n int) []map[string]any {
+		history := make([]map[string]any, 0, n)
+		for i := 0; i < n; i++ {
+			history = append(history, mergedHistoryPR(contributorLaneTestAuthor, "fix: clean change"))
+		}
+		return history
+	}
+	for _, tc := range []struct {
+		name         string
+		history      []map[string]any
+		threshold    int
+		wantReason   string
+		wantMerges   int
+		wantComments int
+	}{
+		{name: "five clean merged PRs admit and audit", history: cleanHistory(5), threshold: 5, wantMerges: 1, wantComments: 2},
+		{name: "below threshold stays untrusted", history: cleanHistory(4), threshold: 5, wantReason: contributorLaneReasonClaimTier},
+		{name: "revert blocks promotion", history: append(cleanHistory(2), mergedHistoryPR(contributorLaneTestAuthor, "Revert \"fix: clean change\"")), threshold: 3, wantReason: contributorLaneReasonClaimTier},
+		{name: "sentinel blocks promotion", history: append(cleanHistory(2), mergedHistoryPR(contributorLaneTestAuthor, "fix: risky", defaultSentinelLabel)), threshold: 3, wantReason: contributorLaneReasonClaimTier},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=contributor verified=true")
+			fx.mergedHistory = tc.history
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.AutoPromoteAfterMergedPR = tc.threshold
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+			event, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if fx.merges != tc.wantMerges {
+				t.Fatalf("merges = %d, want %d", fx.merges, tc.wantMerges)
+			}
+			if fx.comments != tc.wantComments {
+				t.Fatalf("comments = %d, want %d last=%q", fx.comments, tc.wantComments, fx.lastComment)
+			}
+			if tc.wantMerges > 0 {
+				if event.Tier != contributorLaneTier || !strings.Contains(fx.lastComment, "auto-promoted after 5 clean merged PRs") {
+					t.Fatalf("event=%+v comment=%q", event, fx.lastComment)
 				}
 			}
 		})
