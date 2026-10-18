@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -53,15 +54,6 @@ const RedPRStaleAfter = 10 * time.Minute
 // counts distinct red SHAs (real fix attempts); this counts re-nudges of an
 // unchanged red SHA.
 const MaxReEngagements = 6
-
-// SharedFailureSiblings is how many OTHER open PRs must be failing the same
-// check for that check to count as shared/base breakage rather than a defect
-// in this PR. It mirrors the rule the agents already follow in
-// hive-baseline-check.sh (src/policies/scanner-automerge.md): a check red on
-// the default branch or on at least three sibling PRs is not this PR's bug.
-// Counting shared breakage as a failed fix attempt is what turned one
-// /mnt/gocache runner outage into twelve needs-human PRs on 2026-09-28.
-const SharedFailureSiblings = 3
 
 // ReEngageCooldown is the minimum spacing between two re-engagements of the
 // SAME red head SHA.
@@ -275,6 +267,10 @@ type Observation struct {
 	// a slow shard can spend the whole re-engagement budget before the last
 	// check reports (hivecommons/hive#9472).
 	CIRunning bool
+	// IndependentControl marks a human-authored PR that was not opened through
+	// Hive. A shared failure requires one such control so multiple agent PRs
+	// carrying the same defect cannot suppress each other's escalation.
+	IndependentControl bool
 	// FailingChecks names the checks failing on this head, and SharedChecks
 	// the subset of those classified as shared/base breakage by
 	// MarkSharedFailures. Shared is set when EVERY failing check is shared:
@@ -286,39 +282,62 @@ type Observation struct {
 }
 
 // MarkSharedFailures classifies each red observation's failing checks as
-// PR-local or shared, in place, using the rule the agents already follow in
-// hive-baseline-check.sh: a check failing on at least SharedFailureSiblings
-// OTHER open PRs in the same enumeration pass is fleet-wide breakage (a broken
-// base branch, a runner outage), not this PR's defect. It costs no API call —
-// the failing-check names of every enumerated PR are already in hand.
+// PR-local or shared, in place. A check is shared only when it fails on every
+// conclusive open PR in the same repository and that evidence includes an
+// independent human-authored control. A green PR disproves a repo-wide outage;
+// pending PRs provide no evidence either way. The failing-check names of every
+// enumerated PR are already in hand, so classification costs no API call.
 //
 // An observation whose failing checks are ALL shared gets Shared = true; a
 // mixed one keeps its PR-local checks countable and records the shared subset,
 // which is what lets an escalation be un-parked when the shared incident
 // clears without losing a genuine PR-local failure.
 func MarkSharedFailures(obs []Observation) {
-	prsPerCheck := map[string]int{}
-	for _, o := range obs {
-		if !o.Red {
-			continue
-		}
-		for _, c := range uniqueStrings(o.FailingChecks) {
-			prsPerCheck[c]++
-		}
+	type repoEvidence struct {
+		conclusive int
+		hasControl bool
+		common     map[string]bool
 	}
+
+	evidence := make(map[string]*repoEvidence)
 	for i := range obs {
 		o := &obs[i]
 		o.SharedChecks = nil
 		o.Shared = false
-		if !o.Red || len(o.FailingChecks) == 0 {
+		if o.Pending {
 			continue
 		}
+
 		checks := uniqueStrings(o.FailingChecks)
-		for _, c := range checks {
-			// prsPerCheck counts this PR too, hence the > comparison: the
-			// threshold is "at least N OTHER PRs".
-			if prsPerCheck[c] > SharedFailureSiblings {
-				o.SharedChecks = append(o.SharedChecks, c)
+		e := evidence[o.Repo]
+		if e == nil {
+			e = &repoEvidence{common: make(map[string]bool, len(checks))}
+			for _, check := range checks {
+				e.common[check] = true
+			}
+			evidence[o.Repo] = e
+		} else {
+			for check := range e.common {
+				if !slices.Contains(o.FailingChecks, check) {
+					delete(e.common, check)
+				}
+			}
+		}
+		e.conclusive++
+		e.hasControl = e.hasControl || o.IndependentControl
+	}
+
+	for i := range obs {
+		o := &obs[i]
+		e := evidence[o.Repo]
+		if !o.Red || e == nil || e.conclusive < 2 || !e.hasControl || len(e.common) == 0 {
+			continue
+		}
+
+		checks := uniqueStrings(o.FailingChecks)
+		for _, check := range checks {
+			if e.common[check] {
+				o.SharedChecks = append(o.SharedChecks, check)
 			}
 		}
 		o.Shared = len(o.SharedChecks) == len(checks)

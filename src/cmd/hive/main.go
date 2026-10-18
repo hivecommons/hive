@@ -8087,29 +8087,38 @@ func getEscalationStore() *escalation.Store {
 }
 
 // hivePRObservations projects the enumerated hive-authored PRs into escalation
-// observations (repo fully-qualified, Red == a required check failed). Shared by
-// recordRedStaleness and the reaper so both classify PRs identically. A PR is
-// "red" here strictly per HasFailingRequiredCheck — GENERIC check state, never a
-// specific linter or language.
+// observations (repo fully-qualified, Red == a required check failed). Shared
+// by recordRedStaleness and the reaper so both classify PRs identically.
 //
 // owners maps "org/repo#number" to the agent that opened the PR (see
 // auditPRAgents); pass nil when ownership is not needed. Shared/base CI
-// breakage is classified across the WHOLE pass before the observations are
-// returned, so every consumer agrees on which failures belong to this PR
-// (hivecommons/hive#9473).
+// breakage is classified across every PR in the pass before human and
+// non-Hive observations are removed. A green PR is counter-evidence, and an
+// independent human-authored PR must confirm the shared failure.
 func hivePRObservations(cfg *config.Config, actionable *github.ActionableResult, owners map[string]string) []escalation.Observation {
 	if actionable == nil {
 		return nil
 	}
-	var obs []escalation.Observation
-	for _, pr := range actionable.PRs.Items {
-		if !isHiveAgentAuthor(cfg, pr.Author) {
-			continue
+	all := allEscalationObservations(cfg, actionable, owners)
+	agentObs := all[:0]
+	for i, pr := range actionable.PRs.Items {
+		if isHiveAgentAuthor(cfg, pr.Author) {
+			agentObs = append(agentObs, all[i])
 		}
-		obs = append(obs, escalationObservation(cfg, pr, owners))
 	}
-	escalation.MarkSharedFailures(obs)
-	return obs
+	return agentObs
+}
+
+func allEscalationObservations(cfg *config.Config, actionable *github.ActionableResult, owners map[string]string) []escalation.Observation {
+	all := make([]escalation.Observation, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
+	for _, pr := range actionable.PRs.Items {
+		all = append(all, escalationObservation(cfg, pr, owners))
+	}
+	for _, pr := range actionable.PRs.Held {
+		all = append(all, escalationObservation(cfg, pr, owners))
+	}
+	escalation.MarkSharedFailures(all)
+	return all
 }
 
 // escalationObservation projects one enumerated PR into the fix-loop ledger's
@@ -8129,18 +8138,19 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 	}
 	red := pr.HasFailingRequiredCheck()
 	return escalation.Observation{
-		Repo:          repo,
-		Number:        pr.Number,
-		HeadSHA:       pr.HeadSHA,
-		HeadTree:      pr.HeadTree,
-		Red:           red,
-		Pending:       !red && pr.CIStatus != "success",
-		CIRunning:     red && pr.CIChecksRunning,
-		Labeled:       escalation.HasNeedsHumanLabel(pr.Labels),
-		Excerpt:       pr.CIFailureExcerpt,
-		Labels:        pr.Labels,
-		FailingChecks: pr.FailingChecks,
-		Agent:         owners[escalation.Key(repo, pr.Number)],
+		Repo:               repo,
+		Number:             pr.Number,
+		HeadSHA:            pr.HeadSHA,
+		HeadTree:           pr.HeadTree,
+		Red:                red,
+		Pending:            !red && pr.CIStatus != "success",
+		CIRunning:          red && pr.CIChecksRunning,
+		Labeled:            escalation.HasNeedsHumanLabel(pr.Labels),
+		Excerpt:            pr.CIFailureExcerpt,
+		Labels:             pr.Labels,
+		FailingChecks:      pr.FailingChecks,
+		Agent:              owners[escalation.Key(repo, pr.Number)],
+		IndependentControl: isIndependentCIControl(cfg, pr),
 	}
 }
 
@@ -8186,6 +8196,13 @@ func isHiveAgentAuthor(cfg *config.Config, author string) bool {
 		return true
 	}
 	return strings.HasSuffix(author, "[bot]") && !dependencyBots[author]
+}
+
+// isIndependentCIControl reports whether a PR supplies human-authored evidence
+// independent of Hive. Bot-authored and Hive-attributed contributor-relay PRs
+// cannot prove that a failure also affects unrelated human work.
+func isIndependentCIControl(cfg *config.Config, pr github.PullRequest) bool {
+	return !isHiveAgentAuthor(cfg, pr.Author) && !pr.AuthorNonHuman && !pr.HiveAttributed
 }
 
 // recordRedStaleness updates the shared staleness clock (first-seen-red per red
@@ -8505,31 +8522,29 @@ func runEscalationSweep(
 	}
 	getEscalationStore()
 
-	var obs []escalation.Observation
 	type prMeta struct{ checks []string }
 	meta := map[string]prMeta{}
 	owners := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	prs := append([]github.PullRequest(nil), actionable.PRs.Items...)
-	for _, pr := range actionable.PRs.Held {
-		if pr.ReporterTrustReason != "" {
-			prs = append(prs, pr)
+	all := allEscalationObservations(cfg, actionable, owners)
+	itemCount := len(actionable.PRs.Items)
+
+	obs := all[:0]
+	for i, o := range all {
+		var pr *github.PullRequest
+		if i < itemCount {
+			pr = &actionable.PRs.Items[i]
+		} else {
+			pr = &actionable.PRs.Held[i-itemCount]
 		}
-	}
-	for _, pr := range prs {
-		if !isHiveAgentAuthor(cfg, pr.Author) && pr.ReporterTrustReason == "" {
-			continue
-		}
-		o := escalationObservation(cfg, pr, owners)
 		if pr.ReporterTrustReason != "" {
 			escalationStore.SetReporterTrustReason(o.Repo, o.Number, pr.ReporterTrustReason)
 		}
+		if (i >= itemCount || !isHiveAgentAuthor(cfg, pr.Author)) && pr.ReporterTrustReason == "" {
+			continue
+		}
 		obs = append(obs, o)
-		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: pr.FailingChecks}
+		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: o.FailingChecks}
 	}
-	// Classify shared/base CI breakage across the whole pass before counting:
-	// a check failing on this PR and on at least SharedFailureSiblings others
-	// is an incident, not a failed fix attempt (hivecommons/hive#9473).
-	escalation.MarkSharedFailures(obs)
 	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
 
 	for _, o := range obs {
