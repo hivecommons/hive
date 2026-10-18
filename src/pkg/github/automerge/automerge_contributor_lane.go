@@ -947,6 +947,8 @@ func contributorLaneConflictReason(pr *gh.PullRequest) string {
 	switch strings.ToLower(strings.TrimSpace(pr.GetMergeableState())) {
 	case "dirty", "conflicting":
 		return "conflicting"
+	case "unknown":
+		return "mergeable-unknown"
 	default:
 		return ""
 	}

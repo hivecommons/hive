@@ -433,6 +433,48 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 	}
 }
 
+func TestApplyStageLabelsContributorConflictBeatsTrustTier(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 17, 22, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, apiURLOf(t, api), clock)
+
+	pr := nudgePR(12822, "sha-conflict")
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "conflicting", false, nil)
+	e.noteStageRole("acme", "widget", 12822, stagelabels.RoleContributor)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	added := api.added
+	if len(added) != 1 || !slices.Contains(added[0], "stage/072-returned-to-contributor") || slices.Contains(added[0], "stage/090-ready-for-human-merge") {
+		t.Fatalf("conflicting contributor staged incorrectly: result=%+v added=%v", res, added)
+	}
+	rec, ok := e.stageStoreOrShared().Get(stageKey("acme", "widget", 12822))
+	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != "conflicting" {
+		t.Fatalf("record = %+v, want 072 conflicting", rec)
+	}
+}
+
+func TestApplyStageLabelsUnknownMergeabilityDoesNotFlipToHumanMerge(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 17, 22, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, apiURLOf(t, api), clock)
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	pr := nudgePR(12822, "sha-unknown", labels...)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "mergeable-unknown", false, nil)
+	e.noteStageRole("acme", "widget", 12822, stagelabels.RoleContributor)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Writes != 0 || api.writes() != 0 {
+		t.Fatalf("unknown mergeability should keep previous stage: result=%+v added=%v removed=%v comments=%v", res, api.added, api.removed, api.comments)
+	}
+}
+
 // TestApplyStageLabelsWeakOpinionWaitsForEveryLane reproduces the split
 // drain seen on the hive spoke: two drivers share one tracker, so a
 // maintainer PR's trusted-author observation (050, author trusted) is
