@@ -238,7 +238,9 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
     busy_no_activity_threshold: 30m
                                  # surface Working/no-transcript activity after repeated
                                  #   undeliverable kicks; default 30m. At twice
-                                 #   this silence the session is restarted; a
+                                 #   this silence the session is restarted (also
+                                 #   when the live CLI pane shows no input prompt
+                                 #   at all); a
                                  #   kick_failed_repeatedly self-report is filed
                                  #   only if kicks still fail after that restart
     max_turn_duration: 0s        # optional visibility-only Working ceiling; 0 disables

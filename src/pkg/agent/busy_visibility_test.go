@@ -346,6 +346,13 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		t.Fatal("no-transcript wedged pane did not escalate")
 	}
 
+	// A live CLI stuck off its input prompt (#12916): every kick times out
+	// with "CLI did not reach input prompt" yet the pane never shows Working.
+	offPrompt := "GitHub Copilot v1.0.88\nLoading environment..."
+	if got := busyNoActivityStall(stuck(), offPrompt, now); !strings.Contains(got, "pane shows no input prompt") {
+		t.Fatalf("off-prompt wedged pane reason = %q, want no-input-prompt restart reason", got)
+	}
+
 	cases := map[string]func(a *AgentProcess) string{
 		"too few kicks": func(a *AgentProcess) string {
 			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
@@ -361,6 +368,13 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		},
 		"pane no longer working": func(a *AgentProcess) string {
 			return "❯ "
+		},
+		"bare shell left to crash recovery": func(a *AgentProcess) string {
+			return "agent@hive:~$ "
+		},
+		"off-prompt pane too few kicks": func(a *AgentProcess) string {
+			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
+			return "GitHub Copilot v1.0.88\nLoading environment..."
 		},
 		"within restart cooldown": func(a *AgentProcess) string {
 			a.lastSessionStallRestart = now.Add(-time.Minute)

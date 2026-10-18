@@ -325,13 +325,23 @@ func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 // Without this the condition was visibility-only: a wedged CLI refused kicks
 // indefinitely and nothing broke the loop (#12505). Restarts share the
 // session-liveness cooldown so a pane that wedges again is not churned.
+//
+// A live CLI pane that shows neither Working nor any input prompt is wedged
+// the same way: every kick times out with "CLI did not reach input prompt"
+// (#12916), and since #12860 only a restart attempt lets that self-report, so
+// without this branch such a pane was neither recovered nor reported. A bare
+// shell (no CLI marker) is left to crash recovery.
 // Caller holds m.mu (read or write).
 func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string {
 	if agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
 		return ""
 	}
+	paneState := "pane shows Working"
 	if !paneShowsAgentWorking(pane) && !paneShowsActiveWork(pane) {
-		return ""
+		if !paneHasCLIMarker(pane) || paneShowsInputPrompt(pane) {
+			return ""
+		}
+		paneState = "pane shows no input prompt"
 	}
 	if now.Sub(agent.lastSessionStallRestart) < sessionStallRestartCooldown {
 		return ""
@@ -347,8 +357,8 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 	if silentFor < busyNoActivityRecoveryFactor*agent.Config.EffectiveBusyNoActivityThreshold() {
 		return ""
 	}
-	return fmt.Sprintf("%s: pane shows Working with no transcript activity for %s; %d kicks undeliverable",
-		busyNoActivityCondition, roundDurationForHumans(silentFor), agent.KicksUndeliverable)
+	return fmt.Sprintf("%s: %s with no transcript activity for %s; %d kicks undeliverable",
+		busyNoActivityCondition, paneState, roundDurationForHumans(silentFor), agent.KicksUndeliverable)
 }
 
 func roundDurationForHumans(d time.Duration) string {
