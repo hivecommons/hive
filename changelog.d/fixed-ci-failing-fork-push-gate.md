@@ -1,0 +1,1 @@
+- CI_FAILING repair queue keeps non-adopted fork PRs comment-only even when the fork allows maintainer edits; only stage-074 adopted fork PRs are listed as push-repairable, and those name the contributor branch.

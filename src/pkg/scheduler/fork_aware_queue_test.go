@@ -152,3 +152,51 @@ func TestFormatRedPRFixData_AdoptedForkPRIsYours(t *testing.T) {
 		t.Errorf("non-adopted fork PR must stay withheld:\n%s", out)
 	}
 }
+
+// reachable_action describes token capability: since #12899 a fork that
+// allows maintainer edits (GitHub's default for contributor PRs) reports
+// push. The shared CI_FAILING queue must still gate on policy, like
+// FIX-BEFORE-NEW does: only an adopted (stage 074) fork PR is pushable; every
+// other fork row stays in the comment-only section with its head repo named,
+// whatever its reachable_action says.
+func TestBuildCIFailingList_NonAdoptedForkWithMaintainerEditsStaysCommentOnly(t *testing.T) {
+	dir := t.TempDir()
+	orig := ciFailingPath
+	ciFailingPath = filepath.Join(dir, "ci-failing.json")
+	t.Cleanup(func() { ciFailingPath = orig })
+	fixture := `{"ci_failing":[
+  {"number":841,"repo":"projectbluefin/testsuite","title":"contributor fork, maintainer edits on","author":"arteeh","head_sha":"f3",
+   "head_ref":"main","head_repo":"arteeh/testsuite","from_fork":true,"reachable_action":"push","failing_checks":["signoff"]},
+  {"number":12527,"repo":"projectbluefin/testsuite","title":"adopted","author":"karibhou","head_sha":"f5",
+   "head_ref":"fix","head_repo":"karibhou/testsuite","from_fork":true,"adopted":true,"reachable_action":"push","failing_checks":["build"]},
+  {"number":12528,"repo":"projectbluefin/testsuite","title":"adopted but fork edits off","author":"dana","head_sha":"f6",
+   "head_ref":"fix2","head_repo":"dana/testsuite","from_fork":true,"adopted":true,"reachable_action":"comment-only","failing_checks":["build"]},
+  {"number":840,"repo":"projectbluefin/testsuite","title":"hive fix","author":"hive[bot]","head_sha":"f2",
+   "head_ref":"hive/fix-840","head_repo":"projectbluefin/testsuite","reachable_action":"push","failing_checks":["build"]}
+]}`
+	if err := os.WriteFile(ciFailingPath, []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := newScheduler().buildCIFailingList()
+
+	forkIdx := strings.Index(out, "FORK PRs (2 — review/comment only")
+	if forkIdx < 0 {
+		t.Fatalf("fork section missing or wrong count:\n%s", out)
+	}
+	push, forks := out[:forkIdx], out[forkIdx:]
+	if strings.Contains(push, "#841 ") || strings.Contains(push, "#12528 ") {
+		t.Errorf("non-adopted or unreachable fork PR leaked into the push-repairable section:\n%s", push)
+	}
+	if !strings.Contains(forks, "#841 projectbluefin/testsuite by @arteeh [fork: arteeh/testsuite:main — comment/check-report only]") {
+		t.Errorf("non-adopted fork PR must be listed comment-only with its head repo:\n%s", forks)
+	}
+	if !strings.Contains(forks, "#12528 ") {
+		t.Errorf("adopted fork without maintainer edits is not pushable:\n%s", forks)
+	}
+	if !strings.Contains(push, "#840 ") {
+		t.Errorf("same-repo hive PR must stay pushable:\n%s", push)
+	}
+	if !strings.Contains(push, "#12527 projectbluefin/testsuite by @karibhou (sha:f5) [adopted fork: karibhou/testsuite:fix — push to the contributor's branch, never to a same-named base branch]") {
+		t.Errorf("adopted fork PR must be pushable and name the fork head:\n%s", push)
+	}
+}
