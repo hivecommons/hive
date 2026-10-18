@@ -331,6 +331,12 @@ func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 // (#12916), and since #12860 only a restart attempt lets that self-report, so
 // without this branch such a pane was neither recovered nor reported. A bare
 // shell (no CLI marker) is left to crash recovery.
+//
+// A consent/blocking-prompt screen renders a "❯"-selected menu line, so it
+// satisfies paneShowsInputPrompt, yet waitForInputPromptForAgentUnless never
+// accepts it and every kick fails the same way (#12921). It is checked before
+// the input-prompt test so it is not masked; only inference backends have a
+// consent-dismissal path, so on every other backend it restarts here.
 // Caller holds m.mu (read or write).
 func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string {
 	if agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
@@ -338,10 +344,21 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 	}
 	paneState := "pane shows Working"
 	if !paneShowsAgentWorking(pane) && !paneShowsActiveWork(pane) {
-		if !paneHasCLIMarker(pane) || paneShowsInputPrompt(pane) {
+		switch {
+		case !paneHasCLIMarker(pane):
 			return ""
+		case paneShowsConsentScreen(pane):
+			// Inference backends re-run prompt dismissal for this instead
+			// (dismissConsentIfStuck); a restart would loop to the same screen.
+			if IsInferenceBackend(effectiveBackend(agent)) {
+				return ""
+			}
+			paneState = "pane shows a consent or blocking prompt"
+		case paneShowsInputPrompt(pane):
+			return ""
+		default:
+			paneState = "pane shows no input prompt"
 		}
-		paneState = "pane shows no input prompt"
 	}
 	if now.Sub(agent.lastSessionStallRestart) < sessionStallRestartCooldown {
 		return ""

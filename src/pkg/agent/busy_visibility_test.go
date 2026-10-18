@@ -353,6 +353,13 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		t.Fatalf("off-prompt wedged pane reason = %q, want no-input-prompt restart reason", got)
 	}
 
+	// A live CLI parked on a consent/blocking menu (#12921): the "❯"-selected
+	// option satisfies paneShowsInputPrompt, but no kick is ever delivered.
+	consent := "Bypass Permissions mode\n❯ 1. No, exit\n  2. Yes, I accept\nEnter to confirm"
+	if got := busyNoActivityStall(stuck(), consent, now); !strings.Contains(got, "pane shows a consent or blocking prompt") {
+		t.Fatalf("consent-screen wedged pane reason = %q, want consent/blocking-prompt restart reason", got)
+	}
+
 	cases := map[string]func(a *AgentProcess) string{
 		"too few kicks": func(a *AgentProcess) string {
 			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
@@ -375,6 +382,14 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		"off-prompt pane too few kicks": func(a *AgentProcess) string {
 			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
 			return "GitHub Copilot v1.0.88\nLoading environment..."
+		},
+		"consent screen on inference backend left to dismissal": func(a *AgentProcess) string {
+			a.Config.Backend = "vllm"
+			return consent
+		},
+		"consent screen too few kicks": func(a *AgentProcess) string {
+			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
+			return consent
 		},
 		"within restart cooldown": func(a *AgentProcess) string {
 			a.lastSessionStallRestart = now.Add(-time.Minute)
