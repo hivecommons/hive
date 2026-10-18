@@ -1,0 +1,1 @@
+- Preserve a settled `requires_human` verdict while a replacement review of the same head and PR body is incomplete, preventing partial report refreshes from reopening the decision as review-pending ([#12878](https://github.com/hivecommons/hive/issues/12878)).

@@ -913,8 +913,9 @@ const VerdictRetention = 30 * 24 * time.Hour
 // of comments on work it had already handled.
 //
 // Merging keeps the union. Freshly collected verdicts win for a given
-// repo/number/head-SHA, previously recorded ones survive, and anything not
-// re-confirmed within VerdictRetention is dropped.
+// repo/number/head-SHA/body-digest, except that incomplete coverage cannot
+// replace a settled human decision. Previously recorded verdicts survive,
+// and anything not re-confirmed within VerdictRetention is dropped.
 func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Artifact, error) {
 	fresh, err := Collect(dir, opts)
 	if err != nil {
@@ -944,6 +945,14 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
 		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
+		if prior, ok := merged[key]; ok && prior.Verdict == VerdictRequiresHuman && item.Verdict == VerdictIncomplete {
+			// A re-review can arrive one perspective at a time. Missing
+			// reports do not withdraw the previous human decision or its
+			// question: doing so sends 085 back to 050 on the same head.
+			// Keep its timestamp too, so partial coverage cannot extend the
+			// retention window or make a deliberate revisit look complete.
+			continue
+		}
 		if _, seen := merged[key]; !seen {
 			order = append(order, key)
 		}
