@@ -194,9 +194,11 @@ type stageDetail struct {
 	// DCO, DCOTotal and DCOUnsigned are the stage pass's own commit check
 	// for the head (hivecommons/hive#12542); filled by ApplyStageLabels,
 	// not by the lanes.
-	DCO         stagelabels.DCOState
-	DCOTotal    int
-	DCOUnsigned int
+	DCO              stagelabels.DCOState
+	DCOTotal         int
+	DCOUnsigned      int
+	DCOUnsignedHive  int
+	DCOUnsignedOther int
 	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
 	// on the head (required-check set or reported status/check run): the
 	// detected "this repo enforces DCO" signal the 072 override needs when
@@ -1048,7 +1050,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// The commit check is the one author-side gate decided here,
 			// before CI or a verdict: an unsigned head goes straight back
 			// to its author (hivecommons/hive#12542).
-			total, unsigned, err := c.stageDCO(ctx, store, key, obs)
+			stats, err := c.stageDCO(ctx, store, key, obs)
 			if err != nil {
 				c.warn("stage labels: dco commit check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 				if firstErr == nil {
@@ -1056,7 +1058,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 			dcoRead = err == nil
-			obs.Detail.DCO, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned = dcoState(total, unsigned), total, unsigned
+			obs.Detail.DCO = dcoState(stats.total, stats.unsigned)
+			obs.Detail.DCOTotal = stats.total
+			obs.Detail.DCOUnsigned = stats.unsigned
+			obs.Detail.DCOUnsignedHive = stats.unsignedHive
+			obs.Detail.DCOUnsignedOther = stats.unsignedOther
 			want.DCO = obs.Detail.DCO
 			// The label is written everywhere; the 072 override only where
 			// the repo actually enforces DCO (config, else detected gate).
@@ -1098,7 +1104,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
 			if dcoRead {
-				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned)
+				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned, obs.Detail.DCOUnsignedHive)
 			}
 			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
@@ -1215,7 +1221,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
-			n, err := c.settleAdoption(ctx, store, key, obs, now)
+			n, err := c.settleAdoption(ctx, store, key, obs, policy, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

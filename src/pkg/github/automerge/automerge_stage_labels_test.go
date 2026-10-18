@@ -38,11 +38,19 @@ type stageAPI struct {
 	// commits is what GET /pulls/N/commits answers (one message per
 	// commit); a PR not listed has no commits, so its DCO state stays
 	// unknown and the test's label expectations are unaffected.
-	commits     map[int][]string
-	commitReads int
+	commits       map[int][]string
+	commitDetails map[int][]stageCommitFixture
+	commitReads   int
 	// extra handles routes beyond labels/comments (returns true when it
 	// served the request); the adoption tests use it for refs and pulls.
 	extra func(w http.ResponseWriter, r *http.Request) bool
+}
+
+type stageCommitFixture struct {
+	message     string
+	authorLogin string
+	authorName  string
+	authorEmail string
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -95,8 +103,18 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/commits"))
 			api.commitReads++
 			out := []map[string]any{}
-			for i, msg := range api.commits[n] {
-				out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]string{{"sha": "p"}}})
+			if details := api.commitDetails[n]; len(details) > 0 {
+				for i, c := range details {
+					var author any
+					if c.authorLogin != "" {
+						author = map[string]string{"login": c.authorLogin}
+					}
+					out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "author": author, "committer": author, "commit": map[string]any{"message": c.message, "author": map[string]any{"name": c.authorName, "email": c.authorEmail}, "committer": map[string]any{"name": c.authorName, "email": c.authorEmail}}, "parents": []map[string]string{{"sha": "p"}}})
+				}
+			} else {
+				for i, msg := range api.commits[n] {
+					out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]string{{"sha": "p"}}})
+				}
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/labels"):

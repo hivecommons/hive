@@ -1,0 +1,1 @@
+- List held review-pending satellite pull requests in reviewer kicks so the prompt matches the dispatched review queue.

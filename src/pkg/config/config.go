@@ -9187,7 +9187,9 @@ type ContributorTierAutoMergeConfig struct {
 	// AutoPromoteAfterMerged lets the contributor lane conservatively treat a
 	// contributor as trusted after this many recently merged PRs by the same
 	// author in the repository, provided that window has no reverts or sentinel
-	// alerts. 0/unset means DefaultContributorTierAutoPromoteAfterMerged;
+	// alerts — including reverts of those PRs merged by someone else — and
+	// the author is not `revoked` in the contributor registry. 0/unset means
+	// DefaultContributorTierAutoPromoteAfterMerged;
 	// negative disables the ratchet.
 	AutoPromoteAfterMerged int `yaml:"auto_promote_after_merged,omitempty" json:"auto_promote_after_merged,omitempty"`
 }

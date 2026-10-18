@@ -24,6 +24,13 @@ type adoptAPI struct {
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
 	commits     map[string]adoptCommit
+	// failRefs makes POST git/refs answer 500; refAttempts counts them.
+	failRefs    bool
+	refAttempts int
+	// compareFiles are the base-side files served by GET compare/head...base;
+	// failCompare makes it answer 500.
+	compareFiles []string
+	failCompare  bool
 }
 
 type adoptCommit struct {
@@ -46,6 +53,12 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			SHA string `json:"sha"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		a.refAttempts++
+		if a.failRefs {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
 		if _, exists := a.refs[body.Ref]; exists {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Reference already exists"})
@@ -84,6 +97,18 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/compare/"):
+		if a.failCompare {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := []map[string]string{}
+		for _, f := range a.compareFiles {
+			files = append(files, map[string]string{"filename": f})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
 		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")
@@ -307,9 +332,27 @@ func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
 	if !adoptionNeedsDCORehome(obs, false) {
 		t.Fatal("unsigned commits without branch push permission must re-home")
 	}
-	if adoptionNeedsDCORehome(obs, true) {
-		t.Fatal("branch push permission allows in-place DCO repair")
+	if !adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("unknown unsigned commit ownership must re-home")
 	}
+	obs.Detail.DCOUnsignedHive = 2
+	if adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("branch push permission with only hive-authored unsigned commits allows in-place repair")
+	}
+	if !adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("hive-authored unsigned commits without branch push permission must still re-home")
+	}
+	inPlace := stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeInPlace}
+	if adoptedHeadNeedsDCORehome(obs, inPlace, true) {
+		t.Fatal("already adopted in place with App-owned unsigned commits and push access stays in place")
+	}
+	if !adoptedHeadNeedsDCORehome(obs, inPlace, false) {
+		t.Fatal("already adopted in place without push access must re-home")
+	}
+	if adoptedHeadNeedsDCORehome(obs, stagelabels.Record{AdoptedHead: "aaa", AdoptedBy: 90, AdoptMode: stagelabels.AdoptModeSupersede}, false) {
+		t.Fatal("a superseded adoption is never re-homed again")
+	}
+	obs.Detail.DCOUnsignedHive = 0
 	obs.Detail.DCOUnsigned = 0
 	if adoptionNeedsDCORehome(obs, false) {
 		t.Fatal("signed head does not need DCO re-home")
@@ -617,6 +660,46 @@ func TestAdoptionUnregisteredAuthor(t *testing.T) {
 	}
 }
 
+// A base that moved past a .github/workflows/ change cannot be synced into the
+// PR branch by the App (#12865, #6985): supersede instead of adopting in place.
+func TestAdoptionInPlaceWorkflowGuard(t *testing.T) {
+	cases := []struct {
+		name        string
+		files       []string
+		failCompare bool
+		wantInPlace bool
+	}{
+		{name: "base moved with workflow change", files: []string{"src/a.go", ".github/workflows/x.yml"}},
+		{name: "base moved with only non-workflow files", files: []string{"src/a.go", ".github/CODEOWNERS"}, wantInPlace: true},
+		{name: "compare error", failCompare: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.adopt.compareFiles = tc.files
+			h.adopt.failCompare = tc.failCompare
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			comments := adoptionComments(h.api)
+			if len(comments) != 1 {
+				t.Fatalf("adoption comments: %v", h.api.comments)
+			}
+			if got := strings.Contains(comments[0], "mode=in-place"); got != tc.wantInPlace {
+				t.Fatalf("in-place = %v, want %v: %s", got, tc.wantInPlace, comments[0])
+			}
+			if superseded := len(h.adopt.pulls) == 1; superseded == tc.wantInPlace {
+				t.Fatalf("superseding PRs = %d, in-place want %v", len(h.adopt.pulls), tc.wantInPlace)
+			}
+		})
+	}
+}
+
 // In-place adoption: the PR allows maintainer edits, so the hive takes over
 // the PR's own branch (no superseding PR), flips to 074, keeps the adoption
 // across its own pushes and yields when the contributor pushes.
@@ -732,6 +815,192 @@ func TestAdoptionInPlaceForConflictingOfflineContributor(t *testing.T) {
 	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
 	if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonOffline {
 		t.Fatalf("record: %+v", rec)
+	}
+}
+
+func TestAlreadyAdoptedInPlaceDCOFailureRehomesAndClosesOriginal(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned agent commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if res.Comments != 1 {
+		t.Fatalf("comments=%d, want 1", res.Comments)
+	}
+	if got := h.adopt.refs["refs/heads/hive/adopt-7"]; got != "aaa" {
+		t.Fatalf("rehome branch sha=%q refs=%v", got, h.adopt.refs)
+	}
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("pulls=%v", h.adopt.pulls)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	for _, want := range []string{"**DCO repair required:**", "git cherry-pick -s", "Supersedes #7"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rehome body missing %q:\n%s", want, body)
+		}
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "reason=dco-rehome mode=supersede superseded_by=90 head=aaa") {
+		t.Fatalf("rehome comment: %v", h.api.comments)
+	}
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original not closed after DCO rehome: %v", h.adopt.prEdits)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptReason != AdoptReasonDCORehome {
+		t.Fatalf("record not moved to supersede adoption: %+v", rec)
+	}
+}
+
+// The ownership split is cached on the store record, so the decision does
+// not depend on the stage label being present on the PR.
+func TestAlreadyAdoptedInPlaceDCOFailureRehomesFromCachedSplitWithoutStageLabel(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	store := h.e.stageStoreOrShared()
+	if rec, _ := store.Get(key); rec.DCOUnsigned != 1 || rec.DCOUnsignedHive != 0 {
+		t.Fatalf("cached split: %+v", rec)
+	}
+	store.MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	reads := h.api.commitReads
+	h.observe(adoptPR(7, "aaa", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if h.api.commitReads != reads {
+		t.Fatalf("commit reads=%d, want cached decision (%d)", h.api.commitReads, reads)
+	}
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 {
+		t.Fatalf("expected re-home from cached split: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+}
+
+func TestAlreadyAdoptedInPlaceRehomeIsTriedOncePerHead(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.adopt.failRefs = true
+	h.api.commits = map[int][]string{7: {"fix: unsigned contributor commit"}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	labels := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", labels...), "check-failing:DCO", false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the failed re-home push")
+	}
+	if h.adopt.refAttempts != 1 {
+		t.Fatalf("ref attempts=%d, want 1", h.adopt.refAttempts)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptReason != AdoptReasonDCORehome {
+		t.Fatalf("attempt not recorded: %+v", rec)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:DCO")
+	if h.adopt.refAttempts != 1 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("failed re-home retried: attempts=%d pulls=%v", h.adopt.refAttempts, h.adopt.pulls)
+	}
+}
+
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureStaysInPlace(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.DCOUnsigned != 1 || rec.DCOUnsignedHive != 1 {
+		t.Fatalf("cached split: %+v", rec)
+	}
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if res.Comments != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.prEdits) != 0 {
+		t.Fatalf("App-authored unsigned commits should stay in-place for rewrite: res=%+v pulls=%v refs=%v edits=%v comments=%v", res, h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptedBy != 0 {
+		t.Fatalf("record should remain in-place adoption: %+v", rec)
+	}
+}
+
+// A lane-looking git email is contributor-controlled and never makes an
+// unsigned commit hive-owned: without App linkage the PR re-homes.
+func TestAlreadyAdoptedInPlaceForgedLaneEmailDCOFailureRehomes(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "feat: signed contributor\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{message: "fix: looks like the hive", authorName: "architect", authorEmail: "architect@hive.kubestellar.io"},
+	}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("forged lane email must re-home: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
+	}
+}
+
+// Without push access even App-owned unsigned commits cannot be rewritten
+// on the contributor branch, so the adopted PR re-homes.
+func TestAlreadyAdoptedInPlaceAppAuthoredDCOFailureWithoutPushRehomes(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.DCORequired = func(string) (bool, bool) { return true, true }
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, false)
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{message: "fix: unsigned hive fixer", authorLogin: testHiveAppBotLogin, authorName: "architect", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+	if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("maintainer edits revoked must re-home: pulls=%v edits=%v", h.adopt.pulls, h.adopt.prEdits)
 	}
 }
 

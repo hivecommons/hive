@@ -35,13 +35,17 @@ cadence window. The staleness clock starts when CI SETTLES — a head red on one
 check while others are still running is not yet stuck. The escalation comment
 quotes the number of kicks actually delivered.
 
-Shared CI breakage is not a fix attempt. A failing check red on at least three
-other open PRs in the same pass is an incident (a broken base branch, a runner
-outage), so the pass is treated as no-information: no attempt counted, no
-staleness clock, no re-engagement. Attempts are counted per head TREE, so an
-empty `ci: retrigger` commit does not consume one. An escalation is un-parked
-automatically — `needs-human` removed, ledger reset, one comment saying why —
-when the head goes green or when the shared breakage it escalated over clears.
+Shared CI breakage is not a fix attempt. A check is shared only when it fails
+on every conclusive open PR in the repository and the evidence includes an
+independent human-authored control. A green PR disproves a repository-wide
+outage; pending PRs provide no evidence either way. This keeps multiple agent
+PRs carrying the same defect from suppressing each other's escalation while
+holding genuine base-branch or runner incidents after the first independent
+confirmation. Shared failures consume no attempt, staleness, or re-engagement
+budget. Attempts are counted per head TREE, so an empty `ci: retrigger` commit
+does not consume one. An escalation is un-parked automatically —
+`needs-human` removed, ledger reset, one comment saying why — when the head
+goes green or when the shared breakage it escalated over clears.
 
 A PR escalating for the SECOND time — after the reviewer lane ([#5480]) already
 repaired or de-escalated it once — gets a structured hand-off note instead of

@@ -98,9 +98,13 @@ func TestRecordRedStaleness(t *testing.T) {
 		store, clock := newTestEscalationStore(t)
 		cfg := escalationTestConfig()
 
+		human := redPR("widgets", 8, "some-human", "def")
+		// Keep the human red while making its failure independent of the
+		// agent's; matching failures now correctly classify as shared CI.
+		human.FailingChecks = []string{"lint"}
 		recordRedStaleness(cfg, actionableWith(
 			redPR("widgets", 7, "hive-agent", "abc"),
-			redPR("widgets", 8, "some-human", "def"),
+			human,
 		))
 		if store.StaleRed("acme/widgets", 7, "abc") {
 			t.Error("fresh red must not read as stale")

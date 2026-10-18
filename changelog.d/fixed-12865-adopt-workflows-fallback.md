@@ -1,0 +1,1 @@
+- Contributor-PR adoption now falls back to a superseding App PR when the base branch has moved past a `.github/workflows/` change since the PR's merge-base: the App token cannot push such a base-sync to the contributor branch (no `workflows` permission), so the in-place mode promised by the adoption comment was a dead end that left the PR dirty forever (#12865, #6985).

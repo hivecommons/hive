@@ -1,0 +1,1 @@
+- Shared CI failures now require an independent human-authored control and no green counterexample, so related agent PRs cannot hide the same PR-local defect from the escalation circuit breaker.

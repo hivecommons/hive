@@ -417,11 +417,15 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 					// A revisit whose reviewer died is stuck the same way an
 					// unreviewed head is: the stale verdict stands and nothing
 					// re-asks. Let the TTL release it.
+					// Only the entries that outlived the TTL were dropped; the
+					// rest are perspectives still owed or already answered, so
+					// they stay and only the missing ones are re-asked.
 					if dropped := plan.expirePending(pr, opts, now); !dropped {
 						continue
 					}
+				} else {
+					plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
 				}
-				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
 				revisiting = true
 			}
 		} else if plan.redispatchExhausted(pr) {

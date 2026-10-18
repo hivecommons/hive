@@ -293,3 +293,54 @@ func TestOrdinaryKickDoesNotRevise(t *testing.T) {
 		t.Fatal("ordinary kick claims a prior review that may not exist")
 	}
 }
+
+// A revisit that is partly answered must re-ask only the perspectives that
+// outlived the TTL, not clear the head and re-kick the whole set.
+func TestPlanDispatchPartialRevisitRekicksOnlyMissingPerspectives(t *testing.T) {
+	cutoff := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	now := cutoff.Add(10 * time.Hour)
+	pr := PullRequest{Repo: "projectbluefin/server", Number: 181, Author: "castrojo", HeadSHA: "abc123"}
+	stale := Artifact{Items: []Aggregate{{
+		Repo:       pr.Repo,
+		Number:     pr.Number,
+		HeadSHA:    pr.HeadSHA,
+		Verdict:    VerdictRequiresHuman,
+		RecordedAt: cutoff.Add(-24 * time.Hour),
+	}}}
+	opts := DispatchOptions{
+		RequireApproval:      true,
+		FanOut:               true,
+		MaxParallelReviews:   4,
+		ReviewerAgents:       []string{"reviewer"},
+		PostComments:         true,
+		AllAuthors:           true,
+		ReviseRepos:          []string{"projectbluefin/server"},
+		ReviseVerdictsBefore: cutoff,
+		Agents:               []AgentCapability{{Name: "reviewer", Enabled: true, UsesKick: true}},
+		Now:                  now,
+	}
+
+	// Every perspective but the last was kicked after the cutoff and is still
+	// fresh; the last one's dispatch is past the TTL.
+	var state DispatchState
+	last := DefaultPerspectives[len(DefaultPerspectives)-1]
+	for _, p := range DefaultPerspectives {
+		dispatched := now.Add(-time.Minute)
+		if p == last {
+			dispatched = cutoff.Add(time.Hour)
+		}
+		state.Pending = append(state.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: "reviewer", Dispatched: dispatched})
+	}
+
+	plan := PlanDispatch([]PullRequest{pr}, stale, state, opts)
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("partial revisit should re-kick once, got %d kicks", len(plan.ReviewKicks))
+	}
+	msg := plan.ReviewKicks[0].Message
+	if !strings.Contains(msg, "--revise") {
+		t.Errorf("re-kick lost --revise:\n%s", msg)
+	}
+	if plan.ReviewKicks[0].Perspective != last {
+		t.Errorf("re-kicked perspective = %q, want only %q", plan.ReviewKicks[0].Perspective, last)
+	}
+}
