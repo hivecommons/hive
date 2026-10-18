@@ -1187,9 +1187,11 @@ func dispatchKickKey(k DispatchKick) string {
 // verdict must predate the configured cutoff, which is what scopes the
 // correction to verdicts produced by the reviewer that was wrong.
 //
-// The cutoff is self-limiting: re-reviewing records a fresh timestamp that is
-// necessarily after it, so a PR is revisited at most once per bump rather than
-// entering a loop.
+// The cutoff is self-limiting: a complete re-review records a fresh timestamp
+// that is necessarily after it, so a PR is revisited at most once per bump
+// rather than entering a loop. An incomplete re-review of a requires_human
+// head keeps the prior verdict and its RecordedAt (see CollectAndMerge), so
+// that PR stays revisitable until full perspective coverage replaces it.
 func staleVerdictRevisitable(repo string, agg Aggregate, opts DispatchOptions) bool {
 	if opts.ReviseVerdictsBefore.IsZero() || len(opts.ReviseRepos) == 0 {
 		return false
