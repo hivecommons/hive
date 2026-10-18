@@ -2185,9 +2185,22 @@ function parseContributorEnvFile(file) {
     if (!line || line.startsWith('#')) continue;
     const idx = line.indexOf('=');
     if (idx <= 0) continue;
-    out[line.slice(0, idx)] = line.slice(idx + 1);
+    out[line.slice(0, idx)] = unquoteEnvValue(line.slice(idx + 1));
   }
   return out;
+}
+
+// hivectl writes HIVE_REPO_SCOPE wrapped in single quotes so its ';' separators
+// survive `source contributor.env`. Strip one matching pair of quotes so this
+// parser sees the same value the shell does; bare values pass through unchanged.
+function unquoteEnvValue(value) {
+  if (value.length >= 2) {
+    const first = value[0];
+    if ((first === "'" || first === '"') && value[value.length - 1] === first) {
+      return value.slice(1, -1);
+    }
+  }
+  return value;
 }
 
 function hubListFromEnv(env) {

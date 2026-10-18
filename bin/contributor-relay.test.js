@@ -3592,6 +3592,34 @@ test('disabled flags are optional for legacy projections but otherwise strictly 
   } finally { teardown(relay); }
 });
 
+test('parseContributorEnvFile strips the shell quotes hivectl writes around HIVE_REPO_SCOPE', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const dir = fs.mkdtempSync(path.join(__dirname, '..', '.relay-test-tmp', 'relay-env-'));
+  try {
+    const file = path.join(dir, 'contributor.env');
+    fs.writeFileSync(file, [
+      '# projected by hivectl',
+      'HIVE_HUB=wss://a.example/contribute,wss://b.example/contribute',
+      "HIVE_REPO_SCOPE='*;github/hivecommons/hive'",
+      'HIVE_REPO_SCOPE_VERSION=3',
+      'CONTRIBUTOR_USERNAME="quoted"',
+      "HIVE_SESSION='unterminated",
+      'EMPTY_SCOPE=\'\'',
+      '',
+    ].join('\n'));
+    const env = relay.parseContributorEnvFile(file);
+    assert.strictEqual(env.HIVE_HUB, 'wss://a.example/contribute,wss://b.example/contribute');
+    assert.strictEqual(env.HIVE_REPO_SCOPE, '*;github/hivecommons/hive');
+    assert.strictEqual(env.HIVE_REPO_SCOPE_VERSION, '3');
+    assert.strictEqual(env.CONTRIBUTOR_USERNAME, 'quoted');
+    assert.strictEqual(env.HIVE_SESSION, "'unterminated", 'only a matching pair is stripped');
+    assert.strictEqual(env.EMPTY_SCOPE, '', 'an empty quoted selection reads as empty, not two apostrophes');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    teardown(relay);
+  }
+});
+
 for (const strategy of ['ranked', 'spread', 'neediest']) {
   test(`${strategy} excludes disabled hives at startup, between tasks and on fallback`, () => {
     const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_COMMONS_STRATEGY: strategy,

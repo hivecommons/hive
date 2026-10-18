@@ -880,7 +880,15 @@ across rather than dropped, and the previous file is kept at
 
 The projection also includes an aligned `HIVE_REPO_SCOPE`: `*` for a legacy
 profile, otherwise sorted canonical IDs joined by `;`, with an empty entry for
-no repositories. The value is shell-quoted so separators survive sourcing.
+no repositories. On disk the value is wrapped in a literal pair of single
+quotes so the `;` separators survive `source contributor.env` — for example
+`HIVE_REPO_SCOPE='*;github/hivecommons/hive'`, or `HIVE_REPO_SCOPE=''` for a
+profile with no repositories selected. Every other projected key is written
+bare. Readers that do not `source` the file (the relay's
+`parseContributorEnvFile` in `bin/contributor-relay.js`, which reloads it on
+`SIGUSR1`, or `grep | cut` in scripts) must strip one matching pair of
+surrounding quotes before splitting on `;`; the relay parser does this for every
+key, so an empty selection reads as an empty string rather than as `''`.
 `HIVE_REPO_SCOPE_VERSION` is persisted as `repo_scope_version` and incremented
 on every profile-store commit (including retries after projection failure).
 These fields provide local state for the repository-scope protocol; they do
