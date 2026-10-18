@@ -832,11 +832,12 @@ func replaceDecisionParkWithActionable(labels []string, configured string) []str
 
 func containsConfiguredDecisionParkLabel(labels []string, configured string) bool {
 	configured = strings.TrimSpace(configured)
-	if configured == "" {
-		return false
-	}
 	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), configured) {
+		name := strings.TrimSpace(label)
+		if configured != "" && strings.EqualFold(name, configured) {
+			return true
+		}
+		if strings.EqualFold(name, PRNeedsDecisionStageLabel) {
 			return true
 		}
 	}
