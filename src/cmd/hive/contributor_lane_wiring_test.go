@@ -95,6 +95,24 @@ func TestContributorLaneVerdictFunc(t *testing.T) {
 	}
 }
 
+func TestContributorLaneVerdictFromArtifactNormalizesLegacyRequiresHuman(t *testing.T) {
+	artifact := review.Artifact{Items: []review.Aggregate{{
+		Repo:           "acme/widget",
+		Number:         7,
+		HeadSHA:        "sha7",
+		Verdict:        review.VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:   map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictRequiresHuman},
+	}}}
+
+	got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false)
+
+	if got.Verdict != string(review.VerdictChangesRequested) || got.Approved || got.DecisionRequested {
+		t.Fatalf("verdict = %+v, want normalized changes_requested", got)
+	}
+}
+
 func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing.T) {
 	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
 	newer := old.Add(time.Hour)

@@ -189,6 +189,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 	var match review.Aggregate
 	var ok bool
 	for _, item := range artifact.Items {
+		item = item.Normalize()
 		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
 			if !ok || item.RecordedAt.After(match.RecordedAt) {
 				match = item

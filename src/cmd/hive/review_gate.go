@@ -52,6 +52,7 @@ func selfMergeReviewGateVerdictFromArtifact(artifact review.Artifact, repo strin
 	var match review.Aggregate
 	found := false
 	for _, item := range artifact.Items {
+		item = item.Normalize()
 		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
 			continue
 		}

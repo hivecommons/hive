@@ -172,6 +172,8 @@ type Aggregate struct {
 	BodyDigest        string                  `json:"body_digest,omitempty"`
 	AuthorModel       string                  `json:"author_model,omitempty"`
 	ReviewModel       string                  `json:"review_model,omitempty"`
+	HiveAuthored      bool                    `json:"hive_authored,omitempty"`
+	HiveAuthoredKnown bool                    `json:"hive_authored_known,omitempty"`
 	Verdict           Verdict                 `json:"verdict"`
 	MergeEligible     bool                    `json:"merge_eligible"`
 	FixCycle          bool                    `json:"fix_cycle"`
@@ -279,6 +281,8 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		agg.Reasons = []string{"no review reports were collected"}
 		return agg
 	}
+	agg.HiveAuthoredKnown = true
+	agg.HiveAuthored = reportsHiveAuthored(reports)
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
 	var decisionQuestion string
@@ -363,6 +367,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 				}
 				agg.Verdict = VerdictChangesRequested
 				agg.FixCycle = true
+				markRequiresHumanPerspectivesAsChangesRequested(&agg)
 				agg.RequiresHuman = false
 				agg.DecisionRequested = false
 				agg.DecisionQuestion = ""
@@ -400,6 +405,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			}
 			agg.Verdict = VerdictChangesRequested
 			agg.FixCycle = true
+			markRequiresHumanPerspectivesAsChangesRequested(&agg)
 			agg.RequiresHuman = false
 			return agg
 		}
@@ -443,6 +449,110 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+// Normalize returns the routing verdict Hive should use for this aggregate.
+// Older review-verdicts.json entries may carry the raw reviewer verdict and no
+// durable authorship bit even after newer aggregation policy would route the
+// same evidence to the fixer lane. Normalizing those legacy entries on read
+// makes gate, stage labels, and fix dispatch consume one verdict without
+// needing a re-review of the head. Aggregates with known authorship are left as
+// aggregation produced them so self_authored_decision_policy=escalate keeps its
+// human hold.
+func (a Aggregate) Normalize() Aggregate {
+	if a.Verdict == VerdictChangesRequested && a.FixCycle && !a.DecisionRequested && !aggregateRequiresRiskEscalation(a) {
+		markRequiresHumanPerspectivesAsChangesRequested(&a)
+		return a
+	}
+	if a.Verdict != VerdictRequiresHuman || !a.RequiresHuman || a.DecisionRequested {
+		return a
+	}
+	if a.HiveAuthoredKnown {
+		return a
+	}
+	if aggregateFixCycleCapReached(a) {
+		return a
+	}
+	if aggregateRequiresRiskEscalation(a) || !aggregateHasConcreteRemediation(a) {
+		return a
+	}
+	a.Verdict = VerdictChangesRequested
+	a.RequiresHuman = false
+	a.FixCycle = true
+	a.DecisionRequested = false
+	a.DecisionQuestion = ""
+	markRequiresHumanPerspectivesAsChangesRequested(&a)
+	return a
+}
+
+// Normalize returns a copy with every aggregate normalized for routing.
+func (a Artifact) Normalize() Artifact {
+	out := a
+	out.Items = append([]Aggregate(nil), a.Items...)
+	for i := range out.Items {
+		out.Items[i] = out.Items[i].Normalize()
+	}
+	return out
+}
+
+func markRequiresHumanPerspectivesAsChangesRequested(a *Aggregate) {
+	if a == nil || len(a.Perspectives) == 0 {
+		return
+	}
+	for p, v := range a.Perspectives {
+		if v == VerdictRequiresHuman {
+			a.Perspectives[p] = VerdictChangesRequested
+		}
+	}
+}
+
+func aggregateFixCycleCapReached(a Aggregate) bool {
+	if a.MaxFixAttempts > 0 && a.FixAttempts >= a.MaxFixAttempts {
+		return true
+	}
+	for _, reason := range a.Reasons {
+		if strings.Contains(strings.ToLower(reason), "fix cycle cap reached") {
+			return true
+		}
+	}
+	return false
+}
+
+func aggregateHasConcreteRemediation(a Aggregate) bool {
+	if ConcreteRemediationText(a.DecisionQuestion) {
+		return true
+	}
+	for _, text := range append(append([]string{}, a.Reasons...), a.HumanSummaries...) {
+		if ConcreteRemediationText(text) {
+			return true
+		}
+	}
+	for _, f := range a.Findings {
+		if !InScopeFinding(f.Finding) {
+			continue
+		}
+		if strings.TrimSpace(f.Finding.File) != "" || f.Finding.Line > 0 || ConcreteRemediationText(f.Finding.Title) || ConcreteRemediationText(f.Finding.Summary) {
+			return true
+		}
+	}
+	return false
+}
+
+func aggregateRequiresRiskEscalation(a Aggregate) bool {
+	if containsRiskEscalationTerm(a.DecisionQuestion) {
+		return true
+	}
+	for _, text := range append(append([]string{}, a.Reasons...), a.HumanSummaries...) {
+		if containsRiskEscalationTerm(text) {
+			return true
+		}
+	}
+	for _, f := range a.Findings {
+		if containsRiskEscalationTerm(f.Finding.Title) || containsRiskEscalationTerm(f.Finding.Summary) {
+			return true
+		}
+	}
+	return false
 }
 
 func selfAuthoredRequiresHumanReportIsResolvable(r PerspectiveReport, opts AggregateOptions) bool {
@@ -744,6 +854,7 @@ func foldDigestlessReports(groups map[string][]PerspectiveReport) map[string][]P
 }
 
 func WriteArtifact(path string, artifact Artifact) error {
+	artifact = artifact.Normalize()
 	if path == "" {
 		path = ReviewVerdictsPath
 	}
@@ -766,6 +877,7 @@ func CollectAndWrite(dir, path string, opts AggregateOptions) (Artifact, error) 
 	if err != nil {
 		return Artifact{}, err
 	}
+	artifact = artifact.Normalize()
 	return artifact, WriteArtifact(path, artifact)
 }
 
@@ -825,6 +937,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 	for _, key := range order {
 		artifact.Items = append(artifact.Items, merged[key])
 	}
+	artifact = artifact.Normalize()
 	if err := WriteArtifact(path, artifact); err != nil {
 		return artifact, err
 	}
@@ -892,7 +1005,7 @@ func LoadArtifact(path string) (Artifact, error) {
 	if err := json.Unmarshal(data, &artifact); err != nil {
 		return Artifact{}, err
 	}
-	return artifact, nil
+	return artifact.Normalize(), nil
 }
 
 func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) bool {
@@ -901,6 +1014,7 @@ func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) 
 	var match Aggregate
 	var ok bool
 	for _, item := range a.Items {
+		item = item.Normalize()
 		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
 			continue
 		}

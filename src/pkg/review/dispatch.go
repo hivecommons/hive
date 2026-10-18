@@ -910,6 +910,7 @@ func (a Artifact) AggregateForBody(repo string, number int, headSHA, bodyDigest 
 	var fallback Aggregate
 	var haveFallback bool
 	for _, item := range a.Items {
+		item = item.Normalize()
 		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
 			continue
 		}

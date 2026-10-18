@@ -20,6 +20,9 @@ func TestSelfMergeReviewGateVerdictFromArtifact(t *testing.T) {
 			Perspectives: map[review.Perspective]review.Verdict{"security": review.VerdictReject, "style": review.VerdictChangesRequested, "docs": review.VerdictApprove}},
 		{Repo: "acme/widget", Number: 7, HeadSHA: "incomplete", Verdict: review.VerdictIncomplete,
 			Perspectives: map[review.Perspective]review.Verdict{"security": review.VerdictApprove}},
+		{Repo: "acme/widget", Number: 7, HeadSHA: "legacy-human", Verdict: review.VerdictRequiresHuman, RequiresHuman: true,
+			HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+			Perspectives:   map[review.Perspective]review.Verdict{"correctness": review.VerdictRequiresHuman}},
 		// An older changes_requested superseded by a newer approve on the same head.
 		{Repo: "acme/widget", Number: 7, HeadSHA: "rereviewed", Verdict: review.VerdictChangesRequested, RecordedAt: old,
 			Perspectives: map[review.Perspective]review.Verdict{"security": review.VerdictChangesRequested}},
@@ -35,6 +38,7 @@ func TestSelfMergeReviewGateVerdictFromArtifact(t *testing.T) {
 		{name: "approved", head: "approved", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true}},
 		{name: "changes requested", head: "changes", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, ChangesRequested: []string{"security", "style"}}},
 		{name: "awaiting", head: "incomplete", want: automerge.ReviewGateVerdict{Loaded: true, Found: true}},
+		{name: "legacy normalized", head: "legacy-human", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, ChangesRequested: []string{"correctness"}}},
 		{name: "newest aggregate wins", head: "rereviewed", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true}},
 	}
 	for _, tt := range tests {

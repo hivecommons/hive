@@ -170,6 +170,141 @@ func TestAggregateReportsRoutesSelfAuthoredConcreteRequiresHumanToFixer(t *testi
 	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
 		t.Fatalf("aggregate = %+v, want changes_requested fixer route", got)
 	}
+	if got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested {
+		t.Fatalf("perspectives = %+v, want normalized changes_requested", got.Perspectives)
+	}
+}
+
+func TestNormalizeLegacyConcreteRequiresHumanAggregate(t *testing.T) {
+	legacy := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"correctness requires human: LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor or reword the changelog."},
+		Perspectives: map[Perspective]Verdict{
+			PerspectiveCorrectness:     VerdictRequiresHuman,
+			PerspectiveIntentAlignment: VerdictRequiresHuman,
+		},
+	}
+
+	got := legacy.Normalize()
+
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.RequiresHuman {
+		t.Fatalf("normalized = %+v, want changes_requested fixer route", got)
+	}
+	if got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested || got.Perspectives[PerspectiveIntentAlignment] != VerdictChangesRequested {
+		t.Fatalf("perspectives = %+v, want requires_human perspectives normalized", got.Perspectives)
+	}
+}
+
+func TestNormalizeKeepsKnownHiveRequiresHumanAggregate(t *testing.T) {
+	knownHive := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           testSHA,
+		HiveAuthoredKnown: true,
+		HiveAuthored:      true,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		HumanSummaries:    []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:      map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := knownHive.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want known hive aggregate left to aggregation policy", got)
+	}
+}
+
+func TestNormalizeKeepsKnownNonHiveRequiresHumanAggregate(t *testing.T) {
+	knownHuman := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           testSHA,
+		HiveAuthoredKnown: true,
+		HiveAuthored:      false,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		HumanSummaries:    []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:      map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := knownHuman.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want known non-hive human hold unchanged", got)
+	}
+}
+
+func TestNormalizeKeepsFixCycleCapRequiresHumanAggregate(t *testing.T) {
+	capped := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		FixAttempts:    DefaultFixCycleCap,
+		MaxFixAttempts: DefaultFixCycleCap,
+		Reasons:        []string{"fix cycle cap reached (3/3)"},
+		HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}
+
+	got := capped.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want capped human hold unchanged", got)
+	}
+}
+
+func TestNormalizeKeepsRiskRequiresHumanAggregate(t *testing.T) {
+	legacy := Aggregate{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"security requires human: Could not read the diff for a public-facing authorization change."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman},
+	}
+
+	got := legacy.Normalize()
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
+		t.Fatalf("normalized = %+v, want risk hold unchanged", got)
+	}
+}
+
+func TestLoadArtifactNormalizesLegacyConcreteRequiresHumanAggregate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review-verdicts.json")
+	legacy := Artifact{Items: []Aggregate{{
+		Repo:           "hivecommons/hive",
+		Number:         12875,
+		HeadSHA:        testSHA,
+		Verdict:        VerdictRequiresHuman,
+		RequiresHuman:  true,
+		HumanSummaries: []string{"correctness requires human: LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor."},
+		Perspectives:   map[Perspective]Verdict{PerspectiveCorrectness: VerdictRequiresHuman},
+	}}}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	loaded, err := LoadArtifact(path)
+	if err != nil {
+		t.Fatalf("LoadArtifact: %v", err)
+	}
+	got := loaded.Items[0]
+	if got.Verdict != VerdictChangesRequested || !got.FixCycle || got.Perspectives[PerspectiveCorrectness] != VerdictChangesRequested {
+		t.Fatalf("loaded = %+v, want normalized changes_requested", got)
+	}
 }
 
 func TestAggregateReportsAdvisesSelfAuthoredNonRiskHumanWithoutRemediation(t *testing.T) {
