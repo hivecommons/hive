@@ -110,6 +110,40 @@ func TestPlanReviewDispatch_KicksReviewerForAgentAuthoredPR(t *testing.T) {
 	}
 }
 
+func TestPlanReviewDispatch_IncludesHeldPRsInReviewRankOrder(t *testing.T) {
+	redirectReviewPaths(t)
+	cfg := reviewSwarmConfig()
+	cfg.Review.MaxParallelReviews = 1
+	actionable := &github.ActionableResult{PRs: github.PRResult{
+		Items: []github.PullRequest{{
+			Repo:       "hive",
+			Number:     101,
+			Title:      "fix: active item",
+			Author:     "hive-bot",
+			HeadSHA:    reviewTestSHA,
+			ReviewRank: 2,
+		}},
+		Held: []github.PullRequest{{
+			Repo:       "pluk",
+			Number:     257,
+			Title:      "refactor: held review-pending item",
+			Author:     "hive-bot",
+			HeadSHA:    strings.Repeat("b", 40),
+			ReviewRank: 1,
+		}},
+	}}
+
+	plan := planReviewDispatch(cfg, actionable, nil, nil, restoreTestLogger())
+
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("expected 1 review kick, got %d", len(plan.ReviewKicks))
+	}
+	kick := plan.ReviewKicks[0]
+	if kick.Repo != "kubestellar/pluk" || kick.Number != 257 {
+		t.Fatalf("kick = %s#%d, want held PR kubestellar/pluk#257 first", kick.Repo, kick.Number)
+	}
+}
+
 func TestPlanReviewDispatch_SkipsHumanAuthoredPR(t *testing.T) {
 	redirectReviewPaths(t)
 	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("some-human"), nil, nil, restoreTestLogger())

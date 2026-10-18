@@ -9784,8 +9784,31 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		logger.Warn("review verdict artifact unavailable for dispatch planning", "error", err)
 	}
 	prAgents := auditPRAgents(cfg.Project.Org, time.Now().Add(-auditPRAttributionWindow), "")
-	prs := make([]review.PullRequest, 0, len(actionable.PRs.Items))
-	for _, pr := range actionable.PRs.Items {
+	candidates := make([]github.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
+	seenPRs := map[string]bool{}
+	addCandidates := func(items []github.PullRequest) {
+		for _, pr := range items {
+			fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
+			key := github.ReviewQueueKey(fullRepo, pr.Number)
+			if fullRepo == "" || pr.Number <= 0 || seenPRs[key] {
+				continue
+			}
+			seenPRs[key] = true
+			candidates = append(candidates, pr)
+		}
+	}
+	addCandidates(actionable.PRs.Items)
+	addCandidates(actionable.PRs.Held)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		ri, rj := candidates[i].ReviewRank, candidates[j].ReviewRank
+		if ri > 0 && rj > 0 && ri != rj {
+			return ri < rj
+		}
+		return ri > 0 && rj <= 0
+	})
+
+	prs := make([]review.PullRequest, 0, len(candidates))
+	for _, pr := range candidates {
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
 		prs = append(prs, review.PullRequest{
