@@ -956,7 +956,8 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 			// A re-review can arrive one perspective at a time. Missing
 			// reports do not withdraw a settled non-approve verdict (human
 			// decision and its question, fix cycle, or reject): doing so sends
-			// 085 back to 050 on the same head.
+			// a settled head back to 050 — requires_human from 085, and
+			// changes_requested/reject from the fix path — on the same head.
 			// Keep its timestamp too, so partial coverage cannot extend the
 			// retention window or make a deliberate revisit look complete.
 			continue
