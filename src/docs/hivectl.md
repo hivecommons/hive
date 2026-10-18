@@ -1085,6 +1085,58 @@ nothing. It refuses:
 - repository entries that are not a full `owner/name` (display names are never
   matched) or that name an unknown forge.
 
+##### Adopting and refreshing a preset
+
+```bash
+hivectl hives preset adopt https://bluefin.example/hive-preset.yml   # review, then confirm
+hivectl hives preset adopt ./preset.yml --hive acme --follow-new-repos --yes
+hivectl hives preset refresh                     # re-fetch recorded presets and review changes
+hivectl hives preset refresh --yes               # accept new recommendations
+hivectl hives preset refresh --accept-removals   # also drop what the preset no longer recommends
+```
+
+`adopt` matches each preset Hive to an existing profile by normalized origin. It
+never registers or copies credentials: a Hive without a profile is reported as
+`not onboarded, skipped` (onboard it with `hives add` and adopt again). For each
+matched Hive it shows the review diff against your saved selection:
+
+- `+` recommendations that become selected once you confirm (`--yes` skips the
+  prompt). `all-current` snapshots the Hive's currently eligible repositories
+  through the same discovery as `hives repos --select all-current`.
+- `x` recommendations withheld by a personal exclusion. Exclusions always win
+  and are never cleared by a preset.
+- `-?` saved repositories the preset does not recommend. `adopt` keeps them.
+
+Confirming records the accepted membership, the preset as a selection source,
+and its provenance (`presets:` in `profiles.yml`: id, source, reviewed revision
+and time) through the same save, `contributor.env` projection and relay reload
+as `hives repos`. The reviewed revision is the publisher's `revision` plus a
+digest of the document. Re-adopting a revision with nothing new is a no-op and
+does not advance the scope generation. A recommendation of no repositories
+saves an explicit empty selection, which idles that Hive; it never becomes
+unrestricted. Hub entries are listed but not adopted.
+
+`refresh` re-fetches every recorded preset (or only `--hive <name>`) and diffs
+it against the saved selection:
+
+- **Additions** are applied automatically only at Hives that follow new
+  repositories; elsewhere they are shown as `+?` and need confirmation (`--yes`
+  or answering the prompt).
+- **Removals** are shown as `-?` and kept unless you confirm them at the prompt
+  or pass `--accept-removals`. `--yes` alone never removes anything.
+- **Outages**: if the preset cannot be fetched or a Hive's discovery fails, that
+  Hive is reported as `discovery unavailable`, its saved selection is left
+  untouched, nothing is broadened, and the command exits non-zero.
+
+The reviewed revision only advances when every Hive of the preset was reviewed
+and nothing is left pending.
+
+**Follow policy.** `--follow-new-repos` on `adopt` (off by default; pass
+`--follow-new-repos=false` to turn it off) stores `follow_new_repositories` on
+each adopted Hive's selection. It lets `refresh` include that Hive's new
+recommendations without a prompt. Personal exclusions still take precedence,
+and removals still need confirmation.
+
 ## Input and safety
 
 - Write commands take `--file <path>` or `--stdin` (JSON or YAML).

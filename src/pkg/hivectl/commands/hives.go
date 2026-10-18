@@ -74,6 +74,8 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 		Example: `  hivectl hives list
   hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
   hivectl hives reissue acme
+  hivectl hives preset adopt https://example.org/preset.yml
+  hivectl hives preset refresh
   hivectl hives use acme
   hivectl hives export acme --out acme.hive-profile
   hivectl hives import acme.hive-profile --name acme-laptop
@@ -83,6 +85,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
+	cmd.AddCommand(newHivesPresetCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))
 	cmd.AddCommand(newHivesUseCommand(env))
