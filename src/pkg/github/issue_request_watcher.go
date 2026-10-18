@@ -436,6 +436,12 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 
 	meta := c.attributionMeta(req.Agent)
 	body := c.relayBody(req.Agent, req.Body)
+	if kind == "issue" && req.Parent > 0 {
+		// Machine-readable child → parent marker (hivecommons/hive#12857):
+		// the sub-issue link below is best-effort and the ledger is
+		// spoke-local, so the body carries the relation too.
+		body = withParentMarker(body, req.Parent)
+	}
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

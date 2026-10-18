@@ -101,7 +101,13 @@ body regardless
 ([#9435](https://github.com/hivecommons/hive/issues/9435)). A failed link
 (parent missing, GitHub's sub-issue cap reached, a transient API error, …)
 never stops the child issue from being created; the failure is logged and
-recorded on the request's result file (`parent_link_error`) instead.
+recorded on the request's result file (`parent_link_error`) instead. The
+watcher also appends a `<!-- hive:parent n -->` marker to the child body, so
+the relation survives a failed link. Once every child of `n` is closed the
+issue stage sweep closes `n` as completed, and while any child is open `n`
+is never marked `stage/stalled`
+([#12857](https://github.com/hivecommons/hive/issues/12857); see
+[labels-and-control-signals.md](labels-and-control-signals.md#decomposed-parents--closed-by-their-children-never-stalled)).
 
 `--blocked-by <n[,n]>` records that the new issue must wait for issue(s) `n`
 in the same repo, as GitHub "blocked by" dependencies

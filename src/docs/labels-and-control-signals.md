@@ -297,6 +297,7 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 | covered by an open PR, PR not yet staged by the automerge sweep | `040-covered-by-pr` |
 | covered by an open PR the sweep has staged (≥ 050) | still `040-covered-by-pr`; the reason reads `open PR #N covers it (PR at <stage>)`. `050`+ are PR-only stages and never land on an issue ([#12451](https://github.com/hivecommons/hive/issues/12451)) |
 | exempt / filtered / reporter triage / advisory / dependency dashboard | no stage |
+| **decomposed parent** — an issue with tracked child issues (GitHub sub-issues the relay linked with `parent: N`; see below) | keeps the stage the rows above give it while any child is open, **never `stage/stalled`**; once every child is closed the parent is **closed as completed** by the sweep ([#12857](https://github.com/hivecommons/hive/issues/12857)) |
 
 Labels come from the issue list payload the cycle already fetched — no
 per-issue GETs — and are written only when the planned set differs from the
@@ -543,6 +544,45 @@ rules below name 072 — dwell/stall, needs-rebase → 07x, regression checks an
 the tracker's **CI / Review** column, which prints the stage word next to the
 author-kind icon.
 
+### Decomposed parents — closed by their children, never stalled
+
+When an agent splits an issue into ordered children it files each child
+through the issue-request relay with `parent: N`. The relay links the child
+as a native GitHub **sub-issue** of `N`, records the link in the spoke's
+`split-parents.json` ledger (#9840) and writes a `<!-- hive:parent N -->`
+marker into the child body, so the relation is machine-readable three ways.
+The prose "Decomposed into …" comment an agent leaves on the parent is for
+people and is never parsed. The parent has nothing left to implement; it is
+waiting on its children — which is not what `stage/stalled` means
+([#12857](https://github.com/hivecommons/hive/issues/12857): #12361 sat at
+`stage/010-actionable` after all four children merged, was marked stalled
+because its own timeline was quiet, and had to be closed by hand).
+
+The issue stage sweep reads GitHub's `sub_issues_summary` block (total /
+completed) off the same list payload it already decodes — no extra reads;
+when the block is absent it inverts the ledger and the body markers against
+the open-issue snapshot instead — and then:
+
+- **Some children open** → the parent keeps whatever stage the table above
+  gives it, is **never** marked `stage/stalled`, and an existing
+  `stage/stalled` comes off. The store reason reads `…; waiting on 2 open
+  child issue(s)`.
+- **Every child closed** (any `state_reason`) → the sweep re-reads the
+  children live (sub-issue list, or each ledger child), strips the parent's
+  `stage/*` labels, closes the parent as **completed** and leaves one
+  budgeted comment: `<!-- hive:parent-autoclose -->` / `All children
+  delivered: #12394 → PR #12413, #12396 → PR #12421, …` (the PR is the merged
+  PR GitHub lists as closing the child; omitted when none is known). An
+  issue stays an issue: parents never move to `stage/090-ready-for-human-merge`,
+  which is a PR stage. The reporter-confirmation close gate still applies to
+  a human-filed bug parent; a refused close is retried next cycle and no
+  "delivered" comment is posted until the close succeeds.
+- **No children** → nothing changes.
+
+Reopen the parent if something it asked for is still missing; the sweep does
+not close it again until a child is reopened and closed once more (the
+sub-issue summary is read fresh each cycle).
+
 ### `stage/stalled` — "nobody is working this"
 
 On a PR, `stage/stalled` means **no activity by anyone but the hive for the
@@ -601,6 +641,8 @@ does not bump itself.
   (`stage.history[]` on the review-queue entry, newest last, capped at 12).
   Leaving a repair stage (`070`/`071`/`072`/`074`) for `050`/`060` is the repair
   route itself and is not commented.
+- **A decomposed parent with an open child never stalls** (see above): it
+  is waiting on its children, not on a person.
 - **Filter `label:stage/stalled` across repos = every PR a person has
   walked away from, plus every issue that sat in 010–030 past its dwell.**
 

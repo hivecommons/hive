@@ -54,14 +54,20 @@ type issueDependenciesSummary struct {
 type issueWithDependencies struct {
 	gh.Issue
 	DependenciesSummary *issueDependenciesSummary `json:"issue_dependencies_summary,omitempty"`
+	// SubIssuesSummary is GitHub's per-parent sub-issue progress block
+	// (total / completed); see decomposed_parents.go for what reads it.
+	SubIssuesSummary *IssueChildren `json:"sub_issues_summary,omitempty"`
 }
 
 // listOpenIssuesWithBlockedCounts is Issues.ListByRepo(state=open) with the
-// dependency summary preserved. It returns the issues go-github would have
-// and, keyed by issue number, how many OPEN blockers each one reports.
-func (c *Client) listOpenIssuesWithBlockedCounts(ctx context.Context, owner, repoName string) ([]*gh.Issue, map[int]int, error) {
+// dependency and sub-issue summaries preserved. It returns the issues
+// go-github would have and, keyed by issue number, how many OPEN blockers
+// each one reports and (for parents) the sub-issue progress block GitHub
+// put on the payload (hivecommons/hive#12857).
+func (c *Client) listOpenIssuesWithBlockedCounts(ctx context.Context, owner, repoName string) ([]*gh.Issue, map[int]int, map[int]IssueChildren, error) {
 	var all []*gh.Issue
 	blocked := map[int]int{}
+	children := map[int]IssueChildren{}
 	page := 1
 	for {
 		q := url.Values{}
@@ -71,12 +77,12 @@ func (c *Client) listOpenIssuesWithBlockedCounts(ctx context.Context, owner, rep
 		path := fmt.Sprintf("repos/%s/%s/issues?%s", owner, repoName, q.Encode())
 		req, err := c.client.NewRequest(http.MethodGet, path, nil)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		var issues []*issueWithDependencies
 		resp, err := c.client.Do(ctx, req, &issues)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		for _, is := range issues {
 			if is == nil {
@@ -87,13 +93,16 @@ func (c *Client) listOpenIssuesWithBlockedCounts(ctx context.Context, owner, rep
 			if is.DependenciesSummary != nil && is.DependenciesSummary.BlockedBy > 0 {
 				blocked[issue.GetNumber()] = is.DependenciesSummary.BlockedBy
 			}
+			if is.SubIssuesSummary != nil && is.SubIssuesSummary.Total > 0 {
+				children[issue.GetNumber()] = *is.SubIssuesSummary
+			}
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 		page = resp.NextPage
 	}
-	return all, blocked, nil
+	return all, blocked, children, nil
 }
 
 // blockerRef is one entry of GET .../issues/{n}/dependencies/blocked_by.

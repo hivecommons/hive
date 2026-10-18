@@ -638,6 +638,10 @@ type Issue struct {
 	// LinkedPRs carries API-verified PR relationships that are signals for operators
 	// but do not by themselves remove the issue from the actionable set.
 	LinkedPRs []IssueLinkedPR `json:"linked_prs,omitempty"`
+	// Children is set on a decomposed parent: how many tracked child issues
+	// it has and how many are closed (hivecommons/hive#12857). Nil when the
+	// issue has no children.
+	Children *IssueChildren `json:"children,omitempty"`
 	// ClaimedBy / ClaimExpiresAt / ClaimSource carry a LIVE issue claim
 	// (hivecommons/hive#8380) read at enumeration time: a `hive:claim` marker
 	// comment, or an assignee. All three are set together and only while
@@ -1335,7 +1339,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 	// #9839: the list call keeps GitHub's issue_dependencies_summary so only
 	// issues that report an open "blocked by" count pay for a per-issue
 	// dependency fetch below.
-	allIssues, blockedCounts, err := c.listOpenIssuesWithBlockedCounts(ctx, owner, repoName)
+	allIssues, blockedCounts, subIssueSummaries, err := c.listOpenIssuesWithBlockedCounts(ctx, owner, repoName)
 	if err != nil {
 		return nil, nil, 0, RepoIssueBreakdown{}, nil, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
 	}
@@ -1500,6 +1504,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		})
 	}
 	dropMutualBlocks(actionable, c.logger)
+	annotateIssueChildren(repo, subIssueSummaries, splitParents, openByNumber, actionable, details)
 
 	// Keep an honest fallback if a future exclusion path is added without a
 	// dedicated category. This is the same enumeration snapshot, not a second
@@ -3793,6 +3798,8 @@ type RepoWorkIssue struct {
 	// github.Issue fields of the same name, copied as-is.
 	LinkedPRs    []IssueLinkedPR    `json:"linked_prs,omitempty"`
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
+	// Children is Issue.Children, copied for the issue stage reconciler.
+	Children *IssueChildren `json:"children,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -3812,6 +3819,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ClaimedBy:    issue.ClaimedBy,
 		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext: issue.ClaimContext,
+		Children:     issue.Children,
 	}
 }
 

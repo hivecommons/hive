@@ -99,6 +99,12 @@ type IssueStageResult struct {
 	LegacyDecisionMigrated           int
 	NeedsDecisionRestaged            int
 	LegacyDecisionDefinitionsDeleted int
+	// ParentsClosed counts decomposed parents closed because every tracked
+	// child was closed; ParentsAwaitingChildren counts parents with an open
+	// child that were therefore exempt from stage/stalled
+	// (hivecommons/hive#12857).
+	ParentsClosed           int
+	ParentsAwaitingChildren int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -122,6 +128,8 @@ type IssueStageInput struct {
 	ClaimKind string
 	ClaimedBy string
 	Claim     *IssueClaimContext
+	// Children is set on a decomposed parent (hivecommons/hive#12857).
+	Children *IssueChildren
 }
 
 // IssueStageFor classifies one enumerated issue. covered reports whether an
@@ -197,7 +205,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, Claim: issue.ClaimContext})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, Claim: issue.ClaimContext, Children: issue.Children})
 	}
 	repos := make([]string, 0, len(result.WorkDetailsByRepo))
 	for repo := range result.WorkDetailsByRepo {
@@ -209,7 +217,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext, Children: row.Children})
 		}
 	}
 	return out
@@ -256,7 +264,24 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			legacyCarriers[in.Repo]++
 		}
 		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
+		// A decomposed parent is waiting on its children, not on itself
+		// (hivecommons/hive#12857): all closed → close it; any open → it
+		// keeps its stage but is never marked stalled.
+		awaitingChildren := false
+		if in.Children != nil && in.Children.Total > 0 {
+			if in.Children.AllClosed() && client.closeDecomposedParent(ctx, in, store, key, logger) {
+				res.ParentsClosed++
+				res.Writes++
+				res.Comments++
+				continue
+			}
+			awaitingChildren = true
+			res.ParentsAwaitingChildren++
+		}
 		stage, covered, reason := IssueStageFor(in, prStage)
+		if awaitingChildren && stage != stagelabels.None {
+			reason += "; waiting on " + strconv.Itoa(in.Children.Open()) + " open child issue(s)"
+		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		if stage == stagelabels.None {
@@ -265,7 +290,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			tr = store.Observe(key, stage, reason)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{Stage: stage}
-			if !covered {
+			if !covered && !awaitingChildren {
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
 			}
 		}

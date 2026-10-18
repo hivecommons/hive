@@ -89,6 +89,8 @@ type wireIssue struct {
 	PullRequest *struct{} `json:"pull_request,omitempty"`
 	// IssueDependenciesSummary is GitHub's "blocked by" count block (#9839).
 	IssueDependenciesSummary *wireDepsSummary `json:"issue_dependencies_summary,omitempty"`
+	// SubIssuesSummary is GitHub's sub-issue progress block (#12857).
+	SubIssuesSummary *IssueChildren `json:"sub_issues_summary,omitempty"`
 }
 
 type wireDepsSummary struct {

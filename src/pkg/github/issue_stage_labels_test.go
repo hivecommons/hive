@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -35,14 +36,41 @@ type issueStageServer struct {
 	// deletedDefs records repo label definitions deleted via
 	// DELETE /repos/acme/widgets/labels/<name> (hivecommons/hive#12683).
 	deletedDefs []string
+	// subIssues is what GET /issues/N/sub_issues reports per parent;
+	// closers is the merged PR GraphQL names for a closed child; closed
+	// records PATCH state=closed per issue with its state_reason
+	// (hivecommons/hive#12857).
+	subIssues map[int][]subIssueRef
+	closers   map[int]int
+	closed    map[int]string
+	bodies    map[int]string
+	// commentBodies keeps every comment body posted per issue.
+	commentBodies map[int][]string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, commentBodies: map[int][]string{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
+		if r.Method == http.MethodPost && path == "/graphql" {
+			var q struct {
+				Variables struct {
+					Issue int `json:"issue"`
+				} `json:"variables"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&q)
+			s.mu.Lock()
+			pr := s.closers[q.Variables.Issue]
+			s.mu.Unlock()
+			nodes := []map[string]any{}
+			if pr > 0 {
+				nodes = append(nodes, map[string]any{"number": pr, "url": "https://x/pr/" + strconv.Itoa(pr), "merged": true})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{"issue": map[string]any{"closedByPullRequestsReferences": map[string]any{"nodes": nodes}}}}})
+			return
+		}
 		const prefix = "/repos/acme/widgets/"
 		if !strings.HasPrefix(path, prefix) {
 			t.Errorf("unexpected request %s %s", r.Method, path)
@@ -89,7 +117,31 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			for _, l := range s.truth[n] {
 				labels = append(labels, map[string]string{"name": l})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
+			state := "open"
+			if _, done := s.closed[n]; done {
+				state = "closed"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/sub_issues"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			refs := s.subIssues[n]
+			if refs == nil {
+				refs = []subIssueRef{}
+			}
+			_ = json.NewEncoder(w).Encode(refs)
+		case r.Method == http.MethodPatch && strings.HasPrefix(rest, "issues/"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			var body struct {
+				State       string `json:"state"`
+				StateReason string `json:"state_reason"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.State == "closed" {
+				s.closed[n] = body.StateReason
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": body.State})
 		case r.Method == http.MethodPost && strings.HasSuffix(rest, "/labels"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -114,6 +166,11 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			var n int
 			_, _ = sscanIssue(rest, &n)
 			s.comments[n]++
+			var cm struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&cm)
+			s.commentBodies[n] = append(s.commentBodies[n], cm.Body)
 			_, _ = w.Write([]byte(`{"id":1}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, path)
