@@ -91,6 +91,12 @@ type Record struct {
 	// stage visit; reset on every stage change so each transition explains
 	// itself exactly once (hivecommons/hive#12528).
 	EntryCommented bool `json:"entry_commented,omitempty"`
+	// EntryCommentedHead / EntryCommentedStage are the head and stage of the
+	// last entry comment posted. Unlike EntryCommented they survive stage
+	// changes, so a same-head flap back into the same stage does not repost a
+	// byte-identical comment (hivecommons/hive#12878).
+	EntryCommentedHead  string `json:"entry_commented_head,omitempty"`
+	EntryCommentedStage Stage  `json:"entry_commented_stage,omitempty"`
 	// History is the item's recent stage transitions, oldest first, capped
 	// at HistoryLimit: each entry is the stage entered, when, and the reason
 	// at entry. The dashboard's Hive activity monitor renders it as the
@@ -578,15 +584,17 @@ func (s *Store) MarkRegressionCommentedForHead(key, head string) {
 }
 
 // MarkEntryCommented records that the entry comment for the current stage
-// visit was posted.
-func (s *Store) MarkEntryCommented(key string) {
+// visit was posted for the given head.
+func (s *Store) MarkEntryCommented(key, head string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || r.EntryCommented {
+	if !ok || (r.EntryCommented && r.EntryCommentedHead == head && r.EntryCommentedStage == r.Stage) {
 		return
 	}
 	r.EntryCommented = true
+	r.EntryCommentedHead = head
+	r.EntryCommentedStage = r.Stage
 	s.items[key] = r
 	s.dirty = true
 }

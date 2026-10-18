@@ -234,7 +234,7 @@ func TestEntryCommentedResetsOnStageChange(t *testing.T) {
 	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
 	key := Key("o/r", 12528)
 	st.Observe(key, ReadyForHumanMerge, "untrusted-author-role")
-	st.MarkEntryCommented(key)
+	st.MarkEntryCommented(key, "h1")
 	st.Observe(key, ReadyForHumanMerge, "untrusted-author-role")
 	if rec, _ := st.Get(key); !rec.EntryCommented {
 		t.Fatalf("same-stage observation cleared the flag: %+v", rec)
@@ -243,7 +243,16 @@ func TestEntryCommentedResetsOnStageChange(t *testing.T) {
 	if rec, _ := st.Get(key); rec.EntryCommented {
 		t.Fatalf("stage flip kept the flag: %+v", rec)
 	}
-	st.MarkEntryCommented(key)
+	st.MarkEntryCommented(key, "h1")
+	if rec, _ := st.Get(key); rec.EntryCommentedHead != "h1" || rec.EntryCommentedStage != NeedsDecision {
+		t.Fatalf("head/stage not recorded: %+v", rec)
+	}
+	st.Observe(key, ReviewPending, "review-requested")
+	st.Observe(key, NeedsDecision, "excluded-label:hold")
+	if rec, _ := st.Get(key); rec.EntryCommented || rec.EntryCommentedHead != "h1" || rec.EntryCommentedStage != NeedsDecision {
+		t.Fatalf("flap reset the per-head record: %+v", rec)
+	}
+	st.MarkEntryCommented(key, "h1")
 	if err := st.Save(); err != nil {
 		t.Fatal(err)
 	}
@@ -254,5 +263,5 @@ func TestEntryCommentedResetsOnStageChange(t *testing.T) {
 	if rec, _ := st2.Get(key); !rec.EntryCommented || rec.Stage != NeedsDecision {
 		t.Fatalf("flag not persisted: %+v", rec)
 	}
-	st.MarkEntryCommented("missing")
+	st.MarkEntryCommented("missing", "h1")
 }

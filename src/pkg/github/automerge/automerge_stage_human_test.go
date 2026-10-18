@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -337,6 +338,52 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	sweep("role/contributor", "author/human", "stage/085-needs-decision")
 	if len(api.comments) != 0 || api.writes() != 0 {
 		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
+	}
+}
+
+// TestEntryCommentOncePerStageAndHead: a same-head flap 085 -> 050 -> 085 does
+// not repost the entry comment; a new head does (hivecommons/hive#12878).
+func TestEntryCommentOncePerStageAndHead(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(head string, labels ...string) {
+		t.Helper()
+		api.reset()
+		pr := stagePR(13, labels...)
+		pr.Head.SHA = gh.Ptr(head)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageVerdict("acme", "widget", 13, *verdict)
+		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := stageKey("acme", "widget", 13)
+
+	sweep("H", "role/contributor", "author/human", "stage/050-review-pending")
+	if len(api.comments) != 1 {
+		t.Fatalf("first entry comments = %q", api.comments)
+	}
+	store.Observe(key, stagelabels.ReviewPending, "review-requested")
+	sweep("H", "role/contributor", "author/human", "stage/050-review-pending")
+	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage=%v want 085", got)
+	}
+	if len(api.comments) != 0 {
+		t.Fatalf("same-head flap reposted: %q", api.comments)
+	}
+	if rec, _ := store.Get(key); !rec.EntryCommented {
+		t.Fatalf("flag not set for the current visit: %+v", rec)
+	}
+
+	store.Observe(key, stagelabels.ReviewPending, "review-requested")
+	sweep("H2", "role/contributor", "author/human", "stage/050-review-pending")
+	if len(api.comments) != 1 {
+		t.Fatalf("new head comments = %q", api.comments)
 	}
 }
 
