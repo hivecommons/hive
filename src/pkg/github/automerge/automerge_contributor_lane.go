@@ -53,6 +53,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -529,7 +530,7 @@ func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *g
 	if match.ObservedTier == "" {
 		match.ObservedTier = c.observedRegistryTier(author)
 	}
-	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 {
+	if err == nil && match.Reason != "" && policy.AutoPromoteAfterMergedPR > 0 && !contributorRegistryTierRevoked(c.observedRegistryTier(author)) {
 		clean, checked, reason, promoteErr := c.contributorCleanMergedHistory(ctx, owner, repo, author, policy.AutoPromoteAfterMergedPR)
 		if promoteErr != nil {
 			return contributorClaimMatch{Reason: "contributor-lane:auto-promote-history"}, promoteErr
@@ -564,6 +565,23 @@ func (c *Engine) observedRegistryTier(author string) string {
 	return strings.ToLower(strings.TrimSpace(tier))
 }
 
+// contributorRegistryTierRevoked reports whether the registry tier is the
+// operator's explicit `revoked` decision. Revocation is a statement that the
+// contributor must not be trusted again without a human reinstating them, so
+// the merged-history ratchet never runs for such an author: their history is
+// typically long and clean precisely because they used to be trusted.
+func contributorRegistryTierRevoked(tier string) bool {
+	return strings.EqualFold(strings.TrimSpace(tier), contributorRegistryTierRevokedName)
+}
+
+const contributorRegistryTierRevokedName = "revoked"
+
+// contributorCleanMergedHistory walks the repository's recently merged PRs and
+// reports whether the author's last `need` merges are clean: none is itself a
+// revert, none carries the sentinel label, and none was undone by a later
+// merged revert PR (matched by merge-commit SHA in a "This reverts commit"
+// body or by a `Revert "<title>"` title) — the revert evidence the audit
+// comment promises to have checked.
 func (c *Engine) contributorCleanMergedHistory(ctx context.Context, owner, repo, author string, need int) (bool, int, string, error) {
 	if c == nil || c.gh == nil || need <= 0 || strings.TrimSpace(author) == "" {
 		return false, 0, "disabled", nil
@@ -573,12 +591,13 @@ func (c *Engine) contributorCleanMergedHistory(ctx context.Context, owner, repo,
 	if err != nil {
 		return false, 0, "list-merged-prs", err
 	}
+	reverted := mergedRevertTargets(prs)
 	clean := 0
 	for _, old := range prs {
 		if old == nil || !strings.EqualFold(hgithub.SafeGetLogin(old.GetUser()), author) || old.GetMergedAt().IsZero() {
 			continue
 		}
-		if contributorPromotionBlockedByHistory(old) {
+		if contributorPromotionBlockedByHistory(old) || reverted.contains(old) {
 			return false, clean, "revert-or-sentinel", nil
 		}
 		clean++
@@ -587,6 +606,60 @@ func (c *Engine) contributorCleanMergedHistory(ctx context.Context, owner, repo,
 		}
 	}
 	return false, clean, "insufficient-clean-merges", nil
+}
+
+// revertTargets indexes what the merged revert PRs in a window undid.
+type revertTargets struct {
+	shas   map[string]bool
+	titles map[string]bool
+}
+
+var revertsCommitRE = regexp.MustCompile(`(?i)this reverts commit ([0-9a-f]{7,40})`)
+
+// mergedRevertTargets collects, from every merged PR in prs, the commit SHAs
+// named by "This reverts commit <sha>" lines and the quoted titles of
+// `Revert "<title>"` PRs.
+func mergedRevertTargets(prs []*gh.PullRequest) revertTargets {
+	t := revertTargets{shas: map[string]bool{}, titles: map[string]bool{}}
+	for _, pr := range prs {
+		if pr == nil || pr.GetMergedAt().IsZero() {
+			continue
+		}
+		for _, m := range revertsCommitRE.FindAllStringSubmatch(pr.GetBody(), -1) {
+			t.shas[strings.ToLower(m[1])] = true
+		}
+		title := strings.TrimSpace(pr.GetTitle())
+		if len(title) > len(`Revert ""`) && strings.HasPrefix(strings.ToLower(title), `revert "`) && strings.HasSuffix(title, `"`) {
+			t.titles[normalizeRevertTitle(title[len(`Revert "`):len(title)-1])] = true
+		}
+	}
+	return t
+}
+
+// contains reports whether pr's merge commit or title was the target of a
+// merged revert in the window.
+func (t revertTargets) contains(pr *gh.PullRequest) bool {
+	if pr == nil {
+		return false
+	}
+	if sha := strings.ToLower(strings.TrimSpace(pr.GetMergeCommitSHA())); sha != "" {
+		for target := range t.shas {
+			if strings.HasPrefix(sha, target) || strings.HasPrefix(target, sha) {
+				return true
+			}
+		}
+	}
+	return t.titles[normalizeRevertTitle(pr.GetTitle())]
+}
+
+// normalizeRevertTitle lowercases and strips the ` (#N)` suffix GitHub's
+// squash merge appends, so `Revert "fix: x (#12)"` matches PR title `fix: x`.
+func normalizeRevertTitle(title string) string {
+	title = strings.ToLower(strings.TrimSpace(title))
+	if i := strings.LastIndex(title, " (#"); i > 0 && strings.HasSuffix(title, ")") {
+		title = strings.TrimSpace(title[:i])
+	}
+	return title
 }
 
 func contributorPromotionBlockedByHistory(pr *gh.PullRequest) bool {
