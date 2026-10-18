@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/classify"
@@ -382,7 +383,7 @@ func (s *Scheduler) logKickSize(agentName, repo, msg string, issues []github.Iss
 	}
 	issueTotal, prTotal := len(issues), 0
 	if actionable != nil {
-		prTotal = len(actionable.PRs.Items)
+		prTotal = len(s.prListItemsForAgent(actionable, s.cfg.BaseAgentName(agentName)))
 	}
 	s.logger.Info("kick rendered",
 		"agent", agentName,
@@ -641,13 +642,14 @@ func issuePriorityMarker(issue github.Issue) string {
 }
 
 func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.ActionableResult, agentName string) (string, bool) {
-	if len(actionable.PRs.Items) == 0 {
+	prs := s.prListItemsForAgent(actionable, agentName)
+	if len(prs) == 0 {
 		return "(none)", false
 	}
 	var b strings.Builder
 	failClosed := false
 	limit := s.prCap()
-	shown := fairShareByRepo(actionable.PRs.Items, limit, func(pr github.PullRequest) string { return pr.Repo })
+	shown := fairShareByRepo(prs, limit, func(pr github.PullRequest) string { return pr.Repo })
 	verdicts := s.loadReviewVerdicts()
 	links := loadReviewLinks()
 	for _, pr := range shown {
@@ -676,10 +678,60 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	if b.Len() == 0 {
 		return "(none)", failClosed
 	}
-	if omitted := len(actionable.PRs.Items) - len(shown); omitted > 0 {
+	if omitted := len(prs) - len(shown); omitted > 0 {
 		b.WriteString(prListOverflowLine(omitted, limit))
 	}
 	return b.String(), failClosed
+}
+
+func (s *Scheduler) prListItemsForAgent(actionable *github.ActionableResult, agentName string) []github.PullRequest {
+	if actionable == nil {
+		return nil
+	}
+	if s == nil || s.cfg == nil || s.cfg.BaseAgentName(agentName) != "reviewer" {
+		return actionable.PRs.Items
+	}
+	prs := make([]github.PullRequest, 0, len(actionable.PRs.Items)+len(actionable.PRs.Held))
+	seen := map[string]bool{}
+	add := func(items []github.PullRequest) {
+		for _, pr := range items {
+			fullRepo := config.QualifyRepo(s.cfg.Project.Org, pr.Repo)
+			key := github.ReviewQueueKey(fullRepo, pr.Number)
+			if fullRepo == "" || pr.Number <= 0 || seen[key] {
+				continue
+			}
+			seen[key] = true
+			prs = append(prs, pr)
+		}
+	}
+	add(actionable.PRs.Items)
+	add(actionable.PRs.Held)
+	sort.SliceStable(prs, func(i, j int) bool {
+		a, b := prs[i], prs[j]
+		if a.ReviewRank > 0 && b.ReviewRank > 0 && a.ReviewRank != b.ReviewRank {
+			return a.ReviewRank < b.ReviewRank
+		}
+		if a.ReviewRank > 0 && b.ReviewRank <= 0 {
+			return true
+		}
+		if a.ReviewRank <= 0 && b.ReviewRank > 0 {
+			return false
+		}
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			if a.CreatedAt.IsZero() {
+				return false
+			}
+			if b.CreatedAt.IsZero() {
+				return true
+			}
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		if a.Repo != b.Repo {
+			return a.Repo < b.Repo
+		}
+		return a.Number < b.Number
+	})
+	return prs
 }
 
 func (s *Scheduler) buildReposSectionFor(agentName string) string {
