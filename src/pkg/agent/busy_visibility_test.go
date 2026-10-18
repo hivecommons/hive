@@ -374,7 +374,7 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		},
 		"off-prompt pane too few kicks": func(a *AgentProcess) string {
 			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
-			return "GitHub Copilot v1.0.88\nLoading environment..."
+			return offPrompt
 		},
 		"within restart cooldown": func(a *AgentProcess) string {
 			a.lastSessionStallRestart = now.Add(-time.Minute)
