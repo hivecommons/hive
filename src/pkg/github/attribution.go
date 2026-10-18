@@ -76,6 +76,10 @@ const (
 	// refused by the relay and never reach this entry. It is distinct from
 	// hive_label_applied, which is the hive labeling on its own initiative.
 	AuditActionAgentLabelApplied = "agent_label_applied"
+	// AuditActionAgentIssueDecisionResolved is recorded when the issue relay
+	// downgrades a Hive-authored non-risk engineering decision request from
+	// stage/085 parking to the ordinary actionable path.
+	AuditActionAgentIssueDecisionResolved = "agent_issue_decision_resolved"
 	// AuditActionAgentReviewRequested is recorded when the issue-request
 	// watcher asks users and/or teams to review a PR on an agent's behalf
 	// (kind "request_review", #9587). The detail carries who was asked.

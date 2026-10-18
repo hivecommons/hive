@@ -43,6 +43,8 @@ Where the work genuinely cannot be split, give the issue a checkable completion
 criterion: a `- [ ]` task list in the body with one box per deliverable. "Done"
 must be something a later reader can verify, not a judgement buried in prose. A plain task list — one box per deliverable, in prose — does NOT stop your PR from closing the issue: when merging leaves nothing for the issue to track, write `Fixes #N` and the box list is simply the record of what "done" meant. Only a list whose items are *other issues* (`- [ ] #123`) makes the issue a tracker, and the watcher rewrites `Closes` to `Refs` for those. Do not rely on the task-list sweep to close an issue for you: it closes only once every box is ticked, and nothing but a human editing the body ever ticks one.
 
+
+When using `--needs-decision`, include `Risk: <category>` in the body. Hive-authored issues must not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: decide them yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …`. Park only for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a human-intent question that cannot be inferred.
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
 `--needs-decision` to the issue-create command below (it is relayed to

@@ -53,6 +53,7 @@ func runNeedsDecisionCreate(t *testing.T, filter IssueAdmitter, req IssueRequest
 	srv := newIssueCreateLabelServer(t, &mu, &got)
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
+	c.SetAgentIssueDecisionPolicy("escalate")
 	if filter != nil {
 		c.SetIssueFilter(filter)
 	}
@@ -133,4 +134,61 @@ func TestIssueRequestWatcher_NeedsDecisionDoesNotDuplicateLabel(t *testing.T) {
 	if n != 1 {
 		t.Errorf("needs-decision label applied %d times; create labels = %v", n, labels)
 	}
+}
+
+func TestIssueRequestWatcher_NeedsDecisionResolveDowngradesHiveEngineeringQuestion(t *testing.T) {
+	labels := runNeedsDecisionCreateWithPolicy(t, nil, "resolve", IssueRequest{
+		Repo: "o/r", Title: "[scanner] Which ADR gets renumbered?", Body: "Question: which ADR gets renumbered / use a v6-only ADR block",
+		Labels: []string{"agent/scanner"}, Agent: "scanner", NeedsDecision: true,
+	})
+	if hasLabelFold(labels, NeedsDecisionStageLabel) {
+		t.Fatalf("needs-decision label applied for non-risk engineering question; labels = %v", labels)
+	}
+	if !hasLabelFold(labels, "stage/010-actionable") {
+		t.Fatalf("actionable stage not applied for downgraded question; labels = %v", labels)
+	}
+}
+
+func TestIssueRequestWatcher_NeedsDecisionResolveEscalatesRiskQuestion(t *testing.T) {
+	labels := runNeedsDecisionCreateWithPolicy(t, nil, "resolve", IssueRequest{
+		Repo: "o/r", Title: "[scanner] Rotate deploy key", Body: "Risk: credentials/secrets/owner-only infrastructure\nQuestion: rotate the deploy key",
+		Labels: []string{"agent/scanner"}, Agent: "scanner", NeedsDecision: true,
+	})
+	if !hasLabelFold(labels, NeedsDecisionStageLabel) {
+		t.Fatalf("needs-decision label not applied for risk question; labels = %v", labels)
+	}
+}
+
+func TestIssueRequestWatcher_NeedsDecisionHumanOriginUnaffected(t *testing.T) {
+	labels := runNeedsDecisionCreateWithPolicy(t, nil, "resolve", IssueRequest{
+		Repo: "o/r", Title: "Human asks", Body: "Question: pick A or B",
+		Labels: []string{"origin/dashboard"}, NeedsDecision: true,
+	})
+	if !hasLabelFold(labels, NeedsDecisionStageLabel) {
+		t.Fatalf("human-origin request should still park; labels = %v", labels)
+	}
+}
+
+func runNeedsDecisionCreateWithPolicy(t *testing.T, filter IssueAdmitter, policy string, req IssueRequest) []string {
+	t.Helper()
+	var mu sync.Mutex
+	var got [][]string
+	srv := newIssueCreateLabelServer(t, &mu, &got)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.SetAgentIssueDecisionPolicy(policy)
+	if filter != nil {
+		c.SetIssueFilter(filter)
+	}
+	dir := withIssueDir(t)
+	if _, err := WriteIssueRequest(dir, req); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("expected 1 issue create, got %d", len(got))
+	}
+	return got[0]
 }

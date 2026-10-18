@@ -214,6 +214,8 @@ Every checklist must stay out of the hive's work queue — an agent handed "clos
 #1210 as superseded" as a task would do exactly the thing this lane is forbidden
 to do. How it stays out depends on the verdict on line two.
 
+
+When using `--needs-decision`, include `Risk: <category>` in the body. Hive-authored issues must not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: decide them yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …`. Park only for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a human-intent question that cannot be inferred.
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
 `--needs-decision` to the issue-create command below (it is relayed to

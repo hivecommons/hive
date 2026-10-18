@@ -961,6 +961,11 @@ type ProjectConfig struct {
 	// polarity is Governor.Labels.Exempt, which wins on conflict. Absent/empty
 	// = no filtering, the pre-existing behavior. See IssueFilterConfig.
 	IssueFilter IssueFilterConfig `yaml:"issue_filter,omitempty"`
+	// AgentIssueDecisionPolicy is "resolve" (default) or "escalate". Resolve
+	// keeps Hive-authored issues actionable when the only parking reason is a
+	// non-risk engineering choice (sequencing, naming, numbering, config shape,
+	// or approach A vs B). Risk questions still park at stage/085.
+	AgentIssueDecisionPolicy string `yaml:"agent_issue_decision_policy,omitempty" json:"agent_issue_decision_policy,omitempty"`
 	// CheckoutsDir is a host-local directory holding one checkout per monitored
 	// repo, as "<CheckoutsDir>/<repo name>" — the bare name from Repos, without
 	// the org. It is how an operator supplies the per-repo checkout root the
@@ -1019,6 +1024,18 @@ type ProjectConfig struct {
 	LabelDrivenApprovalLabels  []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
 	LabelDrivenTrustOrgMembers *bool    `yaml:"label_driven_trust_org_members,omitempty" json:"label_driven_trust_org_members,omitempty"`
 	LabelDrivenTrustedBots     []string `yaml:"label_driven_trusted_bots,omitempty" json:"label_driven_trusted_bots,omitempty"`
+}
+
+const (
+	ProjectAgentIssueDecisionResolve  = "resolve"
+	ProjectAgentIssueDecisionEscalate = "escalate"
+)
+
+func (p ProjectConfig) EffectiveAgentIssueDecisionPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(p.AgentIssueDecisionPolicy), ProjectAgentIssueDecisionEscalate) {
+		return ProjectAgentIssueDecisionEscalate
+	}
+	return ProjectAgentIssueDecisionResolve
 }
 
 const MaxWritingGuideBytes = 64 * 1024

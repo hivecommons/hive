@@ -14,6 +14,7 @@ project:
     - repo-two
   ai_author: your-bot-user               # GitHub username for AI commits
   primary_repo: repo-one                 # Main repo for priority routing
+  # agent_issue_decision_policy: resolve # resolve (default) lets Hive-authored issues stay actionable for non-risk engineering choices; escalate parks every --needs-decision request
   # Optional: host-local directory holding one checkout per repo, as
   # <checkouts_dir>/<repo name>. Supplies the repo root Hive reads AGENTS.md
   # from at kick time (src/docs/agents-md.md). Hive agents work over the API and

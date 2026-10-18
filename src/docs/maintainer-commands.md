@@ -29,6 +29,9 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 ## Eligibility rules
 
+
+Hive-authored issues normally arrive actionable rather than parked when the question is only an engineering choice (sequencing, naming, numbering, config shape, scope, or approach A vs B). With `project.agent_issue_decision_policy: resolve` (the default), the relay downgrades those attempted parks and records `Decision taken by hive: …`; maintainers can still override with `/hive hold` or `needs-human`. Parked Hive-authored issues should include `Risk: <category>` for the reason a person is required.
+
 The un-park sweep only honors `/hive approve`, `/hive decision <text>`, and the
 sweep fallback for `/hive help` when the command is the first non-empty line of
 the comment, outside quoted text and fenced code. The comment must be newer than

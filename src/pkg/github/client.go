@@ -92,8 +92,10 @@ type Client struct {
 	// can bypass it. Guarded because config reload / hub heartbeat delivery
 	// re-applies it while the enumeration goroutine reads it. Zero value =
 	// admit everything (pre-existing behavior).
-	issueFilterMu sync.RWMutex
-	issueFilter   IssueAdmitter
+	issueFilterMu              sync.RWMutex
+	issueFilter                IssueAdmitter
+	agentIssueDecisionPolicyMu sync.RWMutex
+	agentIssueDecisionPolicy   string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -2825,6 +2827,24 @@ func (c *Client) SetIssueFilter(f IssueAdmitter) {
 	c.issueFilterMu.Lock()
 	defer c.issueFilterMu.Unlock()
 	c.issueFilter = f
+}
+
+func (c *Client) SetAgentIssueDecisionPolicy(policy string) {
+	if c == nil {
+		return
+	}
+	c.agentIssueDecisionPolicyMu.Lock()
+	defer c.agentIssueDecisionPolicyMu.Unlock()
+	c.agentIssueDecisionPolicy = policy
+}
+
+func (c *Client) getAgentIssueDecisionPolicy() string {
+	if c == nil {
+		return ""
+	}
+	c.agentIssueDecisionPolicyMu.RLock()
+	defer c.agentIssueDecisionPolicyMu.RUnlock()
+	return c.agentIssueDecisionPolicy
 }
 
 func (c *Client) SetReporterConfirmationEnabledFunc(fn func() bool) {

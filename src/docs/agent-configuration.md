@@ -897,6 +897,18 @@ Why a setting and not `AGENTS.md` ([#7667](https://github.com/hivecommons/hive/i
 
 Where you will see it: the agent's Prompt Template tab renders the guide where the kick will place it, so you can confirm the setting took. Prompts built in Go take the rendered guide as a parameter rather than expanding `${WRITING_GUIDE}` themselves. That includes the **contributor relay's task prompt**, since [#8124](https://github.com/hivecommons/hive/issues/8124), immediately before the instruction that tells the agent to open the PR. The guide travels with the *assigning* hive, so a relay subscribed to two hives gets each hive's guide on that hive's tasks; see [`contributor-relay.md`](contributor-relay.md#the-assigning-hives-writing-guide-travels-with-the-task). The **review swarm** also carries it in review prompts, so posted review comments use the same editorial voice as issue and PR bodies.
 
+
+### Hive-authored issue decision policy (`project.agent_issue_decision_policy`)
+
+`project.agent_issue_decision_policy` controls what happens when Hive's own agents try to park an issue with `hive-open-issue --needs-decision` or `label … stage/045-needs-decision`. The default is `resolve`: Hive-authored issues do **not** park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions. The agent should pick the simplest additive, backward-compatible option and record the choice in the issue body as `Decision taken by hive: …`; the relay downgrades non-risk parks to `stage/010-actionable` and writes an audit entry. Set `escalate` to preserve the older behavior where every Hive-authored decision request parks.
+
+Parking remains for risk categories: security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a question about a human's intent that cannot be inferred. Parked issue bodies should include `Risk: <category>` so the maintainer can see why a person is needed. Human-origin issue filings are unaffected.
+
+```yaml
+project:
+  agent_issue_decision_policy: resolve  # resolve (default) or escalate
+```
+
 ## Label policy: which issues agents may work
 
 There is exactly **one** label-policy surface for the hive's own agents — the **Governor Configuration → Labels** tab — and it has two polarities:

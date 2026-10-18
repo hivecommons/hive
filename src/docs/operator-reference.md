@@ -111,6 +111,7 @@ Top-level YAML keys accepted by `config.Config`:
 | Block | Purpose | Notes |
 |---|---|---|
 | `project` | Managed GitHub org, repos, primary repo, AI author. | Required for normal operation. |
+| `project.agent_issue_decision_policy` | `resolve`. | `resolve` keeps Hive-authored issues from parking at `stage/045-needs-decision` for non-risk engineering questions (sequencing, naming, numbering, config shape, scope, approach A vs B); agents record `Decision taken by hive: …` and the relay downgrades to `stage/010-actionable`. `escalate` parks every Hive-authored `--needs-decision` request. Risk parks still require `Risk: <category>`. |
 | `policies` | Optional git/local policy prompt source. | Hot-reloaded when configured. |
 | `agents` | Agent definitions and behavior metadata. | Per-agent overlays may also live under `data.agents_dir`. |
 | `governor` | Cadences, labels, sensing, health, budgets, inference gateways, trajectory review. | See notable fields below. |

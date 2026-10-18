@@ -35,6 +35,9 @@ func newLabelMockServer(t *testing.T, added *[]string, removed *[]string) *httpt
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":1,"body":"ok"}`)
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/"):
 			// The re-park gate reads the issue before parking it on a
 			// decision; a bare issue carries no approval.
@@ -190,6 +193,7 @@ func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
 			srv := newLabelMockServer(t, &added, &removed)
 			defer srv.Close()
 			c := issueTestClient(t, srv.URL)
+			c.SetAgentIssueDecisionPolicy("escalate")
 			dir := withIssueDir(t)
 
 			reqPath, err := WriteIssueRequest(dir, IssueRequest{
@@ -211,6 +215,62 @@ func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
 				t.Fatalf("result = %+v, want ok", resp)
 			}
 		})
+	}
+}
+
+func TestIssueRequestWatcher_LabelDowngradesNonRiskHiveDecisionPark(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12816, Agent: "scanner",
+		Body:   "Question: which ADR gets renumbered / use a v6-only ADR block",
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != "stage/010-actionable" {
+		t.Fatalf("labels added = %q, want actionable downgrade", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
+func TestIssueRequestWatcher_LabelResolveStillParksRiskQuestion(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12820, Agent: "scanner",
+		Body:   "Risk: credentials/secrets/owner-only infrastructure\nQuestion: needs owner's GitHub secret",
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+		t.Fatalf("labels added = %q, want needs-decision", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
 	}
 }
 

@@ -128,9 +128,7 @@ drops that pair with a warning and offers both.
 
 #### Parking an issue that needs a decision
 
-`--needs-decision` is the way an agent parks an issue it files. Use it when
-the body asks the maintainer to choose between options, or to approve before
-work can start. The script sends `"needs_decision": true` on the request, and
+`--needs-decision` is the way an agent parks an issue it files. Hive-authored issues must not use it for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions: with `project.agent_issue_decision_policy: resolve` (default), the relay records `Decision taken by hive: …`, keeps the issue actionable, and audits the downgrade. Use it only when the body asks the maintainer to decide a risk category, and include `Risk: <category>` for security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, owner-only credentials/secrets/infra, or uninferable human intent. The script sends `"needs_decision": true` on the request, and
 the watcher adds the hive's configured needs-decision label
 (`project.issue_filter.hard_suppress_labels.needs_decision`, first entry;
 `stage/045-needs-decision` by default — the retired `needs-decision` spelling
@@ -203,7 +201,7 @@ Hive-controlled labels are refused in both directions: the merge-queue label
 retired `needs-decision` / `needs-direction`, and every `stage/*` label
 except the parks — `stage/045-needs-decision` on an issue,
 `stage/085-needs-decision` on a PR — which an agent may *add* to park an item on
-a maintainer ruling — never remove, [#12683](https://github.com/hivecommons/hive/issues/12683)). They are inputs to hive automation or records of someone's
+a maintainer ruling — never remove, [#12683](https://github.com/hivecommons/hive/issues/12683)). With the default issue decision policy, Hive-authored non-risk engineering parks are rewritten to `stage/010-actionable` with a note instead; risk parks should include `Risk: <category>`. They are inputs to hive automation or records of someone's
 verdict, so an agent may not set them through this operation; one reserved
 label refuses the whole request. Use `hive-open-issue claim` to record
 ownership. This refusal applies only to the `label` operation on an existing

@@ -61,15 +61,17 @@ var agentRecordableHiveStateLabels = []string{
 // default, the issue parking bay), the PR-only `stage/085-needs-decision`,
 // and `needs-human`. Parking an item on a maintainer decision is
 // ADR-0019's escalation move (it replaced the retired `needs-direction` and
-// `needs-decision` labels, hivecommons/hive#12683); handing an item to a
-// person with `needs-human` is the same move for work a human must do or
-// consent to. In both cases the agent gives up work; it never decides its
-// own merge. Removing either label — the un-park — stays with people: a
-// maintainer's `/hive approve` / `/hive decision` for the decision label, a
-// person's hand for `needs-human`. The relay does not know whether the
-// target is an issue or a PR, so both parking stages pass; the stage
-// reconcilers then clamp the label to the item's kind (an issue handed 085
-// is re-staged to 045, a PR handed 045 is re-staged to 085).
+// `needs-decision` labels, hivecommons/hive#12683); the issue-request watcher
+// further downgrades Hive-authored non-risk engineering parks under
+// project.agent_issue_decision_policy=resolve. Handing an item to a person
+// with `needs-human` is the same move for work a human must do or consent to.
+// In both cases the agent gives up work; it never decides its own merge.
+// Removing either label — the un-park — stays with people: a maintainer's
+// `/hive approve` / `/hive decision` for the decision label, a person's hand
+// for `needs-human`. The relay does not know whether the target is an issue or
+// a PR, so both parking stages pass; the stage reconcilers then clamp the label
+// to the item's kind (an issue handed 085 is re-staged to 045, a PR handed 045
+// is re-staged to 085).
 func (c *Client) agentMayAddLabel(label string) bool {
 	if agentRecordableHiveStateLabel(label) {
 		return true

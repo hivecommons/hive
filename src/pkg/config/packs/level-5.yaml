@@ -384,7 +384,7 @@ agents:
   on_demand: false
   stale_timeout: 100800  # 28h — must exceed the 24h cadence
   interactions: 'Writes to exactly one place per repository: the consolidation checklist
-    issue it owns (found by its hive:dedupe-checklist marker), filed with --needs-decision
+    issue it owns (found by its hive:dedupe-checklist marker), filed with --needs-decision only for the risk categories and with a Risk: <category> body line
     so it stays out of the work queue. Complements the reviewer''s per-PR duplicate flags
     and the mechanical PR duplicate sweep; does not repeat them.
 
