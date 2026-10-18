@@ -60,7 +60,7 @@ m.tmuxSendEntersForAgent(agent)             // src/pkg/agent/manager_tmux.go:558
 
 The composed command line is per-backend and is built as a string —
 `claude --model … --dangerously-skip-permissions`
-(`src/pkg/agent/manager_launch.go:850`), `copilot … --allow-all`
+(`src/pkg/agent/manager_launch.go:849`), `copilot … --allow-all`
 (`src/pkg/agent/manager_launch.go:859`), and so on.
 
 Nothing in the kick path ever spawns a process. `deliverKickLocked`
@@ -72,7 +72,7 @@ Nothing in the kick path ever spawns a process. `deliverKickLocked`
 `deliverKickLocked` (`src/pkg/agent/manager_kick.go:244`), which:
 
 - clears any stale input with `C-c` then `C-u`
-  (`src/pkg/agent/manager_kick.go:280-283`),
+  (`src/pkg/agent/manager_kick.go:290-293`),
 - types the prompt literally, chunked, via
   `tmuxSendLiteralForAgent` (`src/pkg/agent/manager_kick.go:327`, implementation at
   `src/pkg/agent/manager_tmux.go:553` → `tmux send-keys -l`),
@@ -292,7 +292,7 @@ directly: `RestartWithBootstrap` (`src/pkg/agent/manager_restart.go:419`) sets
 `BootstrapOverride`, and `RestartThenSendKick`
 (`src/pkg/agent/manager_restart.go:505`) is documented as restarting "with a clean
 slate". Whichever path runs, delivery is gated on the new pane reaching its
-input marker (`deliverStartupKick`, `src/pkg/agent/manager_kick.go:456`).
+input marker (`deliverStartupKick`, `src/pkg/agent/manager_kick.go:453`).
 
 **Restart is a reset, not a resume.** Whatever the agent had established in its
 conversation — plan, working context, partial tool results — is gone, and the
@@ -323,7 +323,7 @@ literal CLI UI chrome — `"Login expired"`, `"Please run /login"`
 (`src/pkg/watchdog/classify.go:110-119`).
 
 Its action is `r.fleet.Restart(ctx, name)` (`src/pkg/watchdog/reconciler.go:661`,
-via `planRestartLocked` at `:565` and `restartDetached` at `:646`) — i.e.
+via `planRestartLocked` at `:576` and `restartDetached` at `:657`) — i.e.
 exactly the destructive path in §3.
 
 **What the watchdog does about lost in-process state: nothing, and by design it
@@ -348,7 +348,7 @@ RFC.
 ### 5.1 Hive does not own the conversation, and cannot read it
 
 Every supported backend is an opaque interactive subprocess. Hive composes a
-command line as a string (`src/pkg/agent/manager_launch.go:850`,
+command line as a string (`src/pkg/agent/manager_launch.go:849`,
 `src/pkg/agent/manager_launch.go:859`, `:888`),
 types it into a shell, and from then on interacts only through keystrokes in and
 rendered characters out.
