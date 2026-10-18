@@ -205,6 +205,78 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 	return e, tracker, store
 }
 
+func TestNormalizeContributorLaneVerdictPreservesPolicyOwnedHolds(t *testing.T) {
+	base := ContributorLaneVerdict{
+		Configured:     true,
+		Verdict:        "requires_human",
+		HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
+	}
+	known := base
+	known.HiveAuthoredKnown = true
+	known.HiveAuthored = true
+	if got := normalizeContributorLaneVerdict(known); got.Verdict != "requires_human" {
+		t.Fatalf("known-authorship verdict normalized to %q, want requires_human", got.Verdict)
+	}
+	capped := base
+	capped.FixCycleCapReached = true
+	if got := normalizeContributorLaneVerdict(capped); got.Verdict != "requires_human" {
+		t.Fatalf("capped verdict normalized to %q, want requires_human", got.Verdict)
+	}
+	if got := normalizeContributorLaneVerdict(base); got.Verdict != "changes_requested" {
+		t.Fatalf("legacy verdict normalized to %q, want changes_requested", got.Verdict)
+	}
+}
+
+func TestResolveStageNormalizesRawConcreteRequiresHumanAcrossObservers(t *testing.T) {
+	raw := ContributorLaneVerdict{
+		Configured:     true,
+		Verdict:        "requires_human",
+		HumanSummaries: []string{"correctness requires human: LaneQueuedWork is plumbed but never populated; add the producer in AgentActivityFor."},
+	}
+	list := []stageObservation{
+		{Lane: stageLaneSelf, HeadSHA: "bbb5676", Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{VerdictKnown: true, Verdict: raw}},
+		{Lane: stageLaneTrusted, HeadSHA: "bbb5676", Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{VerdictKnown: true, Verdict: raw}},
+	}
+
+	got, _, obs := resolveStage(list)
+
+	if got.Stage != stagelabels.Fixing || got.Reason != stagelabels.LaneReasonChangesRequested || obs.Lane != stageLaneSelf {
+		t.Fatalf("stage=%s reason=%q lane=%s, want 070 fixing from normalized changes_requested", got.Stage, got.Reason, obs.Lane)
+	}
+}
+
+func TestPreserveNormalizedFixingStageBlocksRawHumanFlap(t *testing.T) {
+	prev := stagelabels.Record{
+		Stage:        stagelabels.Fixing,
+		Reason:       stagelabels.LaneReasonChangesRequested,
+		ActivityHead: "bbb5676",
+	}
+	obs := stageObservation{HeadSHA: "bbb5676", Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."}}}}
+	rawHuman := stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageReasonVerdictRequiresHuman, Human: true}
+
+	got, ok := preserveNormalizedFixingStage(prev, true, obs, rawHuman)
+
+	if !ok || got.Stage != stagelabels.Fixing || got.Reason != stagelabels.LaneReasonChangesRequested || got.Human {
+		t.Fatalf("guard = (%+v, %v), want preserved fixing verdict", got, ok)
+	}
+}
+
+func TestPreserveNormalizedFixingStageAllowsCurrentHumanHold(t *testing.T) {
+	prev := stagelabels.Record{
+		Stage:        stagelabels.Fixing,
+		Reason:       stagelabels.LaneReasonChangesRequested,
+		ActivityHead: "bbb5676",
+	}
+	obs := stageObservation{HeadSHA: "bbb5676", Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human", HiveAuthoredKnown: true, HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."}}}}
+	rawHuman := stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageReasonVerdictRequiresHuman, Human: true}
+
+	got, ok := preserveNormalizedFixingStage(prev, true, obs, rawHuman)
+
+	if ok || got.Rank != stageRankNone {
+		t.Fatalf("guard = (%+v, %v), want current policy-owned human hold to pass through", got, ok)
+	}
+}
+
 func TestClassifyStageMapping(t *testing.T) {
 	approve := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}}
 	reject := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}

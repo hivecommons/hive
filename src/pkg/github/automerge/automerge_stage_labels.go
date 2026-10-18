@@ -286,9 +286,9 @@ func stageKey(owner, repo string, number int) string {
 func (t *StageTracker) note(key string, fn func(*stageDetail)) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	d := t.details[key]
+	d := normalizeStageDetail(t.details[key])
 	fn(&d)
-	t.details[key] = d
+	t.details[key] = normalizeStageDetail(d)
 }
 
 // creditOwnComment records one hive comment posted after the comment count
@@ -332,9 +332,10 @@ func (t *StageTracker) drain() [][]stageObservation {
 	out := make([][]stageObservation, 0, len(keys))
 	for _, k := range keys {
 		lanes := t.obs[k]
-		detail := t.details[k]
+		detail := normalizeStageDetail(t.details[k])
 		list := make([]stageObservation, 0, len(lanes))
 		for _, o := range lanes {
+			o.Detail = normalizeStageDetail(o.Detail)
 			// Details noted by any lane's deep evaluation (verdict, author
 			// tier) apply to every lane's view of the PR.
 			if detail.VerdictKnown {
@@ -430,6 +431,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 // head, so the stage can tell review-pending from reviewed even when the
 // lane's own reason stopped at CI.
 func (c *Engine) noteStageVerdict(owner, repo string, number int, v ContributorLaneVerdict) {
+	v = normalizeContributorLaneVerdict(v)
 	if !c.stagePolicy().Enabled {
 		return
 	}
@@ -675,9 +677,17 @@ const stageReasonVerdictRequiresHuman = "reviewer-verdict:requires_human"
 
 const stageReasonDecisionRequested = "contributor-lane:decision-requested"
 
+func normalizeStageDetail(d stageDetail) stageDetail {
+	if d.VerdictKnown {
+		d.Verdict = normalizeContributorLaneVerdict(d.Verdict)
+	}
+	return d
+}
+
 // stageVerdictReason is the recorded reason when the reviewer verdict, not
 // the lane's skip reason, decided the stage.
 func stageVerdictReason(d stageDetail) string {
+	d = normalizeStageDetail(d)
 	if d.Verdict.DecisionRequested {
 		return stageReasonDecisionRequested
 	}
@@ -686,6 +696,7 @@ func stageVerdictReason(d stageDetail) string {
 
 // verdictBlocks reports whether a known reviewer verdict asks for changes.
 func verdictBlocks(d stageDetail) bool {
+	d = normalizeStageDetail(d)
 	if !d.VerdictKnown || d.Verdict.Approved {
 		return false
 	}
@@ -699,6 +710,7 @@ func verdictBlocks(d stageDetail) bool {
 // (approve / changes_requested / requires_human / reject), and the 085 reason
 // documented for operators is reviewer-verdict:requires_human.
 func verdictNeedsHuman(d stageDetail) bool {
+	d = normalizeStageDetail(d)
 	if !d.VerdictKnown || d.Verdict.Approved {
 		return false
 	}
@@ -709,6 +721,7 @@ func verdictNeedsHuman(d stageDetail) bool {
 }
 
 func trustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
+	d = normalizeStageDetail(d)
 	return verdictNeedsHuman(d) && strings.TrimSpace(d.HumanApprover) != "" && strings.TrimSpace(d.HumanApprovalHead) != "" && strings.TrimSpace(d.HumanApprovalHead) == strings.TrimSpace(head)
 }
 
@@ -790,6 +803,7 @@ func fixingStage(o stageObservation) stagelabels.Stage {
 // classifyStage maps one lane observation to a stage opinion. Reason
 // strings are the lane constants; see the maps above for the groups.
 func classifyStage(o stageObservation) stageVerdict {
+	o.Detail = normalizeStageDetail(o.Detail)
 	reason := o.Reason
 	fixing := fixingStage(o)
 	humanApprovalReason := stageHumanApprovalReason(o.Detail, o.HeadSHA)
@@ -884,6 +898,27 @@ func classifyStage(o stageObservation) stageVerdict {
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}, humanApprovalReason)
 	}
 	return stageVerdict{}
+}
+
+func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
+	if !hadPrev || prev.Stage != stagelabels.Fixing || prev.Reason != stagelabels.LaneReasonChangesRequested {
+		return stageVerdict{}, false
+	}
+	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
+		return stageVerdict{}, false
+	}
+	if verdict.Stage != stagelabels.NeedsDecision || verdict.Reason != stageReasonVerdictRequiresHuman {
+		return stageVerdict{}, false
+	}
+	if !obs.Detail.VerdictKnown {
+		return stageVerdict{}, false
+	}
+	raw := strings.ToLower(strings.TrimSpace(obs.Detail.Verdict.Verdict))
+	normalized := strings.ToLower(strings.TrimSpace(normalizeContributorLaneVerdict(obs.Detail.Verdict).Verdict))
+	if raw != "requires_human" || normalized != "changes_requested" {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
 }
 
 // authorSideDone reports whether the PR has nothing left for its author to
@@ -1068,6 +1103,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
+		prevRec, hadPrev := store.Get(key)
+		if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
 		var route stagelabels.Route
 		if verdict.Human && !verdict.Terminal {
 			route = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
@@ -1079,7 +1119,6 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
-		prevRec, hadPrev := store.Get(key)
 		// dcoRead is true once the commit check for this head was read (or
 		// served from the cache) without error; it is what gates caching, not
 		// the label state, which is reset below for informational no-dco and

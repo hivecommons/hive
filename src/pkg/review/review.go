@@ -470,7 +470,7 @@ func (a Aggregate) Normalize() Aggregate {
 	if a.HiveAuthoredKnown {
 		return a
 	}
-	if aggregateFixCycleCapReached(a) {
+	if FixCycleCapReached(a) {
 		return a
 	}
 	if aggregateRequiresRiskEscalation(a) || !aggregateHasConcreteRemediation(a) {
@@ -506,7 +506,9 @@ func markRequiresHumanPerspectivesAsChangesRequested(a *Aggregate) {
 	}
 }
 
-func aggregateFixCycleCapReached(a Aggregate) bool {
+// FixCycleCapReached reports whether an aggregate is held because the review
+// repair loop exhausted its configured retry budget.
+func FixCycleCapReached(a Aggregate) bool {
 	if a.MaxFixAttempts > 0 && a.FixAttempts >= a.MaxFixAttempts {
 		return true
 	}
@@ -627,6 +629,12 @@ func ConcreteRemediationText(text string) bool {
 		}
 	}
 	return false
+}
+
+// RiskEscalationText reports whether review prose names a category that must
+// remain a human decision instead of being normalized to a fixer route.
+func RiskEscalationText(text string) bool {
+	return containsRiskEscalationTerm(text)
 }
 
 func containsRiskEscalationTerm(text string) bool {

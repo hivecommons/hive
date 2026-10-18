@@ -1,0 +1,1 @@
+- Derive review-driven stage labels from one normalized verdict source to prevent 070/085 flapping.

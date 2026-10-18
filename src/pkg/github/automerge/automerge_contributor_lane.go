@@ -65,6 +65,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -196,11 +197,31 @@ type ContributorLaneVerdict struct {
 	// Approved is true when the aggregate verdict for the head is approve and
 	// merge-eligible.
 	Approved bool
-	// Verdict is the raw aggregate verdict for the audit comment, if any.
+	// Verdict is the aggregate verdict for routing, if any.
 	Verdict           string
 	DecisionRequested bool
 	DecisionQuestion  string
 	HumanSummaries    []string
+	// HiveAuthoredKnown is true for verdicts read from aggregates that recorded
+	// authorship. The stage fallback normalizer leaves those alone: aggregation
+	// already applied the configured self-authored decision policy.
+	HiveAuthoredKnown bool
+	HiveAuthored      bool
+	// FixCycleCapReached preserves a human hold once review repair attempts are
+	// exhausted, even if the review text also names concrete remediation.
+	FixCycleCapReached bool
+}
+
+func normalizeContributorLaneVerdict(v ContributorLaneVerdict) ContributorLaneVerdict {
+	if !v.Configured || v.Approved || v.DecisionRequested || v.HiveAuthoredKnown || v.FixCycleCapReached || strings.ToLower(strings.TrimSpace(v.Verdict)) != string(review.VerdictRequiresHuman) {
+		return v
+	}
+	text := strings.TrimSpace(v.DecisionQuestion + "\n" + strings.Join(v.HumanSummaries, "\n"))
+	if review.RiskEscalationText(text) || !review.ConcreteRemediationText(text) {
+		return v
+	}
+	v.Verdict = string(review.VerdictChangesRequested)
+	return v
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at
@@ -846,7 +867,7 @@ func (c *Engine) contributorLaneVerdictFor(fullRepo string, number int, headSHA 
 	if c == nil || c.contributorLaneVerdict == nil {
 		return ContributorLaneVerdict{}
 	}
-	return c.contributorLaneVerdict(fullRepo, number, headSHA)
+	return normalizeContributorLaneVerdict(c.contributorLaneVerdict(fullRepo, number, headSHA))
 }
 
 func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {

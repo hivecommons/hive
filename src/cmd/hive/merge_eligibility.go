@@ -199,12 +199,15 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 	}
 	if ok {
 		return automerge.ContributorLaneVerdict{
-			Configured:        true,
-			Approved:          approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
-			Verdict:           string(match.Verdict),
-			DecisionRequested: match.DecisionRequested,
-			DecisionQuestion:  match.DecisionQuestion,
-			HumanSummaries:    append([]string(nil), match.HumanSummaries...),
+			Configured:         true,
+			Approved:           approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
+			Verdict:            string(match.Verdict),
+			DecisionRequested:  match.DecisionRequested,
+			DecisionQuestion:   match.DecisionQuestion,
+			HumanSummaries:     append([]string(nil), match.HumanSummaries...),
+			HiveAuthoredKnown:  match.HiveAuthoredKnown,
+			HiveAuthored:       match.HiveAuthored,
+			FixCycleCapReached: review.FixCycleCapReached(match),
 		}
 	}
 	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
