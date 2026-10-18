@@ -1648,6 +1648,29 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	}
 }
 
+func TestApplyStageLabelsResolvedSelfAuthoredDecisionDropsNeedsDecision(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 17, 21, 30, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+
+	const number = 12808
+	pr := stagePR(number, "author/hive", "role/trusted", "stage/085-needs-decision")
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "required-check-pending:build", false, nil)
+	e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+	e.noteStageVerdict("acme", "widget", number, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
+
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/060-reviewed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/085-needs-decision"}) || len(api.comments) != 0 {
+		t.Fatalf("resolved self-authored decision should leave 085: added=%v removed=%v comments=%v", api.added, api.removed, api.comments)
+	}
+}
+
 // A repo without a DCO gate (no `dco`/`DCO` context required or reported)
 // still gets the `no-dco` label but keeps the lane's stage and is not asked
 // to rebase; `governor.labels.stage.dco.required` overrides detection both

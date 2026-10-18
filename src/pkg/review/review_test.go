@@ -99,6 +99,8 @@ func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
 
 func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing.T) {
 	cases := []string{
+		// Exact live questions from #12808 and #12790: Hive-authored
+		// sequencing/config-shape decisions resolved by the reviewer.
 		"@hanthor should decide whether the contribution-preset loader should land before any hivectl command consumes it",
 		"accept `self_experiments.scheduler` as a new top-level config namespace vs nesting, and a fixed ledger path?",
 	}
