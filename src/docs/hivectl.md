@@ -878,9 +878,20 @@ projection does not own —
 across rather than dropped, and the previous file is kept at
 `contributor.env.bak`.
 
-The projection also includes an aligned `HIVE_REPO_SCOPE`: `*` for a legacy
-profile, otherwise sorted canonical IDs joined by `;`, with an empty entry for
-no repositories. The value is shell-quoted so separators survive sourcing.
+The projection also includes an aligned `HIVE_REPO_SCOPE` with one entry per
+hub, in `HIVE_HUB` order and separated by `,`: `*` for a legacy profile,
+otherwise that hub's sorted canonical repository IDs joined by `;`, with an
+empty entry for no repositories. The whole value is wrapped in a literal pair
+of single quotes so the separators survive `source`; the relay's env-file
+parser strips them. For example, a legacy hub followed by a scoped hub with two
+repositories projects as:
+
+```sh
+HIVE_REPO_SCOPE='*,github/github.com/hivecommons/hive;github/github.com/hivecommons/promptargs'
+```
+
+Readers must split on `,` first (aligned with `HIVE_HUB`) and only then on `;`
+within one entry; splitting the whole value on `;` would merge hubs.
 `HIVE_REPO_SCOPE_VERSION` is persisted as `repo_scope_version` and incremented
 on every profile-store commit (including retries after projection failure).
 These fields provide local state for the repository-scope protocol; they do

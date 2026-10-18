@@ -205,6 +205,11 @@ func (s *ProfileStore) Commit(set *ProfileSet) error {
 // FindHive resolves a discovery target by origin, not profile name or path.
 // Legacy users can deliberately have multiple identities at one origin. Never
 // guess which credential to adopt in that case; the caller must ask the user.
+//
+// ValidateHubURL admits hosts the canonical form rejects (compose and k8s
+// service names such as ws://hive_hub:8080). Such a legacy profile can never
+// match a normalizable target, so it is skipped rather than failing every
+// onboarding for the whole set.
 func (set *ProfileSet) FindHive(hub string) (*Profile, error) {
 	id, err := NormalizeHiveID(hub)
 	if err != nil {
@@ -215,7 +220,7 @@ func (set *ProfileSet) FindHive(hub string) (*Profile, error) {
 		candidate := &set.Profiles[i]
 		candidateID, err := NormalizeHiveID(candidate.Hub)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		if candidateID != id {
 			continue

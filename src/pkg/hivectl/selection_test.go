@@ -281,3 +281,28 @@ func TestSelectionAndProvenanceValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestFindHiveSkipsLegacyHostsThatCannotNormalize(t *testing.T) {
+	legacy := Profile{Name: "compose", Hub: "ws://hive_hub:8080/contribute", RegistrationToken: "legacy-token"}
+	if err := ValidateHubURL(legacy.Hub); err != nil {
+		t.Fatalf("fixture must be a hub ValidateHubURL admits: %v", err)
+	}
+	if _, err := NormalizeHiveID(legacy.Hub); err == nil {
+		t.Fatal("fixture must be a hub the canonical form rejects")
+	}
+	set := &ProfileSet{Version: ProfilesVersion, Profiles: []Profile{
+		legacy,
+		{Name: "saved", Hub: "wss://hive.example/contribute", RegistrationToken: "secret"},
+	}}
+	found, err := set.FindHive("https://hive.example/other")
+	if err != nil || found == nil || found.Name != "saved" {
+		t.Fatalf("legacy host broke lookup for unrelated origin: found=%v err=%v", found, err)
+	}
+	target, added, err := set.EnsureHive(Profile{Name: "new", Hub: "wss://other.example/contribute"}, false)
+	if err != nil || !added || target.RegistrationToken != "" || len(set.Profiles) != 3 {
+		t.Fatalf("onboarding alongside legacy host: added=%v err=%v", added, err)
+	}
+	if set.Profiles[0].Hub != legacy.Hub || set.Profiles[0].RegistrationToken != legacy.RegistrationToken {
+		t.Fatal("legacy profile was altered")
+	}
+}

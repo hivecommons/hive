@@ -1,0 +1,1 @@
+- `hivectl` Hive lookup by origin no longer fails for every onboarding target when a legacy profile uses a hub host the canonical identity form rejects (such as compose or Kubernetes service names with `_`); such profiles are skipped. The `HIVE_REPO_SCOPE` documentation now shows the format `hivectl` actually writes (`,` between hubs, `;` between repositories). (#12804)
