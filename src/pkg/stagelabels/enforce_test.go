@@ -131,32 +131,40 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 // hivecommons/hive#12451: the stage table says which kind of item a stage
 // may be written to. 050+ are PR stages; an issue asked to carry one gets
 // 040-covered-by-pr (the PR exists — that is all the issue says), and an
-// issue stage asked of a PR means nothing and clears the stage. The one
-// stage both kinds share is 085-needs-decision: an issue parked on a
-// person by an escalation label (hivecommons/hive#12481) wears it too.
+// issue stage asked of a PR means nothing and clears the stage. No stage is
+// shared: an issue parked on a person wears 045-needs-decision, a PR parked
+// on a decision wears 085-needs-decision, and 085 asked of an issue clamps
+// to 045 so the park survives on the issue's own stage.
 func TestStageForItem(t *testing.T) {
 	for _, d := range Table {
 		if !d.Issue && !d.PR {
 			t.Fatalf("%s: a stage is an issue stage, a PR stage or both, never neither", d.Stage)
 		}
-		if d.Issue && d.PR && d.Stage != NeedsDecision {
-			t.Fatalf("%s: only 085-needs-decision is shared by issues and PRs", d.Stage)
+		if d.Issue && d.PR {
+			t.Fatalf("%s: issue and PR stages are disjoint", d.Stage)
 		}
-		if d.Issue && !d.PR && d.Number > CoveredByPR.Number() {
-			t.Fatalf("%s: an issue's own pipeline ends at 040-covered-by-pr", d.Stage)
+		if d.Issue && d.Number > IssueNeedsDecision.Number() {
+			t.Fatalf("%s: an issue's own pipeline ends at 045-needs-decision", d.Stage)
 		}
-		if d.PR && d.Number <= CoveredByPR.Number() {
-			t.Fatalf("%s: PR stages start after 040", d.Stage)
+		if d.PR && d.Number <= IssueNeedsDecision.Number() {
+			t.Fatalf("%s: PR stages start after 045", d.Stage)
 		}
-		if got := d.Stage.For(IssueItem); d.Issue && got != d.Stage || !d.Issue && got != CoveredByPR {
+		wantIssue := CoveredByPR
+		if d.Stage == NeedsDecision {
+			wantIssue = IssueNeedsDecision
+		}
+		if got := d.Stage.For(IssueItem); d.Issue && got != d.Stage || !d.Issue && got != wantIssue {
 			t.Errorf("%s.For(issue) = %s", d.Stage, got)
 		}
 		if got := d.Stage.For(PRItem); d.PR && got != d.Stage || !d.PR && got != None {
 			t.Errorf("%s.For(pr) = %s", d.Stage, got)
 		}
 	}
-	if NeedsDecision.For(IssueItem) != NeedsDecision || ReadyForHumanMerge.For(IssueItem) != CoveredByPR {
-		t.Fatal("085 is an issue stage too; 090 asked of an issue is still just a covering PR")
+	if NeedsDecision.For(IssueItem) != IssueNeedsDecision || ReadyForHumanMerge.For(IssueItem) != CoveredByPR {
+		t.Fatal("085 asked of an issue is 045; 090 asked of an issue is still just a covering PR")
+	}
+	if IssueNeedsDecision.For(PRItem) != None || IssueNeedsDecision.Applies(PRItem) || NeedsDecision.Applies(IssueItem) {
+		t.Fatal("045 is issue-only and 085 is PR-only")
 	}
 	if !None.Applies(IssueItem) || !None.Applies(PRItem) || None.For(PRItem) != None {
 		t.Fatal("None applies everywhere")

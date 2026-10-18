@@ -84,12 +84,13 @@ const (
 // Policy.HardSuppressLabels say: an issue held for a person (`needs-human`,
 // hivecommons/hive#12680 was stamped `good first issue` minutes after its
 // owner said "Agents stand down"), parked on a maintainer decision
-// (`stage/085-needs-decision` and the retired spellings), or waiting on a
+// (`stage/045-needs-decision`, the pre-045 `stage/085-needs-decision` and
+// the retired word spellings), or waiting on a
 // spec is never a newcomer's first issue. `approved-direction` on its own
 // is fine — it is the maintainer's go-ahead — but next to `needs-human` the
 // go-ahead is for people, and `needs-human` still wins.
 var AlwaysExcludeLabels = []string{
-	"needs-human", "stage/085-needs-decision", "needs-decision", "needs-direction", "needs-spec",
+	"needs-human", "stage/045-needs-decision", "stage/085-needs-decision", "needs-decision", "needs-direction", "needs-spec",
 }
 
 // ClaimedByPrefix is the hive's issue-claim label namespace; any label under

@@ -510,7 +510,7 @@ func (s *Store) CountOwnComments(key string, n int) {
 // worth flagging. A lower number is backward, except leaving a repair stage
 // (fixing, needs-author, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
-// leaving the two human stages: 085 and 090 are parking stages ("the hive
+// leaving the human stages: 045, 085 and 090 are parking stages ("the hive
 // cannot act"), not progress, so moving out of them means the picture
 // changed, whatever the destination — 090 → 072 is the hive learning the
 // head is red, not the author losing ground (hivecommons/hive#12403 carried
@@ -530,7 +530,7 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case Fixing, NeedsAuthor, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
-	case ReadyForHumanMerge, NeedsDecision:
+	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
 	}
 	return true

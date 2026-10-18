@@ -12,13 +12,24 @@ type issueLabelDefinition struct {
 	description string
 }
 
-// NeedsDecisionStageLabel is the single "parked for a human ruling" signal
-// (hivecommons/hive#12683): `stage/085-needs-decision`, the same stage label
-// the PR lanes compute. On an issue it is an INPUT as well as the stage —
-// an agent, the relay or a person puts it on; the enumeration hard-suppresses
-// the issue; the stage reconciler keeps it until a maintainer un-parks with
+// NeedsDecisionStageLabel is the single "issue parked for a human ruling"
+// signal (hivecommons/hive#12683): `stage/045-needs-decision`, the issue-side
+// parking stage. On an issue it is an INPUT as well as the stage — an agent,
+// the relay or a person puts it on; the enumeration hard-suppresses the
+// issue; the stage reconciler keeps it until a maintainer un-parks with
 // `/hive approve` / `/hive decision` or removes the label.
 const NeedsDecisionStageLabel = config.DefaultNeedsDecisionLabel
+
+// legacyIssueNeedsDecisionStageLabel is `stage/085-needs-decision` as found
+// on an ISSUE: the pre-045 park spelling (owner decision: 085 is PR-only).
+// Readers treat it exactly like NeedsDecisionStageLabel until the stage
+// reconciler has swapped it; its repo definition is never deleted because
+// PRs still wear it.
+const legacyIssueNeedsDecisionStageLabel = config.PRNeedsDecisionStageLabel
+
+// PRNeedsDecisionStageLabel is `stage/085-needs-decision`, the PR parking
+// stage (and, on an issue, the retired pre-045 spelling).
+const PRNeedsDecisionStageLabel = legacyIssueNeedsDecisionStageLabel
 
 const (
 	// issueNeedsDirectionLabel and issueNeedsDecisionLabel are RETIRED: both
@@ -45,12 +56,16 @@ const NeedsSignalLabel = "needs-signal"
 var hardSuppressIssueLabels = []string{
 	issueNeedsHumanLabel,
 	NeedsDecisionStageLabel,
+	legacyIssueNeedsDecisionStageLabel,
 	issueNeedsSpecLabel,
 	issueNeedsDecisionLabel,
 	issueNeedsDirectionLabel,
 }
 
-// legacyDecisionLabels are the retired park labels the stage label replaced.
+// legacyDecisionLabels are the retired park labels the stage label replaced
+// and whose repo DEFINITIONS are deleted once nothing carries them. The
+// pre-045 `stage/085-needs-decision` is not among them: on an issue it is
+// retired too, but the definition stays for PRs.
 var legacyDecisionLabels = config.LegacyNeedsDecisionLabels
 
 func isLegacyDecisionLabel(label string) bool {

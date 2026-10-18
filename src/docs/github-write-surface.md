@@ -84,7 +84,8 @@ as fact (`issue_request_label.go`):
 - the labels that record a person's decision or an escalation:
   `approved-direction`, `design-approved`, `needs-human`, `blocked`, the
   retired `needs-decision` / `needs-direction`, and `stage/*` (an agent may
-  only *add* `stage/085-needs-decision`, the park-for-a-ruling signal).
+  only *add* the park-for-a-ruling signals: `stage/045-needs-decision` on an
+  issue, `stage/085-needs-decision` on a PR).
 
 One reserved label refuses the whole request — nothing in it is applied — so a
 batch can never partially land. The refusal is a policy denial like any other:

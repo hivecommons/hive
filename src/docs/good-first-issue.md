@@ -77,7 +77,7 @@ first failure is the `gfi skip reason=…` logged:
 | Pull request wearing the issue shape | `pull-request` |
 | Live claimant (`hive:claim`, assignee) | `claimed`, `assigned` |
 | An open PR already references the issue | `linked-pr` |
-| Hard-suppress label (`needs-human`, `stage/085-needs-decision`, `needs-spec`, or the retired `needs-direction` / `needs-decision`) — always excluded, whatever `exclude_labels` says; `needs-human` next to `approved-direction` still excludes ([#12680](https://github.com/hivecommons/hive/issues/12680)) | `hard-suppress:<label>` |
+| Hard-suppress label (`needs-human`, `stage/045-needs-decision`, a pre-045 `stage/085-needs-decision`, `needs-spec`, or the retired `needs-direction` / `needs-decision`) — always excluded, whatever `exclude_labels` says; `needs-human` next to `approved-direction` still excludes ([#12680](https://github.com/hivecommons/hive/issues/12680)) | `hard-suppress:<label>` |
 | Any `hive/claimed-by-*` label (always excluded) | `excluded-label:<label>` |
 | Excluded label (`kind/epic`, `epic`, `meta`, `meta-tracker`, `tracker`, `roadmap`, `security`, `blocked`, `hold`, `wontfix`, `duplicate`, `hive/in-progress`, `hive/claimed-by-*`, the hive's own `hive/advisory` / `hive/selfreport` / `hive/sentinel` / `hive/fleet` reports, …) | `excluded-label:<label>` |
 | Title starts with `Epic`, `Tracking`, `RFC`, `Proposal`, `Umbrella`, `Hive Advisory Report`, … after leading emoji, `[tags]` and punctuation are stripped, or contains the word `epic`, `rfc`, `umbrella` or `meta` | `title:<word>` |
@@ -191,7 +191,7 @@ the next pass; `exclude_labels` and `repos` are YAML-only.
 | `max_packages` | `2` | Distinct source directories an issue may mention. |
 | `min_score` | `2` | Positive signals required. |
 | `reselect_cooldown` | `168h` | A released issue stays out this long. |
-| `exclude_labels` | built-in list | Replaces the built-in exclusions; hard-suppress labels (`needs-human`, `stage/085-needs-decision`, `needs-spec`, retired spellings) and `hive/claimed-by-*` are always excluded. |
+| `exclude_labels` | built-in list | Replaces the built-in exclusions; hard-suppress labels (`needs-human`, `stage/045-needs-decision`, `stage/085-needs-decision`, `needs-spec`, retired spellings) and `hive/claimed-by-*` are always excluded. |
 | `repos` | all watched | Restrict to these `owner/repo` slugs. |
 | `docs_url` | hive's `src/docs` on `v5` | Base URL the comment links docs under. |
 | `comment_template` | `gfi.DefaultTemplate` | Override; must contain `{{ .Marker }}`. |

@@ -104,7 +104,7 @@ func commentIsDeferral(body string) bool {
 // commentEscalation matches a comment that parks the issue on a person
 // instead of starting it: one that opens with an escalation verdict
 // (`needs-decision (scanner): …`, `needs-direction …` — the explanation
-// text that accompanies a stage/085 park, hivecommons/hive#12683 — or
+// text that accompanies a stage/045 park, hivecommons/hive#12683 — or
 // `Triage (scanner):
 // not a … defect`) or with "parking"/"parked", or that says "parking this
 // [issue/RFC] …", "out of the [agent] work queue" or "no PR to open"
@@ -144,6 +144,7 @@ func commentIsEscalation(body string) bool {
 var escalationLabels = map[string]bool{
 	issueNeedsHumanLabel:                true,
 	NeedsDecisionStageLabel:             true,
+	legacyIssueNeedsDecisionStageLabel:  true,
 	issueNeedsDirectionLabel:            true,
 	issueNeedsDecisionLabel:             true,
 	issueNeedsSpecLabel:                 true,

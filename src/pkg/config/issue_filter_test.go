@@ -87,7 +87,7 @@ func TestIssueFilterHardSuppressDefaultsAndOverrides(t *testing.T) {
 	var f IssueFilterConfig
 	// hivecommons/hive#12683: the stage label is the decision bucket; the
 	// retired spellings stay recognised as legacy aliases of it.
-	for _, label := range []string{DefaultNeedsDecisionLabel, "needs-decision", "needs-direction", "Needs-Direction"} {
+	for _, label := range []string{DefaultNeedsDecisionLabel, PRNeedsDecisionStageLabel, "needs-decision", "needs-direction", "Needs-Direction"} {
 		if got := f.HardSuppressIssueBucket([]string{label}); got != DefaultNeedsDecisionLabel {
 			t.Fatalf("default bucket for %q = %q, want %q", label, got, DefaultNeedsDecisionLabel)
 		}

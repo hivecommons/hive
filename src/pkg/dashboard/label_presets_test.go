@@ -12,7 +12,7 @@ import (
 
 func TestNeedsHumanPresetLabelsDefaultOrder(t *testing.T) {
 	got := needsHumanPresetLabels(nil, "")
-	want := append([]string{github.NeedsDecisionStageLabel, "needs-decision", "needs-direction", "needs-spec", "needs-signal", "needs-human"}, github.HoldLabels...)
+	want := append([]string{github.NeedsDecisionStageLabel, github.PRNeedsDecisionStageLabel, "needs-decision", "needs-direction", "needs-spec", "needs-signal", "needs-human"}, github.HoldLabels...)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default needs-human preset = %v, want %v", got, want)
 	}
@@ -26,7 +26,7 @@ func TestNeedsHumanPresetLabelsHonoursConfigAndHiveHold(t *testing.T) {
 	}
 	got := needsHumanPresetLabels(cfg, "acme")
 	if got[0] != github.NeedsDecisionStageLabel {
-		t.Fatalf("stage/085 decision park must sort first, got %v", got)
+		t.Fatalf("stage/045 decision park must sort first, got %v", got)
 	}
 	if !slices.Contains(got, "triage/direction") {
 		t.Fatalf("configured legacy needs-direction bucket must be included, got %v", got)

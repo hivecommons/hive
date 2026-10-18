@@ -2856,12 +2856,13 @@ func (c *Client) getIssueFilter() IssueAdmitter {
 
 // needsDecisionLabel is the label the issue relay applies to park an
 // agent-filed issue on a maintainer decision: the first configured
-// hard_suppress_labels.needs_decision label, else stage/085-needs-decision
-// (hivecommons/hive#12683). A configured legacy spelling is upgraded to the
-// stage label so no hive keeps writing a retired label.
+// hard_suppress_labels.needs_decision label, else stage/045-needs-decision
+// (hivecommons/hive#12683). A configured legacy spelling — including the
+// pre-045 stage/085, which is PR-only now — is upgraded to the issue stage
+// label so no hive keeps writing a retired label on an issue.
 func (c *Client) needsDecisionLabel() string {
 	if labeler, ok := c.getIssueFilter().(NeedsDecisionLabeler); ok {
-		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" && !isLegacyDecisionLabel(label) {
+		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" && !isLegacyDecisionLabel(label) && !strings.EqualFold(label, legacyIssueNeedsDecisionStageLabel) {
 			return label
 		}
 	}
@@ -3852,8 +3853,9 @@ type RepoIssueBreakdown struct {
 	DependencyDashboard int `json:"dependency_dashboard"`
 	Filtered            int `json:"filtered"`
 	NeedsHuman          int `json:"needs_human,omitempty"`
-	// NeedsDecision counts issues parked on stage/085-needs-decision (and,
-	// until migrated, the retired needs-decision / needs-direction labels).
+	// NeedsDecision counts issues parked on stage/045-needs-decision (and,
+	// until migrated, the pre-045 stage/085 and the retired needs-decision /
+	// needs-direction labels).
 	NeedsDecision        int `json:"needs_decision,omitempty"`
 	NeedsSpec            int `json:"needs_spec,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
@@ -3874,7 +3876,7 @@ func (b *RepoIssueBreakdown) addHardSuppress(label string) {
 	switch label {
 	case issueNeedsHumanLabel:
 		b.NeedsHuman++
-	case NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
+	case NeedsDecisionStageLabel, legacyIssueNeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
 		b.NeedsDecision++
 	case issueNeedsSpecLabel:
 		b.NeedsSpec++

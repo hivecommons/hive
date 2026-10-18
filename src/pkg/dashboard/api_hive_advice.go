@@ -207,7 +207,7 @@ func (s *Server) buildHiveAdvisorQueue(status *StatusPayload, now time.Time) hiv
 			URL:           overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL),
 			Band:          item.info.Band,
 			Blocked:       labels["blocked"],
-			NeedsDecision: labels[needsDecisionLabel] || labels["needs-decision"],
+			NeedsDecision: labels[needsDecisionLabel] || labels[prNeedsDecisionLabel] || labels["needs-decision"],
 			Discussing:    labels["2-discussing"],
 			AgeDays:       daysSince(issue.CreatedAt, now),
 			IdleDays:      daysSince(issueActivity(issue), now),

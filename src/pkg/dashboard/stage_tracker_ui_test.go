@@ -77,6 +77,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_PR_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
@@ -133,6 +134,7 @@ const stages = [
   { number: 10, label: 'Actionable', short: 'Actionable', description: 'Ready to be picked up' },
   { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' },
   { number: 40, label: 'Covered by PR', short: 'Covered by PR' },
+  { number: 45, label: 'Needs human decision', short: 'Needs human decision' },
   { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 60, label: 'Reviewed', short: 'Reviewed' },
   { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 71, label: 'Needs author', short: 'Needs author', branch_from: 50 },
   { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
@@ -255,12 +257,17 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && !row.includes('ham-mod-needs-decision'), row);
 assert.ok(tooltip(row).includes('Needs a human decision'), row);
-// An ISSUE on 085 is parked on a person before any PR exists: it lights
-// Actionable (the issue side) as a detour, not the merge gate, and its
-// headline carries no "(its PR)" suffix.
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 355, kind: 'issue', stage: 85 }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, 'active detoured', T, T, T, T, 'todo cap'], row);
-assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && tooltip(row).includes('Needs a human decision') && !tooltip(row).includes('(its PR)'), row);
+// An ISSUE parked on a person wears 045 (owner decision: 085 is PR-only)
+// before any PR exists: it lights Actionable (the issue side) as a detour,
+// not the merge gate, and its headline carries no "(its PR)" suffix. A
+// pre-045 issue still wearing 085 is drawn the same way until re-staged.
+for (const parked of [45, 85]) {
+  row = stageTrackerRowHtml({ repo: 'acme/console', number: 355, kind: 'issue', stage: parked }, stages, ctx);
+  assert.deepStrictEqual(segStates(row), [D, 'active detoured', T, T, T, T, 'todo cap'], row);
+  assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && tooltip(row).includes('Needs a human decision') && !tooltip(row).includes('(its PR)'), row);
+}
+// 045 needs attention like the other parking stages.
+assert.ok(stageTrackerNeedsAttention({ kind: 'issue', stage: 45 }) && stageTrackerNeedsAttention({ kind: 'pr', stage: 85 }) && !stageTrackerNeedsAttention({ kind: 'issue', stage: 10 }));
 // ...but an issue whose single covering PR sits on 085 still rides the PR's
 // merge gate, with the "(its PR)" suffix.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 356, kind: 'issue', stage: 40, linked_prs: [{ number: 109, author_kind: 'hive', stage: 85 }] }, stages, ctx);
@@ -335,7 +342,8 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'issue', tit
 assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg cap"><span class="ham-badges"><\/span><\/li>/.test(row), row);
 // Sort key: a covered issue counts as far along as its furthest PR.
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
-// An issue parked on 085 with no PR sorts at Actionable, not past the merge gate.
+// An issue parked on 045 (or a pre-045 085) with no PR sorts at Actionable, not past the merge gate.
+assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 45 }, stages).anchor, 10);
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 85 }, stages).anchor, 10);
 assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 85 }, stages).anchor, 80);
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1 }] }, stages).anchor, 30, 'unknown PR stage falls back to the issue');
@@ -426,6 +434,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsFunc(t, html, "stageTrackerDefaultFilter"),
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",

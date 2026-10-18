@@ -11,7 +11,7 @@ import (
 // label filter (hivecommons/hive#12172). Labels is in display priority
 // order: the filter sorts matching rows by the index of the first label they
 // carry, so for the Needs-human preset an operator decision
-// (stage/085-needs-decision) lands above a plain needs-human park.
+// (stage/045-needs-decision) lands above a plain needs-human park.
 type FrontendLabelPreset struct {
 	Key         string `json:"key"`
 	Label       string `json:"label"`
@@ -61,6 +61,7 @@ func needsHumanPresetLabels(cfg *config.Config, hiveID string) []string {
 		}
 	}
 	add(hs.EffectiveNeedsDecision()...)
+	add(github.PRNeedsDecisionStageLabel)
 	add(config.LegacyNeedsDecisionLabels...)
 	add(hs.EffectiveNeedsDirection()...)
 	add(hs.EffectiveNeedsSpec()...)

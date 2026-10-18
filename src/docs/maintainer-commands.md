@@ -14,8 +14,8 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 | Command | What it does | Who may use it | Where it works | Pickup speed | Labels changed |
 | --- | --- | --- | --- | --- | --- |
-| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/085-needs-decision` (or the retired `needs-decision` / `needs-direction`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/085-needs-decision` (and the retired spellings) when present; adds `approved-direction`; **keeps** `needs-human` (the issue stays at 085 and out of the agent queue until a person removes it); never removes `hold`. |
-| `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/085-needs-decision` (or the retired `needs-decision` / `needs-direction`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/085-needs-decision` (and the retired spellings) when present; adds `approved-direction`; **keeps** `needs-human` — a decision never lifts a hold for a person ([#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. An agent's later re-park on 085 is refused while `approved-direction` is present and the recorded decision text is unchanged. |
+| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; **keeps** `needs-human` (the issue stays at 085 and out of the agent queue until a person removes it); never removes `hold`. |
+| `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; **keeps** `needs-human` — a decision never lifts a hold for a person ([#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. An agent's later re-park on 085 is refused while `approved-direction` is present and the recorded decision text is unchanged. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
 | `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` and `needs-reporter-confirmation` when present. |
 | `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | Removes `needs-reporter-confirmation` when present. The reopen sticks: close-on-merge does not close the issue again for a PR that merged before the reopen, whether Hive (`<!-- hive-close-on-merge -->` comment) or GitHub's closing keyword closed it; Hive records the latter with a `<!-- hive-reopened-after-merge pr=<pr> -->` comment. A later PR can still close it. |
@@ -136,7 +136,10 @@ On an opted-in repository the un-park sweep:
   "accepted, but still held by …" note naming the labels.
 
 Parked issues are still filtered from enumeration, and Hive may still add
-`stage/085-needs-decision` with a comment asking the question.
+`stage/045-needs-decision` with a comment asking the question. (Owner
+decision, 2026-10-17: issues park at `stage/045-needs-decision`;
+`stage/085-needs-decision` is PR-only. The un-park sweep still clears a
+pre-045 085 from an issue.)
 
 ### Who may apply the approval label
 
@@ -164,20 +167,20 @@ them; the table states every effect in one place.
 
 | Label | Un-park sweep (label-driven repo) | PR self-authorization sign-off | Reporter-trust admission (`issue_filter.reporter_trust`) |
 |---|---|---|---|
-| `triage/accepted` (or configured approval label) applied by a trusted actor | Releases the issue: Hive-added `stage/085-needs-decision` (and retired spellings) removed, `approved-direction` added, one reply; `needs-human` is kept even when Hive added it | Counts as human sign-off, like `approved-direction` | Unchanged: still one of the labels that admits an untrusted reporter's issue if listed in `untrusted_require_labels` |
+| `triage/accepted` (or configured approval label) applied by a trusted actor | Releases the issue: Hive-added `stage/045-needs-decision` (and retired spellings) removed, `approved-direction` added, one reply; `needs-human` is kept even when Hive added it | Counts as human sign-off, like `approved-direction` | Unchanged: still one of the labels that admits an untrusted reporter's issue if listed in `untrusted_require_labels` |
 | same label applied by an untrusted actor / unreadable timeline | No effect (fail closed) | Not sign-off | Unchanged |
 | `approved-direction` | Issue is not parked | Human sign-off (unchanged) | n/a |
-| `stage/085-needs-decision` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
-| `stage/085-needs-decision` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
-| `needs-human` (whoever added it) | Kept: it is held for a person, and only a person removes it; the issue stays derived at 085 and out of the agent queue ([#12680](https://github.com/hivecommons/hive/issues/12680)) | Parked → no sign-off | n/a |
-| retired `needs-decision` / `needs-direction` ([#12683](https://github.com/hivecommons/hive/issues/12683)) | Migrated by the issue stage reconciler: `stage/085-needs-decision` added, retired label removed; a person's retired label therefore becomes a Hive-added 085 and `/hive approve` can clear it | Parked → no sign-off | n/a |
+| `stage/045-needs-decision` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
+| `stage/045-needs-decision` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
+| `needs-human` (whoever added it) | Kept: it is held for a person, and only a person removes it; the issue stays derived at 045 and out of the agent queue ([#12680](https://github.com/hivecommons/hive/issues/12680)) | Parked → no sign-off | n/a |
+| retired `needs-decision` / `needs-direction` ([#12683](https://github.com/hivecommons/hive/issues/12683)) | Migrated by the issue stage reconciler: `stage/045-needs-decision` added, retired label removed; a person's retired label therefore becomes a Hive-added 045 and `/hive approve` can clear it | Parked → no sign-off | n/a |
 | `hold`, `do-not-merge` | Kept; issue stays parked (unchanged) | Hold (unchanged) | n/a |
 
 ## How the hive sees comments
 
 The un-park path is polling, not a webhook: every sweep lists open issues, keeps
 the "What to reply" notice on issues parked by `needs-human` or
-`stage/085-needs-decision`, and then considers the newest eligible
+`stage/045-needs-decision`, and then considers the newest eligible
 comments within a bounded seven-day window and a per-sweep action cap. Agents may
 still read issue threads directly in their prompts, but the deterministic label
 transition to `approved-direction` happens only when the sweep accepts

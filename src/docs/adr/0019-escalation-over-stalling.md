@@ -88,3 +88,17 @@ are migrated by the issue stage reconciler (085 added, then the retired label
 removed) and the two label definitions are deleted from each repo once
 nothing open carries them. `needs-human` is unchanged: it means a human-held
 identity or consent is required, not that a ruling is owed.
+
+## Amendment (2026-10-17, owner decision: issue park is `stage/045-needs-decision`)
+
+Issues no longer park at `stage/085-needs-decision`; that stage is PR-only.
+The issue-side park is `stage/045-needs-decision`, which sits between
+`040-covered-by-pr` and the PR stages so an issue's stage never reads as
+"past the merge gate". Everything in the amendment above holds with 045 in
+place of 085 for issues: the relay's `--needs-decision` and `label` commands
+apply 045, the retired spellings migrate to 045, and `needs-human` on an
+issue now implies 045 (on a PR it still implies 085). `/hive approve` /
+`/hive decision <text>` un-park to `approved-direction` as before and keep
+`needs-human`. Open issues still wearing 085 are re-staged to 045 by the
+issue stage reconciler and by a one-shot startup sweep; the 085 definition
+is never deleted, PRs wear it.

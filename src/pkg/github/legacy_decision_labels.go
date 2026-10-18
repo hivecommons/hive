@@ -3,14 +3,19 @@ package github
 // `needs-decision` and `needs-direction` are retired (hivecommons/hive#12683).
 // Both parked an issue on a maintainer ruling with identical gates — hard-
 // suppressed at enumeration, the same `/hive approve` / `/hive decision`
-// un-park, the same derived stage/085-needs-decision — so a parked issue wore
+// un-park, the same derived needs-decision stage — so a parked issue wore
 // the stage label plus one or two park labels that said the same thing.
-// stage/085-needs-decision is now the single park signal: an input the
-// enumeration hard-suppresses on, and the stage the reconciler keeps.
+// stage/045-needs-decision is now the single issue park signal: an input the
+// enumeration hard-suppresses on, and the stage the reconciler keeps. (It
+// was stage/085 until the owner ruled that 085 is PR-only; an issue still
+// wearing 085 is re-staged to 045 by Plan — the stale stage label comes off
+// in the same write — and by the one-shot MigrateIssueNeedsDecisionStage
+// sweep for issues the cycle does not enumerate. The 085 DEFINITION is
+// never deleted: PRs wear it.)
 //
 // Migration is one-shot and per item, inside the issue stage reconciler,
 // from the labels the list payload already carries: once Enforce has
-// written (or confirmed) stage/085 on an issue carrying a retired label, the
+// written (or confirmed) stage/045 on an issue carrying a retired label, the
 // retired label comes off. Add-then-remove, so a failure between the two
 // never leaves the issue un-parked. Readers keep recognising the retired
 // spellings (hardSuppressIssueLabels, isIssueParkingLabel, the PR lanes'
@@ -29,7 +34,7 @@ import (
 )
 
 // removeLegacyDecisionLabels strips the retired park labels from an issue
-// that now carries stage/085-needs-decision. carries is the label set after
+// that now carries stage/045-needs-decision. carries is the label set after
 // the stage write. Returns 1 when at least one retired label came off.
 func removeLegacyDecisionLabels(ctx context.Context, client *Client, in IssueStageInput, carries []string, logger *slog.Logger) int {
 	if client == nil || !hasLegacyDecisionLabel(in.Labels) || !issueHasLabel(carries, NeedsDecisionStageLabel) {
@@ -52,7 +57,7 @@ func removeLegacyDecisionLabels(ctx context.Context, client *Client, in IssueSta
 		return 0
 	}
 	if logger != nil {
-		logger.Info("legacy decision label migrated to stage/085-needs-decision", "repo", in.Repo, "issue", in.Number, "removed", removed)
+		logger.Info("legacy decision label migrated to stage/045-needs-decision", "repo", in.Repo, "issue", in.Number, "removed", removed)
 	}
 	return 1
 }

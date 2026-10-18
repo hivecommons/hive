@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,10 +23,16 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 		if d.Number <= prev {
 			t.Fatalf("table not strictly increasing at %s (%d after %d)", d.Slug, d.Number, prev)
 		}
-		if seenNum[d.Number] || seenSlug[d.Slug] {
-			t.Fatalf("duplicate number/slug %d/%s", d.Number, d.Slug)
+		if seenNum[d.Number] {
+			t.Fatalf("duplicate number %d/%s", d.Number, d.Slug)
 		}
-		seenNum[d.Number], seenSlug[d.Slug] = true, true
+		// A slug may repeat only across kinds (045/085 needs-decision: the
+		// issue and PR parking bays); within a kind it must be unique.
+		kindSlug := d.Slug + "/" + strconv.FormatBool(d.Issue)
+		if seenSlug[kindSlug] {
+			t.Fatalf("duplicate slug %d/%s", d.Number, d.Slug)
+		}
+		seenNum[d.Number], seenSlug[kindSlug] = true, true
 		prev = d.Number
 		if !d.Issue && !d.PR {
 			t.Fatalf("%s is emitted for neither issues nor PRs", d.Slug)
@@ -36,7 +43,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	}
 	want := map[Stage]string{
 		Actionable: "stage/010-actionable", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
-		CoveredByPR: "stage/040-covered-by-pr", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
+		CoveredByPR: "stage/040-covered-by-pr", IssueNeedsDecision: "stage/045-needs-decision", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
 		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
 		Fixing:                 "stage/070-fixing", NeedsAuthor: "stage/071-needs-author", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
 		MergeQueue: "stage/100-merge-queue", ReadyForHumanMerge: "stage/090-ready-for-human-merge", NeedsDecision: "stage/085-needs-decision",
@@ -55,8 +62,11 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	if !Reviewed.Before(AwaitingMergeAdmission) || !AwaitingMergeAdmission.Before(NeedsDecision) || !NeedsDecision.Before(ReadyForHumanMerge) || !AwaitingMergeAdmission.StallNote() || MergeQueue.StallNote() {
 		t.Fatal("awaiting-merge-admission must sit between reviewed and needs-decision/ready-for-human-merge and be the only stall-note stage")
 	}
-	if ReadyForHumanMerge.Dwell() != 0 || NeedsDecision.Dwell() != 0 {
+	if ReadyForHumanMerge.Dwell() != 0 || NeedsDecision.Dwell() != 0 || IssueNeedsDecision.Dwell() != 0 {
 		t.Fatal("human stages are open-ended")
+	}
+	if !CoveredByPR.Before(IssueNeedsDecision) || !IssueNeedsDecision.Before(ReviewPending) {
+		t.Fatal("045 must sit between covered-by-pr and review-pending")
 	}
 	if got := StallComment(AwaitingMergeAdmission, 30*time.Minute, "review-state-check"); got != StallCommentMarker+"\nstage 080-awaiting-merge-admission: no activity for 30m0s: review-state-check" {
 		t.Fatalf("StallComment = %q", got)
@@ -506,6 +516,15 @@ func TestHumanStagesAreNotHighWaterMarks(t *testing.T) {
 				t.Errorf("%v → %v flagged as regression", from, to)
 			}
 		}
+	}
+	// 045 is the issue parking bay: un-parking to 010 is not a step back.
+	for _, to := range []Stage{Actionable, Claimed, PRInProgress, CoveredByPR} {
+		if IsRegression(IssueNeedsDecision, to) {
+			t.Errorf("045 → %v flagged as regression", to)
+		}
+	}
+	if IsRegression(CoveredByPR, IssueNeedsDecision) {
+		t.Fatal("040 → 045 is forward")
 	}
 	if IsRegression(ReadyForHumanMerge, NeedsDecision) || IsRegression(NeedsDecision, ReadyForHumanMerge) {
 		t.Fatal("085 ↔ 090 is a flip, not a regression")
@@ -974,11 +993,18 @@ func TestRenamesWithdrawnNeedsAuthorSpellingReads072(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#12683: config spells the decision park label out because
-// it cannot import this package; the two must never drift.
+// hivecommons/hive#12683: config spells the decision park labels out because
+// it cannot import this package; the pairs must never drift. The issue park
+// signal is 045; 085 is the PR stage (and the retired issue spelling).
 func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
-	if NeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
-		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", NeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
+	if IssueNeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
+		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", IssueNeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
+	}
+	if NeedsDecision.Label() != config.PRNeedsDecisionStageLabel {
+		t.Fatalf("stage label %q != config.PRNeedsDecisionStageLabel %q", NeedsDecision.Label(), config.PRNeedsDecisionStageLabel)
+	}
+	if StageBySlugFor("needs-decision", IssueItem) != IssueNeedsDecision || StageBySlugFor("needs-decision", PRItem) != NeedsDecision {
+		t.Fatal("StageBySlugFor must resolve the shared slug per kind")
 	}
 }
 
@@ -999,6 +1025,7 @@ func TestYieldsToAdoption(t *testing.T) {
 		{ReturnedToContributor, true},
 		{AdoptedByHive, true},
 		{AwaitingMergeAdmission, false},
+		{IssueNeedsDecision, true},
 		{NeedsDecision, false},
 		{ReadyForHumanMerge, false},
 		{MergeQueue, false},

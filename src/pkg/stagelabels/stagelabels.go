@@ -84,6 +84,13 @@ const (
 	// the hive's own is 070 fixing — see FixingStageFor. Appended for the
 	// same persisted-enum reason as NeedsDecision.
 	NeedsAuthor
+	// IssueNeedsDecision is stage/045: an ISSUE parked on a person — a
+	// maintainer decision (needs-human, needs-spec, the decision park
+	// label) is owed before any agent may pick it up. It is the issue-side
+	// counterpart of 085, which is PR-only; the two never cross kinds
+	// (Stage.For clamps 085 asked of an issue to 045). Appended for the
+	// same persisted-enum reason as NeedsDecision.
+	IssueNeedsDecision
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -149,8 +156,9 @@ type Definition struct {
 	StallNote bool
 	// Issue/PR report which item kinds the stage may be written to. The
 	// two sets are disjoint: an issue's pipeline ends at 040-covered-by-pr
-	// and the covering PR's own progress is narrated in the issue's stage
-	// reason/comment, never mirrored as a second label (hivecommons/hive#12451).
+	// (045-needs-decision is its parking bay) and the covering PR's own
+	// progress is narrated in the issue's stage reason/comment, never
+	// mirrored as a second label (hivecommons/hive#12451).
 	// Enforce clamps a stage to the item's kind (Stage.For) so a PR-only
 	// stage can never land on an issue and vice versa.
 	Issue, PR bool
@@ -160,7 +168,7 @@ type Definition struct {
 type Item int
 
 const (
-	// IssueItem: an issue. Only Issue:true stages (010–040, and 085 for an
+	// IssueItem: an issue. Only Issue:true stages (010–045; 045 is the
 	// issue parked on a person) may land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
@@ -192,10 +200,11 @@ func (s Stage) Applies(k Item) bool {
 }
 
 // For returns the stage to write on an item of kind k when the caller wants
-// s. An applicable stage is returned unchanged. A PR-only stage asked of an
-// issue clamps to 040-covered-by-pr (the PR exists, that is all the issue
-// says — never to 085, which an issue wears only when parked on a person).
-// An issue-only stage asked of a PR has no PR meaning and yields None.
+// s. An applicable stage is returned unchanged. 085 needs-decision asked of
+// an issue clamps to its issue-side twin 045 (the park survives, on the
+// issue's own stage); any other PR-only stage asked of an issue clamps to
+// 040-covered-by-pr (the PR exists, that is all the issue says). An
+// issue-only stage asked of a PR has no PR meaning and yields None.
 // Unknown stages yield None.
 func (s Stage) For(k Item) Stage {
 	if s.Applies(k) {
@@ -203,6 +212,9 @@ func (s Stage) For(k Item) Stage {
 	}
 	if k == PRItem || !s.Known() {
 		return None
+	}
+	if s == NeedsDecision {
+		return IssueNeedsDecision
 	}
 	return CoveredByPR
 }
@@ -214,6 +226,7 @@ var Table = []Definition{
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent kick is running; no PR yet", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
+	{Stage: IssueNeedsDecision, Number: 45, Slug: "needs-decision", Description: "Issue parked on a person: needs-human or a maintainer decision is owed before the hive picks it up", Issue: true},
 	{Stage: ReviewPending, Number: 50, Slug: "review-pending", Description: "Review swarm requested; awaiting a verdict for the current head", Dwell: time.Hour, PR: true},
 	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, soak not started)", Dwell: 30 * time.Minute, PR: true},
 	{Stage: Fixing, Number: 70, Slug: "fixing", Description: "Hive-authored PR: CI red, changes requested or needs rebase; a hive agent is fixing it", Dwell: 2 * time.Hour, PR: true},
@@ -221,7 +234,7 @@ var Table = []Definition{
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Clanker PR: CI red, changes requested or conflicting; diagnosis posted, its hive must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it (takeover path)", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
-	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed: sentinel alert, hold/needs-decision label, human-only rule or parked issue", Issue: true, PR: true},
+	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "PR parked on a human decision: sentinel alert, hold/needs-decision label or human-only rule", PR: true},
 	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this but trust/role blocks it; a maintainer's /lgtm /approve is all that is missing", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
@@ -346,6 +359,9 @@ func (s Stage) YieldsToAdoption() bool {
 }
 
 // StageBySlug resolves a slug (as used in config dwell overrides) to a stage.
+// The two parking stages share the slug "needs-decision" (045 on issues,
+// 085 on PRs); the first table row — 045 — wins. Both are open-ended, so a
+// dwell override keyed on that slug is a no-op either way.
 func StageBySlug(slug string) (Stage, bool) {
 	slug = strings.ToLower(strings.TrimSpace(slug))
 	for _, d := range Table {
@@ -354,6 +370,18 @@ func StageBySlug(slug string) (Stage, bool) {
 		}
 	}
 	return None, false
+}
+
+// StageBySlugFor resolves a slug to the stage of that name that applies to
+// items of kind k (045 vs 085 for "needs-decision"), or None.
+func StageBySlugFor(slug string, k Item) Stage {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	for _, d := range Table {
+		if d.Slug == slug && d.Stage.Applies(k) {
+			return d.Stage
+		}
+	}
+	return None
 }
 
 // Slugs lists every stage slug in pipeline order (for config/docs).

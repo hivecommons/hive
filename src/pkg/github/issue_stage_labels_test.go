@@ -29,6 +29,9 @@ type issueStageServer struct {
 	// set it to a different label set to simulate another writer.
 	truth map[int][]string
 	gets  map[int]int
+	// prs marks truth numbers the list-by-label call reports as pull
+	// requests (GitHub's issues feed returns PRs too).
+	prs map[int]bool
 	// deletedDefs records repo label definitions deleted via
 	// DELETE /repos/acme/widgets/labels/<name> (hivecommons/hive#12683).
 	deletedDefs []string
@@ -36,7 +39,7 @@ type issueStageServer struct {
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
@@ -58,7 +61,11 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			for n, labels := range s.truth {
 				for _, l := range labels {
 					if strings.ToLower(l) == want {
-						out = append(out, map[string]any{"number": n})
+						item := map[string]any{"number": n}
+						if s.prs[n] {
+							item["pull_request"] = map[string]any{"url": "https://api.example/pulls"}
+						}
+						out = append(out, item)
 						break
 					}
 				}
@@ -196,11 +203,14 @@ func TestIssueStageFor(t *testing.T) {
 		{"covered, cross-repo PR staged: stays 040", IssueStageInput{Repo: "acme/other", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99, PRRepo: "acme/widgets"}}, stagelabels.CoveredByPR, true},
 		{"likely-done is no stage", IssueStageInput{Labels: []string{LikelyDoneLabel}}, stagelabels.None, false},
 		{"filtered out", IssueStageInput{Bucket: "filtered"}, stagelabels.None, false},
-		{"needs-human is human-held without stage 085", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"needs-human", stagelabels.NeedsDecision.Label()}}, stagelabels.None, false},
-		{"parked by needs-direction (#12481)", IssueStageInput{Bucket: "filtered", Reason: "needs-direction", Labels: []string{"help wanted", "needs-direction", stagelabels.PRInProgress.Label()}}, stagelabels.NeedsDecision, false},
-		{"parked by needs-decision", IssueStageInput{Bucket: "filtered", Reason: "needs-decision", Labels: []string{"needs-decision"}}, stagelabels.NeedsDecision, false},
-		{"renamed needs-human bucket is human-held without stage 085", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.None, false},
-		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.NeedsDecision, false},
+		// Owner decision: an issue parked on a person wears 045, never 085
+		// (085 is PR-only); needs-human implies the park.
+		{"needs-human is parked at 045 (stale 085 dropped)", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"needs-human", stagelabels.NeedsDecision.Label()}}, stagelabels.IssueNeedsDecision, false},
+		{"parked by needs-direction (#12481)", IssueStageInput{Bucket: "filtered", Reason: "needs-direction", Labels: []string{"help wanted", "needs-direction", stagelabels.PRInProgress.Label()}}, stagelabels.IssueNeedsDecision, false},
+		{"parked by needs-decision", IssueStageInput{Bucket: "filtered", Reason: "needs-decision", Labels: []string{"needs-decision"}}, stagelabels.IssueNeedsDecision, false},
+		{"parked by legacy 085 on an issue", IssueStageInput{Bucket: "filtered", Reason: PRNeedsDecisionStageLabel, Labels: []string{PRNeedsDecisionStageLabel}}, stagelabels.IssueNeedsDecision, false},
+		{"renamed needs-human bucket is parked at 045", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.IssueNeedsDecision, false},
+		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.IssueNeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
 	}
@@ -216,10 +226,15 @@ func TestIssueStageFor(t *testing.T) {
 			if got != stagelabels.None && !got.Applies(stagelabels.IssueItem) {
 				t.Fatalf("%s is not an issue stage", got)
 			}
+			if got == stagelabels.NeedsDecision {
+				t.Fatal("issue derivation must never emit the PR-only 085")
+			}
 		})
 	}
 }
 
+// An issue carrying needs-human and the PR-only 085 (pre-045 park) is
+// re-staged in one write: 045 on, 085 off.
 func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
@@ -236,11 +251,14 @@ func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if len(fake.added[6]) != 0 {
-		t.Fatalf("needs-human issue must not be re-staged: added=%v", fake.added[6])
+	if got := strings.Join(fake.added[6], ","); got != stagelabels.IssueNeedsDecision.Label() {
+		t.Fatalf("needs-human issue must park at 045: added=%v", fake.added[6])
 	}
 	if got := strings.Join(fake.removed[6], ","); got != stagelabels.NeedsDecision.Label() {
 		t.Fatalf("removed = %v, want stale %s cleared", fake.removed[6], stagelabels.NeedsDecision.Label())
+	}
+	if res.NeedsDecisionRestaged != 1 {
+		t.Fatalf("NeedsDecisionRestaged = %d, want 1", res.NeedsDecisionRestaged)
 	}
 }
 
@@ -502,8 +520,8 @@ func TestSyncIssueStageLabels_HealsDuplicateStageLabels(t *testing.T) {
 
 func TestIssueStageFor_LegacyNeedsDirectionStillParks(t *testing.T) {
 	in := IssueStageInput{Labels: []string{"needs-direction"}}
-	if got, _, _ := IssueStageFor(in, nil); got != stagelabels.NeedsDecision {
-		t.Fatalf("stage = %s, want 085", got)
+	if got, _, _ := IssueStageFor(in, nil); got != stagelabels.IssueNeedsDecision {
+		t.Fatalf("stage = %s, want 045", got)
 	}
 	if !hasHardSuppressIssueLabel(in.Labels) {
 		t.Fatal("needs-direction must still hard-suppress")

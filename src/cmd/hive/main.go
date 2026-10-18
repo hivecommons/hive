@@ -5948,6 +5948,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
 			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyOriginReviewLabel+" or "+github.LegacyFromReviewLabel, "error", err)
 		}
+		// Issues park at stage/045-needs-decision; stage/085 is PR-only
+		// (owner decision). Open issues still wearing 085 are re-staged
+		// once; the issue reconciler also does it per cycle for the issues
+		// it enumerates, so a failure here only delays the rest.
+		if _, err := b.ghClient.MigrateIssueNeedsDecisionStage(b.ctx, github.IssueNeedsDecisionMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("issue needs-decision stage migration incomplete; open issues may still carry "+github.PRNeedsDecisionStageLabel+" instead of "+github.NeedsDecisionStageLabel, "error", err)
+		}
 		// The hive/<hive-id> provenance label is retired (#12539): the origin
 		// marker in every agent-written body carries the same fact. Runs
 		// after the hold migration so that migration still sees the label

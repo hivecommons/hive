@@ -253,6 +253,11 @@ func TestClassifyStageMapping(t *testing.T) {
 		if got.Stage != tc.want || got.Rank != tc.rank || got.Terminal != tc.term || got.Reason != tc.reason {
 			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v reason=%q", tc.name, got, tc.want, tc.rank, tc.term, tc.reason)
 		}
+		// Owner decision: 045 is the ISSUE parking bay; a PR parks at 085
+		// and PR derivation never emits an issue-only stage.
+		if got.Stage != stagelabels.None && !got.Stage.Applies(stagelabels.PRItem) {
+			t.Errorf("%s: PR derivation emitted issue-only stage %v", tc.name, got.Stage)
+		}
 	}
 	// requires_human is a human hand-off too, so routeHuman posts the 085
 	// entry comment for it like every other needs-decision arrival.

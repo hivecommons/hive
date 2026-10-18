@@ -13,14 +13,14 @@ import (
 
 // issueParkingLabels are the labels that park an issue on a person and so
 // make it the un-park sweep's business: `needs-human`, the park signal
-// `stage/085-needs-decision` (hivecommons/hive#12683), and the retired
-// `needs-decision` / `needs-direction` spellings until the stage reconciler
-// has migrated them. Only unparkRemovableLabels are ever cleared by a /hive
+// `stage/045-needs-decision` (hivecommons/hive#12683), and the retired
+// spellings — the pre-045 `stage/085-needs-decision`, `needs-decision`,
+// `needs-direction` — until the stage reconciler has migrated them. Only unparkRemovableLabels are ever cleared by a /hive
 // command. `hold` is deliberately untouched because it has several
 // independent sources (the ACMM level gate, the SHA hold, holdguard and a
 // person), and clearing one of them from a comment would silently clear all
 // of them.
-var issueParkingLabels = []string{issueNeedsHumanLabel, NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
+var issueParkingLabels = []string{issueNeedsHumanLabel, NeedsDecisionStageLabel, legacyIssueNeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
 
 // unparkRemovableLabels are the park labels `/hive approve` / `/hive
 // decision` (and label approval) remove. `needs-human` is NOT among them:
@@ -29,7 +29,7 @@ var issueParkingLabels = []string{issueNeedsHumanLabel, NeedsDecisionStageLabel,
 // it. The incident on hivecommons/hive#12680 / #12681 (2026-10-17) had the
 // sweep clear it on `/hive decision … Agents stand down`, which dropped both
 // issues straight back into the agent queue. Only a person removes it.
-var unparkRemovableLabels = []string{NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
+var unparkRemovableLabels = []string{NeedsDecisionStageLabel, legacyIssueNeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
 
 const maintainerCommandsDocURL = "https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md"
 
@@ -151,7 +151,7 @@ func (r *IssueUnparkSweepResult) actions() int {
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
 // one-line reply instead of editing labels (hivecommons/hive#9879).
 //
-// On every parked issue (`needs-human` or `stage/085-needs-decision`) the
+// On every parked issue (`needs-human` or `stage/045-needs-decision`) the
 // sweep keeps a "What to reply" comment listing the commands, because the
 // maintainer should never have to remember what to type. When an eligible
 // person replies:
@@ -563,7 +563,7 @@ func hasIssueParkingLabel(labels []string) bool {
 // actually carries and adds the approval label, so the resulting PR is not
 // held for #5117 and the issue ranks as an agreed direction. `needs-human`
 // stays (unparkRemovableLabels), so an issue carrying it remains
-// hard-suppressed and at stage/085 after the decision is recorded. A label
+// hard-suppressed and at stage/045 after the decision is recorded. A label
 // that has already gone is not an error.
 func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
 	for _, label := range unparkRemovableLabels {
@@ -760,7 +760,7 @@ const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive de
 
 // unparkLabelDrivenReply answers `/hive approve`, `/hive decision` and
 // `/hive help` on a repo with project.repo_policies[].label_driven set.
-const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human` and `stage/085-needs-decision` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
+const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human` and `stage/045-needs-decision` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
 
 func renderUnparkAcceptedReply(actor, decision string, needsHuman bool) string {
 	var b strings.Builder

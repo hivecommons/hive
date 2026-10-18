@@ -545,7 +545,8 @@ func TestScoreAlwaysExcludesParkedAndClaimed(t *testing.T) {
 	}{
 		{"needs-human", []string{"kind/bug", "Needs-Human"}, "hard-suppress:needs-human"},
 		{"approved-direction with needs-human", []string{"approved-direction", "needs-human"}, "hard-suppress:needs-human"},
-		{"stage 085", []string{"kind/bug", "stage/085-needs-decision"}, "hard-suppress:stage/085-needs-decision"},
+		{"stage 045 (issue parking bay)", []string{"kind/bug", "stage/045-needs-decision"}, "hard-suppress:stage/045-needs-decision"},
+		{"stage 085 (pre-045 park)", []string{"kind/bug", "stage/085-needs-decision"}, "hard-suppress:stage/085-needs-decision"},
 		{"retired needs-decision", []string{"needs-decision"}, "hard-suppress:needs-decision"},
 		{"claimed-by", []string{"kind/bug", "hive/claimed-by-karibhou"}, "excluded-label:hive/claimed-by-karibhou"},
 	}

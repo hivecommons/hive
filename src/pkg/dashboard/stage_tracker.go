@@ -124,8 +124,9 @@ type StageTrackerItem struct {
 	Caption string `json:"caption"`
 	Actor   string `json:"actor,omitempty"`
 	// Modifiers are the health and control markers in effect: stalled,
-	// regressed, hold, needs-human, needs-decision (stage/085 carried as a
-	// park signal), needs-rebase, blocked, draft.
+	// regressed, hold, needs-human, needs-decision (stage/045 on an issue or
+	// stage/085 on a PR carried as a park signal), needs-rebase, blocked,
+	// draft.
 	Modifiers     []string   `json:"modifiers"`
 	RegressedFrom int        `json:"regressed_from,omitempty"`
 	NudgeCount    int        `json:"nudge_count,omitempty"`
@@ -161,14 +162,17 @@ type StageTrackerLinkedPR struct {
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
 // stage_tracker_test.go.
 const (
-	trackerNumberReviewed       = 60
-	trackerNumberAwaitingMerge  = 80
-	trackerNumberReviewPending  = 50
-	trackerNumberFixing         = 70
-	trackerNumberNeedsAuthor    = 71
-	trackerNumberReturned       = 72
-	trackerNumberAdopted        = 74
-	trackerNumberNeedsDecision  = 85
+	trackerNumberReviewed      = 60
+	trackerNumberAwaitingMerge = 80
+	trackerNumberReviewPending = 50
+	trackerNumberFixing        = 70
+	trackerNumberNeedsAuthor   = 71
+	trackerNumberReturned      = 72
+	trackerNumberAdopted       = 74
+	trackerNumberNeedsDecision = 85
+	// trackerNumberIssueDecision is the issue parking stage (045): a main
+	// issue-side stop, not a detour off the merge gate.
+	trackerNumberIssueDecision  = 45
 	trackerNumberReadyForHuman  = 90
 	trackerNumberCoveredByPR    = 40
 	trackerNumberClaimed        = 20
@@ -233,6 +237,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "PR in progress"
 	case stagelabels.CoveredByPR:
 		return "Covered by PR"
+	case stagelabels.IssueNeedsDecision:
+		return "Needs human decision"
 	case stagelabels.ReviewPending:
 		return "CI / Review"
 	case stagelabels.Reviewed:
@@ -361,9 +367,10 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modRegressed] = true
 		case "needs-human":
 			set[modNeedsHuman] = true
-		case needsDecisionLabel, "needs-decision":
-			// The stage label is the park signal (hivecommons/hive#12683);
-			// the retired spelling is read until migrated.
+		case needsDecisionLabel, prNeedsDecisionLabel, "needs-decision":
+			// The stage label is the park signal (hivecommons/hive#12683;
+			// 045 on an issue, 085 on a PR); the retired spelling is read
+			// until migrated.
 			set[modNeedsDecision] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
@@ -523,7 +530,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause(c, clause), "hive"
 	case stagelabels.AwaitingMergeAdmission:
 		return joinClause("Green and approved; waiting for the automerge lane to admit it", clause), "automerge lane"
-	case stagelabels.NeedsDecision:
+	case stagelabels.NeedsDecision, stagelabels.IssueNeedsDecision:
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		return joinClause("Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself", clause), "maintainer"
@@ -622,11 +629,14 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
 		}
-		it.Mirrored = it.Kind == "issue" && stage != stagelabels.None && stage.Number() > trackerNumberCoveredByPR
+		// An issue wearing a PR stage (050+) is riding its covering PR; its
+		// own parking bay 045 is not a mirror.
+		it.Mirrored = it.Kind == "issue" && stage != stagelabels.None && !stage.Applies(stagelabels.IssueItem)
 		it.Modifiers = stageTrackerModifiers(labels, status.HiveID, rec, hasRec, overrides, now, draft)
-		// 085 has its own chevron word ("Needs human decision"); the chip
-		// only adds information when needs-decision modifies another stage.
-		if stage == stagelabels.NeedsDecision {
+		// 045/085 have their own chevron word ("Needs human decision"); the
+		// chip only adds information when needs-decision modifies another
+		// stage.
+		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)

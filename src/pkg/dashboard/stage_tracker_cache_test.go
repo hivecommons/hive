@@ -41,8 +41,8 @@ func TestStageTrackerListsSidelinedItems(t *testing.T) {
 	s.statusMu.Unlock()
 
 	resp := s.buildStageTracker(s.status, store, now)
-	if len(resp.Items) != 13 {
-		t.Fatalf("items = %d, want 13 (7 fixture + 4 parked issues + 2 sidelined PRs)", len(resp.Items))
+	if len(resp.Items) != 14 {
+		t.Fatalf("items = %d, want 14 (8 fixture + 4 parked issues + 2 sidelined PRs)", len(resp.Items))
 	}
 	seen := map[string]int{}
 	for _, it := range resp.Items {
@@ -65,7 +65,9 @@ func TestStageTrackerListsSidelinedItems(t *testing.T) {
 		t.Fatalf("issue10 = %+v", issue10)
 	}
 	issue11 := trackerItem(t, resp, "issue", 11)
-	if issue11.Stage != trackerNumberNeedsDecision || !hasMod(issue11, modNeedsHuman) {
+	// A pre-045 issue still wearing 085 keeps that stage until the reconciler
+	// re-stages it; the tracker flags the mismatch as mirrored.
+	if issue11.Stage != trackerNumberNeedsDecision || !issue11.Mirrored || !hasMod(issue11, modNeedsHuman) {
 		t.Fatalf("label beats bucket: issue11 = %+v", issue11)
 	}
 	if issue12 := trackerItem(t, resp, "issue", 12); issue12.Stage != trackerNumberClaimed {
@@ -123,7 +125,7 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 	if err := json.Unmarshal(first.Body.Bytes(), &fresh); err != nil {
 		t.Fatal(err)
 	}
-	if fresh.Source != "fresh" || fresh.CacheTTLSeconds != 20 || fresh.GeneratedAt.IsZero() || len(fresh.Items) != 7 {
+	if fresh.Source != "fresh" || fresh.CacheTTLSeconds != 20 || fresh.GeneratedAt.IsZero() || len(fresh.Items) != 8 {
 		t.Fatalf("fresh payload: source=%q ttl=%d at=%v items=%d", fresh.Source, fresh.CacheTTLSeconds, fresh.GeneratedAt, len(fresh.Items))
 	}
 	etag := first.Header().Get("ETag")

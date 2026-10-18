@@ -22,7 +22,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 	pins := map[stagelabels.Stage]int{
 		stagelabels.Actionable: trackerNumberActionable, stagelabels.Claimed: trackerNumberClaimed,
 		stagelabels.PRInProgress: trackerNumberPRInProgress, stagelabels.CoveredByPR: trackerNumberCoveredByPR,
-		stagelabels.ReviewPending: trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
+		stagelabels.IssueNeedsDecision: trackerNumberIssueDecision,
+		stagelabels.ReviewPending:      trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
 		stagelabels.Fixing: trackerNumberFixing, stagelabels.NeedsAuthor: trackerNumberNeedsAuthor, stagelabels.ReturnedToContributor: trackerNumberReturned,
 		stagelabels.AdoptedByHive: trackerNumberAdopted, stagelabels.AwaitingMergeAdmission: trackerNumberAwaitingMerge,
 		stagelabels.NeedsDecision: trackerNumberNeedsDecision, stagelabels.ReadyForHumanMerge: trackerNumberReadyForHuman,
@@ -47,8 +48,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 8 || detours != 6 {
-		t.Fatalf("mains=%d detours=%d, want 8 main segments and 6 detours", mains, detours)
+	if mains != 9 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 9 main segments (045 is the issue parking bay) and 6 detours", mains, detours)
 	}
 }
 
@@ -141,6 +142,9 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 		ActionableIssues: []any{
 			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/100-merge-queue"}},
 			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner"}},
+			// Parked on a person: the issue parking bay 045 (owner decision:
+			// issues never wear 085), with needs-human beside it.
+			github.Issue{Number: 13, Title: "Agents stand down", Author: "pat", AuthorIsHuman: true, Labels: []string{"stage/045-needs-decision", "needs-human"}},
 			// GitHub's issues feed returns pull requests too. These are copies
 			// of PRs 101 (also in OpenPrs) and 106 (URL says /pull/, not in the
 			// PR set); neither may become an issue row.
@@ -201,8 +205,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &live); err != nil {
 		t.Fatal(err)
 	}
-	if len(live.Items) != 7 {
-		t.Fatalf("handler items = %d, want 7", len(live.Items))
+	if len(live.Items) != 8 {
+		t.Fatalf("handler items = %d, want 8", len(live.Items))
 	}
 	// Dwell-based modifiers depend on the clock, so the item assertions use
 	// the fixture's frozen now (round-tripped through JSON like the handler).
@@ -217,8 +221,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if resp.HiveID != "hv-test" || len(resp.Stages) != len(stagelabels.Table) || !resp.AuthorKindLabels {
 		t.Fatalf("header: hive=%q stages=%d labels=%v", resp.HiveID, len(resp.Stages), resp.AuthorKindLabels)
 	}
-	if len(resp.Items) != 7 {
-		t.Fatalf("items = %d, want 7 (2 issues + 4 open PRs + 1 held PR; issue-feed PR copies dropped)", len(resp.Items))
+	if len(resp.Items) != 8 {
+		t.Fatalf("items = %d, want 8 (3 issues + 4 open PRs + 1 held PR; issue-feed PR copies dropped)", len(resp.Items))
 	}
 
 	// needs-rebase always lands a PR in 070/072; a sample at 050/060 with the
@@ -284,6 +288,11 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("held pr105 = %+v", pr105)
 	}
 
+	issue13 := trackerItem(t, resp, "issue", 13)
+	if issue13.Stage != trackerNumberIssueDecision || issue13.Mirrored || issue13.Actor != "maintainer" || hasMod(issue13, modNeedsDecision) || !hasMod(issue13, modNeedsHuman) {
+		t.Fatalf("parked issue13 = %+v", issue13)
+	}
+
 	issue7 := trackerItem(t, resp, "issue", 7)
 	if issue7.Stage != 100 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
 		t.Fatalf("issue7 = %+v", issue7)
@@ -312,7 +321,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		order = append(order, it.Number)
 	}
 	// 100: issue7 and pr102 share since; repo tie-break then number → 7, 102.
-	want := []int{7, 102, 104, 101, 103, 8, 105}
+	want := []int{7, 102, 104, 101, 103, 13, 8, 105}
 	for i := range want {
 		if order[i] != want[i] {
 			t.Fatalf("order = %v, want %v", order, want)

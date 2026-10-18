@@ -8,8 +8,9 @@ import (
 )
 
 // hivecommons/hive#12683: a parked issue carrying a retired park label gets
-// stage/085 written first, then the retired label removed, and the
-// definitions are deleted once nothing open carries them.
+// the issue parking stage (045; 085 is PR-only) written first, then the
+// retired label removed, and the definitions are deleted once nothing open
+// carries them. An issue still wearing 085 drops it in the same write.
 func TestSyncIssueStageLabels_MigratesLegacyDecisionLabels(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
@@ -26,23 +27,26 @@ func TestSyncIssueStageLabels_MigratesLegacyDecisionLabels(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if got := fake.added[1]; strings.Join(got, ",") != stagelabels.NeedsDecision.Label() {
-		t.Errorf("issue 1 added %v, want stage/085 only", got)
+	if got := fake.added[1]; strings.Join(got, ",") != stagelabels.IssueNeedsDecision.Label() {
+		t.Errorf("issue 1 added %v, want stage/045 only", got)
 	}
 	if got := fake.removed[1]; strings.Join(got, ",") != "needs-direction" {
 		t.Errorf("issue 1 removed %v, want needs-direction", got)
 	}
-	if len(fake.added[2]) != 0 {
-		t.Errorf("issue 2 already at 085, added %v", fake.added[2])
+	if got := fake.added[2]; strings.Join(got, ",") != stagelabels.IssueNeedsDecision.Label() {
+		t.Errorf("issue 2 added %v, want stage/045 (re-staged off the PR-only 085)", got)
 	}
-	if got := fake.removed[2]; strings.Join(got, ",") != "needs-decision" {
-		t.Errorf("issue 2 removed %v, want needs-decision", got)
+	if got := fake.removed[2]; strings.Join(got, ",") != stagelabels.NeedsDecision.Label()+",needs-decision" {
+		t.Errorf("issue 2 removed %v, want stage/085 then needs-decision", got)
+	}
+	if res.NeedsDecisionRestaged != 1 {
+		t.Errorf("NeedsDecisionRestaged = %d, want 1 (issue 2)", res.NeedsDecisionRestaged)
 	}
 	if len(fake.removed[3]) != 0 {
 		t.Errorf("needs-human must stay: removed %v", fake.removed[3])
 	}
-	if got := fake.added[3]; len(got) != 0 {
-		t.Errorf("issue 3 added %v, want no stage for needs-human", got)
+	if got := fake.added[3]; strings.Join(got, ",") != stagelabels.IssueNeedsDecision.Label() {
+		t.Errorf("issue 3 added %v, want stage/045 (needs-human implies the park)", got)
 	}
 }
 

@@ -39,12 +39,21 @@ import (
 // does not change them.
 const (
 	DefaultNeedsHumanLabel = "needs-human"
-	// DefaultNeedsDecisionLabel is the single "parked for a human ruling"
-	// signal (hivecommons/hive#12683): the stage label itself. It replaced
-	// the `needs-decision` and `needs-direction` labels, which said the same
-	// thing twice next to it. Spelled out here because pkg/stagelabels
-	// imports this package; stagelabels tests pin the two spellings together.
-	DefaultNeedsDecisionLabel = "stage/085-needs-decision"
+	// DefaultNeedsDecisionLabel is the single "issue parked for a human
+	// ruling" signal (hivecommons/hive#12683): the issue-side stage label
+	// itself, stage/045-needs-decision. It replaced the `needs-decision` and
+	// `needs-direction` labels, which said the same thing twice next to it,
+	// and (owner decision) the shared stage/085 spelling, which is PR-only
+	// now. Spelled out here because pkg/stagelabels imports this package;
+	// stagelabels tests pin the spellings together.
+	DefaultNeedsDecisionLabel = "stage/045-needs-decision"
+	// PRNeedsDecisionStageLabel is the PR parking stage, stage/085-needs-
+	// decision. On an ISSUE it is the retired pre-045 spelling: every reader
+	// treats it as the decision bucket until the stage reconciler (or the
+	// one-shot migration) has swapped it for DefaultNeedsDecisionLabel. It
+	// is deliberately NOT in LegacyNeedsDecisionLabels: that list drives
+	// repo label-definition deletion, and 085 stays defined for PRs.
+	PRNeedsDecisionStageLabel = "stage/085-needs-decision"
 	// DefaultNeedsDirectionLabel is the RETIRED spelling the `needs_direction`
 	// bucket defaulted to; it is now a legacy alias of the decision bucket.
 	DefaultNeedsDirectionLabel = LegacyNeedsDirectionLabel
@@ -254,9 +263,10 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 			}
 		}
 		// The stage label is the park signal whatever the bucket is
-		// configured to, and the legacy spellings stay recognised until
-		// the reconciler has migrated them.
-		if labelMatches(DefaultNeedsDecisionLabel, actual) {
+		// configured to, and the legacy spellings (including the pre-045
+		// stage/085 on an issue) stay recognised until the reconciler has
+		// migrated them.
+		if labelMatches(DefaultNeedsDecisionLabel, actual) || labelMatches(PRNeedsDecisionStageLabel, actual) {
 			return DefaultNeedsDecisionLabel
 		}
 		for _, legacy := range LegacyNeedsDecisionLabels {
