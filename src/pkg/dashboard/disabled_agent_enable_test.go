@@ -317,10 +317,22 @@ assert.strictEqual(agentNowAgo(3 * 60 * MIN), '3 hours ago');
 assert.ok(!agentNowIsOutdated(clock, 5000 + 3 * AGENT_NOW_UPDATE_MS));
 assert.ok(agentNowIsOutdated(clock, 5000 + 4 * AGENT_NOW_UPDATE_MS));
 `
-	cmd := exec.Command("node", "-e", script)
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Log("node not on PATH — agent \"Now:\" line fixture was NOT executed by this run")
+		return
+	}
+	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node agent \"Now:\" line fixture failed: %v\n%s", err, out)
 	}
+}
+
+func TestAgentNowLineStatesWithoutNode(t *testing.T) {
+	// Exercise the fixture with no executables on PATH, even on CI runners
+	// that have node installed. A missing node must not fail the test.
+	t.Setenv("PATH", t.TempDir())
+	TestAgentNowLineStates(t)
 }
 
 // TestAgentNowLineWiring pins where the line renders: under the state line on

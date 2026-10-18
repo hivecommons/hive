@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-18 (v5.186.4)
+
+### Fixed
+
+- Restart an agent whose live CLI pane stays off its input prompt (neither Working nor any prompt) after repeated undeliverable kicks, instead of leaving it wedged with every kick failing as "CLI did not reach input prompt" and, since the self-report now waits for that restart, never reported (#12916).
+
 ## 2026-10-18 (v5.186.3)
 
 ### Fixed
