@@ -140,8 +140,7 @@ func TestWithheldFixPrunedWhenHeadMoves(t *testing.T) {
 
 // TestHumanPRReviewPromptProposesFixesInComment: with the push withheld, the
 // reviewer is told to carry the fix in the comment as a suggestion or patch,
-// and not to touch the branch. The hive's own PRs, and a hive that opted
-// in, get the ordinary prompt.
+// and not to touch the branch. The hive's own PRs get the ordinary prompt.
 func TestHumanPRReviewPromptProposesFixesInComment(t *testing.T) {
 	const marker = "PROPOSE FIXES, DO NOT PUSH THEM."
 	cases := []struct {
@@ -153,7 +152,7 @@ func TestHumanPRReviewPromptProposesFixesInComment(t *testing.T) {
 	}{
 		{name: "human_off", pr: humanPR("sha1"), want: true},
 		{name: "human_off_combined", pr: humanPR("sha1"), combined: true, want: true},
-		{name: "human_on", pr: humanPR("sha1"), on: true},
+		{name: "human_on", pr: humanPR("sha1"), on: true, want: true},
 		{name: "agent_off", pr: dispatchPR("sha1")},
 	}
 	for _, tc := range cases {
