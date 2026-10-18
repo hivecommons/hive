@@ -1358,7 +1358,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA)
 	c.noteStageVerdict(owner, repo, number, verdict)
-	c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
+	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
+	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
 	method := mergeMethodFor(pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
@@ -1471,7 +1472,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
 	// Shadow (the default) records and merges; enforce holds.
-	if reviewReason := c.selfMergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA); reviewReason != "" {
+	if reviewReason := c.selfMergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 

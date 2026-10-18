@@ -252,7 +252,7 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 				Mode:    func() string { return ReviewGateModeEnforce },
 				Verdict: func(string, int, string) ReviewGateVerdict { return tt.verdict },
 			}, &rec)
-			reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7")
+			reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "", false)
 			if reason != tt.wantReason {
 				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
 			}
@@ -289,7 +289,7 @@ func TestSelfMergeReviewGateScope(t *testing.T) {
 				tt.gate.Verdict = func(string, int, string) ReviewGateVerdict { asked++; return reviewGateNoBundle }
 				c.SetReviewGate(tt.gate)
 			}
-			if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7"); reason != "" || asked != 0 {
+			if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7", "", false); reason != "" || asked != 0 {
 				t.Fatalf("reason = %q, asked = %d; want no evaluation", reason, asked)
 			}
 		})
@@ -298,5 +298,31 @@ func TestSelfMergeReviewGateScope(t *testing.T) {
 	nilEngine.SetReviewGate(&ReviewGate{})
 	if nilEngine.currentReviewGate() != nil {
 		t.Fatal("nil engine must have no review gate")
+	}
+}
+
+// A caller that already looked up the trusted human approval passes it in, so
+// the gate must not list PR reviews again.
+func TestSelfMergeReviewGateReusesPriorApproval(t *testing.T) {
+	reviewCalls := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reviewCalls++
+		json.NewEncoder(w).Encode([]any{})
+	}))
+	defer api.Close()
+
+	var rec reviewGateRecords
+	c := newReviewGateSweepClient(api.URL, ReviewGate{
+		Mode:    func() string { return ReviewGateModeEnforce },
+		Verdict: func(string, int, string) ReviewGateVerdict { return reviewGateNoBundle },
+	}, &rec)
+	if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "alice", true); reason != "" {
+		t.Fatalf("reason = %q, want merge to proceed", reason)
+	}
+	if reviewCalls != 0 {
+		t.Fatalf("review API calls = %d, want 0", reviewCalls)
+	}
+	if len(rec.evals) != 1 || rec.evals[0].HumanApprover != "alice" || rec.evals[0].Outcome != ReviewGateOutcomeHumanApproved {
+		t.Fatalf("evaluations = %+v, want human-approved by alice", rec.evals)
 	}
 }

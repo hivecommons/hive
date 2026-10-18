@@ -1,0 +1,2 @@
+- Make the automerge review gate's human-approval read-failure log lane-neutral (#12891).
+- List PR reviews once per self-authored sweep instead of twice for requires-human heads (#12892).

@@ -184,8 +184,10 @@ type reviewEvidenceStarter interface {
 // immediately before the merge call. It returns "" when the merge may
 // proceed and a skip reason ("review-gate:<outcome>") when an enforcing gate
 // holds it. Only the self-authored lane is gated; trusted-bot PRs are not
-// reviewed by the swarm and pass untouched.
-func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string) string {
+// reviewed by the swarm and pass untouched. priorChecked reports that the
+// caller already looked up the trusted human approval for head (priorApprover
+// is its result), so the reviews are not listed again.
+func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string, priorApprover string, priorChecked bool) string {
 	gate := c.currentReviewGate()
 	if gate == nil || lane != stageLaneSelf {
 		return ""
@@ -203,7 +205,11 @@ func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, re
 	enforce := mode == ReviewGateModeEnforce
 	humanApprover := ""
 	if enforce && outcome != ReviewGateOutcomeApproved && !strings.HasPrefix(outcome, ReviewGateOutcomeChangesRequested) {
-		if approver, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, head); ok {
+		approver, ok := priorApprover, priorApprover != ""
+		if !priorChecked {
+			approver, ok = c.latestTrustedHumanApproval(ctx, owner, repo, number, head)
+		}
+		if ok {
 			humanApprover = approver
 			outcome = ReviewGateOutcomeHumanApproved
 		}
@@ -255,7 +261,7 @@ func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo str
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
-			c.warn("self-merge review gate could not read PR reviews for human approval", "owner", owner, "repo", repo, "pr", number, "error", err)
+			c.warn("automerge review gate could not read PR reviews for human approval", "owner", owner, "repo", repo, "pr", number, "error", err)
 			return "", false
 		}
 		seen = append(seen, reviews...)
