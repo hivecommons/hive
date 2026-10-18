@@ -1,0 +1,1 @@
+- Treat conflicting contributor PRs like red CI so offline clanker authors are nudged and adopted after grace.

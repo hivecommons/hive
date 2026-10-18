@@ -671,6 +671,32 @@ func TestAdoptionInPlaceWhenMaintainerCanModify(t *testing.T) {
 	}
 }
 
+func TestAdoptionInPlaceForConflictingOfflineContributor(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "conflicting")
+	if got := nudgeComments(h.api); len(got) != 1 || !strings.Contains(got[0], "needs a rebase") {
+		t.Fatalf("conflict nudge: %v", h.api.comments)
+	}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.reset()
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "conflicting")
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 ||
+		!strings.Contains(comments[0], "reason=contributor-offline mode=in-place head=aaa") ||
+		!strings.Contains(comments[0], "your hive has been offline since the nudge") {
+		t.Fatalf("conflicting offline adoption: %v", h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonOffline {
+		t.Fatalf("record: %+v", rec)
+	}
+}
+
 func TestAdoptionYieldsOnForgeableCommitIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

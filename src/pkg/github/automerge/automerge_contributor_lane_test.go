@@ -286,7 +286,12 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 		{name: "sentinel label blocks", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"hive-sentinel"} }, wantReason: contributorLaneReasonSentinelBlocked},
 		{name: "hold label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"hold"} }, wantReason: "label:hold"},
 		{name: "do-not-merge slash label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"do-not-merge/wip"} }, wantReason: "label:do-not-merge/wip"},
+		{name: "needs-rebase label returns author fix", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"needs-rebase"} }, wantReason: "label:needs-rebase"},
 		{name: "policy exclude label", mutate: func(fx *contributorLaneFixture) { fx.labels = []string{"blocked"} }, wantReason: "excluded-label:blocked"},
+		{name: "conflict outranks untrusted claim tier", mutate: func(fx *contributorLaneFixture) {
+			fx.mergeableState = "dirty"
+			tierClaim(" tier=newcomer verified=true")(fx)
+		}, wantReason: "conflicting"},
 		{name: "no linked issue", mutate: func(fx *contributorLaneFixture) { fx.body = "No issue here." }, wantReason: contributorLaneReasonNoLinkedIssue},
 		{name: "refs keyword is not closing", mutate: func(fx *contributorLaneFixture) { fx.body = "Refs #42" }, wantReason: contributorLaneReasonNoLinkedIssue},
 		{name: "no claim marker", mutate: func(fx *contributorLaneFixture) { fx.issueComments = nil }, wantReason: contributorLaneReasonNoClaim},
