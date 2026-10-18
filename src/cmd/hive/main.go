@@ -2557,7 +2557,6 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 				b.ghClient.SetAutoMergeLabel(normalizedAutoMergeLabel(b.cfg.Governor.Labels.AutoMerge))
 			}
 			b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
-			b.ghClient.SetAgentIssueDecisionPolicy(b.cfg.Project.EffectiveAgentIssueDecisionPolicy())
 			syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 			b.logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", b.cfg.Project.Repos)
@@ -5639,7 +5638,6 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
-				b.ghClient.SetAgentIssueDecisionPolicy(b.cfg.Project.EffectiveAgentIssueDecisionPolicy())
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
 
 				// Persist to the PVC overlay so the claim survives a pod restart
