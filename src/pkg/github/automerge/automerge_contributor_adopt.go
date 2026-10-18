@@ -502,8 +502,14 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 // head in the base repo always; a fork head only with "allow edits by
 // maintainers", which the list payload omits, so one GET resolves it.
 func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bool {
-	if obs.HeadRepo == "" || strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo) {
-		return obs.HeadRepo != ""
+	if obs.HeadRepo == "" {
+		return false
+	}
+	if c.baseSyncTouchesWorkflows(ctx, obs) {
+		return false
+	}
+	if strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo) {
+		return true
 	}
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
 	if err != nil {
@@ -511,6 +517,35 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 		return false
 	}
 	return pr.GetMaintainerCanModify()
+}
+
+// baseSyncTouchesWorkflows reports whether the base has moved past a change
+// under .github/workflows/ since the PR's merge-base. The App token cannot
+// push such a base-sync to the PR branch (no `workflows` permission, #6985),
+// so in-place adoption would be a dead end (#12865). A compare failure counts
+// as touching: a superseding PR is always deliverable.
+func (c *Engine) baseSyncTouchesWorkflows(ctx context.Context, obs stageObservation) bool {
+	if obs.HeadSHA == "" || obs.BaseRef == "" {
+		return false
+	}
+	opts := &gh.ListOptions{PerPage: 300}
+	for {
+		cmp, resp, err := c.gh.Repositories.CompareCommits(ctx, obs.Owner, obs.Repo, obs.HeadSHA, obs.BaseRef, opts)
+		if err != nil {
+			c.warn("stage labels: adoption could not compare head to base for workflow changes; superseding", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return true
+		}
+		for _, f := range cmp.Files {
+			if strings.HasPrefix(f.GetFilename(), ".github/workflows/") {
+				c.info("stage labels: base-sync touches .github/workflows/ which the App cannot push; superseding", "repo", obs.Display, "pr", obs.Number, "file", f.GetFilename())
+				return true
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return false
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // settleInPlaceAdoption handles a head change on an in-place-adopted PR with a

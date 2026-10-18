@@ -27,6 +27,10 @@ type adoptAPI struct {
 	// failRefs makes POST git/refs answer 500; refAttempts counts them.
 	failRefs    bool
 	refAttempts int
+	// compareFiles are the base-side files served by GET compare/head...base;
+	// failCompare makes it answer 500.
+	compareFiles []string
+	failCompare  bool
 }
 
 type adoptCommit struct {
@@ -93,6 +97,18 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		_ = json.NewEncoder(w).Encode(payload)
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/compare/"):
+		if a.failCompare {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := []map[string]string{}
+		for _, f := range a.compareFiles {
+			files = append(files, map[string]string{"filename": f})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
 		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")
@@ -641,6 +657,46 @@ func TestAdoptionUnregisteredAuthor(t *testing.T) {
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "reason=contributor-unregistered") || !strings.Contains(c[0], "no hive of yours is registered here") {
 		t.Fatalf("unregistered adoption: %v", h.api.comments)
+	}
+}
+
+// A base that moved past a .github/workflows/ change cannot be synced into the
+// PR branch by the App (#12865, #6985): supersede instead of adopting in place.
+func TestAdoptionInPlaceWorkflowGuard(t *testing.T) {
+	cases := []struct {
+		name        string
+		files       []string
+		failCompare bool
+		wantInPlace bool
+	}{
+		{name: "base moved with workflow change", files: []string{"src/a.go", ".github/workflows/x.yml"}},
+		{name: "base moved with only non-workflow files", files: []string{"src/a.go", ".github/CODEOWNERS"}, wantInPlace: true},
+		{name: "compare error", failCompare: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.adopt.compareFiles = tc.files
+			h.adopt.failCompare = tc.failCompare
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.clock.advance(30 * time.Minute)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			comments := adoptionComments(h.api)
+			if len(comments) != 1 {
+				t.Fatalf("adoption comments: %v", h.api.comments)
+			}
+			if got := strings.Contains(comments[0], "mode=in-place"); got != tc.wantInPlace {
+				t.Fatalf("in-place = %v, want %v: %s", got, tc.wantInPlace, comments[0])
+			}
+			if superseded := len(h.adopt.pulls) == 1; superseded == tc.wantInPlace {
+				t.Fatalf("superseding PRs = %d, in-place want %v", len(h.adopt.pulls), tc.wantInPlace)
+			}
+		})
 	}
 }
 
