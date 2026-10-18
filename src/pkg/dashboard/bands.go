@@ -563,7 +563,7 @@ func holdLabels(labels []string, hiveID string) []string {
 	out := make([]string, 0)
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		if lower == canonical || containsAnyHoldLabel(lower, holdLabelSpellings) {
+		if lower == canonical || lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/") || containsAnyHoldLabel(lower, holdLabelSpellings) {
 			out = append(out, label)
 		}
 	}

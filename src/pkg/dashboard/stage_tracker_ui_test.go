@@ -41,6 +41,7 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`const STAGE_TRACKER_ICONS = {`,
 		`@keyframes ham-pulse`,
 		`animation: ham-pulse 1.6s ease-in-out infinite;`,
+		`.ham-seg.active.ham-open-hold`,
 		`@media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none;`,
 	} {
 		if !strings.Contains(html, want) {
@@ -106,6 +107,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerPRRef"),
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
+		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
@@ -175,6 +177,14 @@ assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Claimed</spa
 assert.ok(!row.includes('ham-caption'), 'no caption line under the strip');
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
 assert.ok(!row.includes('✓'), 'no text check glyphs');
+
+// Open but held: the Open segment itself names the hold state and the row
+// tooltip names the matching hold label, while the trailing flag pill remains.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'pr', title: 'Paused', stage: 0, caption: 'No stage recorded yet', labels: ['do-not-merge/hold'], modifiers: ['hold'] }, stages, ctx);
+assert.deepStrictEqual(segStates(row), ['active ham-open-hold', T, T, T, T, T, 'todo cap']);
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Open · hold</span></li>'), row);
+assert.ok(row.includes('ham-mod-hold">hold</span>'), row);
+assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage recorded yet · acme/console'), tooltip(row));
 
 // Issue with exactly one covering PR (only its number known, legacy linked_pr):
 // a single entry whose strip is driven by the PR; with no PR stage it lights
@@ -531,6 +541,7 @@ assert.strictEqual(c.header, '0 of 5 items · nothing needs attention');
 let fac = stageTrackerLabelFacets(items, F());
 assert.deepStrictEqual(fac.chips.map(x => x.label), ['stage/010-actionable', 'stage/020-claimed', 'stage/050-review', 'stage/080-merge-gate', 'needs-rebase', 'author/clanker', 'author/hive', 'author/human', 'role/docs', 'bug']);
 assert.deepStrictEqual(fac.chips.find(x => x.label === 'author/clanker').count, 2);
+assert.ok(stageTrackerLabelFacets(items.concat([{ kind: 'pr', repo: 'a/b', number: 6, labels: ['do-not-merge/hold'] }]), F()).chips.some(x => x.label === 'do-not-merge/hold'), 'hold labels are offered even when only one item is held');
 fac = stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 6, labels: ['lonely'] }]), F({ labels: ['lonely'] }));
 assert.ok(fac.chips.some(x => x.label === 'lonely' && x.on), 'a selected single-item label is still offered so it can be cleared');
 assert.strictEqual(stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 7, labels: ['solo'] }]), F()).chips.some(x => x.label === 'solo'), false);

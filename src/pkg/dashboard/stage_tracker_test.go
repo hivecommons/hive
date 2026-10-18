@@ -155,7 +155,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 			FrontendPR{PullRequest: github.PullRequest{Number: 104, Title: "Hand-made", Author: "pat", Labels: []string{"stage/085-needs-decision", "needs-decision"}}},
 		},
 		HeldPrs: []any{
-			FrontendPR{PullRequest: github.PullRequest{Number: 105, Title: "Parked", Author: "pat", Labels: []string{"hold"}, Draft: true}},
+			FrontendPR{PullRequest: github.PullRequest{Number: 105, Title: "Parked", Author: "pat", Labels: []string{"do-not-merge/blocked-paths"}, Draft: true}},
 		},
 	}}
 	s.UpdateStatus(status)
@@ -280,7 +280,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	}
 
 	pr105 := trackerItem(t, resp, "pr", 105)
-	if pr105.Stage != 0 || !hasMod(pr105, modHold) || !hasMod(pr105, modDraft) || pr105.Caption != "No stage recorded yet" {
+	if pr105.Stage != 0 || !hasMod(pr105, modHold) || !hasMod(pr105, modDraft) || pr105.Caption != "No stage recorded yet" || !slices.Contains(pr105.Labels, "do-not-merge/blocked-paths") {
 		t.Fatalf("held pr105 = %+v", pr105)
 	}
 

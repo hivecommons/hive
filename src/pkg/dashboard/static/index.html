@@ -1380,6 +1380,8 @@
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
     .ham-seg.active { background: var(--amber); color: var(--surface-0); animation: ham-pulse 1.6s ease-in-out infinite; }
+    .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
+    .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-detour { overflow: hidden; text-overflow: ellipsis; }
     @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
@@ -12566,7 +12568,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ATTENTION_STAGES = [71, 72, 85, 90];
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
-    const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/'];
+    const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
     function stageTrackerDefaultFilter() {
       return { kind: 'all', repo: '', q: '', labels: [], age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
@@ -12576,8 +12578,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerHeadline(item) {
       const n = Number(item.stage) || 0;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const holdLabels = stageTrackerHoldLabels(item);
       if (mods.indexOf('stalled') >= 0) return 'Stalled';
       if (mods.indexOf('regressed') >= 0) return 'Sent back';
+      if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       // An issue on 085 of its own (no covering PR) is parked on a person
       // itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -12600,6 +12604,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 110: return 'Merged';
         default: return item.stage_label || 'Tracking';
       }
+    }
+
+    function stageTrackerHoldLabels(item) {
+      const labels = Array.isArray(item.labels) ? item.labels : [];
+      return labels.filter(label => {
+        const l = String(label || '').trim().toLowerCase();
+        return l === 'do-not-merge' || l.startsWith('do-not-merge/') || l.startsWith('hive-pause/') ||
+          l.indexOf('hold') >= 0 || l.indexOf('on-hold') >= 0 || l.indexOf('hold/review') >= 0;
+      });
     }
 
     // Which strip segment a stage lights: main stages light themselves,
@@ -12638,8 +12651,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (n === anchor) state = 'active';
         // The lit column's tooltip names the real stage (030 vs 040, 060 vs 080).
         const tipStage = (state === 'active' && !detour && curStage.label) ? curStage : st;
-        const word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null };
+        let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
+        const openHold = n === 0 && state === 'active' && (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('hold') >= 0;
+        if (openHold) word = 'Open · hold';
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -12723,7 +12738,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : ''].filter(Boolean).join(' ');
         let tip = sg.label + (sg.description ? ' — ' + sg.description : '');
         // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
         if (sg.state === 'active' && !sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
@@ -12743,7 +12758,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sinceMs = Date.parse(item.stage_since || '');
       const trail = Array.isArray(item.history) && item.history.length > 1
         ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
-      const lines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
+      const openHeld = (Number(item.stage) || 0) === 0 && mods.indexOf('hold') >= 0;
+      const lines = openHeld
+        ? [stageTrackerHeadline(item) + (item.caption || item.reason ? ' · ' + (item.caption || item.reason) : '') + (item.repo ? ' · ' + item.repo : '')]
+        : [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
       if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
