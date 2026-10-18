@@ -270,6 +270,7 @@ func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo str
 			trusted, configured := c.isTrustedMerger(login)
 			if configured && trusted {
 				c.noteStageReviews(owner, repo, number, seen)
+				c.noteStageTrustedHumanApproval(owner, repo, number, head, login)
 				return login, true
 			}
 		}
@@ -280,4 +281,11 @@ func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo str
 	}
 	c.noteStageReviews(owner, repo, number, seen)
 	return "", false
+}
+
+func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner, repo string, number int, head string, verdict ContributorLaneVerdict) (string, bool) {
+	if !verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+		return "", false
+	}
+	return c.latestTrustedHumanApproval(ctx, owner, repo, number, head)
 }

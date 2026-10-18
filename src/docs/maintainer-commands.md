@@ -45,11 +45,11 @@ ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.
 
 PRs use GitHub's native review signal instead of `/hive approve` or
-`/hive decision`. When the L6 self-authored review gate is enforcing and the
-swarm has not approved the current head because it is incomplete or
-`requires_human`, a human who is trusted to queue merges can submit a normal
-GitHub **Approve** review on that exact head SHA to clear the review hold. No
-special review body is required; the queued human-merge lane's
+`/hive decision`. When the swarm has not approved the current head because it
+returned `requires_human`, a human who is trusted to queue merges can submit a
+normal GitHub **Approve** review on that exact head SHA to clear
+`stage/085-needs-decision` for any author kind/lane. No special review body is
+required; the queued human-merge lane's
 `Approved by @... for Hive auto-merge on green CI.` body remains specific to
 that queue flow. A swarm `changes_requested` or `reject` verdict is not
 overridden by a human approval; the head must be fixed or merged manually.

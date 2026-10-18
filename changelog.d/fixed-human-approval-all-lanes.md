@@ -1,0 +1,1 @@
+- Treat trusted human APPROVED reviews on the current head as resolving `requires_human` reviewer verdicts across automerge lanes.

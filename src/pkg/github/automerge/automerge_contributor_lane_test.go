@@ -508,6 +508,49 @@ func TestTrySweepContributorLanePRMergeCommentText(t *testing.T) {
 	}
 }
 
+func TestTrySweepContributorLaneTrustedHumanApprovalClearsRequiresHuman(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		verdict    ContributorLaneVerdict
+		wantReason string
+		wantMerges int
+	}{
+		{
+			name:       "requires human cleared",
+			verdict:    ContributorLaneVerdict{Configured: true, Verdict: "requires_human"},
+			wantMerges: 1,
+		},
+		{
+			name:       "changes requested not cleared",
+			verdict:    ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"},
+			wantReason: contributorLaneReasonNoVerdict,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			fx.reviews = []map[string]any{{
+				"id": 1, "state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "clubanderson"},
+			}}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{
+				ContributorLaneVerdict: func(string, int, string) ContributorLaneVerdict { return tt.verdict },
+				ContributorSoak:        soakedTracker(clock),
+			})
+			engine.SetMergerAuthorizer(func(login string) bool { return strings.EqualFold(login, "clubanderson") })
+			_, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tt.wantReason || fx.merges != tt.wantMerges {
+				t.Fatalf("reason=%q merges=%d, want %q/%d", reason, fx.merges, tt.wantReason, tt.wantMerges)
+			}
+		})
+	}
+}
+
 // registryTiers returns a ContributorRegistryTierFunc over a fixed
 // login→tier map (case-insensitive on login), standing in for the
 // contributor registry on the hive's PVC.

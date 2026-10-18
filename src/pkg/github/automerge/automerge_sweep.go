@@ -1356,7 +1356,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
-	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA))
+	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA)
+	c.noteStageVerdict(owner, repo, number, verdict)
+	c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
 	method := mergeMethodFor(pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
@@ -1732,7 +1734,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
-	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA()))
+	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
+	c.noteStageVerdict(owner, repo, number, verdict)
+	c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
 	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
 	if policy.RequireGitHubPermission {
 		var err error

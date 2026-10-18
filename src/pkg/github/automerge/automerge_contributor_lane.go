@@ -875,7 +875,10 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
-	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, headSHA))
+	fullRepo := owner + "/" + repo
+	verdict := c.contributorLaneVerdictFor(fullRepo, number, headSHA)
+	approver, humanApproved := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, headSHA, verdict)
+	c.noteStageVerdict(owner, repo, number, verdict)
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
 		// for the author, so GitHub's association is the only evidence left;
@@ -916,7 +919,6 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	method := mergeMethodFor(pr)
-	fullRepo := owner + "/" + repo
 	mergeClaim := effects.Claim{
 		Repo:   fullRepo,
 		Kind:   effects.KindPullRequestMerge,
@@ -939,12 +941,14 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	verdict := c.contributorLaneVerdictFor(fullRepo, number, headSHA)
 	if !verdict.Configured {
 		return AutoMergeSweepEvent{}, contributorLaneReasonNoReviewer, nil
 	}
 	if policy.RequireReviewerVerdict && !verdict.Approved {
-		return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
+		if !humanApproved {
+			return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
+		}
+		c.info("contributor-lane reviewer verdict cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", headSHA, "approver", approver)
 	}
 	now := c.now()
 	soakKey := contributorSoakKey(owner, repo, number, headSHA)

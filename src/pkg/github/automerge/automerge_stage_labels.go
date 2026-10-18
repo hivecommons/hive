@@ -171,7 +171,12 @@ var stageLanePrecedence = map[string]int{stageLaneSelf: 3, stageLaneTrusted: 2, 
 type stageDetail struct {
 	Verdict      ContributorLaneVerdict
 	VerdictKnown bool
-	Role         stagelabels.Role
+	// HumanApprover is a trusted human whose APPROVED review exactly matches
+	// HumanApprovalHead. It resolves a requires_human reviewer verdict without
+	// overriding changes_requested/reject.
+	HumanApprover     string
+	HumanApprovalHead string
+	Role              stagelabels.Role
 	// RedChecks names the completed-red, non-required checks the CI gate
 	// walked past on RedChecksHead (sorted). The lane ignores them by
 	// design; the stage engine must not call the PR merge-queued or
@@ -335,6 +340,9 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.VerdictKnown {
 				o.Detail.Verdict, o.Detail.VerdictKnown = detail.Verdict, true
 			}
+			if detail.HumanApprover != "" && detail.HumanApprovalHead != "" && detail.HumanApprovalHead == o.HeadSHA {
+				o.Detail.HumanApprover, o.Detail.HumanApprovalHead = detail.HumanApprover, detail.HumanApprovalHead
+			}
 			if detail.Role != stagelabels.RoleNone {
 				o.Detail.Role = detail.Role
 			}
@@ -427,6 +435,18 @@ func (c *Engine) noteStageVerdict(owner, repo string, number int, v ContributorL
 	}
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
 		d.Verdict, d.VerdictKnown = v, true
+	})
+}
+
+// noteStageTrustedHumanApproval records that a trusted human approved the
+// exact head. Stage derivation uses it only to clear requires_human; rejection
+// verdicts still win.
+func (c *Engine) noteStageTrustedHumanApproval(owner, repo string, number int, head, login string) {
+	if !c.stagePolicy().Enabled || strings.TrimSpace(login) == "" || strings.TrimSpace(head) == "" {
+		return
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.HumanApprover, d.HumanApprovalHead = strings.TrimSpace(login), strings.TrimSpace(head)
 	})
 }
 
@@ -688,6 +708,24 @@ func verdictNeedsHuman(d stageDetail) bool {
 	return strings.ToLower(strings.TrimSpace(d.Verdict.Verdict)) == "requires_human"
 }
 
+func trustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
+	return verdictNeedsHuman(d) && strings.TrimSpace(d.HumanApprover) != "" && strings.TrimSpace(d.HumanApprovalHead) != "" && strings.TrimSpace(d.HumanApprovalHead) == strings.TrimSpace(head)
+}
+
+func withHumanApprovalReason(v stageVerdict, reason string) stageVerdict {
+	if reason != "" && v.Rank != stageRankNone && !v.Terminal && v.Reason == "" {
+		v.Reason = reason
+	}
+	return v
+}
+
+func stageHumanApprovalReason(d stageDetail, head string) string {
+	if !trustedHumanApprovedRequiresHuman(d, head) {
+		return ""
+	}
+	return stageReasonVerdictRequiresHuman + ":human-approved@" + strings.TrimSpace(d.HumanApprover)
+}
+
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
@@ -754,6 +792,7 @@ func fixingStage(o stageObservation) stagelabels.Stage {
 func classifyStage(o stageObservation) stageVerdict {
 	reason := o.Reason
 	fixing := fixingStage(o)
+	humanApprovalReason := stageHumanApprovalReason(o.Detail, o.HeadSHA)
 	if o.Merged && reason == "" {
 		return stageVerdict{Terminal: true, Rank: stageRankOwned}
 	}
@@ -787,7 +826,7 @@ func classifyStage(o stageObservation) stageVerdict {
 		}
 		// Trust is the only thing this lane holds against the PR: a 090
 		// candidate, refined by ApplyStageLabels against the head's evidence.
-		return stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}
+		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
 	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if hasLabelFold(o.Labels, "needs-rebase") {
@@ -803,7 +842,7 @@ func classifyStage(o stageObservation) stageVerdict {
 		// (CI pending, no-verdict, …) is not what the author has to act on.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
-	if verdictNeedsHuman(o.Detail) {
+	if verdictNeedsHuman(o.Detail) && !trustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
 		// The reviewer DID answer — requires_human / needs-decision — but
 		// the lane folds every non-approve verdict into non-mergeable reasons
 		// such as no-verdict or pending CI. Hand it to a person instead of
@@ -828,7 +867,7 @@ func classifyStage(o stageObservation) stageVerdict {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 	}
 	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
-		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
+		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
@@ -842,7 +881,7 @@ func classifyStage(o stageObservation) stageVerdict {
 	if authorSideDone(o) {
 		// Green CI and an approve verdict, yet the lane stopped for a reason
 		// no stage claims: admission is pending on the hive's side.
-		return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}
+		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}, humanApprovalReason)
 	}
 	return stageVerdict{}
 }
