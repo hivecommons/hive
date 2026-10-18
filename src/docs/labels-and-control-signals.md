@@ -696,7 +696,8 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      and the PR is back on the ordinary 072 flow (a fresh nudge for the new
      head; it may be adopted again under the same rules).
    - **supersede** (`mode=supersede`) — the fork forbids maintainer edits,
-     or `in_place: false`:
+     `in_place: false`, or the adopted head has unsigned commits (`no-dco`)
+     that the hive cannot repair by amending the contributor branch:
    - pushes `hive/adopt-<n>` in the base repo at the contributor's head SHA
      (the fork's commits, authorship and `Signed-off-by` preserved byte for
      byte — "sign-off survives the squash");
@@ -721,6 +722,15 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
    every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
    original is closed; closed unmerged (a maintainer declined) → the adoption
    is forgotten and the original returns to 072 (not a regression).
+   If the superseder exists because DCO cannot be repaired in place, the fix
+   agent must first re-home the diff onto a hive-owned branch from the base:
+   cherry-pick each original commit with `git cherry-pick -s`, or squash with
+   `git commit --author=<original author> -s`, preserving authorship/credits
+   while adding the hive submitter sign-off. The replacement PR keeps the
+   original title, starts with `Supersedes #N`, carries the original
+   `Fixes/Closes/Resolves` target (including `Hive-Run: owner/repo#NN` as
+   `Fixes #NN`), and the original PR is commented and closed so it does not
+   sit forever on a DCO-required branch rule.
 4. A new head from the author at any point before adoption re-arms the nudge
    (grace restarts) or, if green, returns the PR to the normal `050 → 100`
    path; no adoption. After a superseding adoption the author can still push

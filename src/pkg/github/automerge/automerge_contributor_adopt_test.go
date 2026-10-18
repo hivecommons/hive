@@ -290,8 +290,46 @@ func TestAdoptionGraceSelection(t *testing.T) {
 	if due, _ := adoptionDue(rec, "ccc", p, now.Add(3*time.Hour), none, false); due {
 		t.Fatal("due while adopted in place")
 	}
-	if got := adoptionCloses("Closes #12\nfixes acme/other#3\nnot closes #9 here\n"); len(got) != 2 || got[0] != "Closes #12" || got[1] != "fixes acme/other#3" {
+	if got := adoptionCloses("Closes #12\nfixes acme/other#3\nnot closes #9 here\n\nHive-Run: acme/widget#44\n"); len(got) != 3 || got[0] != "Closes #12" || got[1] != "fixes acme/other#3" || got[2] != "Fixes #44" {
 		t.Fatalf("closes lines %q", got)
+	}
+}
+
+func TestAdoptionDCORehomeDecisionAndRendering(t *testing.T) {
+	obs := stageObservation{
+		Number:  7,
+		Author:  "mallory",
+		Title:   "✨ feature: add widgets",
+		BaseRef: "v5",
+		Body:    "Implements widgets.\n\nHive-Run: acme/widget#44\n",
+		Detail:  stageDetail{DCO: stagelabels.DCONo, DCOTotal: 3, DCOUnsigned: 2},
+	}
+	if !adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("unsigned commits without branch push permission must re-home")
+	}
+	if adoptionNeedsDCORehome(obs, true) {
+		t.Fatal("branch push permission allows in-place DCO repair")
+	}
+	obs.Detail.DCOUnsigned = 0
+	if adoptionNeedsDCORehome(obs, false) {
+		t.Fatal("signed head does not need DCO re-home")
+	}
+	obs.Detail.DCOUnsigned = 2
+	body := AdoptionPRBody(obs, stagelabels.Record{Reason: "check-failing:dco"}, true)
+	for _, want := range []string{
+		"**DCO repair required:**",
+		"cherry-pick each original commit with `git cherry-pick -s`",
+		"git commit --author",
+		"same title",
+		"close #7",
+		"✨ feature: add widgets",
+		"Supersedes #7 (adopted; re-pushed with DCO sign-off, original authorship preserved).",
+		"Fixes #44",
+		"Credit: original work by @mallory.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
 	}
 }
 

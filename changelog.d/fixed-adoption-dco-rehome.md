@@ -1,0 +1,1 @@
+- Re-home adopted contributor PRs when unsigned commits cannot be DCO-repaired in place, with fixer instructions for DCO-clean superseding branches.
