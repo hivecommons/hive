@@ -7321,6 +7321,79 @@
         }
       }
     },
+    "/api/config/governor/cadence-templates": {
+      "post": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Apply a cadence template to all agents",
+        "description": "Sets the surge/busy/quiet/idle cadences for every configured agent across the matching governor modes. Per-mode continuous cadences are preserved. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "template"
+                ],
+                "properties": {
+                  "template": {
+                    "type": "string",
+                    "enum": [
+                      "testing",
+                      "new-level-testing",
+                      "weekly",
+                      "weekly-sprint",
+                      "biweekly",
+                      "biweekly-sprint",
+                      "daily",
+                      "daily-cadence"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Template applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "template": {
+                      "type": "string"
+                    },
+                    "agentsUpdated": {
+                      "type": "integer",
+                      "description": "Number of agents whose cadence was actually written (continuous cadences and modes missing from the config are skipped)"
+                    },
+                    "minStatusSeq": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body or unknown template"
+          },
+          "403": {
+            "description": "Requires owner role"
+          }
+        }
+      }
+    },
     "/api/config/governor/features": {
       "put": {
         "tags": [

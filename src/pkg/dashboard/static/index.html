@@ -2512,7 +2512,10 @@
          ellipsis; the wrapper scrolls horizontally to reach method/model. */
       .gov-matrix { min-width: 680px; }
     }
-    .gov-matrix { margin-top: 14px; width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
+    .gov-matrix-templates-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
+    .gov-matrix-templates-label { font-size: var(--fs-xs); color: var(--muted); font-weight: 600; }
+    .gov-matrix-templates-buttons { display: inline-flex; gap: var(--sp-2); flex-wrap: wrap; }
+    .gov-matrix { margin-top: 10px; width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
     .gov-matrix th { color: var(--muted); font-weight: 600; padding: 3px 8px; text-align: center; border-bottom: 1px solid var(--border); }
     .gov-matrix th.mode-active { border-radius: 4px 4px 0 0; padding: 4px 10px; font-weight: 700; }
     .gov-matrix th.mode-idle  { color: var(--green); }
@@ -15473,7 +15476,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const cls = `mode-${m}${isActive ? ' mode-active' : ''}`;
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
-      return `<div class="gov-matrix-wrap"><table class="gov-matrix">
+      const templateBar = `<div class="gov-matrix-templates-bar">
+        <span class="gov-matrix-templates-label">Cadence templates:</span>
+        <div class="gov-matrix-templates-buttons">
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyCadenceTemplate" data-arg0="testing" title="New Level testing: sets conservative cadence (surge: pause, busy: 2h, quiet: 4h, idle: 8h) for all agents to reduce risk of token over-consumption">New Level testing</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyCadenceTemplate" data-arg0="weekly" title="Weekly sprint: sets moderate cadence (surge: 1h, busy: 2h, quiet: 4h, idle: 8h) for all agents">Weekly sprint</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyCadenceTemplate" data-arg0="biweekly" title="Biweekly sprint: sets relaxed cadence (surge: 2h, busy: 4h, quiet: 8h, idle: 16h) for all agents">Biweekly sprint</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyCadenceTemplate" data-arg0="daily" title="Daily cadence: sets active daily cadence (surge: 30m, busy: 1h, quiet: 2h, idle: 4h) for all agents">Daily cadence</button>
+        </div>
+      </div>`;
+      return `${templateBar}<div class="gov-matrix-wrap"><table class="gov-matrix">
         <thead><tr><th class="power-col" title="Agent power: 1 enabled, 0 disabled">Power</th><th></th>${headers}<th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
@@ -31939,6 +31951,7 @@ function burnAreaChart() {
         case 'ocRemoveSidebarGroup': ocRemoveSidebarGroup(el.dataset.group); break;
         case 'ocToggleSidebarGroup': ocToggleSidebarGroup(el); break;
         case 'switchConfigTab': switchConfigTab(el.dataset.tab || el.dataset.arg0); break;
+        case 'applyCadenceTemplate': applyCadenceTemplate(el.dataset.arg0 || el.dataset.template); break;
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousOpenNewExperiment': nousOpenNewExperiment(); break;
         case 'nousEditExperiment': nousEditExperiment(el.dataset.arg0); break;
@@ -40922,6 +40935,33 @@ function burnAreaChart() {
       _configState.data.cadences[mode] = value;
       markDirty('cadences', mode, value);
       renderConfigTab(_configState.tab);
+    }
+    async function applyCadenceTemplate(templateKey) {
+      const templateDescriptions = {
+        'testing': 'New Level testing (surge: pause, busy: 2h, quiet: 4h, idle: 8h)',
+        'weekly': 'Weekly sprint (surge: 1h, busy: 2h, quiet: 4h, idle: 8h)',
+        'biweekly': 'Biweekly sprint (surge: 2h, busy: 4h, quiet: 8h, idle: 16h)',
+        'daily': 'Daily cadence (surge: 30m, busy: 1h, quiet: 2h, idle: 4h)'
+      };
+      const desc = templateDescriptions[templateKey] || templateKey;
+      if (!(await hiveConfirm(`Apply global cadence template "${desc}" to all configured agents across all governor modes? This replaces existing interval, schedule and on-demand cadences; continuous cadences are kept.`))) return;
+      try {
+        const res = await fetch('/api/config/governor/cadence-templates', {
+          method: 'POST',
+          headers: Object.assign({ 'Content-Type': 'application/json' }, _inceptionAuthHeaders()),
+          body: JSON.stringify({ template: templateKey })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showToast(data.error || 'Failed to apply cadence template', 'error');
+          return;
+        }
+        noteStatusMutation(data.minStatusSeq);
+        showToast(`Applied ${desc} to ${data.agentsUpdated || 0} agents`, 'success');
+        if (typeof refreshStatus === 'function') refreshStatus();
+      } catch (err) {
+        showToast('Network error applying cadence template: ' + err.message, 'error');
+      }
     }
     function switchToPerModeCadences() {
       if (!_configState.data.general) _configState.data.general = {};

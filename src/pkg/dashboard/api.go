@@ -202,6 +202,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/thresholds", s.handleGovernorThresholds)
 	s.mux.HandleFunc("GET /api/config/governor/cadence-scope", s.handleGovernorCadenceScopeGet)
 	s.mux.HandleFunc("PUT /api/config/governor/cadence-scope", s.handleGovernorCadenceScope)
+	s.mux.HandleFunc("POST /api/config/governor/cadence-templates", s.handleGovernorCadenceTemplates)
 	s.mux.HandleFunc("GET /api/config/governor/threshold-scaling", s.handleGovernorThresholdScalingGet)
 	s.mux.HandleFunc("PUT /api/config/governor/threshold-scaling", s.handleGovernorThresholdScaling)
 	s.mux.HandleFunc("PUT /api/config/governor/coverage-target", s.handleGovernorCoverageTarget)
