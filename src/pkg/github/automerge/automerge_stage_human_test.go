@@ -34,7 +34,7 @@ func humanStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock, 
 			return ContributorLanePolicy{Enabled: true, Soak: soak, RequireTiers: map[string]bool{"trusted": true}}
 		},
 		ContributorLaneVerdict: func(repo string, number int, head string) ContributorLaneVerdict {
-			if head != "sha" {
+			if !strings.HasPrefix(head, "sha") {
 				return ContributorLaneVerdict{Configured: true}
 			}
 			return *verdict
@@ -364,12 +364,12 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 	}
 	key := stageKey("acme", "widget", 13)
 
-	sweep("H", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha", "role/contributor", "author/human", "stage/050-review-pending")
 	if len(api.comments) != 1 {
 		t.Fatalf("first entry comments = %q", api.comments)
 	}
 	store.Observe(key, stagelabels.ReviewPending, "review-requested")
-	sweep("H", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha", "role/contributor", "author/human", "stage/050-review-pending")
 	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
 		t.Fatalf("stage=%v want 085", got)
 	}
@@ -381,7 +381,7 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 	}
 
 	store.Observe(key, stagelabels.ReviewPending, "review-requested")
-	sweep("H2", "role/contributor", "author/human", "stage/050-review-pending")
+	sweep("sha2", "role/contributor", "author/human", "stage/050-review-pending")
 	if len(api.comments) != 1 {
 		t.Fatalf("new head comments = %q", api.comments)
 	}
