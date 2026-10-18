@@ -1218,6 +1218,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
+		if obs.Detail.VerdictKnown {
+			rawVerdict := obs.Detail.Verdict
+			normalizedVerdict := normalizeContributorLaneVerdict(rawVerdict)
+			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "stage", verdict.Stage.String(), "reason", obs.Reason)
+		}
 		commentsBefore := result.Comments
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {

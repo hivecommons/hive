@@ -211,11 +211,16 @@ func TestNormalizeContributorLaneVerdictPreservesPolicyOwnedHolds(t *testing.T) 
 		Verdict:        "requires_human",
 		HumanSummaries: []string{"correctness requires human: field is plumbed but never populated; add the producer."},
 	}
-	known := base
-	known.HiveAuthoredKnown = true
-	known.HiveAuthored = true
-	if got := normalizeContributorLaneVerdict(known); got.Verdict != "requires_human" {
-		t.Fatalf("known-authorship verdict normalized to %q, want requires_human", got.Verdict)
+	knownHive := base
+	knownHive.HiveAuthoredKnown = true
+	knownHive.HiveAuthored = true
+	if got := normalizeContributorLaneVerdict(knownHive); got.Verdict != "changes_requested" {
+		t.Fatalf("known hive verdict normalized to %q, want changes_requested", got.Verdict)
+	}
+	knownHuman := base
+	knownHuman.HiveAuthoredKnown = true
+	if got := normalizeContributorLaneVerdict(knownHuman); got.Verdict != "requires_human" {
+		t.Fatalf("known human verdict normalized to %q, want requires_human", got.Verdict)
 	}
 	capped := base
 	capped.FixCycleCapReached = true

@@ -21,7 +21,7 @@ func TestPromptRoutesHiveAuthoredIncompleteFixesToChangesRequested(t *testing.T)
 	pr := PullRequest{Repo: "hivecommons/hive", Number: 12875, AuthorAgent: "scanner"}
 	got := BuildPerspectivePrompt(PerspectiveCorrectness, pr)
 	want := "A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human."
-	if !strings.Contains(got, want) || !strings.Contains(got, "add producer code OR reword a changelog") {
+	if !strings.Contains(got, want) || !strings.Contains(got, "add producer code OR reword a changelog") || !strings.Contains(got, "duplicates already-landed work") {
 		t.Fatalf("prompt missing incomplete-fix routing instruction: %q", got)
 	}
 }

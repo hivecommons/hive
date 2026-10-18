@@ -213,7 +213,7 @@ type ContributorLaneVerdict struct {
 }
 
 func normalizeContributorLaneVerdict(v ContributorLaneVerdict) ContributorLaneVerdict {
-	if !v.Configured || v.Approved || v.DecisionRequested || v.HiveAuthoredKnown || v.FixCycleCapReached || strings.ToLower(strings.TrimSpace(v.Verdict)) != string(review.VerdictRequiresHuman) {
+	if !v.Configured || v.Approved || v.DecisionRequested || (v.HiveAuthoredKnown && !v.HiveAuthored) || v.FixCycleCapReached || strings.ToLower(strings.TrimSpace(v.Verdict)) != string(review.VerdictRequiresHuman) {
 		return v
 	}
 	text := strings.TrimSpace(v.DecisionQuestion + "\n" + strings.Join(v.HumanSummaries, "\n"))

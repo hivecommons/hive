@@ -199,7 +199,7 @@ func TestNormalizeLegacyConcreteRequiresHumanAggregate(t *testing.T) {
 	}
 }
 
-func TestNormalizeKeepsKnownHiveRequiresHumanAggregate(t *testing.T) {
+func TestNormalizeRepairsKnownHiveConcreteRequiresHumanAggregate(t *testing.T) {
 	knownHive := Aggregate{
 		Repo:              "hivecommons/hive",
 		Number:            12875,
@@ -214,8 +214,56 @@ func TestNormalizeKeepsKnownHiveRequiresHumanAggregate(t *testing.T) {
 
 	got := knownHive.Normalize()
 
-	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || got.FixCycle {
-		t.Fatalf("normalized = %+v, want known hive aggregate left to aggregation policy", got)
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle {
+		t.Fatalf("normalized = %+v, want known hive aggregate repaired to changes_requested", got)
+	}
+}
+
+func TestNormalizeLiveKnownHiveAggregateWithBlockingPerspectives(t *testing.T) {
+	live := Aggregate{
+		Repo:              "hivecommons/hive",
+		Number:            12875,
+		HeadSHA:           "bbb5676",
+		HiveAuthoredKnown: true,
+		HiveAuthored:      true,
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		Reasons:           []string{`correctness finding "LaneQueuedWork is never populated" is high (threshold high)`},
+		Findings: []PerspectiveFinding{{Perspective: PerspectiveCorrectness, Finding: outputschema.Finding{
+			Title:       "LaneQueuedWork is never populated",
+			Severity:    outputschema.SeverityHigh,
+			Summary:     "Add the producer in AgentActivityFor or trim the changelog claim.",
+			ReviewScope: "in-scope",
+		}}},
+		Perspectives: map[Perspective]Verdict{
+			PerspectiveCorrectness:     VerdictChangesRequested,
+			PerspectiveIntentAlignment: VerdictChangesRequested,
+		},
+	}
+
+	got := live.Normalize()
+
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle {
+		t.Fatalf("normalized = %+v, want live aggregate repaired to changes_requested", got)
+	}
+}
+
+func TestAggregateReportsRoutesSelfAuthoredDuplicateChangelogDecisionToFixer(t *testing.T) {
+	r := baseReport(PerspectiveIntentAlignment, VerdictRequiresHuman, outputschema.Finding{
+		Title:       "Duplicate changelog claim",
+		Severity:    outputschema.SeverityHigh,
+		Summary:     "Summary and changelog fragment duplicate work that already landed; trim the summary and fragment.",
+		ReviewScope: "in-scope",
+	})
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "Should the maintainer trim the summary/fragment or accept the duplicate changelog entry?"
+	r.Summary = "Trim the summary/changelog fragment that duplicates a prior fix."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictChangesRequested || got.RequiresHuman || !got.FixCycle || got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want duplicate changelog routed to fixer", got)
 	}
 }
 

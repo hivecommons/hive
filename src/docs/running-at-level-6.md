@@ -63,9 +63,11 @@ scope, and "land now vs later" calls are the hive's own decision, so the
 aggregate can approve while preserving the question in the audit reason. A
 non-risk incomplete-fix review that names concrete remediation is different:
 it is normalized from `requires_human` to `changes_requested` when verdicts are
-aggregated and loaded, so the review gate, every stage-label observer, human-entry comments, and fixer dispatch all
+aggregated and loaded, even if the finding severity is high, so the review
+gate, every stage-label observer, human-entry comments, and fixer dispatch all
 see the fixer-lane verdict and the PR enters `stage/070-fixing` instead of
-parking for a person. Set the policy to `escalate` to restore the older behavior where every
+parking for a person. Intent-alignment cleanup with an obvious fix, such as
+trimming a duplicate PR summary or changelog claim, follows the same route. Set the policy to `escalate` to restore the older behavior where every
 `needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk
 questions still escalate either way: security, data loss, irreversible or
 public-facing behavior, policy/governance, licensing, spend, or unreadable

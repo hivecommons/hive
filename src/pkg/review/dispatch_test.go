@@ -383,6 +383,39 @@ func TestRequiresHumanVerdictProducesHold(t *testing.T) {
 	}
 }
 
+func TestPlanDispatchFixesKnownHiveNormalizedAggregateDespiteStaleHumanHold(t *testing.T) {
+	pr := dispatchPR("bbb5676")
+	pr.Repo = "acme/hive"
+	agg := Aggregate{
+		Repo:              "acme/hive",
+		Number:            7,
+		HeadSHA:           "bbb5676",
+		Verdict:           VerdictRequiresHuman,
+		RequiresHuman:     true,
+		HiveAuthoredKnown: true,
+		HiveAuthored:      true,
+		Reasons:           []string{`correctness finding "LaneQueuedWork is never populated" is high (threshold high)`},
+		Findings: []PerspectiveFinding{{Perspective: PerspectiveCorrectness, Finding: outputschema.Finding{
+			Title:       "LaneQueuedWork is never populated",
+			Severity:    outputschema.SeverityHigh,
+			Summary:     "Add the producer in AgentActivityFor or trim the changelog claim.",
+			ReviewScope: "in-scope",
+		}}},
+		Perspectives: map[Perspective]Verdict{PerspectiveCorrectness: VerdictChangesRequested},
+	}
+	state := DispatchState{Human: []HumanReviewHold{{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: "reviewer verdict requires_human"}}}
+	opts := DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer(DefaultFixerAgent)}}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, state, opts)
+
+	if len(plan.FixKicks) != 1 || plan.FixKicks[0].Kind != "fix" {
+		t.Fatalf("fix kicks = %+v, want a stale-label-agnostic fix kick", plan.FixKicks)
+	}
+	if len(plan.ReviewKicks) != 0 {
+		t.Fatalf("review kicks = %+v, want no re-review", plan.ReviewKicks)
+	}
+}
+
 func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
 	set := ReviewerAgentSet([]string{" auditor ", "", "sec-check"})
 	if len(set) != 2 || !set["auditor"] || !set["sec-check"] {
