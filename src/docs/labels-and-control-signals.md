@@ -257,12 +257,14 @@ stateDiagram-v2
     s060 --> s080: CI green, author side done
     s080 --> s100: lane admits (soak / merge-eligible)
     s050 --> s070: hive PR red / changes requested
+    s050 --> s071: human PR red / changes requested
     s050 --> s072: contributor PR red / changes requested
     s050 --> s085: swarm requires_human (reason reviewer-verdict:requires_human)
     s060 --> s070: new head red
     s100 --> s070: new head red (backward hop, commented)
     s100 --> s072: contributor head red (backward hop, commented)
     s070 --> s050: fixed head pushed
+    s071 --> s050: author pushes a new head
     s072 --> s050: author pushes a new head
     s072 --> s074: clanker unavailable (offline / unregistered / grace), adopted in place or superseded
     s074 --> s080: in-place fix green and approved (adoption outranks 050/060; the merge gate takes it)

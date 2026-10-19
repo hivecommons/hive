@@ -20,12 +20,14 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.Reviewed, stagelabels.AwaitingMergeAdmission}:          true, // CI green, author side done
 	{stagelabels.AwaitingMergeAdmission, stagelabels.MergeQueue}:        true, // lane admits (soak / merge-eligible)
 	{stagelabels.ReviewPending, stagelabels.Fixing}:                     true, // hive PR red / changes requested
+	{stagelabels.ReviewPending, stagelabels.NeedsAuthor}:                true, // human PR red / changes requested
 	{stagelabels.ReviewPending, stagelabels.ReturnedToContributor}:      true, // contributor PR red / changes requested
 	{stagelabels.ReviewPending, stagelabels.NeedsDecision}:              true, // swarm requires_human; hold / sentinel / human-only rule
 	{stagelabels.Reviewed, stagelabels.Fixing}:                          true, // new head red
 	{stagelabels.MergeQueue, stagelabels.Fixing}:                        true, // new head red (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.ReturnedToContributor}:         true, // contributor head red (backward hop, commented)
 	{stagelabels.Fixing, stagelabels.ReviewPending}:                     true, // fixed head pushed
+	{stagelabels.NeedsAuthor, stagelabels.ReviewPending}:                true, // author pushes a new head
 	{stagelabels.ReturnedToContributor, stagelabels.ReviewPending}:      true, // author pushes a new head
 	{stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive}:      true, // clanker unavailable, adopted
 	{stagelabels.AdoptedByHive, stagelabels.AwaitingMergeAdmission}:     true, // in-place fix green and approved
