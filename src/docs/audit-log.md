@@ -89,12 +89,18 @@ One `system` writer worth knowing by name: CLI model discovery (#7384). When a
 backend's live model probe fails — or degrades to a catalog that is not the
 one the CLI uses — the dashboard writes `model_discovery_failed` with
 `backend=…, platform=<os/arch>, fallback=…, degraded=…, served=…, error=<the
-probe's own message>`, and `model_discovery_recovered` (with `previous=` the
-failure it recovered from) once a clean probe answers again. Entries are
-written on transitions only, never per 30 s probe, and the ordinary
-not-configured fallbacks (no credential, no helper installed) are not
-failures and write nothing. Before this existed, a spoke served a wrong
-catalog for two days and the only record was a server log line.
+probe's own message>` — plus `state=credential_missing, recovery=<operator
+action>` when the failure is copilot's runtime `Not authenticated` refusal
+(#12947), naming the dashboard Copilot Login that clears it — and
+`model_discovery_recovered` (with `previous=` the failure it recovered from)
+once a clean probe answers again. Entries are written on transitions only,
+never per 30 s probe, and the ordinary not-configured fallbacks (no credential
+found, no helper installed) are not failures and write nothing. The `Not
+authenticated` case is different: the helper ran and refused, so it does write
+a `model_discovery_failed` entry (with `state=`/`recovery=`) even though no
+fleet self-report is filed for it (see `fleet-report.md`). Before this
+existed, a spoke served a wrong catalog for two days and the only record was a
+server log line.
 
 ## Rotation and retention
 

@@ -85,7 +85,7 @@ title is `[selfreport] <class>: <short message>`.
 | `restart_storm` | the restart-storm breaker pauses an agent | high |
 | `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent *after* the busy-no-activity stall restart has been attempted (or that restart itself errored) — i.e. the recovery did not bring the session back; kicks that fail before the restart are a dashboard/log warning only | medium |
 | `panic_recovered` | a dashboard handler recovered from a panic | high |
-| `model_discovery_degraded` | model discovery has been failing for >1h | medium |
+| `model_discovery_degraded` | model discovery has been failing for >1h (excluded, audit-log only: copilot serving the HTTP catalog because the SDK helper is absent (#11868), and copilot `Not authenticated` because the operator has not completed the dashboard Copilot Login (#12947)) | medium |
 | `inference_auth_failed` | 401/403 from an inference backend (LiteLLM, Copilot) | high |
 | `advisory_post_failed` | the advisory digest could not be posted (rate-limit skips excluded) | medium |
 

@@ -302,3 +302,45 @@ func TestAuditDiscoveryTransition_HTTPCatalogOnlyIsNotSelfReported(t *testing.T)
 		t.Fatalf("a real discovery failure must still self-report, got %#v", ev)
 	}
 }
+
+// #12947: a copilot "Not authenticated" discovery failure is operator-side
+// (the fix is the dashboard Copilot Login), so it never files a fleet
+// self-report — and it Clears any earlier real failure so that condition
+// cannot linger in the tracker and file with stale text. The local audit
+// entry still names the recovery path.
+func TestAuditDiscoveryTransition_CredentialMissingIsNotSelfReported(t *testing.T) {
+	clock := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger(), audit: &AuditLog{lastAction: map[string]time.Time{}}}
+	since := clock.Add(-24 * time.Hour)
+
+	const notAuthed = "sdk helper: exit status 1 (stderr: Not authenticated. Please authenticate first.)"
+	s.auditDiscoveryTransition("copilot", cliModelResult{fallback: true, discoveryErr: notAuthed})
+	clock = clock.Add(2 * time.Hour)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("credential_missing must not self-report, got %#v", ev)
+	}
+	failed := s.audit.RecentWithPrefixSince(since, auditActionModelDiscoveryFailed)
+	if len(failed) != 1 ||
+		!strings.Contains(failed[0].Detail, "state="+copilotCredentialMissingState) ||
+		!strings.Contains(failed[0].Detail, "recovery="+copilotCredentialMissingRecovery) {
+		t.Fatalf("audit entry must carry the state and name the recovery path, got %+v", failed)
+	}
+
+	// A real failure, then the text flips to credential_missing before the
+	// tracker's 1h threshold: the earlier condition must be cleared, not
+	// filed an hour later under the stale 502 message.
+	s.cliModels.noteDiscoveryState("copilot", "")
+	s.auditDiscoveryTransition("copilot", cliModelResult{fallback: true, discoveryErr: "http probe: 502"})
+	clock = clock.Add(10 * time.Minute)
+	s.auditDiscoveryTransition("copilot", cliModelResult{fallback: true, discoveryErr: notAuthed})
+	clock = clock.Add(2 * time.Hour)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("a prior real failure must be cleared when the state becomes credential_missing, got %#v", ev)
+	}
+	failed = s.audit.RecentWithPrefixSince(since, auditActionModelDiscoveryFailed)
+	if len(failed) != 3 || strings.Contains(failed[1].Detail, "recovery=") || strings.Contains(failed[1].Detail, "state=") {
+		t.Fatalf("non-credential failures must not carry state/recovery fields, got %+v", failed)
+	}
+}

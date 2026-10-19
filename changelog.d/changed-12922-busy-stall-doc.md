@@ -1,0 +1,1 @@
+- Clarified the busy-no-activity stall documentation to cover live CLI panes without an input prompt ([#12922](https://github.com/hivecommons/hive/issues/12922)).

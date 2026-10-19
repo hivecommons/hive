@@ -442,6 +442,14 @@ jobs:
             echo -e "${REPORT}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Written once the verdict is known and before either outcome (the
+          # `exit 1` shortfall below or success), so it means "measurement
+          # reached a verdict", not "gate passed". The profile artifact cannot
+          # serve as this signal: a hung run leaves a partial cover-run.log
+          # that the always() upload still ships during cancellation cleanup
+          # (#12951).
+          echo "$GITHUB_SHA" > coverage-measured.marker
+
           if [ -n "$BROKEN" ] || [ -n "$FAILED" ]; then
             echo "below_threshold=true" >> "$GITHUB_OUTPUT"
             {
@@ -477,6 +485,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Upload measurement-complete marker
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src/coverage-measured.marker
+          if-no-files-found: ignore
+          retention-days: 14
+
   create-issue-on-coverage-drop:
     # Scheduled runs only. The bare `failure()` here previously fired on ANY
     # job failure regardless of cause, which is why issue #2191 accumulated 41
@@ -484,6 +501,12 @@ jobs:
     # test failure aborting the run. Now that the gate also runs on
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
+    # A cancelled coverage job carries no outputs. If it was cancelled AFTER the
+    # measurement finished (timeout during post-step cleanup, #12944) the
+    # measurement-complete marker artifact exists and filing would only produce a false "measured unknown"
+    # alarm, so the script below exits early. If it was cancelled BEFORE the
+    # marker was written (a hung suite hitting the job timeout, #12951) the
+    # issue is still filed so a persistent hang does not go unreported.
     if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
@@ -491,6 +514,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Create or update coverage issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -510,6 +534,25 @@ jobs:
             const total = '${{ needs.coverage.outputs.total }}' || 'unavailable';
             const shortSha = measuredSha.substring(0, 7);
 
+            // Cancelled jobs propagate no outputs, so the marker artifact is the
+            // only evidence that the measurement completed (#12944, #12951). The
+            // profile artifact is unreliable here: partial logs from a hung run
+            // are still uploaded during cancellation cleanup.
+            const cancelled = '${{ needs.coverage.result }}' === 'cancelled';
+            if (cancelled) {
+              const markerName = 'coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}';
+              const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                per_page: 100,
+              });
+              if (arts.some(a => a.name === markerName && !a.expired)) {
+                core.info('Coverage job was cancelled after the measurement completed; no issue (#12944).');
+                return;
+              }
+            }
+
             // The gate fails for two DIFFERENT reasons and they need different
             // fixes: a package under its floor, or a package that could not be
             // scored at all (tests failing / no test files). Conflating them is
@@ -522,7 +565,9 @@ jobs:
             // Calling that "below their coverage floor" sent #9632 to agents
             // that added tests for a workflow failure (#9645).
             const neverMeasured = !'${{ needs.coverage.outputs.measured_ref }}';
-            const cause = neverMeasured
+            const cause = cancelled
+              ? 'The coverage job was **cancelled before any coverage verdict reached this job** (for example a hung test suite hitting the job timeout, or a cancellation during setup). No verdict was recorded, so this is not evidence of a coverage shortfall - open the run log to see where it stopped.'
+              : neverMeasured
               ? 'The coverage job **failed before any package was measured** (workflow, setup, or runner failure). This is not a coverage shortfall and adding tests will not fix it - open the run log for the failing step.'
               : cannotScore
               ? 'One or more packages **could not be scored** (tests failing, or no test files). That is a broken-test problem, not a coverage shortfall — fix the tests first; the floor cannot be evaluated until they run.'
@@ -534,7 +579,9 @@ jobs:
             // The title must not claim a shortfall the body contradicts:
             // triage reads titles first (#9664 audit). Both keep the
             // [Coverage] prefix the dedupe below matches on.
-            const title = neverMeasured
+            const title = cancelled
+              ? `[Coverage] gate job cancelled before a coverage verdict`
+              : neverMeasured
               ? `[Coverage] gate job failed before measuring coverage`
               : `[Coverage] packages below 90% threshold`;
             const body = `## Coverage gate failed\n\n`
