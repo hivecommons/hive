@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -191,5 +192,168 @@ func TestCollectAndMergeSurvivesMissingPriorArtifact(t *testing.T) {
 	}
 	if len(merged.Items) != 1 {
 		t.Fatalf("unexpected items: %+v", merged.Items)
+	}
+}
+
+// seedVerdictReports writes one report per default perspective for
+// repo#number@headSHA, all approving except the perspectives in override.
+func seedVerdictReports(t *testing.T, dir string, repo string, number int, headSHA string, override map[Perspective]Verdict) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range DefaultPerspectives {
+		v := VerdictApprove
+		if o, ok := override[p]; ok {
+			v = o
+		}
+		rep := baseReport(p, v)
+		rep.Repo = repo
+		rep.Number = number
+		rep.HeadSHA = headSHA
+		raw, err := json.Marshal(rep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := ReviewReportFilePrefix + string(p) + ReviewReportFileSuffix
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+var securityRequiresHuman = map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman}
+
+// hivecommons/hive#12957: every artifact refresh re-collects the same
+// reports. RecordedAt moves (it is the retention clock); the first-recorded
+// time must not, or a person's release of the verdict hold, judged against
+// it, stops counting a few minutes after it was given.
+func TestCollectAndMergeKeepsFirstRecordedAtAcrossRefreshes(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t1 := time.Now().UTC().Truncate(time.Second)
+	t2 := t1.Add(5 * time.Minute)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1); err != nil {
+		t.Fatalf("first collect: %v", err)
+	}
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t2)
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(merged.Items) != 1 {
+		t.Fatalf("same key must not duplicate: %+v", merged.Items)
+	}
+	item := merged.Items[0]
+	if !item.RecordedAt.Equal(t2) {
+		t.Fatalf("RecordedAt = %v, want the refresh time %v (retention clock)", item.RecordedAt, t2)
+	}
+	if !item.FirstRecordedAt.Equal(t1) {
+		t.Fatalf("FirstRecordedAt = %v, want the first collect %v", item.FirstRecordedAt, t1)
+	}
+	hold, ok := merged.VerdictHoldFor("acme/widget", 192)
+	if !ok {
+		t.Fatal("requires_human verdict must hold the PR")
+	}
+	if !hold.RecordedAt.Equal(t1) {
+		t.Fatalf("hold.RecordedAt = %v, want the first-recorded time %v", hold.RecordedAt, t1)
+	}
+
+	// Retention follows the last time the verdict was seen, not the first:
+	// with the reports gone, a collect just past t1+VerdictRetention (but
+	// within t2+VerdictRetention) still keeps the entry.
+	if err := os.RemoveAll(reportDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(reportDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	later, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1.Add(VerdictRetention+time.Minute))
+	if err != nil {
+		t.Fatalf("collect after wipe: %v", err)
+	}
+	if len(later.Items) != 1 || !later.Items[0].FirstRecordedAt.Equal(t1) || !later.Items[0].RecordedAt.Equal(t2) {
+		t.Fatalf("entry re-confirmed at %v must survive with its timestamps unchanged: %+v", t2, later.Items)
+	}
+}
+
+// An artifact written before first_recorded_at existed falls back to the
+// entry's RecordedAt on the first refresh after the upgrade.
+func TestCollectAndMergeFirstRecordedAtFallsBackToLegacyRecordedAt(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t0 := time.Now().UTC().Truncate(time.Second)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	first, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := first
+	legacy.Items = append([]Aggregate(nil), first.Items...)
+	legacy.Items[0].FirstRecordedAt = time.Time{}
+	if err := WriteArtifact(artifactPath, legacy); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "first_recorded_at") {
+		t.Fatalf("a zero FirstRecordedAt must be omitted from the JSON: %s", raw)
+	}
+
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t0.Add(5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := merged.Items[0].FirstRecordedAt; !got.Equal(t0) {
+		t.Fatalf("FirstRecordedAt = %v, want the legacy RecordedAt %v", got, t0)
+	}
+}
+
+// A genuinely new verdict starts a new first-recorded time: a new head, or a
+// different outcome for the same head. That keeps #12374's rule that a
+// release given before the verdict does not count.
+func TestCollectAndMergeNewVerdictResetsFirstRecordedAt(t *testing.T) {
+	root := t.TempDir()
+	reportDir := filepath.Join(root, "reports")
+	artifactPath := filepath.Join(root, "data", ReviewVerdictsFile)
+	t1 := time.Now().UTC().Truncate(time.Second)
+
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "cacbd42", securityRequiresHuman)
+	if _, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fix push: the per-perspective files are rewritten for the new head.
+	t3 := t1.Add(10 * time.Minute)
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "d00dfee", securityRequiresHuman)
+	merged, err := CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, ok := merged.VerdictHoldFor("acme/widget", 192)
+	if !ok || hold.HeadSHA != "d00dfee" || !hold.RecordedAt.Equal(t3) {
+		t.Fatalf("hold = %+v (held %v), want the new head's verdict first recorded at %v", hold, ok, t3)
+	}
+
+	// Same head, different outcome: the approve is a new verdict.
+	t4 := t3.Add(10 * time.Minute)
+	seedVerdictReports(t, reportDir, "acme/widget", 192, "d00dfee", nil)
+	merged, err = CollectAndMerge(reportDir, artifactPath, AggregateOptions{}, t4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range merged.Items {
+		if item.HeadSHA == "d00dfee" && !item.FirstRecordedAt.Equal(t4) {
+			t.Fatalf("changed verdict on the same head kept FirstRecordedAt %v, want %v", item.FirstRecordedAt, t4)
+		}
+	}
+	if hold, ok := merged.VerdictHoldFor("acme/widget", 192); ok {
+		t.Fatalf("a merge-eligible approve recorded after the hold must release it, got %+v", hold)
 	}
 }

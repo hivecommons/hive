@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 var reviewHoldVerdictAt = time.Date(2026, 10, 14, 11, 6, 42, 0, time.UTC)
@@ -188,6 +190,51 @@ func TestSelfAuthoredSweepReviewVerdictReleases(t *testing.T) {
 			}
 			if front.hits != tc.wantHits {
 				t.Fatalf("reviews/comments API hits = %d, want %d", front.hits, tc.wantHits)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#12957: the hook reports when the holding verdict was
+// first recorded, which an artifact refresh does not move. A person's
+// approval after that stays a release however often the artifact is
+// re-collected; a new requires_human verdict (a new head) recorded after the
+// approval holds again.
+func TestReviewVerdictGateReleaseSurvivesArtifactRefresh(t *testing.T) {
+	t1 := reviewHoldVerdictAt
+	approval := reviewHoldActivity{login: "owner", state: "APPROVED", createdAt: t1.Add(time.Minute)}
+	for _, tc := range []struct {
+		name       string
+		hold       ReviewVerdictHold
+		wantReason string
+	}{
+		// The artifact was re-collected at t1+5m; the verdict is unchanged,
+		// so its first-recorded time is still t1.
+		{name: "same verdict after a refresh stays released", hold: requiresHumanHold("cacbd42")},
+		{name: "new head's requires_human after the approval holds again",
+			hold:       ReviewVerdictHold{Held: true, Verdict: "requires_human", HeadSHA: "d00dfee", RecordedAt: t1.Add(10 * time.Minute)},
+			wantReason: autoMergeReasonReviewRequiresHuman},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merges := 0
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true, mergeCalls: &merges})
+			defer api.Close()
+			front := &reviewHoldFront{reviews: []reviewHoldActivity{approval}}
+			srv := newReviewHoldFront(t, api.URL, front)
+			defer srv.Close()
+
+			c := newAutoMergeSweepClient(srv.URL)
+			c.reviewVerdictHold = verdictHoldFor("acme/widget", tc.hold)
+			pr := &gh.PullRequest{Number: gh.Ptr(7), Head: &gh.PullRequestBranch{SHA: gh.Ptr("d00dfee")}}
+			reason, err := c.reviewVerdictGate(context.Background(), "acme/widget", "acme", "widget", pr)
+			if err != nil {
+				t.Fatalf("err = %v, want nil", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if merges != 0 {
+				t.Fatalf("the gate alone must never merge, merges = %d", merges)
 			}
 		})
 	}

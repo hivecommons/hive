@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -188,6 +189,32 @@ type Aggregate struct {
 	// artifact. It exists so stale entries (PRs long since merged or closed)
 	// can be pruned instead of accumulating forever.
 	RecordedAt time.Time `json:"recorded_at,omitempty"`
+	// FirstRecordedAt is when this verdict was first merged into the durable
+	// artifact. Unlike RecordedAt it does not move when an unchanged verdict
+	// is collected again, so a person's release of a verdict hold, judged
+	// against it, survives artifact refreshes (hivecommons/hive#12957). Zero
+	// on entries written before the field existed; FirstRecorded falls back
+	// to RecordedAt.
+	FirstRecordedAt time.Time `json:"first_recorded_at,omitzero"`
+}
+
+// FirstRecorded is when the verdict was first recorded: FirstRecordedAt, or
+// RecordedAt for an entry written before FirstRecordedAt existed.
+func (a Aggregate) FirstRecorded() time.Time {
+	if !a.FirstRecordedAt.IsZero() {
+		return a.FirstRecordedAt
+	}
+	return a.RecordedAt
+}
+
+// sameRecordedVerdict reports whether fresh is the verdict prev already
+// recorded for the same key, re-collected from the same reports rather than
+// produced by a new review that reached a different outcome.
+func sameRecordedVerdict(prev, fresh Aggregate) bool {
+	return prev.Verdict == fresh.Verdict &&
+		prev.RequiresHuman == fresh.RequiresHuman &&
+		prev.MergeEligible == fresh.MergeEligible &&
+		slices.Equal(prev.Reasons, fresh.Reasons)
 }
 
 type PerspectiveFinding struct {
@@ -649,6 +676,14 @@ const VerdictRetention = 30 * 24 * time.Hour
 // Merging keeps the union. Freshly collected verdicts win for a given
 // repo/number/head-SHA, previously recorded ones survive, and anything not
 // re-confirmed within VerdictRetention is dropped.
+//
+// RecordedAt is restamped on every collect because it is the retention
+// clock. FirstRecordedAt is not: a re-collected verdict unchanged from the
+// one already recorded under its key keeps the original first-recorded time,
+// so a person who released its hold afterwards stays released
+// (hivecommons/hive#12957). A new head, a new body digest, or a changed
+// outcome for the same key is a new verdict and starts a new first-recorded
+// time.
 func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Artifact, error) {
 	fresh, err := Collect(dir, opts)
 	if err != nil {
@@ -677,9 +712,13 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
+		item.FirstRecordedAt = now
 		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
-		if _, seen := merged[key]; !seen {
+		prev, seen := merged[key]
+		if !seen {
 			order = append(order, key)
+		} else if first := prev.FirstRecorded(); !first.IsZero() && sameRecordedVerdict(prev, item) {
+			item.FirstRecordedAt = first
 		}
 		merged[key] = item
 	}

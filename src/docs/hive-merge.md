@@ -203,7 +203,8 @@ the sweep skips it as `review-verdict-requires-human` /
 after the verdict does not clear it. It is released by a merge-eligible
 `approve` verdict recorded after it (a fresh review of the new head), or by a
 person (not a bot) who submits an approving review or replies `/hive approve`
-on the PR after the verdict; a plain comment does not release it. If the
+on the PR after the verdict was first recorded (an artifact refresh does
+not move that time); a plain comment does not release it. If the
 reviews or comments cannot be listed the sweep fails closed
 (`review-verdict-hold-evidence`). The default is
 `dependabot[bot]` only; set an explicit empty list to keep the sweep App-only,

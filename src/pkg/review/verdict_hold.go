@@ -15,8 +15,12 @@ import (
 // stands until a merge-eligible approve aggregate is recorded after it (on
 // any head) or a person releases it on GitHub.
 type VerdictHold struct {
-	Verdict    Verdict   `json:"verdict"`
-	HeadSHA    string    `json:"head_sha,omitempty"`
+	Verdict Verdict `json:"verdict"`
+	HeadSHA string  `json:"head_sha,omitempty"`
+	// RecordedAt is when the holding verdict was first recorded
+	// (Aggregate.FirstRecorded), not when its reports were last collected:
+	// a person's release after it must survive artifact refreshes
+	// (hivecommons/hive#12957).
 	RecordedAt time.Time `json:"recorded_at,omitzero"`
 	Reasons    []string  `json:"reasons,omitempty"`
 }
@@ -38,7 +42,7 @@ func clearsVerdictHold(a Aggregate) bool {
 
 // LatestVerdictHold returns the hold one pull request's verdicts place on it.
 // items must all belong to that pull request; their heads may differ. The
-// most recent decisive aggregate wins: a blocking one holds the PR, a
+// most recently first-recorded decisive aggregate wins: a blocking one holds the PR, a
 // merge-eligible approve releases it. changes_requested and incomplete
 // aggregates neither hold nor release.
 func LatestVerdictHold(items []Aggregate) (VerdictHold, bool) {
@@ -48,7 +52,7 @@ func LatestVerdictHold(items []Aggregate) (VerdictHold, bool) {
 		if !BlocksSelfMerge(*a) && !clearsVerdictHold(*a) {
 			continue
 		}
-		if latest == nil || a.RecordedAt.After(latest.RecordedAt) {
+		if latest == nil || a.FirstRecorded().After(latest.FirstRecorded()) {
 			latest = a
 		}
 	}
@@ -59,7 +63,7 @@ func LatestVerdictHold(items []Aggregate) (VerdictHold, bool) {
 	if verdict != VerdictReject {
 		verdict = VerdictRequiresHuman
 	}
-	return VerdictHold{Verdict: verdict, HeadSHA: latest.HeadSHA, RecordedAt: latest.RecordedAt, Reasons: latest.Reasons}, true
+	return VerdictHold{Verdict: verdict, HeadSHA: latest.HeadSHA, RecordedAt: latest.FirstRecorded(), Reasons: latest.Reasons}, true
 }
 
 // VerdictHoldFor is LatestVerdictHold over the artifact's entries for
