@@ -183,15 +183,30 @@ func adoptionBlocked(labels []string) string {
 // workflow/action definitions, test deletion) before adoption, so the hive
 // never re-homes such a head into an App-authored PR (hivecommons/hive#12850).
 // It returns the contributor-lane skip reason, or "" when adoption may
-// proceed. A file-list failure refuses (files-evidence): the next sweep
-// retries.
+// proceed. The files API answers for the PR's current head while adoption
+// acts on obs.HeadSHA, so a head that moved since the lane recorded it is
+// refused (head-changed-since-eval) rather than judged by another head's
+// diff; the fetched PR also carries changed_files, so an incomplete list
+// fails closed. A read failure refuses (files-evidence). Both retry on the
+// next sweep.
 func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) (string, error) {
-	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, &gh.PullRequest{Number: gh.Ptr(obs.Number)})
+	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		return contributorLaneReasonFilesEvidence, err
+	}
+	if head := pr.GetHead().GetSHA(); head == "" || head != obs.HeadSHA {
+		return adoptionReasonHeadChanged, nil
+	}
+	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, pr)
 	if err != nil {
 		return contributorLaneReasonFilesEvidence, err
 	}
 	return contributorLaneDiffReason(files), nil
 }
+
+// adoptionReasonHeadChanged is adoptionDiffRefusal's verdict for a PR whose
+// head moved after the lane observed it.
+const adoptionReasonHeadChanged = "head-changed-since-eval"
 
 // adoptionCloses extracts the closing-keyword lines from the original body.
 func adoptionCloses(body string) []string {
@@ -479,7 +494,16 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
 		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
 			if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
-				c.info("stage labels: DCO re-home refused by diff fence", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
+				if refusal == adoptionReasonHeadChanged {
+					// The next sweep observes the new head and re-reads.
+					c.info("stage labels: DCO re-home deferred, head moved", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+					return 0, nil
+				}
+				// The hive cannot take this head over, so it gives the PR
+				// back: it returns to 072, where the same fence holds it
+				// (a files-evidence failure is re-judged there next sweep).
+				c.info("stage labels: DCO re-home refused by diff fence; releasing adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
+				store.ClearAdoption(key)
 				return 0, nil
 			}
 			c.info("stage labels: re-homing adopted PR for DCO repair", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "unsigned", obs.Detail.DCOUnsigned, "unsigned_hive", obs.Detail.DCOUnsignedHive, "can_push", canPushInPlace)
