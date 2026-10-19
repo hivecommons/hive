@@ -142,6 +142,47 @@ func TestHiveMediatedPRUnderPersonLoginIsStillFixed(t *testing.T) {
 	}
 }
 
+func TestAdoptedContributorPRIsHiveOwnedForFixes(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 1 || len(plan.WithheldFixes) != 0 {
+		t.Fatalf("adopted contributor PR fixes=%d withheld=%d, want 1 / 0", len(plan.FixKicks), len(plan.WithheldFixes))
+	}
+}
+
+func TestStalledAdoptedPendingFixIsRekicked(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "stage/stalled", "author/clanker"}
+	state := DispatchState{
+		Fixes:       []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
+		FixAttempts: []FixAttempt{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
+	}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 1 {
+		t.Fatalf("stalled adopted PR got %d fix kicks, want 1", len(plan.FixKicks))
+	}
+	if len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 4 {
+		t.Fatalf("pending fixes = %+v, want a fourth attempt", plan.State.Fixes)
+	}
+}
+
+func TestPendingFixIsNotRekickedBeforeStalled(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+	state := DispatchState{Fixes: []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 1, Dispatched: time.Now()}}}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 0 || len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 1 {
+		t.Fatalf("unstalled pending fix changed: fixes=%d state=%+v", len(plan.FixKicks), plan.State.Fixes)
+	}
+}
+
 // TestWithheldFixPrunedWhenHeadMoves: a new push is a new decision. The
 // record for the old head goes with it, like pending reviews and holds.
 func TestWithheldFixPrunedWhenHeadMoves(t *testing.T) {

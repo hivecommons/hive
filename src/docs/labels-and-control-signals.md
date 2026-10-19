@@ -609,6 +609,12 @@ does not bump itself.
   [#12417](https://github.com/hivecommons/hive/pull/12417), 6h at 050 with CI
   green and no verdict, wrongly marked stalled). At 050 the label is possible
   only once the verdict exists and nobody acted on it for the dwell.
+- **Hive-owned stalls re-kick the hive.** A PR the hive owns — including an
+  in-place `stage/074-adopted-by-hive` contributor branch — is not waiting for
+  a maintainer `/lgtm` or `/approve`. If `stage/stalled` appears while a
+  review-fix kick is still pending for the head, the dispatcher treats that as
+  a stale hive fix attempt and issues the next bounded fix attempt instead of
+  letting the PR sit behind the old pending row.
 - **Cleared at once on any activity.** The next cycle that sees a new head,
   a new comment, a new review submission (an Approve / Request changes with
   only a body counts: the comment counters miss it) or a changed
@@ -758,6 +764,10 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      `<!-- hive:adoption-yield head=<sha> -->` note, the adoption is forgotten
      and the PR is back on the ordinary 072 flow (a fresh nudge for the new
      head; it may be adopted again under the same rules).
+     A review verdict of `changes_requested` on an in-place adoption is the
+     hive's work: the review-fix dispatcher may push signed fixer commits to
+     that adopted branch, and a `stage/stalled` label re-kicks the next bounded
+     fix attempt if an earlier pending fix produced no movement.
    - **supersede** (`mode=supersede`) — the fork forbids maintainer edits,
      `in_place: false`, or the adopted head has unsigned commits (`no-dco`)
      that the hive cannot repair by amending the contributor branch:

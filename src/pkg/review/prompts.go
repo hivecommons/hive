@@ -16,6 +16,7 @@ type PullRequest struct {
 	Number    int
 	Title     string
 	Author    string
+	Labels    []string
 	HeadSHA   string
 	UpdatedAt time.Time
 	// BodyDigest fingerprints the PR title/body that the reviewer judged.

@@ -967,6 +967,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if policy.RequireReviewerVerdict && !verdict.Approved {
 		if !humanApproved {
+			if verdictBlocks(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+				return AutoMergeSweepEvent{}, contributorLaneReasonChangesRequested, nil
+			}
 			return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
 		}
 		c.info("contributor-lane reviewer verdict cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", headSHA, "approver", approver)

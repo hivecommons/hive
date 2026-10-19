@@ -695,23 +695,25 @@ func (s DispatchState) PendingSince(repo string, number int, headSHA string) tim
 
 // hiveAuthored reports whether this hive is answerable for the PR: its login
 // is an agent's (isAgentAuthored), the audit trail attributes it to one of
-// this hive's agents (AuthorAgent), or its body carries the hive attribution
-// trailer (HiveAttributed — a PR an agent opened on a person's credentials).
+// this hive's agents (AuthorAgent), its body carries the hive attribution
+// trailer (HiveAttributed — a PR an agent opened on a person's credentials),
+// or the stage reconciler says the hive adopted the contributor PR in place.
 // Anything else was opened by someone the hive does not speak for.
 func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
-	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed
+	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed || hasLabelFold(pr.Labels, "stage/074-adopted-by-hive")
 }
 
-// fixPushAllowed is the authorship check in front of every fix kick. A fix
-// kick tells an agent to push a commit onto the PR branch, so it is only ever
-// dispatched for a PR the hive itself opened. AllAuthors is deliberately not
-// consulted: it widens what is REVIEWED, and reviewing a contributor's PR is
-// not a reason to rewrite it (hivecommons/hive#8421). review.fix_human_prs is
-// not consulted either: the fixer's commit is signed off by the hive, the
-// squash merge is attributed to the PR author, and the squash sign-off gate
-// rejects that pair as bot-signoff — a red the hive cannot repair, since it
-// cannot sign off for the author. Everyone else's PRs get the fix as a
-// suggestion in the review instead (hivecommons/hive#12897).
+// fixPushAllowed is the ownership check in front of every fix kick. A fix kick
+// tells an agent to push a commit onto the PR branch, so it is dispatched only
+// for a PR the hive opened or explicitly adopted in place. AllAuthors is
+// deliberately not consulted: it widens what is REVIEWED, and reviewing a
+// contributor's ordinary PR is not a reason to rewrite it (hivecommons/hive#8421).
+// review.fix_human_prs is not consulted either: for non-adopted human PRs the
+// fixer's commit is signed off by the hive, the squash merge is attributed to
+// the PR author, and the squash sign-off gate rejects that pair as bot-signoff
+// — a red the hive cannot repair, since it cannot sign off for the author.
+// Everyone else's PRs get the fix as a suggestion in the review instead
+// (hivecommons/hive#12897).
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 	return hiveAuthored(pr, opts)
 }
@@ -746,10 +748,18 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
 	idx := fixIndex(p.State.Fixes, pr.Repo, pr.Number, pr.HeadSHA)
+	pendingAttempts := 0
 	if idx >= 0 {
-		return
+		if !stalledHiveOwnedFix(pr, opts) {
+			return
+		}
+		pendingAttempts = p.State.Fixes[idx].Attempts
+		p.State.Fixes = append(p.State.Fixes[:idx], p.State.Fixes[idx+1:]...)
 	}
 	attempts := maxFixAttemptsForPR(p.State.Fixes, pr.Repo, pr.Number)
+	if pendingAttempts > attempts {
+		attempts = pendingAttempts
+	}
 	if historical := maxHistoricalFixAttemptsForPR(p.State.FixAttempts, pr.Repo, pr.Number); historical > attempts {
 		attempts = historical
 	}
@@ -766,6 +776,19 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	msg := BuildFixPrompt(pr, agg, attempts, escalation.MaxReEngagements)
 	p.FixKicks = append(p.FixKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "fix", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA})
 	p.State.Fixes = append(p.State.Fixes, PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now})
+}
+
+func stalledHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {
+	return hasLabelFold(pr.Labels, "stage/stalled") && hiveAuthored(pr, opts)
+}
+
+func hasLabelFold(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
