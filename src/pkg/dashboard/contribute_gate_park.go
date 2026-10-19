@@ -19,7 +19,7 @@ import (
 // the target repository's AGENTS.md "offer a spec and wait for acceptance"
 // rule, or its "stop and report a missing registered checkout" rule, and
 // parked asking the maintainer to accept work the hive had already accepted
-// and dispatched (hivecommons/hive#12913).
+// and dispatched (hivecommons/hive#13059).
 //
 // The hub is the authority on what a completion means, so — exactly as it
 // does for a blocked verdict that describes the contributor's own tooling

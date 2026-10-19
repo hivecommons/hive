@@ -3784,7 +3784,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// "registered sibling checkout missing" — is not a decision a
 			// person must make: the dispatch was the acceptance. Book it idle
 			// so the issue is re-offered once, and lift the decision label the
-			// relay applied (hivecommons/hive#12913). The second such park on
+			// relay applied (hivecommons/hive#13059). The second such park on
 			// the same issue is left standing for a maintainer.
 			if completedTask != nil {
 				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, msg.VerdictReason); ok {

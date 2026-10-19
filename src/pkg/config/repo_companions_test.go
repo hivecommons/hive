@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// project.repo_policies[].companion_repos (hivecommons/hive#12913) names the
+// project.repo_policies[].companion_repos (hivecommons/hive#13059) names the
 // sibling checkouts a repo's own tooling expects beside it. Entries may be
 // bare or org-qualified; the result is always org-qualified, deduplicated,
 // and never includes the repo itself or a malformed entry.

@@ -22,7 +22,7 @@ type RepoPolicy struct {
 	ACMMLastAutomatic         *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
 	// CompanionRepos lists sibling repositories (bare or org-qualified) this
 	// repo's tooling expects checked out beside it under the agent workspace
-	// root, at <root>/<org>/<companion> (hivecommons/hive#12913). Agents are
+	// root, at <root>/<org>/<companion> (hivecommons/hive#13059). Agents are
 	// told to clone them alongside the primary checkout instead of parking
 	// when a repo-local tool reports the path missing.
 	CompanionRepos []string `yaml:"companion_repos,omitempty" json:"companion_repos,omitempty"`

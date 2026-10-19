@@ -792,7 +792,7 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	// to say so, in the same section that produces the impression. Getting a
 	// checkout is an ordinary thing an agent does for itself, not a fault.
 	b.WriteString(fmt.Sprintf("ℹ️ This list is an AUTHORIZATION SCOPE, not a checkout: it does not put any repo on disk, and nothing provisions a per-agent git worktree from it. If you need files rather than the GitHub API and have no checkout, clone one yourself: git clone %s/<org>/<repo> /tmp/<repo>. An absent checkout is a normal state to handle, NOT an infrastructure fault — do not file a finding about a missing worktree or unprovisioned repo workspace.\n", strings.TrimRight(host, "/")))
-	// Repo-local gates and companion checkouts (hivecommons/hive#12913): a
+	// Repo-local gates and companion checkouts (hivecommons/hive#13059): a
 	// target repo's AGENTS.md may say "offer a spec and wait" or "stop when a
 	// registered sibling checkout is missing". Dispatched work is already
 	// accepted, and a registered sibling path under the workspace root is a

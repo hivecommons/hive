@@ -15,7 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 )
 
-// hivecommons/hive#12913: five contributor parks on hivecommons/spektacular
+// hivecommons/hive#13059: five contributor parks on hivecommons/spektacular
 // in one day were agents obeying the target repo's AGENTS.md "offer a spec
 // and wait for acceptance" rule, or its "stop on a missing registered
 // checkout" rule, on issues the hive had already accepted and dispatched.

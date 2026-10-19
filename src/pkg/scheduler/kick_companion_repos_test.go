@@ -8,7 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 )
 
-// hivecommons/hive#12913: resident agents get the same two rules contributor
+// hivecommons/hive#13059: resident agents get the same two rules contributor
 // agents get — a target repo's own confirmation gate is satisfied by the
 // dispatch, and a registered companion checkout is cloned, not reported —
 // plus the clone plan for any companion repos the operator configured.

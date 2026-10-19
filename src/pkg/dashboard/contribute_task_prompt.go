@@ -68,7 +68,7 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 }
 
 // buildTaskPromptForContributorWithHints is buildTaskPromptForContributor
-// plus the assigning hive's per-repo hints (hivecommons/hive#12913); live
+// plus the assigning hive's per-repo hints (hivecommons/hive#13059); live
 // dispatch passes h.taskPromptRepoHints(repo).
 func buildTaskPromptForContributorWithHints(ref worksource.Ref, title string, canPush bool, guide string, hints taskPromptRepoHints) string {
 	repoFull := ref.Repo
@@ -363,7 +363,7 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 }
 
 // taskPromptRepoHints carries the assigning hive's per-repo knowledge into
-// the otherwise pure prompt builder (hivecommons/hive#12913): the companion
+// the otherwise pure prompt builder (hivecommons/hive#13059): the companion
 // repositories project.repo_policies[].companion_repos registers for the
 // task's repo, and the GitHub host they are cloned from. Zero renders nothing.
 type taskPromptRepoHints struct {

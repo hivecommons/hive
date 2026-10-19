@@ -1,5 +1,5 @@
 // Package companionrepos plans the sibling checkouts a target repository's own
-// tooling expects beside it (hivecommons/hive#12913).
+// tooling expects beside it (hivecommons/hive#13059).
 //
 // Some repositories register a sibling repository's path relative to the
 // agent workspace root — spektacular's `repo list` resolves a docs location to
