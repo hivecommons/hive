@@ -56,6 +56,11 @@ const (
 	// boot-time self-heal sweep strips the retired hive/<hive-id> provenance
 	// label from (hive_id_label_retire.go, hivecommons/hive#12539).
 	AuditActionHiveIDLabelRetired = "hive_id_label_retired"
+	// AuditActionClaimedByLabelMigrated is recorded for each open item the
+	// one-shot sweep moves from the retired per-login
+	// `hive/claimed-by-<login>` to the generic `hive/claimed-by-human`
+	// (claimed_by_human_migration.go).
+	AuditActionClaimedByLabelMigrated = "claimed_by_label_migrated"
 	// AuditActionReporterTrustWaitNoticed is recorded when the core poller
 	// posts the one-shot reporter-trust wait explanation comment.
 	AuditActionReporterTrustWaitNoticed = "reporter_trust_wait_noticed"

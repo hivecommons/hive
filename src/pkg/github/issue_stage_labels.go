@@ -95,8 +95,9 @@ type IssueStageResult struct {
 	MergedPRIssuesClosed int
 	// Healed counts issues found carrying more than one stage label.
 	Healed int
-	// ClaimedByHealed counts backend-named `hive/claimed-by-*` labels
-	// rewritten to the holder's login (see healBackendClaimedByLabels).
+	// ClaimedByHealed counts backend-named and retired per-login
+	// `hive/claimed-by-*` labels rewritten to the holder's label (see
+	// healBackendClaimedByLabels).
 	ClaimedByHealed int
 	// LegacyDecisionMigrated counts issues whose retired needs-decision /
 	// needs-direction label came off after stage/045 was confirmed on them;

@@ -224,7 +224,7 @@ func TestClaimHooks_ClaimReplacesStageLabel(t *testing.T) {
 	var added, removed []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"number":7,"labels":[{"name":"bug"},{"name":"stage/010-actionable"},{"name":"hive/claimed-by-ann"}]}`))
+		_, _ = w.Write([]byte(`{"number":7,"labels":[{"name":"bug"},{"name":"stage/010-actionable"},{"name":"hive/claimed-by-human"}]}`))
 	})
 	mux.HandleFunc("/repos/acme/widgets/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
 		var body []string
@@ -285,15 +285,16 @@ func TestInProgressSetting(t *testing.T) {
 }
 
 // A human claim relayed through the ledger (dashboard, /claim, hivectl, a
-// Copilot CLI session acting for the person) mirrors `hive/claimed-by-<login>`
-// and replaces a hand-applied backend-named label; release removes the
-// holder's label and nothing else.
-func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
+// Copilot CLI session acting for the person) mirrors the generic
+// `hive/claimed-by-human` — never the login — and replaces a hand-applied
+// backend-named label and the retired per-login spelling; release removes
+// the holder's labels (generic and legacy) and nothing else.
+func TestClaimHooks_ClaimedByLabelIsGenericHumanNeverLogin(t *testing.T) {
 	var mu sync.Mutex
 	var added, removed []string
 	// The release path re-reads the issue and removes only what it still
 	// carries (RemoveLabelsFresh), so the mock keeps live label truth.
-	truth := []string{"stage/010-actionable", "hive/claimed-by-copilot"}
+	truth := []string{"stage/010-actionable", "hive/claimed-by-copilot", "hive/claimed-by-clubanderson"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widgets/issues/9", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -350,17 +351,25 @@ func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
 	testutil.Eventually(t, 5*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return has(added, "hive/claimed-by-clubanderson")
-	}, "claim hook never added the login claimed-by label")
+		return has(added, claims.ClaimedByHumanLabel)
+	}, "claim hook never added the generic human claimed-by label")
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(removed, "hive/claimed-by-copilot") && has(removed, "hive/claimed-by-clubanderson")
+	}, "claim hook never replaced the backend-named and per-login labels")
 	mu.Lock()
-	if !has(removed, "hive/claimed-by-copilot") {
-		t.Fatalf("removed %v, want the backend-named label replaced", removed)
-	}
 	for _, l := range added {
 		if claims.ClaimedByLabelIsBackend(l) {
 			t.Fatalf("backend name leaked into labels: %v", added)
 		}
+		if strings.Contains(strings.ToLower(l), "clubanderson") {
+			t.Fatalf("login leaked into labels: %v", added)
+		}
 	}
+	// The legacy label is re-applied by hand before release so the release
+	// path proves it strips both spellings of the holder's label.
+	truth = append(truth, "hive/claimed-by-clubanderson")
 	removed = nil
 	mu.Unlock()
 
@@ -368,6 +377,6 @@ func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
 	testutil.Eventually(t, 5*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return has(removed, "hive/claimed-by-clubanderson")
-	}, "release never removed the holder's claimed-by label")
+		return has(removed, claims.ClaimedByHumanLabel) && has(removed, "hive/claimed-by-clubanderson")
+	}, "release never removed the holder's generic and legacy claimed-by labels")
 }

@@ -103,7 +103,7 @@ Config keys to cross-check: `project.issue_filter.require_labels`, `project.issu
 | `hive/advisory` | Hive | Standing advisory, never actionable. | Leave alone unless deliberately moving the digest. |
 | `🐝 covered by PR`, `hive/likely-done`, `hive/verified-open` | Hive/agent outcomes | Progress display; verified-open suppresses stale likely-done state. | Confirm/close/remove based on real outcomes, not as a merge stop. |
 | `hive/already-done` | Contributor flow | Contributor skip/done display; not a universal agent gate. | Verify the outcome before clearing/closing. |
-| `claimed`, `preempted:<login>`, `hive/claimed-by-<agent>`, `<!-- hive-claim -->` | Claim flows | Ownership/display; the ledger/comments carry claim state. | Use `governor.claims.comment: false` for noisy comments; claim labels do not replace holds. |
+| `claimed`, `preempted:<login>`, `hive/claimed-by-human` / `hive/claimed-by-<agent>`, `<!-- hive-claim -->` | Claim flows | Ownership/display; the ledger/comments carry claim state. | Use `governor.claims.comment: false` for noisy comments; claim labels do not replace holds. |
 | `release-blocker` | Human/release workflow | Stable promotion script gate on open issues. | Clear after release blocker resolution, not to unblock ordinary L6 work. |
 | `ci-flake` | CI/Hive scripts | Flake tracking, not an L6 hold itself. | Fix/quarantine the flake while keeping required checks meaningful. |
 | `user-feedback` | Dashboard/hub | Feedback provenance. | Triage reporter input; apply trust/hold policy as needed. |
