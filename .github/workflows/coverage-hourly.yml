@@ -484,7 +484,10 @@ jobs:
     # test failure aborting the run. Now that the gate also runs on
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
-    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
+    # A cancelled coverage job (timeout during post-step cleanup, operator cancel,
+    # or concurrency cancel) carries no coverage verdict and no outputs; filing an
+    # issue from it only produces a false "measured unknown" alarm (#12944).
+    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped' && needs.coverage.result != 'cancelled'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     needs: coverage
