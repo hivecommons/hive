@@ -463,6 +463,13 @@ jobs:
           echo "below_threshold=false" >> "$GITHUB_OUTPUT"
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
 
+      # Written only when every step above finished, i.e. the verdict was
+      # produced. The profile artifact cannot serve as this signal: a hung run
+      # leaves a partial cover-run.log that the always() upload still ships
+      # during cancellation cleanup (#12951).
+      - name: Mark measurement complete
+        run: echo "$GITHUB_SHA" > coverage-measured.marker
+
       # `if: always()` keeps the profile when the gate above fails; `uses:`
       # steps ignore defaults.run.working-directory, hence the src/ prefix.
       - name: Upload coverage profile
@@ -477,6 +484,15 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Upload measurement-complete marker
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}
+          path: src/coverage-measured.marker
+          if-no-files-found: ignore
+          retention-days: 14
+
   create-issue-on-coverage-drop:
     # Scheduled runs only. The bare `failure()` here previously fired on ANY
     # job failure regardless of cause, which is why issue #2191 accumulated 41
@@ -485,10 +501,10 @@ jobs:
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
     # A cancelled coverage job carries no outputs. If it was cancelled AFTER the
-    # measurement finished (timeout during post-step cleanup, #12944) the profile
-    # artifact exists and filing would only produce a false "measured unknown"
+    # measurement finished (timeout during post-step cleanup, #12944) the
+    # measurement-complete marker artifact exists and filing would only produce a false "measured unknown"
     # alarm, so the script below exits early. If it was cancelled BEFORE the
-    # artifact was uploaded (a hung suite hitting the job timeout, #12951) the
+    # marker was written (a hung suite hitting the job timeout, #12951) the
     # issue is still filed so a persistent hang does not go unreported.
     if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
@@ -517,18 +533,20 @@ jobs:
             const total = '${{ needs.coverage.outputs.total }}' || 'unavailable';
             const shortSha = measuredSha.substring(0, 7);
 
-            // Cancelled jobs propagate no outputs, so the profile artifact is the
-            // only evidence that the measurement completed (#12944, #12951).
+            // Cancelled jobs propagate no outputs, so the marker artifact is the
+            // only evidence that the measurement completed (#12944, #12951). The
+            // profile artifact is unreliable here: partial logs from a hung run
+            // are still uploaded during cancellation cleanup.
             const cancelled = '${{ needs.coverage.result }}' === 'cancelled';
             if (cancelled) {
-              const profileName = 'coverage-profile-${{ github.run_id }}-${{ github.run_attempt }}';
+              const markerName = 'coverage-measured-${{ github.run_id }}-${{ github.run_attempt }}';
               const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 run_id: context.runId,
                 per_page: 100,
               });
-              if (arts.some(a => a.name === profileName && !a.expired)) {
+              if (arts.some(a => a.name === markerName && !a.expired)) {
                 core.info('Coverage job was cancelled after the measurement completed; no issue (#12944).');
                 return;
               }
