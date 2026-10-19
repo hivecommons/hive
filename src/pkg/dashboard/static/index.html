@@ -46122,7 +46122,7 @@ function burnAreaChart() {
     function renderGovChannels(ch) {
       if (!ch) return '<div class="fs-sm text-muted">Loading channel settings…</div>';
       return `
-        <p class="fs-sm text-muted">Every inbound surface that can start or steer agent work from outside the dashboard: GitHub @-mentions and Actions, chat bots, escalation targets, and the admin MCP endpoint. Webhook notification destinations stay on the Notifications tab.</p>
+        <p class="fs-sm text-muted mb-3">Every inbound surface that can start or steer agent work from outside the dashboard: GitHub @-mentions and Actions, chat bots, escalation targets, and the admin MCP endpoint. Webhook notification destinations stay on the Notifications tab.</p>
         ${renderGovChannelsGitHub(ch.githubMentions || {}, ch.githubActions || {}, ch.mentionAgents || [])}
         ${renderGovChannelsChat(ch)}
         ${renderGovChannelsDashboardChat(ch.dashboardChat || {})}
