@@ -32,6 +32,7 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.AdoptedByHive, stagelabels.MergeQueue}:                 true, // lane admits the hive's head
 	{stagelabels.AdoptedByHive, stagelabels.ReturnedToContributor}:      true, // superseder closed unmerged / contributor pushed over
 	{stagelabels.AdoptedByHive, stagelabels.NeedsDecision}:              true, // adoption-stalled:<reason> / re-home failed
+	{stagelabels.NeedsDecision, stagelabels.AdoptedByHive}:              true, // adoption-stalled reason cleared; escalation released
 	{stagelabels.Reviewed, stagelabels.ReadyForHumanMerge}:              true, // untrusted tier, head otherwise mergeable
 	{stagelabels.NeedsDecision, stagelabels.ReadyForHumanMerge}:         true, // hold lifted / alert cleared
 	{stagelabels.ReadyForHumanMerge, stagelabels.NeedsDecision}:         true, // hold or sentinel alert added
