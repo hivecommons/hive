@@ -580,6 +580,11 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
 		}
 	}
+	// This includes a code-owner review a ruleset or classic protection
+	// requires while GitHub reports reviewDecision null (#12953): without it
+	// such a "blocked" PR with green required checks fell through to the
+	// eligible bucket and the serialized lane held it at the front until the
+	// front timeout.
 	if rule, blocks := pr.HumanReviewBlocksMerge(); blocks {
 		return mergeBucketSkip, blockedOrOutstanding(rule), ""
 	}

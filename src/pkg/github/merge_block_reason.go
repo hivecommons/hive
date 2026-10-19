@@ -68,6 +68,16 @@ type ProtectionFacts struct {
 	// "required check X has not reported" would be confidently wrong for all
 	// of them. See protectionCollector.attach.
 	MissingRequiredChecks []string `json:"missing_required_checks,omitempty"`
+	// CodeOwnerReviewRequired records that the base branch requires a code
+	// owner's review — a ruleset pull_request rule's require_code_owner_review
+	// or classic protection's require_code_owner_reviews (hivecommons/hive#12953).
+	// It is only looked up for a "blocked" PR whose ReviewDecision is none:
+	// with required_approving_review_count 0 GitHub reports a null
+	// reviewDecision even while it waits on a code owner.
+	CodeOwnerReviewRequired bool `json:"code_owner_review_required,omitempty"`
+	// CodeOwnerRuleSource names the rule behind CodeOwnerReviewRequired, e.g.
+	// `ruleset "protect main"` or "classic branch protection".
+	CodeOwnerRuleSource string `json:"code_owner_rule_source,omitempty"`
 }
 
 // BranchProtectionBlockReason names, in one place, the branch-protection rule
@@ -106,13 +116,56 @@ func (p PullRequest) BranchProtectionBlockReason() (string, bool) {
 		return "an approving review is required by branch protection (" +
 			strconv.Itoa(f.ApprovalsGiven) + " given)", true
 	}
+	if reason, ok := p.codeOwnerReviewBlockReason(); ok {
+		return reason, true
+	}
 	return "", false
+}
+
+// codeOwnerReviewBlockReason names an outstanding code-owner review
+// (hivecommons/hive#12953). GitHub reports reviewDecision null for a PR that
+// waits on a code owner when the rule asks for no other approvals, so the
+// review decision alone reads such a PR as unblocked. Hive does not match
+// CODEOWNERS itself: GitHub already did, and said "blocked". When the base
+// branch requires code-owner review, no review decision was given and the
+// required checks are green, that review is what GitHub is waiting on.
+func (p PullRequest) codeOwnerReviewBlockReason() (string, bool) {
+	f := p.Protection
+	if f == nil || !f.CodeOwnerReviewRequired || f.ReviewDecision != ReviewDecisionNone {
+		return "", false
+	}
+	if !strings.EqualFold(strings.TrimSpace(p.MergeableState), "blocked") {
+		return "", false
+	}
+	if !p.requiredChecksGreen() {
+		return "", false
+	}
+	source := strings.TrimSpace(f.CodeOwnerRuleSource)
+	if source == "" {
+		source = "branch protection"
+	}
+	return "code-owner review required by " + source, true
+}
+
+// requiredChecksGreen reports that no required check explains GitHub's
+// "blocked": every check passed, or the required set is known and none of it
+// is red, unreported or (as far as CIStatus tells) still running.
+func (p PullRequest) requiredChecksGreen() bool {
+	if p.CIStatus == "success" {
+		return true
+	}
+	f := p.Protection
+	if f == nil || !f.RequiredChecksKnown || p.CIStatus == "pending" {
+		return false
+	}
+	return len(f.FailingRequiredChecks) == 0 && len(f.MissingRequiredChecks) == 0
 }
 
 // HumanReviewBlocksMerge reports whether a person's review decision keeps the
 // PR from merging: GitHub's reviewDecision is CHANGES_REQUESTED or
-// REVIEW_REQUIRED and the protection facts name the rule. reason is that
-// rule. The merge-eligibility classifier skips such a PR and the dashboard's
+// REVIEW_REQUIRED and the protection facts name the rule, or the base branch
+// requires a code owner's review that GitHub is still waiting on
+// (hivecommons/hive#12953). reason is that rule. The merge-eligibility classifier skips such a PR and the dashboard's
 // your-turn decision hands it to a person; both read this one predicate so the
 // merge verdict and the marker agree (hivecommons/hive#12378).
 func (p PullRequest) HumanReviewBlocksMerge() (reason string, blocks bool) {
@@ -121,10 +174,11 @@ func (p PullRequest) HumanReviewBlocksMerge() (reason string, blocks bool) {
 	}
 	switch p.Protection.ReviewDecision {
 	case ReviewDecisionChangesRequested, ReviewDecisionReviewRequired:
-	default:
-		return "", false
+		return p.BranchProtectionBlockReason()
+	case ReviewDecisionNone:
+		return p.codeOwnerReviewBlockReason()
 	}
-	return p.BranchProtectionBlockReason()
+	return "", false
 }
 
 // mentionList renders logins as "@a, @b", skipping blanks and duplicates.

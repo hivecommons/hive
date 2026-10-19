@@ -27,6 +27,8 @@ type protectionCollector struct {
 	// reviews is keyed "owner/repo"; a nil map value records a repo whose
 	// GraphQL query failed, so it is attempted only once.
 	reviews map[string]map[int]prReviewState
+	// codeOwner is keyed "owner/repo@branch" (hivecommons/hive#12953).
+	codeOwner map[string]codeOwnerRule
 }
 
 type requiredSet struct {
@@ -51,9 +53,10 @@ type prReviewState struct {
 
 func newProtectionCollector(c *Client) *protectionCollector {
 	return &protectionCollector{
-		c:        c,
-		required: make(map[string]requiredSet),
-		reviews:  make(map[string]map[int]prReviewState),
+		c:         c,
+		required:  make(map[string]requiredSet),
+		reviews:   make(map[string]map[int]prReviewState),
+		codeOwner: make(map[string]codeOwnerRule),
 	}
 }
 
@@ -70,7 +73,8 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 	}
 	var f ProtectionFacts
 
-	if rs, ok := pc.reviewState(ctx, pr.Repo, pr.Number); ok {
+	rs, reviewKnown := pc.reviewState(ctx, pr.Repo, pr.Number)
+	if reviewKnown {
 		f.ReviewDecision = rs.decision
 		f.ChangesRequestedBy = rs.changesRequestedBy
 		f.ApprovalsGiven = rs.approvals
@@ -135,12 +139,22 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		}
 	}
 
+	// A null review decision on a blocked PR may hide an outstanding
+	// code-owner review (#12953). The rule is looked up only then — and only
+	// when the decision was actually fetched — once per repo+branch.
+	if reviewKnown && f.ReviewDecision == ReviewDecisionNone && strings.EqualFold(pr.MergeableState, "blocked") {
+		if rule := pc.codeOwnerRule(ctx, pr.Repo, pr.BaseRef); rule.required {
+			f.CodeOwnerReviewRequired = true
+			f.CodeOwnerRuleSource = rule.source
+		}
+	}
+
 	// Keep the review opinions even without a decision: GitHub reports a
 	// null reviewDecision on a base branch with no review rule, and the
 	// dashboard still wants "changes requested by @x" / "2 approvals" on
 	// such a PR (#8968). The decision itself stays ReviewDecisionNone —
 	// unknown, never inferred — exactly as the contract above requires.
-	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 {
+	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 && !f.CodeOwnerReviewRequired {
 		return
 	}
 	pr.Protection = &f
@@ -180,6 +194,17 @@ func (pc *protectionCollector) requiredChecks(ctx context.Context, repo, branch 
 	rs := requiredSet{set: set, known: known}
 	pc.required[key] = rs
 	return rs
+}
+
+func (pc *protectionCollector) codeOwnerRule(ctx context.Context, repo, branch string) codeOwnerRule {
+	key := repo + "@" + branch
+	if rule, ok := pc.codeOwner[key]; ok {
+		return rule
+	}
+	owner, name := pc.c.splitRepo(repo)
+	rule := pc.c.codeOwnerReviewRule(ctx, owner, name, branch)
+	pc.codeOwner[key] = rule
+	return rule
 }
 
 func (pc *protectionCollector) reviewState(ctx context.Context, repo string, number int) (prReviewState, bool) {
