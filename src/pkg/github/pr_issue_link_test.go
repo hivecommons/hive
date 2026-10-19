@@ -283,16 +283,52 @@ func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
 			t.Fatalf("issue #%d labels = %v, want covered-by-PR on every claimed issue", issue.Number, issue.Labels)
 		}
 	}
-	// Three lookups: one per linked pair, plus the reference claim's
-	// retraction check (hivecommons/hive#12144), which finds no link and
-	// is memoised like the rest. A second sweep is answered from the memo:
+	// Four lookups: one per linked pair, the reference claim's PR-body
+	// retrofit check, plus that claim's retraction check
+	// (hivecommons/hive#12144), which finds no link and is memoised like the
+	// rest. A second sweep is answered from the memo:
 	// no new lookups or mutations.
-	if f.lookups.Load() != 3 {
-		t.Fatalf("lookups = %d, want 3 (two ensure lookups, one retraction check)", f.lookups.Load())
+	if f.lookups.Load() != 4 {
+		t.Fatalf("lookups = %d, want 4 (two ensure lookups, one retrofit check, one retraction check)", f.lookups.Load())
 	}
 	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
-	if f.lookups.Load() != 3 || f.mutations.Load() != 2 {
-		t.Fatalf("after second sweep lookups=%d mutations=%d, want 3/2 (memoised)", f.lookups.Load(), f.mutations.Load())
+	if f.lookups.Load() != 5 || f.mutations.Load() != 2 {
+		t.Fatalf("after second sweep lookups=%d mutations=%d, want 5/2 (link/retraction memoised; retrofit rechecked)", f.lookups.Load(), f.mutations.Load())
+	}
+}
+
+func TestSyncIssuePRClaimLabels_RetrofitsHiveRefsClaim(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "Refs #7 — implemented by this PR.", base: "v5", defaultBranch: "v5", author: "app/hivecommons-hive"}
+	prLink := f.handler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/graphql") || r.Method == http.MethodPatch:
+			prLink(w, r)
+		case strings.Contains(r.URL.Path, "/labels"):
+			_, _ = w.Write([]byte(`{"name":"ok"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
+	c.SetAppBotLogin("hivecommons-hive[bot]")
+	now := time.Now()
+	ledger := NewClaimLedger("", testLogger())
+	ledger.Reconcile([]IssueClaim{{Repo: "hivecommons/hive", Issue: 7, PRNumber: 1, PRRepo: "hivecommons/hive", PRURL: "https://github.com/hivecommons/hive/pull/1", PRState: "open", Reference: true, ObservedAt: now, FirstObservedAt: now}}, true)
+	result := &ActionableResult{}
+	result.Issues.Items = []Issue{{Repo: "hivecommons/hive", Number: 7}}
+
+	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
+	if f.patches.Load() != 1 {
+		t.Fatalf("patches = %d, want one PR body retrofit", f.patches.Load())
+	}
+	if !strings.Contains(f.patchedBody, "Fixes #7") || !strings.Contains(f.patchedBody, issueLinkFixedMarker) {
+		t.Fatalf("patched body %q must rewrite Refs to Fixes and stamp marker", f.patchedBody)
+	}
+	if !HasCoveredByPRLabel(result.Issues.Items[0].Labels) {
+		t.Fatalf("labels = %v, want covered-by-PR", result.Issues.Items[0].Labels)
 	}
 }
 

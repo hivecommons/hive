@@ -1988,6 +1988,21 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			// link now arms exactly the auto-close the author declined.
 			// Links made by anyone else are left alone and logged.
 			if claim.Reference {
+				if res, err := client.EnsureIssueStagePRLink(ctx, issue.Repo, issue.Number, &IssueClaimContext{
+					PRNumber:       claim.PRNumber,
+					PRRepo:         claim.PRRepo,
+					PRURL:          claim.PRURL,
+					PRAuthor:       claim.PRAuthor,
+					ExternalAuthor: claim.ExternalAuthor,
+					Reference:      true,
+				}); err != nil && logger != nil {
+					logger.Warn("retrofitting reference-only Hive PR body for issue-list link failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+				} else if res.EditedBody {
+					if logger != nil {
+						logger.Info("retrofitted reference-only Hive PR body with closing keyword so GitHub shows the issue-list link", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
+					}
+					continue
+				}
 				if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
 					logger.Warn("retracting hive closing link on reference-only PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
 				} else if res.Retracted && logger != nil {
