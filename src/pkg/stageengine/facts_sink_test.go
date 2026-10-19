@@ -137,3 +137,24 @@ func TestFactSinkEnrichAndErrors(t *testing.T) {
 		t.Fatalf("reconcile error = %v", err)
 	}
 }
+
+// DecisionLiftsNeedsHuman: a maintainer's decision answers the hive's own
+// `needs-human` (#13075) and never a person's or an unattributed one (#12680).
+func TestDecisionLiftsNeedsHuman(t *testing.T) {
+	cases := []struct {
+		name    string
+		applier NeedsHumanApplier
+		want    bool
+	}{
+		{"hive-applied lifts", NeedsHumanApplierHive, true},
+		{"person-applied stays", NeedsHumanApplierPerson, false},
+		{"unknown stays", NeedsHumanApplierUnknown, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DecisionLiftsNeedsHuman(tc.applier); got != tc.want {
+				t.Fatalf("DecisionLiftsNeedsHuman(%v) = %v, want %v", tc.applier, got, tc.want)
+			}
+		})
+	}
+}

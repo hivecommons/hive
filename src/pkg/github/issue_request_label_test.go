@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/stageengine"
 )
 
 // newLabelMockServer records the label adds and removes a label request makes.
@@ -421,7 +423,7 @@ func TestNormalizeLabelList(t *testing.T) {
 func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) {
 	const decision = "Agents stand down; owner/Console owners handle this"
 	reply := unparkWireComment{
-		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true)),
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true, unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierPerson, actor: "owner"})),
 		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
 	}
 	cases := []struct {
@@ -476,7 +478,7 @@ func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) 
 func TestReparkDecisionRefusalRecognizesRetiredDecisionLabels(t *testing.T) {
 	const decision = "Agents stand down; owner/Console owners handle this"
 	reply := unparkWireComment{
-		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true)),
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true, unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierPerson, actor: "owner"})),
 		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
 	}
 	for _, label := range []string{NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel} {
