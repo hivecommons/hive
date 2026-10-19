@@ -322,8 +322,10 @@ func TestAuditDiscoveryTransition_CredentialMissingIsNotSelfReported(t *testing.
 		t.Fatalf("credential_missing must not self-report, got %#v", ev)
 	}
 	failed := s.audit.RecentWithPrefixSince(since, auditActionModelDiscoveryFailed)
-	if len(failed) != 1 || !strings.Contains(failed[0].Detail, "recovery="+copilotCredentialMissingRecovery) {
-		t.Fatalf("audit entry must name the recovery path, got %+v", failed)
+	if len(failed) != 1 ||
+		!strings.Contains(failed[0].Detail, "state="+copilotCredentialMissingState) ||
+		!strings.Contains(failed[0].Detail, "recovery="+copilotCredentialMissingRecovery) {
+		t.Fatalf("audit entry must carry the state and name the recovery path, got %+v", failed)
 	}
 
 	// A real failure, then the text flips to credential_missing before the
@@ -338,7 +340,7 @@ func TestAuditDiscoveryTransition_CredentialMissingIsNotSelfReported(t *testing.
 		t.Fatalf("a prior real failure must be cleared when the state becomes credential_missing, got %#v", ev)
 	}
 	failed = s.audit.RecentWithPrefixSince(since, auditActionModelDiscoveryFailed)
-	if len(failed) != 3 || strings.Contains(failed[1].Detail, "recovery=") {
-		t.Fatalf("non-credential failures must not carry a recovery field, got %+v", failed)
+	if len(failed) != 3 || strings.Contains(failed[1].Detail, "recovery=") || strings.Contains(failed[1].Detail, "state=") {
+		t.Fatalf("non-credential failures must not carry state/recovery fields, got %+v", failed)
 	}
 }

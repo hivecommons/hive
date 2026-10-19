@@ -1100,7 +1100,7 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 		args := []any{"backend", backend, "platform", platform, "served", served,
 			"fallback", r.fallback, "degraded", r.degraded, "err", r.discoveryErr}
 		if credentialMissing {
-			args = append(args, "recovery", copilotCredentialMissingRecovery)
+			args = append(args, "state", copilotCredentialMissingState, "recovery", copilotCredentialMissingRecovery)
 		}
 		s.logger.Warn("audit: model discovery failed; serving a non-authoritative list", args...)
 	}
@@ -1127,15 +1127,19 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 			"error", r.discoveryErr,
 		}
 		if credentialMissing {
-			kv = append(kv, "recovery", copilotCredentialMissingRecovery)
+			kv = append(kv, "state", copilotCredentialMissingState, "recovery", copilotCredentialMissingRecovery)
 		}
 		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(kv...), "")
 	}
 }
 
-// copilotCredentialMissingRecovery is the operator action recorded alongside a
-// copilot "Not authenticated" discovery failure (#12947).
-const copilotCredentialMissingRecovery = "credential_missing; operator dashboard device-flow login (Copilot Login)"
+// copilotCredentialMissingState classifies a copilot "Not authenticated"
+// discovery failure (#12947); copilotCredentialMissingRecovery is the operator
+// action that clears it. They are logged as separate state=/recovery= fields.
+const (
+	copilotCredentialMissingState    = "credential_missing"
+	copilotCredentialMissingRecovery = "operator dashboard device-flow login (Copilot Login)"
+)
 
 // isCopilotCredentialMissing reports whether a discovery failure is the copilot
 // helper refusing because the operator has not completed the Copilot Login.
