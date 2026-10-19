@@ -1,0 +1,81 @@
+name: Hive action smoke
+
+# Default-branch (v5) registration of the v6 hive-action-smoke workflow
+# (#12964). GitHub only lists and offers workflow_dispatch for workflows on the
+# default branch, so this copy lives on v5 and runs the v6 composite action
+# pinned below. Keep the pin on a v6 commit; bump it when the action changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number to receive the manual status smoke comment (mentioning the App login) or OIDC dispatch context.
+        required: true
+        type: number
+      prompt:
+        description: Optional prompt text after status.
+        required: false
+        type: string
+        default: manual smoke from workflow_dispatch
+      transport:
+        description: Dispatch transport.
+        required: false
+        type: choice
+        default: comment
+        options:
+          - comment
+          - oidc
+      hive_url:
+        description: Hive dashboard URL for transport=oidc (the spoke serving /api/contribute/actions/dispatch, not the hub).
+        required: false
+        type: string
+      audience:
+        description: OIDC audience for transport=oidc.
+        required: false
+        type: string
+        default: hive
+      mention_login:
+        description: >-
+          Login of the hive's GitHub App that the comment relay @-mentions (with or without
+          a leading "@" or a "[bot]" suffix). It must match the App's bot login or the hive
+          ignores the relay comment. Empty uses the HIVE_APP_HANDLE repository or
+          organization variable, then "hive".
+        required: false
+        type: string
+        default: hivecommons-hive
+
+permissions:
+  id-token: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  status:
+    name: Relay hive status
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch manual hive status
+        id: hive
+        uses: hivecommons/hive/.github/actions/hive@5a129354b6470bcbfcb46e8df913b31c045bd6ac # v6 as of 2026-10-19
+        with:
+          command: status
+          issue: ${{ inputs.issue }}
+          prompt: ${{ inputs.prompt }}
+          transport: ${{ inputs.transport }}
+          hive_url: ${{ inputs.hive_url }}
+          audience: ${{ inputs.audience }}
+          app_handle: ${{ inputs.mention_login || vars.HIVE_APP_HANDLE }}
+
+      - name: Assert OIDC receipt output
+        if: ${{ inputs.transport == 'oidc' }}
+        shell: bash
+        env:
+          HIVE_RECEIPT: ${{ steps.hive.outputs.receipt }}
+        run: |
+          test -n "${HIVE_RECEIPT}"
+          python3 - <<'PY'
+          import json, os
+          receipt = json.loads(os.environ["HIVE_RECEIPT"])
+          assert receipt["kind"] == "stage_receipt"
+          assert receipt["stage_receipt"]["schema_version"] == "stage-receipt/v1"
+          PY
