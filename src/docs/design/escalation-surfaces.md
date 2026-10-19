@@ -170,9 +170,12 @@ transport-failed delivery is re-attempted twice with a short backoff
 4xx is final on the first answer. While a stopped dispatcher drains its
 queue, no retry wait runs past the 30s drain deadline: a wait that would is
 skipped and the event gets its final attempt at once, audited as
-`escalation_delivery_failed` if that attempt fails too. Failure audits never
-carry the request URL, since an ntfy topic URL is the topic's credential. The
-mail sink is the durable fallback.
+`escalation_delivery_failed` if that attempt fails too. A delivery that
+succeeds is audited as `escalation_delivered` (sink name, severity, title,
+and `attempts=N` when it took retries), so an operator can prove a page or
+mail left the hive without reading provider logs. Neither audit carries the
+request URL, since an ntfy topic URL is the topic's credential. The mail sink
+is the durable fallback.
 
 ## The guard invariant, restated
 

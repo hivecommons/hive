@@ -58,7 +58,10 @@ type depBotHold struct {
 
 // dependencyBotRedCI reports a red required check on the PR's current head
 // that the bot PR itself must answer for: CI has settled, and the failure was
-// not triaged as an upstream or shared-CI incident.
+// not triaged as an upstream or shared-CI incident. A failure triaged as
+// transient (TransientCITriaged) is still handed off, because nothing in Hive
+// re-runs a single PR's check, but dependencyBotRedCIComment then asks for a
+// re-run instead of blaming the bump (hivecommons/hive#12977).
 func dependencyBotRedCI(pr github.PullRequest) bool {
 	return pr.HasFailingRequiredCheck() && !pr.CIChecksRunning && !pr.ExternalCIDeferred && pr.SharedCIIncident == 0
 }
@@ -140,7 +143,9 @@ func dependencyBotWaitedConflictComment(author, base string) string {
 }
 
 // dependencyBotRedCIComment is posted when a required check has stayed red on
-// the PR's current head past depBotRedCIGrace.
+// the PR's current head past depBotRedCIGrace. It does not assume the bump is
+// at fault: when a hive-ci-transient triage marker covers every failing run
+// at this head, it says so and asks only for a re-run (hivecommons/hive#12977).
 func dependencyBotRedCIComment(pr github.PullRequest) string {
 	checks := "a required check"
 	if len(pr.FailingChecks) > 0 {
@@ -156,10 +161,20 @@ func dependencyBotRedCIComment(pr github.PullRequest) string {
 		}
 		checks = strings.Join(quoted, ", ") + more
 	}
+	name := dependencyBotDisplayName(pr.Author)
+	waited := depBotHours(depBotRedCIGrace)
+	if pr.TransientCITriaged {
+		return fmt.Sprintf("This %s PR has failed %s on its current head for over %s. "+
+			"Hive's triage of this head found the failure transient or infrastructure-related, not caused by the bump, "+
+			"and nothing has re-run the check since. "+
+			"To fix it, re-run the failed check once the cause has cleared.",
+			name, checks, waited)
+	}
 	return fmt.Sprintf("This %s PR has failed %s on its current head for over %s. "+
-		"Hive does not repair dependency-bot PRs, and a rebase will not fix a bump that breaks the build. "+
-		"To fix it, fix the code or lockfile on this branch, pin or ignore the dependency in the bot's config, or close the PR.",
-		dependencyBotDisplayName(pr.Author), checks, depBotHours(depBotRedCIGrace))
+		"Hive does not repair dependency-bot PRs. "+
+		"If the failure was transient (a flaky job or an infrastructure problem), re-run the failed check. "+
+		"If the bump breaks the build, fix the code or lockfile on this branch, pin or ignore the dependency in the bot's config, or close the PR; a rebase will not fix it.",
+		name, checks, waited)
 }
 
 // dependencyBotHeldCheckComment is posted for a terminal required-check hold

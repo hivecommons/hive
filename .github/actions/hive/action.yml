@@ -34,12 +34,17 @@ inputs:
     description: OIDC token audience requested from GitHub when transport is oidc.
     required: false
     default: hive
-  app_handle:
+  mention_login:
     description: >-
-      Handle of the hive's GitHub App that the comment-relay transport @-mentions, for example
-      hivecommons-hive (with or without a leading "@" or a "[bot]" suffix). Falls back to the
-      HIVE_APP_HANDLE environment variable (set it from vars.HIVE_APP_HANDLE), then to "hive".
-      The hive only picks up the relay comment when this matches its App's bot login.
+      Login of the hive's GitHub App that the comment-relay transport @-mentions, for example
+      hivecommons-hive (with or without a leading "@" or a "[bot]" suffix). When empty, falls back to
+      app_handle, then the HIVE_APP_HANDLE environment variable (set it from vars.HIVE_APP_HANDLE),
+      then to the default "hivecommons-hive". The hive only picks up the relay comment when this
+      matches its App's bot login.
+    required: false
+    default: ''
+  app_handle:
+    description: Deprecated alias for mention_login, kept for backward compatibility. mention_login wins when both are set.
     required: false
     default: ''
 runs:
@@ -55,6 +60,7 @@ runs:
         HIVE_TRANSPORT: ${{ inputs.transport }}
         HIVE_DISPATCH_URL: ${{ inputs.hive_url }}
         HIVE_AUDIENCE: ${{ inputs.audience }}
+        HIVE_MENTION_LOGIN_INPUT: ${{ inputs.mention_login }}
         HIVE_APP_HANDLE_INPUT: ${{ inputs.app_handle }}
         HIVE_ACTION_PATH: ${{ github.action_path }}
         GH_TOKEN: ${{ inputs.token || github.token }}
@@ -88,7 +94,7 @@ runs:
           comment)
             # shellcheck source=app-handle.sh
             source "${HIVE_ACTION_PATH}/app-handle.sh"
-            app_handle="$(hive_resolve_app_handle "${HIVE_APP_HANDLE_INPUT}" "${HIVE_APP_HANDLE:-}")"
+            app_handle="$(hive_resolve_app_handle "${HIVE_MENTION_LOGIN_INPUT}" "${HIVE_APP_HANDLE_INPUT}" "${HIVE_APP_HANDLE:-}")"
             marker="<!-- hive:source=action run_id=${GITHUB_RUN_ID_VALUE} run_attempt=${GITHUB_RUN_ATTEMPT_VALUE} workflow=${GITHUB_WORKFLOW_NAME} actor=${GITHUB_ACTOR_LOGIN} transport=comment -->"
             body="$(hive_relay_comment_body "${app_handle}" "${HIVE_COMMAND}" "${HIVE_PROMPT}" "${marker}")"
 

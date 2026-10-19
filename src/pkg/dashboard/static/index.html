@@ -38147,7 +38147,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Channels', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -39271,6 +39271,7 @@ function burnAreaChart() {
         // The escalation breaker lives at the top level of hive.yaml, so the
         // Health tab loads it from its own endpoint.
         if (tabId === 'Health') { loadEscalationConfig(); loadWatchdogActivity(); }
+        if (tabId === 'Channels') loadChannelsConfig();
         // Opening the Model Gateways tab loads the live gateway list and
         // renders the manager into its container.
         if (tabId === 'Model Gateways') {
@@ -39472,6 +39473,7 @@ function burnAreaChart() {
         case 'Repos': return renderGovRepos(d.repos || []);
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
         case 'Notifications': return renderGovNotifications(d.notifications || {});
+        case 'Channels': return renderGovChannels(d.channels);
         case 'Health': return renderGovHealth(d.health || {});
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
@@ -45948,26 +45950,11 @@ function burnAreaChart() {
     }
 
     function renderGovNotificationsDiscordBot(n) {
-      const tokenText = n.hasDiscordBotToken ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
       const factoryText = n.hasDiscordFactoryWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
       const requestsText = n.hasDiscordRequestsWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
       return `
-        <div class="config-subgroup">Discord bot ${settingHelpMark('notifications', 'configuration', 'Discord bot', `Optional Discord bot integration; separate from webhook notifications. The bot posts status to one channel and accepts commands only from allowed users.`)}</div>
-        <div class="config-field">
-          <label>Bot token ${yamlHint('notifications.discord.bot_token')} ${settingHelpMark('notifications', 'configuration', 'Discord bot token', `Discord bot token. The bot starts only when both the token and the channel id are set.`)}</label>
-          <input type="password" autocomplete="new-password" placeholder="${esc(tokenText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordBotToken" data-arg-types="s,s,v">
-          <div class="config-help">Write-only; the current token is never echoed. Requires restart.</div>
-        </div>
-        <div class="config-field">
-          <label>Channel id ${yamlHint('notifications.discord.channel_id')} ${settingHelpMark('notifications', 'configuration', 'Discord channel id', `Discord channel the bot posts to and listens on, for example 1234567890.`)}</label>
-          <input type="text" value="${esc(n.discordChannelId || '')}" placeholder="1234567890" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordChannelId" data-arg-types="s,s,w">
-          <div class="config-help">Requires restart.</div>
-        </div>
-        <div class="config-field">
-          <label>Allowed users ${yamlHint('notifications.discord.allowed_users[]')} ${settingHelpMark('notifications', 'configuration', 'Discord allowed users', `Discord user IDs permitted to issue bot commands (!kick, !pause, agent actions). When empty, command handling is disabled (fail closed): the bot still posts status but accepts no commands.`)}</label>
-          <textarea rows="3" placeholder="One Discord user id per line" data-change-action="markNotificationsList" data-arg0="discordAllowedUsers" data-arg-types="s,v">${esc((n.discordAllowedUsers || []).join('\n'))}</textarea>
-          <div class="config-help">Empty disables bot commands. Requires restart.</div>
-        </div>
+        <div class="config-subgroup">Discord hub webhooks ${settingHelpMark('notifications', 'discord-webhook-vs-discord-bot', 'Discord hub webhooks', `One-way Discord webhooks used by the hub process. The interactive Discord bot (token, channel, allowed users) is configured on the Channels tab.`)}</div>
+        <div class="config-help">The two-way Discord bot ${n.hasDiscordBotToken ? 'is configured' : 'is not configured'} — manage its token, channel and allowed users under <a class="text-accent" href="#" data-action="switchConfigTab" data-arg0="Channels" data-prevent="1">Channels</a>.</div>
         <div class="config-field">
           <label>Factory webhook ${yamlHint('notifications.discord.factory_webhook')} ${settingHelpMark('notifications', 'configuration', 'Discord factory webhook', `Discord webhook the hub posts the org-wide GitHub activity feed to. Required when the GitHub activity feed is enabled.`)}</label>
           <input type="password" autocomplete="new-password" placeholder="${esc(factoryText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordFactoryWebhook" data-arg-types="s,s,v">
@@ -46016,6 +46003,310 @@ function burnAreaChart() {
         </div>
         ${toggle('filterBots', ga.filterBots !== false, 'Filter bot authors', 'notifications.github_activity.filter_bots', 'Default on: skip activity authored by bot accounts.')}
         ${toggle('filterDependabot', ga.filterDependabot !== false, 'Filter Dependabot', 'notifications.github_activity.filter_dependabot', 'Default on: skip Dependabot activity.')}`;
+    }
+
+    // ---- Settings → Channels (inbound trigger surfaces) ----
+    // Loaded from and saved to /api/config/channels (channels_settings.go).
+    // Dirty state is one bag per surface: _configState.dirty.channels = {
+    // githubMentions: {...}, discord: {...}, ... } and saveConfig PUTs that
+    // object verbatim, so absent fields stay unchanged on the server.
+    const CHANNELS_MASKED = '••••••••';
+    const CHANNELS_MENTION_ROLES = ['read', 'read-write', 'merger', 'owner'];
+    const CHANNELS_PUSH_SEVERITIES = ['decision', 'page'];
+
+    async function loadChannelsConfig() {
+      if (_configState.data.channels) return;
+      try {
+        const res = await fetch('/api/config/channels');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        _configState.data.channels = await res.json();
+        if (_configState.tab === 'Channels') renderConfigTab('Channels');
+      } catch (err) { /* tab stays in loading state */ }
+    }
+
+    function channelsGroupState(group) {
+      const ch = (_configState.data || {}).channels;
+      if (!ch) return null;
+      ch[group] = ch[group] || {};
+      return ch[group];
+    }
+
+    function markChannels(group, key, value, opts) {
+      const st = channelsGroupState(group);
+      if (st && !(opts && opts.secret)) st[key] = value;
+      const prev = (_configState.dirty.channels || {})[group] || {};
+      markDirty('channels', group, Object.assign({}, prev, { [key]: value }));
+    }
+
+    function markChannelsSecret(group, key, value) {
+      // Masked echo means "keep"; the server treats the bullet prefix the same way.
+      markChannels(group, key, value, { secret: true });
+    }
+
+    function markChannelsList(group, key, value) {
+      markChannels(group, key, splitConfigLines(value));
+    }
+
+    // Identity map textarea: one `comment-author = github-login` per line.
+    function markChannelsIdentityMap(value) {
+      const map = {};
+      splitConfigLines(value).forEach(line => {
+        const idx = line.search(/[=:]/);
+        if (idx <= 0) return;
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        if (k && v) map[k] = v;
+      });
+      markChannels('githubActions', 'identityMap', map);
+    }
+
+    function toggleChannelsFlag(el, group, key) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      markChannels(group, key, isOn);
+    }
+
+    function channelsSecretPlaceholder(has, what) {
+      return has ? `Configured — enter a new ${what} to change, or save an empty value to clear.` : 'Not configured.';
+    }
+
+    // Field helpers take the rendered help mark so every settingHelpMark call
+    // below names its docs page and anchor literally (settings_help test).
+    function channelsToggle(group, key, on, label, yamlKey, mark) {
+      return `<div class="config-toggle mt-3">
+          <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleChannelsFlag" data-arg0="${group}" data-arg1="${key}" data-arg-types="t,s,s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+          <span class="config-toggle-label">${label} ${yamlHint(yamlKey)} ${mark}</span>
+        </div>`;
+    }
+
+    function channelsText(group, key, value, label, yamlKey, placeholder, mark, help) {
+      return `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${mark}</label>
+          <input type="text" value="${esc(value || '')}" placeholder="${esc(placeholder || '')}" data-change-action="markChannels" data-arg0="${group}" data-arg1="${key}" data-arg-types="s,s,w">
+          ${help ? `<div class="config-help">${help}</div>` : ''}
+        </div>`;
+    }
+
+    function channelsNumber(group, key, value, label, yamlKey, placeholder, mark) {
+      return `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${mark}</label>
+          <input type="number" min="0" value="${esc(String(value || 0))}" placeholder="${esc(placeholder || '')}" data-change-action="markChannels" data-arg0="${group}" data-arg1="${key}" data-arg-types="s,s,N">
+        </div>`;
+    }
+
+    function channelsSecret(group, key, has, label, yamlKey, what, mark, help) {
+      return `<div class="config-field">
+          <label>${label} ${has ? '(configured — enter new value to change)' : ''} ${yamlHint(yamlKey)} ${mark}</label>
+          <input type="password" autocomplete="new-password" value="${has ? CHANNELS_MASKED : ''}" placeholder="${esc(channelsSecretPlaceholder(has, what))}" data-change-action="markChannelsSecret" data-arg0="${group}" data-arg1="${key}" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current value is never echoed. ${help || ''}</div>
+        </div>`;
+    }
+
+    function channelsList(group, key, values, label, yamlKey, placeholder, mark, help) {
+      return `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${mark}</label>
+          <textarea rows="3" placeholder="${esc(placeholder)}" data-change-action="markChannelsList" data-arg0="${group}" data-arg1="${key}" data-arg-types="s,s,v">${esc((values || []).join('\n'))}</textarea>
+          ${help ? `<div class="config-help">${help}</div>` : ''}
+        </div>`;
+    }
+
+    function channelsSelect(group, key, value, options, label, yamlKey, mark) {
+      const opts = options.map(o => `<option value="${esc(o)}" ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('');
+      return `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${mark}</label>
+          <select data-change-action="markChannels" data-arg0="${group}" data-arg1="${key}" data-arg-types="s,s,v">${opts}</select>
+        </div>`;
+    }
+
+    function renderGovChannels(ch) {
+      if (!ch) return '<div class="fs-sm text-muted">Loading channel settings…</div>';
+      return `
+        <p class="fs-sm text-muted mb-3">Every inbound surface that can start or steer agent work from outside the dashboard: GitHub @-mentions and Actions, chat bots, escalation targets, and the admin MCP endpoint. Webhook notification destinations stay on the Notifications tab.</p>
+        ${renderGovChannelsGitHub(ch.githubMentions || {}, ch.githubActions || {}, ch.mentionAgents || [])}
+        ${renderGovChannelsChat(ch)}
+        ${renderGovChannelsDashboardChat(ch.dashboardChat || {})}
+        ${renderGovChannelsEscalation(ch.escalationEmail || {}, ch.escalationPush || {})}
+        ${renderGovChannelsAdminMcp(ch.adminMcp || {})}`;
+    }
+
+    function renderGovChannelsGitHub(m, a, agents) {
+      const live = 'Applies on save — the mention poller and Actions trigger hot-reload.';
+      const commandBoxes = (a.knownCommands || []).map(cmd => `
+        <label class="config-toggle-label">
+          <input type="checkbox" class="channels-command-checkbox" value="${esc(cmd)}" ${(a.allowedCommands || []).includes(cmd) ? 'checked' : ''} data-change-action="markChannelsAllowedCommands"> ${esc(cmd)}
+        </label>`).join('');
+      const identityLines = Object.keys(a.identityMap || {}).sort().map(k => `${k} = ${a.identityMap[k]}`);
+      const eligible = agents.filter(x => x.eligible);
+      const rest = agents.filter(x => !x.eligible);
+      const agentLink = (x) => `<button class="hv-btn btn-secondary" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(x.name)}" data-tab="Channels" title="Open this agent's Channels tab">${esc(x.name)}</button>`;
+      const why = (x) => [!x.enabled && 'disabled', !x.converse && 'converse off', !x.mention && 'no mention channel', !x.governorKick && 'not governor-kicked'].filter(Boolean).join(', ');
+      return `
+        <div class="config-subgroup">GitHub @-mentions ${settingHelpMark('settings', 'channels', 'GitHub @-mentions', `Lets allow-listed GitHub users summon an agent by @-mentioning the hive's GitHub App handle in an issue or PR comment. The poller watches tracked repos; the webhook path is optional.`)}</div>
+        ${channelsToggle('githubMentions', 'enabled', !!m.enabled, 'Enable @-mention trigger', 'github.mentions.enabled', settingHelpMark('settings', 'channels', 'Enable @-mention trigger', `Turn the @-mention poller on. ${live}`))}
+        <div class="config-field-row">
+          ${channelsText('githubMentions', 'pollInterval', m.pollInterval, 'Poll interval', 'github.mentions.poll_interval', m.effectivePollInterval || '1m', settingHelpMark('settings', 'channels', 'Poll interval', `How often tracked repos are polled for new mentions. Go duration (30s, 2m) or bare seconds; capped at 24h. ${live}`))}
+          <div class="config-field">
+            <label>Default agent ${yamlHint('github.mentions.default_agent')} ${settingHelpMark('settings', 'channels', 'Default agent', `Agent that answers a bare @-mention with no agent name. Must be an agent listed below as mention-eligible.`)}</label>
+            <select data-change-action="markChannels" data-arg0="githubMentions" data-arg1="defaultAgent" data-arg-types="s,s,v">
+              <option value="" ${!m.defaultAgent ? 'selected' : ''}>(none — require explicit agent)</option>
+              ${agents.map(x => `<option value="${esc(x.name)}" ${x.name === m.defaultAgent ? 'selected' : ''}>${esc(x.name)}${x.eligible ? '' : ' (not eligible)'}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        ${channelsList('githubMentions', 'summoners', m.summoners, 'Summoners', 'github.mentions.summoners[]', 'One GitHub login per line', settingHelpMark('settings', 'channels', 'Summoners', `GitHub logins allowed to summon agents. Empty means nobody can (fail closed). Logins are validated on save.`), 'Leading @ is stripped; duplicates are dropped case-insensitively.')}
+        <div class="config-field-row">
+          ${channelsSelect('githubMentions', 'minRole', m.effectiveMinRole || 'read-write', CHANNELS_MENTION_ROLES, 'Minimum dashboard role', 'github.mentions.min_role', settingHelpMark('settings', 'channels', 'Minimum dashboard role', `Summoners must also hold at least this dashboard role (from dashboard.authorized_users).`))}
+          ${channelsText('githubMentions', 'ackReaction', m.ackReaction, 'Ack reaction', 'github.mentions.ack_reaction', 'eyes', settingHelpMark('settings', 'channels', 'Ack reaction', `GitHub reaction added to the comment when the mention is accepted (eyes, rocket, +1…).`))}
+        </div>
+        <div class="config-field-row">
+          ${channelsNumber('githubMentions', 'perUserPerHour', m.perUserPerHour, 'Per user / hour', 'github.mentions.per_user_per_hour', String(m.effectivePerUserPerHour || ''), settingHelpMark('settings', 'channels', 'Per user / hour', `Mentions one summoner may trigger per hour. 0 uses the default (${esc(String(m.effectivePerUserPerHour || ''))}).`))}
+          ${channelsNumber('githubMentions', 'perRepoPerHour', m.perRepoPerHour, 'Per repo / hour', 'github.mentions.per_repo_per_hour', String(m.effectivePerRepoPerHour || ''), settingHelpMark('settings', 'channels', 'Per repo / hour', `Mentions one repository may trigger per hour. 0 uses the default.`))}
+          ${channelsNumber('githubMentions', 'perThreadMax', m.perThreadMax, 'Per thread max', 'github.mentions.per_thread_max', String(m.effectivePerThreadMax || ''), settingHelpMark('settings', 'channels', 'Per thread max', `Lifetime cap of mentions handled in one issue or PR thread. 0 uses the default.`))}
+        </div>
+        ${channelsToggle('githubMentions', 'webhookEnabled', !!m.webhookEnabled, 'Accept mention webhooks', 'github.mentions.webhook_enabled', settingHelpMark('settings', 'channels', 'Accept mention webhooks', `Also accept GitHub issue_comment webhooks instead of waiting for the next poll. Requires the webhook secret env var to be set in the hive process.`))}
+        <div class="config-field-row">
+          ${channelsText('githubMentions', 'webhookSecretEnv', m.webhookSecretEnv, 'Webhook secret env var', 'github.mentions.webhook_secret_env', 'HIVE_GITHUB_WEBHOOK_SECRET', settingHelpMark('settings', 'channels', 'Webhook secret env var', `Name of the environment variable holding the GitHub webhook secret. ${m.hasWebhookSecret ? 'Currently set in this process.' : 'Not set in this process.'}`))}
+          ${channelsText('githubMentions', 'webhookMinGap', m.webhookMinGap, 'Webhook min gap', 'github.mentions.webhook_min_gap', m.effectiveWebhookMinGap || '', settingHelpMark('settings', 'channels', 'Webhook min gap', `Minimum spacing between webhook-triggered polls so a comment burst cannot stampede the API.`))}
+        </div>
+        <div class="config-field">
+          <label>Mention-eligible agents ${settingHelpMark('settings', 'channels', 'Mention-eligible agents', `An agent can be summoned when it is enabled, has converse on, lists a mention channel, and is governor-kicked. Per-agent channels live in the agent dialog's Channels tab — click a name to open it.`)}</label>
+          <div class="config-help">${eligible.length ? eligible.map(agentLink).join(' ') : 'No agent is currently mention-eligible.'}</div>
+          ${rest.length ? `<div class="config-help mt-3">Not eligible: ${rest.map(x => `${agentLink(x)} <span class="text-muted">(${esc(why(x))})</span>`).join(' ')}</div>` : ''}
+        </div>
+
+        <div class="config-subgroup">GitHub Actions trigger ${settingHelpMark('github-actions-trigger', 'hive-configuration', 'GitHub Actions trigger', `Lets a GitHub Actions workflow (or any trusted bot author) post a slash command comment that hive executes. Commands are a closed vocabulary.`)}</div>
+        ${channelsToggle('githubActions', 'enabled', !!a.enabled, 'Enable Actions trigger', 'github.actions.enabled', settingHelpMark('github-actions-trigger', 'hive-configuration', 'Enable Actions trigger', `Accept slash commands from trusted comment authors. ${live}`))}
+        <div class="config-field">
+          <label>Allowed commands ${yamlHint('github.actions.allowed_commands[]')} ${settingHelpMark('github-actions-trigger', 'hive-configuration', 'Allowed commands', `Which slash commands the trigger will run. Unknown commands are rejected on save.`)}</label>
+          <div class="config-grid channels-command-checkboxes">${commandBoxes}</div>
+        </div>
+        ${channelsToggle('githubActions', 'allowApply', !!a.allowApply, 'Allow apply commands', 'github.actions.allow_apply', settingHelpMark('github-actions-trigger', 'hive-configuration', 'Allow apply commands', `Permit commands that mutate repository state (as opposed to read-only status/review).`))}
+        <div class="config-field-row">
+          ${channelsText('githubActions', 'sourceLabel', a.sourceLabel, 'Source label', 'github.actions.source_label', a.effectiveSourceLabel || '', settingHelpMark('github-actions-trigger', 'hive-configuration', 'Source label', `Label stamped on work the Actions trigger creates so it is attributable.`))}
+        </div>
+        ${channelsList('githubActions', 'trustedCommentAuthors', a.trustedCommentAuthors, 'Trusted comment authors', 'github.actions.trusted_comment_authors[]', 'github-actions[bot]', settingHelpMark('github-actions-trigger', 'hive-configuration', 'Trusted comment authors', `Comment authors whose slash commands are honoured. Bot logins keep their [bot] suffix.`))}
+        <div class="config-field">
+          <label>Identity map ${yamlHint('github.actions.identity_map.<key>')} ${settingHelpMark('github-actions-trigger', 'hive-configuration', 'Identity map', `Maps a trusted comment author to the GitHub login whose dashboard role governs what it may do. One <code>author = login</code> per line.`)}</label>
+          <textarea rows="3" placeholder="github-actions[bot] = your-login" data-change-action="markChannelsIdentityMap" data-arg-types="v">${esc(identityLines.join('\n'))}</textarea>
+        </div>
+        ${channelsToggle('githubActions', 'oidcEnabled', !!a.oidcEnabled, 'Accept OIDC dispatch', 'github.actions.oidc.enabled', settingHelpMark('github-actions-trigger', 'oidc-dispatch', 'Accept OIDC dispatch', `Accept workflow dispatches authenticated with a GitHub Actions OIDC token instead of a comment. Requires an audience.`))}
+        <div class="config-field-row">
+          ${channelsText('githubActions', 'oidcAudience', a.oidcAudience, 'OIDC audience', 'github.actions.oidc.audience', 'hive', settingHelpMark('github-actions-trigger', 'oidc-dispatch', 'OIDC audience', `Expected aud claim of the OIDC token. Required when OIDC dispatch is on.`))}
+          ${channelsText('githubActions', 'oidcMaxSkew', a.oidcMaxSkew, 'OIDC max clock skew', 'github.actions.oidc.max_skew', a.effectiveOidcMaxSkew || '', settingHelpMark('github-actions-trigger', 'oidc-dispatch', 'OIDC max clock skew', `Tolerated clock skew when checking token timestamps (Go duration).`))}
+        </div>
+        ${channelsText('githubActions', 'oidcJwksUrl', a.oidcJwksUrl, 'OIDC JWKS URL', 'github.actions.oidc.jwks_url', a.effectiveOidcJwksUrl || '', settingHelpMark('github-actions-trigger', 'oidc-dispatch', 'OIDC JWKS URL', `Key set used to verify tokens. Empty uses GitHub's public JWKS.`))}`;
+    }
+
+    function markChannelsAllowedCommands() {
+      const picked = Array.from(document.querySelectorAll('.channels-command-checkbox:checked')).map(el => el.value);
+      markChannels('githubActions', 'allowedCommands', picked);
+    }
+
+    function renderGovChannelsChat(ch) {
+      const d = ch.discord || {}, sl = ch.slack || {}, mx = ch.matrix || {}, tg = ch.telegram || {}, ms = ch.msteams || {};
+      const restart = 'Requires restart.';
+      return `
+        <div class="config-subgroup">Chat surfaces ${settingHelpMark('notifications', 'discord-webhook-vs-discord-bot', 'Chat surfaces', `Bots that let allow-listed users talk to the hive from a chat room. These are two-way; the one-way webhook destinations stay on the Notifications tab. Bots connect at startup, so changes here apply after a restart.`)}</div>
+
+        <div class="config-field"><label>Discord bot</label></div>
+        ${channelsSecret('discord', 'botToken', !!d.hasBotToken, 'Bot token', 'notifications.discord.bot_token', 'token', settingHelpMark('notifications', 'configuration', 'Bot token', `Discord bot token. The bot starts only when both the token and the channel id are set.`), restart)}
+        ${channelsText('discord', 'channelId', d.channelId, 'Channel id', 'notifications.discord.channel_id', '1234567890', settingHelpMark('notifications', 'configuration', 'Channel id', `Discord channel the bot posts to and listens on.`), restart)}
+        ${channelsList('discord', 'allowedUsers', d.allowedUsers, 'Allowed users', 'notifications.discord.allowed_users[]', 'One Discord user id per line', settingHelpMark('notifications', 'configuration', 'Allowed users', `Discord user IDs permitted to issue bot commands. Empty disables command handling (fail closed).`), `Empty disables bot commands. ${restart}`)}
+
+        <div class="config-field"><label>Slack app</label></div>
+        ${channelsToggle('slack', 'enabled', !!sl.enabled, 'Enable Slack bot', 'notifications.slack.enabled', settingHelpMark('notifications', 'configuration', 'Enable Slack bot', `Connect the Slack Socket Mode app. Needs both an app-level token and a bot token. ${restart}`))}
+        <div class="config-field-row">
+          ${channelsSecret('slack', 'appToken', !!sl.hasAppToken, 'App token', 'notifications.slack.app_token', 'token', settingHelpMark('notifications', 'configuration', 'App token', `Slack app-level token (xapp-…) used for Socket Mode.`), restart)}
+          ${channelsSecret('slack', 'botToken', !!sl.hasBotToken, 'Bot token', 'notifications.slack.bot_token', 'token', settingHelpMark('notifications', 'configuration', 'Bot token', `Slack bot user OAuth token (xoxb-…).`), restart)}
+        </div>
+        ${channelsText('slack', 'channelId', sl.channelId, 'Channel id', 'notifications.slack.channel_id', 'C0123456789', settingHelpMark('notifications', 'configuration', 'Channel id', `Slack channel the bot posts to and listens on.`), restart)}
+        ${channelsList('slack', 'allowedUsers', sl.allowedUsers, 'Allowed users', 'notifications.slack.allowed_users[]', 'U0123456789 or U0123456789:owner', settingHelpMark('notifications', 'configuration', 'Allowed users', `Slack member IDs permitted to command the bot, optionally with a role suffix. Empty disables commands.`), restart)}
+
+        <div class="config-field"><label>Matrix</label></div>
+        ${channelsToggle('matrix', 'enabled', !!mx.enabled, 'Enable Matrix bot', 'notifications.matrix.enabled', settingHelpMark('notifications', 'configuration', 'Enable Matrix bot', `Connect to a Matrix homeserver. Needs an https homeserver URL, an access token, and a room id. ${restart}`))}
+        <div class="config-field-row">
+          ${channelsText('matrix', 'homeserverUrl', mx.homeserverUrl, 'Homeserver URL', 'notifications.matrix.homeserver_url', 'https://matrix.example.org', settingHelpMark('notifications', 'configuration', 'Homeserver URL', `Matrix homeserver base URL (https only).`), restart)}
+          ${channelsText('matrix', 'roomId', mx.roomId, 'Room id', 'notifications.matrix.room_id', '!room:example.org', settingHelpMark('notifications', 'configuration', 'Room id', `Matrix room the bot joins.`), restart)}
+        </div>
+        ${channelsSecret('matrix', 'accessToken', !!mx.hasAccessToken, 'Access token', 'notifications.matrix.access_token', 'token', settingHelpMark('notifications', 'configuration', 'Access token', `Access token for the bot's Matrix account.`), restart)}
+        ${channelsList('matrix', 'allowedUsers', mx.allowedUsers, 'Allowed users', 'notifications.matrix.allowed_users[]', '@user:example.org', settingHelpMark('notifications', 'configuration', 'Allowed users', `Matrix user IDs permitted to command the bot. Empty disables commands.`), restart)}
+
+        <div class="config-field"><label>Telegram</label></div>
+        ${channelsToggle('telegram', 'enabled', !!tg.enabled, 'Enable Telegram bot', 'notifications.telegram.enabled', settingHelpMark('notifications', 'configuration', 'Enable Telegram bot', `Connect the Telegram bot. Needs a bot token and a chat id. ${restart}`))}
+        <div class="config-field-row">
+          ${channelsSecret('telegram', 'botToken', !!tg.hasBotToken, 'Bot token', 'notifications.telegram.bot_token', 'token', settingHelpMark('notifications', 'configuration', 'Bot token', `Telegram bot token from @BotFather.`), restart)}
+          ${channelsText('telegram', 'chatId', tg.chatId, 'Chat id', 'notifications.telegram.chat_id', '-1001234567890', settingHelpMark('notifications', 'configuration', 'Chat id', `Telegram chat or group id the bot posts to and listens on.`), restart)}
+        </div>
+        ${channelsList('telegram', 'allowedUsers', tg.allowedUsers, 'Allowed users', 'notifications.telegram.allowed_users[]', 'One Telegram user id per line', settingHelpMark('notifications', 'configuration', 'Allowed users', `Telegram user IDs permitted to command the bot. Empty disables commands.`), restart)}
+
+        <div class="config-field"><label>Microsoft Teams</label></div>
+        ${channelsToggle('msteams', 'enabled', !!ms.enabled, 'Enable Teams bot', 'notifications.msteams.enabled', settingHelpMark('notifications', 'configuration', 'Enable Teams bot', `Connect the Teams integration. Needs a tenant id, client id, client secret, team id and channel id. ${restart}`))}
+        <div class="config-field-row">
+          ${channelsText('msteams', 'tenantId', ms.tenantId, 'Tenant id', 'notifications.msteams.tenant_id', '', settingHelpMark('notifications', 'configuration', 'Tenant id', `Azure AD tenant id of the Teams organisation.`), restart)}
+          ${channelsText('msteams', 'clientId', ms.clientId, 'Client id', 'notifications.msteams.client_id', '', settingHelpMark('notifications', 'configuration', 'Client id', `Application (client) id of the registered Teams app.`), restart)}
+        </div>
+        ${channelsSecret('msteams', 'clientSecret', !!ms.hasClientSecret, 'Client secret', 'notifications.msteams.client_secret', 'secret', settingHelpMark('notifications', 'configuration', 'Client secret', `Client secret of the registered Teams app.`), restart)}
+        <div class="config-field-row">
+          ${channelsText('msteams', 'teamId', ms.teamId, 'Team id', 'notifications.msteams.team_id', '', settingHelpMark('notifications', 'configuration', 'Team id', `Teams team the bot posts in.`), restart)}
+          ${channelsText('msteams', 'channelId', ms.channelId, 'Channel id', 'notifications.msteams.channel_id', '', settingHelpMark('notifications', 'configuration', 'Channel id', `Teams channel the bot posts to and listens on.`), restart)}
+        </div>
+        ${channelsSecret('msteams', 'webhookUrl', !!ms.hasWebhookUrl, 'Incoming webhook URL', 'notifications.msteams.webhook_url', 'URL', settingHelpMark('notifications', 'configuration', 'Incoming webhook URL', `Optional Teams incoming webhook used for posting when the Graph bot is not available (https only).`), restart)}
+        ${channelsList('msteams', 'allowedUsers', ms.allowedUsers, 'Allowed users', 'notifications.msteams.allowed_users[]', 'One Teams user id per line', settingHelpMark('notifications', 'configuration', 'Allowed users', `Teams user IDs permitted to command the bot. Empty disables commands.`), restart)}`;
+    }
+
+    function renderGovChannelsDashboardChat(dc) {
+      return `
+        <div class="config-subgroup">Dashboard chat ${settingHelpMark('dashboard-chat', 'one-shared-channel', 'Dashboard chat', `The in-dashboard chat panel and inception-via-chat have no server-side settings of their own: who may post is derived from dashboard.authorized_users (Security tab) and each agent's converse flag.`)}</div>
+        <div class="config-field">
+          <label>Status</label>
+          <div class="config-help">Endpoint <code>${esc(dc.endpoint || '/api/chat')}</code> · ${esc(String(dc.authorizedUsers || 0))} authorized dashboard user(s) may chat. Manage the allow-list under <strong>Security</strong> → Authorized users ${yamlHint('dashboard.authorized_users[]')}; enable <em>converse</em> per agent in the agent dialog.</div>
+        </div>`;
+    }
+
+    function renderGovChannelsEscalation(em, pu) {
+      const live = 'Applies on save — the escalation dispatcher rebuilds its sinks.';
+      return `
+        <div class="config-subgroup">Escalation &amp; on-call ${settingHelpMark('settings', 'channels', 'Escalation and on-call', `Where human-escalation events (decisions and pages) are delivered beyond the dashboard: email digests and push/on-call providers. The breaker thresholds themselves live on the Health tab.`)}</div>
+        <div class="config-field"><label>Email</label></div>
+        ${channelsToggle('escalationEmail', 'enabled', !!em.enabled, 'Enable email escalation', 'escalation.email.enabled', settingHelpMark('settings', 'channels', 'Enable email escalation', `Send escalation emails via SMTP. Needs host, from and at least one recipient. ${live}`))}
+        <div class="config-field-row">
+          ${channelsText('escalationEmail', 'smtpHost', em.smtpHost, 'SMTP host', 'escalation.email.smtp.host', 'smtp.example.org', settingHelpMark('settings', 'channels', 'SMTP host', `SMTP server hostname.`))}
+          ${channelsNumber('escalationEmail', 'smtpPort', em.smtpPort, 'SMTP port', 'escalation.email.smtp.port', '587', settingHelpMark('settings', 'channels', 'SMTP port', `SMTP port (1–65535). 0 uses the default.`))}
+        </div>
+        <div class="config-field-row">
+          ${channelsText('escalationEmail', 'smtpUsername', em.smtpUsername, 'SMTP username', 'escalation.email.smtp.username', '', settingHelpMark('settings', 'channels', 'SMTP username', `SMTP auth username. Empty sends unauthenticated.`))}
+          ${channelsSecret('escalationEmail', 'smtpPassword', !!em.hasSmtpPassword, 'SMTP password', 'escalation.email.smtp.password', 'password', settingHelpMark('settings', 'channels', 'SMTP password', `SMTP auth password.`))}
+        </div>
+        ${channelsText('escalationEmail', 'from', em.from, 'From address', 'escalation.email.from', 'hive@example.org', settingHelpMark('settings', 'channels', 'From address', `Sender address for escalation mail.`))}
+        <div class="config-field-row">
+          ${channelsList('escalationEmail', 'to', em.to, 'Recipients', 'escalation.email.to[]', 'One address per line', settingHelpMark('settings', 'channels', 'Recipients', `Addresses that receive every escalation immediately.`))}
+          ${channelsList('escalationEmail', 'digestTo', em.digestTo, 'Digest recipients', 'escalation.email.digest.to[]', 'One address per line', settingHelpMark('settings', 'channels', 'Digest recipients', `Addresses that receive the daily digest instead of individual mails.`))}
+        </div>
+        ${channelsText('escalationEmail', 'digestAt', em.digestAt, 'Digest time', 'escalation.email.digest.at', '09:00', settingHelpMark('settings', 'channels', 'Digest time', `Local time (HH:MM) the daily digest is sent.`))}
+
+        <div class="config-field"><label>Push / on-call</label></div>
+        ${channelsToggle('escalationPush', 'enabled', !!pu.enabled, 'Enable push escalation', 'escalation.push.enabled', settingHelpMark('settings', 'channels', 'Enable push escalation', `Page an on-call target through ntfy, Pushover or PagerDuty. Needs at least one provider. ${live}`))}
+        ${channelsSelect('escalationPush', 'minSeverity', pu.minSeverity || 'page', CHANNELS_PUSH_SEVERITIES, 'Minimum severity', 'escalation.push.min_severity', settingHelpMark('settings', 'channels', 'Minimum severity', `Lowest severity that pushes: decision (every human decision) or page (only pages).`))}
+        <div class="config-field-row">
+          ${channelsText('escalationPush', 'ntfyUrl', pu.ntfyUrl, 'ntfy topic URL', 'escalation.push.ntfy.url', 'https://ntfy.sh/your-topic', settingHelpMark('settings', 'channels', 'ntfy topic URL', `Full https URL of the ntfy topic to publish to.`))}
+          ${channelsSecret('escalationPush', 'ntfyToken', !!pu.hasNtfyToken, 'ntfy access token', 'escalation.push.ntfy.token', 'token', settingHelpMark('settings', 'channels', 'ntfy access token', `Optional bearer token for protected ntfy topics.`))}
+        </div>
+        <div class="config-field-row">
+          ${channelsSecret('escalationPush', 'pushoverAppToken', !!pu.hasPushoverAppToken, 'Pushover app token', 'escalation.push.pushover.app_token', 'token', settingHelpMark('settings', 'channels', 'Pushover app token', `Pushover application token. Set together with the user key.`))}
+          ${channelsSecret('escalationPush', 'pushoverUserKey', !!pu.hasPushoverUserKey, 'Pushover user key', 'escalation.push.pushover.user_key', 'key', settingHelpMark('settings', 'channels', 'Pushover user key', `Pushover user or group key. Set together with the app token.`))}
+        </div>
+        ${channelsSecret('escalationPush', 'pagerdutyRoutingKey', !!pu.hasPagerdutyRoutingKey, 'PagerDuty routing key', 'escalation.push.pagerduty.routing_key', 'key', settingHelpMark('settings', 'channels', 'PagerDuty routing key', `Events API v2 integration (routing) key for the on-call service.`))}`;
+    }
+
+    function renderGovChannelsAdminMcp(mcp) {
+      const writes = mcp.writesEnabled ? statusBadgeHTML('ready', 'writes enabled', 'Writes enabled', 'done') : statusBadgeHTML('idle', 'read-only', 'Read-only', 'idle');
+      return `
+        <div class="config-subgroup">Admin MCP ${settingHelpMark('admin-mcp', 'http-endpoint', 'Admin MCP', `The admin MCP endpoint lets an external agent (Claude Code, Bob CLI…) operate this hive. It is always registered; there is no hive.yaml section. Writes are gated by an environment variable on the hive process.`)}</div>
+        <div class="config-field">
+          <label>Status ${settingHelpMark('admin-mcp', 'writes', 'Admin MCP writes', `Set the environment variable to 1/true on the hive process and restart to allow write tools. Without it the endpoint answers read tools only.`)}</label>
+          <div class="config-help">Endpoint <code>${esc(mcp.endpoint || '/api/admin/mcp')}</code> · ${writes} · toggle with <code>${esc(mcp.writesEnv || 'HIVE_ADMIN_MCP_ENABLE_WRITES')}</code> on the hive process (requires restart).</div>
+        </div>`;
     }
 
     // ── Stats tab for per-agent stat config ──
@@ -51739,6 +52030,17 @@ function burnAreaChart() {
               });
               if (!hRes.ok) throw new Error(await saveErrorMessage(hRes));
             }
+          } else if (_configState.type === 'governor' && section === 'channels') {
+            // Inbound trigger surfaces (Settings → Channels) span github.*,
+            // notifications.* bots and escalation sinks; they save through
+            // their own owner-only /api/config/channels endpoint.
+            const chRes = await fetch('/api/config/channels', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!chRes.ok) throw new Error(await saveErrorMessage(chRes));
+            _configState.data.channels = await chRes.json().catch(() => _configState.data.channels);
           } else if (_configState.type === 'governor' && section === 'escalation') {
             // Escalation is a top-level Config field, not under /governor.
             const escRes = await fetch('/api/config/escalation', {

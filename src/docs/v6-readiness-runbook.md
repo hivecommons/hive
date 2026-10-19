@@ -68,7 +68,11 @@ Prerequisites:
   (`src/docs/design/github-mention-triggers.md:3-11`).
 - Configure `github.mentions.enabled`, the managed repo list, a
   `github.mentions.default_agent` or an unambiguous mention-capable agent, and
-  either a trusted dashboard role floor or explicit summoners. The config fields
+  either a trusted dashboard role floor or explicit summoners from the
+  dashboard: **Settings → Channels → GitHub @-mentions** edits every
+  `github.mentions.*` key, validates summoner logins and the poll interval, and
+  hot-reloads the poller on save, so no `hive.yaml` hand-edit in the pod is
+  needed ([Channels](settings.md#channels)). The config fields
   and defaults include `summoners`, `min_role`, and the default `eyes` ack
   reaction (`src/pkg/config/github_integration_config.go:10-23`). If webhook acceleration is
   used, set `github.mentions.webhook_secret_env`; polling alone is acceptable
@@ -121,26 +125,34 @@ Prerequisites:
   `status`) and `github-actions[bot]` in `trusted_comment_authors` (the
   default). For the OIDC row also set `github.actions.oidc.enabled: true` and
   `github.actions.oidc.audience`; the workflow's `audience` input must match it
-  exactly. The keys are documented in
+  exactly. Set all of these from **Settings → Channels → GitHub Actions
+  trigger** (allowed commands are checkboxes over the known vocabulary; the save
+  hot-reloads) rather than editing YAML in the pod. The keys are documented in
   [GitHub Actions trigger](github-actions-trigger.md#hive-configuration).
 - The smoke is [`hive-action-smoke`](../../.github/workflows/hive-action-smoke.yml),
   a `workflow_dispatch` with inputs `issue`, `prompt`, `transport`
-  (`comment` | `oidc`), `hive_url`, `audience`, and `app_handle`. The comment transport posts on
+  (`comment` | `oidc`), `hive_url`, `audience`, and `mention_login`. The comment transport posts on
   an issue **in the repository the workflow runs in**, so run it from a
   repository the live hive manages: this repository if it is in the hive's repo
   list, otherwise a copy of the workflow in a managed repository. Bot actors are
-  refused on repositories the hive does not govern.
-- The relay comment body is `@<app-handle> status <prompt>` plus a hidden
+  refused on repositories the hive does not govern. The repository guard
+  normalises both sides (`RepoMatches` in `src/pkg/mention/repo_match.go`): the
+  event's `owner/name` matches a bare `repos:` entry qualified by `org`, an
+  explicit `owner/name` entry, or a `https://github.com/owner/name` entry,
+  case-insensitively. A `guard=repo` decline therefore means the repository is
+  genuinely absent from the hive's repo list or its owner differs from `org`.
+- The relay comment body is `@<mention_login> status <prompt>` plus a hidden
   `<!-- hive:source=action … transport=comment -->` marker
   (`.github/actions/hive/action.yml`). The parser matches `@<app-login>` or the
   login without its `[bot]` suffix (`findMention` in
-  `src/pkg/mention/grammar.go`), so `<app-handle>` must be your App's bot
-  handle (for example `@hivecommons-hive`), not a fixed name. Set it once as
+  `src/pkg/mention/grammar.go`), so `<mention_login>` must be your App's bot
+  login (for example `@hivecommons-hive`), not a fixed name. Set it once as
   the `HIVE_APP_HANDLE` repository or organization variable, or pass the
-  `app_handle` input for a single run; the input wins, then the variable, then
-  the backward-compatible default `hive`. A leading `@` and a trailing `[bot]`
+  `mention_login` input for a single run; the input wins, then the variable, then
+  the default `hivecommons-hive` (the deprecated `app_handle` input is still
+  accepted as an alias, and `mention_login` wins when both are set). A leading `@` and a trailing `[bot]`
   are both accepted and stripped. Check the relay comment on the issue: if it
-  does not start with your App's handle, the hive will not pick it up.
+  does not start with your App's login, the hive will not pick it up.
 - The `github.actor` who dispatches must hold the required Hive role directly,
   or be mapped to a dashboard identity that does through
   `github.actions.identity_map`.
@@ -148,7 +160,7 @@ Prerequisites:
 Run:
 
 1. **Comment relay.** Dispatch `hive-action-smoke` with `transport=comment`
-   and `issue=<real managed issue>` (plus `app_handle=<your App's bot handle>`
+   and `issue=<real managed issue>` (plus `mention_login=<your App's bot login>`
    unless `HIVE_APP_HANDLE` is set). Save the workflow run URL and the relay
    comment permalink.
 2. Wait for the poller or webhook accelerator. Save the 👀 reaction on the relay
@@ -201,7 +213,9 @@ Prerequisites:
   The Slack design says Socket Mode is the shipped, pull-only-friendly transport
   (`src/docs/design/slack-integration.md:3-12`,
   `src/docs/design/slack-integration.md:54-69`).
-- Configure the `slack` notification block with `enabled: true`,
+- Configure the `slack` notification block (editable under **Settings →
+  Channels → Chat surfaces**, as are the Discord bot, Matrix, Telegram and Teams
+  blocks; bots connect at startup so restart after saving) with `enabled: true`,
   `app_token: ${SLACK_APP_TOKEN}`, `bot_token: ${SLACK_BOT_TOKEN}`,
   `channel_id`, and `allowed_users` containing the maintainer's Slack user ID
   (`src/docs/design/slack-integration.md:113-128`). The backend refuses to
@@ -527,7 +541,8 @@ Prerequisites:
   shipped on v6 and explicitly says inbound reply-to-act is not built yet
   (`src/docs/design/escalation-surfaces.md:3-10`). Record that deferral in the
   evidence unless a later PR adds the inbound path.
-- Configure `escalation.email.enabled`, `smtp.host`, optional `smtp.port`,
+- Configure (from **Settings → Channels → Escalation & on-call**, which
+  hot-reloads the dispatcher on save) `escalation.email.enabled`, `smtp.host`, optional `smtp.port`,
   `smtp.username`, `smtp.password`, `from`, and at least one `to` recipient;
   digest recipients are optional. The design shows the operator-facing block
   (`src/docs/design/escalation-surfaces.md:73-103`), while the config schema
@@ -542,8 +557,11 @@ Run:
 2. Confirm the event severity is `decision` or `page`; those severities send
    immediate email (`src/pkg/escalate/types.go:8-20`,
    `src/pkg/escalate/email.go:56-68`).
-3. Save SMTP/hive evidence. The sink scrubs and sends through SMTP in `send`,
-   so logs should never include secrets (`src/pkg/escalate/email.go:138-153`).
+3. Save SMTP/hive evidence: the `escalation_delivered` audit entry (sink
+   `email`, `severity=decision`, the mail's title) that the dispatcher records
+   once SMTP accepts the message. The sink scrubs and sends through SMTP in
+   `send`, so logs should never include secrets
+   (`src/pkg/escalate/email.go:138-153`).
 4. For the inbound half, record one of these explicitly:
    - **Current v6:** reply-to-act deferred; no IMAP poller/signed reply parser is
      shipped (`src/docs/design/escalation-surfaces.md:106-127`).
@@ -568,7 +586,8 @@ Prerequisites:
 
 - Use the v6 push/on-call sinks. The escalation design records ntfy, Pushover,
   and PagerDuty as the shipped push providers (`src/docs/design/escalation-surfaces.md:130-155`).
-- Configure `escalation.push.enabled`, `min_severity` (`decision` or `page`),
+- Configure (also from **Settings → Channels → Escalation & on-call**)
+  `escalation.push.enabled`, `min_severity` (`decision` or `page`),
   and at least one provider: `ntfy.url` plus optional `token`, Pushover
   `app_token` and `user_key`, or PagerDuty `routing_key`. The config schema and
   validation enforce provider presence and the severity values
@@ -582,7 +601,10 @@ Run:
    least one provider. Save the redacted device screenshot, ntfy message,
    Pushover receipt, or PagerDuty incident/event link.
 3. Save hive evidence showing the event entered the dispatcher and the provider
-   sink delivered it. Dispatch queues events by severity and logs/audits
+   sink delivered it: the `escalation_delivered` audit entry (or the
+   `escalation delivered` log line) names the sink (`ntfy`, `pushover`,
+   `pagerduty`), the severity and the title. Dispatch queues events by severity
+   and logs/audits
    `escalation_delivery_failed` once a delivery's bounded retries run out or
    the provider rejects it outright (`Dispatch` and `deliver`,
    `src/pkg/escalate/dispatcher.go:91-161`). Provider delivery paths are
@@ -592,7 +614,8 @@ Run:
 Evidence checklist:
 
 - [ ] Redacted provider/device evidence for the page.
-- [ ] Hive log/audit line showing severity `decision`/`page` and provider name.
+- [ ] `escalation_delivered` audit/log line showing severity `decision`/`page`
+      and provider name.
 - [ ] If no page arrived, include any `escalation_delivery_failed` line and do
       not tick #7563's **v6 readiness bar** section until a retry succeeds.
 - [ ] Paste the template as a comment on #7563, tick the Push / on-call row in

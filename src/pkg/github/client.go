@@ -839,6 +839,14 @@ type PullRequest struct {
 	// new run id, e.g. after it went green and failed again at the same
 	// head) invalidates the markers (hivecommons/hive#11609).
 	ExternalCIDeferred bool `json:"external_ci_deferred,omitempty"`
+	// TransientCITriaged reports that every failing check run on this red
+	// PR's current head carries a
+	// `<!-- hive-ci-transient head=<sha> check=<name> run=<id> -->` marker for
+	// that head and run: an agent triaged the failure as transient or
+	// infrastructure, not caused by the PR's diff, so re-running the check is
+	// the fix. The dependency-bot red-CI hand-off says so instead of blaming
+	// the bump (hivecommons/hive#12977).
+	TransientCITriaged bool `json:"transient_ci_triaged,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
 	// repo-grounded review can be pinned to a specific commit rather than to
@@ -2014,9 +2022,10 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 // plus at most one GraphQL query per repository; nothing here is per-hover
 // and nothing here is per-PR beyond the calls that were already made.
 //
-// For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528)
-// and ExternalCIDeferred (hivecommons/hive#11609): one comment listing per
-// red PR serves both, plus one issue GET per distinct incident number named
+// For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528),
+// ExternalCIDeferred (hivecommons/hive#11609) and TransientCITriaged
+// (hivecommons/hive#12977): one comment listing per
+// red PR serves all three, plus one issue GET per distinct incident number named
 // by a `<!-- hive-shared-ci-<n> -->` marker in this pass.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	if c == nil {
@@ -2030,6 +2039,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			if texts, ok := c.redPRCommentTexts(ctx, &prs[i]); ok {
 				prs[i].SharedCIIncident = c.openSharedCIIncident(ctx, &prs[i], texts, incidents)
 				prs[i].ExternalCIDeferred = externalCIDeferred(texts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
+				prs[i].TransientCITriaged = transientCITriaged(texts, prs[i].HeadSHA, prs[i].FailingCheckRunIDs)
 			}
 		}
 		facts.attach(ctx, &prs[i], reported)

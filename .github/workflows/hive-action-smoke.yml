@@ -29,11 +29,11 @@ on:
         required: false
         type: string
         default: hive
-      app_handle:
+      mention_login:
         description: >-
-          Handle of the hive's GitHub App that the comment relay @-mentions (for example
+          Login of the hive's GitHub App that the comment relay @-mentions (for example
           hivecommons-hive). Empty uses the HIVE_APP_HANDLE repository or organization
-          variable, then "hive".
+          variable, then "hivecommons-hive".
         required: false
         type: string
         default: ''
@@ -60,7 +60,7 @@ jobs:
           transport: ${{ inputs.transport }}
           hive_url: ${{ inputs.hive_url }}
           audience: ${{ inputs.audience }}
-          app_handle: ${{ inputs.app_handle || vars.HIVE_APP_HANDLE }}
+          mention_login: ${{ inputs.mention_login || vars.HIVE_APP_HANDLE }}
 
       - name: Assert OIDC receipt output
         if: ${{ inputs.transport == 'oidc' }}

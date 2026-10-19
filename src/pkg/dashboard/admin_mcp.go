@@ -315,8 +315,15 @@ func (r *discardingWriteRecorder) statusCode() int {
 func (r *discardingWriteRecorder) bodyBytes() []byte { return r.body.Bytes() }
 func (r *discardingWriteRecorder) bytesWritten() int { return r.bytes }
 
+// adminMCPEndpointPath and adminMCPWritesEnvName are surfaced read-only on
+// the Settings → Channels tab; the admin MCP server has no hive.yaml section.
+const (
+	adminMCPEndpointPath  = "/api/admin/mcp"
+	adminMCPWritesEnvName = "HIVE_ADMIN_MCP_ENABLE_WRITES"
+)
+
 func adminMCPWritesEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("HIVE_ADMIN_MCP_ENABLE_WRITES"))) {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(adminMCPWritesEnvName))) {
 	case "1", "true", "yes", "on":
 		return true
 	default:

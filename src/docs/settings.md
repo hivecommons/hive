@@ -32,7 +32,18 @@ The token budget and its rolling period, optional dollar and coin caps, the perc
 
 ## Notifications
 
-The ntfy, Discord, and Slack destinations and which hive events are sent to them. See [Notifications](notifications.md#configuration).
+The one-way ntfy, Discord, and Slack webhook destinations, which hive events are sent to them, the Discord hub webhooks, and the GitHub activity feed. See [Notifications](notifications.md#configuration). Two-way chat bots live on the Channels tab.
+
+## Channels
+
+Every inbound surface that can start or steer agent work from outside the dashboard, grouped by surface. Saves go through the owner-only `PUT /api/config/channels` endpoint, which validates the whole body against a copy of the live config and applies nothing on a 400. Secrets are write-only: a configured field shows a masked value, leaving it untouched keeps the stored secret, and saving an empty value clears it.
+
+- **GitHub @-mentions** — `github.mentions.*`: enable, poll interval (Go duration or seconds, at most 24h), default agent, summoner logins (validated as GitHub logins), minimum dashboard role, ack reaction, per-user/per-repo/per-thread limits, and optional webhook acceleration. Below the fields the tab lists which agents are currently mention-eligible (enabled, converse on, a `mention` channel, governor-kicked) and deep-links every agent name to its own Channels tab, where the per-agent `channels` list is edited. Saving hot-reloads the mention poller.
+- **GitHub Actions trigger** — `github.actions.*`: enable, allowed commands (a closed vocabulary: `status`, `review`, `kick`), allow-apply, source label, trusted comment authors, the author→login identity map, and OIDC dispatch (audience, JWKS URL, max skew). See [GitHub Actions trigger](github-actions-trigger.md#hive-configuration). Hot-reloads with the mention runtime.
+- **Chat surfaces** — the two-way Discord bot (`notifications.discord.bot_token`, `channel_id`, `allowed_users`) and the Slack, Matrix, Telegram and Microsoft Teams bots (`notifications.<surface>.*`). An enabled bot must carry its credentials or the save is rejected. Bots connect at startup, so these apply after a restart.
+- **Dashboard chat** — read-only status. The chat panel and inception-via-chat have no server-side settings of their own; who may post comes from `dashboard.authorized_users` on the Security tab and each agent's converse flag. See [Dashboard chat](dashboard-chat.md).
+- **Escalation & on-call** — `escalation.email.*` (SMTP host/port/credentials, from, recipients, digest recipients and time) and `escalation.push.*` (minimum severity, ntfy, Pushover, PagerDuty). Saving rebuilds the escalation dispatcher's sinks. The breaker thresholds stay on the Health tab.
+- **Admin MCP** — read-only status of the `/api/admin/mcp` endpoint. It is always registered and has no `hive.yaml` section; writes are enabled with `HIVE_ADMIN_MCP_ENABLE_WRITES` on the hive process. See [Admin MCP](admin-mcp.md#writes).
 
 ## Health
 

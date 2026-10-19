@@ -88,6 +88,7 @@ func TestDependencyBotHandoffReason(t *testing.T) {
 		{"red ci", depBotPR("dependabot[bot]", "s", redCI), "", depBotHandoffRedCI, true},
 		{"red ci still running", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { redCI(p); p.CIChecksRunning = true }), "", "", false},
 		{"red ci external", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { redCI(p); p.ExternalCIDeferred = true }), "", "", false},
+		{"red ci transient still hands off", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { redCI(p); p.TransientCITriaged = true }), "", depBotHandoffRedCI, true},
 		{"red ci shared incident", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { redCI(p); p.SharedCIIncident = 7 }), "", "", false},
 		{"failure without failing checks", depBotPR("dependabot[bot]", "s", func(p *github.PullRequest) { p.CIStatus = "failure" }), "", "", false},
 	}
@@ -215,8 +216,8 @@ func TestDependencyBotHandoffRedCIWaitsForGraceThenHandsOff(t *testing.T) {
 	if len(h.writer.comments) != 1 {
 		t.Fatalf("comments = %v, want exactly one", h.writer.comments)
 	}
-	if c := h.writer.comments[0]; !strings.Contains(c, "Dependabot PR has failed `build`, `test`") || !strings.Contains(c, "pin or ignore the dependency") {
-		t.Fatalf("comment = %q, want the failing checks and the action named", c)
+	if c := h.writer.comments[0]; !strings.Contains(c, "Dependabot PR has failed `build`, `test`") || !strings.Contains(c, "pin or ignore the dependency") || !strings.Contains(c, "re-run the failed check") {
+		t.Fatalf("comment = %q, want the failing checks and the actions named", c)
 	}
 	if len(h.writer.adds) != 1 {
 		t.Fatalf("adds = %v, want needs-human once", h.writer.adds)
@@ -232,6 +233,42 @@ func TestDependencyBotHandoffRedCIWaitsForGraceThenHandsOff(t *testing.T) {
 	h.passAt(depBotT0.Add(3*depBotRedCIGrace), pr)
 	if len(h.writer.comments) != 1 || len(h.writer.adds) != 1 {
 		t.Fatalf("repeat ticks: comments=%v adds=%v, want no new writes", h.writer.comments, h.writer.adds)
+	}
+}
+
+// hivecommons/hive#12977: when Hive's own triage marked every failing run at
+// this head as transient, the hand-off asks for a re-run and does not tell the
+// owner to fix, pin or close a bump that did not break the build.
+func TestDependencyBotRedCICommentHonorsTransientTriage(t *testing.T) {
+	cases := []struct {
+		name      string
+		transient bool
+		want      []string
+		notWant   []string
+	}{
+		{"untriaged", false,
+			[]string{"re-run the failed check", "If the bump breaks the build", "pin or ignore the dependency"},
+			[]string{"not caused by the bump"}},
+		{"transient triage on this head", true,
+			[]string{"not caused by the bump", "re-run the failed check"},
+			[]string{"pin or ignore the dependency", "fix the code or lockfile", "close the PR", "breaks the build"}},
+	}
+	for _, tc := range cases {
+		pr := depBotPR("renovate[bot]", "sha-1", func(p *github.PullRequest) { redCI(p); p.TransientCITriaged = tc.transient })
+		c := dependencyBotRedCIComment(pr)
+		if !strings.Contains(c, "Renovate PR has failed `build`, `test`") {
+			t.Errorf("%s: comment = %q, want the failing checks named", tc.name, c)
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(c, w) {
+				t.Errorf("%s: comment = %q, want %q", tc.name, c, w)
+			}
+		}
+		for _, w := range tc.notWant {
+			if strings.Contains(c, w) {
+				t.Errorf("%s: comment = %q, must not contain %q", tc.name, c, w)
+			}
+		}
 	}
 }
 

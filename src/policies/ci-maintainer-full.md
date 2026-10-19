@@ -107,6 +107,17 @@ check, or a re-run of the check (a new run id) brings it back. Never re-stamp a
 run that already carries a marker. When the helper prints no `external_marker`
 (its newest run of the check is not red, or could not be read), stamp nothing.
 
+When your own diagnosis of a red check on a PR finds a transient or
+infrastructure failure the diff did not cause (a flaky job, a runner outage, a
+race against a cache or image the default branch was still publishing) and
+you cannot re-run the check yourself, end your triage comment with
+`<!-- hive-ci-transient head=<40-char head sha> check=<encoded check name> run=<check run id> -->`,
+one per failing check run, in the same format as `external_marker` (use the
+failing run's id from `gh pr checks` or the check-runs API). While every
+failing run at that head carries one, the dependency-bot red-CI hand-off asks
+for a re-run instead of blaming the bump; a push or a re-run (a new run id)
+makes the marker stale. Never stamp it for a failure the diff could cause.
+
 ## CI Throughput and Merge Order
 
 A slow or red CI lane is usually a fleet or ordering problem before it is a

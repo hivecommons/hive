@@ -213,3 +213,10 @@ func (m GitHubMentionsConfig) Validate() error {
 	}
 	return nil
 }
+
+// ValidGitHubLogin reports whether login is shaped like a GitHub account
+// name; the Settings → Channels summoner list uses it to reject typos before
+// they reach github.mentions.summoners.
+func ValidGitHubLogin(login string) bool {
+	return validGitHubLogin(normalizeGitHubLogin(login))
+}
