@@ -322,6 +322,46 @@ func TestSendKickDuringStartupKickInFlightReplacesBootstrap(t *testing.T) {
 	}
 }
 
+func TestDeliverStartupKickPrefersDeferredMentionOverCadence(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-startup-deferred-mention"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"reviewer": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["reviewer"]
+	agent.tmuxSession = session
+	agent.State = StateRunning
+	agent.launchGen = 2
+	agent.startupKickInFlight = true
+	agent.startupKickGen = 2
+	m.mu.Unlock()
+
+	if err := m.SendKickWithSource("reviewer", "answer the mention", "mention:IC_1"); err != nil {
+		t.Fatalf("mention kick during startup should defer, got error: %v", err)
+	}
+	if err := m.SendKick("reviewer", "reviewer queue cadence"); err != nil {
+		t.Fatalf("cadence kick during startup should defer, got error: %v", err)
+	}
+
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+	m.deliverStartupKick(agent, "bootstrap prompt", 2)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if agent.LastKickMessage != "answer the mention" || agent.LastKickSource != "mention:IC_1" {
+		t.Fatalf("delivered (%q,%q), want the deferred mention", agent.LastKickMessage, agent.LastKickSource)
+	}
+	if len(agent.deferredMentionKicks) != 0 {
+		t.Fatalf("delivered mention still queued: %+v", agent.deferredMentionKicks)
+	}
+	if agent.pendingStartupKick != "" {
+		t.Fatalf("superseded cadence kick left pending: %q", agent.pendingStartupKick)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // runCopilotDiagnostic — binary-not-found early return.
 // ---------------------------------------------------------------------------
