@@ -179,5 +179,5 @@ shadow but is for the default flip).
 
 ## Tracking
 
-Tracking issue: *Central stage engine (ADR-0025)* — one checkbox per PR
+Tracking issue: [#12999](https://github.com/hivecommons/hive/issues/12999) *Central stage engine (ADR-0025)* — one checkbox per PR
 above; each PR body carries `Refs #<tracking>`.
