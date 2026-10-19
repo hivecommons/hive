@@ -171,6 +171,22 @@ func TestParityBatch6FeaturesRoundTrip(t *testing.T) {
 	if am["bot_takeover_enabled"] != false {
 		t.Fatalf("auto-merge response bot_takeover_enabled = %v", am["bot_takeover_enabled"])
 	}
+	if !s.deps.Config.AutoMerge.WorkflowApproval.TrustedBotsEnabled() {
+		t.Fatal("workflow approval should default on")
+	}
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"workflow_approval_trusted_bots": false})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auto-merge workflow approval PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.AutoMerge.WorkflowApproval.TrustedBotsEnabled() {
+		t.Fatal("workflow_approval_trusted_bots=false not applied")
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &am); err != nil {
+		t.Fatal(err)
+	}
+	if am["workflow_approval_trusted_bots"] != false {
+		t.Fatalf("auto-merge response workflow_approval_trusted_bots = %v", am["workflow_approval_trusted_bots"])
+	}
 }
 
 // Every key this batch exposes renders with its YAML-key hint next to a

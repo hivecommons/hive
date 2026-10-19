@@ -388,3 +388,109 @@ func TestTrySweepTrustedBotTreatsSkippedByDesignRequiredCheckAsSatisfied(t *test
 		})
 	}
 }
+
+func TestTrySweepTrustedBotApprovesActionRequiredPendingRuns(t *testing.T) {
+	approves := 0
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.author = "dependabot[bot]"
+		p.omitStatus = true
+		p.statusState = "success"
+		p.checkStatus = "completed"
+		p.checkConclusion = "success"
+		p.extraChecks = []map[string]string{{"name": "ci/build", "status": "in_progress"}}
+		p.workflowRuns = []map[string]any{heldRun(7, "acme/widget")}
+		p.approveCount = &approves
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != approvedHeldWorkflowRunsReason {
+		t.Fatalf("reason = %q, want %q", reason, approvedHeldWorkflowRunsReason)
+	}
+	if approves != 1 {
+		t.Fatalf("approve POSTs = %d, want 1", approves)
+	}
+	if len(merged) != 0 {
+		t.Fatalf("merged = %v, want no merge on approval tick", merged)
+	}
+}
+
+func TestTrySweepTrustedBotWorkflowApprovalSwitchAndSentinelBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*selfAuthoredPR)
+		config func(*Engine)
+	}{
+		{
+			name:   "switch off",
+			config: func(c *Engine) { c.workflowApprovalTrustedBots = func() bool { return false } },
+		},
+		{
+			name:   "sentinel label",
+			mutate: func(p *selfAuthoredPR) { p.extraLabels = append(p.extraLabels, "sentinel-alert") },
+			config: func(c *Engine) { c.sentinelLabel = func() string { return "sentinel-alert" } },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			approves := 0
+			pr := missingRequiredPR(func(p *selfAuthoredPR) {
+				p.author = "dependabot[bot]"
+				p.statusState = "success"
+				p.checkStatus = "in_progress"
+				p.workflowRuns = []map[string]any{heldRun(7, "acme/widget")}
+				p.approveCount = &approves
+				if tc.mutate != nil {
+					tc.mutate(p)
+				}
+			})
+			var merged []int
+			api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
+			if tc.config != nil {
+				tc.config(c)
+			}
+
+			_, _, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+			if err != nil {
+				t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+			}
+			if approves != 0 {
+				t.Fatalf("approve POSTs = %d, want 0", approves)
+			}
+		})
+	}
+}
+
+func TestSweepApprovesTrustedRegistryClankerWithoutMerging(t *testing.T) {
+	approves := 0
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.author = "relay-bot"
+		p.extraLabels = []string{"role/trusted", "author/clanker"}
+		p.workflowRuns = []map[string]any{heldRun(9, "acme/widget")}
+		p.approveCount = &approves
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	res, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("SweepSelfAuthoredAutoMerges returned error: %v", err)
+	}
+	if approves != 1 {
+		t.Fatalf("approve POSTs = %d, want 1", approves)
+	}
+	if len(merged) != 0 || len(res.Merged) != 0 {
+		t.Fatalf("merged server=%v result=%v, want no merge", merged, res.Merged)
+	}
+}

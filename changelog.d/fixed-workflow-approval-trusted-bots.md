@@ -1,0 +1,1 @@
+- Auto-approve GitHub Actions workflow runs held for trusted same-repo bot and clanker PRs, while surfacing held approvals that need maintainer action.
