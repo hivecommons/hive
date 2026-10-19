@@ -29590,6 +29590,12 @@
                               },
                               "reason": {
                                 "type": "string"
+                              },
+                              "checks_pending": {
+                                "type": "boolean"
+                              },
+                              "extensions": {
+                                "type": "integer"
                               }
                             }
                           },
