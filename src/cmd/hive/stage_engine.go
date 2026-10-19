@@ -23,6 +23,11 @@ import (
 // metrics. governor.labels.stage.engine.mode is re-read before every sweep
 // (syncStageEngineMode), so a dashboard PUT or a hive.yaml reload flips the
 // mode on the next pass without a restart.
+//
+// The out-of-cycle fact sink (Client.StageFacts, plan PR-D) is deliberately
+// not this reconciler: a submitted fact must land a label whatever the
+// sweeps' mode, so it runs enforce over the same StageWriter, Store and
+// counters; the sweeps' mode gates derivation of the whole fleet.
 var stageEngine struct {
 	once   sync.Once
 	opts   *stageengine.Options
@@ -37,7 +42,6 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 		if logger == nil {
 			logger = slog.Default()
 		}
-		stageengine.SetDerivers(github.IssueDeriver(), automerge.PRDeriver())
 		stageEngine.shadow = shadowdiff.NewRecorder(shadowdiff.WithLogger(logger))
 		stageEngine.opts = &stageengine.Options{
 			Mode:    stageEngineConfiguredMode(cfg),
