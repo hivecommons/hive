@@ -38,6 +38,10 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	selfAuthorizationHoldActive := s.selfAuthorizationHoldActiveForRepo
 	out := *status
 	out.OverviewBands = &OverviewBands{Issues: IssueBandSpecs(cfg), PRs: PRBandSpecs(cfg)}
+	if s.deps != nil && s.deps.StageEngineStatus != nil {
+		st := s.deps.StageEngineStatus()
+		out.StageEngine = &st
+	}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
 	issues := func(items []any, held bool, repoName string) []any {
 		if items == nil {

@@ -1317,6 +1317,12 @@
     .ham-meta:empty { display: none; }
     .ham-meta .ham-count { color: var(--muted); }
     .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-engine { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--font-mono); }
+    .ham-engine > span { padding: 0 var(--sp-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--radius-sm); }
+    .ham-engine .ham-engine-mode { color: var(--muted); }
+    .ham-engine[data-mode="enforce"] .ham-engine-mode { color: var(--status-ok); }
+    .ham-engine[data-mode="off"] .ham-engine-mode { color: var(--text-faint); }
+    .ham-engine .ham-engine-warn { color: var(--status-error); border-color: var(--status-error); }
     .ham-pager { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
     .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
@@ -13135,6 +13141,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
       return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
     }
+    // The ADR-0025 central stage engine's status strip: mode, shadow
+    // mismatches, admission anomalies (governor.labels.stage.engine.mode).
+    // Hover text on the items only, per the tracker hover rules.
+    function stageTrackerEngineHtml(d) {
+      const e = d && d.engine;
+      if (!e || !e.mode) return '';
+      const mismatches = Number(e.mismatches) || 0;
+      const anomalies = Number(e.anomalies) || 0;
+      const examples = Array.isArray(e.lastMismatchExamples) ? e.lastMismatchExamples : [];
+      const exampleText = examples.length
+        ? ' Latest: ' + examples.map(x => `${x.ref} ${x.kind}: legacy ${x.legacy || '-'} vs engine ${x.engine || '-'}`).join('; ')
+        : '';
+      const modeHelp = { off: 'off: rollback — the sweeps write their own derivation, the engine is inert.', shadow: 'shadow: the engine derives alongside the sweeps, which still write; disagreements are counted.', enforce: 'enforce: the engine derives and writes; its admission table rejects out-of-order transitions.' }[e.mode] || '';
+      return `<span class="ham-engine" data-mode="${esc(e.mode)}">`
+        + `<span class="ham-engine-mode" title="${esc('Central stage engine (ADR-0025). ' + modeHelp + ' ' + (Number(e.derivations) || 0) + ' derivations since start. Settings → Labels → Central stage engine mode.')}">engine ${esc(e.mode)}</span>`
+        + `<span class="ham-engine-mismatch${mismatches ? ' ham-engine-warn' : ''}" title="${esc('Shadow mismatches: items where the engine and the sweep derived different stages (stage_shadow_mismatch_total).' + exampleText)}">${esc(mismatches)} mismatch${mismatches === 1 ? '' : 'es'}</span>`
+        + `<span class="ham-engine-anomaly${anomalies ? ' ham-engine-warn' : ''}" title="${esc('Transition anomalies: stage moves the admission table rejected (stage_transition_anomaly_total).')}">${esc(anomalies)} anomal${anomalies === 1 ? 'y' : 'ies'}</span>`
+        + '</span>';
+    }
     function stageTrackerTickClock() {
       const el = document.querySelector('#activity-monitor-meta .ham-updated');
       if (!el || !_stageTracker) return;
@@ -13181,7 +13206,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       const meta = document.getElementById('activity-monitor-meta');
-      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       if (!visible.length) {
@@ -36062,6 +36087,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled role tier author kind human clanker hive governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode off shadow enforce rollout rollback mismatch anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution' },
@@ -42835,6 +42861,11 @@ function burnAreaChart() {
       const stageStalledQuietOn = (_configState.dirty.labels && _configState.dirty.labels.stage_stalled_require_quiet !== undefined)
         ? _configState.dirty.labels.stage_stalled_require_quiet
         : (_configState.data.stageStalledRequireQuiet !== false);
+      const stageEngineMode = (_configState.dirty.labels && _configState.dirty.labels.stage_engine_mode !== undefined)
+        ? _configState.dirty.labels.stage_engine_mode
+        : (_configState.data.stageEngineMode || 'shadow');
+      const stageEngineModeOptions = [['off', 'off — legacy pass-through (rollback)'], ['shadow', 'shadow — engine derives, legacy writes (default)'], ['enforce', 'enforce — engine writes']]
+        .map(([v, label]) => `<option value="${v}" ${stageEngineMode === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
       const stageGraceOnline = (_configState.dirty.labels && _configState.dirty.labels.stage_grace_online !== undefined)
         ? _configState.dirty.labels.stage_grace_online
         : (_configState.data.stageGraceOnline || '');
@@ -42873,6 +42904,11 @@ function burnAreaChart() {
         <h4 class="mt-6 mb-3">Stage labels</h4>
         <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-decision, ready-for-human-merge, merge-queue), a role/* admission-tier label, an author/* label saying who wrote the PR (human, clanker = a contributor's hive, hive = this hive), and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-engine-mode">Central stage engine mode ${yamlHint('governor.labels.stage.engine.mode')} ${settingHelpMark('settings', 'labels', 'Central stage engine', `ADR-0025: one reconciler derives every stage/NN label through one writer. shadow (default): the engine derives alongside the sweeps' own logic, writes what the sweeps derived, and counts each disagreement (stage_shadow_mismatch_total, Activity tracker strip, /api/status.stageEngine). enforce: the engine's derivation is written and its admission table rejects out-of-order transitions. off: rollback — the sweeps' derivation is written verbatim and the engine is inert. Rollout gate: run shadow for 48h with zero unexplained mismatches before enforce. Takes effect on the next sweep, no restart.`)}</label>
+          <select id="cfg-stage-engine-mode" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_engine_mode" data-arg-types="s,s,v">${stageEngineModeOptions}</select>
+          <div class="config-help">Rollout: <code>shadow</code> for 48h with no unexplained mismatches, then <code>enforce</code>. Rollback: <code>off</code>. No restart needed.</div>
+        </div>
         <div class="config-field">
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
           <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, needs-author=24h, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">

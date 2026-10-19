@@ -68,6 +68,7 @@ import (
 	"github.com/hivecommons/hive/pkg/sessionprune"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/toolapprove"
@@ -1441,6 +1442,7 @@ func (b *boot) wireBootClosures() {
 			LinearStoredViewerID: linearStoredViewerID,
 			Governor:             b.gov,
 			GHClient:             b.ghClient,
+			StageEngineStatus:    func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
 			ReviewEvents:         b.reviewEvents,
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
@@ -2331,6 +2333,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
+		StageEngine:             stageEngineOptions(b.cfg, b.logger),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
@@ -3896,6 +3899,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 		}
 		syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
+		syncStageEngineMode(b.cfg, b.ghClient, b.logger)
 		b.gov.UpdateConfig(b.cfg.Governor)
 		if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
 			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
@@ -8824,7 +8828,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
 		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
+		StageEngine:             stageEngineOptions(cfg, logger),
 	}
+	syncStageEngineMode(cfg, ghClient, logger)
 	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
 	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
 	// interface.
@@ -9358,7 +9364,8 @@ func applyDuplicatePRGuard(
 	// pass, so bound the sync; a paced request whose slot would miss the
 	// deadline fails fast and the best-effort sync retries next cycle.
 	stageCtx, stageCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
-	res := github.SyncIssueStageLabels(stageCtx, ghClient, actionable, nil, time.Now(), logger)
+	syncStageEngineMode(cfg, ghClient, logger)
+	res := github.SyncIssueStageLabelsWith(stageCtx, ghClient, actionable, nil, time.Now(), logger, stageEngineOptions(cfg, logger))
 	stageCancel()
 	if res.Writes+res.Comments > 0 {
 		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)

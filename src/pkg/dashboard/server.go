@@ -32,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -423,6 +424,10 @@ type StatusPayload struct {
 	// hard-coded in the page so the "Needs human" preset is the same
 	// hard-suppress / hold label set the enumeration parks on.
 	LabelPresets []FrontendLabelPreset `json:"labelPresets,omitempty"`
+	// StageEngine is the ADR-0025 central stage engine's mode and counters
+	// (governor.labels.stage.engine.mode). Filled at serve time from
+	// Dependencies.StageEngineStatus; absent when the hive has no engine.
+	StageEngine *stageengine.Status `json:"stageEngine,omitempty"`
 	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
 	// stale in-progress issues, targets); per-repo blocks sit on each repo.
 	SLA *FrontendSLA `json:"sla,omitempty"`

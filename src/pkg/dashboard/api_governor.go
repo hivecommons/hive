@@ -162,8 +162,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// stage-074 adoption of red contributor PRs.
 		"stageAdoptionEnabled":     cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
 		"stageStalledRequireQuiet": cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
-		"stageGraceOnline":         cfg.Governor.Labels.Stage.ContributorGraceOnline,
-		"stageGraceOffline":        cfg.Governor.Labels.Stage.ContributorGraceOffline,
+		// governor.labels.stage.engine.mode: the ADR-0025 central stage
+		// engine's rollout switch (off | shadow | enforce).
+		"stageEngineMode":   cfg.Governor.Labels.Stage.Engine.EffectiveMode().String(),
+		"stageGraceOnline":  cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline": cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -796,6 +799,8 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageGraceOffline    *string `json:"stage_grace_offline"`
 		// governor.labels.stage.stalled.require_quiet (hivecommons/hive#12534).
 		StageStalledRequireQuiet *bool `json:"stage_stalled_require_quiet"`
+		// governor.labels.stage.engine.mode (ADR-0025): off | shadow | enforce.
+		StageEngineMode *string `json:"stage_engine_mode"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -911,6 +916,13 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.StageEngineMode != nil {
+		probe := config.StageEngineConfig{Mode: strings.TrimSpace(*body.StageEngineMode)}
+		if err := probe.Validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	if body.Labels != nil {
 		filtered := make([]string, 0, len(*body.Labels))
@@ -1006,6 +1018,11 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	if body.StageStalledRequireQuiet != nil {
 		v := *body.StageStalledRequireQuiet
 		s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet = &v
+	}
+	if body.StageEngineMode != nil {
+		// The sweeps re-read this before every pass (cmd/hive
+		// syncStageEngineMode), so the flip takes effect without a restart.
+		s.deps.Config.Governor.Labels.Stage.Engine.Mode = strings.TrimSpace(*body.StageEngineMode)
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)

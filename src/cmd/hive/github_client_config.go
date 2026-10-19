@@ -124,6 +124,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)
+	// The central stage engine (ADR-0025): built here, once per client, so
+	// both sweeps find the same reconciler (stage_engine.go).
+	stageEngineReconciler(b.cfg, client, b.logger)
 	// Invocation-attribution trail (pkg/github/attribution.go): the trailer
 	// gate reads the live cfg pointer (the config watcher swaps contents in
 	// place), so a dashboard flip takes effect on the next creation. The

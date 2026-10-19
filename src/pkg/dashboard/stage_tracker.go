@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -51,6 +52,9 @@ type StageTrackerResponse struct {
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
 	AuthorKindLabels bool `json:"author_kind_labels"`
+	// Engine is the ADR-0025 central stage engine's mode and counters for
+	// the tracker's status strip; absent when the hive has no engine.
+	Engine *stageengine.Status `json:"engine,omitempty"`
 }
 
 // StageTrackerStage is one row of stagelabels.Table as the strip needs it.
@@ -599,6 +603,10 @@ func (s *Server) stageDwellOverrides() map[string]time.Duration {
 func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse {
 	overrides := s.stageDwellOverrides()
 	resp := StageTrackerResponse{GeneratedAt: now, Stages: stageTrackerStages(overrides), Items: []StageTrackerItem{}}
+	if s.deps != nil && s.deps.StageEngineStatus != nil {
+		st := s.deps.StageEngineStatus()
+		resp.Engine = &st
+	}
 	if status == nil {
 		return resp
 	}

@@ -539,6 +539,41 @@ see [contributor-relay.md](contributor-relay.md#what-the-operator-sees-operation
 first cycle after upgrade. Full table, state diagram and migration note:
 [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).
 
+### Central stage engine rollout
+
+Every stage label is derived by one `pkg/stageengine` reconciler behind
+one writer ([ADR-0025](adr/0025-central-stage-engine.md)), built once per
+process and shared by the issue and PR sweeps. The rollout switch is
+`governor.labels.stage.engine.mode` (Settings → Labels → *Central stage
+engine mode*, or `hive.yaml`); the sweeps re-read it before each pass, so
+a change takes effect on the next sweep without a restart, and the hive
+logs one `WARN stage engine: mode changed` per transition.
+
+| mode | behaviour |
+|---|---|
+| `shadow` (default) | engine derives alongside the sweep; the sweep's derivation is written; every disagreement is counted and logged once per `(kind, legacy, engine)` |
+| `enforce` | engine's derivation is written; out-of-order transitions are rejected and counted as anomalies |
+| `off` | rollback — the sweep's derivation is written verbatim, the engine is inert |
+
+Runbook:
+
+1. Run `shadow` for 48h. Watch `/api/status.stageEngine`
+   (`mode`, `derivations`, `mismatches`, `anomalies`,
+   `lastMismatchExamples[≤5]`), the strip at the top of the activity
+   tracker (`engine shadow · N mismatches · N anomalies`) and
+   `hive_stage_shadow_mismatch_total{kind,legacy,engine}` on `/metrics`.
+2. Investigate every distinct mismatch pair; an item where the engine is
+   right is a legacy fix, an item where legacy is right is a deriver fix.
+   The gate is 48h with zero unexplained mismatches.
+3. Set `enforce`. Watch `hive_stage_transition_anomaly_total{kind,from,to}`
+   and `hive_stage_duplicate_pills_healed_total{kind}`; anomalies should
+   stay at the baseline shadow showed.
+4. Rollback at any step: set `off` — the sweeps write exactly what they
+   derived before the engine existed. `shadow` is a safe intermediate.
+
+The remaining series are `hive_stage_derivations_total{kind,stage}` and
+`hive_stage_writer_writes_total{kind,op}`.
+
 ## Shared-CI rerun sweep (`shared_ci_rerun`)
 
 When a fix lane defers a red PR to a `[shared-ci] <check> failing across

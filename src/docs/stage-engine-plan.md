@@ -150,6 +150,12 @@ so the import would cycle; `TestClaimLabelConstantsMatchStages` in
 
 ## PR-E — `stage_engine.mode` flag, shadow→enforce rollout, migration, docs (after A, B, C)
 
+Landed (hivecommons/hive#13010): `cmd/hive/stage_engine.go` builds the one
+`stageengine.Options`, `Client.StageReconciler` the one reconciler; the mode
+is a runtime switch (`stageengine.ModeSwitch`) re-read before each sweep,
+`off` is legacy pass-through; `/api/status.stageEngine` and the tracker strip
+report mode / mismatches / anomalies. The original scope follows.
+
 - `src/pkg/config`: `governor.labels.stage.engine.mode` (`off|shadow|enforce`,
   default `shadow`); Settings → Labels tab exposes it; `hivectl config`
   validation.
