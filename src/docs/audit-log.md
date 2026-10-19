@@ -123,6 +123,20 @@ Reads that need history beyond the current file must walk the rotated and `.gz`
 backups. `OutputActionsSince` does this, with a decompression cap that bounds a
 malicious or corrupt `.gz` — see [security](security.md).
 
+### Spill files during a rolling update
+
+A hosted spoke rolls with `maxSurge: 1`, so two pods briefly share the
+ReadWriteMany `/data`. NFSv3 cannot make two writers' appends to one file safe,
+so only the pod holding `/data/audit-writer.lease` (renewed every 10s, stale
+after 45s, released on shutdown) appends to `audit.jsonl`. The other pod writes
+to `/data/audit-spill-<pod>-<start>.jsonl`; the lease holder appends those
+entries to `audit.jsonl` and deletes the spill once it takes over (its own
+spill) or once a spill has not been written for 45s (another pod's). A spill
+file that lingers is therefore unmerged audit data, not garbage — `grep
+/data/audit*.jsonl` covers both, and the readers that walk rotated backups
+already include it (#13046). Merged entries keep their original `ts`, so
+`audit.jsonl` is not strictly time-ordered across a rollout.
+
 ## `GET /api/audit`
 
 The dashboard serves recent entries at `GET /api/audit`

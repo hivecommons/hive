@@ -162,6 +162,14 @@ type AuditLog struct {
 	// they persist; "" keeps them in memory only (no /data volume, tests).
 	prCounters     PRThroughputCounters
 	prCountersPath string
+	// Writer lease state (#13046, audit_writer_lease.go). logPath is the
+	// canonical audit.jsonl; "" (bare struct literals, no /data) disables the
+	// lease entirely and writer is used as-is.
+	logPath       string
+	writerID      string
+	owner         bool
+	leaseReleased bool
+	stopLease     chan struct{}
 }
 
 func newAuditLog() *AuditLog {
@@ -172,15 +180,10 @@ func newAuditLog() *AuditLog {
 
 	dir := "/data"
 	if _, err := os.Stat(dir); err == nil {
-		a.writer = &lumberjack.Logger{
-			Filename:   auditLogPath,
-			MaxSize:    auditMaxSizeMB,
-			MaxBackups: auditMaxBackups,
-			MaxAge:     auditMaxAgeDays,
-			Compress:   true,
-		}
+		a.initWriterLease(auditLogPath, auditWriterID())
 		a.loadFromDisk()
 		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
+		go a.runWriterLease(a.stopLease)
 	}
 
 	return a
@@ -631,6 +634,15 @@ func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string)
 // config watcher, startup, login detector).
 func (s *Server) AuditLog(user, action, detail, agent string) {
 	s.audit.Log(user, action, detail, agent)
+}
+
+// ReleaseAuditWriter hands the shared audit.jsonl to the replacement pod at
+// shutdown (#13046); see AuditLog.ReleaseWriterLease.
+func (s *Server) ReleaseAuditWriter() {
+	if s == nil {
+		return
+	}
+	s.audit.ReleaseWriterLease()
 }
 
 // AuditLogRecord records a hive-mediated GitHub write with its typed repo and

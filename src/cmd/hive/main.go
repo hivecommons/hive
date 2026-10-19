@@ -2795,6 +2795,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Hand /data/audit.jsonl to the replacement pod (#13046): during the
+	// maxSurge overlap only the lease holder may append to it on NFS, so this
+	// pod's remaining entries go to its spill file for the new holder to merge.
+	b.preShutdownHooks.add("release-audit-writer", func() {
+		b.dashSrv.ReleaseAuditWriter()
+	})
 	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
 	// #12363). Report-only: it writes evidence files and never touches merge
 	// eligibility.
