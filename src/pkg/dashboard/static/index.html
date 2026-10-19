@@ -2947,6 +2947,7 @@
     .feedback-diagnostics-fieldset legend { padding:0 var(--sp-2); font-weight:700; }
     .feedback-check { display:flex; align-items:flex-start; gap:var(--sp-3); margin-bottom:var(--sp-3); color:var(--text); }
     .feedback-option-extra { color:var(--muted); }
+    .feedback-prefill-url { width:100%; margin-top:var(--sp-2); font-family:var(--font-mono); font-size:var(--fs-xs); }
     .feedback-disclosure-list { margin:var(--sp-4) 0 0; padding-left:var(--sp-7); color:var(--muted); line-height:1.45; }
     .feedback-disclosure-list li { margin:var(--sp-2) 0; }
     /* FAQ section (#faq-panel): token-only classes, no inline styles (faq_ui_test.go). */
@@ -7191,15 +7192,14 @@
     function updateFeedbackAttributionLine() {
       const el = document.getElementById('feedback-attribution-line'); if (!el) return;
       const status = window._feedbackStatus || {};
-      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'your browser on GitHub');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
       // A verified login wins over the typed one; a typed login is only ever self-reported.
       const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
       const hive = status.hive_id || ((window._lastStatus || {}).hiveId) || 'unknown';
-      let line = 'Will be opened as ' + credential;
-      if (credential.toLowerCase() !== user.toLowerCase()) line += ' on behalf of ' + user;
-      line += ' · hive ' + hive + ' (' + feedbackHubLabel(status) + ')';
-      el.textContent = line;
+      // Zero-scope handoff (#1927): the hive never files the issue. It stores the
+      // diagnostic bundle with its GitHub App and opens a prefilled issue the
+      // user submits as themselves — no OAuth scope is ever requested.
+      el.textContent = 'Opens a prefilled GitHub issue for you to submit as yourself (attributed to ' + user + ') · diagnostic bundle stored by the hive\u2019s GitHub App · hive ' + hive + ' (' + feedbackHubLabel(status) + ')';
     }
     function feedbackPlaceholder(type) { return type === 'feature' ? 'What would you like Hive to do?\n\nWhy would it help your workflow?\n\nAny examples or constraints?' : 'What happened?\n\nWhat did you expect?\n\nSteps to reproduce:\n1.\n2.\n3.'; }
     function renderFeedbackDiagnosticsDisclosure() {
@@ -7243,7 +7243,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
-            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.</span></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Optional. Used only to attribute you in the prefilled issue text; you submit the issue on GitHub as yourself.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -7499,12 +7499,6 @@
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
-        const status = window._feedbackStatus || {};
-        if (!status.credential_login && !status.hub_linked && !feedbackGitHubLogin(status.submitter_login) && !feedbackGitHubLogin(rawUsername)) {
-          if (usernameField) { usernameField.required = true; usernameField.focus(); usernameField.setCustomValidity('Enter your GitHub username to open the prefilled issue on GitHub.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
-          showToast('Enter your GitHub username to open the issue on GitHub', 'error');
-          return;
-        }
         if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
           if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
           showToast('Enter a valid GitHub username, or leave it blank', 'error');
@@ -7516,14 +7510,44 @@
         const r = await fetch('/api/feedback/report', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (!data.prefill_url) throw new Error('the hive did not return a prefilled issue link');
         try { localStorage.removeItem(FEEDBACK_DRAFT_KEY); } catch {}
-        const result = document.getElementById('feedback-result');
-        if (data.issue_url) result.innerHTML = '<div class="feedback-success">Created issue: <a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(data.issue_url) + '">#' + escapeHtml(String(data.issue_number || '')) + '</a></div>';
-        else if (data.fallback_url) result.innerHTML = '<div class="feedback-success">GitHub auth is unavailable for automatic filing. <a class="hv-btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(data.fallback_url) + '">Open prefilled issue</a><p>Paste screenshots manually on GitHub.</p></div>';
-        showToast('Feedback ready', 'success');
+        renderFeedbackPrefillResult(data);
         loadFeedbackReports(false);
       } catch (e) { showToast('Feedback failed: ' + e.message, 'error'); }
       finally { if (btn) btn.disabled = false; }
+    }
+    // Zero-scope handoff (#1927): open the prefilled GitHub issue in a new tab so
+    // the user submits it as themselves. Popup blockers (and users who are not
+    // signed in to GitHub) get the same URL as a copyable link, never a silent
+    // failure. The bundle link is shown too, so nothing depends on the popup.
+    function renderFeedbackPrefillResult(data) {
+      const result = document.getElementById('feedback-result'); if (!result) return;
+      const prefill = String(data.prefill_url || '');
+      let opened = null;
+      // No 'noopener' feature here: Chrome returns null for it even on success, which
+      // would misreport a blocked popup. Sever the opener manually instead.
+      try { opened = window.open(prefill, '_blank'); if (opened) opened.opener = null; } catch (e) { opened = null; }
+      const blocked = !opened;
+      let html = '<div class="feedback-success">';
+      html += blocked
+        ? '<strong>Your browser blocked the new tab.</strong> Open the prefilled issue yourself and submit it on GitHub as you:'
+        : 'A prefilled GitHub issue opened in a new tab — review it and press <strong>Submit new issue</strong> there. If the tab did not appear:';
+      html += ' <a class="hv-btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(prefill) + '">Open prefilled issue</a>';
+      html += ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyFeedbackPrefillURL">Copy link</button>';
+      html += '<input id="feedback-prefill-url" class="feedback-prefill-url" type="text" readonly value="' + escapeHtml(prefill) + '">';
+      if (data.bundle_url) html += '<p>Diagnostic bundle (stored by the hive\u2019s GitHub App, linked from the issue): <a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(String(data.bundle_url)) + '">' + escapeHtml(String(data.bundle_url)) + '</a></p>';
+      if (data.warning) html += '<p class="feedback-option-extra">' + escapeHtml(String(data.warning)) + '</p>';
+      html += '</div>';
+      result.innerHTML = html;
+      showToast(blocked ? 'Popup blocked — use the link to open the issue' : 'Prefilled issue opened on GitHub', blocked ? 'error' : 'success');
+    }
+    function copyFeedbackPrefillURL() {
+      const input = document.getElementById('feedback-prefill-url'); if (!input) return;
+      const v = input.value;
+      const done = function() { showToast('Link copied', 'success'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done, function() { input.select(); document.execCommand('copy'); done(); });
+      else { input.select(); document.execCommand('copy'); done(); }
     }
     async function loadFeedbackReports(markSeen) {
       try {

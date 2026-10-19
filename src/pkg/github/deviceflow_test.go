@@ -1,9 +1,13 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -195,28 +199,45 @@ func TestStartDeviceFlowRequestsNoScopeByDefault(t *testing.T) {
 	}
 }
 
-// TestStartDeviceFlowWithScopeOptIn confirms the explicit opt-in path still
-// requests the narrow feedback scope, and that whitespace-only means none.
-func TestStartDeviceFlowWithScopeOptIn(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{DeviceScopeFeedback, "scope=public_repo"},
-		{"  ", ""},
-	} {
-		var form string
-		withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
-			b, _ := io.ReadAll(req.Body)
-			form = string(b)
-			return jsonBodyResponse(200, DeviceFlowState{DeviceCode: "c", UserCode: "u", Interval: 5}), nil
-		}, func() {
-			if _, err := StartDeviceFlowWithScope("cid", "", "", tc.in); err != nil {
-				t.Fatalf("error: %v", err)
+// TestDashboardLoginNeverRequestsRepoScope is the source-level guard for
+// #1927: no code on the dashboard login path may ask GitHub for a repository
+// scope. tokenscopes.go legitimately names "public_repo" because it CHECKS
+// the scopes of an operator PAT; it never requests them, so it is excluded.
+func TestDashboardLoginNeverRequestsRepoScope(t *testing.T) {
+	files := []string{
+		"deviceflow.go",
+		filepath.Join("..", "dashboard", "api_auth.go"),
+		filepath.Join("..", "dashboard", "session.go"),
+		filepath.Join("..", "dashboard", "server.go"),
+		filepath.Join("..", "hub", "oauth.go"),
+	}
+	forbidden := []*regexp.Regexp{
+		regexp.MustCompile(`"public_repo"`),
+		regexp.MustCompile(`"repo"`),
+		regexp.MustCompile(`scope=(public_)?repo\b`),
+		regexp.MustCompile(`"scope",\s*\{?"[^"]+"`),
+		regexp.MustCompile(`Set\("scope",\s*"[^"]+"\)`),
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
 			}
-		})
-		if tc.want == "" && strings.Contains(form, "scope") {
-			t.Errorf("scope %q: expected no scope field, got %q", tc.in, form)
+			t.Fatal(err)
 		}
-		if tc.want != "" && !strings.Contains(form, tc.want) {
-			t.Errorf("scope %q: want %q in form %q", tc.in, tc.want, form)
+		for _, re := range forbidden {
+			if loc := re.FindIndex(b); loc != nil {
+				line := 1 + bytes.Count(b[:loc[0]], []byte("\n"))
+				t.Errorf("%s:%d requests a GitHub OAuth scope on the login path (%s); dashboard login must stay scope-free (#1927)", f, line, re)
+			}
 		}
+	}
+	src, err := os.ReadFile("deviceflow.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`deviceScope\s*=\s*""`).Match(src) {
+		t.Fatal(`deviceflow.go must keep deviceScope = "" (#1927)`)
 	}
 }

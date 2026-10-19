@@ -88,20 +88,14 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 	// a blank oauth_client_id and never uses a GHE client.
 	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
 
-	// Plain login requests NO OAuth scope (issue #1927): the token only proves
-	// identity. The single opt-in is {"scope":"feedback"}, which the feedback
-	// modal may send so issues can be authored as the submitter; anything else
-	// (absent, empty, unknown) is the no-scope login.
-	var startReq struct {
-		Scope string `json:"scope"`
-	}
-	_ = decodeBody(r, &startReq) // absent/invalid body means plain login
-	scope := deviceFlowScopeFor(startReq.Scope)
-
+	// Login requests NO OAuth scope (issue #1927): the token only proves
+	// identity. There is no opt-in for more — feedback issues are opened by the
+	// user in their own browser via a prefilled URL, so the hive never needs a
+	// user token that can write.
 	s.deviceFlowMu.Lock()
 	defer s.deviceFlowMu.Unlock()
 
-	state, err := github.StartDeviceFlowWithScope(clientID, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL(), scope)
+	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -120,7 +114,7 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.deviceFlowState = state
 	s.deviceFlowID = flowID
-	s.auditFromRequest(r, "gh_auth_start", auditDetail("scope", scope), "")
+	s.auditFromRequest(r, "gh_auth_start", "", "")
 	jsonResponse(w, map[string]interface{}{
 		"user_code":        state.UserCode,
 		"verification_uri": state.VerificationURI,
@@ -128,20 +122,6 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 		"interval":         state.Interval,
 		"flow_id":          flowID,
 	})
-}
-
-// deviceFlowScopeOptInFeedback is the only value /api/gh-user-auth/start
-// accepts in its "scope" field. It maps to github.DeviceScopeFeedback.
-const deviceFlowScopeOptInFeedback = "feedback"
-
-// deviceFlowScopeFor maps the client's opt-in keyword to the GitHub OAuth scope
-// to request. Everything except the explicit feedback opt-in yields "" so that
-// viewing a dashboard never asks for repository access (#1927).
-func deviceFlowScopeFor(optIn string) string {
-	if strings.EqualFold(strings.TrimSpace(optIn), deviceFlowScopeOptInFeedback) {
-		return github.DeviceScopeFeedback
-	}
-	return ""
 }
 
 // newDeviceFlowID mints the opaque per-flow secret handed to the client that
@@ -181,7 +161,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
-	token, status, scope, err := github.PollDeviceFlowWithScope(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
+	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
 		s.deviceFlowID = ""
@@ -243,11 +223,13 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		role = resolvedRole
 	}
 
-	// The login token stays bound to THIS per-user session. Plain login
-	// requested no scope, so it can only prove identity; only when the user
-	// opted into the feedback scope (and GitHub granted public_repo/repo) is it
-	// used to create feedback issues as the submitter. It is never installed as
-	// the hive's shared GitHub identity (#1927).
+	// The login token is used ONLY to prove identity (username + role, above).
+	// It is deliberately NOT persisted, NOT stored on the session and NOT
+	// installed as a hive write identity: every GitHub write goes through the
+	// App installation token, and feedback issues are opened by the user in
+	// their own browser. This is what lets the device flow request no scope at
+	// all (issue #1927) — a viewer or owner logging in no longer has to grant
+	// any repository access just to look at a dashboard.
 
 	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username, "role", role)
 
@@ -261,7 +243,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// rejected the request and the login page bounced forever (same failure
 	// handleSSO fixed). The session store is the authority on identity here and
 	// does not depend on a shared token existing.
-	sid := s.createUserSessionWithToken(username, role, token, scope)
+	sid := s.createUserSession(username, role)
 	if sid == "" {
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
 		return

@@ -21,6 +21,7 @@ github.com/hivecommons/hive/pkg/dashboard
 github.com/hivecommons/hive/pkg/decisionpolicy
 github.com/hivecommons/hive/pkg/defsrc
 github.com/hivecommons/hive/pkg/evidence
+github.com/hivecommons/hive/pkg/feedbackbundle
 github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/github

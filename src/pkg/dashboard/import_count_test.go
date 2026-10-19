@@ -39,8 +39,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// hivecommons/hive#13009), plus pkg/decisionpolicy so the contribute hub
 	// shares the one needs-decision classifier with the issue watcher when a
 	// contributor parks on the target repo's own confirmation gate
-	// (hivecommons/hive#13059).
-	const maxDashboardInternalImports = 52
+	// (hivecommons/hive#13059), plus pkg/feedbackbundle, the single
+	// implementation of diagnostic-bundle storage and prefilled-issue URL
+	// building shared by the spoke and the hub so dashboard login can stay
+	// scope-free (hivecommons/hive#1927).
+	const maxDashboardInternalImports = 53
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
