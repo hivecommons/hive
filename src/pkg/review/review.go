@@ -149,6 +149,13 @@ type PerspectiveReport struct {
 	// mislabeled requires_human engineering findings back to the fixer lane
 	// without storing the whole PR review body in the durable verdict file.
 	ConcreteRemediation bool `json:"concrete_remediation,omitempty"`
+	// PermissionsTighteningOnly is set by the relay when
+	// WorkflowPermissionsTighteningOnly proved the PR's diff only removes or
+	// narrows workflow `permissions:` scopes. It suppresses the direction-blind
+	// permissions-credentials and sensitive-paths risk classes (and the
+	// "permission"/"privilege" escalation terms) for this report; every other
+	// risk class still parks the PR (hivecommons/hive#13068).
+	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -202,6 +209,9 @@ type Aggregate struct {
 	// artifact. It exists so stale entries (PRs long since merged or closed)
 	// can be pruned instead of accumulating forever.
 	RecordedAt time.Time `json:"recorded_at,omitempty"`
+	// PermissionsTighteningOnly mirrors the reports' flag so Normalize judges
+	// risk escalation with the same carve-out AggregateReports did.
+	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
 }
 
 type PerspectiveFinding struct {
@@ -266,6 +276,16 @@ func ValidateReportFor(raw []byte, set PerspectiveSet) (*PerspectiveReport, erro
 }
 
 func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggregate {
+	agg := aggregateReports(reports, opts)
+	if agg.PermissionsTighteningOnly && agg.Verdict != VerdictRequiresHuman {
+		// The suppression removed a human hold; say so where the verdict is
+		// read (review-verdicts.json, stage comments) so it is auditable.
+		agg.Reasons = append(agg.Reasons, PermissionsTighteningReason)
+	}
+	return agg
+}
+
+func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggregate {
 	threshold := opts.HumanThreshold
 	if threshold == "" {
 		threshold = DefaultHumanThreshold
@@ -290,6 +310,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	agg.HiveAuthoredKnown = true
 	agg.HiveAuthored = reportsHiveAuthored(reports)
+	agg.PermissionsTighteningOnly = reportsPermissionsTighteningOnly(reports)
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
 	var decisionQuestion string
@@ -559,16 +580,29 @@ func aggregateHasConcreteRemediation(a Aggregate) bool {
 }
 
 func aggregateRequiresRiskEscalation(a Aggregate) bool {
-	if _, risk := DecisionQuestionRiskClass(a.DecisionQuestion); risk {
+	tightening := a.PermissionsTighteningOnly
+	if _, risk := DecisionQuestionRiskClassFor(a.DecisionQuestion, tightening); risk {
 		return true
 	}
 	for _, text := range append(append([]string{}, a.Reasons...), a.HumanSummaries...) {
-		if containsRiskEscalationTerm(text) {
+		if text == PermissionsTighteningReason {
+			continue
+		}
+		if containsRiskEscalationTermFor(text, tightening) {
 			return true
 		}
 	}
 	for _, f := range a.Findings {
-		if containsRiskEscalationTerm(f.Finding.Title) || containsRiskEscalationTerm(f.Finding.Summary) {
+		if containsRiskEscalationTermFor(f.Finding.Title, tightening) || containsRiskEscalationTermFor(f.Finding.Summary, tightening) {
+			return true
+		}
+	}
+	return false
+}
+
+func reportsPermissionsTighteningOnly(reports []PerspectiveReport) bool {
+	for _, r := range reports {
+		if r.PermissionsTighteningOnly {
 			return true
 		}
 	}
@@ -618,14 +652,15 @@ func reportHasConcreteRemediation(r PerspectiveReport) bool {
 }
 
 func reportRequiresRiskEscalation(r PerspectiveReport) bool {
-	if _, risk := DecisionQuestionRiskClass(r.DecisionQuestion); risk || r.DecisionRiskHigh {
+	tightening := r.PermissionsTighteningOnly
+	if _, risk := DecisionQuestionRiskClassFor(r.DecisionQuestion, tightening); risk || r.DecisionRiskHigh {
 		return true
 	}
-	if containsRiskEscalationTerm(r.Summary) {
+	if containsRiskEscalationTermFor(r.Summary, tightening) {
 		return true
 	}
 	for _, f := range r.Findings {
-		if containsRiskEscalationTerm(f.Title) || containsRiskEscalationTerm(f.Summary) {
+		if containsRiskEscalationTermFor(f.Title, tightening) || containsRiskEscalationTermFor(f.Summary, tightening) {
 			return true
 		}
 	}
@@ -659,11 +694,21 @@ func RiskEscalationText(text string) bool {
 }
 
 func containsRiskEscalationTerm(text string) bool {
+	return containsRiskEscalationTermFor(text, false)
+}
+
+// containsRiskEscalationTermFor is containsRiskEscalationTerm with the
+// permissions-tightening carve-out: on a PR whose diff only narrows workflow
+// permissions, prose that merely names permissions is not an escalation.
+func containsRiskEscalationTermFor(text string, permissionsTighteningOnly bool) bool {
 	q := strings.ToLower(strings.TrimSpace(text))
 	if q == "" {
 		return false
 	}
 	for _, term := range riskEscalationTerms() {
+		if permissionsTighteningOnly && permissionsTighteningSuppressedTerms[term] {
+			continue
+		}
 		if strings.Contains(q, term) {
 			return true
 		}
@@ -721,7 +766,7 @@ func selfAuthoredDecisionResolvable(r PerspectiveReport) bool {
 	if q == "" || r.DecisionRiskHigh {
 		return false
 	}
-	_, risk := DecisionQuestionRiskClass(q)
+	_, risk := DecisionQuestionRiskClassFor(q, r.PermissionsTighteningOnly)
 	return !risk
 }
 
@@ -808,11 +853,24 @@ var DecisionRiskClasses = []DecisionRiskClass{
 // DecisionQuestionRiskClass classifies a reviewer decision question against
 // DecisionRiskClasses and returns the first class it lands in.
 func DecisionQuestionRiskClass(question string) (string, bool) {
+	return DecisionQuestionRiskClassFor(question, false)
+}
+
+// DecisionQuestionRiskClassFor is DecisionQuestionRiskClass with the
+// permissions-tightening carve-out (hivecommons/hive#13068): when the PR's
+// workflow diff was proved to only narrow `permissions:`, the
+// direction-blind permissions-credentials and sensitive-paths classes are
+// skipped, so "confirm the permissions narrowing is acceptable" is the
+// hive's own call. Every other class still applies to the same question.
+func DecisionQuestionRiskClassFor(question string, permissionsTighteningOnly bool) (string, bool) {
 	q := strings.ToLower(strings.TrimSpace(question))
 	if q == "" {
 		return "", false
 	}
 	for _, class := range DecisionRiskClasses {
+		if permissionsTighteningOnly && permissionsTighteningSuppressedClasses[class.Name] {
+			continue
+		}
 		for _, term := range class.Terms {
 			if strings.Contains(q, term) {
 				return class.Name, true

@@ -2,6 +2,7 @@ package github
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -103,7 +104,7 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 		pending,
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 1 {
@@ -143,7 +144,7 @@ func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 	}}})
 	body := "Looks correct, but this is a maintainer decision.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this groundwork lands before its consumer. -->"
 
-	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
 
 	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
 		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
@@ -178,7 +179,7 @@ func TestRecordReviewVerdictMarksConcreteRemediationFromBody(t *testing.T) {
 	}}})
 	body := "The new LaneQueuedWork field is plumbed but never populated. Add the producer in AgentActivityFor or reword the changelog."
 
-	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
 
 	if len(recorded) != 1 || !recorded[0].HiveAuthored || !recorded[0].ConcreteRemediation {
 		t.Fatalf("recorded = %+v, want hive-authored concrete remediation", recorded)
@@ -207,7 +208,7 @@ func TestRecordReviewVerdictRejectsMissingBodyDigestForBodyBoundDispatch(t *test
 		Dispatched:  time.Now().UTC(),
 	}}})
 
-	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
 
 	if len(recorded) != 0 {
 		t.Fatalf("recorded = %+v, want missing body digest rejected", recorded)
@@ -228,7 +229,7 @@ func TestRecordReviewVerdictRejectsMismatchedBodyDigest(t *testing.T) {
 		Dispatched:  time.Now().UTC(),
 	}}})
 
-	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+	recorded := c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
 
 	if len(recorded) != 0 {
 		t.Fatalf("recorded = %+v, want mismatched body digest rejected", recorded)
@@ -271,7 +272,7 @@ func TestRecordReviewVerdictRejectsMismatchedTarget(t *testing.T) {
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSON(t, "projectbluefin/other", 9999, "correctness", "reject")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 0 {
@@ -291,7 +292,7 @@ func TestRecordReviewVerdictAcceptsRecentConfirmedDispatch(t *testing.T) {
 		Confirmed:   time.Now().UTC(),
 	}}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "sec-check", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "sec-check", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix)); len(matches) != 1 {
 		t.Fatalf("recent confirmed dispatch verdict was not recorded: %v", matches)
@@ -304,7 +305,7 @@ func TestRecordReviewVerdictRejectsNoDispatch(t *testing.T) {
 	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
 	withVerdictDispatchState(t, review.DispatchState{})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("verdict without dispatch was recorded: %v", matches)
@@ -323,7 +324,7 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWithoutDispatchState(t *testin
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "approve", "abc123")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
@@ -343,7 +344,7 @@ func TestRecordReviewVerdictAcceptsAdvisoryVerdictWhenDispatchStateHasNoMatch(t 
 		pendingVerdict("o/r", 2, review.PerspectiveSecurity, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
@@ -367,7 +368,7 @@ func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchMatch(t *testing.T)
 		pendingVerdict("o/r", 1, review.PerspectiveSecurity, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("non-reviewer verdict without dispatch was recorded: %v", matches)
@@ -386,7 +387,7 @@ func TestRecordReviewVerdictRejectsNonReviewerWithoutDispatchState(t *testing.T)
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSONWithHead(t, "o/r", 1, "correctness", "reject", "abc123")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "docs-writer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("non-reviewer verdict without dispatch state was recorded: %v", matches)
@@ -406,12 +407,12 @@ func TestRecordReviewVerdictHonoursConfiguredReviewerSet(t *testing.T) {
 	}}
 	withVerdictDispatchState(t, review.DispatchState{})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("lane outside reviewer_agents was recorded: %v", matches)
 	}
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "auditor", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "auditor", Report: validVerdictJSONWithHead(t, "o/r", 1, "security", "approve", "abc123")}, reportDir)
 	artifact, err := review.Collect(reportDir, review.AggregateOptions{})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -433,7 +434,7 @@ func TestRecordReviewVerdictRejectsAdvisoryVerdictWithoutHead(t *testing.T) {
 	c := &Client{logger: testLogger()}
 	raw := validVerdictJSON(t, "o/r", 1, "correctness", "approve")
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, reportDir)
 
 	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
 		t.Fatalf("headless advisory verdict was recorded: %v", matches)
@@ -448,7 +449,7 @@ func TestRecordReviewVerdictRejectsWrongPerspective(t *testing.T) {
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("wrong-perspective verdict was recorded: %v", matches)
@@ -463,7 +464,7 @@ func TestRecordReviewVerdictRejectsWrongAgent(t *testing.T) {
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "assigned-reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "other-reviewer", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("wrong-agent verdict was recorded: %v", matches)
@@ -478,7 +479,7 @@ func TestRecordReviewVerdictRejectsAuthorSelfApproval(t *testing.T) {
 	pending.AuthorAgent = "author-agent"
 	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{pending}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
 
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("author self-approval verdict was recorded: %v", matches)
@@ -501,7 +502,7 @@ func TestRecordReviewVerdictRejectsAuthorSelfApprovalFromAuditTrail(t *testing.T
 		pendingVerdict("o/r", 1, review.PerspectiveCorrectness, "author-agent"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "author-agent", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 0 {
@@ -576,7 +577,7 @@ func TestRecordReviewVerdictRejectsMalformed(t *testing.T) {
 		"bad verdict":    strings.Replace(validVerdictJSON(t, "o/r", 1, "correctness", "approve"), `"approve"`, `"merge_it"`, 1),
 		"bad perspectve": strings.Replace(validVerdictJSON(t, "o/r", 1, "correctness", "approve"), `"correctness"`, `"vibes"`, 1),
 	} {
-		c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1, Report: raw}, dir)
+		c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Report: raw}, dir)
 		if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 			t.Fatalf("%s: malformed verdict was written: %v", name, matches)
 		}
@@ -606,7 +607,7 @@ func TestRecordReviewVerdictDoesNotEscapeDir(t *testing.T) {
 		pendingVerdict(evil, 1, review.PerspectiveCorrectness, "reviewer"),
 	}})
 
-	c.recordReviewVerdict(ReviewRequest{Repo: evil, Number: 1, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: evil, Number: 1, Agent: "reviewer", Report: raw}, dir)
 
 	// The only acceptable outcome is a plain file directly inside dir.
 	var stray []string
@@ -635,7 +636,7 @@ func TestRecordReviewVerdictDoesNotEscapeDir(t *testing.T) {
 func TestRecordReviewVerdictNoReportIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 1}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1}, dir)
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("no-op wrote files: %v", matches)
 	}
@@ -652,9 +653,9 @@ func TestRecordReviewVerdictIsIdempotentPerPerspective(t *testing.T) {
 	}})
 
 	req.Report = validVerdictJSON(t, "o/r", 7, "correctness", "changes_requested")
-	c.recordReviewVerdict(req, dir)
+	c.recordReviewVerdict(context.Background(), req, dir)
 	req.Report = validVerdictJSON(t, "o/r", 7, "correctness", "approve")
-	c.recordReviewVerdict(req, dir)
+	c.recordReviewVerdict(context.Background(), req, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 1 {

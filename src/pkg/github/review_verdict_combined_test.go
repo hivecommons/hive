@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ func TestRecordReviewVerdictFansOutAnArray(t *testing.T) {
 		validVerdictJSON(t, "o/r", 7, "docs-currency", "approve"),
 	}, ",") + "]"
 
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, review.ReviewReportFilePrefix+"*"+review.ReviewReportFileSuffix))
 	if len(matches) != 3 {
@@ -63,7 +64,7 @@ func TestRecordReviewVerdictRejectsWholeArrayOnOneBadElement(t *testing.T) {
 	}})
 	raw := "[" + validVerdictJSON(t, "o/r", 7, "correctness", "approve") + "," +
 		validVerdictJSON(t, "o/r", 8, "security", "approve") + "]" // different PR
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("partial array was written: %v", matches)
 	}
@@ -85,7 +86,7 @@ func TestRecordReviewVerdictBindsEachArrayElementToItsDispatch(t *testing.T) {
 		validVerdictJSONWithHead(t, "o/r", 7, "security", "approve", head),
 		validVerdictJSONWithHead(t, "o/r", 7, "style", "approve", head), // advisory fallback
 	}, ",") + "]"
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 3 {
@@ -108,7 +109,7 @@ func TestRecordReviewVerdictRejectsUndispatchedArrayElementWithoutHead(t *testin
 		validVerdictJSON(t, "o/r", 7, "security", "approve"),
 		validVerdictJSON(t, "o/r", 7, "style", "reject"),
 	}, ",") + "]"
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: raw}, dir)
 
 	matches, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(matches) != 2 {
@@ -137,13 +138,13 @@ func TestRecordReviewVerdictUsesTheHivesPerspectiveSet(t *testing.T) {
 	// Built with the default set for the fixture check, but "api-compat" is not
 	// a default — construct by hand.
 	custom := strings.Replace(validVerdictJSON(t, "o/r", 7, "correctness", "approve"), `"correctness"`, `"api-compat"`, 1)
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: custom}, dir)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: custom}, dir)
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*api-compat*")); len(matches) != 1 {
 		t.Fatalf("hive-defined perspective not recorded: %v", matches)
 	}
 
 	dir2 := t.TempDir()
-	c.recordReviewVerdict(ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: validVerdictJSON(t, "o/r", 7, "security", "approve")}, dir2)
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 7, Agent: "reviewer", Report: validVerdictJSON(t, "o/r", 7, "security", "approve")}, dir2)
 	if matches, _ := filepath.Glob(filepath.Join(dir2, "*")); len(matches) != 0 {
 		t.Fatalf("perspective outside the hive's set was recorded: %v", matches)
 	}

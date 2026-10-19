@@ -265,6 +265,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Use approve only when this perspective finds no IN-SCOPE blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower the verdict.\n")
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
+	b.WriteString(permissionsTighteningGuidance)
 	b.WriteString("A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human. If there are two engineering remedies (for example, add producer code OR reword a changelog), choose the best route yourself and state it as the requested change; do not escalate the choice to a human unless it falls into one of the risk categories above. Intent-alignment cleanup such as trimming a PR summary or changelog fragment that duplicates already-landed work is also changes_requested when the remediation is concrete.\n")
 	if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
@@ -471,6 +472,7 @@ func buildRoutingInstruction(pr PullRequest) string {
 		b.WriteString("Do NOT @-mention the PR author: this PR was opened by an app or bot account, so a mention notifies nobody. The marker line is the routing.\n")
 	}
 	b.WriteString("Before raising a maintainer decision, check the linked issue/spec and the PR body. If the answer is stated there, do not ask: cite it (`per #<issue>: ...`) and judge against it. Raise a decision question only when the answer is genuinely absent AND the choice is a risk class (permissions/tokens/secrets/credentials; security-sensitive paths such as .github/workflows, OWNERS, auth, crypto; data loss, destructive migrations, irreversible actions; merge/trust/ACMM-level/role policy; external side effects such as publishing, releases, billing, outbound email or notifications to humans; licensing/legal). Mark such a question with `<!-- hive-decision-risk: high -->` so it always reaches a person; naming, sequencing, defaults, config shape, scope and changelog wording are the hive's own call on a Hive-authored PR.\n")
+	b.WriteString("A workflow diff that only removes or narrows `permissions:` scopes is NOT a permissions/sensitive-path risk class: do not raise a decision question or mark it high-risk for that reason alone.\n")
 	b.WriteString("Report the limits of your own review. If you could not judge part of this PR — missing context, an unfamiliar subsystem, an ambiguous requirement, a change you cannot test — say so plainly and use requires_human. Naming what you could not verify is more useful than a confident guess, and omitting it is how an unreviewed change gets waved through on the strength of an automated approval.\n")
 	return b.String()
 }
@@ -559,6 +561,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Give each perspective its OWN verdict. Use approve only when THAT perspective finds no in-scope blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower any verdict.\n")
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
+	b.WriteString(permissionsTighteningGuidance)
 	b.WriteString("A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human. If there are two engineering remedies (for example, add producer code OR reword a changelog), choose the best route yourself and state it as the requested change; do not escalate the choice to a human unless it falls into one of the risk categories above. Intent-alignment cleanup such as trimming a PR summary or changelog fragment that duplicates already-landed work is also changes_requested when the remediation is concrete.\n")
 	b.WriteString("A perspective you could not meaningfully assess is requires_human, not approve. Approving a perspective you did not actually consider is the one failure mode that makes this whole review worthless, because it is indistinguishable from having considered it.\n")
 	if opts.PostComments {
@@ -635,6 +638,15 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 	fmt.Fprintf(&b, "%d verdicts as a JSON array, including the clean ones — a perspective missing from the array reads downstream as never reviewed, and the PR comes back to you from scratch.\n", len(perspectives))
 	return b.String()
 }
+
+// permissionsTighteningGuidance is the direction-aware carve-out for the
+// "security" risk class (hivecommons/hive#13068). A reviewer that read
+// "edits workflow permissions" as human-owned risk parked hivecommons/pluk#305,
+// a pure contents: write -> read narrowing with green CI, on a maintainer.
+// The relay proves the same property structurally (WorkflowPermissionsTighteningOnly)
+// and suppresses the permissions classes; this text keeps the model's verdict
+// consistent with that code path instead of fighting it.
+const permissionsTighteningGuidance = "Narrowing GitHub Actions permissions is not a security risk a human must own: a workflow diff that only removes `permissions:` scopes or lowers them (write to read or none, a block replaced by `permissions: {}`) with no new job, step, trigger such as pull_request_target or workflow_run, `uses:` change, `secrets.*`/token reference, or added `id-token: write` is a mechanical reduction — approve it with an advisory note. Any widened or newly granted scope, or a tightening mixed with any other change, stays requires_human.\n"
 
 // findingSchemaInstruction spells out the Finding object field by field. The
 // relay validates the whole report against outputschema and a finding missing
