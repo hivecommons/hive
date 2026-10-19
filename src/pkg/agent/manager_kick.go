@@ -525,7 +525,7 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	if len(agent.deferredMentionKicks) > 0 {
 		next := agent.deferredMentionKicks[0]
 		if agent.pendingStartupKick != "" {
-			m.logger.Info("deferred cadence kick superseded by queued mention kick",
+			m.logger.Info("deferred non-mention kick superseded by queued mention kick",
 				"name", agent.Name, "superseded_trigger", agent.pendingStartupSource, "trigger", next.source)
 		}
 		agent.pendingStartupKick = ""
@@ -1284,9 +1284,10 @@ func (m *Manager) queueDeferredMentionKickLocked(agent *AgentProcess, message, s
 }
 
 // nextDeferredMentionKickLocked substitutes the oldest queued mention kick for
-// a cadence kick being delivered to a running agent, so mentions left over
-// from startup are delivered on the next turn the agent is kickable. Mention
-// kicks themselves are delivered as sent. fromQueue reports whether the
+// any non-mention kick being delivered to a running agent — governor cadence
+// kicks and the default "send-kick" trigger of sourceless callers alike — so
+// mentions left over from startup are delivered on the next turn the agent is
+// kickable. Mention kicks themselves are delivered as sent. fromQueue reports whether the
 // returned kick must be removed from the FIFO once it is delivered.
 //
 // Caller holds m.mu.
@@ -1295,7 +1296,7 @@ func (m *Manager) nextDeferredMentionKickLocked(agent *AgentProcess, message, tr
 		return message, trigger, false
 	}
 	next := agent.deferredMentionKicks[0]
-	m.logger.Info("cadence kick superseded by queued mention kick",
+	m.logger.Info("non-mention kick superseded by queued mention kick",
 		"name", agent.Name, "superseded_trigger", trigger, "trigger", next.source)
 	return next.message, next.source, true
 }
