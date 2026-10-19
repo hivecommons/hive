@@ -127,6 +127,7 @@ package stageengine
 // Ref identifies one forge item. Key() equals stagelabels.Key(owner/repo, number)
 // so Store records keep their identity.
 type Ref struct {
+	Source      string // work source: "github" (default when ""); "jira", "linear", "projects" planned
 	Owner, Repo string
 	Number      int
 	Kind        stagelabels.Item // stagelabels.IssueItem | stagelabels.PRItem
@@ -354,6 +355,27 @@ writer did not derive.
 `stage_transition_anomaly_total{kind,from,to}`, `stage_writer_writes_total{kind,op}`,
 `stage_duplicate_pills_healed_total{kind}`. Exposed on the existing
 `/metrics` path and summarised on the activity tracker's status strip.
+
+## Scope and extension points
+
+**What the engine owns.** Only the *derived* pipeline family: `stage/*`,
+the `author/<kind>` kind label, `role/*`, `dco` / `no-dco` and
+`stage/stalled` / `stage/regressed` — exactly the set `stagelabels.Desired`
+renders. **Signals it consumes but never writes:** `origin/*`, `agent/*`,
+`needs-human`, `approved-direction`, `triage/*`, `good-first-issue`,
+`recommend/*`. They reach the engine as `Facts` (labels, `ParkFacts`,
+`Origin`) and keep their existing writers; the admission test checks only
+the derived family.
+
+**Other work sources (planned extension, out of scope for this epic).**
+Jira, Linear and GitHub Projects (the Settings → *Work Source* tab) are
+reached by keeping `Derive*`, `Reconciler`, `Facts` and `Decision`
+source-agnostic and making the edges per-source: `Ref.Source` names the
+source (`""`/`"github"` today), fact adapters are per-source, and each source
+gets its own `StageWriter` (Jira status/field, Linear state, Projects status
+field) selected by `Ref.Source`. The current epic (#12999) ships only the
+GitHub adapters and writer; `Ref.Source` is carried from PR-B so later
+sources need no signature change.
 
 ## Consequences
 
