@@ -2,6 +2,7 @@ package automerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -187,8 +189,10 @@ func adoptionBlocked(labels []string) string {
 // acts on obs.HeadSHA, so a head that moved since the lane recorded it is
 // refused (head-changed-since-eval) rather than judged by another head's
 // diff; the fetched PR also carries changed_files, so an incomplete list
-// fails closed. A read failure refuses (files-evidence). Both retry on the
-// next sweep.
+// (more files than the API will ever return) is a standing files-evidence
+// refusal with a nil error. A transport failure refuses with the error set,
+// so callers can tell a transient read fault from a verdict; both are
+// re-read on the next sweep.
 func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) (string, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
 	if err != nil {
@@ -198,6 +202,9 @@ func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) 
 		return adoptionReasonHeadChanged, nil
 	}
 	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, pr)
+	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
+		return contributorLaneReasonFilesEvidence, nil
+	}
 	if err != nil {
 		return contributorLaneReasonFilesEvidence, err
 	}
