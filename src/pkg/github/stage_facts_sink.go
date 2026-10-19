@@ -38,9 +38,10 @@ func (c *Client) SetStageFactSink(sink stageengine.FactSink) {
 // shares stagelabels.Shared() with the enumeration cycle, derives with this
 // package's issue deriver (the PR side delegates to whatever cmd/hive
 // registered via stageengine.SetDerivers) and writes through the client's
-// stage labeler. Each submission re-reads the item first (enrichStageFacts)
-// so the derivation and the write plan see the labels and state GitHub has
-// now, not the ones the caller remembers.
+// one StageWriter (stage_writer.go), so a fact racing the sweep on an item
+// queues behind it. Each submission re-reads the item first
+// (enrichStageFacts) so the derivation and the write plan see the labels
+// and state GitHub has now, not the ones the caller remembers.
 func (c *Client) StageFacts() stageengine.FactSink {
 	if c == nil {
 		return nil
@@ -57,7 +58,7 @@ func (c *Client) defaultStageFactSink() stageengine.FactSink {
 	r := stageengine.New(stageengine.Options{
 		Mode:   stageengine.ModeEnforce,
 		Store:  stagelabels.Shared(),
-		Writer: clientStageWriter{c: c},
+		Writer: c.StageWriter(),
 		Issue:  IssueDeriver(),
 		PR:     stageengine.PRDeriver(),
 		Logger: c.logger,
@@ -80,28 +81,6 @@ func (c *Client) IssueStageRef(repo string, number int) stageengine.Ref {
 // PRStageRef is the engine Ref for a pull request of repo.
 func (c *Client) PRStageRef(repo string, number int) stageengine.Ref {
 	return c.stageRef(repo, number, stagelabels.PRItem)
-}
-
-// clientStageWriter is the stageengine.StageWriter behind the default sink
-// until the single StageWriter of plan PR-C owns every write: it is
-// stagelabels.Enforce over Client.StageLabeler, i.e. the same journaled
-// read-then-write the retired claim-hook helper used. An out-of-cycle
-// Decision carries no role or health opinion (its deriver saw a fact, not
-// the lanes), so the role and `stalled` the item already wears are kept,
-// exactly as the retired EnforceStage path kept them.
-type clientStageWriter struct{ c *Client }
-
-func (w clientStageWriter) Apply(ctx context.Context, ref stageengine.Ref, hint []string, want stagelabels.Desired) (stagelabels.Outcome, error) {
-	if w.c == nil {
-		return stagelabels.Outcome{}, ErrNoGitHubClient
-	}
-	if want.Role == stagelabels.RoleNone {
-		want.Role = stagelabels.RoleOf(hint)
-	}
-	if !want.Stalled && issueHasLabel(hint, stagelabels.StalledLabel) {
-		want.Stalled = true
-	}
-	return stagelabels.Enforce(ctx, w.c.StageLabeler(), ref.Kind, ref.Owner, ref.Repo, ref.Number, hint, want)
 }
 
 // enrichStageFacts is the sink's Enrich hook: a fresh read of the item tops
@@ -143,6 +122,7 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 	}
 	if f.Issue != nil {
 		f.Issue.LikelyDone = issueHasLabel(f.Labels, LikelyDoneLabel)
+		f.Issue.Stalled = issueHasLabel(f.Labels, stagelabels.StalledLabel)
 	}
 	if f.Author.Login == "" {
 		f.Author.Login = issue.GetUser().GetLogin()

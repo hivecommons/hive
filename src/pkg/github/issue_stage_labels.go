@@ -420,6 +420,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		facts := issueFactsFrom(in, prStage)
 		facts.Ref.Owner, facts.Ref.Repo = owner, name
 		facts.ObservedAt = now
+		facts.Issue.Stalled = want.Stalled
 		legacy.Set(facts.Ref, stageengine.Decision{Stage: want.Stage, Stalled: want.Stalled, Terminal: stage == stagelabels.None, Reason: reason})
 		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
 	}

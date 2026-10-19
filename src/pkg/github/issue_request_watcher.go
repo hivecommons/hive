@@ -596,17 +596,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 	default: // "issue"
 		var res CreateIssueResult
-		createLabels := req.Labels
-		createBody := body
-		if req.NeedsDecision {
-			if d := c.issueDecisionDowngradeForCreate(req, createBody); d.Active {
-				issueDecisionDowngrade = d
-				createLabels = removeDecisionParkLabels(createLabels, c.needsDecisionLabel())
-				createLabels = appendLabelIfMissing(createLabels, stagelabels.Actionable.Label())
-				createBody = appendHiveDecisionTaken(createBody, d.Question)
-			} else {
-				createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
-			}
+		createLabels, createBody, d := c.issueCreateLabels(req, body)
+		if d.Active {
+			issueDecisionDowngrade = d
 		}
 		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: createBody, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: true})
 		if err == nil && res.RejectedTwin {
@@ -837,6 +829,25 @@ func appendHiveDecisionTaken(body, question string) string {
 
 func hiveDecisionDowngradeNote(question string) string {
 	return "Hive did not park this: engineering decision taken by hive — " + question + ". Owner may override with `/hive hold` or `needs-human`."
+}
+
+// issueCreateLabels is the label set and body a `needs_decision` issue
+// request is created with: the configured decision park label, or — when
+// the hive takes the engineering decision itself — stage/010-actionable in
+// its place and the decision recorded in the body. The labels travel in
+// the create call; the stage engine owns them from the first sweep on.
+func (c *Client) issueCreateLabels(req IssueRequest, body string) (labels []string, createBody string, d issueDecisionDowngrade) {
+	labels, createBody = req.Labels, body
+	if !req.NeedsDecision {
+		return labels, createBody, d
+	}
+	if d = c.issueDecisionDowngradeForCreate(req, createBody); d.Active {
+		labels = removeDecisionParkLabels(labels, c.needsDecisionLabel())
+		labels = appendLabelIfMissing(labels, stagelabels.Actionable.Label())
+		createBody = appendHiveDecisionTaken(createBody, d.Question)
+		return labels, createBody, d
+	}
+	return appendLabelIfMissing(labels, c.needsDecisionLabel()), createBody, d
 }
 
 func replaceDecisionParkWithActionable(labels []string, configured string) []string {

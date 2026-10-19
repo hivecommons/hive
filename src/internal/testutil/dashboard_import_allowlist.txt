@@ -45,6 +45,7 @@ github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/scheduler
 github.com/hivecommons/hive/pkg/skillreg
 github.com/hivecommons/hive/pkg/spokebackup
+github.com/hivecommons/hive/pkg/stageengine
 github.com/hivecommons/hive/pkg/stagelabels
 github.com/hivecommons/hive/pkg/terminalassert
 github.com/hivecommons/hive/pkg/timeline

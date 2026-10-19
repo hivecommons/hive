@@ -109,10 +109,15 @@ const (
 
 // IssueFacts is the issue-side evidence.
 type IssueFacts struct {
-	Bucket          IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason)
-	FilteredReason  string
-	Claim           *ClaimFact
-	LikelyDone      bool
+	Bucket         IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason)
+	FilteredReason string
+	Claim          *ClaimFact
+	LikelyDone     bool
+	// Stalled is the dwell verdict: the sweep's stagelabels.Stalled over
+	// the Store record, or, for an out-of-cycle fact, the `stage/stalled`
+	// the issue already wears. The deriver keeps it only while the stage
+	// stands still — a stage change restarts the clock.
+	Stalled         bool
 	CoveringPR      *Ref
 	CoveringPRStage stagelabels.Stage // from the Store; None when unknown
 }

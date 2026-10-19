@@ -128,5 +128,9 @@ func (issueDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 		Stage:    stage,
 		Reason:   reason,
 		Terminal: stage == stagelabels.None && f.Issue.LikelyDone,
+		// The dwell verdict is the sweep's: an out-of-cycle fact carries the
+		// label as found (legacy EnforceStage kept it too) and the next
+		// sweep re-judges it from the restarted clock.
+		Stalled: f.Issue.Stalled && stage != stagelabels.None,
 	}
 }
