@@ -316,7 +316,7 @@ write_prs "[{\"number\":66,\"headRefOid\":\"$UP_HEAD\",\"statusCheckRollup\":[
   {\"id\":4401,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"completedAt\":\"2026-08-30T02:00:00Z\"},
   {\"id\":4402,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"2026-08-30T03:00:00Z\"}]}]"
 MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66 --json
-if [[ "$OUTPUT" == *external_marker* ]]; then
+if [[ "$OUTPUT" == *_marker* ]]; then
   echo "  FAIL: no marker when the PR's newest run is green (output: $OUTPUT)"; FAIL=$((FAIL + 1))
 else
   echo "  PASS: no marker when the PR's newest run is green"; PASS=$((PASS + 1))
@@ -325,7 +325,7 @@ fi
 # Without a PR there is no head to pin: the verdict stands, no marker.
 MOCK_PARENT=upstream/widgets run_helper acme/widgets "Check ogc-lts (44)" --json
 check_status 0 "red upstream is shared without a PR argument"
-if [[ "$OUTPUT" == *external_marker* ]]; then
+if [[ "$OUTPUT" == *_marker* ]]; then
   echo "  FAIL: no marker without a PR head (output: $OUTPUT)"; FAIL=$((FAIL + 1))
 else
   echo "  PASS: no marker without a PR head"; PASS=$((PASS + 1))
@@ -357,6 +357,63 @@ check_output '"conclusion":"unknown"' "JSON reports the upstream as unknown"
 run_helper acme/widgets build --upstream not-a-repo
 check_status 2 "a malformed --upstream is rejected"
 unset MOCK_UPSTREAM_RUNS
+
+# --- hivecommons/hive#13025: transient_marker on any verdict ---
+
+# A same-repo PR whose newest run of the check is red, on a fresh green base
+# with no upstream: the verdict is PR-local (FIX_DIFF), yet the helper prints
+# a transient_marker pinned to the head, encoded check name and red run so
+# the agent copies it rather than assembling one by hand. external_marker is
+# reserved for DEFER_EXTERNAL and must not appear.
+TR_HEAD=7a11c0ffee00000000000000000000000000beef
+write_base '{"check_runs":[{"name":"Check ogc-lts (44)","status":"completed","conclusion":"success","completed_at":"2026-08-30T01:00:00Z"}]}'
+write_prs "[{\"number\":77,\"headRefOid\":\"$TR_HEAD\",\"statusCheckRollup\":[
+  {\"id\":5500,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"2026-08-30T01:00:00Z\"},
+  {\"id\":5501,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"completedAt\":\"2026-08-30T02:00:00Z\"}]}]"
+printf '{"number":77,"headRefOid":"%s","isCrossRepository":false}\n' "$TR_HEAD" >"$MOCK_PR_VIEW"
+MOCK_COMPARE="{\"$TR_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 77 --json
+check_status 1 "a current same-repo PR with a red newest run is PR-local"
+check_output '"action":"FIX_DIFF"' "the verdict is FIX_DIFF, not a deferral"
+check_output "\"transient_marker\":\"<!-- hive-ci-transient head=$TR_HEAD check=Check%20ogc-lts%20%2844%29 run=5501 -->\"" \
+  "FIX_DIFF still prints the transient marker pinned to the head, encoded check and newest red run"
+if [[ "$OUTPUT" == *external_marker* ]]; then
+  echo "  FAIL: no external marker outside DEFER_EXTERNAL (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no external marker outside DEFER_EXTERNAL"; PASS=$((PASS + 1))
+fi
+
+# A branch behind base gets the same transient marker with its MERGE_BASE verdict.
+MOCK_COMPARE="{\"$TR_HEAD\":4}" run_helper acme/widgets "Check ogc-lts (44)" 77 --json
+check_output '"action":"MERGE_BASE"' "a behind PR must merge base first"
+check_output "\"transient_marker\":\"<!-- hive-ci-transient head=$TR_HEAD check=Check%20ogc-lts%20%2844%29 run=5501 -->\"" \
+  "MERGE_BASE also prints the transient marker"
+if [[ "$OUTPUT" == *external_marker* ]]; then
+  echo "  FAIL: no external marker on MERGE_BASE (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no external marker on MERGE_BASE"; PASS=$((PASS + 1))
+fi
+
+# Only --json carries the transient marker; the human text never prints it.
+MOCK_COMPARE="{\"$TR_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 77
+check_output 'ISOLATED (FIX_DIFF)' "human output gives the PR-local verdict"
+if [[ "$OUTPUT" == *hive-ci-* ]]; then
+  echo "  FAIL: human output prints no marker on a PR-local verdict (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: human output prints no marker on a PR-local verdict"; PASS=$((PASS + 1))
+fi
+
+# The newest run at that head is green (a re-run passed): nothing to triage,
+# so no transient marker either.
+write_prs "[{\"number\":77,\"headRefOid\":\"$TR_HEAD\",\"statusCheckRollup\":[
+  {\"id\":5501,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\",\"completedAt\":\"2026-08-30T02:00:00Z\"},
+  {\"id\":5502,\"name\":\"Check ogc-lts (44)\",\"status\":\"COMPLETED\",\"conclusion\":\"SUCCESS\",\"completedAt\":\"2026-08-30T03:00:00Z\"}]}]"
+MOCK_COMPARE="{\"$TR_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 77 --json
+check_output '"action":"FIX_DIFF"' "a green newest run keeps the PR-local verdict"
+if [[ "$OUTPUT" == *_marker* ]]; then
+  echo "  FAIL: no marker of either kind when the PR's newest run is green (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no marker of either kind when the PR's newest run is green"; PASS=$((PASS + 1))
+fi
 
 check_file_contains "$ROOT_DIR/src/Dockerfile" \
   'COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh' \

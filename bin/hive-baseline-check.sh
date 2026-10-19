@@ -388,8 +388,11 @@ fi
 if [[ "$UPSTREAM_RED" == true && ! ( "$BASE_CONCLUSION" == "success" && "$BASE_STALE" == false ) ]]; then
   SHARED=true; REASON="upstream"; ACTION="DEFER_EXTERNAL"; EXIT=0
 fi
-# The PR's newest run of the check must be the red one the marker covers; no
-# marker when it cannot be read or is not red (nothing to defer yet).
+# Two markers pin the PR head, the encoded check name and the PR's newest run
+# of the check, which must be the red one they cover: external_marker only on
+# DEFER_EXTERNAL, transient_marker on any verdict (the agent stamps it only
+# after its own transient diagnosis). Neither when the run cannot be read or
+# is not red (nothing to defer or triage yet).
 EXTERNAL_MARKER=""
 TRANSIENT_MARKER=""
 if [[ "$PR_OID" =~ ^[0-9a-f]{40}$ ]] &&
