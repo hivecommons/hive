@@ -106,6 +106,12 @@ func (issueDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 	if f.Issue == nil {
 		return stageengine.Decision{Abstain: true, Reason: "stage facts: no enumeration bucket for the issue"}
 	}
+	// A closed issue is out of the pipeline whatever fact arrived: an
+	// out-of-cycle release on an issue that closed meanwhile clears its
+	// stage rather than re-staging it 010 (the enumeration never sees it).
+	if !f.Open {
+		return stageengine.Decision{Stage: stagelabels.None, Terminal: true, Reason: "closed"}
+	}
 	var prStage func(repo string, number int) stagelabels.Stage
 	if pr := f.Issue.CoveringPR; pr != nil {
 		want := *pr
@@ -122,5 +128,9 @@ func (issueDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 		Stage:    stage,
 		Reason:   reason,
 		Terminal: stage == stagelabels.None && f.Issue.LikelyDone,
+		// The dwell verdict is the sweep's: an out-of-cycle fact carries the
+		// label as found (legacy EnforceStage kept it too) and the next
+		// sweep re-judges it from the restarted clock.
+		Stalled: f.Issue.Stalled && stage != stagelabels.None,
 	}
 }

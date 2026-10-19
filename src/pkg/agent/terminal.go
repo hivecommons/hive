@@ -15,8 +15,8 @@ type TerminalSession interface {
 	CapturePane(agent *AgentProcess) string
 	CaptureVisiblePane(agent *AgentProcess) string
 	SessionAttached(agent *AgentProcess) bool
-	SendLiteral(agent *AgentProcess, text string)
-	SendKeys(agent *AgentProcess, keys ...string)
+	SendLiteral(agent *AgentProcess, text string) error
+	SendKeys(agent *AgentProcess, keys ...string) error
 	SleepDuringPromptDismiss(time.Duration)
 	CaptureFullLog(agent *AgentProcess) (string, error)
 	ClearHistory(agent *AgentProcess)
@@ -92,16 +92,18 @@ func (t tmuxTerminal) SessionAttached(agent *AgentProcess) bool {
 // quality kick arrived as "onboard-ai" followed by text from the next chunk,
 // and the agent stood down on the corrupted list. A failed send is logged
 // rather than dropped so the next occurrence is diagnosable from the hive log.
-func (t tmuxTerminal) SendLiteral(agent *AgentProcess, text string) {
-	if err := t.manager.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", "--", text).Run(); err != nil && t.manager.logger != nil {
+func (t tmuxTerminal) SendLiteral(agent *AgentProcess, text string) error {
+	err := t.manager.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", "--", text).Run()
+	if err != nil && t.manager.logger != nil {
 		t.manager.logger.Warn("tmux send-keys failed; literal text was not typed into the pane",
 			"agent", agent.Name, "session", agent.tmuxSession, "runes", len([]rune(text)), "error", err)
 	}
+	return err
 }
 
-func (t tmuxTerminal) SendKeys(agent *AgentProcess, keys ...string) {
+func (t tmuxTerminal) SendKeys(agent *AgentProcess, keys ...string) error {
 	args := append([]string{"send-keys", "-t", agent.tmuxSession}, keys...)
-	_ = t.manager.tmuxCmd(agent, args...).Run()
+	return t.manager.tmuxCmd(agent, args...).Run()
 }
 
 func (t tmuxTerminal) CaptureFullLog(agent *AgentProcess) (string, error) {

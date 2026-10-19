@@ -141,13 +141,9 @@ func (m *Manager) SendResumeKick(name, message, sessionID string) error {
 		return fmt.Errorf("%w: agent %s is mid-turn", ErrResumeBusy, name)
 	}
 
-	before := agent.LastKick
 	agent.resumeSkipClear = true
-	m.deliverKickLocked(agent, message, resumeKickTrigger)
-	// deliverKickLocked skips silently (logging why) when the pane changed
-	// under it; only a recorded delivery moves LastKick.
-	if agent.LastKick == before {
-		return fmt.Errorf("%w: agent %s did not accept the follow-up", ErrResumeBusy, name)
+	if err := m.deliverKickLocked(agent, message, resumeKickTrigger); err != nil {
+		return fmt.Errorf("%w: %w", ErrResumeBusy, err)
 	}
 	return nil
 }

@@ -173,7 +173,7 @@ review:
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
-  self_authored_decision_policy: resolve    # resolve (default) or escalate low-risk Hive-authored decision questions
+  self_authored_decision_policy: resolve    # resolve (default) non-risk-class Hive-authored decision questions, or escalate all of them
   # all_authors: true                       # deprecated no-op; every open PR is reviewed regardless of author
   fix_human_prs: false                      # optional; also answer review-bot threads on PRs Hive did not open, by suggestion only (default off)
   contributor_prs:
@@ -223,13 +223,36 @@ The confidence score also feeds the **PR review queue** (`GET /api/review/queue`
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
 For Hive-authored PRs, `review.self_authored_decision_policy: resolve` (default)
-keeps low-risk reviewer decision questions advisory. Sequencing, naming,
-config-shape, scope, and "land now vs later" calls are resolved by the reviewer
-itself and recorded as audit reasons on an approving aggregate. Security, data
-loss, irreversible/public-facing behavior, policy/governance, licensing, spend,
-or unreadable-diff questions still aggregate to `requires_human`. Set the policy
-to `escalate` to preserve the older behavior where every decision marker parks
-the PR for a person.
+keeps reviewer decision questions advisory unless they are a **risk class**.
+The test is a denylist, not an allowlist: a question escalates to
+`stage/085-needs-decision` only when its wording lands in one of the named
+classes in `review.DecisionRiskClasses` (`src/pkg/review/review.go`) or the
+reviewer marked it `<!-- hive-decision-risk: high -->`; every other question —
+naming, sequencing, defaults, config shape, scope, changelog wording, or
+anything the list never anticipated — is resolved by the hive itself and
+recorded on the approving aggregate as
+`decision resolved by policy: <topic> — not a risk question; recorded as advisory: <question>`.
+(Before [#13020](https://github.com/hivecommons/hive/pull/13020) the policy
+only resolved questions matching a short allowlist of non-risk words, so a
+green agent PR whose linked issue had already specified the default still
+parked for a person.) The risk classes are:
+
+| Class | Escalates when the question names … |
+|---|---|
+| `permissions-credentials` | permissions, privileges, tokens, secrets, credentials, write/admin access, grants |
+| `security` | security, vulnerabilities, injection, crypto/TLS/certificates/signing keys, auth/authn/authz/OAuth/SSO |
+| `sensitive-paths` | `.github/workflows`, OWNERS/CODEOWNERS, branch protection/rulesets, and every path in the sentinel `sensitive_path` default list (`hive.yaml`, `policies/`, `Dockerfile`, `go.mod`, `deploy/`, `.env`, …) |
+| `data-loss-irreversible` | data loss, delete/drop/truncate/purge, destructive or irreversible actions, migrations, breaking or public-facing changes, force-push |
+| `merge-trust-policy` | merge or auto-merge policy, trust tiers, ACMM levels, roles, approvers, governance, policy |
+| `external-side-effects` | publishing, releases, deploys, billing/spend/cost, outbound email or notifications to humans, webhooks, registries |
+| `licensing-legal` | license, copyright, legal, privacy, compliance, trademark, CLA |
+| `unverifiable` | the reviewer says it could not read, judge or test the change, or the requirement is ambiguous |
+
+Set the policy to `escalate` to preserve the older behavior where every
+decision marker parks the PR for a person. The reviewer template
+(`policies/reviewer-queue.md`) also tells the swarm to check the linked
+issue/spec and PR body before asking, and to cite the answer
+(`per #<issue>: …`) instead of raising a question the issue already settled.
 
 `review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 

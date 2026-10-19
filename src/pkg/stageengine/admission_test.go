@@ -22,24 +22,13 @@ import (
 // built elsewhere in the same function; and when any type other than
 // stageWriter implements stageengine.StageWriter.
 //
-// The allow-list below is the set of out-of-cycle writers plan PR-D
-// (hivecommons/hive#13009) moves onto FactSink. PR-D empties it; a new
-// entry is a design regression, not a fix.
+// The allow-list is empty since plan PR-D (hivecommons/hive#13009) moved
+// every out-of-cycle writer onto FactSink; a new entry is a design
+// regression, not a fix.
 func TestAdmissionOnlyStageWriterWritesStageLabels(t *testing.T) {
-	// allowed are file:func sites (file relative to src/) that still name a
-	// stage label to the forge. PR-D empties this list.
-	allowed := map[string]string{
-		"pkg/github/stage_labeler.go:ApplyStageLabel":                                 "claim-ledger entry point → FactSink (PR-D deletes it)",
-		"pkg/github/stage_labeler.go:AddLabelsFresh":                                  "claim hook stage parameter (PR-D removes it)",
-		"cmd/hive/claimswire.go:*":                                                    "ledger hooks → FactSink.Claimed/ClaimReleased (PR-D)",
-		"pkg/github/issue_inprogress.go:*":                                            "sweep 040 swap → FactSink.CoveredBy (PR-D)",
-		"pkg/github/issue_request_watcher.go:handleOneIssueRequest":                   "agent claim request → FactSink.InProgress (PR-D)",
-		"pkg/github/prclaims.go:*":                                                    "040 add/remove → FactSink.CoveredBy/Uncovered (PR-D)",
-		"pkg/dashboard/contribute_verdict_settle.go:*":                                "→ FactSink.CoveredBy (PR-D)",
-		"pkg/dashboard/claims_api.go:removeLegacyClaimLabelForLease":                  "lease release → FactSink.ClaimReleased (PR-D)",
-		"pkg/dashboard/contribute_claims.go:recordAgentClaim":                         "dashboard agent claim → FactSink.Claimed (PR-D)",
-		"pkg/github/issue_needs_decision_migration.go:MigrateIssueNeedsDecisionStage": "one-shot 085→045 migration; retires with the legacy paths (PR-F)",
-	}
+	// allowed are file:func sites (file relative to src/) that may still
+	// name a stage label to the forge. Empty by design.
+	allowed := map[string]string{}
 
 	root := srcRoot(t)
 	var violations []string
@@ -119,24 +108,13 @@ var stageLabelIdents = map[string]bool{
 }
 
 // stageEntryPoints take a stagelabels.Stage and set it: any call is a stage
-// write whatever the argument's spelling. AddLabelsFresh is one unless its
-// stage argument is literally stagelabels.None.
+// write whatever the argument's spelling. (AddLabelsFresh lost its stage
+// parameter in PR-D and drops any stage label it is handed; a stage label
+// in its arguments is caught like any other mutator's.)
 var stageEntryPoints = map[string]bool{"EnforceStage": true, "EnforceStageAdding": true, "ApplyStageLabel": true}
 
 func isStageWrite(call *ast.CallExpr) bool {
-	sel := call.Fun.(*ast.SelectorExpr)
-	if stageEntryPoints[sel.Sel.Name] {
-		return true
-	}
-	if sel.Sel.Name == "AddLabelsFresh" && len(call.Args) >= 4 {
-		if x, ok := call.Args[3].(*ast.SelectorExpr); ok {
-			if id, ok := x.X.(*ast.Ident); ok && id.Name == "stagelabels" && x.Sel.Name == "None" {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return stageEntryPoints[call.Fun.(*ast.SelectorExpr).Sel.Name]
 }
 
 type admissionViolation struct {
@@ -330,6 +308,10 @@ func TestAdmissionWalkerDetects(t *testing.T) {
 			src:  "func f(ctx context.Context, c *C) { ls := []string{stagelabels.Actionable.Label()}; _ = c.AddLabels(ctx, \"o/r\", 1, ls) }",
 			want: "builds a stage label and calls AddLabels",
 		},
+		"stage label into AddLabelsFresh": {
+			src:  `func f(ctx context.Context, c *C) { _ = c.AddLabelsFresh(ctx, "o/r", 1, "hive/claimed-by-x", stagelabels.Claimed.Label()) }`,
+			want: "stage label passed to AddLabelsFresh",
+		},
 		"stage entry point": {
 			src:  `func f(ctx context.Context, c *C, s stagelabels.Stage) { _, _ = c.ApplyStageLabel(ctx, "o/r", 1, s) }`,
 			want: "stage label passed to ApplyStageLabel",
@@ -339,7 +321,7 @@ func TestAdmissionWalkerDetects(t *testing.T) {
 			want: "implements stageengine.StageWriter",
 		},
 		"non-stage label": {
-			src:  `func f(ctx context.Context, c *C) { _ = c.AddLabelsFresh(ctx, "o/r", 1, stagelabels.None, "needs-human"); _ = c.RemoveLabel(ctx, "o/r", 1, "needs-human") }`,
+			src:  `func f(ctx context.Context, c *C) { _ = c.AddLabelsFresh(ctx, "o/r", 1, "hive/claimed-by-x"); _ = c.RemoveLabel(ctx, "o/r", 1, "needs-human") }`,
 			want: "",
 		},
 		"stage read only": {

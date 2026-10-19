@@ -59,9 +59,14 @@ own enabling conditions. See `classifyMergeEligibility` in
 [sweep](../pkg/github/automerge/automerge_sweep.go).
 
 On Hive-authored PRs the default `review.self_authored_decision_policy: resolve`
-keeps low-stakes reviewer questions advisory: sequencing, naming, config-shape,
-scope, and "land now vs later" calls are the hive's own decision, so the
-aggregate can approve while preserving the question in the audit reason. A
+keeps reviewer questions advisory unless they are a risk class: the test is a
+denylist (`review.DecisionRiskClasses` — permissions/credentials, security,
+sensitive paths, data loss/irreversible, merge/trust policy, external side
+effects, licensing/legal, unverifiable — or an explicit
+`<!-- hive-decision-risk: high -->` marker), so naming, sequencing, defaults,
+config-shape, scope and "land now vs later" calls are the hive's own decision
+and the aggregate approves while preserving the question in the audit reason
+(`decision resolved by policy: <topic> — not a risk question`). A
 non-risk incomplete-fix review that names concrete remediation is different:
 it is normalized from `requires_human` to `changes_requested` when verdicts are
 aggregated and loaded, even if the finding severity is high, so the review
@@ -69,10 +74,9 @@ gate, every stage-label observer, human-entry comments, and fixer dispatch all
 see the fixer-lane verdict and the PR enters `stage/070-fixing` instead of
 parking for a person. Intent-alignment cleanup with an obvious fix, such as
 trimming a duplicate PR summary or changelog claim, follows the same route. Set the policy to `escalate` to restore the older behavior where every
-`needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk
-questions still escalate either way: security, data loss, irreversible or
-public-facing behavior, policy/governance, licensing, spend, or unreadable
-diffs.
+`needs-decision` marker parks the PR at `stage/085-needs-decision`. Risk-class
+questions still escalate either way; see
+[review-swarm.md](review-swarm.md#configuration) for the class table.
 
 The [policy matrix](acmm-policy-matrix.md) describes the same distinction: reviewer verdicts alone are not universal merge stops, and promotion does not automatically release level holds. Use GitHub rules or an actual hold for a safety guarantee.
 

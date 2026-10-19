@@ -638,7 +638,10 @@ func TestRenderUnparkHelpReplyListsDocumentedCommands(t *testing.T) {
 // `needs-human`; the accepted reply says so; and the resulting label set
 // remains hard-suppressed. Under the owner decision that issues park at
 // stage/045 (085 is PR-only), the kept `needs-human` re-derives 045 — the
-// issue stays visibly a person's, never 085 and never actionable.
+// issue stays visibly a person's, never 085 and never actionable. The
+// un-park is an Unparked fact for the stage engine (ADR-0025), which
+// re-reads the issue and keeps 045 in place rather than removing and
+// re-adding it.
 func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 	issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision Agents stand down; owner/Console owners handle this"))
 	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: NeedsDecisionStageLabel}, {Name: "kind/bug"}}
@@ -652,8 +655,8 @@ func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 	if len(result.Unparked) != 1 || result.Unparked[0].Decision != "Agents stand down; owner/Console owners handle this" {
 		t.Fatalf("decision not recorded: %+v", result.Unparked)
 	}
-	if got := strings.Join(rec.removed[12680], ","); got != NeedsDecisionStageLabel {
-		t.Fatalf("removed = %q, want only %s", got, NeedsDecisionStageLabel)
+	if len(rec.removed[12680]) != 0 {
+		t.Fatalf("removed = %v, want nothing: needs-human keeps the issue at %s", rec.removed[12680], NeedsDecisionStageLabel)
 	}
 	if len(rec.added[12680]) != 1 || rec.added[12680][0] != HumanAckLabel {
 		t.Fatalf("added = %v, want only %s", rec.added[12680], HumanAckLabel)
@@ -680,7 +683,9 @@ func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 }
 
 // An issue carrying only `needs-human` is a person's to work; `/hive approve`
-// records the go-ahead but changes no park label.
+// records the go-ahead but lifts no park: the Unparked fact makes the stage
+// engine re-read the issue, and needs-human derives stage/045 — the stage
+// it was missing.
 func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T) {
 	issue := parkedIssue(12681, humanComment(32, "owner", "/hive approve"))
 	issue.Labels = []wireLabel{{Name: "needs-human"}}
@@ -693,7 +698,7 @@ func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T)
 	if len(rec.removed[12681]) != 0 {
 		t.Fatalf("nothing should be removed, got %v", rec.removed[12681])
 	}
-	if len(rec.added[12681]) != 1 || rec.added[12681][0] != HumanAckLabel {
-		t.Fatalf("added = %v, want only %s", rec.added[12681], HumanAckLabel)
+	if got := strings.Join(rec.added[12681], ","); got != HumanAckLabel+","+NeedsDecisionStageLabel {
+		t.Fatalf("added = %v, want %s then the engine's %s", rec.added[12681], HumanAckLabel, NeedsDecisionStageLabel)
 	}
 }

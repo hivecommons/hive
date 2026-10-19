@@ -362,6 +362,5 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	if err := m.restartKickHoldErrLocked(agent, time.Now()); err != nil {
 		return err
 	}
-	m.deliverKickLocked(agent, message, "send-kick")
-	return nil
+	return m.deliverKickLocked(agent, message, "send-kick")
 }

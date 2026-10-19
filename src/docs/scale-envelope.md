@@ -29,7 +29,7 @@ ones to:
 
 1. **A truncated list must say it is truncated.** Every kick list that is cut
    ends with an explicit "… and N more" line
-   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:252-254`). A silent slice
+   (`prListOverflowLine`, `src/pkg/scheduler/kickmessage.go:423`). A silent slice
    reads to the agent as "this is the complete list".
 2. **Truncation must preserve the prioritization signal, not cut an arbitrary slice.**
    This holds today and is easy to assume backwards:
@@ -125,8 +125,8 @@ operator can change it without rebuilding.
 
 | Cap | Where | Default | Tunable | Behaviour when exceeded |
 | --- | --- | --- | --- | --- |
-| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/kickmessage.go:230-235` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Fair-share across repos while preserving oldest-first order; list is cut silently in `formatIssueListWithPolicy` (`kickmessage.go:40`) and with an explicit note in the scanner/work lists |
-| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/kickmessage.go:240-245` | 50 | **Yes** (same block/UI) | Fair-share across repos while preserving review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
+| Issue list per kick | `governor.kick_limits.max_issues` → `Scheduler.issueCap()`, `src/pkg/scheduler/kickmessage.go:368` | 100 | **Yes** (`hive.yaml`, or Settings → Repos) | Fair-share across repos while preserving oldest-first order; list is cut silently in `formatIssueListWithPolicy` (`kickmessage.go:40`) and with an explicit note in the scanner/work lists |
+| PR list per kick (actionable, stale drafts, merge-eligible, CI-failing, repair queue) | `governor.kick_limits.max_prs` → `Scheduler.prCap()`, `src/pkg/scheduler/kickmessage.go:378` | 50 | **Yes** (same block/UI) | Fair-share across repos while preserving review-priority order + "… and N more open PRs not listed (cap N per kick; they return on later kicks as this list drains)" |
 | Ceiling on either cap | `config.MaxKickListCap`, `src/pkg/config/kick_limits.go:18` | 500 | No | A configured value above 500 is **pinned to 500**, not rejected — so a bad `hive.yaml` degrades to a safe cap instead of failing startup (`clampKickListCap`, `kick_limits.go:39-51`). An absent key or a negative value means "use the default"; an explicit `0` is the operator's opt-out of capping (`KickListUnlimited`, `kick_limits.go:27`) — the render path then lists every item (`repofilter.go:143-149`) |
 | Held-PR snapshot, per repo | `maxHeldPRsPerRepoPerKick`, `src/pkg/scheduler/policy_overlays.go:446` | 100 | **No** (hardcoded) | **Fails closed, by design**: the overflowing repo gets "STAND DOWN for `<repo>` this kick". Scoped per repo since [#7391](https://github.com/hivecommons/hive/pull/7391) so one crowded repo no longer blanks the snapshot for the other 15 |
 | Red-PR fix-before-new detail | `redPRFixMaxDetailed`, `src/pkg/scheduler/policy_overlays.go:180` | 5 | **No** (hardcoded) | Degrade to summary: "… and N more (full list: `<path>`)" |

@@ -57,6 +57,9 @@ var clientSetterAllowlist = map[string]string{
 		"SetMergeRequestNoCIAllowedRepos, which syncAutoMergePolicyToGitHubClient calls individually",
 	"SetAttributionAudit": "legacy untyped audit sink, superseded by SetAttributionAuditRecord " +
 		"(#9587), which configureGitHubClient installs and which takes precedence",
+	"SetStageFactSink": "test seam: production uses the client's own default stage FactSink " +
+		"(enforce-mode reconciler over stagelabels.Shared()), which every rebuilt client " +
+		"constructs lazily on first use (ADR-0025, #13009)",
 }
 
 // clientResyncSetters may be called directly on b.ghClient outside

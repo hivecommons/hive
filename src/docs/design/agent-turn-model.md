@@ -64,19 +64,27 @@ The composed command line is per-backend and is built as a string —
 (`src/pkg/agent/manager_launch.go:859`), and so on.
 
 Nothing in the kick path ever spawns a process. `deliverKickLocked`
-(`src/pkg/agent/manager_kick.go:244`) only manipulates the existing pane.
+(`src/pkg/agent/manager_kick.go:242`) only manipulates the existing pane.
 
 ### 1.2 A turn starts with simulated keystrokes
 
 `SendKick` (`src/pkg/agent/manager_kick.go:102`) is the entry point; it delegates to
-`deliverKickLocked` (`src/pkg/agent/manager_kick.go:244`), which:
+`deliverKickLocked` (`src/pkg/agent/manager_kick.go:242`), which:
 
-- clears any stale input with `C-c` then `C-u`
-  (`src/pkg/agent/manager_kick.go:290-293`),
+- clears stale input with `C-c` then `C-u` (Codex uses only `C-u`; Goose skips clearing)
+  (`src/pkg/agent/manager_kick.go:285-296`),
 - types the prompt literally, chunked, via
-  `tmuxSendLiteralForAgent` (`src/pkg/agent/manager_kick.go:327`, implementation at
+  `tmuxSendLiteralForAgent` (`src/pkg/agent/manager_kick.go:332`, implementation at
   `src/pkg/agent/manager_tmux.go:553` → `tmux send-keys -l`),
-- submits with `tmuxSendEntersForAgent` (`src/pkg/agent/manager_kick.go:354`).
+- submits with `tmuxSendEntersForAgent` (`src/pkg/agent/manager_kick.go:363`).
+
+Pane writes return errors to the kick caller. A failed clear, prompt chunk, or
+Enter stops delivery, increments the existing undeliverable counter, and leaves
+`LastKick` and successful-kick history unchanged. A final readiness refusal or
+restart during chunk delivery also returns an error, so synchronous dispatch
+and asynchronous kick status cannot mistake a skipped delivery for success.
+The governor evaluation log lists idle reviewer lanes under `agents_skipped`;
+no synthetic kick timestamp delays their next check for work.
 
 The prompt reaches the model the same way a human's keyboard would. There is no
 API call, no stdin pipe, and no structured request that hive could inspect,
@@ -112,9 +120,9 @@ captured pane content to maintain `agent.LastPaneChange`
 authenticated CLI is actually doing something.
 
 Stall recovery is likewise textual: `nudgeIfKickStalled`
-(`src/pkg/agent/manager_kick.go:878`) compares `paneContentHash(pane)` against
-`agent.lastInferKickPane` (`src/pkg/agent/manager_kick.go:906`), and
-`paneShowsActiveWork` (`src/pkg/agent/manager_kick.go:794`) matches a spinner or a
+(`src/pkg/agent/manager_kick.go:907`) compares `paneContentHash(pane)` against
+`agent.lastInferKickPane` (`src/pkg/agent/manager_kick.go:883`), and
+`paneShowsActiveWork` (`src/pkg/agent/manager_kick.go:823`) matches a spinner or a
 token-counter marker.
 
 ### 1.4 Scheduling: one shared ticker, not a per-turn continuation
@@ -128,11 +136,12 @@ Kick *timing* lives in `pkg/governor`; kick *text* is built in `pkg/scheduler`.
 - `Governor.Evaluate` (`src/pkg/governor/governor.go:377`) calls it at
   `src/pkg/governor/governor.go:485` and returns the due list.
 - The driving loop is a single ticker in `main`:
-  `deps.newTicker(initialEvalInterval)` (from `EvalIntervalS`) at `src/cmd/hive/main.go:5883`, loop at
-  `src/cmd/hive/main.go:6120`, evaluation at `src/cmd/hive/main.go:6972`,
-  message assembly via `sched.BuildKickMessages` at `src/cmd/hive/main.go:7136`
-  (`src/pkg/scheduler/kickmessage.go:254`), and delivery via
-  `agentMgr.SendKick` at `src/cmd/hive/main.go:7224`.
+  `deps.newTicker(initialEvalInterval)` at `src/cmd/hive/main.go:5889`, loop at
+  `src/cmd/hive/main.go:6126`, evaluation via `deps.runEval` at
+  `src/cmd/hive/main.go:6045` (`runEvalCycle`, `src/cmd/hive/main.go:6710`),
+  message assembly via `sched.BuildKickMessagesWithSkips` at `src/cmd/hive/main.go:7138`
+  (`src/pkg/scheduler/kickmessage.go:261`), and delivery via
+  `agentMgr.SendKick` wired into `dispatchAgentKicks` at `src/cmd/hive/main.go:7241`.
 
 This matters for the RFC: the scheduler is already **stateless with respect to
 turns**. It does not hold a continuation, does not await turn *N* before
@@ -292,7 +301,7 @@ directly: `RestartWithBootstrap` (`src/pkg/agent/manager_restart.go:419`) sets
 `BootstrapOverride`, and `RestartThenSendKick`
 (`src/pkg/agent/manager_restart.go:505`) is documented as restarting "with a clean
 slate". Whichever path runs, delivery is gated on the new pane reaching its
-input marker (`deliverStartupKick`, `src/pkg/agent/manager_kick.go:453`).
+input marker (`deliverStartupKick`, `src/pkg/agent/manager_kick.go:480`).
 
 **Restart is a reset, not a resume.** Whatever the agent had established in its
 conversation — plan, working context, partial tool results — is gone, and the
@@ -385,7 +394,7 @@ It is easy to mistake either for one; neither is.
   asked to do?"; the store's own comment still contrasts itself with the 120-character snippet (`src/pkg/dashboard/prompt_history.go:186-188`). No model
   response, tool call, or tool result is recorded.
 - `/data/logs/kicks/…` holds **rendered terminal text**, captured with
-  `tmux capture-pane -p -J` (`src/pkg/agent/terminal.go:107-109`). It is a
+  `tmux capture-pane -p -J` (`src/pkg/agent/terminal.go:109-111`). It is a
   human debugging artifact, retained to 10 files / 64 MiB per agent
   (`src/pkg/agent/kick_logs.go:28`, `:39`). It contains ANSI-rendered,
   width-wrapped, spinner-animated output with no message boundaries and no
@@ -414,7 +423,7 @@ rather than a new one to invent.
 
 This is the load-bearing constraint behind all of the above and is worth
 isolating. Turn completion (§1.3), liveness classification (§4), stall
-detection (`src/pkg/agent/manager_kick.go:878`), auth failure
+detection (`src/pkg/agent/manager_kick.go:907`), auth failure
 (`src/pkg/watchdog/classify.go:99-104`), quota exhaustion
 (`src/pkg/agent/manager.go:351`), and even whether a surviving CLI can be
 adopted (`src/pkg/agent/manager_tmux.go:441`) are all decided by matching substrings

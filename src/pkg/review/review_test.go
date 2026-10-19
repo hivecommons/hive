@@ -103,6 +103,12 @@ func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing
 		// sequencing/config-shape decisions resolved by the reviewer.
 		"@hanthor should decide whether the contribution-preset loader should land before any hivectl command consumes it",
 		"accept `self_experiments.scheduler` as a new top-level config namespace vs nesting, and a fixed ledger path?",
+		// #13020: the linked issue (#12964) specified the default; the old
+		// allowlist still parked the PR because "default" was not on it.
+		"should the composite action's default `mention_login` be hard-coded to `hivecommons-hive` or stay org-neutral?",
+		"rename flag --foo to --bar?",
+		// Wording the old allowlist never anticipated is still the hive's call.
+		"keep the helper in the same file or split it out?",
 	}
 	for _, question := range cases {
 		t.Run(question, func(t *testing.T) {
@@ -116,10 +122,73 @@ func TestAggregateReportsResolvesNonRiskHiveAuthoredDecisionQuestions(t *testing
 			if got.Verdict != VerdictApprove || !got.MergeEligible || got.RequiresHuman || got.DecisionRequested {
 				t.Fatalf("aggregate = %+v, want resolved approve", got)
 			}
-			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "advisory") || !strings.Contains(got.Reasons[0], question) {
-				t.Fatalf("Reasons = %v, want advisory audit line with question", got.Reasons)
+			if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "decision resolved by policy:") || !strings.Contains(got.Reasons[0], "not a risk question") || !strings.Contains(got.Reasons[0], question) {
+				t.Fatalf("Reasons = %v, want policy-resolution audit line with question", got.Reasons)
 			}
 		})
+	}
+}
+
+func TestDecisionQuestionRiskClassDenylist(t *testing.T) {
+	cases := []struct {
+		question string
+		class    string
+	}{
+		{"should the composite action's default `mention_login` be hard-coded to `hivecommons-hive` or stay org-neutral?", ""},
+		{"rename flag --foo to --bar?", ""},
+		{"should this workflow be granted contents: write?", "permissions-credentials"},
+		{"drop the users table column?", "data-loss-irreversible"},
+		{"rotate the deploy token in this PR?", "permissions-credentials"},
+		{"is this change to OWNERS acceptable?", "sensitive-paths"},
+		{"edit .github/workflows/ci.yml to skip the lint job?", "sensitive-paths"},
+		{"should L6 auto-merge apply to this repo?", "merge-trust-policy"},
+		{"should the author of this PR be notified?", ""},
+		{"publish the release to ghcr now?", "external-side-effects"},
+		{"is the added dependency license acceptable?", "licensing-legal"},
+		{"the requirement is ambiguous; which reading applies?", "unverifiable"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.question, func(t *testing.T) {
+			class, risk := DecisionQuestionRiskClass(tc.question)
+			if risk != (tc.class != "") || class != tc.class {
+				t.Fatalf("DecisionQuestionRiskClass(%q) = %q,%v; want %q", tc.question, class, risk, tc.class)
+			}
+		})
+	}
+}
+
+func TestDecisionRiskClassesAreNamedAndNonEmpty(t *testing.T) {
+	seen := map[string]bool{}
+	for _, class := range DecisionRiskClasses {
+		if class.Name == "" || seen[class.Name] {
+			t.Fatalf("risk class %+v: name must be unique and non-empty", class)
+		}
+		seen[class.Name] = true
+		if len(class.Terms)+len(class.Patterns) == 0 {
+			t.Fatalf("risk class %q has no terms", class.Name)
+		}
+	}
+	// The sensitive-path class is derived from the sentinel list and must
+	// carry its headline entries.
+	for _, want := range []string{"owners", ".github/workflows", "hive.yaml", "dockerfile"} {
+		if _, risk := DecisionQuestionRiskClass("touches " + want); !risk {
+			t.Fatalf("sentinel path %q not in the decision risk denylist", want)
+		}
+	}
+}
+
+func TestAggregateReportsEscalatesHighRiskMarkerOnBenignQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictRequiresHuman)
+	r.HiveAuthored = true
+	r.DecisionRequested = true
+	r.DecisionQuestion = "rename flag --foo to --bar?"
+	r.DecisionRiskHigh = true
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want hive-decision-risk: high to escalate", got)
 	}
 }
 
@@ -144,6 +213,8 @@ func TestAggregateReportsEscalatesRiskDecisionQuestions(t *testing.T) {
 		"Should we accept this public-facing auth behavior change?",
 		"Can this data deletion migration run without data loss?",
 		"Is the added dependency license acceptable?",
+		"should this workflow be granted contents: write?",
+		"drop the users table column?",
 	} {
 		t.Run(question, func(t *testing.T) {
 			r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)

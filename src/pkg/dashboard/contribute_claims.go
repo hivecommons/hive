@@ -4,8 +4,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/stageengine"
 )
 
 // Issue claims on the contribute hub (hivecommons/hive#8380).
@@ -30,15 +31,13 @@ import (
 // task_assign is what the relay is waiting for. Same bound as the plan mirror.
 const claimCommentTimeout = 15 * time.Second
 
-// claimLabeler is the stage-label seam: ApplyStageLabel re-reads the issue
-// and leaves exactly one `stage/*` label (hivecommons/hive#12512), so a claim
-// landing after the reconciler staged the issue replaces that stage.
+// claimLabeler is the stage seam: the claim is a fact for the stage engine
+// (ADR-0025), which re-reads the issue and leaves exactly one `stage/*`
+// label (hivecommons/hive#12512), so a claim landing after the reconciler
+// staged the issue replaces that stage.
 type claimLabeler interface {
-	ApplyStageLabel(ctx context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error)
-}
-
-type claimLabelRemover interface {
-	RemoveLabel(ctx context.Context, repo string, number int, label string) error
+	StageFacts() stageengine.FactSink
+	IssueStageRef(repo string, number int) stageengine.Ref
 }
 
 // claimsEnabled reports governor.claims.enabled for this hub.
@@ -172,7 +171,8 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 			posted = true
 			claim.Source = ghpkg.IssueClaimSourceMarker
 			if labeler, ok := commenter.(claimLabeler); ok && h.claimLabelsEnabled() {
-				if _, err := labeler.ApplyStageLabel(postCtx, repoFull, number, stagelabels.Claimed); err != nil {
+				fact := stageengine.ClaimFact{Holder: claim.Identity, Kind: claims.KindContributor, Until: claim.ExpiresAt}
+				if err := labeler.StageFacts().Claimed(postCtx, labeler.IssueStageRef(repoFull, number), fact); err != nil {
 					h.logger.Warn("[contribute-ws] issue claim label failed; comment remains authoritative",
 						"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number, "error", err)
 				}

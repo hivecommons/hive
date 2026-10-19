@@ -1,6 +1,10 @@
 package agent
 
 import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -47,5 +51,22 @@ func TestTmuxTerminal_SendLiteral_TypesTextStartingWithDash(t *testing.T) {
 			t.Fatalf("chunk starting with %q never reached the pane; pane was:\n%s", chunk[:1], pane)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Exercise the production terminal adapter without a live tmux server.
+func TestTmuxTerminalReturnsWriteErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\nexit 17\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	m, a, _ := kickLogTestManager(t, "")
+	terminal := tmuxTerminal{manager: m}
+	for _, err := range []error{terminal.SendLiteral(a, "task"), terminal.SendKeys(a, "Enter")} {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 17 {
+			t.Fatalf("write error = %v, want tmux exit status 17", err)
+		}
 	}
 }

@@ -217,7 +217,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/072-returned-to-contributor` | PR | clanker PR (`author/clanker`, relay or external hive): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the contributor hive's court. (Briefly spelled `stage/072-needs-author` by [#12713](https://github.com/hivecommons/hive/pull/12713); the engine renames that label back in place) | 24h |
 | `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). Adoption is an **ownership** state, not a CI state: the PR reads 074 for as long as the hive owns it — through its fixes going pending, green, reviewed or red again (074 outranks 050/060/070/071/072) — and leaves 074 only at the merge gate (080/085/090/100), when the adoption is released, or to 085 `adoption-stalled:<reason>` when the head sat unchanged past the dwell with CI idle and a real blocker the hive cannot push past — a red optional check alone never counts, and the escalation releases back to 074 as soon as the reason clears (an in-place adoption with a blocking review finding or a squash-unsafe hive commit re-homes to `hive/adopt-<n>` first instead). For in-place adoption, a changed head must be linked to the App bot by GitHub commit metadata (the stage store only remembers heads that already passed that check); otherwise the hive treats it as a contributor push and hands the PR back (072 if red, else the normal path). Forgeable git author/committer names and emails never keep 074. | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
-| `stage/085-needs-decision` | PR | **PR-only** since the owner decision of 2026-10-17 (issues park at `stage/045-needs-decision`; before that this stage carried both, [#12683](https://github.com/hivecommons/hive/issues/12683)). A person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, GitHub workflow approval is required for a trusted same-repo bot/App/clanker PR (`workflow-approval-required:<ctx>`); Hive has posted `/ok-to-test` and is waiting for the repo-local `hive-ok-to-test` workflow or a maintainer, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). A trusted human's normal GitHub **Approve** review on the exact current head clears a `requires_human` verdict for any author kind/lane and records `reviewer-verdict:requires_human:human-approved@<login>`; a new head invalidates it, and `changes_requested` / `reject` still require fixes or manual merge. Under `review.self_authored_decision_policy: resolve`, Hive-authored non-risk incomplete-fix reviews with concrete remediation are normalized to `changes_requested` at verdict load/aggregation time and by the stage-label detail selector, even when the finding was marked high severity; duplicate summary/changelog intent-alignment cleanup with a concrete trim/reword fix is included. Those PRs go to `stage/070-fixing`, not here. One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
+| `stage/085-needs-decision` | PR | **PR-only** since the owner decision of 2026-10-17 (issues park at `stage/045-needs-decision`; before that this stage carried both, [#12683](https://github.com/hivecommons/hive/issues/12683)). A person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, GitHub workflow approval is required for a trusted same-repo bot/App/clanker PR (`workflow-approval-required:<ctx>`); Hive has posted `/ok-to-test` and is waiting for the repo-local `hive-ok-to-test` workflow or a maintainer, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). A trusted human's normal GitHub **Approve** review on the exact current head clears a `requires_human` verdict for any author kind/lane and records `reviewer-verdict:requires_human:human-approved@<login>`; a new head invalidates it, and `changes_requested` / `reject` still require fixes or manual merge. Under `review.self_authored_decision_policy: resolve`, a Hive-authored PR's reviewer decision question parks here only when it matches a named risk class (`review.DecisionRiskClasses`: permissions/credentials, security, sensitive paths, data loss/irreversible, merge/trust policy, external side effects, licensing/legal, unverifiable) or carries `<!-- hive-decision-risk: high -->`; any other question is resolved by policy and recorded as an advisory reason on the approving aggregate. Hive-authored non-risk incomplete-fix reviews with concrete remediation are normalized to `changes_requested` at verdict load/aggregation time and by the stage-label detail selector, even when the finding was marked high severity; duplicate summary/changelog intent-alignment cleanup with a concrete trim/reword fix is included. Those PRs go to `stage/070-fixing`, not here. One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
 | `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `role/*` and `author/*` labels. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check is 070/071/072 like any red CI | 3h |
 
@@ -312,18 +312,24 @@ engine's no-activity clock and `stalled.require_quiet` below do not apply
 to issues. When the issue falls back between its own stages (a claim or
 kick lapsed with no PR: 030 → 010) it gets one explanatory comment and a
 history hop in the store. The claim
-relay (`hive-open-issue claim`) writes `stage/020-claimed` /
-`stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
-label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
-for 040 when the PR opens. An agent comment that *escalates* (opens with
+relay (`hive-open-issue claim`) writes `hive/claimed-by-<who>` itself and
+submits a *fact* to the stage engine (`stageengine.FactSink`, ADR-0025) —
+`Claimed` / `InProgress` — which re-reads the issue and writes
+`stage/020-claimed` / `stage/030-pr-in-progress` so the label is right as soon
+as the claim lands; `hive-open-pr --issues` submits `CoveredBy`, and the
+engine swaps 030 for 040 when the PR opens. Claim release, the PR-claim sync
+(a closed or merged PR: `Uncovered`), parking on a decision (`Parked`) and
+`/hive approve` / `/hive decision` (`Unparked`) are facts too. An agent
+comment that *escalates* (opens with
 `needs-decision`/`needs-direction`/…, "parking this", "Triage (x): not a …
 defect") or a label request carrying only escalation labels is not a start
-signal: it records no agent claim and never stages the issue 030. Every stage
-write outside the reconciler (claim relay, claim release, in-progress sweep,
-PR-claim sync) goes through a fresh read so the mutation journal keys it to
-the item's `updated_at` — a label a human removed is re-applied, not replayed
-as "already applied"; close-on-merge strips every hive-owned label from
-an issue it closes. Timing shares the PR engine's state file
+signal: it records no agent claim and never stages the issue 030. No code
+outside the engine writes a `stage/*` label (a label request naming one is
+turned into the matching fact): every out-of-cycle fact goes through a fresh
+read so the derivation sees the labels GitHub has now and the mutation journal
+keys the write to the item's `updated_at` — a label a human removed is
+re-applied, not replayed as "already applied"; close-on-merge strips every
+hive-owned label from an issue it closes. Timing shares the PR engine's state file
 (`/data/stage-labels.json`, issues and PRs share a number space per repo);
 an issue's record never holds a PR stage, so a PR falling `100 → 060` does
 not read as the issue regressing.
@@ -333,9 +339,11 @@ not read as the issue regressing.
 > paths on this page (issue sweep and automerge lanes) and every
 > out-of-cycle stage write (claim relay, in-progress sweep, PR-claim sync,
 > dashboard) with one `pkg/stageengine` reconciler and a single
-> `StageWriter`; relay and claim paths will submit *facts* instead of
-> labels. Stage stays derived from GitHub truth each cycle; unexpected
-> transitions are counted as anomalies, never rejected. Rollout is gated by
+> `StageWriter`. The out-of-cycle writers already submit *facts* instead
+> of labels (plan PR-D, [#13009](https://github.com/hivecommons/hive/issues/13009));
+> the two in-cycle derivation paths move next. Stage stays derived from
+> GitHub truth each cycle; unexpected transitions are counted as anomalies,
+> never rejected. Rollout is gated by
 > `governor.labels.stage.engine.mode: shadow | enforce`; see the
 > [implementation plan](stage-engine-plan.md). Until it lands, the
 > description above is current.

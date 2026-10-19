@@ -15,6 +15,8 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Tests for the hive/in-progress start signal: the label and marker a
@@ -134,12 +136,16 @@ func TestIssueRequestWatcher_ClaimWithoutInProgressIsUnchanged(t *testing.T) {
 	}
 }
 
-// Enabled with governor.claims off: the claim request applies both labels in
-// ONE call and posts the start mark itself.
+// Enabled with governor.claims off: the claim request applies the ownership
+// label, submits the in-progress fact (the stage is the engine's to write —
+// the fake sink over the real reconciler shows it lands as stage/030) and
+// posts the start mark itself.
 func TestIssueRequestWatcher_ClaimAppliesInProgressLabelAndStartMark(t *testing.T) {
 	fake := newInProgressRelayServer(t)
 	c := issueTestClient(t, fake.srv.URL)
 	enableInProgress(c, "hive-a", 2*time.Hour)
+	sink, writer := stageenginetest.NewSink(stageenginetest.Options{Issue: IssueDeriver()})
+	c.SetStageFactSink(sink)
 	withIssueDir(t)
 	reqPath, err := WriteIssueRequest(issueRequestDirForTest, IssueRequest{Kind: "claim", Repo: "o/r", Number: 42, Agent: "scanner"})
 	if err != nil {
@@ -151,8 +157,11 @@ func TestIssueRequestWatcher_ClaimAppliesInProgressLabelAndStartMark(t *testing.
 	if len(labels) != 1 {
 		t.Fatalf("expected one label call, got %d: %v", len(labels), labels)
 	}
-	if strings.Join(labels[0], ",") != InProgressLabel+",hive/claimed-by-scanner" {
-		t.Fatalf("labels = %v", labels[0])
+	if strings.Join(labels[0], ",") != "hive/claimed-by-scanner" {
+		t.Fatalf("labels = %v, want only the ownership label (the stage is a fact)", labels[0])
+	}
+	if got := writer.LabelsOf(c.IssueStageRef("o/r", 42)); strings.Join(got, ",") != InProgressLabel {
+		t.Fatalf("stage labels from the in-progress fact = %v, want %s", got, InProgressLabel)
 	}
 	if len(comments) != 1 {
 		t.Fatalf("expected one start-mark comment, got %d", len(comments))
@@ -176,10 +185,16 @@ func TestIssueRequestWatcher_ClaimLeavesCommentToLedgerWhenClaimsOn(t *testing.T
 	if _, err := WriteIssueRequest(issueRequestDirForTest, IssueRequest{Kind: "claim", Repo: "o/r", Number: 42, Agent: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
+	sink := &stageenginetest.Recorder{}
+	c.SetStageFactSink(sink)
 	c.ProcessIssueRequestsOnce(context.Background())
 	labels, comments, _ := fake.snapshot()
-	if len(labels) != 1 || !containsString(labels[0], InProgressLabel) {
-		t.Fatalf("labels = %v, want %s present", labels, InProgressLabel)
+	if len(labels) != 1 || !containsString(labels[0], "hive/claimed-by-scanner") {
+		t.Fatalf("labels = %v, want the ownership label", labels)
+	}
+	facts := sink.All()
+	if len(facts) != 1 || facts[0].Method != "InProgress" || facts[0].Who != "scanner" || facts[0].Ref.Number != 42 {
+		t.Fatalf("facts = %+v, want one InProgress fact for #42 by scanner", facts)
 	}
 	if len(comments) != 0 {
 		t.Fatalf("relay must not duplicate the ledger comment, got %v", comments)
@@ -189,27 +204,49 @@ func TestIssueRequestWatcher_ClaimLeavesCommentToLedgerWhenClaimsOn(t *testing.T
 func TestClearInProgressForPR(t *testing.T) {
 	fake := newInProgressRelayServer(t)
 	c := issueTestClient(t, fake.srv.URL)
-	// Off: nothing is removed.
-	c.clearInProgressForPR(context.Background(), "o/r", []int{42, 43})
-	if _, _, removed := fake.snapshot(); len(removed) != 0 {
-		t.Fatalf("disabled clear removed labels: %v", removed)
+	sink := &stageenginetest.Recorder{}
+	c.SetStageFactSink(sink)
+	// Off: nothing is submitted.
+	c.clearInProgressForPR(context.Background(), "o/r", 99, []int{42, 43})
+	if facts := sink.All(); len(facts) != 0 {
+		t.Fatalf("disabled clear submitted facts: %+v", facts)
 	}
 	enableInProgress(c, "hive-a", time.Hour)
-	c.clearInProgressForPR(context.Background(), "o/r", []int{42, 0, 43})
-	added, _, removed := fake.snapshot()
-	// Each issue is re-read and only the claim-side labels it carries come
-	// off (#42 has none, #43 has the stage and the retired mark), journaled
-	// against that read; both move to stage/040-covered-by-pr.
-	if len(removed) != 2 {
-		t.Fatalf("removed = %v, want the two labels #43 carried", removed)
+	c.clearInProgressForPR(context.Background(), "o/r", 99, []int{42, 0, 43})
+	// Each named issue is a CoveredBy fact naming the PR; the engine turns
+	// it into stage/040 (see TestClearInProgressForPR_FactsBecomeLabels).
+	facts := sink.All()
+	if len(facts) != 2 {
+		t.Fatalf("facts = %+v, want one CoveredBy per issue", facts)
 	}
-	for _, p := range removed {
-		if !strings.Contains(p, "/issues/43/labels/") || (!strings.Contains(p, "stage/030") && !strings.Contains(p, "in-progress")) {
-			t.Errorf("unexpected removal path %q", p)
+	for i, n := range []int{42, 43} {
+		f := facts[i]
+		if f.Method != "CoveredBy" || f.Ref.Number != n || f.Ref.Kind != stagelabels.IssueItem || f.PR == nil || f.PR.Number != 99 || f.PR.Kind != stagelabels.PRItem || f.PR.FullRepo() != "o/r" {
+			t.Errorf("fact %d = %+v, want CoveredBy(#%d, PR o/r#99)", i, f, n)
 		}
 	}
-	if len(added) != 2 || added[0][0] != CoveredByPRLabel || added[1][0] != CoveredByPRLabel {
-		t.Fatalf("added = %v, want stage/040 on both issues", added)
+	if added, _, removed := fake.snapshot(); len(added)+len(removed) != 0 {
+		t.Fatalf("no direct stage writes expected: added %v removed %v", added, removed)
+	}
+}
+
+// The CoveredBy fact through the real reconciler takes the claimed /
+// pr-in-progress (and retired) labels off and puts stage/040 on — the same
+// labels the retired direct write produced.
+func TestClearInProgressForPR_FactsBecomeLabels(t *testing.T) {
+	fake := newInProgressRelayServer(t)
+	c := issueTestClient(t, fake.srv.URL)
+	enableInProgress(c, "hive-a", time.Hour)
+	sink, writer := stageenginetest.NewSink(stageenginetest.Options{Issue: IssueDeriver()})
+	c.SetStageFactSink(sink)
+	ref43 := c.IssueStageRef("o/r", 43)
+	writer.Seed(ref43, "stage/030-pr-in-progress", "hive/in-progress", "bug")
+	c.clearInProgressForPR(context.Background(), "o/r", 99, []int{42, 43})
+	if got := writer.LabelsOf(c.IssueStageRef("o/r", 42)); strings.Join(got, ",") != CoveredByPRLabel {
+		t.Fatalf("#42 labels = %v, want stage/040 only", got)
+	}
+	if got := writer.LabelsOf(ref43); strings.Join(got, ",") != "bug,"+CoveredByPRLabel {
+		t.Fatalf("#43 labels = %v, want bug + stage/040 (claim-side and retired labels gone)", got)
 	}
 }
 
