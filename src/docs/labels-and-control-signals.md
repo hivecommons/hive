@@ -215,7 +215,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/070-fixing` | PR | hive-owned repair: App/taken-over PR red, changes requested or needs-rebase, **or** a non-App PR whose red head was caused by a hive-pushed commit that must be removed/re-homed; a hive agent is reworking it | 2h |
 | `stage/071-needs-author` | PR | human-authored PR (`author/human`): CI red / changes requested / conflicting; the hive posted its diagnosis, the author must act. No nudge, no adoption — the person pushes or comments | 24h |
 | `stage/072-returned-to-contributor` | PR | clanker PR (`author/clanker`, relay or external hive): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the contributor hive's court. (Briefly spelled `stage/072-needs-author` by [#12713](https://github.com/hivecommons/hive/pull/12713); the engine renames that label back in place) | 24h |
-| `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). Adoption is an **ownership** state, not a CI state: the PR reads 074 for as long as the hive owns it — through its fixes going pending, green, reviewed or red again (074 outranks 050/060/070/071/072) — and leaves 074 only at the merge gate (080/085/090/100) or when the adoption is released. For in-place adoption, a changed head must be linked to the App bot by GitHub commit metadata (the stage store only remembers heads that already passed that check); otherwise the hive treats it as a contributor push and hands the PR back (072 if red, else the normal path). Forgeable git author/committer names and emails never keep 074. | 3h |
+| `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). Adoption is an **ownership** state, not a CI state: the PR reads 074 for as long as the hive owns it — through its fixes going pending, green, reviewed or red again (074 outranks 050/060/070/071/072) — and leaves 074 only at the merge gate (080/085/090/100), when the adoption is released, or — once per head — to 085 `adoption-stalled:<reason>` when the head sat unchanged past the dwell with CI idle and nothing the hive can push (an in-place adoption with a blocking review finding or a squash-unsafe hive commit re-homes to `hive/adopt-<n>` first instead). For in-place adoption, a changed head must be linked to the App bot by GitHub commit metadata (the stage store only remembers heads that already passed that check); otherwise the hive treats it as a contributor push and hands the PR back (072 if red, else the normal path). Forgeable git author/committer names and emails never keep 074. | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/085-needs-decision` | PR | **PR-only** since the owner decision of 2026-10-17 (issues park at `stage/045-needs-decision`; before that this stage carried both, [#12683](https://github.com/hivecommons/hive/issues/12683)). A person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, GitHub workflow approval is required for a trusted same-repo bot/App/clanker PR (`workflow-approval-required:<ctx>`), or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). A trusted human's normal GitHub **Approve** review on the exact current head clears a `requires_human` verdict for any author kind/lane and records `reviewer-verdict:requires_human:human-approved@<login>`; a new head invalidates it, and `changes_requested` / `reject` still require fixes or manual merge. Under `review.self_authored_decision_policy: resolve`, Hive-authored non-risk incomplete-fix reviews with concrete remediation are normalized to `changes_requested` at verdict load/aggregation time and by the stage-label detail selector, even when the finding was marked high severity; duplicate summary/changelog intent-alignment cleanup with a concrete trim/reword fix is included. Those PRs go to `stage/070-fixing`, not here. One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
 | `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `role/*` and `author/*` labels. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
@@ -268,6 +268,7 @@ stateDiagram-v2
     s074 --> s100: lane admits the hive's head (soak / merge-eligible)
     s074 --> [*]: superseder merged (original closed)
     s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back; 050 if that head is green)
+    s074 --> s085: adopted head unchanged past the dwell with CI idle and nothing the hive can push (adoption-stalled:<reason>), or the re-home failed
     s050 --> s085: hold / sentinel / human-only lane rule
     s060 --> s090: untrusted tier, head otherwise mergeable, soak elapsed
     s085 --> s090: hold lifted / alert cleared, head mergeable
@@ -724,10 +725,25 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      graces (`contributor_grace_online` 2h / `contributor_grace_offline` 15m
      after a comment-only nudge);
    - `reason=dco-rehome` (always `mode=supersede`) — not a fresh adoption
-     but the one second takeover that exists: an in-place-adopted head stayed
+     but a second takeover: an in-place-adopted head stayed
      DCO-red with unsigned commits the hive cannot rewrite on the contributor
      branch (see the DCO paragraph below). The stage record's `adopt_reason`
      moves to `dco-rehome` as well.
+   - `reason=signoff-rehome` (always `mode=supersede`) — second takeover: an
+     in-place-adopted head carries a hive commit whose `Signed-off-by` names
+     the App while the squash would land as the contributor, so the sign-off
+     gate strips it (`check-squash-signoff-attribution.sh`, lane reason
+     `hive-signoff-attribution`). The hive cannot deliver a signed commit on
+     that branch at all; it re-homes at the next sweep.
+   - `reason=in-place-stalled` (always `mode=supersede`) — second takeover:
+     an in-place-adopted head sat unchanged for the 074 dwell (3h) with CI
+     idle (not pending) and the review swarm's latest verdict on it
+     `changes_requested`. The in-place lane repairs CI only, so a green head
+     with an open finding is never worked there; the superseding PR body
+     names the carried-over finding and tells the fixer green CI alone is
+     not done. The sweep re-evaluates existing 074 records every pass, so a
+     record adopted before this rule existed converts too
+     (hivecommons/hive#12858).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
    How the hive takes over depends on whether it can push to the PR's own
@@ -769,7 +785,24 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      hive's work: the review-fix dispatcher may push signed fixer commits to
      that adopted branch and keeps the PR in the fixer's work list every cycle
      until a new head lands. If the bounded fix-attempt cap is exhausted, the
-     PR is escalated visibly with reason `fix-attempts-exhausted`.
+     PR is escalated visibly with reason `fix-attempts-exhausted`. When no
+     such fix lands for the 074 dwell the adoption converts to a supersession
+     (`reason=in-place-stalled`, above) rather than sitting silently.
+     **Stalled adoption → 085.** Whatever the mode, an adopted PR the hive
+     owns on paper but nobody is working — the head unchanged for the 074
+     dwell with CI idle and no re-home applicable, or a supersession whose
+     `hive/adopt-<n>` push or PR create failed — moves to
+     `stage/085-needs-decision` with lane reason
+     `adoption-stalled:<lane reason>` (e.g.
+     `adoption-stalled:reviewer-verdict:changes_requested`,
+     `adoption-stalled:check-failing:unit`,
+     `adoption-stalled:supersede-failed:dco-rehome`) and ONE
+     `<!-- hive:adoption-stalled head=<sha> reason=<r> -->` comment naming
+     the exact blocker (the verdict and its summaries, the red check, or the
+     failed re-home). The escalation is remembered per head: a hive push to a
+     new head returns the PR to 074 and restarts the clock. A pending `tide`
+     or missing `lgtm` is never the reason — the lane has not admitted the
+     head; the comment says so.
    - **supersede** (`mode=supersede`) — the fork forbids maintainer edits,
      `in_place: false`, or the adopted head has unsigned commits (`no-dco`)
      that the hive cannot repair by amending the contributor branch:

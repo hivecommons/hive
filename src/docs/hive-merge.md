@@ -490,7 +490,17 @@ pushes and release adoption once repo evidence exists
 App-authored agents commit with the App bot noreply email (keyed by the bot's
 GitHub user id, not the App id) so their fixer pushes
 normally provide the GitHub linkage, while their commit name/sign-off still
-shows the lane. The issues a PR covers
+shows the lane. An in-place adoption does not sit at 074 forever: the sweep
+re-evaluates every adopted record each pass, and when the hive cannot finish
+on the contributor branch — a hive commit the squash sign-off gate strips
+(`hive-signoff-attribution`), or a blocking review-swarm finding left on a
+head that sat idle for the 074 dwell — it converts to a supersession
+(`reason=signoff-rehome` / `in-place-stalled`) and the superseding PR takes
+the same red-PR / review-fix route. An adoption with nothing the hive can
+push past the dwell goes to `stage/085-needs-decision` as
+`adoption-stalled:<lane reason>` with one comment naming the blocker, so the
+dashboard shows a person's item, not a silent 074; "waiting on maintainer
+lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same

@@ -1098,3 +1098,74 @@ func TestRecordAdoptionLive(t *testing.T) {
 		t.Fatalf("yielded: %+v", rec)
 	}
 }
+
+// Stage-074 escape bookkeeping (hivecommons/hive#12858): the adopted-head
+// clock restarts on a hive push, a failed supersession reads as nobody
+// working the head, and an escalation is remembered once per head.
+func TestStoreAdoptionEscapeBookkeeping(t *testing.T) {
+	now := time.Date(2026, 10, 18, 14, 26, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("hivecommons/hive", 12858)
+	s.Observe(key, Fixing, LaneReasonChangesRequested)
+	s.MarkAdoptedInPlace(key, "5665cda", "grace-elapsed", now)
+	r, _ := s.Get(key)
+	if !r.AdoptedHeadSince().Equal(now) || !r.AdoptedHeadAt.IsZero() {
+		t.Fatalf("fresh in-place adoption clock: %+v", r)
+	}
+	if r.AdoptionEscalated("5665cda") || r.AdoptionAttemptedNothingOpened("5665cda") {
+		t.Fatalf("in-place record misread: %+v", r)
+	}
+
+	clock = now.Add(4 * time.Hour)
+	s.MarkAdoptedHead(key, "5665cda")
+	if r, _ = s.Get(key); !r.AdoptedHeadSince().Equal(now) {
+		t.Fatalf("same head restarted the clock: %+v", r)
+	}
+	s.MarkAdoptedHead(key, "f72fa44")
+	if r, _ = s.Get(key); !r.AdoptedHeadSince().Equal(clock) || r.AdoptedHead != "f72fa44" {
+		t.Fatalf("hive push did not restart the clock: %+v", r)
+	}
+
+	s.MarkAdoptionEscalated("missing", "f72fa44", "adoption-stalled:x")
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkAdoptionEscalated created a record")
+	}
+	s.MarkAdoptionEscalated(key, "", "adoption-stalled:x")
+	if r, _ = s.Get(key); r.AdoptionEscalated("") || r.AdoptEscalatedHead != "" {
+		t.Fatalf("empty head escalated: %+v", r)
+	}
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	r, _ = s.Get(key)
+	if !r.AdoptionEscalated("f72fa44") || r.AdoptionEscalated("5665cda") || r.AdoptEscalatedReason != "adoption-stalled:check-failing:unit" {
+		t.Fatalf("escalation not recorded: %+v", r)
+	}
+	s.dirty = false
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	if s.dirty {
+		t.Fatal("re-marking the same escalation dirtied the store")
+	}
+
+	// A supersession that opened nothing is an adoption nobody works.
+	s.MarkAdopted(key, "f72fa44", 0, clock)
+	if r, _ = s.Get(key); !r.AdoptionAttemptedNothingOpened("f72fa44") || r.AdoptionAttemptedNothingOpened("5665cda") {
+		t.Fatalf("failed supersession misread: %+v", r)
+	}
+	s.MarkAdopted(key, "f72fa44", 90, clock)
+	if r, _ = s.Get(key); r.AdoptionAttemptedNothingOpened("f72fa44") {
+		t.Fatalf("live superseder misread: %+v", r)
+	}
+
+	// Yield and clear forget the escalation and the head clock.
+	s.MarkYielded(key, "abc")
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalatedReason != "" || !r.AdoptedHeadAt.IsZero() {
+		t.Fatalf("yield kept escape state: %+v", r)
+	}
+	s.MarkAdoptedInPlace(key, "abc", "grace-elapsed", clock)
+	s.MarkAdoptedHead(key, "abd")
+	s.MarkAdoptionEscalated(key, "abd", "adoption-stalled:x")
+	s.ClearAdoption(key)
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || !r.AdoptedHeadAt.IsZero() {
+		t.Fatalf("clear kept escape state: %+v", r)
+	}
+}
