@@ -138,7 +138,7 @@ func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 		state.Fixes = append(state.Fixes, PendingFix{Repo: "acme/hive", Number: 7, HeadSHA: "old", Attempts: i})
 	}
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, state, DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1")}})
-	if len(plan.FixKicks) != 0 || len(plan.State.Human) != 1 || !strings.Contains(plan.State.Human[0].Reason, "cap reached") {
+	if len(plan.FixKicks) != 0 || len(plan.State.Human) != 1 || plan.State.Human[0].Reason != FixAttemptsExhaustedHumanDecisionReason {
 		t.Fatalf("cap exhaustion did not require human: kicks=%d human=%+v", len(plan.FixKicks), plan.State.Human)
 	}
 }

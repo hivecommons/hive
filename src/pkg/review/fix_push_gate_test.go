@@ -153,9 +153,9 @@ func TestAdoptedContributorPRIsHiveOwnedForFixes(t *testing.T) {
 	}
 }
 
-func TestStalledAdoptedPendingFixIsRekicked(t *testing.T) {
+func TestAdoptedPendingFixIsRekickedEveryCycle(t *testing.T) {
 	pr := humanPR("sha1")
-	pr.Labels = []string{"stage/074-adopted-by-hive", "stage/stalled", "author/clanker"}
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
 	state := DispatchState{
 		Fixes:       []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
 		FixAttempts: []FixAttempt{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
@@ -164,22 +164,46 @@ func TestStalledAdoptedPendingFixIsRekicked(t *testing.T) {
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
 
 	if len(plan.FixKicks) != 1 {
-		t.Fatalf("stalled adopted PR got %d fix kicks, want 1", len(plan.FixKicks))
+		t.Fatalf("adopted PR got %d fix kicks, want 1", len(plan.FixKicks))
 	}
 	if len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 4 {
 		t.Fatalf("pending fixes = %+v, want a fourth attempt", plan.State.Fixes)
 	}
 }
 
-func TestPendingFixIsNotRekickedBeforeStalled(t *testing.T) {
+func TestNonAdoptedPendingFixIsNotRekicked(t *testing.T) {
 	pr := humanPR("sha1")
-	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+	pr.HiveAttributed = true
 	state := DispatchState{Fixes: []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 1, Dispatched: time.Now()}}}
 
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
 
 	if len(plan.FixKicks) != 0 || len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 1 {
-		t.Fatalf("unstalled pending fix changed: fixes=%d state=%+v", len(plan.FixKicks), plan.State.Fixes)
+		t.Fatalf("ordinary pending fix changed: fixes=%d state=%+v", len(plan.FixKicks), plan.State.Fixes)
+	}
+	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedPending {
+		t.Fatalf("fix exclusions = %+v, want pending exclusion", plan.FixExclusions)
+	}
+}
+
+func TestAdoptedFixAttemptsExhaustedIsVisibleHumanHold(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+	state := DispatchState{
+		Fixes:       []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 6, Dispatched: time.Now()}},
+		FixAttempts: []FixAttempt{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 6, Dispatched: time.Now()}},
+	}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 0 {
+		t.Fatalf("exhausted adopted PR got %d fix kicks, want 0", len(plan.FixKicks))
+	}
+	if len(plan.State.Human) != 1 || plan.State.Human[0].Reason != FixAttemptsExhaustedHumanDecisionReason {
+		t.Fatalf("human hold = %+v, want %q", plan.State.Human, FixAttemptsExhaustedHumanDecisionReason)
+	}
+	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedAttemptsExhausted || plan.FixExclusions[0].Attempts != 6 {
+		t.Fatalf("fix exclusions = %+v, want exhausted attempts=6", plan.FixExclusions)
 	}
 }
 

@@ -10075,6 +10075,10 @@ type reviewFixAuditor interface {
 // hivecommons/hive#12897). The planner reports each head once, so
 // this does not repeat on every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
+	for _, x := range plan.FixExclusions {
+		logger.Info("review fix dispatch excluded",
+			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
+	}
 	for _, w := range plan.WithheldFixes {
 		logger.Info("review fix withheld: PR not hive-authored; review published, nothing pushed",
 			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)

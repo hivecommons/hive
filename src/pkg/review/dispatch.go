@@ -288,6 +288,10 @@ type DispatchPlan struct {
 	// should log and audit. Refusals already recorded in State.Withheld for
 	// the same head are not repeated here.
 	WithheldFixes []WithheldFix
+	// FixExclusions are changes-requested PRs whose fix kick was deliberately
+	// not added to FixKicks this cycle. Callers log them so a stuck PR never
+	// disappears behind a silent planner branch.
+	FixExclusions []FixDispatchExclusion
 	// Expired are the pending reviews dropped THIS cycle for outliving
 	// PendingTTL without a verdict; their perspectives are re-dispatched in
 	// the same plan unless the head's retry budget is exhausted.
@@ -297,6 +301,24 @@ type DispatchPlan struct {
 	Exhausted []HumanReviewHold
 	State     DispatchState
 }
+
+type FixDispatchExclusion struct {
+	Repo     string
+	Number   int
+	HeadSHA  string
+	Author   string
+	Reason   string
+	Attempts int
+}
+
+const (
+	FixDispatchExcludedPending              = "pending-fix-already-dispatched"
+	FixDispatchExcludedAttemptsExhausted    = "fix-attempts-exhausted"
+	FixDispatchExcludedNoEnabledFixer       = "no-enabled-fixer"
+	FixDispatchExcludedNotHiveAuthored      = "not-hive-authored"
+	FixDispatchExcludedNotHiveAuthoredDCO   = "not-hive-authored-squash-signoff"
+	FixAttemptsExhaustedHumanDecisionReason = "fix-attempts-exhausted"
+)
 
 func LoadDispatchState(path string) (DispatchState, error) {
 	explicit := path != ""
@@ -725,6 +747,11 @@ func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now time.Time) {
 	for _, w := range p.State.Withheld {
 		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			reason := FixDispatchExcludedNotHiveAuthored
+			if opts.FixHumanPRs {
+				reason = FixDispatchExcludedNotHiveAuthoredDCO
+			}
+			p.recordFixExclusion(pr, reason, 0)
 			return
 		}
 	}
@@ -744,13 +771,19 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 	}
 	p.State.Withheld = append(p.State.Withheld, w)
 	p.WithheldFixes = append(p.WithheldFixes, w)
+	reason = FixDispatchExcludedNotHiveAuthored
+	if opts.FixHumanPRs {
+		reason = FixDispatchExcludedNotHiveAuthoredDCO
+	}
+	p.recordFixExclusion(pr, reason, 0)
 }
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
 	idx := fixIndex(p.State.Fixes, pr.Repo, pr.Number, pr.HeadSHA)
 	pendingAttempts := 0
 	if idx >= 0 {
-		if !stalledHiveOwnedFix(pr, opts) {
+		if !adoptedHiveOwnedFix(pr, opts) {
+			p.recordFixExclusion(pr, FixDispatchExcludedPending, p.State.Fixes[idx].Attempts)
 			return
 		}
 		pendingAttempts = p.State.Fixes[idx].Attempts
@@ -764,11 +797,13 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 		attempts = historical
 	}
 	if attempts >= escalation.MaxReEngagements {
-		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: fmt.Sprintf("review fix cap reached (%d/%d)", attempts, escalation.MaxReEngagements), UpdatedAt: now})
+		p.recordFixExclusion(pr, FixDispatchExcludedAttemptsExhausted, attempts)
+		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: FixAttemptsExhaustedHumanDecisionReason, UpdatedAt: now})
 		return
 	}
 	agent := selectFixerAgent(pr, opts)
 	if agent == "" {
+		p.recordFixExclusion(pr, FixDispatchExcludedNoEnabledFixer, attempts)
 		p.State.Human = upsertHuman(p.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: "no enabled kick-capable fixer agent is available", UpdatedAt: now})
 		return
 	}
@@ -778,8 +813,19 @@ func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchO
 	p.State.Fixes = append(p.State.Fixes, PendingFix{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Agent: agent, Attempts: attempts, Dispatched: now})
 }
 
-func stalledHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {
-	return hasLabelFold(pr.Labels, "stage/stalled") && hiveAuthored(pr, opts)
+func adoptedHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {
+	return hasLabelFold(pr.Labels, "stage/074-adopted-by-hive") && hiveAuthored(pr, opts)
+}
+
+func (p *DispatchPlan) recordFixExclusion(pr PullRequest, reason string, attempts int) {
+	p.FixExclusions = append(p.FixExclusions, FixDispatchExclusion{
+		Repo:     pr.Repo,
+		Number:   pr.Number,
+		HeadSHA:  pr.HeadSHA,
+		Author:   strings.TrimSpace(pr.Author),
+		Reason:   reason,
+		Attempts: attempts,
+	})
 }
 
 func hasLabelFold(labels []string, want string) bool {
