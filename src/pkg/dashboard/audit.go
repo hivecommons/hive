@@ -260,6 +260,7 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
 
+	a.reopenSpillIfRemovedLocked()
 	if a.writer != nil {
 		if data, err := json.Marshal(entry); err == nil {
 			if _, err := a.writer.Write(append(data, '\n')); err != nil {

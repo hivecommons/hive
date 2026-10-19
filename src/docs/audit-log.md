@@ -128,14 +128,26 @@ malicious or corrupt `.gz` — see [security](security.md).
 A hosted spoke rolls with `maxSurge: 1`, so two pods briefly share the
 ReadWriteMany `/data`. NFSv3 cannot make two writers' appends to one file safe,
 so only the pod holding `/data/audit-writer.lease` (renewed every 10s, stale
-after 45s, released on shutdown) appends to `audit.jsonl`. The other pod writes
-to `/data/audit-spill-<pod>-<start>.jsonl`; the lease holder appends those
+after 90s, released on shutdown) appends to `audit.jsonl`. The other pod writes
+to `/data/audit-spill-<pod>-<start>.jsonl` and touches it on every 10s renewal
+tick while it is alive; a pod that cannot write the lease file spills too
+rather than appending to `audit.jsonl` unleased. The lease holder appends spill
 entries to `audit.jsonl` and deletes the spill once it takes over (its own
-spill) or once a spill has not been written for 45s (another pod's). A spill
-file that lingers is therefore unmerged audit data, not garbage — `grep
-/data/audit*.jsonl` covers both, and the readers that walk rotated backups
-already include it (#13046). Merged entries keep their original `ts`, so
-`audit.jsonl` is not strictly time-ordered across a rollout.
+spill) or once another pod's spill has not been touched for 90s (that pod has
+released the lease or died). A spill file that lingers is therefore unmerged
+audit data, not garbage — `grep /data/audit*.jsonl` covers both, and the
+readers that walk rotated backups already include it (#13046). Merged entries
+keep their original `ts`, so `audit.jsonl` is not strictly time-ordered across
+a rollout. Merged entries are written to the file only, not to the new pod's
+in-memory list, so verify a rollout's entries in `/data/audit*.jsonl` rather
+than in `GET /api/audit` (they appear there after the next restart).
+
+The 90s TTL assumes the NFS client caches file attributes and directory
+entries for at most 60s — the Linux default `acregmax`/`acdirmax` — so a pod
+never sees a lease or spill timestamp older than the TTL while its owner is
+still renewing it (#13072). Mounting `/data` with `noac`, or with `actimeo` at
+or below 60, keeps that assumption; raising the attribute cache above 60s can
+let two pods append to `audit.jsonl` for up to one renewal interval.
 
 ## `GET /api/audit`
 

@@ -24,12 +24,18 @@ import (
 // Any other pod appends to its own spill file (audit-spill-<id>.jsonl), which
 // no one else writes. When a pod acquires the lease it folds its own spill
 // into audit.jsonl, and the holder periodically folds in spill files left by
-// pods that have gone quiet (released or died). audit.jsonl stays the
+// pods that have gone quiet (released or died). A live non-holder touches its
+// spill on every renewal tick, so only a pod that stopped ticking ever looks
+// quiet. audit.jsonl stays the
 // canonical file; the audit readers already glob audit-*.jsonl, so spilled
 // entries are visible before they are merged.
+//
+// The TTL sits well above the NFS client's default attribute/dentry cache
+// ceiling (acregmax/acdirmax = 60s, #13072): a peer may read a lease or spill
+// mtime that is up to that old, and must still see it as fresh.
 var (
 	auditLeaseRenewInterval = 10 * time.Second
-	auditLeaseTTL           = 45 * time.Second
+	auditLeaseTTL           = 90 * time.Second
 	auditLeaseNow           = time.Now
 )
 
@@ -140,10 +146,10 @@ func (a *AuditLog) tryAcquireLeaseLocked() bool {
 		return false
 	}
 	if err := writeAuditLease(path, a.writerID, now); err != nil {
-		// Without a writable lease there is nothing to coordinate on; keep the
-		// pre-#13046 behaviour rather than spilling forever.
-		slog.Warn("audit writer lease write failed; writing audit.jsonl directly", "path", path, "error", err)
-		return true
+		// Never append to audit.jsonl without a lease: the real holder may
+		// still be writing it. Spill instead and retry on the next tick.
+		slog.Warn("audit writer lease write failed; spilling to a per-pod file", "path", path, "error", err)
+		return false
 	}
 	// Two pods that saw the same stale lease both wrote one; the rename that
 	// landed last wins and the other backs off.
@@ -158,6 +164,36 @@ func (a *AuditLog) switchWriterLocked(path string, compress bool) {
 		_ = a.writer.Close()
 	}
 	a.writer = newAuditLumberjack(path, compress)
+}
+
+// reopenSpillIfRemovedLocked drops the spill writer's open descriptor when its
+// file has been merged and removed, so the next write recreates the file
+// instead of landing on an unlinked inode. Callers must hold a.mu.
+func (a *AuditLog) reopenSpillIfRemovedLocked() {
+	if a.logPath == "" || a.owner || a.writer == nil {
+		return
+	}
+	if _, err := os.Stat(a.writer.Filename); os.IsNotExist(err) {
+		a.switchWriterLocked(a.writer.Filename, false)
+	}
+}
+
+// touchOwnSpillLocked is a live non-holder's heartbeat: it creates its spill
+// file if needed and sets its mtime to now, so the holder never mistakes a
+// pod that is merely not logging for one that has gone. Callers must hold a.mu.
+func (a *AuditLog) touchOwnSpillLocked() {
+	a.reopenSpillIfRemovedLocked()
+	spill := auditSpillPath(a.logPath, a.writerID)
+	f, err := os.OpenFile(spill, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		slog.Warn("audit spill heartbeat failed", "path", spill, "error", err)
+		return
+	}
+	_ = f.Close()
+	now := auditLeaseNow()
+	if err := os.Chtimes(spill, now, now); err != nil {
+		slog.Warn("audit spill heartbeat failed", "path", spill, "error", err)
+	}
 }
 
 // mergeSpillsLocked appends spill files into the canonical log and removes
@@ -202,7 +238,7 @@ func (a *AuditLog) mergeSpillsLocked() {
 }
 
 // leaseTick renews (and sweeps quiet spills) while holding the lease, and
-// tries to take it over otherwise.
+// otherwise tries to take it over, keeping its own spill fresh until it does.
 func (a *AuditLog) leaseTick() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -228,7 +264,9 @@ func (a *AuditLog) leaseTick() {
 		a.switchWriterLocked(a.logPath, true)
 		a.mergeSpillsLocked()
 		slog.Info("audit writer lease acquired; merged spilled entries into the audit log", "path", a.logPath)
+		return
 	}
+	a.touchOwnSpillLocked()
 }
 
 func (a *AuditLog) runWriterLease(stop <-chan struct{}) {
