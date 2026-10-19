@@ -184,8 +184,9 @@ func TestIssueRequestWatcher_LabelAllowsVerifiedOpenVerdict(t *testing.T) {
 // parking an item on a maintainer decision is the ADR-0019 escalation move
 // that replaced `needs-direction` / `needs-decision`; every other stage label
 // is refused and the un-park stays with a maintainer. Both the issue bay
-// (stage/045) and the PR-only stage/085 pass; the reconcilers clamp the
-// label to the item's kind.
+// (stage/045) and the PR-only stage/085 pass; the request is a Parked fact
+// for the stage engine, which writes the one canonical spelling for the
+// item's kind (ADR-0025) — never the agent's mixed-case or PR-only label.
 func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
 	for _, park := range []string{"Stage/045-Needs-Decision", "Stage/085-Needs-Decision"} {
 		t.Run(park, func(t *testing.T) {
@@ -205,8 +206,8 @@ func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
 			}
 			c.ProcessIssueRequestsOnce(context.Background())
 
-			if got := strings.Join(added, ","); got != park {
-				t.Fatalf("labels added = %q, want %s", got, park)
+			if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+				t.Fatalf("labels added = %q, want the engine's %s", got, NeedsDecisionStageLabel)
 			}
 			if len(removed) != 0 {
 				t.Fatalf("unexpected removed labels: %v", removed)

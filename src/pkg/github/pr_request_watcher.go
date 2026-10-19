@@ -669,7 +669,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// names: they move to stage/040-covered-by-pr, where the stage
 	// reconciler keeps them while the PR is open (the PR's own stage is
 	// narrated in the issue's stage reason, never written as its label).
-	c.clearInProgressForPR(ctx, req.Repo, req.IssueN)
+	c.clearInProgressForPR(ctx, req.Repo, res.Number, req.IssueN)
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},
 		"author", res.Author,

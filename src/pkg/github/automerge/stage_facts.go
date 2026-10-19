@@ -203,6 +203,9 @@ func (prDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 	}
 	list := observationsFrom(f)
 	if len(list) == 0 {
+		if d, ok := parkedPRDecision(f); ok {
+			return d
+		}
 		return stageengine.Decision{Abstain: true, Reason: "stage facts: no lane observed the PR"}
 	}
 	verdict, role, obs := resolveStage(list)
@@ -232,4 +235,30 @@ func decisionFrom(v stageVerdict, role stagelabels.Role, obs stageObservation, f
 		d.Human = &stagelabels.Route{Stage: v.Stage}
 	}
 	return d
+}
+
+// parkedPRDecision is the opinion for a PR no lane has observed but whose
+// Facts say a person parked it (an out-of-cycle Parked fact from the issue
+// request relay, or a needs-decision label found on a fresh read): it sits
+// at 085 on the human route with whatever role it already wears until the
+// next sweep's lanes speak. An open PR with no park and no lanes stays an
+// Abstain.
+func parkedPRDecision(f stageengine.Facts) (stageengine.Decision, bool) {
+	if !f.Open || f.Park.ApprovedDirection {
+		return stageengine.Decision{}, false
+	}
+	label := strings.TrimSpace(f.Park.DecisionLabel)
+	if label == "" && f.Park.NeedsHuman {
+		label = stageengine.NeedsHumanLabel
+	}
+	if label == "" {
+		return stageengine.Decision{}, false
+	}
+	return stageengine.Decision{
+		Stage:  stagelabels.NeedsDecision,
+		Role:   stagelabels.RoleOf(f.Labels),
+		Kind:   f.Author.Kind,
+		Reason: "parked on a person: " + label,
+		Human:  &stagelabels.Route{Stage: stagelabels.NeedsDecision},
+	}, true
 }

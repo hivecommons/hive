@@ -135,3 +135,38 @@ func TestPRDeriverAbstainsWithoutEvidence(t *testing.T) {
 		t.Fatalf("no lanes: %+v", got)
 	}
 }
+
+// A PR no lane has observed but a person parked (an out-of-cycle Parked fact
+// from the issue request relay, or a needs-decision / needs-human label on
+// the fresh read) sits at 085 on the human route with the role it wears; an
+// un-park or a closed PR still abstains until the lanes speak.
+func TestPRDeriverParksUnobservedPR(t *testing.T) {
+	d := PRDeriver()
+	base := stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.PRItem}, Open: true, PR: &stageengine.PRFacts{}}
+
+	parked := base
+	parked.Labels = []string{"needs-decision", stagelabels.RoleContributor.Label()}
+	parked.Park = stageengine.ParkFacts{DecisionLabel: "needs-decision"}
+	got := d.Derive(parked)
+	if got.Abstain || got.Stage != stagelabels.NeedsDecision || got.Role != stagelabels.RoleContributor ||
+		got.Human == nil || got.Human.Stage != stagelabels.NeedsDecision || got.Reason != "parked on a person: needs-decision" {
+		t.Fatalf("decision park: %+v", got)
+	}
+
+	human := base
+	human.Park = stageengine.ParkFacts{NeedsHuman: true}
+	if got := d.Derive(human); got.Abstain || got.Stage != stagelabels.NeedsDecision || got.Reason != "parked on a person: "+stageengine.NeedsHumanLabel {
+		t.Fatalf("needs-human park: %+v", got)
+	}
+
+	unparked := parked
+	unparked.Park.ApprovedDirection = true
+	if got := d.Derive(unparked); !got.Abstain {
+		t.Fatalf("un-park must abstain without lanes: %+v", got)
+	}
+	closed := parked
+	closed.Open = false
+	if got := d.Derive(closed); !got.Abstain {
+		t.Fatalf("closed PR must abstain: %+v", got)
+	}
+}

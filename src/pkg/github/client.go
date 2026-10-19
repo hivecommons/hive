@@ -127,6 +127,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	authToken                 string   // token-authenticated clients only; never log

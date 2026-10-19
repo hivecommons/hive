@@ -9,6 +9,8 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // issueParkingLabels are the labels that park an issue on a person and so
@@ -332,7 +334,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	}
 
 	labels := issueLabelNames(issue.Labels)
-	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels); err != nil {
+	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels, actor); err != nil {
 		return false, err
 	}
 	decision := strings.TrimSpace(command.Decision)
@@ -468,6 +470,11 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 			kept = append(kept, labelAttribution{Label: label, Actor: safeGetLogin(ev.Actor)}.String())
 			continue
 		}
+		if stagelabels.IsStageLabel(label) {
+			// The stage park label is the stage engine's to lift (below).
+			removed = append(removed, label)
+			continue
+		}
 		if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
 			return false, err
 		}
@@ -481,6 +488,9 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 			WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
 	}
 	actor := safeGetLogin(candidate.GetUser())
+	if err := c.StageFacts().Unparked(ctx, c.IssueStageRef(owner+"/"+repo, number), actor); err != nil {
+		return false, err
+	}
 	decision := strings.TrimSpace(command.Decision)
 	if decision == "" {
 		decision = "go with the recommendation"
@@ -559,15 +569,17 @@ func hasIssueParkingLabel(labels []string) bool {
 	return false
 }
 
-// clearIssueParkingLabels removes the removable parking labels the issue
-// actually carries and adds the approval label, so the resulting PR is not
-// held for #5117 and the issue ranks as an agreed direction. `needs-human`
-// stays (unparkRemovableLabels), so an issue carrying it remains
-// hard-suppressed and at stage/045 after the decision is recorded. A label
-// that has already gone is not an error.
-func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+// clearIssueParkingLabels removes the removable (retired, non-stage) parking
+// labels the issue actually carries, adds the approval label — so the
+// resulting PR is not held for #5117 and the issue ranks as an agreed
+// direction — and tells the stage engine the park lifted (an Unparked fact
+// by actor): the engine takes the stage/045 park label off and re-derives
+// the stage. `needs-human` stays (unparkRemovableLabels), so an issue
+// carrying it remains hard-suppressed and at stage/045 after the decision
+// is recorded. A label that has already gone is not an error.
+func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string, actor string) error {
 	for _, label := range unparkRemovableLabels {
-		if !labelPresent(labels, label) {
+		if !labelPresent(labels, label) || stagelabels.IsStageLabel(label) {
 			continue
 		}
 		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil {
@@ -584,7 +596,7 @@ func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string
 	}
 	c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
 		WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
-	return nil
+	return c.StageFacts().Unparked(ctx, c.IssueStageRef(owner+"/"+repo, number), actor)
 }
 
 func labelPresent(labels []string, want string) bool {

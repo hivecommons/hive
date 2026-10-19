@@ -2046,14 +2046,6 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, name)
 		}
-		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
-			// The claim lapsed (PR closed or merged) but the stage label is
-			// still on the issue: take it off now rather than a cycle later.
-			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, CoveredByPRLabel, observedState(issue.UpdatedAt)); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
-			}
-			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
-		}
 		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
 				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
@@ -2074,6 +2066,21 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				logger.Warn("removing likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+		}
+		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
+			// The claim lapsed (PR closed or merged) but the stage label is
+			// still on the issue: tell the stage engine now rather than a
+			// cycle later. It re-reads the issue — after the likely-done /
+			// partially-addressed writes above — so a merged PR's issue
+			// leaves the pipeline and a closed-unmerged one goes back to 010.
+			prRepo := claim.PRRepo
+			if prRepo == "" {
+				prRepo = issue.Repo
+			}
+			if err := client.StageFacts().Uncovered(ctx, client.IssueStageRef(issue.Repo, issue.Number), client.PRStageRef(prRepo, claim.PRNumber)); err != nil && logger != nil {
+				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 	}
 }

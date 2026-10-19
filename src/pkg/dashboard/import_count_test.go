@@ -33,8 +33,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// and pending (not yet dispatched) rework from the persisted stage-label
 	// store without extra GitHub calls (hivecommons/hive#12502), plus
 	// pkg/nous for the per-campaign experiment store that scopes the
-	// Experiment Lab baseline to the active research question (hivecommons/hive#12501).
-	const maxDashboardInternalImports = 50
+	// Experiment Lab baseline to the active research question (hivecommons/hive#12501),
+	// plus pkg/stageengine so the contribute hub submits stage facts to the
+	// central engine instead of writing stage/* labels directly (ADR-0025,
+	// hivecommons/hive#13009).
+	const maxDashboardInternalImports = 51
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

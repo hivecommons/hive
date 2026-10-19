@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -55,7 +57,11 @@ func TestStageLabeler_RemoveAgainAfterExternalReadd(t *testing.T) {
 	c.SetMutationBoundary(replayTestBoundary(t))
 	ctx := context.Background()
 
-	if _, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
+	// The claim fact goes through the default sink: the engine derives 020
+	// and the client's writer enforces it against a fresh read.
+	ref := c.IssueStageRef("acme/widgets", 7)
+	claim := stageengine.ClaimFact{Holder: "ann", Kind: claims.KindHuman}
+	if err := c.StageFacts().Claimed(ctx, ref, claim); err != nil {
 		t.Fatal(err)
 	}
 	// Another writer puts 010 back; GitHub bumps updated_at.
@@ -63,12 +69,12 @@ func TestStageLabeler_RemoveAgainAfterExternalReadd(t *testing.T) {
 	labels = append(labels, "stage/010-actionable")
 	updated = updated.Add(time.Minute)
 	mu.Unlock()
-	if _, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
+	if err := c.StageFacts().Claimed(ctx, ref, claim); err != nil {
 		t.Fatal(err)
 	}
 	// Same state again: nothing to do, so no third delete either way.
-	if out, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil || out.Changed() {
-		t.Fatalf("idempotent pass: out=%+v err=%v", out, err)
+	if err := c.StageFacts().Claimed(ctx, ref, claim); err != nil {
+		t.Fatalf("idempotent pass: err=%v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -195,37 +201,36 @@ func TestRemoveLabelsFresh_RemovesAgainAfterReadd(t *testing.T) {
 	}
 }
 
-// A claim request's labels go on through the enforcer: one read, the stale
-// stage off, one add carrying the stage and the ownership label, and a
-// second claim after the first lapsed is written, not replayed.
-func TestAddLabelsFresh_EnforcesStageAndRewritesAfterLapse(t *testing.T) {
+// A claim request's ownership label goes on against a fresh read: a second
+// claim after the first lapsed is written, not replayed, and a stage label
+// handed to AddLabelsFresh is dropped — the stage is the engine's to write.
+func TestAddLabelsFresh_RewritesAfterLapseAndRefusesStageLabels(t *testing.T) {
 	f, c := newIssueLabelFixture(t, "bug", "stage/010-actionable")
 	ctx := context.Background()
-	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, "hive/claimed-by-scanner", stagelabels.PRInProgress.Label()); err != nil {
 		t.Fatal(err)
 	}
-	// The claim lapsed: the hooks took both labels off and the reconciler
-	// staged the issue actionable again.
+	// The claim lapsed: the hooks took the label off.
 	f.mu.Lock()
 	f.labels = []string{"bug", "stage/010-actionable"}
 	f.updated = f.updated.Add(time.Hour)
 	f.mu.Unlock()
-	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, "hive/claimed-by-scanner"); err != nil {
 		t.Fatal(err)
 	}
 	// Already there: nothing is written.
-	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, "hive/claimed-by-scanner"); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.adds) != 2 || strings.Join(f.adds[0], ",") != "stage/030-pr-in-progress,hive/claimed-by-scanner" || strings.Join(f.adds[1], ",") != "stage/030-pr-in-progress,hive/claimed-by-scanner" {
-		t.Fatalf("adds = %v, want one combined add per claim", f.adds)
+	if len(f.adds) != 2 || strings.Join(f.adds[0], ",") != "hive/claimed-by-scanner" || strings.Join(f.adds[1], ",") != "hive/claimed-by-scanner" {
+		t.Fatalf("adds = %v, want one ownership-label add per claim and no stage label", f.adds)
 	}
-	if strings.Join(f.deletes, ",") != "stage/010-actionable,stage/010-actionable" {
-		t.Fatalf("deletes = %v", f.deletes)
+	if len(f.deletes) != 0 {
+		t.Fatalf("deletes = %v, want none (the stage is not this path's)", f.deletes)
 	}
-	if strings.Join(f.labels, ",") != "bug,stage/030-pr-in-progress,hive/claimed-by-scanner" {
+	if strings.Join(f.labels, ",") != "bug,stage/010-actionable,hive/claimed-by-scanner" {
 		t.Fatalf("item carries %v", f.labels)
 	}
 }

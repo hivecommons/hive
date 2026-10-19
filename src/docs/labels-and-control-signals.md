@@ -311,18 +311,24 @@ engine's no-activity clock and `stalled.require_quiet` below do not apply
 to issues. When the issue falls back between its own stages (a claim or
 kick lapsed with no PR: 030 → 010) it gets one explanatory comment and a
 history hop in the store. The claim
-relay (`hive-open-issue claim`) writes `stage/020-claimed` /
-`stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
-label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
-for 040 when the PR opens. An agent comment that *escalates* (opens with
+relay (`hive-open-issue claim`) writes `hive/claimed-by-<who>` itself and
+submits a *fact* to the stage engine (`stageengine.FactSink`, ADR-0025) —
+`Claimed` / `InProgress` — which re-reads the issue and writes
+`stage/020-claimed` / `stage/030-pr-in-progress` so the label is right as soon
+as the claim lands; `hive-open-pr --issues` submits `CoveredBy`, and the
+engine swaps 030 for 040 when the PR opens. Claim release, the PR-claim sync
+(a closed or merged PR: `Uncovered`), parking on a decision (`Parked`) and
+`/hive approve` / `/hive decision` (`Unparked`) are facts too. An agent
+comment that *escalates* (opens with
 `needs-decision`/`needs-direction`/…, "parking this", "Triage (x): not a …
 defect") or a label request carrying only escalation labels is not a start
-signal: it records no agent claim and never stages the issue 030. Every stage
-write outside the reconciler (claim relay, claim release, in-progress sweep,
-PR-claim sync) goes through a fresh read so the mutation journal keys it to
-the item's `updated_at` — a label a human removed is re-applied, not replayed
-as "already applied"; close-on-merge strips every hive-owned label from
-an issue it closes. Timing shares the PR engine's state file
+signal: it records no agent claim and never stages the issue 030. No code
+outside the engine writes a `stage/*` label (a label request naming one is
+turned into the matching fact): every out-of-cycle fact goes through a fresh
+read so the derivation sees the labels GitHub has now and the mutation journal
+keys the write to the item's `updated_at` — a label a human removed is
+re-applied, not replayed as "already applied"; close-on-merge strips every
+hive-owned label from an issue it closes. Timing shares the PR engine's state file
 (`/data/stage-labels.json`, issues and PRs share a number space per repo);
 an issue's record never holds a PR stage, so a PR falling `100 → 060` does
 not read as the issue regressing.
@@ -332,9 +338,11 @@ not read as the issue regressing.
 > paths on this page (issue sweep and automerge lanes) and every
 > out-of-cycle stage write (claim relay, in-progress sweep, PR-claim sync,
 > dashboard) with one `pkg/stageengine` reconciler and a single
-> `StageWriter`; relay and claim paths will submit *facts* instead of
-> labels. Stage stays derived from GitHub truth each cycle; unexpected
-> transitions are counted as anomalies, never rejected. Rollout is gated by
+> `StageWriter`. The out-of-cycle writers already submit *facts* instead
+> of labels (plan PR-D, [#13009](https://github.com/hivecommons/hive/issues/13009));
+> the two in-cycle derivation paths move next. Stage stays derived from
+> GitHub truth each cycle; unexpected transitions are counted as anomalies,
+> never rejected. Rollout is gated by
 > `governor.labels.stage.engine.mode: shadow | enforce`; see the
 > [implementation plan](stage-engine-plan.md). Until it lands, the
 > description above is current.

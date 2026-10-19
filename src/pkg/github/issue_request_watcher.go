@@ -491,13 +491,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				verificationClaimCooldown.String()+" ago and nothing has changed since; do not re-verify it, and open a PR without a claim if you intend to fix it", nowFn)
 			return
 		}
-		// Apply a namespaced ownership label (App bots can't be assignees)
-		// and, when enabled, stage/030-pr-in-progress — the timestamped "an
-		// agent started a PR for this" signal (see issue_inprogress.go). The
-		// stage goes through the one enforcer and both writes are journaled
-		// against a fresh read, so a second claim on an issue whose earlier
-		// labels lapsed is written, not replayed (hivecommons/hive#12512).
-		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, c.claimStage(), c.inProgressLabelsForClaim(req.Agent)...)
+		// Apply a namespaced ownership label (App bots can't be assignees),
+		// journaled against a fresh read so a second claim on an issue whose
+		// earlier label lapsed is written, not replayed (hivecommons/hive#12512).
+		// The stage — stage/030-pr-in-progress when the in-progress mark is
+		// on — is a fact for the stage engine (see issue_inprogress.go).
+		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, claimOwnershipLabel(req.Agent))
+		if err == nil {
+			err = c.submitInProgressFact(ctx, req.Repo, req.Number, req.Agent, nowFn())
+		}
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -545,8 +547,21 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		// in the state it asked for even when the same automation reads the
 		// item in between. A failure leaves the request on the retry path; the
 		// GitHub calls are idempotent (adding a present label and removing an
-		// absent one are both no-ops), so a retry converges.
-		err = c.AddLabels(ctx, req.Repo, req.Number, addLabels)
+		// absent one are both no-ops), so a retry converges. Stage labels are
+		// never written here: a park label is a Parked fact for the stage
+		// engine (045 on an issue, 085 on a PR) and the downgrade's
+		// stage/010-actionable an Unparked one; the engine re-reads the item
+		// and writes exactly one stage.
+		plainLabels, parkLabel, unpark := c.partitionStageRequestLabels(addLabels)
+		if len(plainLabels) > 0 {
+			err = c.AddLabels(ctx, req.Repo, req.Number, plainLabels)
+		}
+		if err == nil && unpark {
+			err = c.StageFacts().Unparked(ctx, c.IssueStageRef(req.Repo, req.Number), req.Agent)
+		}
+		if err == nil && parkLabel != "" {
+			err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
+		}
 		if err == nil {
 			resp.LabelsAdded = addLabels
 			for _, label := range removeLabels {
@@ -827,6 +842,37 @@ func hiveDecisionDowngradeNote(question string) string {
 func replaceDecisionParkWithActionable(labels []string, configured string) []string {
 	labels = removeDecisionParkLabels(labels, configured)
 	return appendLabelIfMissing(labels, stagelabels.Actionable.Label())
+}
+
+// partitionStageRequestLabels splits a `label` request's additions into the
+// labels written as labels, the park label (if any) the request submits as
+// a Parked fact, and whether it carries the downgrade's stage/010-actionable
+// (an Unparked fact). The configured decision label and `needs-human` are
+// both park labels AND labels the item wears (the engine does not write
+// them), so they stay in the plain list too; the stage spellings (045, 085,
+// 010) are the engine's alone.
+func (c *Client) partitionStageRequestLabels(labels []string) (plain []string, park string, unpark bool) {
+	configured := c.needsDecisionLabel()
+	for _, label := range labels {
+		name := strings.TrimSpace(label)
+		if name == "" {
+			continue
+		}
+		isPark := strings.EqualFold(name, configured) || strings.EqualFold(name, PRNeedsDecisionStageLabel) ||
+			strings.EqualFold(name, NeedsDecisionStageLabel) || strings.EqualFold(name, issueNeedsHumanLabel)
+		if isPark && park == "" {
+			park = name
+		}
+		if strings.EqualFold(name, stagelabels.Actionable.Label()) {
+			unpark = true
+			continue
+		}
+		if stagelabels.IsStageLabel(strings.ToLower(name)) {
+			continue
+		}
+		plain = append(plain, label)
+	}
+	return plain, park, unpark
 }
 
 func containsConfiguredDecisionParkLabel(labels []string, configured string) bool {

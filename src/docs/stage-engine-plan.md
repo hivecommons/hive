@@ -138,6 +138,16 @@ real reconciler with a fake writer so label expectations still hold.
 Files touched: ~8 modified. Depends on: PR-B (the `FactSink` type); rebases
 over PR-C for the allow-list.
 
+Landed as [#13009](https://github.com/hivecommons/hive/issues/13009). The
+sink hangs off `github.Client` (`StageFacts()` / `SetStageFactSink`); its
+default is an enforce-mode reconciler over `stagelabels.Shared()` whose
+Enrich hook re-reads the item (labels, open/closed, issue-vs-PR) before
+deriving. Deviation: `src/pkg/claims/comments.go` keeps its literals —
+`pkg/config` imports `pkg/claims` and `pkg/stagelabels` imports `pkg/config`,
+so the import would cycle; `TestClaimLabelConstantsMatchStages` in
+`pkg/stagelabels` pins the spellings instead. Test doubles live in
+`src/pkg/stageengine/stageenginetest` (`Writer`, `NewSink`, `Recorder`).
+
 ## PR-E — `stage_engine.mode` flag, shadow→enforce rollout, migration, docs (after A, B, C)
 
 - `src/pkg/config`: `governor.labels.stage.engine.mode` (`off|shadow|enforce`,
