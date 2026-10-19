@@ -17,6 +17,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -61,6 +62,11 @@ type Options struct {
 	// ReviewGate is the swarm-review policy trySweepSelfAuthoredPR evaluates
 	// on the App's own PRs (#12592). nil installs no policy; see ReviewGate.
 	ReviewGate *ReviewGate
+	// HumanChangeRequests receives a trusted maintainer's CHANGES_REQUESTED
+	// review on a hive-authored PR head so the review planner can kick the
+	// author agent with it (hivecommons/hive#13041). nil still parks the PR
+	// at fixing; it just records nothing for the planner.
+	HumanChangeRequests review.HumanChangeRequestStore
 	// HumanMergePaths returns the live auto_merge.human_merge_paths patterns
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
@@ -155,6 +161,8 @@ type Engine struct {
 	reviewGateMu sync.RWMutex
 	reviewGate   *ReviewGate
 
+	humanChangeRequests review.HumanChangeRequestStore
+
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
@@ -215,6 +223,7 @@ func New(transport Transport, opts Options) *Engine {
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
 		reviewGate:                        opts.ReviewGate,
+		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -413,6 +422,7 @@ func nextSelfAuthoredSweepInterval(repos int, current time.Duration, result *Aut
 
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
+	autoMergeReasonHumanChangesRequested      = "human-changes-requested"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
 	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
 	autoMergeReasonUntrustedMerger            = "untrusted-merger"
@@ -1386,6 +1396,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	c.noteStageVerdict(owner, repo, number, verdict)
 	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
 	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
+	// A trusted maintainer's changes_requested on this head outranks every
+	// swarm verdict and the merge gates below (hivecommons/hive#13041): the
+	// PR goes to 070 and the planner kicks the author agent with the review
+	// text. Mirrors the trusted-author and contributor lanes, which also
+	// refuse to merge over an outstanding changes_requested.
+	if c.humanChangesRequestedForHead(ctx, owner, repo, number, evaluatedHeadSHA) {
+		return AutoMergeSweepEvent{}, autoMergeReasonHumanChangesRequested, nil
+	}
 	method := mergeMethodFor(pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,

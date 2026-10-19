@@ -401,6 +401,22 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// the verdict: fixPushAllowed and the merge lanes, not this loop.
 		revisiting := false
 		var delivered map[Perspective]Verdict
+		if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.HeadSHA) == strings.TrimSpace(pr.HeadSHA) {
+			// A trusted maintainer answered this head — a changes_requested
+			// review or `/hive decision <text>` — so whatever the swarm said
+			// about it is superseded (hivecommons/hive#13041). Hand the
+			// instruction to the author agent; the swarm re-reviews the head
+			// the fix pushes. One kick per head: dispatchFix's pending check.
+			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+			plan.State.Human = removeHumanForHead(plan.State.Human, pr)
+			agg, _ := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest)
+			if fixPushAllowed(pr, opts) {
+				plan.dispatchFix(pr, agg, opts, now)
+			} else {
+				plan.withholdFix(pr, opts, now)
+			}
+			continue
+		}
 		if agg, ok := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest); ok {
 			// A verdict normally settles a PR until its head moves. That is
 			// right while the reviewer is sound, and a trap once a
@@ -971,9 +987,16 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 	}
 	fmt.Fprintf(&b, "Auto-fix attempt %d of %d. Stay narrowly scoped to the review findings below; push a new commit to the PR branch.\n\n", attempt, maxAttempts)
 	fmt.Fprintf(&b, "When committing the fix, include this exact git trailer so rework metrics can count the attempt: Hive-Fix-Attempt: %d/%d\n\n", attempt, maxAttempts)
+	if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.Body) != "" {
+		b.WriteString(humanChangeRequestPromptSection(*req))
+	}
 	b.WriteString("Aggregated review findings:\n")
 	if len(agg.Findings) == 0 && len(agg.Reasons) == 0 {
-		b.WriteString("- Review requested changes but did not include structured findings; inspect the PR conversation and latest diff.\n")
+		if pr.HumanChangeRequest != nil {
+			b.WriteString("- No structured swarm findings for this head; the maintainer instruction above is the whole scope.\n")
+		} else {
+			b.WriteString("- Review requested changes but did not include structured findings; inspect the PR conversation and latest diff.\n")
+		}
 	}
 	for _, reason := range agg.Reasons {
 		fmt.Fprintf(&b, "- %s\n", reason)
@@ -983,6 +1006,42 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 	}
 	b.WriteString("\nReturn the standard fix AgentReport when done. If the findings are unsafe or ambiguous, request human review instead of guessing.\n")
 	return b.String()
+}
+
+// humanChangeRequestPromptSection renders a maintainer's instruction into
+// the fix prompt. The body goes in verbatim: it is the maintainer's words,
+// and paraphrasing a conditional answer is how the condition gets lost.
+func humanChangeRequestPromptSection(req HumanChangeRequest) string {
+	var b strings.Builder
+	actor := strings.TrimSpace(req.Actor)
+	if actor == "" {
+		actor = "maintainer"
+	}
+	what := "changes-requested review"
+	if req.Source == HumanChangeRequestSourceDecision {
+		what = "/hive decision"
+	}
+	fmt.Fprintf(&b, "Maintainer instruction (@%s via %s", actor, what)
+	if url := strings.TrimSpace(req.URL); url != "" {
+		fmt.Fprintf(&b, ", %s", url)
+	}
+	b.WriteString("). This is the primary instruction; implement it as written and treat the swarm findings below as secondary:\n")
+	for _, line := range strings.Split(strings.TrimRight(req.Body, "\n"), "\n") {
+		fmt.Fprintf(&b, "> %s\n", line)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func removeHumanForHead(items []HumanReviewHold, pr PullRequest) []HumanReviewHold {
+	kept := items[:0]
+	for _, h := range items {
+		if samePRHead(h.Repo, h.Number, h.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			continue
+		}
+		kept = append(kept, h)
+	}
+	return kept
 }
 
 func (a Artifact) AggregateFor(repo string, number int, headSHA string) (Aggregate, bool) {

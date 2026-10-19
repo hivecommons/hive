@@ -161,6 +161,12 @@ type Route struct {
 	// Summary is the one-line evidence digest for comments:
 	// "verdict approved @abc1234, 55/55 checks green, DCO yes, soak 2h elapsed".
 	Summary string
+	// Head, SelfAuthored and Verdict carry the evidence DecisionComment
+	// needs to name the concrete actions a maintainer has on a hive-authored
+	// PR parked on `requires_human` (hivecommons/hive#13041).
+	Head         string
+	SelfAuthored bool
+	Verdict      VerdictState
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -235,7 +241,7 @@ func RouteHuman(e Evidence) Route {
 		decide = append(decide, "the automerge lane will not merge this unattended")
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary}
+		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict}
 	}
 	var wait []string
 	switch {
@@ -361,6 +367,23 @@ func DecisionComment(r Route) string {
 		b.WriteString(r.Summary)
 		b.WriteString(".")
 	}
+	if actions := DecisionActions(r); actions != "" {
+		b.WriteString("\n\n")
+		b.WriteString(actions)
+	}
 	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "` or the merge queue on its own.</sub>")
 	return b.String()
+}
+
+// DecisionActions names the two things a maintainer can do with a
+// hive-authored PR the swarm parked on `requires_human`: approve the head
+// to merge it as-is, or request changes — by review or `/hive decision` —
+// and the hive pushes the fix (hivecommons/hive#13041). Empty for every
+// other 085 route: a hold label or sentinel alert has its own remedy, and
+// the hive does not push to a PR it did not open.
+func DecisionActions(r Route) string {
+	if r.Stage != NeedsDecision || !r.SelfAuthored || r.Verdict != VerdictRequiresHuman {
+		return ""
+	}
+	return "**What to do:** approve this head (`" + ShortSHA(r.Head) + "`) to merge as-is, or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix."
 }

@@ -24,6 +24,15 @@ type unparkWireIssue struct {
 	User     wireUser            `json:"user"`
 	Labels   []wireLabel         `json:"labels"`
 	Comments []unparkWireComment `json:"-"`
+	// PullRequest marks the issue as a PR in the issues list; HeadSHA and
+	// State feed the pulls/{n} endpoint (hivecommons/hive#13041).
+	PullRequest *unparkWirePRLink `json:"pull_request,omitempty"`
+	HeadSHA     string            `json:"-"`
+	State       string            `json:"-"`
+}
+
+type unparkWirePRLink struct {
+	URL string `json:"url"`
 }
 
 type unparkWireComment struct {
@@ -126,6 +135,24 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 				return
 			}
 			_ = json.NewEncoder(w).Encode(issue)
+
+		case strings.HasPrefix(path, "pulls/") && r.Method == http.MethodGet:
+			var n int
+			fmt.Sscanf(path, "pulls/%d", &n)
+			issue, ok := byNum[n]
+			if !ok || issue.PullRequest == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			state := issue.State
+			if state == "" {
+				state = "open"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": n, "state": state, "title": issue.Title, "body": issue.Body,
+				"user": issue.User, "labels": issue.Labels,
+				"head": map[string]any{"sha": issue.HeadSHA},
+			})
 
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
 			var n int

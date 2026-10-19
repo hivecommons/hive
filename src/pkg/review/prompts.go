@@ -56,6 +56,13 @@ type PullRequest struct {
 	// satisfy. It is extracted before prompt construction so the reviewer gets
 	// the contract without seeing the author's whole PR rationale.
 	ScopeContract string
+	// HumanChangeRequest is a trusted maintainer's instruction standing
+	// against HeadSHA — a CHANGES_REQUESTED review or a `/hive decision`
+	// comment (hivecommons/hive#13041). Set by the caller from the
+	// HumanChangeRequestStore; the planner answers it with a fix kick and
+	// reviews nothing on that head. It is the maintainer's text, not the
+	// author's rationale, so it is allowed into the fix prompt verbatim.
+	HumanChangeRequest *HumanChangeRequest
 }
 
 func PullRequestBodyDigest(title, body string) string {

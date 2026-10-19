@@ -44,15 +44,32 @@ The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.
 
-PRs use GitHub's native review signal instead of `/hive approve` or
-`/hive decision`. When the swarm has not approved the current head because it
-returned `requires_human`, a human who is trusted to queue merges can submit a
-normal GitHub **Approve** review on that exact head SHA to clear
-`stage/085-needs-decision` for any author kind/lane. No special review body is
-required; the queued human-merge lane's
-`Approved by @... for Hive auto-merge on green CI.` body remains specific to
-that queue flow. A swarm `changes_requested` or `reject` verdict is not
-overridden by a human approval; the head must be fixed or merged manually.
+PRs use GitHub's native review signal instead of `/hive approve`. When the
+swarm has not approved the current head because it returned `requires_human`,
+a human who is trusted to queue merges can submit a normal GitHub **Approve**
+review on that exact head SHA to clear `stage/085-needs-decision` for any
+author kind/lane. No special review body is required; the queued human-merge
+lane's `Approved by @... for Hive auto-merge on green CI.` body remains
+specific to that queue flow. A swarm `changes_requested` or `reject` verdict
+is not overridden by a human approval; the head must be fixed or merged
+manually.
+
+On a **hive-authored** PR (`author/hive`) parked at `stage/085-needs-decision`
+the same trusted human has a second lever
+([#13041](https://github.com/hivecommons/hive/issues/13041)): a GitHub
+**changes requested** review on the current head, or a `/hive decision <what
+to change>` comment, moves the PR to `stage/070-fixing` and kicks the author
+agent once per head with the review/decision text quoted verbatim plus the
+swarm's outstanding findings; the swarm verdict for that head is superseded,
+and the new head the agent pushes gets the normal swarm re-review. One kick per
+(head, review/comment): a second sweep over the same head does not re-kick, a
+dismissed review or a later approval by the same reviewer clears it, and a
+changes-requested review left on an older head is outdated. The 085 entry
+comment names both actions. The commenter must hold `write` or better on the
+repo *and* be in the hive's trusted-merger set (the bar a human approval
+already meets). `/hive decision` on a PR the hive did **not** open, or `/hive
+approve` / `/hive help` on any PR, gets one reply naming the review-side
+equivalents instead of silence; the hive never pushes to a PR it did not open.
 
 `/fixed` and `/reopen` are intentionally narrower: they work for the issue's own
 reporter or for `write`/`maintain`/`admin` collaborators. `/fixed` plain prose is

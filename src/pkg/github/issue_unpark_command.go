@@ -10,6 +10,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -116,6 +117,29 @@ type IssueUnparkSweepOptions struct {
 	LabelApproval func(repo string) (LabelApprovalPolicy, bool)
 	// LabelApprovalAudit, when set, is called once per acceptance acted on.
 	LabelApprovalAudit func(IssueLabelApprovalEvent)
+	// HumanChangeRequests receives `/hive decision <text>` left by a trusted
+	// maintainer on a hive-authored PR parked at stage/085-needs-decision
+	// (hivecommons/hive#13041); the review planner turns it into a fix kick.
+	// nil means the sweep answers the PR but cannot route the decision.
+	HumanChangeRequests review.HumanChangeRequestStore
+	// TrustedMerger is the automerge lane's merger trust test. A PR-side
+	// `/hive decision` needs it on top of repo write access, the same bar
+	// the self-authored lane sets for a human approval or changes_requested
+	// review. nil (not configured) means no PR decision is acted on.
+	TrustedMerger func(login string) bool
+	// PRAudit, when set, is called once per PR decision routed to the fix lane.
+	PRAudit func(PullRequestDecisionEvent)
+}
+
+// PullRequestDecisionEvent records one `/hive decision` on a hive-authored
+// PR the sweep routed to the fix lane (hivecommons/hive#13041).
+type PullRequestDecisionEvent struct {
+	Repo       string
+	Number     int
+	HeadSHA    string
+	Actor      string
+	Decision   string
+	CommentURL string
 }
 
 // IssueLabelApprovalEvent records one acceptance the sweep acted on, for the
@@ -150,10 +174,13 @@ type IssueUnparkSweepResult struct {
 	// LabelApproved lists the acceptances acted on via a configured approval
 	// label on label-driven repos (hivecommons/hive#11313).
 	LabelApproved []IssueLabelApprovalEvent
+	// PRDecisions lists the `/hive decision` comments on hive-authored PRs
+	// routed to the fix lane (hivecommons/hive#13041).
+	PRDecisions []PullRequestDecisionEvent
 }
 
 func (r *IssueUnparkSweepResult) actions() int {
-	return len(r.Unparked) + r.Replies + len(r.LabelApproved)
+	return len(r.Unparked) + r.Replies + len(r.LabelApproved) + len(r.PRDecisions)
 }
 
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
@@ -204,10 +231,30 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			if result.actions() >= maxActions {
 				break
 			}
-			if issue == nil || issue.IsPullRequest() {
+			if issue == nil {
 				continue
 			}
 			labels := issueLabelNames(issue.Labels)
+			if issue.IsPullRequest() {
+				// PRs take one command only — `/hive decision` while parked
+				// at 085 (hivecommons/hive#13041) — and never a notice.
+				if !labelPresent(labels, PRNeedsDecisionStageLabel) {
+					continue
+				}
+				result.Seen++
+				acted, err := c.tryUnparkPullRequest(ctx, repo, owner, repoName, issue, cutoff, opts, result)
+				if err != nil {
+					if c.logger != nil {
+						c.logger.Warn("unpark sweep skipped pull request", "repo", repo, "pr", issue.GetNumber(), "error", err)
+					}
+					result.Skipped++
+					continue
+				}
+				if !acted {
+					result.Skipped++
+				}
+				continue
+			}
 			parked := hasIssueParkingLabel(labels)
 			if !parked && !(labelApproval && hasLabelApprovalCandidate(labels, policy)) {
 				continue

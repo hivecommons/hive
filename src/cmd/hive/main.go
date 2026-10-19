@@ -2327,6 +2327,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts := automerge.Options{
 		Logger:                  b.logger,
 		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
 		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
 		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
@@ -8848,6 +8849,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	opts := automerge.Options{
 		Logger:                  logger,
 		MergerAuthorizer:        trustedMergerFunc(cfg),
+		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
 		TrustedAuthorizer:       trustedAuthorFunc(cfg),
 		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
@@ -9284,6 +9286,18 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 				event.Repo, event.Number, event.Actor, event.Decision)
 			dashSrv.AuditLogRecord("system", "issue-unparked-by-reply", detail, "", event.Repo, event.Number)
 		},
+		// `/hive decision` on a hive-authored PR at 085 (hivecommons/hive#13041)
+		// is routed to the fix lane under the automerge lane's merger trust.
+		HumanChangeRequests: review.DefaultHumanChangeRequests(),
+		TrustedMerger:       trustedMergerFunc(cfg),
+		PRAudit: func(event github.PullRequestDecisionEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, head=%s, actor=%s, decision=%s",
+				event.Repo, event.Number, event.HeadSHA, event.Actor, event.Decision)
+			dashSrv.AuditLogRecord("system", "pr-decision-routed-to-fix", detail, "", event.Repo, event.Number)
+		},
 	})
 	if err != nil {
 		logger.Warn("issue un-park sweep failed", "error", err)
@@ -9292,9 +9306,9 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if result == nil {
 		return
 	}
-	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 {
+	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 || len(result.PRDecisions) > 0 {
 		logger.Info("issue un-park sweep complete",
-			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "replies", result.Replies, "skipped", result.Skipped)
+			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "pr_decisions", len(result.PRDecisions), "replies", result.Replies, "skipped", result.Skipped)
 	}
 }
 
@@ -9915,6 +9929,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			PlanRef:       pr.HivePlan,
 			PlanWave:      planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
 			ScopeContract: pr.ScopeContract,
+			// A maintainer's changes_requested review or `/hive decision`
+			// on this head (hivecommons/hive#13041): the planner kicks the
+			// fix lane with it instead of reviewing the head again.
+			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
 		})
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle

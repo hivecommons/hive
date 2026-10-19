@@ -456,8 +456,11 @@ no-verdict → `stage/085-needs-decision` with reason
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
 human-authored PR → `stage/071-needs-author`, on a clanker PR →
-`stage/072-returned-to-contributor`, hold / sentinel alert →
-`stage/085-needs-decision`, untrusted author with an approve verdict at the
+`stage/072-returned-to-contributor`, a trusted human's changes-requested
+review or `/hive decision <text>` on a hive-authored PR's current head →
+`stage/070-fixing` with reason `human-changes-requested` and one fix kick
+carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
+hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
 missing), merged → no stage), plus one `role/*` label saying
