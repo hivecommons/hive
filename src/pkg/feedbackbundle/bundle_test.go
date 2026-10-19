@@ -164,3 +164,149 @@ func TestStoreRefusesWithoutToken(t *testing.T) {
 		t.Fatal("expected error for a path-unsafe id")
 	}
 }
+
+// Error paths: an upload failure that is not a missing branch is returned as
+// is; a missing branch whose default branch cannot be resolved fails; a 422 on
+// ref creation (concurrent store) is tolerated; empty screenshots are skipped
+// and a missing html_url falls back to the canonical blob URL.
+func TestStoreErrorAndFallbackPaths(t *testing.T) {
+	t.Run("upload 500 is returned", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		_, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id1", "x", []Screenshot{{Content: []byte("p"), Ext: "png"}})
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Fatalf("err = %v, want upload 500", err)
+		}
+	})
+	t.Run("default branch unknown", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPut {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer srv.Close()
+		_, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id2", "x", nil)
+		if err == nil || !strings.Contains(err.Error(), "default branch unknown") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("default head unknown", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				w.WriteHeader(http.StatusUnprocessableEntity)
+			case r.URL.Path == "/repos/o/r":
+				_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			default:
+				_, _ = w.Write([]byte(`{"object":{}}`))
+			}
+		}))
+		defer srv.Close()
+		_, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id3", "x", nil)
+		if err == nil || !strings.Contains(err.Error(), "head unknown") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("ref GET failure propagates", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				w.WriteHeader(http.StatusNotFound)
+			case r.URL.Path == "/repos/o/r":
+				_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			default:
+				w.WriteHeader(http.StatusForbidden)
+			}
+		}))
+		defer srv.Close()
+		if _, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id4", "x", nil); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("concurrent ref creation tolerated, blob URL fallback, empty shots skipped", func(t *testing.T) {
+		first := true
+		var puts int
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				puts++
+				if first {
+					first = false
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				_, _ = w.Write([]byte(`{"content":{}}`))
+			case r.URL.Path == "/repos/o/r":
+				_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			case r.Method == http.MethodGet:
+				_, _ = w.Write([]byte(`{"object":{"sha":"abc"}}`))
+			case r.Method == http.MethodPost:
+				w.WriteHeader(http.StatusUnprocessableEntity)
+			}
+		}))
+		defer srv.Close()
+		got, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id5", "x", []Screenshot{{Content: nil, Ext: "png"}, {Content: []byte("p"), Ext: ""}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if puts != 2 {
+			t.Fatalf("puts = %d, want 2 (one retry, screenshots skipped)", puts)
+		}
+		if got.ReportURL != "https://github.com/o/r/blob/"+Branch+"/"+Dir+"/id5/"+ReportFile {
+			t.Fatalf("report url = %q", got.ReportURL)
+		}
+		if len(got.Screenshots) != 0 {
+			t.Fatalf("screenshots = %v", got.Screenshots)
+		}
+	})
+	t.Run("ref creation failure other than 422 propagates", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				w.WriteHeader(http.StatusNotFound)
+			case r.URL.Path == "/repos/o/r":
+				_, _ = w.Write([]byte(`{"default_branch":"main"}`))
+			case r.Method == http.MethodGet:
+				_, _ = w.Write([]byte(`{"object":{"sha":"abc"}}`))
+			default:
+				w.WriteHeader(http.StatusForbidden)
+			}
+		}))
+		defer srv.Close()
+		if _, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id6", "x", nil); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("malformed JSON and transport errors", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`not json`))
+		}))
+		defer srv.Close()
+		if _, err := Store(context.Background(), srv.Client(), srv.URL, "ghs_x", "o", "r", "id7", "x", nil); err == nil {
+			t.Fatal("expected JSON error")
+		}
+		if _, err := Store(context.Background(), srv.Client(), "http://127.0.0.1:1", "ghs_x", "o", "r", "id8", "x", nil); err == nil {
+			t.Fatal("expected transport error")
+		}
+		if _, err := githubJSON(context.Background(), srv.Client(), "t", "BAD METHOD", srv.URL, nil, nil); err == nil {
+			t.Fatal("expected request-build error")
+		}
+	})
+}
+
+func TestTruncateBytesOnRune(t *testing.T) {
+	s := "aé" // 'é' is two bytes
+	if got := truncateBytesOnRune(s, 2); got != "a" {
+		t.Fatalf("got %q, want %q", got, "a")
+	}
+	if got := truncateBytesOnRune(s, 3); got != s {
+		t.Fatalf("got %q, want unchanged", got)
+	}
+	if got := truncateBytesOnRune("", 0); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}
