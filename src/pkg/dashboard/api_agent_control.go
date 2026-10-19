@@ -44,6 +44,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		return s.deps.AgentMgr.SendKickAsync(name, kickMsg)
 	}
 
+	operatorSupplied := msg != ""
 	if msg == "" && s.deps.Scheduler != nil {
 		if !s.deps.Scheduler.FirstScanDone() {
 			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
@@ -73,11 +74,16 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		}
 		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
-	if sanitized, ok := s.enforceKickPrompt(r, name, msg); !ok {
-		jsonError(w, "ioscan rejected critical injection in kick prompt", http.StatusUnprocessableEntity)
-		return
-	} else {
-		msg = sanitized
+	// Only operator-supplied text is untrusted here. A server-rendered prompt
+	// embeds hive-authored template text, and its untrusted items were already
+	// enforced individually on the scheduler path (#12936).
+	if operatorSupplied {
+		if sanitized, ok := s.enforceKickPrompt(r, name, msg); !ok {
+			jsonError(w, "ioscan rejected critical injection in kick prompt", http.StatusUnprocessableEntity)
+			return
+		} else {
+			msg = sanitized
+		}
 	}
 
 	// Queue the kick and answer immediately (#5325).
@@ -128,6 +134,11 @@ func (s *Server) enforceKickPrompt(r *http.Request, agentName, text string) (str
 	}
 	sanitized, v := ioscan.EnforceInput(text)
 	if v.Blocked {
+		rules := make([]string, 0, len(v.Findings))
+		for _, f := range v.Findings {
+			rules = append(rules, f.Rule)
+		}
+		s.deps.Logger.Warn("ioscan withheld operator kick prompt", "agent", agentName, "rules", strings.Join(rules, ","))
 		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "kick_prompt", "findings", strconv.Itoa(len(v.Findings))), agentName)
 	}
 	level := detectACMMLevel(s.deps.Config)
