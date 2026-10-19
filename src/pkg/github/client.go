@@ -22,6 +22,8 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -386,6 +388,13 @@ type Client struct {
 	commitTrees  map[string]string
 	mutationMu   sync.RWMutex
 	mutation     effects.Boundary
+	// stageWriter is the one stageengine.StageWriter for this client and
+	// stageEngines the reconcilers built over it, one per Store
+	// (stage_writer.go). Guarded by stageEngineMu.
+	stageEngineMu sync.Mutex
+	stageWriter   *stageWriter
+	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	stageLegacy   stageengine.LegacyTable
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {

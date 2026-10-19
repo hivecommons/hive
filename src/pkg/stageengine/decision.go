@@ -8,14 +8,17 @@ import (
 // Decision is one derivation's output: exactly one stage (None = leave the
 // pipeline, remove every hive-owned label) and why.
 type Decision struct {
-	Stage    stagelabels.Stage
-	Role     stagelabels.Role
-	Kind     authorkind.Kind
-	DCO      stagelabels.DCOState
-	Stalled  bool
-	Terminal bool               // Stage == None because the item closed/merged/left
-	Reason   string             // stored on the Record, rendered in comments/tracker
-	Human    *stagelabels.Route // set when the stage is a hand-off (085/090)
+	Stage stagelabels.Stage
+	Role  stagelabels.Role
+	Kind  authorkind.Kind
+	// KindLabels are the configured author/<kind> label names the writer
+	// plans against; zero means the authorkind defaults.
+	KindLabels authorkind.Names
+	DCO        stagelabels.DCOState
+	Stalled    bool
+	Terminal   bool               // Stage == None because the item closed/merged/left
+	Reason     string             // stored on the Record, rendered in comments/tracker
+	Human      *stagelabels.Route // set when the stage is a hand-off (085/090)
 	// Abstain means the deriver has no opinion: nothing it saw classifies
 	// the item (today's stageRankNone), so the reconciler leaves the labels
 	// and the Store untouched. It is distinct from Stage == None, which is a
@@ -27,7 +30,7 @@ type Decision struct {
 // Desired renders the Decision as the full hive-owned label set the writer
 // should make the item carry.
 func (d Decision) Desired() stagelabels.Desired {
-	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, Stalled: d.Stalled, DCO: d.DCO}
+	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO}
 }
 
 // abstain is the Decision for "no opinion" with a reason for the log.

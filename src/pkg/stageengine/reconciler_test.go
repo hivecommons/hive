@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -36,7 +37,12 @@ func (w *fakeWriter) AddLabels(_ context.Context, owner, repo string, number int
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	k := stagelabels.Key(owner+"/"+repo, number)
-	w.labels[k] = append(w.labels[k], labels...)
+	// A forge's label set has no duplicates: adding a present label is a no-op.
+	for _, l := range labels {
+		if !slices.Contains(w.labels[k], l) {
+			w.labels[k] = append(w.labels[k], l)
+		}
+	}
 	return nil
 }
 
@@ -137,7 +143,7 @@ func randomFacts(rng *rand.Rand, n int) Facts {
 	return f
 }
 
-func newTestReconciler(t *testing.T, mode Mode, w StageWriter, legacy func(Facts) (stagelabels.Stage, string)) (Reconciler, *Counters, *stagelabels.Store) {
+func newTestReconciler(t *testing.T, mode Mode, w StageWriter, legacy func(Facts) Decision) (Reconciler, *Counters, *stagelabels.Store) {
 	t.Helper()
 	store := stagelabels.NewStore("", nil)
 	m := NewCounters()
@@ -217,7 +223,7 @@ func prFacts(n int, reason string) Facts {
 func TestShadowNeverWritesEngineResult(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	legacy := func(Facts) (stagelabels.Stage, string) { return stagelabels.Reviewed, "legacy says reviewed" }
+	legacy := func(Facts) Decision { return Decision{Stage: stagelabels.Reviewed, Reason: "legacy says reviewed"} }
 	r, m, store := newTestReconciler(t, ModeShadow, w, legacy)
 	f := prFacts(7, "pending") // engine: 050 review-pending
 
@@ -246,13 +252,40 @@ func TestShadowNeverWritesEngineResult(t *testing.T) {
 	}
 
 	// Agreement records no mismatch.
-	agree := func(Facts) (stagelabels.Stage, string) { return stagelabels.ReviewPending, "pending" }
+	agree := func(Facts) Decision { return Decision{Stage: stagelabels.ReviewPending, Reason: "pending"} }
 	r2, m2, _ := newTestReconciler(t, ModeShadow, newFakeWriter(), agree)
 	if _, err := r2.Reconcile(ctx, f); err != nil {
 		t.Fatal(err)
 	}
 	if m2.Total(MetricShadowMismatch) != 0 {
 		t.Fatal("agreeing legacy/engine must not count a mismatch")
+	}
+
+	// A legacy Abstain skips the item: nothing observed, nothing written.
+	skip := func(Facts) Decision { return Decision{Abstain: true, Reason: "sweep had no opinion"} }
+	w3 := newFakeWriter()
+	r3, m3, store3 := newTestReconciler(t, ModeShadow, w3, skip)
+	if tr, err := r3.Reconcile(ctx, f); err != nil || tr.Reason != "sweep had no opinion" {
+		t.Fatalf("tr=%+v err=%v", tr, err)
+	}
+	if _, ok := store3.Get(f.Ref.Key()); ok || w3.Writes != 0 || m3.Total(MetricShadowMismatch) != 0 {
+		t.Fatalf("legacy abstain must skip: writes=%d store=%v", w3.Writes, ok)
+	}
+
+	// The engine abstaining never blocks the legacy write; it is the mismatch.
+	w4 := newFakeWriter()
+	r4, m4, _ := newTestReconciler(t, ModeShadow, w4, legacy)
+	other := f
+	other.Ref.Kind = stagelabels.IssueItem // the PR table deriver abstains on an issue
+	other.Ref.Number = 8
+	if _, err := r4.Reconcile(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if got := w4.stageLabels(other.Ref); len(got) != 1 || w4.Writes != 1 {
+		t.Fatalf("engine abstain blocked the legacy write: %v", got)
+	}
+	if m4.Total(MetricShadowMismatch) != 1 || m4.Total(MetricDerivations) != 0 {
+		t.Fatalf("metrics %+v", m4.Snapshot())
 	}
 }
 
@@ -419,7 +452,7 @@ func TestReconcileBatchDedupesAndKeepsOrder(t *testing.T) {
 	// A failing item does not stop the others; its error is returned.
 	w.Err = errors.New("boom")
 	trs, err = r.ReconcileBatch(ctx, []Facts{a})
-	if err == nil || len(trs) != 0 {
+	if err == nil || len(trs) != 1 || trs[0].Err == nil {
 		t.Fatalf("trs=%v err=%v", trs, err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)

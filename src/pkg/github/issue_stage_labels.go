@@ -55,6 +55,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -283,6 +284,29 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 // sweep so the buckets are final. store may be nil (the shared store is
 // used). Best-effort: a failed write is logged and retried next cycle.
 func SyncIssueStageLabels(ctx context.Context, client *Client, result *ActionableResult, store *stagelabels.Store, now time.Time, logger *slog.Logger) IssueStageResult {
+	return SyncIssueStageLabelsWith(ctx, client, result, store, now, logger, nil)
+}
+
+// issueStagePending is one issue the sweep derived a stage for, waiting on
+// the reconciler's write before its post-write work (legacy park-label
+// migration, reconcile log, regression note) runs.
+type issueStagePending struct {
+	in      IssueStageInput
+	key     string
+	want    stagelabels.Desired
+	tr      stagelabels.Transition
+	covered bool
+	reason  string
+	facts   stageengine.Facts
+}
+
+// SyncIssueStageLabelsWith is SyncIssueStageLabels with the stage engine's
+// options chosen by the caller (ADR-0025). Nil engine is the default:
+// shadow mode with this sweep's derivation as the legacy comparator, so
+// the labels written are exactly what the sweep derived. Every stage write
+// goes through client.StageReconciler → StageWriter; nothing here names a
+// label to the forge.
+func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *ActionableResult, store *stagelabels.Store, now time.Time, logger *slog.Logger, engine *stageengine.Options) IssueStageResult {
 	var res IssueStageResult
 	if client == nil || result == nil {
 		return res
@@ -294,6 +318,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 	if store == nil {
 		store = stagelabels.Shared()
 	}
+	reconciler, legacy := client.StageReconciler(store, engine, logger)
 	ctx = WithRESTCaller(ctx, issueStageRESTCaller)
 	prStage := func(repo string, number int) stagelabels.Stage {
 		owner, name := client.splitRepo(repo)
@@ -306,6 +331,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 	seen := map[string]bool{}
 	legacyCarriers := map[string]int{}
 	reposSeen := map[string]bool{}
+	var pending []issueStagePending
 	for _, in := range IssueStageInputs(result) {
 		owner, name := client.splitRepo(in.Repo)
 		key := stagelabels.Key(owner+"/"+name, in.Number)
@@ -391,11 +417,33 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			}
 			continue
 		}
-		// Enforce re-reads the issue before writing so a stage a claim hook
-		// placed since the list payload was fetched is replaced, not joined
-		// (hivecommons/hive#12512), and any duplicate it finds is healed.
-		// IssueItem clamps the stage to the issue stages (hivecommons/hive#12451).
-		out, err := stagelabels.Enforce(ctx, client.StageLabeler(), stagelabels.IssueItem, owner, name, in.Number, in.Labels, want)
+		facts := issueFactsFrom(in, prStage)
+		facts.Ref.Owner, facts.Ref.Repo = owner, name
+		facts.ObservedAt = now
+		legacy.Set(facts.Ref, stageengine.Decision{Stage: want.Stage, Stalled: want.Stalled, Terminal: stage == stagelabels.None, Reason: reason})
+		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
+	}
+	// The write: one ReconcileBatch for the pass. The reconciler re-reads
+	// each issue before writing so a stage a claim hook placed since the
+	// list payload was fetched is replaced, not joined
+	// (hivecommons/hive#12512), heals duplicates, and IssueItem clamps the
+	// stage to the issue stages (hivecommons/hive#12451).
+	facts := make([]stageengine.Facts, 0, len(pending))
+	for _, p := range pending {
+		facts = append(facts, p.facts)
+	}
+	var transitions []stageengine.Transition
+	if len(facts) > 0 {
+		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
+	}
+	for i, p := range pending {
+		legacy.Delete(p.facts.Ref)
+		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
+		var out stagelabels.Outcome
+		err := ctx.Err()
+		if i < len(transitions) {
+			out, err = transitions[i].Outcome, transitions[i].Err
+		}
 		if err != nil && logger != nil {
 			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
 		}

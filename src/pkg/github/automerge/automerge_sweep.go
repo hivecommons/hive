@@ -17,6 +17,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -119,6 +120,12 @@ type Options struct {
 	// StageStore persists stage timing (stalled/regressed); nil shares the
 	// package default at stagelabels.StatePath.
 	StageStore *stagelabels.Store
+	// StageEngine configures the ADR-0025 reconciler ApplyStageLabels
+	// routes every stage write through (hivecommons/hive#13008). Nil is the
+	// default: stageengine.DefaultMode (shadow) with this sweep's own
+	// derivation as the legacy comparator, so the labels written are
+	// exactly what the sweep derived. The mode flag arrives with plan PR-E.
+	StageEngine *stageengine.Options
 	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
 	// nil posts the GitHub comment only.
 	ContributorNudge ContributorNudgeSink
@@ -186,6 +193,7 @@ type Engine struct {
 	stageLabelPolicy func() StageLabelPolicy
 	stageTracker     *StageTracker
 	stageStore       *stagelabels.Store
+	stageEngine      *stageengine.Options
 	contributorNudge ContributorNudgeSink
 	checkSummary     CheckSummarizer
 }
@@ -226,6 +234,7 @@ func New(transport Transport, opts Options) *Engine {
 		stageLabelPolicy:                  opts.StageLabelPolicy,
 		stageTracker:                      opts.StageTracker,
 		stageStore:                        opts.StageStore,
+		stageEngine:                       opts.StageEngine,
 		contributorNudge:                  opts.ContributorNudge,
 		checkSummary:                      opts.CheckSummary,
 		evaluatedHeads:                    make(map[string]string),

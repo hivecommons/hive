@@ -18,6 +18,9 @@ type Transition struct {
 	Reason   string
 	Anomaly  string // "" when expected; otherwise why the from→to pair is unexpected
 	Outcome  stagelabels.Outcome
+	// Err is the item's write error inside a ReconcileBatch; the batch
+	// still reports the item so the caller can finish its side effects.
+	Err error
 }
 
 // Reconciler derives, asserts the transition, records it in the Store and —
@@ -33,12 +36,16 @@ type Reconciler interface {
 
 // Options configures New.
 type Options struct {
-	Mode    Mode
-	Store   *stagelabels.Store // stagelabels.Shared() by default; API unchanged
-	Writer  StageWriter
-	Issue   Deriver                                   // defaults to DeriveIssue
-	PR      Deriver                                   // defaults to DerivePR
-	Legacy  func(f Facts) (stagelabels.Stage, string) // shadow-mode comparator; nil in enforce
+	Mode   Mode
+	Store  *stagelabels.Store // stagelabels.Shared() by default; API unchanged
+	Writer StageWriter
+	Issue  Deriver // defaults to DeriveIssue
+	PR     Deriver // defaults to DerivePR
+	// Legacy is the shadow-mode comparator: the sweep's own derivation
+	// for f, written verbatim so a sweep routed through the reconciler
+	// keeps today's labels. An Abstain means "the sweep had nothing to
+	// write" and skips the item. Nil in enforce mode.
+	Legacy  func(f Facts) Decision
 	Now     func() time.Time
 	Logger  *slog.Logger
 	Metrics Metrics
@@ -113,26 +120,34 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 	defer unlock()
 
 	d := r.deriver(f.Ref.Kind).Derive(f)
-	if d.Abstain {
+	shadowLegacy := r.opts.Mode == ModeShadow && r.opts.Legacy != nil
+	if d.Abstain && !shadowLegacy {
 		tr.Reason = d.Reason
 		return tr, nil
 	}
-	r.opts.Metrics.Derivation(f.Ref.Kind, d.Stage)
+	if !d.Abstain {
+		r.opts.Metrics.Derivation(f.Ref.Kind, d.Stage)
+	}
 
 	// What gets written: the engine's Decision in enforce mode; in shadow
 	// mode the legacy result (when a comparator is configured), never the
-	// engine's.
+	// engine's. The engine abstaining never blocks a legacy write: the
+	// sweep decided, the engine's silence is the mismatch to record.
 	want := d
 	switch r.opts.Mode {
 	case ModeShadow:
-		if r.opts.Legacy == nil {
+		if !shadowLegacy {
 			return r.shadowOnly(tr, d), nil
 		}
-		legacyStage, legacyReason := r.opts.Legacy(f)
-		if legacyStage != d.Stage {
-			r.recordMismatch(f, legacyStage, d)
+		legacy := r.opts.Legacy(f)
+		if legacy.Abstain {
+			tr.Reason = legacy.Reason
+			return tr, nil
 		}
-		want.Stage, want.Reason = legacyStage, legacyReason
+		if d.Abstain || legacy.Stage != d.Stage {
+			r.recordMismatch(f, legacy.Stage, d)
+		}
+		want = legacy
 	case ModeEnforce:
 		if r.opts.Writer == nil {
 			return tr, ErrNoWriter
@@ -199,14 +214,21 @@ func (r *reconciler) recordMismatch(f Facts, legacy stagelabels.Stage, d Decisio
 	if seen {
 		return
 	}
+	engine := d.Stage.String()
+	if d.Abstain {
+		engine = "abstain"
+	}
 	r.opts.Logger.Warn("stage engine: shadow mismatch",
 		slog.String("kind", f.Ref.Kind.String()), slog.String("ref", f.Ref.String()),
-		slog.String("legacy", legacy.String()), slog.String("engine", d.Stage.String()), slog.String("engine_reason", d.Reason))
+		slog.String("legacy", legacy.String()), slog.String("engine", engine), slog.String("engine_reason", d.Reason))
 }
 
 // ReconcileBatch implements Reconciler. The last Facts for a Ref wins; the
-// first occurrence fixes its position. Every item is attempted; the first
-// error is returned with the transitions of the items that succeeded.
+// first occurrence fixes its position. Every item is attempted and every
+// attempted item has a Transition in the result, in order, so a sweep can
+// pair them with its own per-item work; an item whose write failed carries
+// the error in Transition.Err and the first such error is also returned.
+// A cancelled context stops the batch with the transitions so far.
 func (r *reconciler) ReconcileBatch(ctx context.Context, facts []Facts) ([]Transition, error) {
 	order := make([]string, 0, len(facts))
 	latest := make(map[string]Facts, len(facts))
@@ -225,10 +247,10 @@ func (r *reconciler) ReconcileBatch(ctx context.Context, facts []Facts) ([]Trans
 		}
 		tr, err := r.Reconcile(ctx, latest[k])
 		if err != nil {
+			tr.Err = err
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue
 		}
 		out = append(out, tr)
 	}

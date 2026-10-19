@@ -20,6 +20,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -2128,5 +2129,69 @@ func TestApplyStageLabelsConfiguredKindNames(t *testing.T) {
 	}
 	if _, ok := api.labels["author/clanker"]; ok {
 		t.Fatal("default clanker name provisioned despite override")
+	}
+}
+
+// A transport without the process's StageWriter cannot stage anything: the
+// pass fails closed and drains the tracker rather than writing from a
+// second writer (ADR-0025 admission).
+func TestApplyStageLabelsNeedsStageWriterTransport(t *testing.T) {
+	tracker := NewStageTracker()
+	e := New(stubTransport{}, Options{
+		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+		StageTracker:     tracker,
+		StageStore:       stagelabels.NewStore(filepath.Join(t.TempDir(), "stage.json"), nil),
+	})
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(1), "pending", false, nil)
+	_, err := e.ApplyStageLabels(context.Background())
+	if !errors.Is(err, ErrNoStageWriter) {
+		t.Fatalf("err = %v, want ErrNoStageWriter", err)
+	}
+	if got := tracker.drain(); len(got) != 0 {
+		t.Fatalf("tracker not drained: %d observations left", len(got))
+	}
+}
+
+// Options.StageEngine reaches the reconciler: an enforce-mode engine with
+// its own PR deriver decides the stage instead of the sweep's derivation.
+func TestApplyStageLabelsHonoursStageEngineOptions(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, srv.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	tracker := NewStageTracker()
+	store := stagelabels.NewStore(filepath.Join(t.TempDir(), "stage.json"), clock.now)
+	engine := stageengine.DeriverFunc(stagelabels.PRItem, func(stageengine.Facts) stageengine.Decision {
+		return stageengine.Decision{Stage: stagelabels.Reviewed, Role: stagelabels.RoleTrusted, Reason: "engine says reviewed"}
+	})
+	e := New(client, Options{
+		Now:              clock.now,
+		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+		StageTracker:     tracker,
+		StageStore:       store,
+		StageEngine:      &stageengine.Options{Mode: stageengine.ModeEnforce, PR: engine},
+		CheckSummary:     greenChecks,
+	})
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(1, "stage/100-merge-queue", "role/trusted"), "head-changed-since-eval", false, nil)
+	e.noteStageRole("acme", "widget", 1, stagelabels.RoleTrusted)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	var added []string
+	for _, a := range api.added {
+		added = append(added, a...)
+	}
+	if !slices.Contains(added, stagelabels.Reviewed.Label()) || !slices.Contains(api.removed, "stage/100-merge-queue") {
+		t.Fatalf("engine decision not written: added=%v removed=%v", api.added, api.removed)
+	}
+	if rec, ok := store.Get(stageKey("acme", "widget", 1)); !ok || rec.Stage != stagelabels.Reviewed || rec.Reason != "engine says reviewed" {
+		t.Fatalf("store %+v", rec)
 	}
 }
