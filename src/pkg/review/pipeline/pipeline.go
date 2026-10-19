@@ -129,6 +129,11 @@ type Inputs struct {
 	ReviewLink *ghpkg.ReviewLink
 	// Escalation is the PR's escalation ledger entry, if any.
 	Escalation *escalation.Entry
+	// HoldRelease is the person's release of the review verdict hold the
+	// self-merge sweep recorded for this PR (ghpkg.LoadReviewHoldReleases), if
+	// any. It releases a requires_human or reject verdict recorded before it,
+	// as the sweep does (#12962).
+	HoldRelease *ghpkg.ReviewHoldRelease
 	// FixCycleCap overrides the loop cap when the verdict does not carry one.
 	// Zero means review.DefaultFixCycleCap.
 	FixCycleCap int
@@ -235,11 +240,15 @@ var approvalLabels = []string{ghpkg.AutoMergeQueuedLabel, "approved", escalation
 //     current-head verdict that requires a human or rejects, an earlier such
 //     verdict no merge-eligible approve has cleared since (a fix push does
 //     not clear it, #12374), a dispatch-state human hold for the head, or an
-//     escalated escalation entry.
+//     escalated escalation entry. A person's approving review or
+//     `/hive approve` after the verdict releases a verdict hold and the
+//     dispatch hold that verdict placed on its head, as the self-merge sweep
+//     does (#12962).
 //  4. approved — a merge-eligible approve verdict on the head, an approval
 //     label (lgtm, approved, reviewer-passed), the escalation ledger's
-//     reviewer-passed SHA equal to the head, or an approving hive review on
-//     the head in the review-links ledger.
+//     reviewer-passed SHA equal to the head, an approving hive review on
+//     the head in the review-links ledger, or a person's release of a
+//     requires_human or reject verdict on the head (#12962).
 //  5. fixing — a pending fix dispatched for the head.
 //  6. changes_requested — a changes_requested verdict (or, with no verdict, a
 //     changes-requested hive review) on the head.
@@ -454,6 +463,12 @@ func approvalReasons(in Inputs, current *review.Aggregate, link *ghpkg.ReviewLin
 			if strings.EqualFold(l, want) {
 				reasons = append(reasons, fmt.Sprintf("label %q", l))
 			}
+		}
+	}
+	if r := in.HoldRelease; r != nil && blocksOnHead(current) && ghpkg.ReleasesReviewHold(current.RecordedAt, *r) {
+		reasons = append(reasons, fmt.Sprintf("review verdict hold released by @%s", r.By))
+		if since.IsZero() {
+			since = r.At
 		}
 	}
 	if e := in.Escalation; e != nil && e.ReviewerPassedSHA != "" && e.ReviewerPassedSHA == in.PR.HeadSHA {

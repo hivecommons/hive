@@ -2457,6 +2457,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
 		ReviewVerdictHold:       reviewVerdictHoldFunc(b.logger),
+		RecordReviewHoldRelease: reviewHoldReleaseRecorder(b.logger),
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
@@ -9317,6 +9318,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
 		ReviewVerdictHold:       reviewVerdictHoldFunc(logger),
+		RecordReviewHoldRelease: reviewHoldReleaseRecorder(logger),
 		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
 	}
 	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink

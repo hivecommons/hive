@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -143,6 +144,58 @@ func TestReviewHoldKeepsEarlierRules12377(t *testing.T) {
 		with.reviewSwarm.dispatch = dispatchHold12377(pr, "head-2", "no enabled kick-capable fixer agent is available")
 		if got, want := decidePROwnership(pr, isHeld, with), decidePROwnership(pr, isHeld, without); got != want {
 			t.Fatalf("pr %v: with a dispatch hold %+v, without %+v; want unchanged", pr.Labels, got, want)
+		}
+	}
+}
+
+// hivecommons/hive#12962: a person's approving review or `/hive approve`
+// after a requires_human verdict, as recorded by the self-merge sweep,
+// releases the your-turn row and the pipeline's human_hold together. A
+// release from before the verdict, or a bot's, still holds.
+func TestReviewHoldReleasedByAPerson12962(t *testing.T) {
+	pr := withHead12329(hivePR11565(), "head-2")
+	v := verdict12377(pr, "head-2", review.VerdictRequiresHuman)
+	after := v.RecordedAt.Add(30 * time.Minute)
+	before := v.RecordedAt.Add(-30 * time.Minute)
+	verdictDispatch := dispatchHold12377(pr, "head-2", "review verdict requires_human")
+	for _, tc := range []struct {
+		name     string
+		release  github.ReviewHoldRelease
+		wantHeld bool
+	}{
+		{"approving review after the verdict", github.ReviewHoldRelease{Via: github.ReviewHoldReleaseViaReview, State: "APPROVED", By: "owner", Person: true, At: after}, false},
+		{"/hive approve after the verdict", github.ReviewHoldRelease{Via: github.ReviewHoldReleaseViaComment, Body: "/hive approve", By: "owner", Person: true, At: after}, false},
+		{"/hive approve before the verdict", github.ReviewHoldRelease{Via: github.ReviewHoldReleaseViaComment, Body: "/hive approve", By: "owner", Person: true, At: before}, true},
+		{"a bot's approval", github.ReviewHoldRelease{Via: github.ReviewHoldReleaseViaReview, State: "APPROVED", By: "hive[bot]", At: after}, true},
+	} {
+		release := tc.release
+		card := pipeline.Derive(pipeline.Inputs{
+			PR:          github.ReviewQueueEntry{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, HiveAuthored: true},
+			Verdicts:    []review.Aggregate{v},
+			Dispatch:    verdictDispatch,
+			HoldRelease: &release,
+		})
+		if held := card.Stage == pipeline.StageHumanHold; held != tc.wantHeld {
+			t.Fatalf("%s: pipeline human_hold = %v, want %v (%+v)", tc.name, held, tc.wantHeld, card)
+		}
+		env := ownershipEnv11565(6)
+		env.reviewVerdicts = []review.Aggregate{v}
+		env.reviewSwarm.dispatch = verdictDispatch
+		path := filepath.Join(t.TempDir(), github.ReviewHoldReleasesFile)
+		if err := github.RecordReviewHoldRelease(path, pr.Repo, pr.Number, release); err != nil {
+			t.Fatalf("%s: record: %v", tc.name, err)
+		}
+		releases, err := github.LoadReviewHoldReleases(path)
+		if err != nil {
+			t.Fatalf("%s: load: %v", tc.name, err)
+		}
+		env.reviewSwarm.releases = releases
+		got := decidePROwnership(pr, false, env)
+		if got.YourTurn != tc.wantHeld {
+			t.Fatalf("%s: your turn = %v, want %v (%+v)", tc.name, got.YourTurn, tc.wantHeld, got)
+		}
+		if tc.wantHeld {
+			checkOwnership11565(t, got, want11565{OwnershipVerbReview, OwnershipReasonReviewRequiresHuman})
 		}
 	}
 }

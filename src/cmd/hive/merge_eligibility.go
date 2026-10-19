@@ -225,6 +225,18 @@ func reviewVerdictHoldFunc(logger *slog.Logger) automerge.ReviewVerdictHoldFunc 
 	}
 }
 
+// reviewHoldReleaseRecorder keeps the person's release the sweep's review
+// verdict gate found, so /api/review/pipeline and the dashboard's your-turn
+// decision stop holding a PR the sweep treats as released (#12962). A failed
+// write only leaves the board holding the PR; the merge is unaffected.
+func reviewHoldReleaseRecorder(logger *slog.Logger) automerge.ReviewHoldReleaseFunc {
+	return func(repo string, number int, release github.ReviewHoldRelease) {
+		if err := github.RecordReviewHoldRelease("", repo, number, release); err != nil && logger != nil {
+			logger.Warn("review verdict gate: recording a person's release failed", "repo", repo, "pr", number, "error", err)
+		}
+	}
+}
+
 func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string, approved bool) automerge.ContributorLaneVerdict {
 	var match review.Aggregate
 	var ok bool

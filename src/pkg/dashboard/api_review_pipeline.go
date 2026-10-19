@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -76,6 +77,12 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "review links unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// An unreadable release ledger keeps every verdict hold in place, the
+	// same failure the sweep's gate fails closed to.
+	releases, err := ghpkg.LoadReviewHoldReleases("")
+	if err != nil {
+		slog.Warn("review pipeline: review hold releases unreadable", "error", err)
+	}
 
 	opts := ghpkg.ReviewQueueOptions{
 		Verdicts:     artifact,
@@ -105,6 +112,9 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		}
 		if link, ok := lookupReviewLink(links, entry.Repo, reviewPipelineBareRepo(entry.Repo), entry.Number); ok {
 			in.ReviewLink = &link
+		}
+		if release, ok := ghpkg.ReviewHoldReleaseFor(releases, entry.Repo, entry.Number); ok {
+			in.HoldRelease = &release
 		}
 		card := pipeline.Derive(in)
 		card.Trigger = s.reviewCardTrigger(card)

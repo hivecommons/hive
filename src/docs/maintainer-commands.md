@@ -71,6 +71,13 @@ special review body is required; the queued human-merge lane's
 that queue flow. A swarm `changes_requested` or `reject` verdict is not
 overridden by a human approval; the head must be fixed or merged manually.
 
+The self-merge sweep's review verdict hold (App-authored and trusted-author
+PRs, [review-swarm.md](review-swarm.md)) is released by a person's GitHub
+**Approve** review or a `/hive approve` reply posted after the swarm's
+`requires_human` or `reject` verdict. Once the sweep has seen that release, the
+PR also leaves `human_hold` on `/api/review/pipeline` and the owner's "your
+turn" inbox; a newer blocking verdict puts it back.
+
 `/fixed` and `/reopen` are intentionally narrower: they work for the issue's own
 reporter or for `write`/`maintain`/`admin` collaborators. `/fixed` plain prose is
 only meaningful when Hive has already asked whether a merged referenced fix can

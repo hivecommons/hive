@@ -23,10 +23,6 @@ const (
 	autoMergeReasonReviewHoldEvidence = "review-verdict-hold-evidence"
 )
 
-// reviewHoldReleaseCommand is the reply a person posts to release a review
-// verdict hold without submitting an approving review.
-const reviewHoldReleaseCommand = "/hive approve"
-
 // ReviewVerdictHold is the review swarm's hold on one pull request: the
 // latest decisive verdict asked for a person (requires_human) or rejected it.
 // HeadSHA is the head the verdict was recorded on, which may be older than
@@ -41,6 +37,11 @@ type ReviewVerdictHold struct {
 // ReviewVerdictHoldFunc resolves the review verdict hold for repo#number.
 // repo is owner/repo. It is consulted regardless of review.require_approval.
 type ReviewVerdictHoldFunc func(repo string, number int) ReviewVerdictHold
+
+// ReviewHoldReleaseFunc records the person's release the gate found for
+// repo#number, so the review pipeline and the dashboard's your-turn decision
+// see the hold as released too (#12962). repo is owner/repo.
+type ReviewHoldReleaseFunc func(repo string, number int, release hgithub.ReviewHoldRelease)
 
 // reviewVerdictGate refuses an App or trusted-author self-merge while the
 // review swarm's verdict holds the PR for a person (#12374). The hold is not
@@ -65,35 +66,43 @@ func (c *Engine) reviewVerdictGate(ctx context.Context, displayRepo, owner, repo
 	if strings.EqualFold(hold.Verdict, "reject") {
 		reason = autoMergeReasonReviewRejected
 	}
-	released, by, err := c.personReleasedReviewHold(ctx, owner, repo, number, hold.RecordedAt)
+	release, released, err := c.personReleasedReviewHold(ctx, owner, repo, number, hold.RecordedAt)
 	if err != nil {
 		return autoMergeReasonReviewHoldEvidence, err
 	}
 	if released {
-		c.info("automerge sweep: review verdict hold released by a person", "repo", displayRepo, "pr", number, "verdict", hold.Verdict, "verdict_head", hold.HeadSHA, "by", by)
+		c.info("automerge sweep: review verdict hold released by a person", "repo", displayRepo, "pr", number, "verdict", hold.Verdict, "verdict_head", hold.HeadSHA, "by", release.By)
+		if c.recordReviewHoldRelease != nil {
+			c.recordReviewHoldRelease(owner+"/"+repo, number, release)
+		}
 		return "", nil
 	}
 	c.info("automerge sweep held PR for a person: review verdict", "repo", displayRepo, "pr", number, "verdict", hold.Verdict, "verdict_head", hold.HeadSHA, "current_head", pr.GetHead().GetSHA())
 	return reason, nil
 }
 
-// personReleasedReviewHold reports whether a person approved the PR, or
-// replied `/hive approve`, after the hold's verdict was recorded. A plain
-// comment does not release: "do not merge this" is a comment too.
-func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo string, number int, since time.Time) (bool, string, error) {
+// personReleasedReviewHold returns the first review or comment on the PR
+// that releases a hold whose verdict was recorded at since, by
+// hgithub.ReleasesReviewHold: a person's approving review or `/hive approve`
+// reply posted after the verdict.
+func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo string, number int, since time.Time) (hgithub.ReviewHoldRelease, bool, error) {
 	ctx = hgithub.WithRESTCaller(ctx, "hive:automerge_sweep")
 	reviewOpts := &gh.ListOptions{PerPage: 100}
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, reviewOpts)
 		if err != nil {
-			return false, "", err
+			return hgithub.ReviewHoldRelease{}, false, err
 		}
 		for _, r := range reviews {
-			if !strings.EqualFold(r.GetState(), "APPROVED") || !c.isPersonLogin(r.GetUser()) {
-				continue
+			release := hgithub.ReviewHoldRelease{
+				Via:    hgithub.ReviewHoldReleaseViaReview,
+				State:  r.GetState(),
+				By:     hgithub.SafeGetLogin(r.GetUser()),
+				Person: c.isPersonLogin(r.GetUser()),
+				At:     r.GetSubmittedAt().Time,
 			}
-			if r.GetSubmittedAt().Time.After(since) {
-				return true, hgithub.SafeGetLogin(r.GetUser()), nil
+			if hgithub.ReleasesReviewHold(since, release) {
+				return release, true, nil
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -108,31 +117,25 @@ func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo strin
 	for {
 		comments, resp, err := c.gh.Issues.ListComments(ctx, owner, repo, number, commentOpts)
 		if err != nil {
-			return false, "", err
+			return hgithub.ReviewHoldRelease{}, false, err
 		}
 		for _, comment := range comments {
-			if !c.isPersonLogin(comment.GetUser()) || !comment.GetCreatedAt().Time.After(since) {
-				continue
+			release := hgithub.ReviewHoldRelease{
+				Via:    hgithub.ReviewHoldReleaseViaComment,
+				Body:   comment.GetBody(),
+				By:     hgithub.SafeGetLogin(comment.GetUser()),
+				Person: c.isPersonLogin(comment.GetUser()),
+				At:     comment.GetCreatedAt().Time,
 			}
-			if isReviewHoldReleaseCommand(comment.GetBody()) {
-				return true, hgithub.SafeGetLogin(comment.GetUser()), nil
+			if hgithub.ReleasesReviewHold(since, release) {
+				return release, true, nil
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
-			return false, "", nil
+			return hgithub.ReviewHoldRelease{}, false, nil
 		}
 		commentOpts.Page = resp.NextPage
 	}
-}
-
-func isReviewHoldReleaseCommand(body string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(strings.ToLower(line))
-		if len(fields) >= 2 && fields[0]+" "+fields[1] == reviewHoldReleaseCommand {
-			return true
-		}
-	}
-	return false
 }
 
 // isPersonLogin reports whether u is a person, not the App or another bot.

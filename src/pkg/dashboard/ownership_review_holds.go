@@ -37,10 +37,14 @@ func init() {
 type reviewSwarmState struct {
 	dispatch review.DispatchState
 	links    map[string]github.ReviewLink
+	// releases are the persons' releases of verdict holds the self-merge
+	// sweep recorded (#12962).
+	releases map[string]github.ReviewHoldRelease
 }
 
-// loadReviewSwarm loads the verdict artifact, the dispatch state and the
-// review-links ledger /api/review/pipeline reads. A missing file reads as
+// loadReviewSwarm loads the verdict artifact, the dispatch state, the
+// review-links ledger and the review hold releases /api/review/pipeline
+// reads. A missing file reads as
 // empty; an unreadable one is logged and treated as empty.
 func (e *ownershipEnv) loadReviewSwarm() {
 	if artifact, err := review.LoadArtifact(""); err == nil {
@@ -58,6 +62,11 @@ func (e *ownershipEnv) loadReviewSwarm() {
 	} else {
 		slog.Warn("ownership: review links unreadable", "error", err)
 	}
+	if releases, err := github.LoadReviewHoldReleases(""); err == nil {
+		e.reviewSwarm.releases = releases
+	} else {
+		slog.Warn("ownership: review hold releases unreadable", "error", err)
+	}
 }
 
 // reviewHolds returns the review-swarm reasons /api/review/pipeline would put
@@ -74,6 +83,9 @@ func (e ownershipEnv) reviewHolds(pr github.PullRequest) []pipeline.ReviewHold {
 	}
 	if link, ok := lookupReviewLink(e.reviewSwarm.links, pr.Repo, reviewPipelineBareRepo(pr.Repo), pr.Number); ok {
 		in.ReviewLink = &link
+	}
+	if release, ok := github.ReviewHoldReleaseFor(e.reviewSwarm.releases, pr.Repo, pr.Number); ok {
+		in.HoldRelease = &release
 	}
 	return pipeline.ReviewHolds(in)
 }

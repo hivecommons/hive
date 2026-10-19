@@ -68,6 +68,10 @@ type Options struct {
 	// The self-authored and trusted-author sweep refuse a held PR whatever
 	// review.require_approval says. nil means no verdict ever holds.
 	ReviewVerdictHold ReviewVerdictHoldFunc
+	// RecordReviewHoldRelease records a person's release of that hold so the
+	// review pipeline and the dashboard read it too (#12962). nil records
+	// nothing.
+	RecordReviewHoldRelease ReviewHoldReleaseFunc
 	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
@@ -160,7 +164,8 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
-	reviewVerdictHold ReviewVerdictHoldFunc
+	reviewVerdictHold       ReviewVerdictHoldFunc
+	recordReviewHoldRelease ReviewHoldReleaseFunc
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
@@ -216,6 +221,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewGate:                        opts.ReviewGate,
 		humanMergePaths:                   opts.HumanMergePaths,
 		reviewVerdictHold:                 opts.ReviewVerdictHold,
+		recordReviewHoldRelease:           opts.RecordReviewHoldRelease,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,

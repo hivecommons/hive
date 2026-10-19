@@ -256,18 +256,3 @@ func TestSelfAuthoredSweepReviewVerdictEvidenceErrorFailsClosed(t *testing.T) {
 		t.Fatalf("reason = %q, err = %v, merges = %d; want evidence failure with no merge", reason, err, merges)
 	}
 }
-
-func TestIsReviewHoldReleaseCommand(t *testing.T) {
-	for body, want := range map[string]bool{
-		"/hive approve":                  true,
-		"  /HIVE   Approve  please":      true,
-		"lgtm\n/hive approve\n":          true,
-		"I would not /hive approve this": false,
-		"/hive decision A":               false,
-		"looks fine":                     false,
-	} {
-		if got := isReviewHoldReleaseCommand(body); got != want {
-			t.Errorf("isReviewHoldReleaseCommand(%q) = %v, want %v", body, got, want)
-		}
-	}
-}

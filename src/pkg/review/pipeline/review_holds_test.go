@@ -87,3 +87,61 @@ func TestReviewHolds(t *testing.T) {
 		})
 	}
 }
+
+func personApproval12962(at time.Time) *ghpkg.ReviewHoldRelease {
+	return &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaReview, State: "APPROVED", By: "owner", Person: true, At: at}
+}
+
+// A person's approving review or `/hive approve` reply after the verdict
+// releases the review-swarm hold, as the self-merge sweep does (#12962). An
+// earlier release, a bot's approval, or a plain comment does not, and a newer
+// blocking verdict holds the PR again.
+func TestReviewHolds_PersonRelease12962(t *testing.T) {
+	onHead := reviewedAgg(review.VerdictRequiresHuman, "head", 1)
+	after := onHead.RecordedAt.Add(30 * time.Minute)
+	before := onHead.RecordedAt.Add(-30 * time.Minute)
+	verdictDispatch := review.DispatchState{Human: []review.HumanReviewHold{{Repo: testRepo, Number: 7, HeadSHA: "head", Reason: "review verdict requires_human", UpdatedAt: after.Add(time.Hour)}}}
+	cases := []struct {
+		name      string
+		verdicts  []review.Aggregate
+		dispatch  review.DispatchState
+		release   *ghpkg.ReviewHoldRelease
+		want      []string
+		wantStage Stage
+	}{
+		{name: "approving review after requires_human on the current head", verdicts: []review.Aggregate{onHead}, release: personApproval12962(after), wantStage: StageApproved},
+		{name: "the verdict's dispatch hold is released with it", verdicts: []review.Aggregate{onHead}, dispatch: verdictDispatch, release: personApproval12962(after), wantStage: StageApproved},
+		{name: "/hive approve reply after the verdict", verdicts: []review.Aggregate{onHead},
+			release: &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaComment, Body: "/hive approve", By: "owner", Person: true, At: after}, wantStage: StageApproved},
+		{name: "reject released by a person", verdicts: []review.Aggregate{reviewedAgg(review.VerdictReject, "head", 1)}, release: personApproval12962(after), wantStage: StageApproved},
+		{name: "carried requires_human released by a person", verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 1)}, release: personApproval12962(after), wantStage: StageUnreviewed},
+		{name: "approval before the verdict", verdicts: []review.Aggregate{onHead}, release: personApproval12962(before), want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "/hive approve before the verdict", verdicts: []review.Aggregate{onHead},
+			release: &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaComment, Body: "/hive approve", By: "owner", Person: true, At: before}, want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "a bot's approval", verdicts: []review.Aggregate{onHead},
+			release: &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaReview, State: "APPROVED", By: "hive[bot]", At: after}, want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "a plain comment", verdicts: []review.Aggregate{onHead},
+			release: &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaComment, Body: "do not merge this", By: "owner", Person: true, At: after}, want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "a newer requires_human on a later head holds again",
+			verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 0), reviewedAgg(review.VerdictRequiresHuman, "head", 2)},
+			release:  personApproval12962(t0.Add(time.Hour)), want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "a release does not lift a dispatch hold the verdict did not place",
+			dispatch: review.DispatchState{Human: []review.HumanReviewHold{{Repo: testRepo, Number: 7, HeadSHA: "head", Reason: "review fix cap reached (6/6)"}}},
+			release:  personApproval12962(after), want: []string{ReviewHoldDispatch}, wantStage: StageHumanHold},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := Inputs{PR: basePR(), Verdicts: tc.verdicts, Dispatch: tc.dispatch, HoldRelease: tc.release}
+			var kinds []string
+			for _, h := range ReviewHolds(in) {
+				kinds = append(kinds, h.Kind)
+			}
+			if strings.Join(kinds, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("hold kinds = %v, want %v", kinds, tc.want)
+			}
+			if card := Derive(in); card.Stage != tc.wantStage {
+				t.Fatalf("stage = %s, want %s: %+v", card.Stage, tc.wantStage, card)
+			}
+		})
+	}
+}
