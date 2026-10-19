@@ -238,6 +238,7 @@ func (b *boot) serializedLaneGate(ctx context.Context, req github.LaneMergeReque
 				Client:               b.currentGitHubClient,
 				ConfigRequiredChecks: func() (map[string]bool, bool) { return b.cfg.AutoMerge.RequiredCheckSet() },
 			},
+			TimeoutFor:                 b.cfg.RepoMergeFrontTimeout,
 			Strategy:                   b.cfg.RepoMergeStrategy,
 			AutoMergeAllowed:           b.cfg.RepoAutoMergeEnabled,
 			Paused:                     b.cfg.IsRepoPaused,

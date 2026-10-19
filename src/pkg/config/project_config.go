@@ -61,6 +61,11 @@ type ProjectConfig struct {
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
 	RepoPolicies []RepoPolicy `yaml:"repo_policies,omitempty" json:"repo_policies,omitempty"`
+	// MergeFrontTimeout is the hive-wide front timeout of the serialized merge
+	// lane (hivecommons/hive#12952) as a Go duration ("90m", "2h"); empty
+	// keeps the lane default of 60 minutes. repo_policies[].merge_front_timeout
+	// overrides it per repo. See RepoMergeFrontTimeout in repo_policy.go.
+	MergeFrontTimeout string `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
 	// WritingGuide is the hive owner's instruction for how the issues, PRs and
 	// reviews its agents write should READ — length, structure, register — as
 	// free text (hivecommons/hive#7667). It is rendered into every default

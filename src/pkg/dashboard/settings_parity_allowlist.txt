@@ -574,7 +574,9 @@ notifications.telegram.chat_id # TODO #11854
 notifications.telegram.enabled # TODO #11854
 planning.design_approved_status # TODO #11854
 planning.design_requested_status # TODO #11854
+project.merge_front_timeout # TODO #11854
 project.repo_policies[].merge_strategy # TODO #11854
+project.repo_policies[].merge_front_timeout # TODO #11854
 project.repo_policies[].release_on_approve # TODO #11854
 runs.spektacular.hub_executor.backend # TODO #11854
 runs.spektacular.hub_executor.enabled # TODO #11854

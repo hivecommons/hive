@@ -660,3 +660,44 @@ func TestShort(t *testing.T) {
 		t.Fatalf("short = %q", got)
 	}
 }
+
+// A repo_policies merge_front_timeout override reaches the lane's timeoutFor
+// through the TimeoutFor callback hive wires to the config; the project-wide
+// value covers every other repo and an unset or invalid value keeps the
+// lane default (hivecommons/hive#12952).
+func TestConfigFrontTimeoutReachesTimeoutFor(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Org = "acme"
+	cfg.Project.MergeFrontTimeout = "2h"
+	cfg.Project.RepoPolicies = []config.RepoPolicy{
+		{Repo: "widgets", MergeStrategy: config.MergeStrategyHiveSerialized, MergeFrontTimeout: "3h"},
+		{Repo: "gadgets", MergeStrategy: config.MergeStrategyHiveSerialized, MergeFrontTimeout: "soon"},
+	}
+	h := newHarness(t)
+	store, err := OpenStore(h.path)
+	if err != nil {
+		t.Fatalf("OpenStore: %v", err)
+	}
+	opts := h.options(store)
+	opts.TimeoutFor = cfg.RepoMergeFrontTimeout
+	l, err := New(opts)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for repo, want := range map[string]time.Duration{
+		testRepo:       3 * time.Hour,
+		"acme/gadgets": 2 * time.Hour,
+		"acme/other":   2 * time.Hour,
+	} {
+		if got := l.timeoutFor(repo); got != want {
+			t.Errorf("timeoutFor(%q) = %s, want %s", repo, got, want)
+		}
+	}
+	cfg.Project.MergeFrontTimeout = ""
+	if got := l.timeoutFor("acme/other"); got != DefaultFrontTimeout {
+		t.Errorf("timeoutFor without a configured timeout = %s, want %s", got, DefaultFrontTimeout)
+	}
+	if got := l.timeoutFor(testRepo); got != 3*time.Hour {
+		t.Errorf("repo override without a project timeout = %s, want 3h", got)
+	}
+}

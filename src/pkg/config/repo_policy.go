@@ -20,11 +20,14 @@ type RepoPolicy struct {
 	ReleaseVersionSource string `yaml:"release_version_source,omitempty" json:"release_version_source,omitempty"`
 	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
 	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
-	LabelDrivenApprovalLabels []string             `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
-	MergeStrategy             string               `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
-	ACMMLevel                 *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
-	ACMMPinned                bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
-	ACMMLastAutomatic         *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	LabelDrivenApprovalLabels []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	MergeStrategy             string   `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
+	// MergeFrontTimeout overrides project.merge_front_timeout for this repo's
+	// serialized lane (hivecommons/hive#12952): a Go duration such as "2h".
+	MergeFrontTimeout string               `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
+	ACMMLevel         *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
+	ACMMPinned        bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
+	ACMMLastAutomatic *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
 }
 
 // Per-repo merge strategies (hivecommons/hive#10886). The strategy decides how
@@ -361,7 +364,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && len(rp.LabelDrivenApprovalLabels) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && len(rp.LabelDrivenApprovalLabels) == 0
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
@@ -396,6 +399,42 @@ func (c *Config) RepoMergeStrategy(repo string) string {
 		return rp.MergeStrategy
 	}
 	return MergeStrategyDirect
+}
+
+// ValidateMergeFrontTimeout accepts "" (unset) or a positive Go duration.
+func ValidateMergeFrontTimeout(field, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+		return fmt.Errorf("%s: invalid merge_front_timeout %q (must be a positive duration such as 90m or 2h)", field, value)
+	}
+	return nil
+}
+
+// RepoMergeFrontTimeout returns the serialized lane's front timeout for repo
+// (hivecommons/hive#12952): the repo_policies override, else
+// project.merge_front_timeout, else 0, which leaves the lane's own default
+// (60 minutes). An unparsable or non-positive value counts as unset.
+func (c *Config) RepoMergeFrontTimeout(repo string) time.Duration {
+	if c == nil {
+		return 0
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok {
+		if d := parseMergeFrontTimeout(rp.MergeFrontTimeout); d > 0 {
+			return d
+		}
+	}
+	return parseMergeFrontTimeout(c.Project.MergeFrontTimeout)
+}
+
+func parseMergeFrontTimeout(raw string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(raw))
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // SetRepoMergeStrategyForRepoAndSave persists one repo's merge strategy.

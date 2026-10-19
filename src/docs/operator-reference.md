@@ -508,6 +508,32 @@ the same API is `GET`/`POST /api/repos/merge-strategy` (see
 `merge_strategy` is unrelated to `knowledge.primer.merge_strategy`, which
 controls how knowledge primers are merged. The two only share a name.
 
+### Front timeout (`merge_front_timeout`)
+
+The serialized lane's front timeout is 60 minutes unless configured. Set it
+hive-wide under `project`, and override it per repository next to
+`merge_strategy`; the value is a Go duration (`90m`, `2h`). An invalid or
+non-positive value is a configuration error.
+
+```yaml
+project:
+  merge_front_timeout: 90m            # hive-wide; unset means 60m
+  repo_policies:
+    - repo: exult
+      merge_strategy: hive-serialized
+      merge_front_timeout: 3h         # this repository only
+```
+
+When the front's timeout runs out while every required check on the head it
+is evaluating is still queued or in progress (none failed, none missing), the
+lane is waiting on CI capacity rather than on the pull request: rotating the
+front would only start another CI run for the next pull request. The lane then
+extends the deadline by one more timeout and records a `front-extend` decision
+(`front timeout extended by 1h0m0s (1 of 3): required checks still queued or
+in progress; last known state: …`). It does so at most three times, so a front
+waits at most 4x the timeout after its last branch update; after that it
+leaves with the usual `front timeout after …` reason.
+
 ### What the serialized lane guarantees
 
 For every `hive-serialized` repository:
@@ -550,10 +576,12 @@ one starts. This holds even when a merge path (the self-merge sweep or the
 `lgtm` queue sweep) rejects the front before the lane, for example as not
 mergeable once GitHub reports it `blocked`: the path still hands its current
 front to the lane, which re-evaluates it without merging and lets it leave
-with its own reason. The front timeout (60 minutes by default, restarted on
-every branch update) is the fallback for a front whose checks never finish;
-its reason says what the lane last knew, for example that the head after the
-branch update was never evaluated, or the last recorded waiting reason.
+with its own reason. The front timeout (`merge_front_timeout`, 60 minutes by
+default, restarted on every branch update, and extended up to 4x while the
+required checks are only queued or in progress) is the fallback for a front
+whose checks never finish; its reason says what the lane last knew, for
+example that the head after the branch update was never evaluated, or the
+last recorded waiting reason.
 
 A front that GitHub still reports as `blocked` after its head contains the
 current target tip and all required checks pass also leaves immediately. The

@@ -527,11 +527,11 @@ func TestFrontTimeout(t *testing.T) {
 		h := newHarness(t)
 		h.f.addPR(1, "h1")
 		h.f.addPR(2, "h2")
-		h.f.setRun("h1", "build", "queued", "")
+		delete(h.f.runs, "h1")
 		h.acquire(1)
 		h.acquire(2)
 		h.now = h.now.Add(59 * time.Minute)
-		expectOutcome(t, h.advance(1), OutcomeWaiting, "build (queued)")
+		expectOutcome(t, h.advance(1), OutcomeWaiting, "build (missing)")
 		h.now = h.now.Add(2 * time.Minute)
 		expectOutcome(t, h.advance(1), OutcomeDeferred, ReasonNotAtFront)
 		rec := h.record()
@@ -729,29 +729,96 @@ func TestFrontTimeoutReasonSaysWhatWasLastKnown(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setup func(t *testing.T, h *harness)
+		after time.Duration
 		want  string
 	}{
 		{"updated head never evaluated", func(t *testing.T, h *harness) {
 			h.f.contained["h1"] = "old-tip"
 			expectOutcome(t, h.advance(1), OutcomeUpdated, "")
-		}, "the head after the branch update was never evaluated"},
-		{"waiting for checks", func(t *testing.T, h *harness) {
+		}, DefaultFrontTimeout, "front timeout after 1h0m0s: the head after the branch update was never evaluated"},
+		{"waiting for checks past the extension cap", func(t *testing.T, h *harness) {
 			h.f.setRun("h1", "build", "in_progress", "")
 			expectOutcome(t, h.advance(1), OutcomeWaiting, "build (in_progress)")
-		}, "last known state: waiting for required checks on head h1: build (in_progress)"},
-		{"never evaluated", func(*testing.T, *harness) {}, "no evaluation of the front reached a verdict"},
+		}, (1 + MaxFrontTimeoutExtensions) * DefaultFrontTimeout, "front timeout after 4h0m0s: last known state: waiting for required checks on head h1: build (in_progress)"},
+		{"never evaluated", func(*testing.T, *harness) {}, DefaultFrontTimeout, "front timeout after 1h0m0s: no evaluation of the front reached a verdict"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
 			h.f.addPR(1, "h1")
 			h.acquire(1)
 			tc.setup(t, h)
-			h.now = h.now.Add(DefaultFrontTimeout + time.Minute)
+			h.now = h.now.Add(tc.after + time.Minute)
 			h.acquire(2)
 			exit := h.record().LastExit
-			if exit == nil || exit.PR != 1 || !strings.Contains(exit.Reason, "front timeout after 1h0m0s: "+tc.want) || strings.Contains(exit.Reason, "did not finish") {
+			if exit == nil || exit.PR != 1 || !strings.Contains(exit.Reason, tc.want) || strings.Contains(exit.Reason, "did not finish") {
 				t.Fatalf("last exit = %+v, want a timeout naming %q", exit, tc.want)
 			}
 		})
+	}
+}
+
+// A front whose required checks are all queued is waiting on CI capacity, not
+// on the pull request: its timeout is extended one timeout at a time instead
+// of rotating to a waiter that would need a new branch update and CI run, and
+// it leaves once 4x the timeout is used up (hivecommons/hive#12952).
+func TestFrontTimeoutExtendedWhileRequiredChecksQueued(t *testing.T) {
+	h := newHarness(t)
+	h.f.addPR(1, "h1")
+	h.f.addPR(2, "h2")
+	h.f.contained["h2"] = "old-tip"
+	h.f.setRun("h1", "build", "queued", "")
+	h.acquire(1)
+	h.acquire(2)
+	expectOutcome(t, h.advance(1), OutcomeWaiting, "build (queued)")
+
+	for i := 1; i <= MaxFrontTimeoutExtensions; i++ {
+		h.now = h.now.Add(DefaultFrontTimeout + time.Second)
+		expectOutcome(t, h.acquire(2), OutcomeDeferred, ReasonNotAtFront)
+		expectOutcome(t, h.advance(1), OutcomeWaiting, "build (queued)")
+		rec := h.record()
+		if rec.Front == nil || rec.Front.PR != 1 || rec.Front.Extensions != i {
+			t.Fatalf("after extension %d: front = %+v, want #1 extended %d times", i, rec.Front, i)
+		}
+		if rec.LastExit != nil {
+			t.Fatalf("after extension %d: last exit = %+v, want none", i, rec.LastExit)
+		}
+		h.now = h.now.Add(-time.Second)
+	}
+	extended := h.eventsFor(ActionExtend)
+	if len(extended) != MaxFrontTimeoutExtensions || !strings.Contains(extended[0].Reason, "front timeout extended by 1h0m0s (1 of 3): required checks still queued or in progress") ||
+		!strings.Contains(extended[0].Reason, "build (queued)") {
+		t.Fatalf("extension audit = %+v", extended)
+	}
+	if len(h.f.updates) != 0 {
+		t.Fatalf("branch updates = %v, want none while the front waits on CI", h.f.updates)
+	}
+
+	h.now = h.now.Add(DefaultFrontTimeout + time.Second)
+	expectOutcome(t, h.advance(1), OutcomeDeferred, ReasonNotAtFront)
+	rec := h.record()
+	if rec.Front == nil || rec.Front.PR != 2 {
+		t.Fatalf("front = %+v, want #2 once the extension cap is used up", rec.Front)
+	}
+	if rec.LastExit == nil || rec.LastExit.PR != 1 ||
+		!strings.Contains(rec.LastExit.Reason, "front timeout after 4h0m0s: last known state: waiting for required checks on head h1: build (queued)") {
+		t.Fatalf("last exit = %+v", rec.LastExit)
+	}
+	if got := len(h.eventsFor(ActionExtend)); got != MaxFrontTimeoutExtensions {
+		t.Fatalf("extensions = %d, want %d", got, MaxFrontTimeoutExtensions)
+	}
+}
+
+// Once the queued checks finish green the extended front merges as usual.
+func TestExtendedFrontMergesWhenChecksFinish(t *testing.T) {
+	h := newHarness(t)
+	h.f.addPR(1, "h1")
+	h.f.setRun("h1", "build", "in_progress", "")
+	h.acquire(1)
+	expectOutcome(t, h.advance(1), OutcomeWaiting, "build (in_progress)")
+	h.now = h.now.Add(DefaultFrontTimeout + time.Minute)
+	h.f.pass("h1")
+	expectOutcome(t, h.advance(1), OutcomeMerged, "")
+	if got := len(h.eventsFor(ActionExtend)); got != 1 {
+		t.Fatalf("extensions = %d, want 1", got)
 	}
 }
