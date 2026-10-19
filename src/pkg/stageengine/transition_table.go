@@ -41,4 +41,5 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.ReadyForHumanMerge, stagelabels.ReviewPending}:         true, // new head pushed (verdict pending)
 	{stagelabels.ReadyForHumanMerge, stagelabels.ReturnedToContributor}: true, // head red / DCO missing / conflicts
 	{stagelabels.NeedsDecision, stagelabels.ReturnedToContributor}:      true, // head red / DCO missing / conflicts
+	{stagelabels.NeedsDecision, stagelabels.Fixing}:                     true, // hive PR, trusted human changes_requested review or /hive decision (author agent kicked)
 }

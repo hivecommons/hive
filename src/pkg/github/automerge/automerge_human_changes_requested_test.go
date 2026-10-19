@@ -128,3 +128,49 @@ func TestTrySweepSelfAuthoredPRHumanChangesRequestedWithoutStore(t *testing.T) {
 		t.Fatalf("got (%+v, %q, %v)", event, reason, err)
 	}
 }
+
+// TestTrySweepSelfAuthoredPRHonoursRecordedDecision pins the text path of
+// hivecommons/hive#13041: a `/hive decision` the un-park sweep recorded for
+// this head (no changes_requested review exists) is read by the lane as
+// changes requested — same reason, same 070 route, no merge — and a stale
+// decision on an older head is not.
+func TestTrySweepSelfAuthoredPRHonoursRecordedDecision(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		head       string
+		wantReason string
+	}{
+		{name: "decision on the current head parks at fixing", head: "sha7", wantReason: autoMergeReasonHumanChangesRequested},
+		{name: "decision on an older head is superseded", head: "sha6"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			api := newSelfSweepGuardAPI(t, selfSweepFixture{mergeApplied: true})
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			store := review.NewHumanChangeRequests("")
+			c.humanChangeRequests = store
+			if err := store.Record(review.HumanChangeRequest{Repo: "acme/widget", Number: 7, HeadSHA: tt.head, Source: review.HumanChangeRequestSourceDecision, SourceID: 99, Actor: "bob", Body: "drop the retry loop"}); err != nil {
+				t.Fatal(err)
+			}
+			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if tt.wantReason == "" {
+				if event.MergeSHA != "merge7" {
+					t.Fatalf("event = %+v, want merge when the decision is on an older head", event)
+				}
+				return
+			}
+			if event.MergeSHA != "" {
+				t.Fatalf("event = %+v, want no merge over a recorded /hive decision", event)
+			}
+			if n := store.Len(); n != 1 {
+				t.Fatalf("store entries = %d, want the decision untouched", n)
+			}
+		})
+	}
+}

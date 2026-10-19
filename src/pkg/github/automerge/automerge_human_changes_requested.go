@@ -74,11 +74,18 @@ func (c *Engine) latestTrustedHumanChangesRequested(ctx context.Context, owner, 
 // humanChangesRequestedForHead reports whether a trusted maintainer has
 // asked for changes on head, recording the request for the review planner
 // the first time it is seen. The store dedupes on (head, review id), so a
-// head is kicked once however many sweeps observe the same review.
+// head is kicked once however many sweeps observe the same review. A
+// request already standing in the store for this head — a `/hive decision`
+// the un-park sweep recorded (pr_unpark_decision.go) — counts the same way,
+// so the text path reaches 070 through the lane reason like a review does.
 func (c *Engine) humanChangesRequestedForHead(ctx context.Context, owner, repo string, number int, head string) bool {
 	rv, ok := c.latestTrustedHumanChangesRequested(ctx, owner, repo, number, head)
 	if !ok {
-		return false
+		if c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
+			return false
+		}
+		_, standing := c.humanChangeRequests.For(owner+"/"+repo, number, strings.TrimSpace(head))
+		return standing
 	}
 	if c.humanChangeRequests == nil {
 		return true
