@@ -583,7 +583,7 @@ means the situation cannot occur at that level.
 | Actionable `blocked` issue with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label). Held and filtered issues keep their earlier row: their links are not read | same | same | same |
 | `Epic` · `2-discussing` · `needs-triage` on an issue | As the unclaimed row — still in the agent queue | same | same | same |
 | PR with a label that puts it in the Gated band (`needs-decision`, `2-discussing`, `needs-direction`, `needs-spec`, a renamed parking label, or a configured waiting label), no `needs-human`, unheld | Yours — `DECIDE` (`needs-decision`, `2-discussing`) / `STEER` / `SPEC` with the parking reason codes; any other gate label `REVIEW` (`pr_gate_label`) | same | same | same |
-| Non-draft, unheld PR whose GitHub review decision is `REVIEW_REQUIRED` or `CHANGES_REQUESTED` with a named branch-protection rule — the merge classifier's skip | Yours — `REVIEW` (`review_decision_required`, with the rule as the reason) | same | same | same |
+| Non-draft, unheld PR whose GitHub review decision is `REVIEW_REQUIRED` or `CHANGES_REQUESTED` with a named branch-protection rule, or whose decision is null while GitHub reports it `blocked` with green required checks on a base branch that requires a code owner's review (`protection.code_owner_review_required`) — the merge classifier's skip | Yours — `REVIEW` (`review_decision_required`, with the rule as the reason; for the code-owner case "code-owner review required by `<rule source>`") | same | same | same |
 | Non-draft, unheld PR the merge classifier calls eligible whose author no Hive merge lane admits (self-authored, trusted bot, trusted author, contributor lane) | Yours — `REVIEW` (`hand_merge_required`) | same | same | same |
 | `needs-reporter-confirmation` | Not yours — the reporter's turn; after the stale period with no activity, Yours — `CLOSE` | same | same | same |
 
@@ -796,8 +796,18 @@ display-only: no enumeration, review, hold, or merge gate reads any of them.
   requires no review; the decision then stays unknown — it is never inferred
   — and the reviewer opinions GitHub did return are shown as opinions
   ("2 approvals on GitHub — no review decision", "changes requested by @x —
-  no review decision from GitHub"). Any decision or opinion places the PR in
-  the **In review** band unless a higher band already claimed it.
+  no review decision from GitHub"). A null decision can also mean an
+  outstanding code-owner review: with no other approvals required, GitHub
+  reports `reviewDecision` null even while it waits on a code owner
+  ([#12953](https://github.com/hivecommons/hive/issues/12953)). For a
+  `blocked` PR with a null decision the sweep looks up the base branch's
+  rules and records `protection.code_owner_review_required` with
+  `protection.code_owner_rule_source` (the ruleset or classic protection
+  rule behind it); when the required checks are also green, that review is
+  what GitHub is waiting on, the merge classifier skips the PR, and the
+  your-turn table above marks it `review_decision_required`. Any decision
+  or opinion places the PR in the **In review** band unless a higher band
+  already claimed it.
 - **Requested reviewers and teams.** `requested_reviewers` (logins) and
   `requested_teams` (slugs) come from the list payload at enumeration time —
   no additional request — on actionable, held, and stale-draft PRs alike. The
