@@ -63,6 +63,13 @@ Actions (also in --json as "action"):
   FIX_DIFF           PR-local: diagnose this PR's own diff
   NOT_REACHABLE_FORK the head is in a fork; you cannot push — comment only
   RERUN_BASELINE     the default-branch green is stale; re-run it first
+
+Transient triage (no action of its own): when your diagnosis finds the
+failure transient or infrastructure-related, not caused by the diff, and you
+cannot re-run the check, end the triage comment with
+  <!-- hive-ci-transient head=<sha> check=<encoded name> run=<check run id> -->
+pinned like external_marker; the dependency-bot red-CI hand-off then asks for
+a re-run instead of blaming the bump (hivecommons/hive#12977).
 EOF
 }
 

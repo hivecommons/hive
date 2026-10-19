@@ -121,6 +121,41 @@ func TestExternalCIDeferredNeedsEveryFailingRun(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#12977: a transient-CI triage marker is pinned to the head
+// and failing run exactly like the external marker, and the two never stand
+// in for each other.
+func TestTransientCITriagedNeedsEveryFailingRun(t *testing.T) {
+	head := strings.Repeat("d", 40)
+	transient := func(check string, run int64) string {
+		return "Not the bump: the cache was not signed yet.\n<!-- hive-ci-transient head=" + head + " check=" + check + " run=" + strconv.FormatInt(run, 10) + " -->"
+	}
+	build := transient("Build%20PR%20Image%20%28No%20Push%29", 9)
+	cases := []struct {
+		name    string
+		texts   []string
+		failing []int64
+		want    bool
+	}{
+		{"marked run", []string{build}, []int64{9}, true},
+		{"an unmarked failing run keeps the PR untriaged", []string{build}, []int64{9, 10}, false},
+		{"a re-run is a new run id", []string{build}, []int64{11}, false},
+		{"no failing run ids", []string{build}, nil, false},
+		{"marker for another head is stale", []string{strings.Replace(build, head, strings.Repeat("e", 40), 1)}, []int64{9}, false},
+		{"an external marker is not a transient triage", []string{externalMarker(head, "build", 9)}, []int64{9}, false},
+	}
+	for _, tc := range cases {
+		if got := transientCITriaged(tc.texts, head, tc.failing); got != tc.want {
+			t.Errorf("%s: transientCITriaged = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if externalCIDeferred([]string{build}, head, []int64{9}) {
+		t.Error("a transient marker must not defer the PR as failing upstream")
+	}
+	if transientCITriaged([]string{build}, "", []int64{9}) {
+		t.Error("a PR with no known head must never be triaged")
+	}
+}
+
 // The batched GraphQL path must carry each check run's real id: the marker is
 // pinned to it, and a positional stand-in would never match.
 func TestGraphQLCheckRunsCarryDatabaseID(t *testing.T) {
