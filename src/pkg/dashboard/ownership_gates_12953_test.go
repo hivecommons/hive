@@ -15,6 +15,7 @@ func TestPRCodeOwnerReviewIsYourTurn12953(t *testing.T) {
 	codeOwner := func(pr github.PullRequest, decision github.ReviewDecision) github.PullRequest {
 		pr.MergeableState = "blocked"
 		pr.CIStatus = "success"
+		pr.RequestedReviewers = []string{"alice"}
 		pr.Protection = &github.ProtectionFacts{
 			ReviewDecision:          decision,
 			CodeOwnerReviewRequired: true,

@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -26,11 +28,16 @@ func (c *Client) codeOwnerReviewRule(ctx context.Context, owner, repo, branch st
 	if c == nil || c.client == nil || owner == "" || repo == "" || strings.TrimSpace(branch) == "" {
 		return codeOwnerRule{}
 	}
-	rules, _, err := c.client.Repositories.GetRulesForBranch(ctx, owner, repo, branch, &gh.ListOptions{PerPage: 100})
-	if err == nil && rules != nil {
-		for _, rule := range rules.PullRequest {
-			if rule != nil && rule.Parameters.RequireCodeOwnerReview {
-				return codeOwnerRule{required: true, source: c.rulesetLabel(ctx, owner, repo, rule.RulesetID)}
+	// go-github's GetRulesForBranch does not escape the branch, so a name with
+	// a "/" (release/1.x) would 404; build the path as commit_ci.go does.
+	path := fmt.Sprintf("repos/%s/%s/rules/branches/%s?per_page=100", owner, repo, url.PathEscape(branch))
+	if req, err := c.client.NewRequest("GET", path, nil); err == nil {
+		var rules *gh.BranchRules
+		if _, err := c.client.Do(ctx, req, &rules); err == nil && rules != nil {
+			for _, rule := range rules.PullRequest {
+				if rule != nil && rule.Parameters.RequireCodeOwnerReview {
+					return codeOwnerRule{required: true, source: c.rulesetLabel(ctx, owner, repo, rule.RulesetID)}
+				}
 			}
 		}
 	}

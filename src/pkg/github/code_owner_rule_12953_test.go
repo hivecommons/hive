@@ -26,8 +26,10 @@ type codeOwnerServer struct {
 	rulesetName string
 	// classic is the classic required_pull_request_reviews answer; nil
 	// answers 403 as it does for an App without Administration permission.
-	classic     map[string]any
-	rulesCalls  int
+	classic    map[string]any
+	rulesCalls int
+	// rulesPaths records the escaped request path of every rules/branches call.
+	rulesPaths  []string
 	classicCall int
 }
 
@@ -57,6 +59,7 @@ func (s *codeOwnerServer) start(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(s.checkRuns), "check_runs": s.checkRuns})
 		case strings.Contains(path, "/rules/branches/"):
 			s.rulesCalls++
+			s.rulesPaths = append(s.rulesPaths, r.URL.EscapedPath())
 			if s.branchRules == nil {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -120,12 +123,17 @@ func greenBuild() []map[string]any {
 
 func enrichCodeOwnerPRs(t *testing.T, s *codeOwnerServer, n int) []PullRequest {
 	t.Helper()
+	return enrichCodeOwnerPRsOn(t, s, n, "main", []string{"alice"})
+}
+
+func enrichCodeOwnerPRsOn(t *testing.T, s *codeOwnerServer, n int, baseRef string, requested []string) []PullRequest {
+	t.Helper()
 	t.Cleanup(resetRequiredChecksForbiddenCacheForTest(time.Now, time.Hour))
 	srv := s.start(t)
 	c := newTestClient(t, srv, "org", []string{"repo"})
 	prs := make([]PullRequest, n)
 	for i := range prs {
-		prs[i] = PullRequest{Repo: "org/repo", Number: 1, HeadSHA: "abc123", BaseRef: "main"}
+		prs[i] = PullRequest{Repo: "org/repo", Number: 1, HeadSHA: "abc123", BaseRef: baseRef, RequestedReviewers: requested}
 	}
 	c.EnrichCIStatus(context.Background(), prs)
 	return prs
@@ -160,6 +168,46 @@ func TestEnrichCIStatus_RulesetCodeOwnerReviewBlocks12953(t *testing.T) {
 	// code-owner lookup adds one more per repo+branch, not one per PR.
 	if s.rulesCalls != 2 {
 		t.Errorf("rules/branches called %d times for 2 PRs on one branch, want the code-owner lookup memoised", s.rulesCalls)
+	}
+}
+
+// GetRulesForBranch does not escape the branch, so release/1.x used to 404 and
+// the rule was never seen. The lookup must send the branch path-escaped.
+func TestEnrichCIStatus_SlashBranchCodeOwnerRule12953(t *testing.T) {
+	s := &codeOwnerServer{
+		mergeableState: "blocked",
+		checkRuns:      greenBuild(),
+		branchRules:    []map[string]any{codeOwnerPullRequestRule(true), requiredBuildRule()},
+		rulesetName:    "protect release",
+	}
+	pr := enrichCodeOwnerPRsOn(t, s, 1, "release/1.x", []string{"alice"})[0]
+	want := `code-owner review required by ruleset "protect release"`
+	if got, blocks := pr.HumanReviewBlocksMerge(); !blocks || got != want {
+		t.Errorf("HumanReviewBlocksMerge() = (%q, %v), want (%q, true)", got, blocks, want)
+	}
+	if len(s.rulesPaths) == 0 {
+		t.Fatal("rules/branches never called")
+	}
+	for _, p := range s.rulesPaths {
+		if !strings.HasSuffix(p, "/rules/branches/release%2F1.x") {
+			t.Errorf("rules/branches path = %q, want the branch escaped as release%%2F1.x", p)
+		}
+	}
+}
+
+// With no requested reviewer or team nothing says a code owner is the one
+// GitHub waits on: still a block, but not named as code-owner review.
+func TestEnrichCIStatus_CodeOwnerRuleWithoutRequestedReviewerIsNeutral12953(t *testing.T) {
+	s := &codeOwnerServer{
+		mergeableState: "blocked",
+		checkRuns:      greenBuild(),
+		branchRules:    []map[string]any{codeOwnerPullRequestRule(true), requiredBuildRule()},
+		rulesetName:    "protect main",
+	}
+	pr := enrichCodeOwnerPRsOn(t, s, 1, "main", nil)[0]
+	want := `blocked by a branch rule Hive does not read (ruleset "protect main" requires code-owner review)`
+	if got, blocks := pr.HumanReviewBlocksMerge(); !blocks || got != want {
+		t.Errorf("HumanReviewBlocksMerge() = (%q, %v), want (%q, true)", got, blocks, want)
 	}
 }
 
@@ -266,6 +314,7 @@ func TestCodeOwnerReviewRuleWithoutClient12953(t *testing.T) {
 }
 
 func TestCodeOwnerReviewBlockReason12953(t *testing.T) {
+	requested := []string{"alice"}
 	rule := func(f ProtectionFacts) *ProtectionFacts {
 		f.CodeOwnerReviewRequired = true
 		if f.CodeOwnerRuleSource == "" {
@@ -280,16 +329,18 @@ func TestCodeOwnerReviewBlockReason12953(t *testing.T) {
 		want       string
 		wantBlocks bool
 	}{
-		{name: "blocked, CI green", pr: PullRequest{MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{})}, want: want, wantBlocks: true},
-		{name: "blocked, only a non-required check red", pr: PullRequest{MergeableState: "BLOCKED", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true})}, want: want, wantBlocks: true},
-		{name: "no rule source falls back to branch protection", pr: PullRequest{MergeableState: "blocked", CIStatus: "success", Protection: &ProtectionFacts{CodeOwnerReviewRequired: true}}, want: "code-owner review required by branch protection", wantBlocks: true},
-		{name: "required check red", pr: PullRequest{MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true, FailingRequiredChecks: []string{"build"}})}},
-		{name: "required check missing", pr: PullRequest{MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true, MissingRequiredChecks: []string{"build"}})}},
-		{name: "CI pending", pr: PullRequest{MergeableState: "blocked", CIStatus: "pending", Protection: rule(ProtectionFacts{RequiredChecksKnown: true})}},
-		{name: "CI red, required set unknown", pr: PullRequest{MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{})}},
-		{name: "not blocked", pr: PullRequest{MergeableState: "clean", CIStatus: "success", Protection: rule(ProtectionFacts{})}},
-		{name: "approved", pr: PullRequest{MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{ReviewDecision: ReviewDecisionApproved})}},
-		{name: "no code-owner rule", pr: PullRequest{MergeableState: "blocked", CIStatus: "success", Protection: &ProtectionFacts{}}},
+		{name: "blocked, CI green", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{})}, want: want, wantBlocks: true},
+		{name: "blocked, only a non-required check red", pr: PullRequest{RequestedReviewers: requested, MergeableState: "BLOCKED", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true})}, want: want, wantBlocks: true},
+		{name: "no rule source falls back to branch protection", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "success", Protection: &ProtectionFacts{CodeOwnerReviewRequired: true}}, want: "code-owner review required by branch protection", wantBlocks: true},
+		{name: "no requested reviewer is neutral but still blocks", pr: PullRequest{MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{})}, want: `blocked by a branch rule Hive does not read (ruleset "protect main" requires code-owner review)`, wantBlocks: true},
+		{name: "requested team names code-owner review", pr: PullRequest{RequestedTeams: []string{"owners"}, MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{})}, want: want, wantBlocks: true},
+		{name: "required check red", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true, FailingRequiredChecks: []string{"build"}})}},
+		{name: "required check missing", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{RequiredChecksKnown: true, MissingRequiredChecks: []string{"build"}})}},
+		{name: "CI pending", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "pending", Protection: rule(ProtectionFacts{RequiredChecksKnown: true})}},
+		{name: "CI red, required set unknown", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "failure", Protection: rule(ProtectionFacts{})}},
+		{name: "not blocked", pr: PullRequest{RequestedReviewers: requested, MergeableState: "clean", CIStatus: "success", Protection: rule(ProtectionFacts{})}},
+		{name: "approved", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "success", Protection: rule(ProtectionFacts{ReviewDecision: ReviewDecisionApproved})}},
+		{name: "no code-owner rule", pr: PullRequest{RequestedReviewers: requested, MergeableState: "blocked", CIStatus: "success", Protection: &ProtectionFacts{}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -805,7 +805,11 @@ display-only: no enumeration, review, hold, or merge gate reads any of them.
   `protection.code_owner_rule_source` (the ruleset or classic protection
   rule behind it); when the required checks are also green, that review is
   what GitHub is waiting on, the merge classifier skips the PR, and the
-  your-turn table above marks it `review_decision_required`. Any decision
+  your-turn table above marks it `review_decision_required`. The reason
+  names code-owner review only while a reviewer or team is requested (GitHub
+  auto-requests the code owner); with none it reads "blocked by a branch rule
+  Hive does not read (<rule source> requires code-owner review)" — still a
+  block. Any decision
   or opinion places the PR in the **In review** band unless a higher band
   already claimed it.
 - **Requested reviewers and teams.** `requested_reviewers` (logins) and

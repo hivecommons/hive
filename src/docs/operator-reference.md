@@ -526,7 +526,9 @@ the App cannot read classic branch protection (GitHub answers 403); the lane
 then uses the required checks the branch's rulesets list, and GitHub still
 enforces any classic rule itself at merge time. The lane panel and the ACMM
 merge-queue row show the reason when the required-check set is unknown, for
-example a 403 on a branch whose rulesets require no checks.
+example a 403 on a branch whose rulesets require no checks. Without Administration,
+classic-protection `require_code_owner_reviews` is likewise invisible (the
+403 reads as "not required"), so only ruleset code-owner rules are detected.
 4. The merge call pins the validated head.
 5. Immediately before the merge Hive re-reads the head, the branch tip,
    open/draft state, the target branch, mergeability, the required-check set

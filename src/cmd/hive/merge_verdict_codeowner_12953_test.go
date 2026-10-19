@@ -15,11 +15,12 @@ import (
 func TestClassifyMergeEligibility_CodeOwnerReviewIsNotEligible12953(t *testing.T) {
 	pr := func(decision github.ReviewDecision) github.PullRequest {
 		return github.PullRequest{
-			Number:         108,
-			Mergeable:      github.MergeableNo,
-			MergeableState: "blocked",
-			BaseRef:        "main",
-			CIStatus:       "success",
+			Number:             108,
+			Mergeable:          github.MergeableNo,
+			MergeableState:     "blocked",
+			BaseRef:            "main",
+			RequestedReviewers: []string{"alice"},
+			CIStatus:           "success",
 			Protection: &github.ProtectionFacts{
 				ReviewDecision:          decision,
 				RequiredChecksKnown:     true,

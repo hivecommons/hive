@@ -144,6 +144,12 @@ func (p PullRequest) codeOwnerReviewBlockReason() (string, bool) {
 	if source == "" {
 		source = "branch protection"
 	}
+	// GitHub auto-requests the code owner, so a requested reviewer or team is
+	// what makes "code-owner review" the honest name. Without one the block is
+	// still a block, but its cause is some branch rule Hive does not read.
+	if len(p.RequestedReviewers)+len(p.RequestedTeams) == 0 {
+		return "blocked by a branch rule Hive does not read (" + source + " requires code-owner review)", true
+	}
 	return "code-owner review required by " + source, true
 }
 
