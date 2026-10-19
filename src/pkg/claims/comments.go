@@ -82,6 +82,9 @@ func ClaimMarker(c Claim) string {
 	if c.Kind == KindContributor {
 		fmt.Fprintf(&b, " tier=%s verified=%t", markerTier(c.Tier), c.Verified)
 	}
+	if c.PRStarted {
+		b.WriteString(" pr_started=true")
+	}
 	if !c.ClaimedAt.IsZero() {
 		fmt.Fprintf(&b, " at=%s", c.ClaimedAt.UTC().Format(time.RFC3339))
 	}

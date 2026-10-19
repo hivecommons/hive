@@ -509,7 +509,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:
-		return joinClause("An agent kick is running; no PR yet", clause), "hive"
+		return joinClause("An agent has a PR under way; not yet opened", clause), "hive"
 	case stagelabels.CoveredByPR:
 		return joinClause("An open PR"+prRef+" covers this issue", clause), "its PR"
 	case stagelabels.ReviewPending:

@@ -105,7 +105,8 @@ func issueFacts(ref Ref, issue IssueFacts) Facts {
 	return Facts{Ref: ref, Issue: &issue}
 }
 
-// Claimed implements FactSink: a live claim → 020, or 030 for an agent.
+// Claimed implements FactSink: a live claim → 020, or 030 when it carries
+// PR evidence (ClaimFact.PRStarted).
 func (s *factSink) Claimed(ctx context.Context, ref Ref, c ClaimFact) error {
 	return s.submit(ctx, issueFacts(ref, IssueFacts{Bucket: BucketClaimed, Claim: &c}))
 }
@@ -115,7 +116,9 @@ func (s *factSink) ClaimReleased(ctx context.Context, ref Ref, holder string) er
 	return s.submit(ctx, issueFacts(ref, IssueFacts{Bucket: BucketActionable}))
 }
 
-// InProgress implements FactSink: an agent kick is running → 030.
+// InProgress implements FactSink: an agent kick is running on the issue
+// with no PR evidence yet → 020 (030 needs a PR under way; see
+// ClaimFact.PRStarted).
 func (s *factSink) InProgress(ctx context.Context, ref Ref, agent string, until time.Time) error {
 	return s.submit(ctx, issueFacts(ref, IssueFacts{
 		Bucket: BucketInProgress,

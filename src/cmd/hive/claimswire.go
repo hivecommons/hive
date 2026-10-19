@@ -109,8 +109,8 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					// The stage is a fact for the engine (ADR-0025): a live
-					// claim derives to stage/020-claimed, an agent's to
-					// stage/030-pr-in-progress. The engine re-reads the issue
+					// claim derives to stage/020-claimed, or stage/030 when
+					// it carries PR evidence. The engine re-reads the issue
 					// and replaces whatever stage it carries, so a claim
 					// landing seconds after the reconciler staged it 010
 					// replaces that label rather than joining it (#12512).
@@ -192,13 +192,14 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 }
 
 // claimFactFor renders a ledger claim as the fact the stage engine derives a
-// stage from (hivecommons/hive#12436): the engine stages a hive agent's own
-// claim — recorded on its start signal (#10527), which is exactly the "an
-// agent began a PR for this" instant — stage/030-pr-in-progress and every
-// other kind stage/020-claimed. The ledger, not the label, is what claim
-// detection reads.
+// stage from (hivecommons/hive#12436): a live claim is stage/020-claimed
+// whatever its kind; it is stage/030-pr-in-progress only when the claim
+// carries PR evidence (Claim.PRStarted: a PR request naming the issue or a
+// start marker naming a branch / PR) — the label promises a PR, so a bare
+// agent claim must not wear it (hivecommons/hive#13069). The ledger, not
+// the label, is what claim detection reads.
 func claimFactFor(c claims.Claim) stageengine.ClaimFact {
-	return stageengine.ClaimFact{Holder: c.Holder, Kind: c.Kind, Until: c.ExpiresAt}
+	return stageengine.ClaimFact{Holder: c.Holder, Kind: c.Kind, Until: c.ExpiresAt, PRStarted: c.PRStarted}
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an
@@ -292,7 +293,7 @@ func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue 
 	if ledger == nil || agentName == "" || issue <= 0 {
 		return
 	}
-	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName)
+	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName, github.StartSignalIsPREvidence(signal))
 	if logger == nil || !started {
 		return
 	}

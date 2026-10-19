@@ -158,7 +158,7 @@ func TestSyncIssueStageLabels_HealsBackendClaimedBy(t *testing.T) {
 				Labels: []string{"hive/claimed-by-clubanderson", stagelabels.Claimed.Label()}},
 			{Repo: "acme/widgets", Number: 4, Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "clubanderson",
 				Labels: []string{"hive/claimed-by-clubanderson", stagelabels.Claimed.Label()}},
-			{Repo: "acme/widgets", Number: 5, Bucket: workBucketClaimed, ClaimKind: "agent", ClaimedBy: "scanner",
+			{Repo: "acme/widgets", Number: 5, Bucket: workBucketClaimed, ClaimKind: "agent", ClaimedBy: "scanner", ClaimPRStarted: true,
 				Labels: []string{"hive/claimed-by-scanner", stagelabels.PRInProgress.Label()}},
 		}}},
 	}

@@ -160,8 +160,9 @@ func TestIssueRequestWatcher_ClaimAppliesInProgressLabelAndStartMark(t *testing.
 	if strings.Join(labels[0], ",") != "hive/claimed-by-scanner" {
 		t.Fatalf("labels = %v, want only the ownership label (the stage is a fact)", labels[0])
 	}
-	if got := writer.LabelsOf(c.IssueStageRef("o/r", 42)); strings.Join(got, ",") != InProgressLabel {
-		t.Fatalf("stage labels from the in-progress fact = %v, want %s", got, InProgressLabel)
+	// A bare claim is PR-less: 020, never 030 (hivecommons/hive#13069).
+	if got := writer.LabelsOf(c.IssueStageRef("o/r", 42)); strings.Join(got, ",") != stagelabels.Claimed.Label() {
+		t.Fatalf("stage labels from the in-progress fact = %v, want %s", got, stagelabels.Claimed.Label())
 	}
 	if len(comments) != 1 {
 		t.Fatalf("expected one start-mark comment, got %d", len(comments))

@@ -170,24 +170,29 @@ func TestLedgerHasContributor(t *testing.T) {
 	}
 }
 
-// A hive agent's claim is a fact the engine derives to stage/030-pr-in-progress;
-// a human or contributor claim to stage/020-claimed — one stage label per
-// issue, never the retired `claimed` / `hive/in-progress` pair
-// (hivecommons/hive#12436). The hooks submit the fact; a sink over the real
-// reconciler and a fake writer shows the label each kind ends up as, and the
-// release fact takes it off again (010 while the issue is open).
+// A claim is a fact the engine derives to stage/020-claimed whatever the
+// holder's kind; only an agent claim carrying PR evidence (PRStarted — a
+// pr_request / branch start signal) derives stage/030-pr-in-progress
+// (hivecommons/hive#13069; one stage label per issue, never the retired
+// `claimed` / `hive/in-progress` pair, hivecommons/hive#12436). The hooks
+// submit the fact; a sink over the real reconciler and a fake writer shows the
+// label each kind ends up as, and the release fact takes it off again (010
+// while the issue is open).
 func TestClaimHooks_SubmitClaimFacts(t *testing.T) {
 	cases := []struct {
-		kind claims.Kind
-		want stagelabels.Stage
+		name      string
+		kind      claims.Kind
+		prStarted bool
+		want      stagelabels.Stage
 	}{
-		{claims.KindAgent, stagelabels.PRInProgress},
-		{claims.KindHuman, stagelabels.Claimed},
-		{claims.KindContributor, stagelabels.Claimed},
-		{claims.KindExternal, stagelabels.Claimed},
+		{"agent", claims.KindAgent, false, stagelabels.Claimed},
+		{"agent-pr-started", claims.KindAgent, true, stagelabels.PRInProgress},
+		{"human", claims.KindHuman, false, stagelabels.Claimed},
+		{"contributor", claims.KindContributor, false, stagelabels.Claimed},
+		{"external", claims.KindExternal, false, stagelabels.Claimed},
 	}
 	for _, tc := range cases {
-		t.Run(string(tc.kind), func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			sink, writer := stageenginetest.NewSink(stageenginetest.Options{Issue: github.IssueDeriver()})
 			gh := github.NewClientForTest("http://127.0.0.1:0", "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			gh.SetStageFactSink(sink)
@@ -197,7 +202,7 @@ func TestClaimHooks_SubmitClaimFacts(t *testing.T) {
 			cfg.Governor.Claims.Label = boolPtr(true)
 			cfg.Governor.Claims.Comment = boolPtr(false)
 			hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
-			claim := claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "ann", Kind: tc.kind}
+			claim := claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "ann", Kind: tc.kind, PRStarted: tc.prStarted}
 			hooks.OnClaimed(claim, claims.OutcomeClaimed)
 			testutil.Eventually(t, 5*time.Second, func() bool {
 				return stagelabels.Current(writer.LabelsOf(ref)) == tc.want

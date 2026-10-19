@@ -48,6 +48,9 @@ type issueStageGoldenInput struct {
 	Reason    string   `json:"reason,omitempty"`
 	ClaimKind string   `json:"claim_kind,omitempty"`
 	ClaimedBy string   `json:"claimed_by,omitempty"`
+	// PRStarted mirrors IssueStageInput.PRStarted: the live claim carries
+	// PR evidence (hivecommons/hive#13069).
+	PRStarted bool `json:"pr_started,omitempty"`
 	// ClaimPR / ClaimPRRepo mirror IssueClaimContext.PRNumber / PRRepo; a
 	// zero ClaimPR with ClaimPresent means a context without a PR.
 	ClaimPresent bool   `json:"claim_present,omitempty"`
@@ -74,7 +77,7 @@ type issueStageGoldenCase struct {
 }
 
 func (in issueStageGoldenInput) toInput() IssueStageInput {
-	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy}
+	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted}
 	if in.ClaimPresent {
 		out.Claim = &IssueClaimContext{PRNumber: in.ClaimPR, PRRepo: in.ClaimPRRepo}
 	}
@@ -171,6 +174,14 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 						Name:  fmt.Sprintf("bucket=%s/labels=%s/claim=%s/reason=%s", bname, ln, ckName, rName),
 						Input: issueStageGoldenInput{Repo: repo, Number: 1, Labels: labelSets[ln], Bucket: bucket, Reason: reason, ClaimKind: ck, ClaimedBy: "someone"},
 					})
+					// PR evidence on the claim only means something on the
+					// claim-shaped buckets (hivecommons/hive#13069).
+					if bucket == workBucketClaimed || bucket == inProgressWorkBucket {
+						add("buckets.json", issueStageGoldenCase{
+							Name:  fmt.Sprintf("bucket=%s/labels=%s/claim=%s/reason=%s/pr_started", bname, ln, ckName, rName),
+							Input: issueStageGoldenInput{Repo: repo, Number: 1, Labels: labelSets[ln], Bucket: bucket, Reason: reason, ClaimKind: ck, ClaimedBy: "someone", PRStarted: true},
+						})
+					}
 				}
 			}
 		}
@@ -250,6 +261,21 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		{
 			Name:  "regression/agent-claim-kind-is-case-insensitive",
 			Input: issueStageGoldenInput{Repo: repo, Number: 12456, Bucket: workBucketClaimed, ClaimKind: "Agent"},
+		},
+		{
+			Name:  "regression/13069-bare-agent-claim-derives-020",
+			Note:  "hivecommons/hive#13069 wore stage/030-pr-in-progress on the scanner's `hive-open-issue claim` with no PR, branch or PR request anywhere; an agent claim without PR evidence is 020-claimed.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 13069, Labels: []string{"kind/bug", stagelabels.PRInProgress.Label(), "hive/claimed-by-scanner"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+		},
+		{
+			Name:  "regression/13069-agent-start-mark-derives-020",
+			Note:  "The in-progress sweep's live kind=agent marker is the same bare claim: 020 until pr_started= is on the marker.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 13069, Labels: []string{stagelabels.PRInProgress.Label(), "hive/claimed-by-scanner"}, Bucket: inProgressWorkBucket, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+		},
+		{
+			Name:  "regression/13069-agent-claim-with-pr-evidence-derives-030",
+			Note:  "A `hive-open-pr --issues` request (or a start marker naming a branch) on the claim is the PR evidence 030 promises.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 13069, Labels: []string{stagelabels.Claimed.Label(), "hive/claimed-by-scanner"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true},
 		},
 		{
 			Name:  "regression/12999-epic-with-agent-claim-stays-010",

@@ -302,8 +302,12 @@ func TestIssueStageFor(t *testing.T) {
 		{"actionable", IssueStageInput{}, stagelabels.Actionable, false},
 		{"live human claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: "human"}, stagelabels.Claimed, false},
 		{"live contributor claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: "contributor"}, stagelabels.Claimed, false},
-		{"live agent claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.PRInProgress, false},
-		{"in-progress sweep", IssueStageInput{Bucket: inProgressWorkBucket}, stagelabels.PRInProgress, false},
+		// hivecommons/hive#13069: an agent claim is 020 until it carries PR
+		// evidence; 030 promises a PR.
+		{"live agent claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Claimed, false},
+		{"live agent claim with a PR under way", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), PRStarted: true}, stagelabels.PRInProgress, false},
+		{"in-progress sweep", IssueStageInput{Bucket: inProgressWorkBucket}, stagelabels.Claimed, false},
+		{"in-progress sweep with a PR under way", IssueStageInput{Bucket: inProgressWorkBucket, PRStarted: true}, stagelabels.PRInProgress, false},
 		{"covered, PR not yet staged", IssueStageInput{Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5}}, stagelabels.CoveredByPR, false},
 		// hivecommons/hive#12451: the PR's stage is narrated, never mirrored
 		// as the issue's label — 050+ are PR-only stages.
@@ -444,7 +448,7 @@ func issueStageResult() *ActionableResult {
 		{Repo: "acme/widgets", Number: 1, Labels: []string{"bug"}},
 	})
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 2, Labels: []string{claims.LegacyLabelClaimed}, ClaimKind: "human"}, workBucketClaimed, "live claim")
-	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 3, Labels: []string{claims.LegacyLabelInProgress}, ClaimKind: string(claims.KindAgent)}, workBucketClaimed, "live claim")
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 3, Labels: []string{claims.LegacyLabelInProgress}, ClaimKind: string(claims.KindAgent), ClaimPRStarted: true}, workBucketClaimed, "live claim")
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.LegacyCoveredByPR}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 5, Labels: []string{stagelabels.Actionable.Label()}}, "filtered", "Exempt label")
 	return result
@@ -545,9 +549,9 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	store := stagelabels.NewStore("", func() time.Time { return clock })
 	key := stagelabels.Key("acme/widgets", 7)
 
-	// Cycle 1: an agent claim → 030.
+	// Cycle 1: an agent claim with a PR under way → 030.
 	result := &ActionableResult{}
-	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent)}, workBucketClaimed, "live claim")
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent), ClaimPRStarted: true}, workBucketClaimed, "live claim")
 	syncSeeded(fake, c, result, store, clock)
 	if rec, ok := store.Get(key); !ok || rec.Stage != stagelabels.PRInProgress {
 		t.Fatalf("record after cycle 1 = %+v", rec)

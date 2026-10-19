@@ -669,9 +669,13 @@ type Issue struct {
 	ClaimSource    string     `json:"claim_source,omitempty"`
 	// ClaimKind is the marker's kind= (agent, human, contributor, external)
 	// when the live claim came from a `hive:claim` marker; empty otherwise.
-	// The issue stage reconciler reads it to tell stage/030-pr-in-progress
-	// (an agent kick is working) from stage/020-claimed.
 	ClaimKind string `json:"claim_kind,omitempty"`
+	// ClaimPRStarted is the marker's pr_started= — the claim carries PR
+	// evidence (the holder's PR request named the issue or its start marker
+	// named a branch / PR). The issue stage reconciler reads it to tell
+	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
+	// alone never does (hivecommons/hive#13069).
+	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -3825,10 +3829,12 @@ type RepoWorkIssue struct {
 	URL       string    `json:"url,omitempty"`
 	Bucket    string    `json:"bucket"`
 	Reason    string    `json:"reason,omitempty"`
-	// ClaimKind and ClaimedBy are Issue.ClaimKind / Issue.ClaimedBy, copied
-	// for the issue stage reconciler.
-	ClaimKind string `json:"claim_kind,omitempty"`
-	ClaimedBy string `json:"claimed_by,omitempty"`
+	// ClaimKind, ClaimedBy and ClaimPRStarted are Issue.ClaimKind /
+	// Issue.ClaimedBy / Issue.ClaimPRStarted, copied for the issue stage
+	// reconciler.
+	ClaimKind      string `json:"claim_kind,omitempty"`
+	ClaimedBy      string `json:"claimed_by,omitempty"`
+	ClaimPRStarted bool   `json:"claim_pr_started,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -3842,22 +3848,23 @@ type RepoWorkIssue struct {
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 	return RepoWorkIssue{
-		Repo:         issue.Repo,
-		Number:       issue.Number,
-		Title:        issue.Title,
-		Author:       issue.Author,
-		Labels:       append([]string(nil), issue.Labels...),
-		Assignees:    append([]string(nil), issue.Assignees...),
-		CreatedAt:    issue.CreatedAt,
-		UpdatedAt:    issue.UpdatedAt,
-		URL:          issue.URL,
-		Bucket:       bucket,
-		Reason:       reason,
-		ClaimKind:    issue.ClaimKind,
-		ClaimedBy:    issue.ClaimedBy,
-		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
-		ClaimContext: issue.ClaimContext,
-		Children:     issue.Children,
+		Repo:           issue.Repo,
+		Number:         issue.Number,
+		Title:          issue.Title,
+		Author:         issue.Author,
+		Labels:         append([]string(nil), issue.Labels...),
+		Assignees:      append([]string(nil), issue.Assignees...),
+		CreatedAt:      issue.CreatedAt,
+		UpdatedAt:      issue.UpdatedAt,
+		URL:            issue.URL,
+		Bucket:         bucket,
+		Reason:         reason,
+		ClaimKind:      issue.ClaimKind,
+		ClaimedBy:      issue.ClaimedBy,
+		ClaimPRStarted: issue.ClaimPRStarted,
+		LinkedPRs:      append([]IssueLinkedPR(nil), issue.LinkedPRs...),
+		ClaimContext:   issue.ClaimContext,
+		Children:       issue.Children,
 	}
 }
 

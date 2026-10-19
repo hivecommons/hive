@@ -203,6 +203,19 @@ shadow but is for the default flip).
 | enforce → default | `stage_transition_anomaly_total` | only pairs explained by a documented event (merge, close, human label edit) |
 | any | GitHub REST calls per cycle (`hive:issue_stage_labels`, `stageRESTCaller`) | not above the pre-engine baseline |
 
+## Amendments after PR-E
+
+- **030 needs PR evidence** ([#13069](https://github.com/hivecommons/hive/issues/13069)):
+  `ClaimFact.PRStarted` (ledger `Claim.PRStarted`, marker `pr_started=true`)
+  is set by the start-signal seam only for a `hive-open-pr --issues` request
+  or a `<!-- hive:start branch=… -->` / `pr=…` marker; `IssueStageFor` and
+  the engine adapter derive `030-pr-in-progress` only when it is set and
+  `020-claimed` for every other live claim or start mark. The diagram and
+  `transition_table.go` gained `020 → 010`, `030 → 010` (claim released /
+  lapsed with no PR) and `020 → 040`, so claim expiry is no longer an
+  anomaly. Landed in the same PR for legacy and engine so the shadow
+  mismatch gate stays at 0.
+
 ## Tracking
 
 Tracking issue: [#12999](https://github.com/hivecommons/hive/issues/12999) *Central stage engine (ADR-0025)* — one checkbox per PR

@@ -124,11 +124,16 @@ type IssueFacts struct {
 
 // ClaimFact is the live claim on an issue.
 type ClaimFact struct {
-	Holder   string
-	Kind     claims.Kind // KindAgent → 030, anything else → 020
-	Until    time.Time
-	PRRepo   string
-	PRNumber int
+	Holder string
+	Kind   claims.Kind
+	Until  time.Time
+	// PRStarted is PR evidence behind the claim — the holder's PR request
+	// named the issue, or its start marker named a branch / PR. Only a
+	// claim with it derives 030-pr-in-progress; any other live claim,
+	// an agent's included, derives 020-claimed (hivecommons/hive#13069).
+	PRStarted bool
+	PRRepo    string
+	PRNumber  int
 }
 
 // PRFacts is the pull-request-side evidence.

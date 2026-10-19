@@ -187,11 +187,16 @@ type IssueFacts struct {
 }
 
 type ClaimFact struct {
-	Holder   string
-	Kind     claims.Kind // KindAgent → 030, anything else → 020
-	Until    time.Time
-	PRRepo   string
-	PRNumber int
+	Holder string
+	Kind   claims.Kind
+	Until  time.Time
+	// PRStarted is PR evidence behind the claim: the holder's
+	// `hive-open-pr --issues` request named the issue, or its start
+	// marker named a branch / PR. Only a claim with it derives 030;
+	// any other live claim, an agent's included, derives 020 (#13069).
+	PRStarted bool
+	PRRepo    string
+	PRNumber  int
 }
 
 type PRFacts struct {
@@ -342,6 +347,15 @@ type FactSink interface {
 	Unparked(ctx context.Context, ref Ref, by string) error    // /hive approve|decision
 }
 ```
+
+`Claimed` carries the claim's PR evidence (`ClaimFact.PRStarted`, recorded
+on the ledger claim by the start-signal seam when the signal is a PR
+request or a branch-naming start marker, and stamped `pr_started=true` on
+the `hive:claim` marker so the enumeration reads the same thing); it is the
+only way an issue derives `030-pr-in-progress`. `InProgress` — the bare
+`hive-open-issue claim` — derives `020-claimed` (amendment, #13069: the
+scanner's triage claim on hivecommons/hive#13069 wore 030 with no PR
+anywhere).
 
 `Client.ApplyStageLabel`, `AddLabelsFresh(stage, …)` and the automerge
 labeler are removed once their callers submit facts. The label relay keeps

@@ -207,8 +207,8 @@ referenced it) a lone `stage/050-review-pending`
 | Label | Applies to | Meaning | Expected dwell (then `stage/stalled`) |
 |---|---|---|---|
 | `stage/010-actionable` | issue | triaged; eligible for the hive to pick up | 24h |
-| `stage/020-claimed` | issue | claimed by the scanner or a relay contributor (replaces `claimed`, `hive/in-progress`) | 2h |
-| `stage/030-pr-in-progress` | issue | an agent kick / contributor session is actively working; no PR yet. If the in-progress evidence includes an open Hive-authored PR, the issue-stage lane applies the same PR-link safeguard described for 040: default-branch PRs that fully address the issue get a `Fixes #N` trailer when missing, while partial or non-default-branch PRs get an issue stage-entry comment linking the PR and explaining GitHub's icon limitation. If the claiming PR has already merged, the issue leaves 030: full-fix claims close it with one `<!-- hive:closed-by-merged-pr pr=N -->` comment (checked before posting, so a close that fails after the comment is retried without a duplicate), while `Refs` / `Part of` claims move back to 010 with a partial-landed note. | 90m |
+| `stage/020-claimed` | issue | a live claim by anyone — a human, a relay contributor or a hive agent's `hive-open-issue claim` / start mark — with no PR evidence yet (replaces `claimed`, `hive/in-progress`) | 2h |
+| `stage/030-pr-in-progress` | issue | the claimant has a PR under way: its `hive-open-pr --issues` request named the issue or its start marker named a branch / PR (`pr_started=true` on the `hive:claim` marker). A claim or start mark without that evidence — the scanner's bare `hive-open-issue claim` included — stays at 020 ([#13069](https://github.com/hivecommons/hive/issues/13069)). If the in-progress evidence includes an open Hive-authored PR, the issue-stage lane applies the same PR-link safeguard described for 040: default-branch PRs that fully address the issue get a `Fixes #N` trailer when missing, while partial or non-default-branch PRs get an issue stage-entry comment linking the PR and explaining GitHub's icon limitation. If the claiming PR has already merged, the issue leaves 030: full-fix claims close it with one `<!-- hive:closed-by-merged-pr pr=N -->` comment (checked before posting, so a close that fails after the comment is retried without a duplicate), while `Refs` / `Part of` claims move back to 010 with a partial-landed note. | 90m |
 | `stage/040-covered-by-pr` | issue | an open PR covers it (replaces `🐝 covered by PR`); the issue stays here while the PR is open — the PR's own stage is named in the issue's stage reason, never written as its label ([#12451](https://github.com/hivecommons/hive/issues/12451)). For Hive-authored PRs on the repository default branch, the stage and claim-label sweeps append `Fixes #N` to the PR body when the PR appears to fully address the issue but lacks a closing keyword, so GitHub can show the Development sidebar link and issue-list PR icon. They also retrofit older Hive-authored default-branch PRs whose only claim line is `Refs #N` by rewriting that one keyword to `Fixes #N` once and stamping `<!-- hive:issue-link-fixed -->`; human-authored PR bodies are never edited. `Part of` / leave-open partial work and non-default-branch PRs get one issue stage-entry comment with the PR link and GitHub limitation instead. Merged full-fix claims close the issue; merged reference claims remove stale 040/030 and return the issue to 010 with a partial-landed note. | n/a (the PR carries health) |
 | `stage/045-needs-decision` | issue | **the** issue-side park-for-a-person signal (owner decision, 2026-10-17: issues never wear `stage/085-needs-decision`; that stage is PR-only). Derived whenever the issue carries `needs-human` or a hard-suppress park label (`needs-spec`, the retired `needs-direction` / `needs-decision`, a pre-045 `stage/085-needs-decision`) **and no hold-class label** — a held issue (`hold`, `do-not-merge*`, the hive's `hive-pause/<id>`) is paused, not parked: it carries no stage label and the activity monitor shows it as "Open · on hold", the reconciler removing a 045 the hold caught it with ([#13012](https://github.com/hivecommons/hive/issues/13012)) — and written by the relay (`hive-open-issue --needs-decision`, or `label … stage/045-needs-decision`, the one issue stage label an agent may add) and by the dedupe/selfreport relays; the issue is outside the agent work queue (and off the good-first-issue list) until a maintainer replies `/hive approve` / `/hive decision <text>`, which removes it and adds `approved-direction` (a Hive-added `needs-human` lifts too, so the issue reaches 010, [#13075](https://github.com/hivecommons/hive/issues/13075); a person's `needs-human` is left and keeps deriving 045 — the issue stays visibly a person's); with `project.agent_issue_decision_policy: resolve` (default), Hive-authored non-risk engineering questions are not allowed to self-park here — the relay records `Decision taken by hive: …`, downgrades to `stage/010-actionable`, and audits the downgrade, while true parks include a `Risk: <category>` line naming security posture, data loss, irreversible/public-facing behaviour, governance/policy/licensing, spend, owner-only credentials/secrets/infra, or uninferable human intent; once `approved-direction` is on the issue the relay refuses an agent's re-park while the recorded decision is unchanged — the agent adds `needs-human` and `/unclaim`s instead; a lapsed claim on a parked issue never shows 030. A contributor verdict that parks here citing only the target repository's own confirmation gate ("AGENTS.md says offer a spec and wait", "confirm scope first") or a registered sibling checkout that is merely not cloned yet (`repo_location_missing`) is not a decision: the hub reclassifies it as idle, removes the label with a `<!-- hive:needs-decision-released kind=repo-local-gate -->` comment, and re-offers the issue once; the second such park on the same issue stays (`src/pkg/dashboard/contribute_gate_park.go`, `src/pkg/decisionpolicy`). Leaving 045 is never a regression. An issue still wearing 085 is re-staged to 045 by the reconciler in one write, and a one-shot startup sweep (`/data/issue-needs-decision-stage-v1.done`) catches issues the enumeration never sees (`src/pkg/github/issue_needs_decision_migration.go`) | none |
 | `stage/050-review-pending` | PR | review swarm requested/dispatched; awaiting a verdict for the current head (or CI still pending with no verdict) | 1h |
@@ -250,8 +250,11 @@ stateDiagram-v2
     s010 --> s045: needs-human / park label (agent escalates)
     s020 --> s045: claim lapses on a parked issue
     s045 --> s010: /hive approve or /hive decision (approved-direction; a person's needs-human keeps it at 045, the hive's own lifts)
-    s020 --> s030: kick running
+    s020 --> s030: PR under way (hive-open-pr request or start marker naming a branch)
+    s020 --> s040: PR opened straight from the claim
+    s020 --> s010: claim released or lapsed with no PR
     s030 --> s040: PR opened
+    s030 --> s010: PR request failed / start mark lapsed with no PR
     s040 --> s050: the PR takes over (issue stays 040)
     s050 --> s060: swarm approve
     s060 --> s080: CI green, author side done
@@ -297,8 +300,8 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 |---|---|
 | carries `hive/likely-done` (a PR merged, awaiting confirmation) | no stage — every hive-owned label removed, timing forgotten |
 | actionable (no claim, no PR) | `010-actionable` |
-| live claim (`<!-- hive:claim … -->` marker / ledger) by a human or relay contributor | `020-claimed` |
-| live claim by one of the hive's own agents, or an in-progress start mark (`kind=agent` marker from `hive-open-issue claim`) | `030-pr-in-progress` |
+| live claim (`<!-- hive:claim … -->` marker / ledger) by anyone — a human, a relay contributor, or one of the hive's own agents (`hive-open-issue claim`, the in-progress start mark) — with **no PR evidence** | `020-claimed` |
+| live claim whose marker carries `pr_started=true` — the holder's `hive-open-pr --issues` request named the issue, or its start comment's `<!-- hive:start branch=<name> -->` / `pr=<n>` marker named where the PR lives (`claims.Claim.PRStarted` / `stageengine.ClaimFact.PRStarted`) | `030-pr-in-progress` — the label promises a PR, so a bare agent claim never wears it ([#13069](https://github.com/hivecommons/hive/issues/13069)) |
 | covered by an open PR, PR not yet staged by the automerge sweep | `040-covered-by-pr` |
 | covered by an open PR the sweep has staged (≥ 050) | still `040-covered-by-pr`; the reason reads `open PR #N covers it (PR at <stage>)`. `050`+ are PR-only stages and never land on an issue ([#12451](https://github.com/hivecommons/hive/issues/12451)) |
 | exempt / filtered / reporter triage / advisory / dependency dashboard | no stage |
@@ -313,14 +316,17 @@ payload carries no comment count or activity timestamp the hive did not
 bump itself (`updated_at` moves on every hive write, #12491) — the PR
 engine's no-activity clock and `stalled.require_quiet` below do not apply
 to issues. When the issue falls back between its own stages (a claim or
-kick lapsed with no PR: 030 → 010) it gets one explanatory comment and a
-history hop in the store. The claim
+kick lapsed with no PR: 020 → 010 or 030 → 010, both drawn in the
+diagram so the transition monitor does not count them as anomalies) it gets
+one explanatory comment and a history hop in the store. The claim
 relay (`hive-open-issue claim`) writes `hive/claimed-by-<who>` itself and
 submits a *fact* to the stage engine (`stageengine.FactSink`, ADR-0025) —
 `Claimed` / `InProgress` — which re-reads the issue and writes
-`stage/020-claimed` / `stage/030-pr-in-progress` so the label is right as soon
-as the claim lands; `hive-open-pr --issues` submits `CoveredBy`, and the
-engine swaps 030 for 040 when the PR opens. Claim release, the PR-claim sync
+`stage/020-claimed` so the label is right as soon as the claim lands; a
+`hive-open-pr --issues` request (or a start comment naming a branch / PR)
+is the PR evidence that re-records the claim with `pr_started=true`, which
+derives `stage/030-pr-in-progress`; the PR opening submits `CoveredBy`, and
+the engine swaps 020/030 for 040. Claim release, the PR-claim sync
 (a closed or merged PR: `Uncovered`), parking on a decision (`Parked`) and
 `/hive approve` / `/hive decision` (`Unparked`) are facts too. An agent
 comment that *escalates* (opens with

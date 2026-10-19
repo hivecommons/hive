@@ -494,8 +494,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		// Apply a namespaced ownership label (App bots can't be assignees),
 		// journaled against a fresh read so a second claim on an issue whose
 		// earlier label lapsed is written, not replayed (hivecommons/hive#12512).
-		// The stage — stage/030-pr-in-progress when the in-progress mark is
-		// on — is a fact for the stage engine (see issue_inprogress.go).
+		// The stage — stage/020-claimed when the in-progress mark is on;
+		// 030 needs PR evidence — is a fact for the stage engine (see
+		// issue_inprogress.go).
 		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, claimOwnershipLabel(req.Agent))
 		if err == nil {
 			err = c.submitInProgressFact(ctx, req.Repo, req.Number, req.Agent, nowFn())

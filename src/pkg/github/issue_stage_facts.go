@@ -36,7 +36,7 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 		},
 	}
 	if in.Claim != nil || in.ClaimKind != "" || in.ClaimedBy != "" {
-		c := &stageengine.ClaimFact{Holder: in.ClaimedBy, Kind: claims.Kind(in.ClaimKind)}
+		c := &stageengine.ClaimFact{Holder: in.ClaimedBy, Kind: claims.Kind(in.ClaimKind), PRStarted: in.PRStarted}
 		if in.Claim != nil {
 			c.PRRepo, c.PRNumber = in.Claim.PRRepo, in.Claim.PRNumber
 		}
@@ -77,7 +77,7 @@ func issueInputFrom(f stageengine.Facts) IssueStageInput {
 	}
 	in.Reason = f.Issue.FilteredReason
 	if c := f.Issue.Claim; c != nil {
-		in.ClaimKind, in.ClaimedBy = string(c.Kind), c.Holder
+		in.ClaimKind, in.ClaimedBy, in.PRStarted = string(c.Kind), c.Holder, c.PRStarted
 		in.Claim = &IssueClaimContext{PRRepo: c.PRRepo, PRNumber: c.PRNumber}
 	}
 	if pr := f.Issue.CoveringPR; pr != nil && in.Claim == nil {

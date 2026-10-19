@@ -251,3 +251,35 @@ func TestAgentStartHook_DeferralCommentRecordsNoStart(t *testing.T) {
 		t.Fatalf("deferral comment reported start signals: %+v", *calls)
 	}
 }
+
+// hivecommons/hive#13069: only a PR request or a start marker naming a
+// branch / PR is PR evidence; a bare claim or start comment is not.
+func TestStartSignalIsPREvidence(t *testing.T) {
+	cases := map[string]bool{
+		AgentStartSignalPRRequest: true,
+		AgentStartSignalBranch:    true,
+		AgentStartSignalClaim:     false,
+		AgentStartSignalComment:   false,
+		AgentStartSignalLabel:     false,
+		"":                        false,
+	}
+	for signal, want := range cases {
+		if got := StartSignalIsPREvidence(signal); got != want {
+			t.Errorf("StartSignalIsPREvidence(%q) = %v, want %v", signal, got, want)
+		}
+	}
+	bodies := map[string]string{
+		"Starting now.\n<!-- hive:start branch=fix/13069-stage030 -->": AgentStartSignalBranch,
+		"<!-- hive:start pr=13080 -->":                                 AgentStartSignalBranch,
+		`<!-- hive:start branch="feat/x" -->`:                          AgentStartSignalBranch,
+		"<!-- hive:start -->":                                          AgentStartSignalComment,
+		"<!-- hive:start by=scanner -->":                               AgentStartSignalComment,
+		"Working on branch fix/x now.":                                 AgentStartSignalComment,
+		"Gate check: branch=none, no implementation started.":          "",
+	}
+	for body, want := range bodies {
+		if got := issueRequestStartSignal("comment", body); got != want {
+			t.Errorf("issueRequestStartSignal(comment, %q) = %q, want %q", body, got, want)
+		}
+	}
+}

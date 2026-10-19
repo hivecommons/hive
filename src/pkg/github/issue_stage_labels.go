@@ -6,9 +6,13 @@ package github
 // decided about each one — no extra GitHub reads:
 //
 //   - still in the actionable set            → stage/010-actionable
-//   - withheld by a live issue claim         → stage/020-claimed, or
-//     stage/030-pr-in-progress when the claim marker is kind=agent
-//   - withheld by the in-progress sweep      → stage/030-pr-in-progress
+//   - withheld by a live issue claim or by the in-progress sweep (a live
+//     kind=agent start mark)                 → stage/020-claimed, or
+//     stage/030-pr-in-progress only when the claim carries PR evidence
+//     (pr_started= on the marker: the holder's `hive-open-pr --issues`
+//     request named the issue, or its start marker named a branch / PR).
+//     The label promises a PR; a bare agent claim — a `hive-open-issue
+//     claim` with nothing pushed — never wears it (hivecommons/hive#13069)
 //   - withheld because an open PR covers it  → stage/040-covered-by-pr; the
 //     covering PR's own stage (read from the shared stage store the
 //     automerge sweep fills) is narrated in the reason, never written as
@@ -136,6 +140,10 @@ type IssueStageInput struct {
 	Reason    string // the bucket's reason; for "filtered", the label that parked it
 	ClaimKind string
 	ClaimedBy string
+	// PRStarted is the live claim's PR evidence (Issue.ClaimPRStarted /
+	// stageengine.ClaimFact.PRStarted): the only thing that stages a
+	// claimed issue 030-pr-in-progress rather than 020-claimed.
+	PRStarted bool
 	Claim     *IssueClaimContext
 	// Children is set on a decomposed parent (hivecommons/hive#12857).
 	Children *IssueChildren
@@ -182,12 +190,18 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	case "":
 		return stagelabels.Actionable, false, "actionable"
 	case workBucketClaimed:
+		if in.PRStarted {
+			return stagelabels.PRInProgress, false, "live claim with a PR under way"
+		}
 		if strings.EqualFold(in.ClaimKind, string(claims.KindAgent)) {
-			return stagelabels.PRInProgress, false, "live agent claim"
+			return stagelabels.Claimed, false, "live agent claim (no PR yet)"
 		}
 		return stagelabels.Claimed, false, "live issue claim"
 	case inProgressWorkBucket:
-		return stagelabels.PRInProgress, false, "in-progress start mark"
+		if in.PRStarted {
+			return stagelabels.PRInProgress, false, "in-progress start mark with a PR under way"
+		}
+		return stagelabels.Claimed, false, "in-progress start mark (no PR yet)"
 	case workBucketClaimedByPR:
 		if in.Claim != nil && in.Claim.PRNumber > 0 && prStage != nil {
 			prRepo := in.Claim.PRRepo
@@ -259,7 +273,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, Claim: issue.ClaimContext, Children: issue.Children})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -282,7 +296,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext, Children: row.Children})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
 		}
 	}
 	return out
@@ -383,6 +397,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			in.Bucket = ""
 			in.ClaimKind = ""
 			in.ClaimedBy = ""
+			in.PRStarted = false
 		}
 		stage, covered, reason := IssueStageFor(in, prStage)
 		if awaitingChildren && stage != stagelabels.None {

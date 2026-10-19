@@ -39,7 +39,20 @@ const (
 	AgentStartSignalLabel     = "label"
 	AgentStartSignalClaim     = "claim"
 	AgentStartSignalPRRequest = "pr_request"
+	// AgentStartSignalBranch is a comment whose start marker names the
+	// branch or pull request the work lives on (`<!-- hive:start
+	// branch=<name> -->` / `pr=<n>`): PR evidence, like a PR request.
+	AgentStartSignalBranch = "branch"
 )
+
+// StartSignalIsPREvidence reports whether signal says a pull request is
+// under way — a PR request naming the issue, or a start marker naming a
+// branch / PR. Only such a signal stages the issue
+// stage/030-pr-in-progress; a bare claim or start comment is
+// stage/020-claimed (hivecommons/hive#13069).
+func StartSignalIsPREvidence(signal string) bool {
+	return signal == AgentStartSignalPRRequest || signal == AgentStartSignalBranch
+}
 
 // AgentStartHook is told that agent's own request shows it working issue
 // number in repo. repo is spelled as the request spelled it (bare or
@@ -125,6 +138,21 @@ var commentStartOpener = regexp.MustCompile(`(?i)` +
 // work on the issue: `<!-- hive:start -->`, optionally with attributes.
 var commentStartMarker = regexp.MustCompile(`<!--\s*hive:start\b[^>]*-->`)
 
+// commentStartBranchAttr matches a `branch=<name>` or `pr=<n>` attribute
+// inside the start marker: the agent names where its pull request lives.
+var commentStartBranchAttr = regexp.MustCompile(`(?i)\b(?:branch|pr)=["']?[^\s"'>]+`)
+
+// commentStartNamesBranch reports whether body carries a start marker whose
+// attributes name a branch or pull request.
+func commentStartNamesBranch(body string) bool {
+	for _, m := range commentStartMarker.FindAllString(body, -1) {
+		if commentStartBranchAttr.MatchString(m) {
+			return true
+		}
+	}
+	return false
+}
+
 // CommentStartMarker is the canonical spelling of the start marker.
 const CommentStartMarker = "<!-- hive:start -->"
 
@@ -202,6 +230,9 @@ func commentIsEscalation(body string) bool {
 func issueRequestStartSignal(kind, body string) string {
 	switch kind {
 	case "comment":
+		if commentStartNamesBranch(body) {
+			return AgentStartSignalBranch
+		}
 		if commentIsStart(body) {
 			return AgentStartSignalComment
 		}

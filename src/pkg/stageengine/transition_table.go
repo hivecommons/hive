@@ -13,8 +13,11 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.Actionable, stagelabels.IssueNeedsDecision}:            true, // needs-human / park label (agent escalates)
 	{stagelabels.Claimed, stagelabels.IssueNeedsDecision}:               true, // claim lapses on a parked issue
 	{stagelabels.IssueNeedsDecision, stagelabels.Actionable}:            true, // /hive approve or /hive decision
-	{stagelabels.Claimed, stagelabels.PRInProgress}:                     true, // kick running
+	{stagelabels.Claimed, stagelabels.PRInProgress}:                     true, // PR under way (hive-open-pr request or start marker naming a branch)
+	{stagelabels.Claimed, stagelabels.CoveredByPR}:                      true, // PR opened straight from the claim
+	{stagelabels.Claimed, stagelabels.Actionable}:                       true, // claim released or lapsed with no PR
 	{stagelabels.PRInProgress, stagelabels.CoveredByPR}:                 true, // PR opened
+	{stagelabels.PRInProgress, stagelabels.Actionable}:                  true, // PR request failed / start mark lapsed with no PR
 	{stagelabels.CoveredByPR, stagelabels.ReviewPending}:                true, // the PR takes over (issue stays 040; cross-kind)
 	{stagelabels.ReviewPending, stagelabels.Reviewed}:                   true, // swarm approve
 	{stagelabels.Reviewed, stagelabels.AwaitingMergeAdmission}:          true, // CI green, author side done
