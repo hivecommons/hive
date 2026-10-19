@@ -22,10 +22,26 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	// deviceScope is the narrowest GitHub OAuth grant the dashboard needs to let
-	// a signed-in public-GitHub user author feedback issues as themselves. The
-	// dashboard does not request private-repository "repo" access for this path.
-	deviceScope = "public_repo"
+	// deviceScope is empty: dashboard login only proves the user's identity
+	// (ValidateToken → GET /user, which works with a no-scope token). It never
+	// needs repository access, because ALL GitHub writes — issues, PRs,
+	// comments, merges, the advisory digest — go through the hive's App
+	// installation token (kubestellar-hive[bot]), not the user token. Requesting
+	// any repo scope here (even "public_repo") forces every viewer/owner through
+	// GitHub's "read and write repository data" authorization just to look at a
+	// dashboard (issue #1927, regressed by #11051). This mirrors the hub
+	// browser-OAuth path, which has used an empty scope for the same reason.
+	//
+	// The one feature that wants a user-scoped token — authoring feedback issues
+	// as the submitter — must opt in explicitly via StartDeviceFlowWithScope
+	// (DeviceScopeFeedback); when it has not, feedback falls back to the App
+	// installation token with "on behalf of @user" attribution.
+	deviceScope = ""
+
+	// DeviceScopeFeedback is the narrowest GitHub OAuth grant that lets a
+	// signed-in public-GitHub user author feedback issues as themselves. It is
+	// requested ONLY when the user explicitly opts in; never on plain login.
+	DeviceScopeFeedback = "public_repo"
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.
@@ -53,19 +69,28 @@ type DeviceFlowState struct {
 	Interval        int    `json:"interval"`
 }
 
-// StartDeviceFlow initiates GitHub device flow authentication.
+// StartDeviceFlow initiates GitHub device flow authentication requesting no
+// OAuth scope (identity-only login, issue #1927).
 // baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
 // for default github.com behavior.
 func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error) {
+	return StartDeviceFlowWithScope(clientID, baseURL, apiURL, deviceScope)
+}
+
+// StartDeviceFlowWithScope initiates GitHub device flow authentication
+// requesting the given OAuth scope. Callers must pass "" for ordinary login;
+// a non-empty scope (e.g. DeviceScopeFeedback) is reserved for flows the user
+// has explicitly opted into, because every extra scope shows up on GitHub's
+// consent page.
+func StartDeviceFlowWithScope(clientID, baseURL, apiURL, scope string) (*DeviceFlowState, error) {
 	codeURL, _, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id": {clientID},
 	}
-	// Only request a scope when one is configured. deviceScope is empty by
-	// default (identity-only login, issue #1927); omitting the field entirely
+	// Only send the field when a scope was requested: omitting it entirely
 	// yields a no-scope token rather than sending scope="".
-	if deviceScope != "" {
-		data.Set("scope", deviceScope)
+	if scope = strings.TrimSpace(scope); scope != "" {
+		data.Set("scope", scope)
 	}
 	req, err := http.NewRequest("POST", codeURL, strings.NewReader(data.Encode()))
 	if err != nil {

@@ -20,8 +20,10 @@ import (
 // that owns ITS cookie — never a single shared identity.
 //
 // The GitHub OAuth token is stored only for the user session that completed the
-// device flow, so feedback issues can be authored by that submitter when GitHub
-// granted the public_repo scope. It is never shared across dashboard users.
+// device flow. Plain login requests no scope, so the token usually proves
+// identity only; when the user explicitly opted into the feedback scope and
+// GitHub granted public_repo, feedback issues can be authored by that
+// submitter. It is never shared across dashboard users.
 type userSession struct {
 	Username    string
 	Role        string

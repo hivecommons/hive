@@ -172,3 +172,51 @@ func TestValidateTokenInvalid(t *testing.T) {
 		}
 	})
 }
+
+// TestStartDeviceFlowRequestsNoScopeByDefault pins the #1927 contract: plain
+// dashboard login must not ask GitHub for any OAuth scope, otherwise every
+// viewer is pushed through a "read and write repository data" consent page.
+func TestStartDeviceFlowRequestsNoScopeByDefault(t *testing.T) {
+	var form string
+	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		form = string(b)
+		return jsonBodyResponse(200, DeviceFlowState{DeviceCode: "c", UserCode: "u", Interval: 5}), nil
+	}, func() {
+		if _, err := StartDeviceFlow("cid", "", ""); err != nil {
+			t.Fatalf("error: %v", err)
+		}
+	})
+	if strings.Contains(form, "scope") {
+		t.Fatalf("default device flow must not send a scope field, got form %q", form)
+	}
+	if !strings.Contains(form, "client_id=cid") {
+		t.Fatalf("client_id missing from form %q", form)
+	}
+}
+
+// TestStartDeviceFlowWithScopeOptIn confirms the explicit opt-in path still
+// requests the narrow feedback scope, and that whitespace-only means none.
+func TestStartDeviceFlowWithScopeOptIn(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{DeviceScopeFeedback, "scope=public_repo"},
+		{"  ", ""},
+	} {
+		var form string
+		withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
+			b, _ := io.ReadAll(req.Body)
+			form = string(b)
+			return jsonBodyResponse(200, DeviceFlowState{DeviceCode: "c", UserCode: "u", Interval: 5}), nil
+		}, func() {
+			if _, err := StartDeviceFlowWithScope("cid", "", "", tc.in); err != nil {
+				t.Fatalf("error: %v", err)
+			}
+		})
+		if tc.want == "" && strings.Contains(form, "scope") {
+			t.Errorf("scope %q: expected no scope field, got %q", tc.in, form)
+		}
+		if tc.want != "" && !strings.Contains(form, tc.want) {
+			t.Errorf("scope %q: want %q in form %q", tc.in, tc.want, form)
+		}
+	}
+}
