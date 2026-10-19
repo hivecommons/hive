@@ -33,10 +33,9 @@ import (
 // The TTL sits well above the NFS client's default attribute/dentry cache
 // ceiling (acregmax/acdirmax = 60s, #13072): a peer may read a lease or spill
 // mtime that is up to that old, and must still see it as fresh.
-var (
+const (
 	auditLeaseRenewInterval = 10 * time.Second
 	auditLeaseTTL           = 90 * time.Second
-	auditLeaseNow           = time.Now
 )
 
 const (
@@ -141,7 +140,7 @@ func (a *AuditLog) initWriterLease(logPath, id string) {
 // ours. Callers must hold a.mu.
 func (a *AuditLog) tryAcquireLeaseLocked() bool {
 	path := auditLeasePath(a.logPath)
-	now := auditLeaseNow()
+	now := time.Now()
 	if cur, ok := readAuditLease(path); ok && cur.Holder != a.writerID && now.Sub(cur.Renewed) < auditLeaseTTL {
 		return false
 	}
@@ -190,7 +189,7 @@ func (a *AuditLog) touchOwnSpillLocked() {
 		return
 	}
 	_ = f.Close()
-	now := auditLeaseNow()
+	now := time.Now()
 	if err := os.Chtimes(spill, now, now); err != nil {
 		slog.Warn("audit spill heartbeat failed", "path", spill, "error", err)
 	}
@@ -207,8 +206,11 @@ func (a *AuditLog) mergeSpillsLocked() {
 	}
 	own := auditSpillPath(a.logPath, a.writerID)
 	ownPrefix := strings.TrimSuffix(own, filepath.Ext(own))
-	now := auditLeaseNow()
+	now := time.Now()
 	for _, p := range matches {
+		// Own spill and lumberjack-rotated backups of it
+		// (audit-spill-<id>-<timestamp>.jsonl) merge unconditionally;
+		// anything else belongs to another pod and must have gone quiet.
 		if p != own && !strings.HasPrefix(p, ownPrefix+"-") {
 			info, err := os.Stat(p)
 			if err != nil || now.Sub(info.ModTime()) < auditLeaseTTL {
@@ -222,8 +224,7 @@ func (a *AuditLog) mergeSpillsLocked() {
 		}
 		for _, line := range bytes.Split(data, []byte("\n")) {
 			line = bytes.TrimSpace(line)
-			var entry AuditEntry
-			if len(line) == 0 || json.Unmarshal(line, &entry) != nil || entry.Timestamp == "" {
+			if _, ok := parseAuditLine(line); !ok {
 				continue
 			}
 			if _, err := a.writer.Write(append(line, '\n')); err != nil {
@@ -247,13 +248,13 @@ func (a *AuditLog) leaseTick() {
 	}
 	path := auditLeasePath(a.logPath)
 	if a.owner {
-		if cur, ok := readAuditLease(path); ok && cur.Holder != a.writerID && auditLeaseNow().Sub(cur.Renewed) < auditLeaseTTL {
+		if cur, ok := readAuditLease(path); ok && cur.Holder != a.writerID && time.Now().Sub(cur.Renewed) < auditLeaseTTL {
 			slog.Warn("audit writer lease taken over by another pod; spilling", "holder", cur.Holder)
 			a.owner = false
 			a.switchWriterLocked(auditSpillPath(a.logPath, a.writerID), false)
 			return
 		}
-		if err := writeAuditLease(path, a.writerID, auditLeaseNow()); err != nil {
+		if err := writeAuditLease(path, a.writerID, time.Now()); err != nil {
 			slog.Warn("audit writer lease renew failed", "path", path, "error", err)
 		}
 		a.mergeSpillsLocked()

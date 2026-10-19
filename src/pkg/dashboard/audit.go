@@ -180,6 +180,9 @@ func newAuditLog() *AuditLog {
 
 	dir := "/data"
 	if _, err := os.Stat(dir); err == nil {
+		// initWriterLease must run before loadFromDisk: acquiring the lease
+		// merges orphaned spill files into audit.jsonl, and loadFromDisk is
+		// the only replay of that file into the in-memory ring.
 		a.initWriterLease(auditLogPath, auditWriterID())
 		a.loadFromDisk()
 		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
@@ -193,6 +196,17 @@ func (a *AuditLog) loadFromDisk() {
 	a.loadFromDiskPath(auditLogPath)
 }
 
+// parseAuditLine is the single accept-rule for a persisted audit line, shared
+// by the boot-time replay and the spill merge: non-empty, valid JSON, and
+// carrying a timestamp.
+func parseAuditLine(line []byte) (AuditEntry, bool) {
+	var entry AuditEntry
+	if len(line) == 0 || json.Unmarshal(line, &entry) != nil || entry.Timestamp == "" {
+		return AuditEntry{}, false
+	}
+	return entry, true
+}
+
 func (a *AuditLog) loadFromDiskPath(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -200,12 +214,7 @@ func (a *AuditLog) loadFromDiskPath(path string) {
 	}
 	lines := bytes.Split(data, []byte("\n"))
 	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var entry AuditEntry
-		if json.Unmarshal(line, &entry) == nil && entry.Timestamp != "" {
+		if entry, ok := parseAuditLine(bytes.TrimSpace(line)); ok {
 			a.ring = append(a.ring, entry)
 			a.noteUserAction(entry.User, entry.Timestamp)
 		}
