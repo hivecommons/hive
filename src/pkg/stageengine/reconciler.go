@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/stagelabels/shadowdiff"
 )
 
 // Transition is what Reconcile reports to its caller and the audit log.
@@ -49,6 +51,11 @@ type Options struct {
 	Now     func() time.Time
 	Logger  *slog.Logger
 	Metrics Metrics
+	// Shadow is the PR-A recorder every shadow-mode comparison is fed:
+	// it owns the (kind, legacy, engine) log-once and the bounded example
+	// ring the dashboard status shows. nil keeps the reconciler's own
+	// log-once.
+	Shadow *shadowdiff.Recorder
 }
 
 // ErrNoWriter is returned by an enforce-mode Reconcile with no Writer.
@@ -56,6 +63,7 @@ var ErrNoWriter = errors.New("stage engine: enforce mode needs a StageWriter")
 
 type reconciler struct {
 	opts Options
+	mode atomic.Pointer[Mode]
 
 	locks sync.Map // Ref.Key() → *sync.Mutex
 
@@ -90,7 +98,26 @@ func New(o Options) Reconciler {
 	if o.Metrics == nil {
 		o.Metrics = DefaultCounters()
 	}
-	return &reconciler{opts: o, anomalies: map[string]bool{}, mismatch: map[string]bool{}}
+	r := &reconciler{opts: o, anomalies: map[string]bool{}, mismatch: map[string]bool{}}
+	m := o.Mode
+	r.mode.Store(&m)
+	return r
+}
+
+// Mode implements ModeSwitch.
+func (r *reconciler) Mode() Mode { return *r.mode.Load() }
+
+// SetMode implements ModeSwitch. An invalid mode is ignored.
+func (r *reconciler) SetMode(m Mode) bool {
+	if !m.Valid() {
+		return false
+	}
+	prev := r.mode.Swap(&m)
+	if *prev == m {
+		return false
+	}
+	r.opts.Logger.Warn("stage engine: mode changed", slog.String("from", prev.String()), slog.String("to", m.String()))
+	return true
 }
 
 func (r *reconciler) lock(key string) func() {
@@ -110,8 +137,12 @@ func (r *reconciler) deriver(k stagelabels.Item) Deriver {
 // Reconcile implements Reconciler.
 func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error) {
 	tr := Transition{Ref: f.Ref}
-	if r.opts.Mode == ModeOff {
-		return tr, nil
+	mode := r.Mode()
+	if mode == ModeOff {
+		if r.opts.Legacy == nil || r.opts.Writer == nil {
+			return tr, nil
+		}
+		return r.passThrough(ctx, f, tr)
 	}
 	if f.ObservedAt.IsZero() {
 		f.ObservedAt = r.opts.Now()
@@ -120,7 +151,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 	defer unlock()
 
 	d := r.deriver(f.Ref.Kind).Derive(f)
-	shadowLegacy := r.opts.Mode == ModeShadow && r.opts.Legacy != nil
+	shadowLegacy := mode == ModeShadow && r.opts.Legacy != nil
 	if d.Abstain && !shadowLegacy {
 		tr.Reason = d.Reason
 		return tr, nil
@@ -134,7 +165,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 	// engine's. The engine abstaining never blocks a legacy write: the
 	// sweep decided, the engine's silence is the mismatch to record.
 	want := d
-	switch r.opts.Mode {
+	switch mode {
 	case ModeShadow:
 		if !shadowLegacy {
 			return r.shadowOnly(tr, d), nil
@@ -144,9 +175,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 			tr.Reason = legacy.Reason
 			return tr, nil
 		}
-		if d.Abstain || legacy.Stage != d.Stage {
-			r.recordMismatch(f, legacy.Stage, d)
-		}
+		r.recordShadow(f, legacy, d)
 		want = legacy
 	case ModeEnforce:
 		if r.opts.Writer == nil {
@@ -204,8 +233,49 @@ func (r *reconciler) recordAnomaly(ref Ref, from, to stagelabels.Stage, reason, 
 		slog.String("ref", ref.String()), slog.String("anomaly", anomaly))
 }
 
+// passThrough is ModeOff with a comparator: the sweep's own Decision is
+// observed and written exactly as the pre-engine sweep did, with no
+// derivation, comparison or counter. The rollback position.
+func (r *reconciler) passThrough(ctx context.Context, f Facts, tr Transition) (Transition, error) {
+	unlock := r.lock(f.Ref.Key())
+	defer unlock()
+	legacy := r.opts.Legacy(f)
+	if legacy.Abstain {
+		tr.Reason = legacy.Reason
+		return tr, nil
+	}
+	key := f.Ref.Key()
+	prev, _ := r.opts.Store.Get(key)
+	tr.From, tr.To, tr.Reason = prev.Stage, legacy.Stage, legacy.Reason
+	r.opts.Store.Observe(key, legacy.Stage, legacy.Reason)
+	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, legacy.Desired())
+	tr.Outcome = out
+	if err != nil {
+		return tr, fmt.Errorf("stage engine: write %s: %w", f.Ref, err)
+	}
+	return tr, nil
+}
+
+// recordShadow feeds one shadow comparison to the recorder (when
+// configured) and, on a stage disagreement, to the mismatch counter.
+func (r *reconciler) recordShadow(f Facts, legacy, d Decision) {
+	if r.opts.Shadow != nil {
+		engine := shadowdiff.Decision{Stage: d.Stage, Reason: d.Reason}
+		if d.Abstain {
+			engine.Reason = "abstain: " + d.Reason
+		}
+		r.opts.Shadow.Record(f.Ref.String(), shadowdiff.Decision{Stage: legacy.Stage, Reason: legacy.Reason}, engine)
+	}
+	if d.Abstain || legacy.Stage != d.Stage {
+		r.recordMismatch(f, legacy.Stage, d)
+	}
+}
+
 func (r *reconciler) recordMismatch(f Facts, legacy stagelabels.Stage, d Decision) {
 	r.opts.Metrics.ShadowMismatch(f.Ref.Kind, legacy, d.Stage)
+	if r.opts.Shadow != nil {
+		return // the recorder logged the first occurrence of this bucket
+	}
 	k := f.Ref.Key() + "|" + legacy.String() + "→" + d.Stage.String()
 	r.mu.Lock()
 	seen := r.mismatch[k]

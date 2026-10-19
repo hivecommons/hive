@@ -62,6 +62,9 @@ func (c *Client) defaultStageFactSink() stageengine.FactSink {
 		Issue:  IssueDeriver(),
 		PR:     stageengine.PRDeriver(),
 		Logger: c.logger,
+		// Shares the process counters with the sweeps' reconciler so
+		// /metrics and /api/status count fact-driven writes too.
+		Metrics: stageengine.DefaultCounters(),
 	})
 	return stageengine.NewFactSink(r, stageengine.FactSinkOptions{Enrich: c.enrichStageFacts})
 }

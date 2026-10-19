@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
@@ -42,13 +43,17 @@ type Dependencies struct {
 	// OAuth scopes. github_auth reports it as a DETAIL on an otherwise-passing
 	// check: a narrow token still authenticates, so failing the check would
 	// misreport the fault — what is broken is a capability, not the auth.
-	GHTokenScopes    ghpkg.ScopeResult
-	Tokens           *tokens.Collector
-	Knowledge        *knowledge.KnowledgeAPI
-	Inception        *knowledge.InceptionEngine
-	Nous             *NousState
-	Scheduler        SchedulerControl
-	MetricsCollector *MetricsCollector
+	GHTokenScopes ghpkg.ScopeResult
+	// StageEngineStatus reports the ADR-0025 central stage engine's mode and
+	// counters for /api/status.stageEngine and the activity tracker's
+	// status strip. nil leaves the block out of /api/status.
+	StageEngineStatus func() stageengine.Status
+	Tokens            *tokens.Collector
+	Knowledge         *knowledge.KnowledgeAPI
+	Inception         *knowledge.InceptionEngine
+	Nous              *NousState
+	Scheduler         SchedulerControl
+	MetricsCollector  *MetricsCollector
 	// KnowledgePrimer builds, publishes and reports the scheduler's kick
 	// primer — the one thing knowledge.enabled actually gates (#9231). Nil
 	// (bare test deps) means the toggle can only persist the flag, so it

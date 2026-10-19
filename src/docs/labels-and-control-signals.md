@@ -333,19 +333,30 @@ hive-owned label from an issue it closes. Timing shares the PR engine's state fi
 an issue's record never holds a PR stage, so a PR falling `100 → 060` does
 not read as the issue regressing.
 
-> **Planned: central stage engine (ADR-0025).**
-> [ADR-0025](adr/0025-central-stage-engine.md) replaces the two derivation
-> paths on this page (issue sweep and automerge lanes) and every
-> out-of-cycle stage write (claim relay, in-progress sweep, PR-claim sync,
-> dashboard) with one `pkg/stageengine` reconciler and a single
-> `StageWriter`. The out-of-cycle writers already submit *facts* instead
-> of labels (plan PR-D, [#13009](https://github.com/hivecommons/hive/issues/13009));
-> the two in-cycle derivation paths move next. Stage stays derived from
-> GitHub truth each cycle; unexpected transitions are counted as anomalies,
-> never rejected. Rollout is gated by
-> `governor.labels.stage.engine.mode: shadow | enforce`; see the
-> [implementation plan](stage-engine-plan.md). Until it lands, the
-> description above is current.
+> **Implemented (ADR-0025): central stage engine.**
+> [ADR-0025](adr/0025-central-stage-engine.md) puts one `pkg/stageengine`
+> reconciler and a single `StageWriter` behind the two derivation paths on
+> this page (issue sweep and automerge lanes) and every out-of-cycle stage
+> write — the claim relay, in-progress sweep, PR-claim sync and dashboard
+> submit *facts* instead of labels
+> ([#13009](https://github.com/hivecommons/hive/issues/13009)); the
+> per-kind rules above are the engine's derivers, and the sweeps' own
+> derivation is kept as the comparator. The reconciler is built once per process
+> (`cmd/hive/stage_engine.go`) and shared by both sweeps. Rollout is gated
+> by `governor.labels.stage.engine.mode` (Settings → Labels → *Central
+> stage engine mode*; takes effect on the next sweep, no restart):
+>
+> | mode | who derives | who writes | counted |
+> |---|---|---|---|
+> | `off` | sweep (legacy) | sweep's derivation verbatim; engine inert | — |
+> | `shadow` (default) | both | sweep's derivation | `stage_shadow_mismatch_total{kind,legacy,engine}`, one log per distinct pair |
+> | `enforce` | engine | engine's derivation | `stage_transition_anomaly_total{kind,from,to}` for out-of-order moves |
+>
+> Mode, derivation / mismatch / anomaly counts and the last five mismatch
+> examples are on `/api/status.stageEngine` and in the activity tracker's
+> status strip; the rollout runbook is in
+> [operator-reference.md](operator-reference.md#central-stage-engine-rollout)
+> and the plan in [stage-engine-plan.md](stage-engine-plan.md).
 
 ### How a PR's stage is decided
 

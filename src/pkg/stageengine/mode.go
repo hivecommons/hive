@@ -10,8 +10,11 @@ import (
 type Mode string
 
 const (
-	// ModeOff keeps the legacy derivation paths; Reconcile does nothing.
-	// Exists only for rollback.
+	// ModeOff is the rollback position: the engine derives nothing,
+	// compares nothing and counts nothing. A sweep routed through the
+	// reconciler with an Options.Legacy comparator still gets its own
+	// derivation written verbatim (the pre-engine behaviour); without a
+	// comparator Reconcile does nothing.
 	ModeOff Mode = "off"
 	// ModeShadow derives, diffs against Options.Legacy, records the
 	// mismatch and never writes the engine's result. When Legacy and a
@@ -48,4 +51,14 @@ func ParseMode(s string) (Mode, error) {
 		return "", fmt.Errorf("stage engine mode %q: want off, shadow or enforce", s)
 	}
 	return m, nil
+}
+
+// ModeSwitch is the runtime mode control the Reconciler New returns
+// implements. cmd/hive flips it when governor.labels.stage.engine.mode
+// changes (config reload or a dashboard PUT) so a shadow→enforce rollout
+// or an enforce→off rollback needs no restart. SetMode reports whether the
+// mode changed; every change is logged once at WARN.
+type ModeSwitch interface {
+	Mode() Mode
+	SetMode(Mode) bool
 }

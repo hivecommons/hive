@@ -55,7 +55,9 @@ func (c *Client) StageWriter() stageengine.StageWriter {
 // (shadow) with the table as comparator, which writes exactly what the
 // sweep derived — byte-identical to the pre-engine sweep. A caller's opts
 // are honoured field by field; nil fields take the same defaults. The
-// first call for a Store fixes its reconciler.
+// first call for a Store fixes its reconciler; later calls return it
+// whatever opts they pass, so cmd/hive's boot-time call is the one
+// construction and the sweeps share it.
 func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) (stageengine.Reconciler, *stageengine.LegacyTable) {
 	if c == nil {
 		return nil, nil
@@ -82,7 +84,10 @@ func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Opt
 	if o.Mode == "" {
 		o.Mode = stageengine.DefaultMode
 	}
-	if o.Legacy == nil && o.Mode == stageengine.ModeShadow {
+	// The comparator is installed whatever the starting mode: the mode is
+	// a runtime switch (stageengine.ModeSwitch), and shadow and off both
+	// need the sweep's own derivation to write.
+	if o.Legacy == nil {
 		o.Legacy = c.stageLegacy.Lookup
 	}
 	if o.Logger == nil && logger != nil {

@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"gopkg.in/yaml.v3"
 )
 
@@ -4204,6 +4205,40 @@ type StageLabelsConfig struct {
 	// "missing sign-off returns the PR to its author" rule
 	// (hivecommons/hive#12542).
 	DCO StageDCOConfig `yaml:"dco"`
+	// Engine configures the central stage engine (ADR-0025,
+	// hivecommons/hive#12999) every stage write goes through.
+	Engine StageEngineConfig `yaml:"engine"`
+}
+
+// StageEngineConfig is governor.labels.stage.engine (ADR-0025).
+type StageEngineConfig struct {
+	// Mode is off, shadow or enforce (default shadow). shadow: the engine
+	// derives every item alongside the sweep's own derivation, writes the
+	// sweep's result and records where the two disagree
+	// (stage_shadow_mismatch_total). enforce: the engine's result is
+	// written. off: the sweep's result is written with no derivation or
+	// comparison (rollback). Read on every sweep, so a change applies on
+	// the next pass without a restart. The rollout gate is 48 h in shadow
+	// with zero mismatches and zero healed duplicate pills before enforce.
+	Mode string `yaml:"mode,omitempty"`
+}
+
+// EffectiveMode parses Mode; empty and unparsable values yield the default
+// (shadow), so a bad value never silently enforces.
+func (c StageEngineConfig) EffectiveMode() stageengine.Mode {
+	m, err := stageengine.ParseMode(c.Mode)
+	if err != nil {
+		return stageengine.DefaultMode
+	}
+	return m
+}
+
+// Validate rejects a mode outside off|shadow|enforce.
+func (c StageEngineConfig) Validate() error {
+	if _, err := stageengine.ParseMode(c.Mode); err != nil {
+		return fmt.Errorf("governor.labels.stage.engine.mode: %w", err)
+	}
+	return nil
 }
 
 // StageDCOConfig is governor.labels.stage.dco.
