@@ -547,8 +547,11 @@ Run:
 2. Confirm the event severity is `decision` or `page`; those severities send
    immediate email (`src/pkg/escalate/types.go:8-20`,
    `src/pkg/escalate/email.go:56-68`).
-3. Save SMTP/hive evidence. The sink scrubs and sends through SMTP in `send`,
-   so logs should never include secrets (`src/pkg/escalate/email.go:138-153`).
+3. Save SMTP/hive evidence: the `escalation_delivered` audit entry (sink
+   `email`, `severity=decision`, the mail's title) that the dispatcher records
+   once SMTP accepts the message. The sink scrubs and sends through SMTP in
+   `send`, so logs should never include secrets
+   (`src/pkg/escalate/email.go:138-153`).
 4. For the inbound half, record one of these explicitly:
    - **Current v6:** reply-to-act deferred; no IMAP poller/signed reply parser is
      shipped (`src/docs/design/escalation-surfaces.md:106-127`).
@@ -587,7 +590,10 @@ Run:
    least one provider. Save the redacted device screenshot, ntfy message,
    Pushover receipt, or PagerDuty incident/event link.
 3. Save hive evidence showing the event entered the dispatcher and the provider
-   sink delivered it. Dispatch queues events by severity and logs/audits
+   sink delivered it: the `escalation_delivered` audit entry (or the
+   `escalation delivered` log line) names the sink (`ntfy`, `pushover`,
+   `pagerduty`), the severity and the title. Dispatch queues events by severity
+   and logs/audits
    `escalation_delivery_failed` once a delivery's bounded retries run out or
    the provider rejects it outright (`Dispatch` and `deliver`,
    `src/pkg/escalate/dispatcher.go:91-161`). Provider delivery paths are
@@ -597,7 +603,8 @@ Run:
 Evidence checklist:
 
 - [ ] Redacted provider/device evidence for the page.
-- [ ] Hive log/audit line showing severity `decision`/`page` and provider name.
+- [ ] `escalation_delivered` audit/log line showing severity `decision`/`page`
+      and provider name.
 - [ ] If no page arrived, include any `escalation_delivery_failed` line and do
       not tick #7563's **v6 readiness bar** section until a retry succeeds.
 - [ ] Paste the template as a comment on #7563, tick the Push / on-call row in

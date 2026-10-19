@@ -180,8 +180,34 @@ func TestDispatcherRetriesThrottledDelivery(t *testing.T) {
 	if got := seen(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("provider requests = %q, want %q (429, 429, 200, then the sentinel)", got, want)
 	}
-	if lines := audits.snapshot(); len(lines) != 0 {
-		t.Fatalf("audits = %v, want none: the third attempt delivered", lines)
+	// Two audits: the retried event names its attempt count, the sentinel
+	// went through first time. No escalation_delivery_failed line.
+	want = []string{
+		`escalation_delivered:ntfy:severity=page title="Governor budget exhausted" attempts=3`,
+		`escalation_delivered:ntfy:severity=page title="sentinel"`,
+	}
+	if got := audits.snapshot(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("audits = %q, want %q", got, want)
+	}
+}
+
+func TestDispatcherAuditsSuccessfulDelivery(t *testing.T) {
+	// An operator proving an escalation reached a device needs a hive-side
+	// line for the success path, not only escalation_delivery_failed.
+	audits := &auditLog{}
+	d := NewDispatcher(context.Background(), nil, audits.record)
+	defer d.Stop()
+	sink := &fakeSink{name: "pushover"}
+	d.Register(sink, SeverityDecision, 4)
+	d.Dispatch(Event{Severity: SeverityDecision, Title: "HUMAN DECISION NEEDED: org/repo#7"})
+
+	waitFor(t, func() bool { return audits.count("escalation_delivered:pushover") == 1 })
+	want := `escalation_delivered:pushover:severity=decision title="HUMAN DECISION NEEDED: org/repo#7"`
+	if got := audits.snapshot(); len(got) != 1 || got[0] != want {
+		t.Fatalf("audits = %q, want [%s]", got, want)
+	}
+	if got := audits.count("escalation_delivery_failed:pushover"); got != 0 {
+		t.Fatalf("delivery failure audited %d times on a successful send", got)
 	}
 }
 
