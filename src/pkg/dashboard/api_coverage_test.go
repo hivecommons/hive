@@ -757,7 +757,7 @@ func TestHandleVersion_Fields(t *testing.T) {
 // ---- Config endpoint ----
 
 func TestHandleConfig_Fields(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
 	rec := doGet(s, "/api/config")
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -765,6 +765,9 @@ func TestHandleConfig_Fields(t *testing.T) {
 	result := decodeJSON(t, rec)
 	if result["org"] != "myorg" {
 		t.Errorf("org = %v", result["org"])
+	}
+	if got, ok := result["app_bot_login"]; !ok || got != deps.Config.GitHub.BotLogin() {
+		t.Errorf("app_bot_login = %v (present=%v), want %q", got, ok, deps.Config.GitHub.BotLogin())
 	}
 }
 

@@ -3,11 +3,14 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/oktotest"
 )
 
 func execute(t *testing.T, server *httptest.Server, input string, args ...string) (string, string, error) {
@@ -468,24 +471,106 @@ func TestCommandTreeHasExamples(t *testing.T) {
 	}
 }
 
-func TestOkToTestTemplateCommandRendersCaller(t *testing.T) {
+func TestOkToTestTemplateCommandRendersSelfContainedWorkflow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
 	defer server.Close()
 
-	stdout, _, err := execute(t, server, "", "ok-to-test-template", "--hive-app-login", "hivecommons-hive[bot]", "--trusted-authors", "dependabot[bot]")
+	stdout, _, err := execute(t, server, "", "ok-to-test-template", "--app-login", "hivecommons-hive[bot]", "--trusted-authors", "dependabot[bot]", "--command", "/go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(stdout, "uses: hivecommons/hive/") || strings.Contains(stdout, "uses:") {
+		t.Fatalf("template must be self-contained:\n%s", stdout)
+	}
 	for _, want := range []string{
-		"uses: hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5",
-		"hive-app-logins: hivecommons-hive[bot]",
-		"trusted-authors: dependabot[bot]",
+		"issue_comment:",
+		`HIVE_APP_LOGINS: "hivecommons-hive[bot]"`,
+		`TRUSTED_AUTHORS: "dependabot[bot]"`,
+		`COMMAND: "/go"`,
 		"actions: write",
+		"/actions/runs/${run_id}/approve",
+		"status=action_required",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout)
 		}
+	}
+	if got := oktotest.Workflow(oktotest.Options{AppLogins: "hivecommons-hive[bot]", TrustedAuthors: "dependabot[bot]", Command: "/go"}); got != stdout {
+		t.Fatalf("hivectl output diverged from oktotest.Workflow")
+	}
+}
+
+func TestOkToTestTemplateCommandDeprecatedFlagAlias(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	stdout, _, err := execute(t, server, "", "ok-to-test-template", "--hive-app-login", "legacy[bot]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `HIVE_APP_LOGINS: "legacy[bot]"`) {
+		t.Fatalf("stdout = %s", stdout)
+	}
+}
+
+func TestOkToTestTemplateCommandReadsAppLoginFromConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/config" || r.Method != http.MethodGet {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"org":"acme","app_bot_login":"acme-hive[bot]"}`))
+	}))
+	defer server.Close()
+
+	stdout, _, err := execute(t, server, "", "ok-to-test-template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout, `HIVE_APP_LOGINS: "acme-hive[bot]"`) {
+		t.Fatalf("stdout = %s", stdout)
+	}
+}
+
+func TestOkToTestTemplateCommandRequiresLoginWhenConfigHasNone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"org":"acme","app_bot_login":""}`))
+	}))
+	defer server.Close()
+
+	_, _, err := execute(t, server, "", "ok-to-test-template")
+	var usage *usageError
+	if !errors.As(err, &usage) || !strings.Contains(err.Error(), "--app-login is required") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestOkToTestTemplateCommandRejectsInvalidOutputBeforeConfigFetch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	_, _, err := execute(t, server, "", "--output", "bogus", "ok-to-test-template")
+	var usage *usageError
+	if !errors.As(err, &usage) || !strings.Contains(err.Error(), "invalid --output") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestOkToTestTemplateCommandReportsConfigFetchFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	_, _, err := execute(t, server, "", "ok-to-test-template")
+	if err == nil || !strings.Contains(err.Error(), "hive config could not be read") {
+		t.Fatalf("err = %v", err)
 	}
 }

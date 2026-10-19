@@ -27,7 +27,7 @@ package automerge
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
 // first-time contributor's held run is never nudged by automation. Hive posts
-// `/ok-to-test`; the repository-local caller workflow approves only same-repo
+// `/ok-to-test`; the repository-local self-contained workflow approves only same-repo
 // heads, never fork heads.
 
 import (
@@ -171,7 +171,7 @@ func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, own
 		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
 	}
 	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
-		c.warn("automerge workflow approval still required after ok-to-test grace; install the hive ok-to-test workflow caller",
+		c.warn("automerge workflow approval still required after ok-to-test grace; install the self-contained hive ok-to-test workflow",
 			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
 		return workflowApprovalWorkflowMissingPrefix + contextName
 	}

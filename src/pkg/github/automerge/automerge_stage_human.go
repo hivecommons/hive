@@ -16,6 +16,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -172,9 +173,9 @@ func decisionCause(reason string) string {
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
 		return "the merge intent could not be authorized"
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
-		return "GitHub Actions is still waiting after Hive posted `/ok-to-test`. Install `.github/workflows/hive-ok-to-test.yml` from `src/docs/templates/hive-ok-to-test.yml` so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
-		return "GitHub Actions is waiting for workflow approval. Hive posted `/ok-to-test`; install `.github/workflows/hive-ok-to-test.yml` from `src/docs/templates/hive-ok-to-test.yml` if the runs do not start, or manually approve them from the PR checks banner."
+		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
 	case reason == "approval-desk-withheld":
 		return "the approval desk withheld this merge"
 	case reason == "":
@@ -200,7 +201,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	case stagelabels.ReadyForHumanMerge:
 		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
-		body = stagelabels.DecisionComment(route)
+		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
 	}
@@ -211,4 +212,27 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	store.MarkEntryCommented(key, obs.HeadSHA)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
+}
+
+// workflowApprovalSnippet appends the self-contained ok-to-test workflow,
+// rendered for this hive's own App login, to the 085 entry when held runs
+// stayed `action_required` past the grace period (the repository most likely
+// lacks the workflow). It contains no `uses:` reference so it installs under
+// restrictive Actions policies and on GHES.
+func (c *Engine) workflowApprovalSnippet(reason string) string {
+	if !strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix) {
+		return ""
+	}
+	login := ""
+	if c != nil && c.transport != nil {
+		login = strings.TrimSpace(c.transport.AppBotLogin())
+	}
+	workflow := oktotest.Workflow(oktotest.Options{AppLogins: login})
+	var b strings.Builder
+	b.WriteString("\n\n<details><summary>Install <code>")
+	b.WriteString(oktotest.WorkflowPath)
+	b.WriteString("</code> (self-contained; commit it to the default branch)</summary>\n\n```yaml\n")
+	b.WriteString(strings.TrimRight(workflow, "\n"))
+	b.WriteString("\n```\n\n</details>")
+	return b.String()
 }

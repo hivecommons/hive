@@ -446,3 +446,33 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 		t.Fatalf("085 entry comment = %q", api.comments)
 	}
 }
+
+func TestWorkflowApprovalSnippetRendersSelfContainedWorkflowForOwnAppLogin(t *testing.T) {
+	e := &Engine{transport: stubTransport{}}
+	got := e.workflowApprovalSnippet(workflowApprovalWorkflowMissingPrefix + "ci/build")
+	for _, want := range []string{
+		"<details>",
+		"```yaml",
+		"issue_comment:",
+		`HIVE_APP_LOGINS: "` + testHiveAppBotLogin + `"`,
+		"/actions/runs/${run_id}/approve",
+		"actions: write",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("snippet missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "uses:") {
+		t.Fatalf("snippet must be self-contained:\n%s", got)
+	}
+	if e.workflowApprovalSnippet(workflowApprovalRequiredPrefix+"ci/build") != "" || e.workflowApprovalSnippet("held") != "" {
+		t.Fatal("snippet must only render for the missing-workflow reason")
+	}
+	var nilEngine *Engine
+	if got := nilEngine.workflowApprovalSnippet(workflowApprovalWorkflowMissingPrefix + "x"); !strings.Contains(got, `HIVE_APP_LOGINS: "HIVE_APP_LOGIN[bot]"`) {
+		t.Fatalf("nil engine should fall back to the placeholder login:\n%s", got)
+	}
+	if got := decisionCause(workflowApprovalWorkflowMissingPrefix + "ci/build"); !strings.Contains(got, "hivectl ok-to-test-template") || strings.Contains(got, "src/docs/templates") {
+		t.Fatalf("missing-workflow cause = %q", got)
+	}
+}
