@@ -144,14 +144,17 @@ func translateAnthropicMessage(msg anthropicMessage) []openaiMessage {
 		}
 	}
 
-	var msgs []openaiMessage
+	// Tool results first: OpenAI requires the role:"tool" messages directly
+	// after the assistant's tool_calls, and a gateway that re-encodes for
+	// Anthropic rejects a tool_use not immediately followed by its
+	// tool_result. Any text in the same user message follows them.
+	msgs := toolResults
 	if len(textParts) > 0 {
 		msgs = append(msgs, openaiMessage{
 			Role:    "user",
 			Content: strings.Join(textParts, "\n"),
 		})
 	}
-	msgs = append(msgs, toolResults...)
 	return msgs
 }
 
