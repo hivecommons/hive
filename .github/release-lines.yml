@@ -81,6 +81,10 @@ pinned:
   # GitHub Actions Workflow triage compiles only on the active v5 line; older
   # release lines do not carry the gh-aw automation surface.
   gh-aw-compile.yml: [-v4]
+  # Self-test for the hive-action-smoke dispatch workflow (#12964). Its push
+  # trigger names v5 only: the smoke workflow is registered on v5 and does not
+  # exist on the feature-frozen v4 line, so there is nothing there to test.
+  hive-action-smoke-tests.yml: [-v4]
   go-security-analysis.yml: [v5, v6]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
