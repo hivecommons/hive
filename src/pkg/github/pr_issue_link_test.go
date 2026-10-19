@@ -365,17 +365,44 @@ func TestEnsureIssueStagePRLinkEditsHiveDefaultBranchPR(t *testing.T) {
 }
 
 func TestEnsureIssueStagePRLinkLeavesPartialPRBodyAlone(t *testing.T) {
-	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs #7; leaves follow-up work open.", base: "v5", defaultBranch: "v5", author: "hive[bot]"}
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nPart of #7; leaves follow-up work open.", base: "v5", defaultBranch: "v5", author: "hive[bot]"}
 	c := newIssueStagePRLinkClient(t, f)
 	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
 	if err != nil {
 		t.Fatalf("EnsureIssueStagePRLink: %v", err)
 	}
 	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "partial-reference" {
-		t.Fatalf("result=%+v patches=%d, want partial no-op", got, f.patches.Load())
+		t.Fatalf("result=%+v patches=%d, want part-of no-op", got, f.patches.Load())
 	}
 	if !strings.Contains(got.StageComment, "PR #1 covers this issue") || !strings.Contains(got.StageComment, "GitHub will not show") {
 		t.Fatalf("stage comment = %q", got.StageComment)
+	}
+}
+
+func TestEnsureIssueStagePRLinkRetrofitsRefsOnlyHivePR(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs #7 — implemented by this Hive PR.", base: "v5", defaultBranch: "v5", author: "app/hive"}
+	c := newIssueStagePRLinkClient(t, f)
+	c.SetAppBotLogin("hive[bot]")
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if !got.EditedBody || f.patches.Load() != 1 {
+		t.Fatalf("result=%+v patches=%d, want refs retrofit edit", got, f.patches.Load())
+	}
+	if !strings.Contains(f.patchedBody, "Fixes #7 — implemented") || !strings.Contains(f.patchedBody, issueLinkFixedMarker) {
+		t.Fatalf("patched body = %q", f.patchedBody)
+	}
+
+	f2 := &issueStagePRLinkFixture{body: f.patchedBody, base: "v5", defaultBranch: "v5", author: "app/hive"}
+	c2 := newIssueStagePRLinkClient(t, f2)
+	c2.SetAppBotLogin("hive[bot]")
+	again, err := c2.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("second EnsureIssueStagePRLink: %v", err)
+	}
+	if again.EditedBody || f2.patches.Load() != 0 || again.Skipped != "already-closing" {
+		t.Fatalf("second result=%+v patches=%d, want marker to prevent a second rewrite", again, f2.patches.Load())
 	}
 }
 
@@ -395,13 +422,13 @@ func TestEnsureIssueStagePRLinkExplainsNonDefaultBranch(t *testing.T) {
 }
 
 func TestEnsureIssueStagePRLinkNeverEditsHumanPR(t *testing.T) {
-	f := &issueStagePRLinkFixture{body: "## Fix\n\nImplements the retry.", base: "v5", defaultBranch: "v5", author: "octocat"}
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs #7 — implemented by this PR.", base: "v5", defaultBranch: "v5", author: "octocat"}
 	c := newIssueStagePRLinkClient(t, f)
-	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1"})
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
 	if err != nil {
 		t.Fatalf("EnsureIssueStagePRLink: %v", err)
 	}
-	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "not-hive-authored" {
+	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "partial-reference" {
 		t.Fatalf("result=%+v patches=%d, want human no-op", got, f.patches.Load())
 	}
 }

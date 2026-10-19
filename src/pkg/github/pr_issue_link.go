@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -216,6 +218,8 @@ type IssueStagePRLinkResult struct {
 	Base    string
 }
 
+const issueLinkFixedMarker = "<!-- hive:issue-link-fixed -->"
+
 // EnsureIssueStagePRLink is the issue-stage lane's guardrail for open PRs that
 // cover an issue. GitHub's issue-list PR glyph appears only for default-branch
 // PRs whose body contains a closing keyword. For Hive-authored default-branch
@@ -299,7 +303,19 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "GitHub only shows its linked-PR icon for closing-keyword PRs that target the repository default branch; this PR targets `"+res.Base+"`, so Hive cannot make GitHub display that icon for this issue.")
 		return res, nil
 	}
-	if claim.Reference || bodySaysIssueStaysOpen(pr.Body, owner+"/"+name, issueNumber) {
+	if claim.Reference {
+		if body, ok := rewriteRefsIssueLinkToClosing(pr.Body, owner+"/"+name, issueNumber); ok && c.isOwnBotLogin(pr.Author.Login) {
+			if _, _, err := c.client.PullRequests.Edit(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), owner, name, claim.PRNumber, &gh.PullRequest{Body: gh.Ptr(body)}); err != nil {
+				return res, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d edit body: %w", repo, issueNumber, claim.PRNumber, err)
+			}
+			res.EditedBody = true
+			return res, nil
+		}
+		res.Skipped = "partial-reference"
+		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.")
+		return res, nil
+	}
+	if bodySaysIssueStaysOpen(pr.Body, owner+"/"+name, issueNumber) {
 		res.Skipped = "partial-reference"
 		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.")
 		return res, nil
@@ -318,6 +334,24 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 	}
 	res.EditedBody = true
 	return res, nil
+}
+
+func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) {
+	if body == "" || issue <= 0 || strings.Contains(body, issueLinkFixedMarker) {
+		return "", false
+	}
+	if _, ok := FindClosingKeywordReference(body, repo, repo, issue); ok {
+		return "", false
+	}
+	repoPrefix := `(?:` + regexp.QuoteMeta(repo) + `)?`
+	pattern := regexp.MustCompile(`(?i)\brefs?\b([^\n#]{0,40}?)` + repoPrefix + `#` + strconv.Itoa(issue))
+	loc := pattern.FindStringSubmatchIndex(body)
+	if loc == nil {
+		return "", false
+	}
+	out := body[:loc[0]] + "Fixes" + body[loc[2]:]
+	out = strings.TrimRight(out, " \t\r\n") + "\n\n" + issueLinkFixedMarker
+	return out, true
 }
 
 func issueStagePRLinkComment(prURL string, prNumber int, explanation string) string {
@@ -504,6 +538,7 @@ func (c *Client) RetractHiveClosingIssueLink(ctx context.Context, repo string, p
 // GraphQL actor logins omit the `[bot]` suffix REST appends, so both
 // spellings compare equal.
 func (c *Client) isOwnBotLogin(login string) bool {
+	login = strings.TrimPrefix(strings.TrimSpace(login), "app/")
 	login = strings.TrimSuffix(strings.TrimSpace(login), "[bot]")
 	if login == "" {
 		return false

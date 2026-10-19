@@ -158,6 +158,14 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				state = "closed"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/comments"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			out := []map[string]string{}
+			for _, body := range s.commentBodies[n] {
+				out = append(out, map[string]string{"body": body})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/sub_issues"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -736,6 +744,56 @@ func TestSyncIssueStageLabels_CommentsForPartialPRLinkLimitation(t *testing.T) {
 	}
 	body := strings.Join(fake.commentBodies[4], "\n")
 	if !strings.Contains(body, "PR #42 covers this issue") || !strings.Contains(body, "GitHub will not show") {
+		t.Fatalf("comment body = %q", body)
+	}
+}
+
+func TestSyncIssueStageLabels_MergedReferencePRMovesIssueBackToActionable(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.PRInProgress.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Reference: true, MergedPR: true}}})
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Comments != 1 || res.MergedPRIssuesClosed != 0 {
+		t.Fatalf("result = %+v, want one partial comment and no close", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.closed[64] != "" {
+		t.Fatalf("issue was closed: %q", fake.closed[64])
+	}
+	if got := strings.Join(fake.added[64], ","); got != stagelabels.Actionable.Label() {
+		t.Fatalf("added = %v, want actionable", fake.added[64])
+	}
+	if got := strings.Join(fake.removed[64], ","); got != stagelabels.PRInProgress.Label() {
+		t.Fatalf("removed = %v, want stale 030", fake.removed[64])
+	}
+	body := strings.Join(fake.commentBodies[64], "\n")
+	if !strings.Contains(body, "PR #67 has merged") || !strings.Contains(body, "landed partial work") {
+		t.Fatalf("comment body = %q", body)
+	}
+}
+
+func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true}}})
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.MergedPRIssuesClosed != 1 || res.Comments != 1 {
+		t.Fatalf("result = %+v, want close and comment", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.closed[64] != IssueStateReasonCompleted {
+		t.Fatalf("closed reason = %q, want completed", fake.closed[64])
+	}
+	body := strings.Join(fake.commentBodies[64], "\n")
+	if !strings.Contains(body, "Fixed by #67") || !strings.Contains(body, "full fix") {
 		t.Fatalf("comment body = %q", body)
 	}
 }
