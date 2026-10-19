@@ -44,23 +44,51 @@ type issueStageServer struct {
 	closers   map[int]int
 	closed    map[int]string
 	bodies    map[int]string
+	prBodies  map[int]string
+	prBases   map[int]string
+	prAuthors map[int]string
+	prPatches map[int]string
 	// commentBodies keeps every comment body posted per issue.
 	commentBodies map[int][]string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, commentBodies: map[int][]string{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, prBodies: map[int]string{}, prBases: map[int]string{}, prAuthors: map[int]string{}, prPatches: map[int]string{}, commentBodies: map[int][]string{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
 		if r.Method == http.MethodPost && path == "/graphql" {
 			var q struct {
+				Query     string `json:"query"`
 				Variables struct {
 					Issue int `json:"issue"`
+					PR    int `json:"pr"`
 				} `json:"variables"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&q)
+			if strings.Contains(q.Query, "pullRequest(number:$pr)") {
+				pr := q.Variables.PR
+				base := s.prBases[pr]
+				if base == "" {
+					base = "v5"
+				}
+				author := s.prAuthors[pr]
+				if author == "" {
+					author = "hive[bot]"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{
+					"defaultBranchRef": map[string]any{"name": "v5"},
+					"pullRequest": map[string]any{
+						"state":       "OPEN",
+						"baseRefName": base,
+						"body":        s.prBodies[pr],
+						"url":         "https://x/pr/" + strconv.Itoa(pr),
+						"author":      map[string]any{"login": author},
+					},
+				}}})
+				return
+			}
 			s.mu.Lock()
 			pr := s.closers[q.Variables.Issue]
 			s.mu.Unlock()
@@ -81,6 +109,14 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
+		case r.Method == http.MethodPatch && strings.HasPrefix(rest, "pulls/"):
+			pr, _ := strconv.Atoi(strings.TrimPrefix(rest, "pulls/"))
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			s.prPatches[pr] = body.Body
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": pr, "body": body.Body})
 		case r.Method == http.MethodGet && rest == "issues":
 			// List-by-label used by the legacy decision-label retirement:
 			// answer from truth so carriers block definition deletion.
@@ -582,5 +618,56 @@ func TestIssueStageFor_LegacyNeedsDirectionStillParks(t *testing.T) {
 	}
 	if !hasHardSuppressIssueLabel(in.Labels) {
 		t.Fatal("needs-direction must still hard-suppress")
+	}
+}
+
+func TestSyncIssueStageLabels_EditsHivePRBodyForDefaultBranchLink(t *testing.T) {
+	fake := newIssueStageServer(t)
+	fake.prBodies[41] = "## Fix\n\nImplements the issue."
+	fake.prBases[41] = "v5"
+	fake.prAuthors[41] = "hive[bot]"
+	c := issueStageTestClient(t, fake.srv, true)
+	c.SetAppBotLogin("hive[bot]")
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 41, PRURL: "https://x/pr/41"}}, workBucketClaimedByPR, "open PR")
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.PRBodiesEdited != 1 {
+		t.Fatalf("PRBodiesEdited = %d, want 1", res.PRBodiesEdited)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !strings.HasSuffix(fake.prPatches[41], "\n\nFixes #4") {
+		t.Fatalf("patched body = %q", fake.prPatches[41])
+	}
+	if fake.comments[4] != 0 {
+		t.Fatalf("comments = %d, want 0 when the PR body was fixed", fake.comments[4])
+	}
+}
+
+func TestSyncIssueStageLabels_CommentsForPartialPRLinkLimitation(t *testing.T) {
+	fake := newIssueStageServer(t)
+	fake.prBodies[42] = "## Fix\n\nPart of #4; leaves follow-up work open."
+	fake.prBases[42] = "v5"
+	fake.prAuthors[42] = "hive[bot]"
+	c := issueStageTestClient(t, fake.srv, true)
+	c.SetAppBotLogin("hive[bot]")
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 42, PRURL: "https://x/pr/42", Reference: true}}, workBucketClaimedByPR, "open PR")
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Comments != 1 || res.PRBodiesEdited != 0 {
+		t.Fatalf("result = %+v, want one issue comment and no PR edit", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.prPatches[42] != "" {
+		t.Fatalf("PR body was edited: %q", fake.prPatches[42])
+	}
+	body := strings.Join(fake.commentBodies[4], "\n")
+	if !strings.Contains(body, "PR #42 covers this issue") || !strings.Contains(body, "GitHub will not show") {
+		t.Fatalf("comment body = %q", body)
 	}
 }

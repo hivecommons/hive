@@ -85,6 +85,9 @@ type IssueStageResult struct {
 	Items    int
 	Writes   int
 	Comments int
+	// PRBodiesEdited counts Hive-authored PR bodies amended with a closing
+	// trailer so GitHub can show the issue↔PR link for default-branch work.
+	PRBodiesEdited int
 	// Healed counts issues found carrying more than one stage label.
 	Healed int
 	// ClaimedByHealed counts backend-named `hive/claimed-by-*` labels
@@ -294,6 +297,16 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
 			}
 		}
+		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
+			edited, commented := ensureIssueStagePRLink(ctx, client, in, store, key, logger)
+			if edited {
+				res.PRBodiesEdited++
+				res.Writes++
+			}
+			if commented {
+				res.Comments++
+			}
+		}
 		add, remove := stagelabels.Plan(in.Labels, want)
 		if len(add)+len(remove) == 0 {
 			// Stage already right; a retired park label left beside 045
@@ -364,6 +377,46 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		logger.Warn("issue stage labels: persisting state failed", "error", err)
 	}
 	return res
+}
+
+func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageInput, store *stagelabels.Store, key string, logger *slog.Logger) (edited, commented bool) {
+	if client == nil || client.client == nil || in.Claim == nil || in.Claim.PRNumber <= 0 {
+		return false, false
+	}
+	// Older tests and payloads may carry only a PR number. Real claim rows
+	// include URL/repo/grade metadata; require at least one such field before
+	// spending a PR lookup.
+	if in.Claim.PRURL == "" && in.Claim.PRRepo == "" && in.Claim.PRAuthor == "" && !in.Claim.Closing && !in.Claim.Reference {
+		return false, false
+	}
+	link, err := client.EnsureIssueStagePRLink(ctx, in.Repo, in.Number, in.Claim)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("issue stage labels: PR issue-link safeguard failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
+		}
+		return false, false
+	}
+	if link.EditedBody {
+		if logger != nil {
+			logger.Info("issue stage labels: appended closing keyword to Hive-authored PR body for GitHub issue link", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "base", link.Base)
+		}
+		return true, false
+	}
+	if strings.TrimSpace(link.StageComment) == "" {
+		return false, false
+	}
+	rec, ok := store.Get(key)
+	if !ok || rec.EntryCommented {
+		return false, false
+	}
+	if err := client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment); err != nil {
+		if logger != nil {
+			logger.Warn("issue stage labels: PR link stage comment failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
+		}
+		return false, false
+	}
+	store.MarkEntryCommented(key, "")
+	return false, true
 }
 
 // ensureStageLabelFamily provisions (or recolours) the stage/author label

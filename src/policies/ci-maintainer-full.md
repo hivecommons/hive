@@ -169,7 +169,7 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 hive-open-pr --repo "$HIVE_REPO" \
   --base "<target-branch>" \
   --title "fix: <short description>" \
-  --body "## CI Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use Refs #<issue-number> only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))\n\n---\n*Filed by ci-maintainer agent (ACMM L6 — full mode)*" \
+  --body "## CI Fix\n\n<what this changes and why>\n\nFixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use `Part of #<issue-number>` or `Refs #<issue-number>` only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write `Part of #<issue-number>` (needs-human: <reason>). Hive will keep the issue open and add the stage-lane issue comment that links the PR, because GitHub shows no issue-list PR icon without a closing keyword)\n\n---\n*Filed by ci-maintainer agent (ACMM L6 — full mode)*" \
   --issues <issue-number> \
   --label "ci"
 ```

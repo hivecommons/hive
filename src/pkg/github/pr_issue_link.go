@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // ClosingLinkResult reports what EnsureClosingIssueLink did for one
@@ -197,6 +199,159 @@ func (c *Client) linkClosingIssuesForPR(ctx context.Context, owner, repo string,
 				slog.String("repo", repo), slog.Int("number", prNumber), slog.Int("issue", issue), slog.String("base", res.Base))
 		}
 	}
+}
+
+// IssueStagePRLinkResult reports how the issue-stage lane made an open
+// issue↔PR relationship visible to GitHub and operators.
+type IssueStagePRLinkResult struct {
+	// EditedBody is true when Hive appended a closing trailer to its own PR so
+	// GitHub can derive the Development-sidebar link and issue-list glyph.
+	EditedBody bool
+	// StageComment is a one-time issue stage-entry comment explaining why Hive
+	// did not edit the PR body and naming the covering PR. Empty means no issue
+	// comment is needed.
+	StageComment string
+	// Skipped names the no-op reason, for logs and tests.
+	Skipped string
+	Base    string
+}
+
+// EnsureIssueStagePRLink is the issue-stage lane's guardrail for open PRs that
+// cover an issue. GitHub's issue-list PR glyph appears only for default-branch
+// PRs whose body contains a closing keyword. For Hive-authored default-branch
+// PRs that appear to fully address the issue but forgot that trailer, Hive edits
+// its own PR body to append `Fixes #N`. If the PR is partial (`Refs`,
+// `Part of`, or explicit leave-open wording) or targets a non-default branch,
+// Hive leaves the body alone and asks the caller to post a stage-entry comment
+// with the PR link and the limitation. Human-authored PR bodies are never edited.
+func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueNumber int, claim *IssueClaimContext) (IssueStagePRLinkResult, error) {
+	if c == nil || c.client == nil {
+		return IssueStagePRLinkResult{}, ErrNoGitHubClient
+	}
+	if claim == nil || claim.PRNumber <= 0 || issueNumber <= 0 {
+		return IssueStagePRLinkResult{}, nil
+	}
+	owner, name := c.splitRepo(repo)
+	if owner == "" || name == "" {
+		return IssueStagePRLinkResult{}, fmt.Errorf("EnsureIssueStagePRLink: repo is required")
+	}
+	prRepo := strings.TrimSpace(claim.PRRepo)
+	if prRepo == "" {
+		prRepo = owner + "/" + name
+	}
+	prOwner, prName := c.splitRepo(prRepo)
+	if prOwner == "" || prName == "" || !strings.EqualFold(prOwner+"/"+prName, owner+"/"+name) {
+		return IssueStagePRLinkResult{Skipped: "cross-repo"}, nil
+	}
+
+	var out struct {
+		Repository struct {
+			DefaultBranchRef struct {
+				Name string `json:"name"`
+			} `json:"defaultBranchRef"`
+			PullRequest struct {
+				State       string `json:"state"`
+				BaseRefName string `json:"baseRefName"`
+				Body        string `json:"body"`
+				URL         string `json:"url"`
+				Author      struct {
+					Login string `json:"login"`
+				} `json:"author"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+	query := `query($owner:String!, $name:String!, $pr:Int!) {
+  repository(owner:$owner, name:$name) {
+    defaultBranchRef { name }
+    pullRequest(number:$pr) {
+      state
+      baseRefName
+      body
+      url
+      author { login }
+    }
+  }
+}`
+	vars := map[string]any{"owner": owner, "name": name, "pr": claim.PRNumber}
+	if err := c.graphQL(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), query, vars, &out); err != nil {
+		return IssueStagePRLinkResult{}, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d lookup: %w", repo, issueNumber, claim.PRNumber, err)
+	}
+	pr := out.Repository.PullRequest
+	res := IssueStagePRLinkResult{Base: strings.TrimSpace(pr.BaseRefName)}
+	prURL := strings.TrimSpace(pr.URL)
+	if prURL == "" {
+		prURL = claim.PRURL
+	}
+	if prURL == "" {
+		prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, claim.PRNumber)
+	}
+	if !strings.EqualFold(pr.State, "OPEN") {
+		res.Skipped = "pr-not-open"
+		return res, nil
+	}
+	if _, ok := FindClosingKeywordReference(pr.Body, owner+"/"+name, owner+"/"+name, issueNumber); ok {
+		res.Skipped = "already-closing"
+		return res, nil
+	}
+	defaultBranch := strings.TrimSpace(out.Repository.DefaultBranchRef.Name)
+	if defaultBranch == "" || !strings.EqualFold(res.Base, defaultBranch) {
+		res.Skipped = "non-default-base"
+		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "GitHub only shows its linked-PR icon for closing-keyword PRs that target the repository default branch; this PR targets `"+res.Base+"`, so Hive cannot make GitHub display that icon for this issue.")
+		return res, nil
+	}
+	if claim.Reference || bodySaysIssueStaysOpen(pr.Body, owner+"/"+name, issueNumber) {
+		res.Skipped = "partial-reference"
+		res.StageComment = issueStagePRLinkComment(prURL, claim.PRNumber, "The PR body says this is partial/non-closing work (`Refs`/`Part of` or leave-open wording), so Hive will not add a closing keyword. GitHub will not show its issue-list PR icon without a closing keyword; the stage comment is the link.")
+		return res, nil
+	}
+	if !c.isOwnBotLogin(pr.Author.Login) {
+		res.Skipped = "not-hive-authored"
+		return res, nil
+	}
+	body := strings.TrimRight(pr.Body, " \t\r\n")
+	if body != "" {
+		body += "\n\n"
+	}
+	body += fmt.Sprintf("Fixes #%d", issueNumber)
+	if _, _, err := c.client.PullRequests.Edit(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), owner, name, claim.PRNumber, &gh.PullRequest{Body: gh.Ptr(body)}); err != nil {
+		return res, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d edit body: %w", repo, issueNumber, claim.PRNumber, err)
+	}
+	res.EditedBody = true
+	return res, nil
+}
+
+func issueStagePRLinkComment(prURL string, prNumber int, explanation string) string {
+	return fmt.Sprintf("<!-- hive:issue-stage-pr-link pr=%d -->\nPR #%d covers this issue: %s\n\n%s", prNumber, prNumber, prURL, explanation)
+}
+
+func bodySaysIssueStaysOpen(body, repo string, issue int) bool {
+	if body == "" || issue <= 0 {
+		return false
+	}
+	for _, ref := range ParseReferencedIssues(body, repo) {
+		if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+			return true
+		}
+	}
+	text := strings.ToLower(stripClosingFalsePositiveText(body))
+	issueRef := fmt.Sprintf("#%d", issue)
+	patterns := []string{
+		"leave " + issueRef + " open",
+		"leaves " + issueRef + " open",
+		"leaving " + issueRef + " open",
+		issueRef + " stays open",
+		issueRef + " remains open",
+		"does not close " + issueRef,
+		"doesn't close " + issueRef,
+		"do not close " + issueRef,
+		"not close " + issueRef,
+	}
+	for _, p := range patterns {
+		if strings.Contains(text, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ClosingLinkRetraction reports what RetractHiveClosingIssueLink did for one
