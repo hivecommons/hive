@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/classify"
+	"github.com/hivecommons/hive/pkg/companionrepos"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
@@ -790,6 +792,19 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	// to say so, in the same section that produces the impression. Getting a
 	// checkout is an ordinary thing an agent does for itself, not a fault.
 	b.WriteString(fmt.Sprintf("ℹ️ This list is an AUTHORIZATION SCOPE, not a checkout: it does not put any repo on disk, and nothing provisions a per-agent git worktree from it. If you need files rather than the GitHub API and have no checkout, clone one yourself: git clone %s/<org>/<repo> /tmp/<repo>. An absent checkout is a normal state to handle, NOT an infrastructure fault — do not file a finding about a missing worktree or unprovisioned repo workspace.\n", strings.TrimRight(host, "/")))
+	// Repo-local gates and companion checkouts (hivecommons/hive#12913): a
+	// target repo's AGENTS.md may say "offer a spec and wait" or "stop when a
+	// registered sibling checkout is missing". Dispatched work is already
+	// accepted, and a registered sibling path under the workspace root is a
+	// repo this installation can clone — neither is a reason to park.
+	b.WriteString("ℹ️ " + decisionpolicy.DispatchSatisfiesRepoGates + " " + decisionpolicy.MissingCompanionCheckoutRule + "\n")
+	for _, repo := range active {
+		full := config.QualifyRepo(org, repo)
+		plan := companionrepos.Plan("$HOME/workspace", full, s.cfg.CompanionReposFor(full))
+		if instr := companionrepos.Instruction(full, host, plan); instr != "" {
+			b.WriteString("ℹ️ " + instr + " (clone the primary to $HOME/workspace/" + full + " so the registered paths resolve.)\n")
+		}
+	}
 	// Multi-repo projects: the agent workdir is never a checkout of anything
 	// but the PRIMARY repo, and the shipped templates' examples say --repo
 	// "$HIVE_REPO" (primary). Without an explicit rotation instruction agents lock onto

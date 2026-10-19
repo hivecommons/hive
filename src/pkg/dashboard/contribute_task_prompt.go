@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/hivecommons/hive/pkg/companionrepos"
+	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
@@ -62,6 +64,13 @@ func buildTaskPromptForRef(ref worksource.Ref, title string) string {
 // gets each hive's guide on that hive's tasks, because the repo owner is who
 // decides how PRs in their repo read. Empty renders nothing.
 func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush bool, guide string) string {
+	return buildTaskPromptForContributorWithHints(ref, title, canPush, guide, taskPromptRepoHints{})
+}
+
+// buildTaskPromptForContributorWithHints is buildTaskPromptForContributor
+// plus the assigning hive's per-repo hints (hivecommons/hive#12913); live
+// dispatch passes h.taskPromptRepoHints(repo).
+func buildTaskPromptForContributorWithHints(ref worksource.Ref, title string, canPush bool, guide string, hints taskPromptRepoHints) string {
 	repoFull := ref.Repo
 	issueRef := ref.Key()
 	if issueRef == "" {
@@ -84,9 +93,23 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 	// was put back on v5 by the agent, because the plan it had already formed
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
-	return buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide) +
+	return buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint,
+		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide, hints) +
 		artifactTrailerPromptInstruction(issueRef)
+}
+
+// taskPromptRepoHints resolves the companion repositories configured for
+// repo and the GitHub host to clone them from. Nil-safe like
+// writingGuideSection: no config means no hints, never a panic on dispatch.
+func (h *ContributeWSHub) taskPromptRepoHints(repo string) taskPromptRepoHints {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return taskPromptRepoHints{}
+	}
+	cfg := h.server.deps.Config
+	return taskPromptRepoHints{
+		Companions: cfg.CompanionReposFor(repo),
+		Host:       cfg.GitHub.ResolvedBaseURL(),
+	}
 }
 
 func artifactTrailerPromptInstruction(issueRef string) string {
@@ -336,6 +359,19 @@ func buildTaskPromptBody(repoFull, issueRef, title, sourceHint, baseBranch strin
 }
 
 func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide string) string {
+	return buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBranch, canPush, guide, taskPromptRepoHints{})
+}
+
+// taskPromptRepoHints carries the assigning hive's per-repo knowledge into
+// the otherwise pure prompt builder (hivecommons/hive#12913): the companion
+// repositories project.repo_policies[].companion_repos registers for the
+// task's repo, and the GitHub host they are cloned from. Zero renders nothing.
+type taskPromptRepoHints struct {
+	Companions []string
+	Host       string
+}
+
+func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide string, hints taskPromptRepoHints) string {
 	// The workspace contract (kubestellar/hive#2545): your tmux pane already
 	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
 	// launches the session with -c pointed there), but nothing had put a repo
@@ -463,6 +499,15 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 	if g := strings.TrimSpace(guide); g != "" {
 		guideHint = "\n\n" + g + "\n\n"
 	}
+	// #12913: companion checkouts, right after the primary checkout step
+	// they sit beside. spektacular's `repo list` resolves a registered docs
+	// location to $HIVE_WORKSPACE_DIR/hivecommons/spektacular-website and
+	// its AGENTS.md says to stop when it is missing; four tasks parked on
+	// that in one day. The clone is the intended checkout, so the prompt
+	// provisions it before any tool can miss it.
+	if companions := companionrepos.Instruction(repoFull, hints.Host, companionrepos.Plan("$HIVE_WORKSPACE_DIR", repoFull, hints.Companions)); companions != "" {
+		checkoutHint += companions + " "
+	}
 
 	return fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s: \"%s\".%s "+
@@ -484,6 +529,12 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"etiquette. Two things they do not override: hive's safety rules (never merge "+
 			"your own PR, never bypass a write gate), and a branch or requirement this "+
 			"assignment names explicitly below. "+
+			// #12913: the repository's conventions win; its confirmation gates
+			// do not apply. Five contributor parks on hivecommons/spektacular
+			// in one day obeyed its "offer a spec and wait for acceptance"
+			// rule on issues the hive had already accepted and dispatched.
+			decisionpolicy.DispatchSatisfiesRepoGates+" "+
+			decisionpolicy.MissingCompanionCheckoutRule+" "+
 			// #5729: the base branch. Everything above deliberately REUSES a
 			// checkout across tasks, which is exactly what makes the branch
 			// left on disk the previous task's answer rather than this one's.
@@ -539,7 +590,9 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"policy, or approval decision, use the structured reason form "+
 			"'HIVE_VERDICT: no_work_needed — decision: <what needs deciding>' "+
 			"so hive applies the configured maintainer-decision label and keeps it out "+
-			"of the queue until a human removes that label. "+
+			"of the queue until a human removes that label. A repository's own "+
+			"spec/confirmation gate or a missing companion checkout is never such a "+
+			"decision (see above); hive re-dispatches a decision verdict that cites one. "+
 			// hivecommons/hive#7924: the blocked sentinel. utah#100 reached a
 			// correct "nothing here can change until utah-packages' factory
 			// publishes" and printed no_work_needed for it; the hub booked an
