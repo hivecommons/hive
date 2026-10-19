@@ -9091,6 +9091,11 @@ type AutoMergeConfig struct {
 	// that supersedes the bot PR, and closes the bot PR. It applies only when
 	// github-actions[bot] is in TrustedBotAuthors.
 	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
+	// WorkflowApproval controls auto-approval of GitHub Actions workflow runs
+	// left in `action_required` for same-repository PR heads owned by the App,
+	// trusted bots, or registry-trusted clanker authors. It never applies to
+	// forks or PRs carrying the sentinel label.
+	WorkflowApproval WorkflowApprovalAutoMergeConfig `yaml:"workflow_approval,omitempty" json:"workflow_approval,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
@@ -9136,6 +9141,17 @@ type BotTakeoverAutoMergeConfig struct {
 
 func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
 	return b.Enabled == nil || *b.Enabled
+}
+
+// WorkflowApprovalAutoMergeConfig is auto_merge.workflow_approval.*.
+type WorkflowApprovalAutoMergeConfig struct {
+	// TrustedBots releases same-repo workflow runs held for approval on trusted
+	// bot/App/registry-trusted clanker PRs. nil/unset means ON.
+	TrustedBots *bool `yaml:"trusted_bots,omitempty" json:"trusted_bots,omitempty"`
+}
+
+func (w WorkflowApprovalAutoMergeConfig) TrustedBotsEnabled() bool {
+	return w.TrustedBots == nil || *w.TrustedBots
 }
 
 type TrustedAuthorAutoMergeConfig struct {

@@ -118,6 +118,12 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 		}
 		return reason
 	}
+	if c.sentinelLabelPresent(labelNames(pr.Labels)) {
+		return "sentinel"
+	}
+	if !c.workflowApprovalTrustedBotsEnabled() {
+		return requiredCheckHeldPrefix + missing
+	}
 	if !c.markHeldRunApprovalAttempted(owner, repo, number, headSHA) {
 		// Already released (or refused) for this head; the runs are either
 		// starting or need a person. Do not spend another approve call.
@@ -141,6 +147,95 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	c.info("automerge approved held workflow runs", "repo", displayRepo, "pr", number, "sha", headSHA, "approved", approved, "held", len(held), "missing", missing)
 	return approvedHeldWorkflowRunsReason
+}
+
+// resolveActionRequiredWorkflowRuns releases same-repo workflow runs GitHub is
+// holding for approval on trusted lanes even when the required context already
+// exists and commitGreen reported `required-check-pending:` rather than
+// `required-check-missing:`. It returns an empty string when this shape does not
+// apply, or a skip reason for the current sweep tick after an approval/refusal.
+func (c *Engine) resolveActionRequiredWorkflowRuns(ctx context.Context, displayRepo, owner, repo, lane string, pr *gh.PullRequest, number int, headSHA, reason string) string {
+	if c == nil || c.gh == nil || !c.workflowApprovalTrustedBotsEnabled() || c.isForkPR(pr) {
+		return ""
+	}
+	labels := labelNames(pr.Labels)
+	if c.sentinelLabelPresent(labels) {
+		return ""
+	}
+	if lane != "self-authored" && lane != "trusted-bot" && !trustedRegistryClanker(labels) {
+		return ""
+	}
+	if !strings.HasPrefix(reason, requiredCheckPendingPrefix) && reason != "check-pending" && reason != "ci-unverified" {
+		return ""
+	}
+	return c.approveActionRequiredWorkflowRuns(ctx, displayRepo, owner, repo, number, headSHA, strings.TrimPrefix(reason, requiredCheckPendingPrefix))
+}
+
+const requiredCheckPendingPrefix = "required-check-pending:"
+
+func (c *Engine) approveActionRequiredWorkflowRuns(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, missing string) string {
+	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, &gh.ListWorkflowRunsOptions{
+		HeadSHA:     headSHA,
+		Event:       "pull_request",
+		ListOptions: gh.ListOptions{PerPage: workflowRunsPageSize},
+	})
+	if err != nil || runs == nil {
+		c.warn("automerge could not list workflow runs for approval", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
+		return ""
+	}
+	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
+	if len(held) == 0 {
+		return ""
+	}
+	if missing == "" {
+		missing = held[0].GetName()
+	}
+	if !c.markHeldRunApprovalAttempted(owner, repo, number, headSHA) {
+		return requiredCheckHeldPrefix + missing
+	}
+	approved := 0
+	for _, run := range held {
+		if err := c.approveWorkflowRunEffect(ctx, owner, repo, number, headSHA, run); err != nil {
+			if isGitHubStatus(err, http.StatusForbidden) {
+				c.warn("automerge cannot approve action_required workflow runs; the App needs Actions: write — approve them in the Actions tab or `gh run approve`",
+					"repo", displayRepo, "pr", number, "sha", headSHA, "run", run.GetID(), "workflow", run.GetName(), "held", len(held))
+				return requiredCheckHeldPrefix + missing
+			}
+			c.warn("automerge failed to approve action_required workflow run", "repo", displayRepo, "pr", number, "run", run.GetID(), "workflow", run.GetName(), "error", err)
+			continue
+		}
+		approved++
+	}
+	if approved == 0 {
+		return requiredCheckHeldPrefix + missing
+	}
+	c.info("automerge approved action_required workflow runs", "repo", displayRepo, "pr", number, "sha", headSHA, "approved", approved, "held", len(held), "reason", missing)
+	return approvedHeldWorkflowRunsReason
+}
+
+// approveTrustedRegistryClankerWorkflowRuns releases held runs for the
+// contributor registry lane without admitting the PR to the self-authored merge
+// path. It is intentionally narrow: same-repo head, author/clanker +
+// role/trusted labels, no sentinel label, and trusted-bot approval enabled.
+func (c *Engine) approveTrustedRegistryClankerWorkflowRuns(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest) string {
+	if c == nil || !c.workflowApprovalTrustedBotsEnabled() || pr == nil || c.isForkPR(pr) {
+		return ""
+	}
+	labels := labelNames(pr.Labels)
+	if !trustedRegistryClanker(labels) {
+		return ""
+	}
+	if c.sentinelLabelPresent(labels) {
+		return ""
+	}
+	sha := ""
+	if pr.GetHead() != nil {
+		sha = pr.GetHead().GetSHA()
+	}
+	if sha == "" {
+		return ""
+	}
+	return c.approveActionRequiredWorkflowRuns(ctx, displayRepo, owner, repo, pr.GetNumber(), sha, "workflow-approval")
 }
 
 // recheckSkippedByDesign re-evaluates a `required-check-missing:` head for a
