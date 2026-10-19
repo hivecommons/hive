@@ -247,6 +247,22 @@ func TestReviewDecisionRequestFallbackRequiresMaintainerCallLine(t *testing.T) {
 	}
 }
 
+func TestReviewDecisionRiskHighMarker(t *testing.T) {
+	body := "**HUMAN DECISION NEEDED** — rename?\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: rename flag --foo to --bar? -->\n<!-- HIVE-DECISION-RISK: High -->"
+	if !reviewDecisionRiskHighFromBody(body) {
+		t.Fatalf("risk marker not detected in %q", body)
+	}
+	for _, benign := range []string{
+		"<!-- hive-decision-risk: low -->",
+		"<!-- hive-decision-question: should it be high or low? -->",
+		"hive-decision-risk: high",
+	} {
+		if reviewDecisionRiskHighFromBody(benign) {
+			t.Fatalf("risk marker falsely detected in %q", benign)
+		}
+	}
+}
+
 // A verdict naming a different PR than the one reviewed must be discarded: an
 // agent authorized to comment on one PR must not be able to record a binding
 // verdict against another.

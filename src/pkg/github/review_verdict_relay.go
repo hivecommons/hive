@@ -74,6 +74,7 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 		return nil
 	}
 	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
+	decisionRiskHigh := reviewDecisionRiskHighFromBody(req.Body)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
@@ -84,6 +85,7 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 		if decisionRequested {
 			report.DecisionRequested = true
 			report.DecisionQuestion = decisionQuestion
+			report.DecisionRiskHigh = decisionRiskHigh
 			report.Verdict = review.VerdictRequiresHuman
 		}
 		if written, ok := c.writeOneVerdict(req, report, dir); ok {
@@ -118,6 +120,27 @@ func reviewDecisionRequestFromBody(body string) (bool, string) {
 		return true, fallback
 	}
 	return false, ""
+}
+
+// reviewDecisionRiskHighFromBody reports whether the reviewer marked its
+// decision question `<!-- hive-decision-risk: high -->`. The marker is the
+// reviewer's escape hatch from the self-authored decision denylist: a
+// Hive-authored PR carrying it parks at stage/085-needs-decision even when
+// the question's wording matches no review.DecisionRiskClass.
+func reviewDecisionRiskHighFromBody(body string) bool {
+	const prefix = "<!-- hive-decision-risk:"
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, prefix) || !strings.HasSuffix(lower, "-->") {
+			continue
+		}
+		level := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(lower, prefix), "-->"))
+		if level == "high" {
+			return true
+		}
+	}
+	return false
 }
 
 func maintainerCallQuestion(body string) string {

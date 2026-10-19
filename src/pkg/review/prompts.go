@@ -470,6 +470,7 @@ func buildRoutingInstruction(pr PullRequest) string {
 	} else {
 		b.WriteString("Do NOT @-mention the PR author: this PR was opened by an app or bot account, so a mention notifies nobody. The marker line is the routing.\n")
 	}
+	b.WriteString("Before raising a maintainer decision, check the linked issue/spec and the PR body. If the answer is stated there, do not ask: cite it (`per #<issue>: ...`) and judge against it. Raise a decision question only when the answer is genuinely absent AND the choice is a risk class (permissions/tokens/secrets/credentials; security-sensitive paths such as .github/workflows, OWNERS, auth, crypto; data loss, destructive migrations, irreversible actions; merge/trust/ACMM-level/role policy; external side effects such as publishing, releases, billing, outbound email or notifications to humans; licensing/legal). Mark such a question with `<!-- hive-decision-risk: high -->` so it always reaches a person; naming, sequencing, defaults, config shape, scope and changelog wording are the hive's own call on a Hive-authored PR.\n")
 	b.WriteString("Report the limits of your own review. If you could not judge part of this PR — missing context, an unfamiliar subsystem, an ambiguous requirement, a change you cannot test — say so plainly and use requires_human. Naming what you could not verify is more useful than a confident guess, and omitting it is how an unreviewed change gets waved through on the strength of an automated approval.\n")
 	return b.String()
 }
