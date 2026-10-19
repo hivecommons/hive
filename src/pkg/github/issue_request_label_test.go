@@ -533,3 +533,28 @@ func TestIssueRequestWatcher_LabelAllowsNeedsHumanAdd(t *testing.T) {
 		t.Fatalf("removing needs-human must be refused, got %+v", resp)
 	}
 }
+
+func TestIssueRequestWatcher_LabelResolveParksUnclassifiedQuestion(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12969, Agent: "scanner",
+		Body:   neutralDecisionText,
+		Labels: []string{NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != NeedsDecisionStageLabel {
+		t.Fatalf("labels added = %q, want park %q", got, NeedsDecisionStageLabel)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
