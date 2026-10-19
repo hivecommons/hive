@@ -129,7 +129,12 @@ Prerequisites:
   an issue **in the repository the workflow runs in**, so run it from a
   repository the live hive manages: this repository if it is in the hive's repo
   list, otherwise a copy of the workflow in a managed repository. Bot actors are
-  refused on repositories the hive does not govern.
+  refused on repositories the hive does not govern. The repository guard
+  normalises both sides (`RepoMatches` in `src/pkg/mention/repo_match.go`): the
+  event's `owner/name` matches a bare `repos:` entry qualified by `org`, an
+  explicit `owner/name` entry, or a `https://github.com/owner/name` entry,
+  case-insensitively. A `guard=repo` decline therefore means the repository is
+  genuinely absent from the hive's repo list or its owner differs from `org`.
 - The relay comment body is `@<app-handle> status <prompt>` plus a hidden
   `<!-- hive:source=action … transport=comment -->` marker
   (`.github/actions/hive/action.yml`). The parser matches `@<app-login>` or the

@@ -25,7 +25,7 @@ github:
       audience: hive-prod
 ```
 
-`trusted_comment_authors` lists comment authors whose hidden Action marker may select the Actions path; it defaults to `github-actions[bot]`. For that path, Hive reads the marker `run_id` from GitHub before using the marker actor. `identity_map` maps `github.actor` from the checked comment marker or the OIDC `actor` claim to an existing Hive dashboard identity. If omitted, the actor login itself must already have the required Hive role. Bot actors, including `github-actions[bot]`, are refused unless the repository is already governed by the hive and the command is in `allowed_commands`. OIDC dispatch is off by default; when `oidc.enabled` is true, `oidc.audience` is required and must match the workflow input exactly.
+`trusted_comment_authors` lists comment authors whose hidden Action marker may select the Actions path; it defaults to `github-actions[bot]`. For that path, Hive reads the marker `run_id` from GitHub before using the marker actor. `identity_map` maps `github.actor` from the checked comment marker or the OIDC `actor` claim to an existing Hive dashboard identity. If omitted, the actor login itself must already have the required Hive role. Bot actors, including `github-actions[bot]`, are refused unless the repository is already governed by the hive and the command is in `allowed_commands`. The repository check accepts `repos:` entries written as a bare `name` (qualified by `org`), `owner/name`, or `https://github.com/owner/name`, matched case-insensitively against the event's `owner/name`. OIDC dispatch is off by default; when `oidc.enabled` is true, `oidc.audience` is required and must match the workflow input exactly.
 
 ## App handle
 

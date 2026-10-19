@@ -129,7 +129,13 @@ func (s *Server) handleActionsDispatch(w http.ResponseWriter, r *http.Request) {
 		Roles: func(login string) (string, bool) {
 			return s.deps.Config.Dashboard.AuthorizedRole(login)
 		},
-		Repos:  s.actionsRepos,
+		Repos: s.actionsRepos,
+		RepoOwner: func() string {
+			if s.deps == nil || s.deps.Config == nil {
+				return ""
+			}
+			return s.deps.Config.Project.Org
+		},
 		Agents: s.actionsAgents,
 		GitHub: actionsGitHub{app: s.actionsAppLogin()},
 		Store:  store,

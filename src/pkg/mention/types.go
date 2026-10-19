@@ -86,13 +86,16 @@ type Options struct {
 	ReviewBotsFunc func() config.ReviewBotsConfig
 	Roles          RoleFunc
 	Repos          func() []string
-	Agents         AgentFunc
-	GitHub         GitHub
-	GitHubFunc     func() GitHub
-	Store          *Store
-	Kick           KickFunc
-	Audit          AuditFunc
-	Now            func() time.Time
+	// RepoOwner returns the config's `org`, used to qualify bare `repos:`
+	// entries when matching an `owner/name` event repository (#12981).
+	RepoOwner  func() string
+	Agents     AgentFunc
+	GitHub     GitHub
+	GitHubFunc func() GitHub
+	Store      *Store
+	Kick       KickFunc
+	Audit      AuditFunc
+	Now        func() time.Time
 }
 
 type Handler struct {
@@ -371,16 +374,20 @@ func (h *Handler) authorizeAction(ctx context.Context, ev Event, p Parsed) (stri
 	return mapped, true
 }
 
+// repoConfigured reports whether the event repository is governed by this
+// hive. Events arrive as `owner/name` (the client qualifies bare config
+// entries with `org` before polling) while `repos:` entries are usually bare
+// names, so both sides are normalised through RepoMatches rather than compared
+// verbatim.
 func (h *Handler) repoConfigured(repo string) bool {
 	if h.opts.Repos == nil {
 		return true
 	}
-	for _, configured := range h.opts.Repos() {
-		if strings.EqualFold(strings.TrimSpace(configured), strings.TrimSpace(repo)) {
-			return true
-		}
+	owner := ""
+	if h.opts.RepoOwner != nil {
+		owner = h.opts.RepoOwner()
 	}
-	return false
+	return RepoConfigured(h.opts.Repos(), repo, owner)
 }
 
 func actionCommand(text string) string {
