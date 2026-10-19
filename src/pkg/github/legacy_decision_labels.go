@@ -29,9 +29,14 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
+
+// legacyDecisionRetireTimeout bounds one repo's definition-retirement pass
+// (two list calls and up to two deletes).
+const legacyDecisionRetireTimeout = 30 * time.Second
 
 // removeLegacyDecisionLabels strips the retired park labels from an issue
 // that now carries stage/045-needs-decision. carries is the label set after
@@ -67,6 +72,11 @@ func removeLegacyDecisionLabels(ctx context.Context, client *Client, in IssueSta
 // carries them: the reconciler's cycle saw none, and a one-item list per
 // label confirms it for the PRs and issues the cycle did not enumerate.
 // Returns the number of definitions deleted.
+//
+// It is housekeeping, so it stands down while the shared rate-limit caution
+// window is engaged and its calls are bounded by legacyDecisionRetireTimeout:
+// a paced ListByRepo with no deadline once stalled the governor run loop
+// (hivecommons/hive#12983). Either way the retirement retries next cycle.
 func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo string, logger *slog.Logger) int {
 	if c == nil || c.client == nil {
 		return 0
@@ -76,6 +86,14 @@ func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo 
 	if c.legacyDecisionLabels.has(key) {
 		return 0
 	}
+	if sharedSlowStartState.cautious(time.Now()) {
+		if logger != nil {
+			logger.Debug("legacy decision label: retirement deferred while rate-limit caution window is engaged", "repo", repo)
+		}
+		return 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, legacyDecisionRetireTimeout)
+	defer cancel()
 	deleted := 0
 	for _, label := range legacyDecisionLabels {
 		items, _, err := c.client.Issues.ListByRepo(ctx, owner, name, &gh.IssueListByRepoOptions{State: "open", Labels: []string{label}, ListOptions: gh.ListOptions{PerPage: 1}})

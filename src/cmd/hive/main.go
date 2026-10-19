@@ -9305,6 +9305,10 @@ func hiveIdentity(cfg *config.Config) github.HiveIdentity {
 	return id
 }
 
+// issueStageSyncTimeout bounds one eval pass's issue stage-label sync so a
+// rate-limit pacing queue cannot stall the run loop (hivecommons/hive#12983).
+const issueStageSyncTimeout = 2 * time.Minute
+
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
@@ -9339,7 +9343,13 @@ func applyDuplicatePRGuard(
 	// hivecommons/hive#12436: with every bucket final, mirror the cycle's
 	// decision about each open issue onto its stage/NNN label (and strip the
 	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
-	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
+	// hivecommons/hive#12983: the run loop holds cfgReloadMu for the whole
+	// pass, so bound the sync; a paced request whose slot would miss the
+	// deadline fails fast and the best-effort sync retries next cycle.
+	stageCtx, stageCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	res := github.SyncIssueStageLabels(stageCtx, ghClient, actionable, nil, time.Now(), logger)
+	stageCancel()
+	if res.Writes+res.Comments > 0 {
 		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
