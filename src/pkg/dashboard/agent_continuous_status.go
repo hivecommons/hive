@@ -10,6 +10,9 @@ type FrontendAgentContinuous struct {
 	ContinuousModes        []string `json:"continuousModes,omitempty"`
 	ContinuousKicks        int64    `json:"continuousKicks,omitempty"`
 	ContinuousTokens       int64    `json:"continuousTokens,omitempty"`
+	// PresumedTurnEnds counts kicks the governor presumed over after
+	// continuous_turn_ceiling because no turn-end signal arrived.
+	PresumedTurnEnds int64 `json:"presumedTurnEnds,omitempty"`
 	// LastKickEnd is when the agent's last kick turn ended (RFC3339).
 	LastKickEnd string `json:"lastKickEnd,omitempty"`
 	// IdleSince is set while a continuous agent is idle between its last kick
