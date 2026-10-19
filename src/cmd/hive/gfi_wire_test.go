@@ -190,13 +190,16 @@ func TestGFISweepReleaseAndConvertWiring(t *testing.T) {
 	// A hive agent start on an unknown issue is ignored without API calls.
 	release := gfiReleaseOnHiveStart(context.Background(), cfg, state, func() *github.Client { return gh }, nil, logger)
 	release("worker", "widgets", 99, github.AgentStartSignalClaim)
-	// On the labelled issue: labels off, comment superseded.
+	// On the labelled issue: labels off, comment superseded. The release
+	// runs in a goroutine that talks to the forge first and only then
+	// bumps the Released stat and forgets the labelled key, so wait on the
+	// state transition (the goroutine's last step) rather than on the
+	// forge side effects alone — otherwise the stats assertion below can
+	// observe Released:0 (#13048).
 	release("worker", "widgets", 7, github.AgentStartSignalClaim)
 	testutil.Eventually(t, 5*time.Second, func() bool {
-		fake.mu.Lock()
-		defer fake.mu.Unlock()
-		return len(fake.removed) == 2 && len(fake.comments) > 0 && strings.Contains(fake.comments[0]["body"].(string), gfi.SupersededMarker)
-	}, "release did not remove labels and supersede the comment")
+		return !state.known("acme/widgets#7") && state.sweeper.Stats().Released == 1
+	}, "release did not clear the labelled state")
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if strings.Join(fake.removed, ",") != "good%20first%20issue,help%20wanted" && strings.Join(fake.removed, ",") != gfi.Label+","+gfi.HelpWantedLabel {

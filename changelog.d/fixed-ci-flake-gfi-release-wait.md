@@ -1,0 +1,1 @@
+- `TestGFISweepReleaseAndConvertWiring` no longer flakes: it now waits for the release goroutine's final state transition (labelled key cleared, `Released` stat bumped) instead of only the forge side effects, which could be observed before the stats were updated ([#13048](https://github.com/hivecommons/hive/issues/13048)).
