@@ -231,6 +231,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// its UI lives on the governor Health tab — see api_escalation.go.
 	s.mux.HandleFunc("GET /api/config/escalation", s.handleEscalationGet)
 	s.mux.HandleFunc("PUT /api/config/escalation", s.handleEscalationPut)
+	// Inbound trigger surfaces (GitHub mentions/Actions, chat bots, escalation
+	// sinks) edited on the Settings → Channels tab — see channels_settings.go.
+	s.mux.HandleFunc("GET /api/config/channels", s.handleChannelsSettingsGet)
+	s.mux.HandleFunc("PUT /api/config/channels", s.handleChannelsSettingsPut)
 	// Review-swarm merge gate is a top-level Config field (not GovernorConfig),
 	// but its UI lives on the governor Features tab — see api_config_review.go.
 	s.mux.HandleFunc("GET /api/config/review", s.handleReviewConfigGet)

@@ -146,6 +146,12 @@ type Dependencies struct {
 	// whose min_priority the same PUT edits) can push the new values into
 	// it. Nil means nothing caches.
 	ReviewConfigApplied func(config.ReviewConfig)
+	// ChannelsConfigApplied is called after PUT /api/config/channels has
+	// mutated the inbound-trigger sections (github.mentions, github.actions,
+	// escalation sinks), so the mention poller can start or stop and the
+	// escalation dispatcher can rebuild its sinks without a restart. Nil
+	// means nothing hot-reloads; the tab then shows the restart note.
+	ChannelsConfigApplied func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot

@@ -1642,6 +1642,17 @@ func (b *boot) wireBootClosures() {
 				// applies them without a restart (#10481).
 				installReviewBots(b.ghClient, b.cfg, b.logger)
 			},
+			ChannelsConfigApplied: func() {
+				// Settings → Channels saved github.mentions / github.actions /
+				// escalation sinks: start or stop the mention poller and
+				// rebuild the escalation dispatcher the way a hive.yaml
+				// reload would, so the edit is live without a restart.
+				if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
+					b.ensureMentionStore()
+				}
+				b.syncMentionRuntime()
+				configureEscalationDispatcher(b.ctx, b.cfg, b.notifier, b.dashSrv.AgentAuditSink(), b.logger)
+			},
 			EnumerateFunc: func() {
 				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
 			},

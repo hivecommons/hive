@@ -1487,7 +1487,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/status/summary", s.handleStatusSummary)
 	s.mux.HandleFunc("GET /api/classifier/stats", s.handleClassifierStats)
-	s.mux.HandleFunc("POST /api/admin/mcp", s.handleAdminMCP)
+	s.mux.HandleFunc("POST "+adminMCPEndpointPath, s.handleAdminMCP)
 	s.mux.HandleFunc("GET /api/overview/issues.csv", s.handleOverviewIssuesCSV)
 	s.mux.HandleFunc("GET /api/overview/issues.json", s.handleOverviewIssuesJSON)
 	s.mux.HandleFunc("GET /api/overview/prs.csv", s.handleOverviewPRsCSV)
