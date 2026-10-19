@@ -7289,17 +7289,25 @@ func runEvalCycle(
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
 				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-				// #8380/#10527: list these issues for the kicked agent so
-				// contributors and other agents back off while the kick is
-				// live; the claim itself is recorded on the agent's first
-				// start signal (recordAgentStart), not here.
-				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+				// A review-swarm kick (review or fix) names a pull request,
+				// not an issue: its IssueRefs is the PR ref. Listing it in
+				// the issue-claims ledger made the author's next comment on
+				// its own PR an issue "start signal", so the PR was claimed
+				// as an issue and staged stage/030-pr-in-progress — an
+				// issue-only stage — until the PR sweep healed it.
+				reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
+				if !isReview {
+					// #8380/#10527: list these issues for the kicked agent so
+					// contributors and other agents back off while the kick is
+					// live; the claim itself is recorded on the agent's first
+					// start signal (recordAgentStart), not here.
+					recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+				}
 
 				// #12128: record which issue/PR/head SHA this kick was launched
 				// for, so /api/launch-cost can place the turn's spend. Review
 				// kicks carry the PR head; governor kicks carry the issue refs.
 				if tokenCollector != nil {
-					reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
 					tokenCollector.RecordLaunch(launchRecordForKick(msg, reviewKick, isReview, time.Now()))
 				}
 

@@ -302,8 +302,10 @@ func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue 
 	}
 	switch res.Outcome {
 	case claims.OutcomeRefused, claims.OutcomeHeld:
-		logger.Warn("issue-claims: agent started an issue another holder claims",
-			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
+		// Refused by admission (res.Reason set: hold, needs-human, or the
+		// number is a pull request) or by another holder's live claim.
+		logger.Warn("issue-claims: agent start signal did not record a claim",
+			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "reason", res.Reason, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
 	case claims.OutcomeClaimed, claims.OutcomeTakenOver:
 		logger.Info("issue-claims: agent claim recorded on start signal", "agent", agentName, "issue", res.Claim.Key(), "signal", signal)
 	}
