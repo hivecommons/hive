@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Checks the default-branch (v5) hive-action-smoke workflow (#12964): it must
 # register with the v6 inputs, pin the composite action to a v6 commit, and
-# relay a comment that @-mentions the mention_login input. The relay body test
+# relay a comment that @-mentions the app_handle input. The relay body test
 # runs the pinned action's real run: block with a gh test double, so it proves
-# the comment the workflow would post starts with "@<mention_login> status".
+# the comment the workflow would post starts with "@<app_handle> status".
 # The only network access is a git fetch of the pinned commit when it is not
 # already present; no GitHub API calls are made.
 set -uo pipefail
@@ -40,22 +40,22 @@ input_default() {
 }
 
 echo 'workflow_dispatch inputs'
-for input in issue prompt transport hive_url audience mention_login; do
+for input in issue prompt transport hive_url audience app_handle; do
   assert_grep "^      ${input}:\$" "input ${input} is declared"
 done
 assert_grep '^  workflow_dispatch:$' 'workflow is dispatchable'
-MENTION_LOGIN="$(input_default mention_login)"
-assert_eq "$MENTION_LOGIN" 'hivecommons-hive' 'mention_login defaults to hivecommons-hive'
+MENTION_LOGIN="$(input_default app_handle)"
+assert_eq "$MENTION_LOGIN" 'hivecommons-hive' 'app_handle defaults to hivecommons-hive'
 assert_eq "$(input_default transport)" 'comment' 'transport defaults to comment'
-assert_grep 'app_handle: \$\{\{ inputs\.mention_login \|\| vars\.HIVE_APP_HANDLE \}\}' \
-  'mention_login is passed to the action, then vars.HIVE_APP_HANDLE'
+assert_grep 'app_handle: \$\{\{ inputs\.app_handle \|\| vars\.HIVE_APP_HANDLE \}\}' \
+  'app_handle is passed to the action, then vars.HIVE_APP_HANDLE'
 
 echo 'composite action pinned to v6'
 ACTION_SHA="$(sed -nE 's|^ *uses: hivecommons/hive/\.github/actions/hive@([0-9a-f]{40}) # v6.*|\1|p' "$SMOKE_YML")"
 if [[ -n "$ACTION_SHA" ]]; then pass "action pinned to ${ACTION_SHA}"; else bad 'action is not pinned to a v6 commit SHA'; fi
 if grep -qF 'uses: ./.github/actions/hive' "$SMOKE_YML"; then bad 'workflow uses a local action path that does not exist on v5'; else pass 'workflow does not use a local action path'; fi
 
-echo 'relay comment body uses mention_login'
+echo 'relay comment body uses app_handle'
 ACTION_DIR="${TMP}/action"
 if [[ -n "$ACTION_SHA" ]]; then
   if ! git -C "$ROOT" cat-file -e "${ACTION_SHA}^{commit}" 2>/dev/null; then
@@ -113,10 +113,10 @@ relay_body() {
 
 body="$(relay_body "$MENTION_LOGIN")"
 assert_eq "$(head -n 1 <<<"$body")" '@hivecommons-hive status manual smoke from workflow_dispatch' \
-  'default mention_login is the relay mention'
+  'default app_handle is the relay mention'
 if grep -qF 'hive:source=action run_id=42 run_attempt=1' <<<"$body"; then pass 'relay body carries the action marker'; else bad 'relay body is missing the action marker'; fi
 assert_eq "$(relay_body '@other-hive[bot]' | head -n 1)" '@other-hive status manual smoke from workflow_dispatch' \
-  'a custom mention_login is normalized and mentioned'
+  'a custom app_handle is normalized and mentioned'
 
 if [[ $failures -gt 0 ]]; then
   printf '%d failure(s)\n' "$failures"

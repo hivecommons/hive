@@ -34,7 +34,7 @@ on:
         required: false
         type: string
         default: hive
-      mention_login:
+      app_handle:
         description: >-
           Login of the hive's GitHub App that the comment relay @-mentions (with or without
           a leading "@" or a "[bot]" suffix). It must match the App's bot login or the hive
@@ -64,7 +64,7 @@ jobs:
           transport: ${{ inputs.transport }}
           hive_url: ${{ inputs.hive_url }}
           audience: ${{ inputs.audience }}
-          app_handle: ${{ inputs.mention_login || vars.HIVE_APP_HANDLE }}
+          app_handle: ${{ inputs.app_handle || vars.HIVE_APP_HANDLE }}
 
       - name: Assert OIDC receipt output
         if: ${{ inputs.transport == 'oidc' }}

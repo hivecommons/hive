@@ -1,7 +1,7 @@
 # Release-line branch allow-lists — the single source of truth for which
 # version branches CI is expected to cover.
 #
-# Nine workflows pin their `push` / `pull_request` triggers to an explicit list
+# The workflows below pin their `push` / `pull_request` triggers to an explicit list
 # of version-branch names. That list is hand-maintained, and it has already
 # failed once: podman-contract.yml named `v2` alone, mainline moved to `v4`, and
 # the workflow stopped running entirely (#4339). A guard that never executes
