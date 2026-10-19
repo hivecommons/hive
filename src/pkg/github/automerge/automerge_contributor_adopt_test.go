@@ -31,6 +31,10 @@ type adoptAPI struct {
 	// failCompare makes it answer 500.
 	compareFiles []string
 	failCompare  bool
+	// prFiles are the files served by GET pulls/n/files (the adopted PR's
+	// diff); failPRFiles makes it answer 500.
+	prFiles     []map[string]any
+	failPRFiles bool
 }
 
 type adoptCommit struct {
@@ -47,6 +51,18 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 	defer a.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/files"):
+		if a.failPRFiles {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := a.prFiles
+		if files == nil {
+			files = []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}
+		}
+		_ = json.NewEncoder(w).Encode(files)
+		return true
 	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/refs":
 		var body struct {
 			Ref string `json:"ref"`
@@ -1291,6 +1307,67 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 	}
 	if got := adoptionBlocked([]string{"size/L", "do-not-merge/hold"}); got != "do-not-merge/hold" {
 		t.Fatalf("adoptionBlocked=%q", got)
+	}
+}
+
+// Adoption applies the contributor lane's diff fences first
+// (hivecommons/hive#12850): a body-marker clanker PR that touches CI
+// workflows, deletes tests or whose file list cannot be read is never
+// re-homed into an App PR; it stays at 072 and the attempt is not recorded,
+// so a later sweep (or a new head) is judged afresh.
+func TestAdoptionRefusedByDiffFence(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		files     []map[string]any
+		failFiles bool
+		wantAdopt bool
+	}{
+		{name: "plain diff adopts", files: []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}, wantAdopt: true},
+		{name: "workflow path", files: []map[string]any{{"filename": "src/widget.go", "status": "modified"}, {"filename": ".github/workflows/ci.yml", "status": "modified"}}},
+		{name: "action definition", files: []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}},
+		{name: "test file removed", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}},
+		{name: "tests gutted", files: []map[string]any{{"filename": "src/widget_test.go", "status": "modified", "additions": 1, "deletions": 40}}},
+		{name: "file list unavailable", failFiles: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptAfterUnregistered = 30 * time.Minute
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			// No profile here: author/clanker comes from the PR body alone.
+			h.sink.presence = &ContributorPresence{}
+			h.adopt.prFiles = tc.files
+			h.adopt.failPRFiles = tc.failFiles
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.api.reset()
+			h.clock.advance(time.Hour)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			adopted := len(h.adopt.pulls) == 1 && len(adoptionComments(h.api)) == 1
+			if adopted != tc.wantAdopt {
+				t.Fatalf("adopted = %v, want %v: pulls=%d comments=%v", adopted, tc.wantAdopt, len(h.adopt.pulls), h.api.comments)
+			}
+			if tc.wantAdopt {
+				return
+			}
+			if len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+				t.Fatalf("refused adoption pushed a branch: %v", h.adopt.refs)
+			}
+			if added := strings.Join(h.addedLabels(), " "); strings.Contains(added, "stage/074") {
+				t.Fatalf("refused adoption moved to 074: %v", h.api.added)
+			}
+			if rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); ok && rec.Adopted("aaa") {
+				t.Fatal("refused adoption was recorded as an attempt")
+			}
+			// The refusal is not sticky: once the diff reads clean the
+			// same head is adopted on the next sweep.
+			h.adopt.prFiles, h.adopt.failPRFiles = nil, false
+			h.api.reset()
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			if len(h.adopt.pulls) != 1 {
+				t.Fatalf("clean diff not adopted after refusal: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+			}
+		})
 	}
 }
 

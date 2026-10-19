@@ -179,6 +179,20 @@ func adoptionBlocked(labels []string) string {
 	return ""
 }
 
+// adoptionDiffRefusal applies the contributor lane's diff fences (CI
+// workflow/action definitions, test deletion) before adoption, so the hive
+// never re-homes such a head into an App-authored PR (hivecommons/hive#12850).
+// It returns the contributor-lane skip reason, or "" when adoption may
+// proceed. A file-list failure refuses (files-evidence): the next sweep
+// retries.
+func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) (string, error) {
+	files, err := ListChangedFiles(ctx, c.gh, obs.Owner, obs.Repo, &gh.PullRequest{Number: gh.Ptr(obs.Number)})
+	if err != nil {
+		return contributorLaneReasonFilesEvidence, err
+	}
+	return contributorLaneDiffReason(files), nil
+}
+
 // adoptionCloses extracts the closing-keyword lines from the original body.
 func adoptionCloses(body string) []string {
 	var out []string
@@ -347,6 +361,12 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
+	if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
+		// Not recorded as an attempt: the PR stays on its 072 route and a
+		// new head from the author is judged afresh.
+		c.info("stage labels: adoption due but refused by diff fence", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", refusal, "error", err)
+		return 0, nil
+	}
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	// Record the attempt first: whatever happens below, this head is tried once.
@@ -458,6 +478,10 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if adoptedHeadDCORed(obs, rec) {
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
 		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
+			if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
+				c.info("stage labels: DCO re-home refused by diff fence", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
+				return 0, nil
+			}
 			c.info("stage labels: re-homing adopted PR for DCO repair", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "unsigned", obs.Detail.DCOUnsigned, "unsigned_hive", obs.Detail.DCOUnsignedHive, "can_push", canPushInPlace)
 			// Record the attempt first, as adoptContributorPR does: this
 			// head is re-homed once, whatever the API says below.
