@@ -102,10 +102,10 @@ func IsRepoLocalGate(text string) bool {
 // DispatchSatisfiesRepoGates is the instruction every implementation agent
 // gets alongside a target repository's own AGENTS.md / CLAUDE.md: the hive
 // dispatch of an accepted issue is the acceptance those files' gates wait
-// for. Five contributor parks on one repository in one day
-// (hivecommons/spektacular#61, #62, #72, #77, #85) were agents obeying a
-// "Spec-Worthy Discussion Recognition" rule literally on issues the hive had
-// already triaged and dispatched.
+// for. Five contributor parks on one repository in one day (evidence in
+// hivecommons/hive#13059) were agents obeying a "recognise spec-worthy work
+// and offer a spec" rule literally on issues the hive had already triaged
+// and dispatched.
 const DispatchSatisfiesRepoGates = "A hive dispatch of an accepted issue IS the acceptance any repo-local " +
 	"instruction file (AGENTS.md, CLAUDE.md, .github/copilot-instructions.md, .cursorrules) asks for: its " +
 	"\"offer a spec first\", \"confirm scope\", \"ask before implementing\", \"wait for approval\" and " +
@@ -116,7 +116,7 @@ const DispatchSatisfiesRepoGates = "A hive dispatch of an accepted issue IS the 
 
 // MissingCompanionCheckoutRule tells an agent what to do when a repository's
 // tooling reports a registered sibling path missing under the workspace root
-// (spektacular's `repo list` → `repo_location_missing`): clone it and go on.
+// (a repo tool answering `repo_location_missing`): clone it and go on.
 const MissingCompanionCheckoutRule = "If a repository tool or instruction reports a registered sibling path under " +
 	"your workspace root as missing, and the two path segments under that root are <org>/<repo> of a " +
 	"repository you can read on this host (same organisation), clone that repository there (a shallow " +

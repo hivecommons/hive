@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-// The park texts contributor agents left on hivecommons/spektacular#61, #62,
-// #72 and #77 (2026-10-19), verbatim: every one is an AGENTS.md
-// confirmation gate and/or a registered sibling checkout reported missing.
-var spektacularGateParks = []string{
-	"Implementation is paused at the repository’s explicit AGENTS.md confirmation gate: its “Spec-Worthy Discussion Recognition” rule requires offering a spec and waiting for acceptance, deferral, or decline before implementing a multi-requirement issue. With `spec_trigger_threshold: moderate`, #77 meets that threshold. Should this issue be captured as a Spektacular spec first, or should spec capture be explicitly declined so implementation can proceed directly?\n\nThere is also a checkout prerequisite: `go run . repo list` stops with `repo_location_missing` for the registered docs location `/home/dev/workspace/hivecommons/spektacular-website/.spektacular`; AGENTS.md requires reporting that missing path and stopping rather than substituting another directory.",
+// The park texts contributor agents left on one target repository on
+// 2026-10-19 (evidence in hivecommons/hive#13059), with repo names
+// generalised: every one is an AGENTS.md confirmation gate and/or a
+// registered sibling checkout reported missing.
+var observedGateParks = []string{
+	"Implementation is paused at the repository’s explicit AGENTS.md confirmation gate: its “Spec-Worthy Discussion Recognition” rule requires offering a spec and waiting for acceptance, deferral, or decline before implementing a multi-requirement issue. With `spec_trigger_threshold: moderate`, #77 meets that threshold. Should this issue be captured as a spec first, or should spec capture be explicitly declined so implementation can proceed directly?\n\nThere is also a checkout prerequisite: `go run . repo list` stops with `repo_location_missing` for the registered docs location `/home/dev/workspace/acme/widgets-docs/.specs`; AGENTS.md requires reporting that missing path and stopping rather than substituting another directory.",
 	"Implementation is waiting on the repository-required spec-workflow decision. `AGENTS.md` (Spec-Worthy Discussion Recognition), with `spec_trigger_threshold: moderate`, requires offering to capture a multi-requirement issue as a spec and waiting for acceptance or an explicit decline before implementation. I offered that choice, but have not received a decision.",
 	"Implementation is paused at the repository’s AGENTS.md gates. This issue defines multiple requirements (per-run state, safe concurrent plan updates, isolated working trees, and exactly-once feature completion), so the mandatory spec-trigger rule requires offering spec capture and waiting for explicit confirmation before implementation. Please confirm whether to capture these requirements as a spec, or decline spec capture so implementation can proceed.",
 	"Paused before edits to comply with this repository’s AGENTS.md approval gates. This multi-requirement docs review meets the configured `spec_trigger_threshold: moderate`: would you like it captured as a spec first, or should I proceed directly with the review? The required `go run . repo list` also fails with `repo_location_missing` for the registered website location; AGENTS.md says to stop and report missing registered paths. May I provision that website checkout at the registered location?",
@@ -20,8 +21,8 @@ var spektacularGateParks = []string{
 	"CLAUDE.md says to confirm scope with a maintainer before implementing",
 }
 
-func TestIsRepoLocalGateRecognisesSpektacularParks(t *testing.T) {
-	for _, text := range spektacularGateParks {
+func TestIsRepoLocalGateRecognisesObservedParks(t *testing.T) {
+	for _, text := range observedGateParks {
 		got := Classify(text)
 		if got.Escalate || got.Category != CategoryRepoLocalGate || got.Evidence == "" {
 			t.Errorf("Classify(%.60q…) = %+v, want %q", text, got, CategoryRepoLocalGate)

@@ -2,10 +2,10 @@
 // tooling expects beside it (hivecommons/hive#13059).
 //
 // Some repositories register a sibling repository's path relative to the
-// agent workspace root — spektacular's `repo list` resolves a docs location to
-// <root>/hivecommons/spektacular-website/.spektacular and reports
-// `repo_location_missing` when it is not there — and their AGENTS.md says to
-// stop. Five contributor parks on one repository in one day were agents
+// agent workspace root — a spec or docs tool resolving a registered location
+// to <root>/<org>/<sibling>/… and reporting `repo_location_missing` when it
+// is not there — and their AGENTS.md says to stop. Five contributor parks on
+// one repository in one day were agents
 // obeying that literally. The owner's decision: when the registered path is
 // <root>/<org>/<repo> of a repository the hive's installation can read, the
 // agent clones it there (shallow is fine) and continues. This package turns a

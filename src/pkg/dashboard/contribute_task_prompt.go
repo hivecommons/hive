@@ -500,11 +500,11 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 		guideHint = "\n\n" + g + "\n\n"
 	}
 	// #13059: companion checkouts, right after the primary checkout step
-	// they sit beside. spektacular's `repo list` resolves a registered docs
-	// location to $HIVE_WORKSPACE_DIR/hivecommons/spektacular-website and
-	// its AGENTS.md says to stop when it is missing; four tasks parked on
-	// that in one day. The clone is the intended checkout, so the prompt
-	// provisions it before any tool can miss it.
+	// they sit beside. A target repo's tooling may resolve a registered
+	// sibling location to $HIVE_WORKSPACE_DIR/<org>/<sibling> and its
+	// AGENTS.md may say to stop when it is missing; agents parked on exactly
+	// that. The clone is the intended checkout, so the prompt provisions it
+	// before any tool can miss it.
 	if companions := config.CompanionCheckoutInstruction(repoFull, hints.Host, config.PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR", repoFull, hints.Companions)); companions != "" {
 		checkoutHint += companions + " "
 	}
@@ -530,9 +530,9 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 			"your own PR, never bypass a write gate), and a branch or requirement this "+
 			"assignment names explicitly below. "+
 			// #13059: the repository's conventions win; its confirmation gates
-			// do not apply. Five contributor parks on hivecommons/spektacular
-			// in one day obeyed its "offer a spec and wait for acceptance"
-			// rule on issues the hive had already accepted and dispatched.
+			// do not apply. Five contributor parks on one target repo in one
+			// day obeyed its "offer a spec and wait for acceptance" rule on
+			// issues the hive had already accepted and dispatched.
 			decisionpolicy.DispatchSatisfiesRepoGates+" "+
 			decisionpolicy.MissingCompanionCheckoutRule+" "+
 			// #5729: the base branch. Everything above deliberately REUSES a

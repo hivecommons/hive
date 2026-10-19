@@ -15,7 +15,7 @@ import (
 // parks an issue on a maintainer: the relay applies the configured decision
 // label (stage/045-needs-decision) and the hub books the full cooldown. Five
 // of the nine issues at 045 on one hive on 2026-10-19 were not decisions at
-// all (hivecommons/spektacular#61, #62, #72, #77, #85): the agents had read
+// all (evidence in hivecommons/hive#13059): the agents had read
 // the target repository's AGENTS.md "offer a spec and wait for acceptance"
 // rule, or its "stop and report a missing registered checkout" rule, and
 // parked asking the maintainer to accept work the hive had already accepted

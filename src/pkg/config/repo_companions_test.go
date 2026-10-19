@@ -15,15 +15,15 @@ func TestCompanionReposForParsesAndQualifies(t *testing.T) {
 	var cfg Config
 	raw := []byte(`
 project:
-  org: hivecommons
-  repos: [spektacular, other]
+  org: acme
+  repos: [widgets, other]
   repo_policies:
-    - repo: spektacular
+    - repo: widgets
       companion_repos:
-        - spektacular-website
-        - hivecommons/spektacular-website
+        - widgets-docs
+        - acme/widgets-docs
         - Other-Org/Docs
-        - spektacular
+        - widgets
         - ""
         - "bad/shape/entry"
     - repo: other
@@ -32,8 +32,8 @@ project:
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	want := []string{"hivecommons/spektacular-website", "Other-Org/Docs"}
-	for _, repo := range []string{"spektacular", "hivecommons/spektacular", "HiveCommons/Spektacular"} {
+	want := []string{"acme/widgets-docs", "Other-Org/Docs"}
+	for _, repo := range []string{"widgets", "acme/widgets", "Acme/Widgets"} {
 		if got := cfg.CompanionReposFor(repo); !reflect.DeepEqual(got, want) {
 			t.Errorf("CompanionReposFor(%q) = %v, want %v", repo, got, want)
 		}
@@ -44,7 +44,7 @@ project:
 		}
 	}
 	var nilCfg *Config
-	if got := nilCfg.CompanionReposFor("spektacular"); got != nil {
+	if got := nilCfg.CompanionReposFor("widgets"); got != nil {
 		t.Errorf("nil config CompanionReposFor = %v, want nil", got)
 	}
 	if repoPolicyHasNoOverrides(RepoPolicy{Repo: "x", CompanionRepos: []string{"y"}}) {

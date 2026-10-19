@@ -15,7 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 )
 
-// hivecommons/hive#13059: five contributor parks on hivecommons/spektacular
+// hivecommons/hive#13059: five contributor parks on one target repo
 // in one day were agents obeying the target repo's AGENTS.md "offer a spec
 // and wait for acceptance" rule, or its "stop on a missing registered
 // checkout" rule, on issues the hive had already accepted and dispatched.
@@ -23,7 +23,7 @@ import (
 // lifts the decision label, and leaves a marked comment; a second gate park
 // on the same issue stays parked.
 
-const gateParkReason = "Implementation is paused at the repository's explicit AGENTS.md confirmation gate: its Spec-Worthy Discussion Recognition rule requires offering a spec and waiting for acceptance before implementing. `go run . repo list` also stops with `repo_location_missing` for the registered docs location /home/dev/workspace/hivecommons/spektacular-website/.spektacular."
+const gateParkReason = "Implementation is paused at the repository's explicit AGENTS.md confirmation gate: its Spec-Worthy Discussion Recognition rule requires offering a spec and waiting for acceptance before implementing. `go run . repo list` also stops with `repo_location_missing` for the registered docs location /home/dev/workspace/acme/widgets-docs/.widgets."
 
 const genuineDecisionReason = "whether the public-facing CLI flag should be renamed is a breaking change the maintainer must decide"
 
@@ -69,14 +69,14 @@ func TestGateParkVerdict_OneRekickPerIssue(t *testing.T) {
 	hub, _ := covK2Hub(t)
 	fx := newToolingReleaseFixture()
 	hub.gateParkReleaser = fx.release
-	task := &WSTaskAssign{Kind: "issue", Repo: "hivecommons/spektacular", Number: 77}
+	task := &WSTaskAssign{Kind: "issue", Repo: "acme/widgets", Number: 77}
 	key := task.identityKey()
 
 	if v, ok := hub.reclassifyGateParkVerdict(key, completionVerdictNeedsDecision, gateParkReason); !ok || v != completionVerdictIdle {
 		t.Fatalf("first gate park must demote, got (%q, %v)", v, ok)
 	}
 	hub.releaseGateParkedIssue(task, "dev", gateParkReason)
-	if len(fx.calls) != 1 || !strings.HasPrefix(fx.calls[0], "hivecommons/spektacular#77 by dev: ") {
+	if len(fx.calls) != 1 || !strings.HasPrefix(fx.calls[0], "acme/widgets#77 by dev: ") {
 		t.Fatalf("release must go through the seam once, got %v", fx.calls)
 	}
 	if v, ok := hub.reclassifyGateParkVerdict(key, completionVerdictNeedsDecision, gateParkReason); ok || v != completionVerdictNeedsDecision {
@@ -153,7 +153,7 @@ func TestGateParkVerdict_ReleaseWithoutClientErrs(t *testing.T) {
 }
 
 // TestGateParkVerdict_WireShape drives the real task_complete handler with the
-// completion the relay sent for spektacular#77 and checks the hub booked an
+// completion the relay sent for widgets#77 and checks the hub booked an
 // idle completion (no decision ledger row, short cooldown), released the
 // label through the seam, re-offered the issue, and kept the SECOND gate
 // park on the same issue as a real needs-decision.
@@ -182,8 +182,8 @@ func TestGateParkVerdict_WireShape(t *testing.T) {
 	s.statusMu.Lock()
 	s.status = &StatusPayload{
 		Repos: []FrontendRepo{{
-			Name: "spektacular",
-			Full: "hivecommons/spektacular",
+			Name: "widgets",
+			Full: "acme/widgets",
 			ActionableIssues: []any{
 				noWorkIssue(77, "Smoke tests that check each agent loads what init and migrate install", time.Now().Add(-24*time.Hour)),
 			},
@@ -218,11 +218,11 @@ func TestGateParkVerdict_WireShape(t *testing.T) {
 	fx.mu.Lock()
 	calls := append([]string(nil), fx.calls...)
 	fx.mu.Unlock()
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "hivecommons/spektacular#77 by dev: ") {
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "acme/widgets#77 by dev: ") {
 		t.Fatalf("release must target the completed issue for the reporting contributor, got %v", calls)
 	}
 
-	key := noPRKey("hivecommons/spektacular", 77)
+	key := noPRKey("acme/widgets", 77)
 	hub.completedMu.Lock()
 	_, decisionRow := hub.noWorkVerdicts[key]
 	hub.completedMu.Unlock()
@@ -270,33 +270,33 @@ func TestGateParkVerdict_WireShape(t *testing.T) {
 }
 
 // The contributor prompt carries the two rules that would have prevented the
-// spektacular parks, and the companion checkout plan when one is configured.
+// widgets parks, and the companion checkout plan when one is configured.
 func TestTaskPromptRepoHints_GateAndCompanionText(t *testing.T) {
 	hub, s := covK2Hub(t)
-	s.deps.Config.Project.Org = "hivecommons"
+	s.deps.Config.Project.Org = "acme"
 	s.deps.Config.Project.RepoPolicies = []config.RepoPolicy{{
-		Repo:           "spektacular",
-		CompanionRepos: []string{"spektacular-website"},
+		Repo:           "widgets",
+		CompanionRepos: []string{"widgets-docs"},
 	}}
-	hints := hub.taskPromptRepoHints("hivecommons/spektacular")
-	if len(hints.Companions) != 1 || hints.Companions[0] != "hivecommons/spektacular-website" {
+	hints := hub.taskPromptRepoHints("acme/widgets")
+	if len(hints.Companions) != 1 || hints.Companions[0] != "acme/widgets-docs" {
 		t.Fatalf("companions = %v", hints.Companions)
 	}
 	if hints.Host == "" {
 		t.Fatal("host must resolve to the configured forge base URL")
 	}
-	body := buildTaskPromptBodyWithHints("hivecommons/spektacular", "hivecommons/spektacular#77", "Smoke tests", "", "main", true, "", hints)
+	body := buildTaskPromptBodyWithHints("acme/widgets", "acme/widgets#77", "Smoke tests", "", "main", true, "", hints)
 	for _, want := range []string{
 		decisionpolicy.DispatchSatisfiesRepoGates,
 		decisionpolicy.MissingCompanionCheckoutRule,
-		"$HIVE_WORKSPACE_DIR/hivecommons/spektacular-website",
+		"$HIVE_WORKSPACE_DIR/acme/widgets-docs",
 		"git clone --depth 1",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("prompt lacks %q", want)
 		}
 	}
-	plain := buildTaskPromptBodyWithHints("hivecommons/spektacular", "hivecommons/spektacular#77", "Smoke tests", "", "main", true, "", taskPromptRepoHints{})
+	plain := buildTaskPromptBodyWithHints("acme/widgets", "acme/widgets#77", "Smoke tests", "", "main", true, "", taskPromptRepoHints{})
 	if strings.Contains(plain, "git clone --depth 1") {
 		t.Error("no companion clone instruction without configured companions")
 	}

@@ -7,10 +7,10 @@ import (
 )
 
 func TestPlanLaysCompanionsOutUnderRoot(t *testing.T) {
-	got := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR/", "hivecommons/spektacular", []string{
-		"hivecommons/spektacular-website",
-		" HiveCommons/Spektacular-Website ",
-		"hivecommons/spektacular",
+	got := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR/", "acme/widgets", []string{
+		"acme/widgets-docs",
+		" Acme/Widgets-Docs ",
+		"acme/widgets",
 		"acme/docs/",
 		"bare",
 		"",
@@ -19,7 +19,7 @@ func TestPlanLaysCompanionsOutUnderRoot(t *testing.T) {
 		"a/b/c",
 	})
 	want := []CompanionCheckout{
-		{Repo: "hivecommons/spektacular-website", Path: "$HIVE_WORKSPACE_DIR/hivecommons/spektacular-website"},
+		{Repo: "acme/widgets-docs", Path: "$HIVE_WORKSPACE_DIR/acme/widgets-docs"},
 		{Repo: "acme/docs", Path: "$HIVE_WORKSPACE_DIR/acme/docs"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -40,24 +40,24 @@ func TestPlanIsNilWithoutRootOrCompanions(t *testing.T) {
 }
 
 func TestCloneCommandIsShallowIdempotentAndHostAware(t *testing.T) {
-	c := CompanionCheckout{Repo: "hivecommons/spektacular-website", Path: "/home/dev/workspace/hivecommons/spektacular-website"}
+	c := CompanionCheckout{Repo: "acme/widgets-docs", Path: "/home/dev/workspace/acme/widgets-docs"}
 	got := c.CloneCommand("https://github.ibm.com/")
-	want := "[ -d /home/dev/workspace/hivecommons/spektacular-website/.git ] || git clone --depth 1 https://github.ibm.com/hivecommons/spektacular-website /home/dev/workspace/hivecommons/spektacular-website"
+	want := "[ -d /home/dev/workspace/acme/widgets-docs/.git ] || git clone --depth 1 https://github.ibm.com/acme/widgets-docs /home/dev/workspace/acme/widgets-docs"
 	if got != want {
 		t.Fatalf("CloneCommand =\n%s\nwant\n%s", got, want)
 	}
-	if got := c.CloneCommand(""); !strings.Contains(got, "https://github.com/hivecommons/spektacular-website") {
+	if got := c.CloneCommand(""); !strings.Contains(got, "https://github.com/acme/widgets-docs") {
 		t.Fatalf("empty host should default to github.com: %s", got)
 	}
 }
 
 func TestInstructionRendersEveryCloneAndTheNoParkRule(t *testing.T) {
-	plan := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR", "hivecommons/spektacular", []string{"hivecommons/spektacular-website", "hivecommons/spektacular-specs"})
-	got := CompanionCheckoutInstruction("hivecommons/spektacular", "https://github.com", plan)
+	plan := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR", "acme/widgets", []string{"acme/widgets-docs", "acme/widgets-specs"})
+	got := CompanionCheckoutInstruction("acme/widgets", "https://github.com", plan)
 	for _, want := range []string{
-		"hivecommons/spektacular registers 2 companion repositories",
-		"git clone --depth 1 https://github.com/hivecommons/spektacular-website $HIVE_WORKSPACE_DIR/hivecommons/spektacular-website",
-		"git clone --depth 1 https://github.com/hivecommons/spektacular-specs $HIVE_WORKSPACE_DIR/hivecommons/spektacular-specs",
+		"acme/widgets registers 2 companion repositories",
+		"git clone --depth 1 https://github.com/acme/widgets-docs $HIVE_WORKSPACE_DIR/acme/widgets-docs",
+		"git clone --depth 1 https://github.com/acme/widgets-specs $HIVE_WORKSPACE_DIR/acme/widgets-specs",
 		"never park",
 	} {
 		if !strings.Contains(got, want) {
