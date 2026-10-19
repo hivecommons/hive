@@ -326,6 +326,18 @@ an issue it closes. Timing shares the PR engine's state file
 an issue's record never holds a PR stage, so a PR falling `100 → 060` does
 not read as the issue regressing.
 
+> **Planned: central stage engine (ADR-0025).**
+> [ADR-0025](adr/0025-central-stage-engine.md) replaces the two derivation
+> paths on this page (issue sweep and automerge lanes) and every
+> out-of-cycle stage write (claim relay, in-progress sweep, PR-claim sync,
+> dashboard) with one `pkg/stageengine` reconciler and a single
+> `StageWriter`; relay and claim paths will submit *facts* instead of
+> labels. Stage stays derived from GitHub truth each cycle; unexpected
+> transitions are counted as anomalies, never rejected. Rollout is gated by
+> `governor.labels.stage.engine.mode: shadow | enforce`; see the
+> [implementation plan](stage-engine-plan.md). Until it lands, the
+> description above is current.
+
 ### How a PR's stage is decided
 
 The automerge sweep already computes one reason per PR per lane each cycle
