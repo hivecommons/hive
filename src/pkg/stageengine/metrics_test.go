@@ -35,7 +35,8 @@ func TestCountersSnapshot(t *testing.T) {
 			t.Fatal("a zero write must not create a series")
 		}
 	}
-	if DefaultCounters() == nil || DefaultCounters() != DefaultCounters() {
-		t.Fatal("DefaultCounters")
+	def := DefaultCounters()
+	if def == nil || def != DefaultCounters() {
+		t.Fatal("DefaultCounters must be a stable singleton")
 	}
 }
