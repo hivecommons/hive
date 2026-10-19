@@ -130,7 +130,7 @@ func TestActionRepoGuard_BareConfigAcceptsOwnerQualifiedEvent(t *testing.T) {
 			Agents: func() []AgentInfo {
 				return []AgentInfo{{Name: "reviewer", Enabled: true, Converse: true, Mention: true, GovernorKick: true}}
 			},
-			GitHub: &fakeGH{app: "hive[bot]", actionRun: ActionRun{Repository: "kubestellar/console", Actor: "clubanderson"}},
+			GitHub: &fakeGH{app: "hivecommons-hive[bot]", actionRun: ActionRun{Repository: "kubestellar/console", Actor: "clubanderson"}},
 			Store:  store,
 			Kick: func(agent, msg, source string) error {
 				*kick = append(*kick, agent+":"+source)
@@ -147,7 +147,7 @@ func TestActionRepoGuard_BareConfigAcceptsOwnerQualifiedEvent(t *testing.T) {
 		CommentID: 6271475730,
 		HTMLURL:   "https://github.com/kubestellar/console/issues/24483#issuecomment-6271475730",
 		Author:    "github-actions[bot]",
-		Body:      "@hive status smoke\n<!-- hive:source=action run_id=39281968583 run_attempt=1 workflow=Hive action smoke actor=clubanderson transport=comment -->",
+		Body:      "@hivecommons-hive status smoke\n<!-- hive:source=action run_id=39281968583 run_attempt=1 workflow=Hive action smoke actor=clubanderson transport=comment -->",
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
