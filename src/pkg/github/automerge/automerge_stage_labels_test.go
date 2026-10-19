@@ -331,7 +331,8 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "changes requested while head too young", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
 		{name: "changes requested behind no-verdict", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
 		{name: "contributor changes requested", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
-		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "soaking is pre-merge soak", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(remaining=30m)"}, want: stagelabels.PreMergeSoak, rank: stageRankOwned},
+		{name: "soak complete waiting on github is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-checks-expected"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "workflow approval held", obs: stageObservation{Lane: stageLaneSelf, Reason: workflowApprovalRequiredPrefix + "build"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
@@ -346,7 +347,8 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "approved green lane error", obs: stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
 		{name: "unapproved unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new"}},
 		{name: "approved but ci pending stays reviewed", obs: stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
-		{name: "approved soaking is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "approved soaking is pre-merge soak", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(remaining=5m)", Detail: approve}, want: stagelabels.PreMergeSoak, rank: stageRankOwned},
+		{name: "approved soak complete is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: "head-changed-since-eval", Detail: approve}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 	}
 	for _, tc := range cases {
 		got := classifyStage(tc.obs)
@@ -436,7 +438,7 @@ func TestResolveStageTrustedHumanApprovalClearsRequiresHuman(t *testing.T) {
 		Reason:  contributorLaneReasonSoaking + "(remaining=30m)",
 		Detail:  humanApproved,
 	}})
-	if v.Stage != stagelabels.MergeQueue || v.Reason != "reviewer-verdict:requires_human:human-approved@clubanderson" || author != stagelabels.RoleContributor || obs.Lane != stageLaneContributor {
+	if v.Stage != stagelabels.PreMergeSoak || v.Reason != "reviewer-verdict:requires_human:human-approved@clubanderson" || author != stagelabels.RoleContributor || obs.Lane != stageLaneContributor {
 		t.Fatalf("current head got stage=%v reason=%q author=%v lane=%s", v.Stage, v.Reason, author, obs.Lane)
 	}
 
@@ -1383,15 +1385,36 @@ func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
 	if api.writes() != 0 || len(api.comments) != 0 {
 		t.Fatalf("stall note must be posted once: added=%v comments=%v", api.added, api.comments)
 	}
-	// Lane admits the PR: forward to the merge queue, stalled cleared, no note.
+	// Lane admits the PR: forward to 095 pre-merge-soak, stalled cleared, no note.
 	api.reset()
-	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonSoaking+"(10m)", nil)
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || len(api.comments) != 0 {
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonSoaking+"(remaining=10m0s)", nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/095-pre-merge-soak"}}) || len(api.comments) != 0 {
 		t.Fatalf("admission added=%v comments=%v", api.added, api.comments)
 	}
 	sort.Strings(api.removed)
 	if !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission", "stage/stalled"}) {
 		t.Fatalf("admission removed=%v", api.removed)
+	}
+	// The soak window plus grace passes and the lane still reports soaking:
+	// stalled, with the 095 note saying the lane has not promoted it.
+	api.reset()
+	clock.advance(stagelabels.PreMergeSoakDwell)
+	observe([]string{"stage/095-pre-merge-soak", "role/trusted", "author/human"}, contributorLaneReasonSoaking+"(remaining=10m0s)", nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("soak overrun added=%v", api.added)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 095-pre-merge-soak: no activity for 45m0s: contributor-lane:soaking(remaining=10m0s)") || !strings.Contains(api.comments[0], stagelabels.PreMergeSoakStallNote) {
+		t.Fatalf("soak overrun note=%v", api.comments)
+	}
+	// Soak complete, waiting on GitHub: 100 merge-queue, stalled cleared.
+	api.reset()
+	observe([]string{"stage/095-pre-merge-soak", "stage/stalled", "role/trusted", "author/human"}, "required-checks-expected", nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || len(api.comments) != 0 {
+		t.Fatalf("soak complete added=%v comments=%v", api.added, api.comments)
+	}
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/095-pre-merge-soak", "stage/stalled"}) {
+		t.Fatalf("soak complete removed=%v", api.removed)
 	}
 }
 
@@ -1476,9 +1499,10 @@ func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 		{name: "red required", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.ReturnedToContributor},
 		{name: "red required self-authored", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: approve}, want: stagelabels.Fixing},
 		// green
-		{name: "soaking all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: approve}, want: stagelabels.MergeQueue},
+		{name: "soaking all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: approve}, want: stagelabels.PreMergeSoak},
+		{name: "merge-failed all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "merge-failed", Detail: approve}, want: stagelabels.MergeQueue},
 		{name: "author side done all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: approve}, want: stagelabels.AwaitingMergeAdmission},
-		{name: "note for an older head does not bind", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha2", Reason: contributorLaneReasonSoaking + "(1h)", Detail: red}, want: stagelabels.MergeQueue},
+		{name: "note for an older head does not bind", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha2", Reason: contributorLaneReasonSoaking + "(1h)", Detail: red}, want: stagelabels.PreMergeSoak},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1499,10 +1523,11 @@ func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 }
 
 // hivecommons/hive#12538 end to end: a PR soaking behind a red optional
-// check moves 100 → 071 (regressed, check named in the comment and store
+// check moves 095 → 071 (regressed, check named in the comment and store
 // reason); a PR awaiting admission moves 080 → 071 the same way; once the
-// check is green the same soaking reason yields 100; and a head push drops
-// the old head's note.
+// check is green the same soaking reason yields 095; and a head push drops
+// the old head's note. A pre-095 record still wearing 100 while soaking is
+// reclassified to 095 without a regression.
 func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *testing.T) {
 	api := &stageAPI{}
 	srv := newStageAPI(t, api)
@@ -1526,16 +1551,27 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 		}
 	}
 
-	// Earlier cycle: all green, soaking → 100 (already on the PR).
+	// Migration: a PR at 100 from before 095 existed, still soaking, is
+	// reclassified to 095 — a downward label move that is NOT a regression.
+	store.Observe(key, stagelabels.MergeQueue, soaking)
 	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/095-pre-merge-soak"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+		t.Fatalf("100→095 reclassify: added=%v removed=%v", api.added, api.removed)
+	}
+	if rec, _ := store.Get(key); rec.Regressed() || len(api.comments) != 0 {
+		t.Fatalf("100→095 must not be a regression: rec=%+v comments=%v", rec, api.comments)
+	}
+
+	// Earlier cycle: all green, soaking → 095 (already on the PR).
+	cycle(stagePR(12457, "stage/095-pre-merge-soak", "role/trusted", "author/human"), soaking, nil)
 	if len(api.added) != 0 || len(api.removed) != 0 {
 		t.Fatalf("green soak changed labels: added=%v removed=%v", api.added, api.removed)
 	}
 
-	// An optional check on the same head went red: 100 → 071 (human author), named.
-	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, []string{redName})
+	// An optional check on the same head went red: 095 → 071 (human author), named.
+	cycle(stagePR(12457, "stage/095-pre-merge-soak", "role/trusted", "author/human"), soaking, []string{redName})
 	// Retired label: the backward hop is recorded as history + comment, never as stage/regressed.
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) || !reflect.DeepEqual(api.removed, []string{"stage/095-pre-merge-soak"}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 	rec, _ := store.Get(key)
@@ -1545,19 +1581,19 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	if rec.Reason != "optional-check-failing:"+redName {
 		t.Fatalf("stored reason %q", rec.Reason)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 071-needs-author: optional-check-failing:"+redName) {
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 095-pre-merge-soak → 071-needs-author: optional-check-failing:"+redName) {
 		t.Fatalf("comments=%v", api.comments)
 	}
 
-	// Same head, check re-run green: the lane's soaking reason is 100 again.
+	// Same head, check re-run green: the lane's soaking reason is 095 again.
 	cycle(stagePR(12457, "stage/071-needs-author", "role/trusted", "author/human"), soaking, nil)
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/095-pre-merge-soak"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 
 	// Red again while the lane stops on a reason no stage claims (would be
 	// 080): still 072.
-	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), "review-state-check", []string{redName})
+	cycle(stagePR(12457, "stage/095-pre-merge-soak", "role/trusted", "author/human"), "review-state-check", []string{redName})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
@@ -1568,7 +1604,7 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 
 	// New head pushed: a note recorded for the old head does not bind it.
 	cycle(stagePR(12457, "stage/071-needs-author", "role/trusted", "author/human"), soaking, nil)
-	pr := stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human")
+	pr := stagePR(12457, "stage/095-pre-merge-soak", "role/trusted", "author/human")
 	pr.Head.SHA = gh.Ptr("sha2")
 	cycle(pr, soaking, []string{redName})
 	if len(api.added) != 0 || len(api.removed) != 0 {

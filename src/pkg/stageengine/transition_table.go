@@ -18,12 +18,17 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.CoveredByPR, stagelabels.ReviewPending}:                true, // the PR takes over (issue stays 040; cross-kind)
 	{stagelabels.ReviewPending, stagelabels.Reviewed}:                   true, // swarm approve
 	{stagelabels.Reviewed, stagelabels.AwaitingMergeAdmission}:          true, // CI green, author side done
-	{stagelabels.AwaitingMergeAdmission, stagelabels.MergeQueue}:        true, // lane admits (soak / merge-eligible)
+	{stagelabels.AwaitingMergeAdmission, stagelabels.PreMergeSoak}:      true, // lane admits, soak window running
+	{stagelabels.AwaitingMergeAdmission, stagelabels.MergeQueue}:        true, // lane admits, no soak / soak already complete
+	{stagelabels.PreMergeSoak, stagelabels.MergeQueue}:                  true, // soak complete
+	{stagelabels.MergeQueue, stagelabels.PreMergeSoak}:                  true, // pre-095 record reclassified while still soaking (not a regression)
 	{stagelabels.ReviewPending, stagelabels.Fixing}:                     true, // hive PR red / changes requested
 	{stagelabels.ReviewPending, stagelabels.NeedsAuthor}:                true, // human PR red / changes requested
 	{stagelabels.ReviewPending, stagelabels.ReturnedToContributor}:      true, // contributor PR red / changes requested
 	{stagelabels.ReviewPending, stagelabels.NeedsDecision}:              true, // swarm requires_human; hold / sentinel / human-only rule
 	{stagelabels.Reviewed, stagelabels.Fixing}:                          true, // new head red
+	{stagelabels.PreMergeSoak, stagelabels.Fixing}:                      true, // new head red during the soak (backward hop, commented)
+	{stagelabels.PreMergeSoak, stagelabels.ReturnedToContributor}:       true, // contributor head red during the soak (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.Fixing}:                        true, // new head red (backward hop, commented)
 	{stagelabels.MergeQueue, stagelabels.ReturnedToContributor}:         true, // contributor head red (backward hop, commented)
 	{stagelabels.Fixing, stagelabels.ReviewPending}:                     true, // fixed head pushed
@@ -31,7 +36,8 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.ReturnedToContributor, stagelabels.ReviewPending}:      true, // author pushes a new head
 	{stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive}:      true, // clanker unavailable, adopted
 	{stagelabels.AdoptedByHive, stagelabels.AwaitingMergeAdmission}:     true, // in-place fix green and approved
-	{stagelabels.AdoptedByHive, stagelabels.MergeQueue}:                 true, // lane admits the hive's head
+	{stagelabels.AdoptedByHive, stagelabels.PreMergeSoak}:               true, // lane admits the hive's head, soak running
+	{stagelabels.AdoptedByHive, stagelabels.MergeQueue}:                 true, // lane admits the hive's head, soak complete
 	{stagelabels.AdoptedByHive, stagelabels.ReturnedToContributor}:      true, // superseder closed unmerged / contributor pushed over
 	{stagelabels.AdoptedByHive, stagelabels.NeedsDecision}:              true, // adoption-stalled:<reason> / re-home failed
 	{stagelabels.NeedsDecision, stagelabels.AdoptedByHive}:              true, // adoption-stalled reason cleared; escalation released

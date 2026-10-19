@@ -251,6 +251,9 @@ func RouteHuman(e Evidence) Route {
 		wait = append(wait, fmt.Sprintf("%d check(s) still running", e.Checks.Pending))
 	}
 	if e.Soak > 0 && e.SoakElapsed < e.Soak {
+		// A head the lane has NOT admitted (trust blocks it) is still
+		// 060 while its soak runs; 095 pre-merge-soak is the lane's own
+		// soak after admission (see PreMergeSoakSummary).
 		wait = append(wait, fmt.Sprintf("soak %s remaining", (e.Soak-e.SoakElapsed).Round(time.Minute)))
 	}
 	if len(wait) > 0 {
@@ -317,6 +320,22 @@ func summarize(e Evidence) string {
 	return strings.Join(parts, ", ")
 }
 
+// PreMergeSoakSummary is the one-line 095 explanation — "soaking: admitted,
+// 12m of 30m elapsed" — for the stage comment, dashboard and logs. With no
+// soak window configured it reads "soaking: admitted, no soak window".
+func PreMergeSoakSummary(soak, elapsed time.Duration) string {
+	if soak <= 0 {
+		return "soaking: admitted, no soak window"
+	}
+	if elapsed > soak {
+		elapsed = soak
+	}
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return fmt.Sprintf("soaking: admitted, %s of %s elapsed", elapsed.Round(time.Minute), soak.Round(time.Minute))
+}
+
 // Entry-comment markers for the two human stages.
 const (
 	ReadyCommentMarker    = "<!-- hive:stage-ready-for-human-merge -->"
@@ -371,7 +390,7 @@ func DecisionComment(r Route) string {
 		b.WriteString("\n\n")
 		b.WriteString(actions)
 	}
-	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "` or the merge queue on its own.</sub>")
+	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own.</sub>")
 	return b.String()
 }
 

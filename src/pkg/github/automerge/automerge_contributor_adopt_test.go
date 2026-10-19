@@ -1234,14 +1234,14 @@ func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
 		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
 	}
 
-	// The merge gate takes it: approved and soaking is 100, the adoption
+	// The merge gate takes it: approved and soaking is 095, the adoption
 	// record stays (it is released by the yield / close paths, not here).
 	h.api.reset()
 	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
-	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(5m)")
-	stageIs(stagelabels.MergeQueue, "merge gate")
-	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/100-merge-queue" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
-		t.Fatalf("074 → 100: added=%v removed=%v", h.api.added, h.api.removed)
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(remaining=5m)")
+	stageIs(stagelabels.PreMergeSoak, "merge gate")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/095-pre-merge-soak" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074 → 095: added=%v removed=%v", h.api.added, h.api.removed)
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() {
 		t.Fatalf("adoption dropped at the merge gate: %+v", rec)
@@ -1253,7 +1253,7 @@ func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
 	h.api.reset()
 	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
 	h.clock.advance(time.Minute)
-	h.observe(adoptPR(7, "ccc", "stage/100-merge-queue", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	h.observe(adoptPR(7, "ccc", "stage/095-pre-merge-soak", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
 	stageIs(stagelabels.ReviewPending, "released")
 	var yields int
 	for _, c := range h.api.comments {

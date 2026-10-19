@@ -452,7 +452,8 @@ it evaluated, derived from the same per-lane reason it logs
 swarm's known verdict is `requires_human`, which the lane also reports as
 no-verdict → `stage/085-needs-decision` with reason
 `reviewer-verdict:requires_human`,
-`contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
+`contributor-lane:soaking(...)` → `stage/095-pre-merge-soak` (admitted, soak window
+running; promoted to `stage/100-merge-queue` once the soak is complete), approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
 human-authored PR → `stage/071-needs-author`, on a clanker PR →

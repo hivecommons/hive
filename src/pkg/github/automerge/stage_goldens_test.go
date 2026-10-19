@@ -827,6 +827,16 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 			Input: stageGoldenInput{Observations: single(stageLaneSelf, contributorLaneReasonSoaking+"(remaining=10m)", stageGoldenDetail{RedChecks: []string{"docs-link-check"}, RedChecksHead: goldenHead}), AuthorKind: string(authorkind.Hive)},
 		},
 		{
+			Name:  "regression/13020-soaking-is-095-not-merge-queue",
+			Note:  "hivecommons/hive#13020: a lane-admitted head inside its soak window is 095 pre-merge-soak; 100 merge-queue is reached only once the soak is complete.",
+			Input: stageGoldenInput{Observations: single(stageLaneSelf, contributorLaneReasonSoaking+"(remaining=12m0s)", stageGoldenDetail{}), AuthorKind: string(authorkind.Hive)},
+		},
+		{
+			Name:  "regression/13020-soak-complete-is-merge-queue",
+			Note:  "hivecommons/hive#13020: soak done and only GitHub (required-checks-expected) in the way → 100 merge-queue.",
+			Input: stageGoldenInput{Observations: single(stageLaneSelf, "required-checks-expected", stageGoldenDetail{}), AuthorKind: string(authorkind.Hive)},
+		},
+		{
 			Name:  "regression/12606-shared-ci-red-is-review-pending",
 			Note:  "hivecommons/hive#12606: red CI deferred to a shared-ci incident is the hive's, not the author's.",
 			Input: stageGoldenInput{Observations: []stageGoldenObservation{{Lane: stageLaneContributor, Reason: "required-check-failing:unit", HeadSHA: goldenHead, SharedCIIncident: 9100}}, AuthorKind: string(authorkind.Clanker)},
@@ -839,7 +849,7 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 		},
 		{
 			Name:  "regression/trusted-human-approval-clears-requires-human-same-head",
-			Note:  "A trusted human's APPROVED review on the current head resolves requires_human into the merge queue with the approver in the reason.",
+			Note:  "A trusted human's APPROVED review on the current head resolves requires_human into the pre-merge soak (095) with the approver in the reason.",
 			Input: stageGoldenInput{Observations: single(stageLaneContributor, contributorLaneReasonSoaking+"(remaining=30m)", stageGoldenVerdicts[7].detail("contributor")), AuthorKind: string(authorkind.Human)},
 		},
 		{

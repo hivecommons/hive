@@ -87,6 +87,12 @@ const (
 	// (Stage.For clamps 085 asked of an issue to 045). Appended for the
 	// same persisted-enum reason as NeedsDecision.
 	IssueNeedsDecision
+	// PreMergeSoak is stage/095: the automerge lane has admitted the PR
+	// and its soak window (contributor-lane soak_minutes) is still running
+	// before the merge is attempted. 100 merge-queue is reached only once
+	// the soak is complete. Appended for the same persisted-enum reason as
+	// NeedsDecision.
+	PreMergeSoak
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -224,7 +230,7 @@ var Table = []Definition{
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
 	{Stage: IssueNeedsDecision, Number: 45, Slug: "needs-decision", Description: "Issue parked on a person: needs-human or a maintainer decision is owed; a hold label outranks it", Issue: true},
 	{Stage: ReviewPending, Number: 50, Slug: "review-pending", Description: "Review swarm requested; awaiting a verdict for the current head", Dwell: time.Hour, PR: true},
-	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, soak not started)", Dwell: 30 * time.Minute, PR: true},
+	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, or soak on an unadmitted head)", Dwell: 30 * time.Minute, PR: true},
 	{Stage: Fixing, Number: 70, Slug: "fixing", Description: "Hive-authored PR: CI red, changes requested or needs rebase; a hive agent is fixing it", Dwell: 2 * time.Hour, PR: true},
 	{Stage: NeedsAuthor, Number: 71, Slug: "needs-author", Description: "Human-authored PR: CI red, changes requested or conflicting; diagnosis posted, the author must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Clanker PR: CI red, changes requested or conflicting; diagnosis posted, its hive must act", Dwell: 24 * time.Hour, PR: true},
@@ -232,7 +238,8 @@ var Table = []Definition{
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
 	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "PR parked on a human decision: sentinel alert, hold/needs-decision label or human-only rule", PR: true},
 	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this but trust/role blocks it; a maintainer's /lgtm /approve is all that is missing", PR: true},
-	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
+	{Stage: PreMergeSoak, Number: 95, Slug: "pre-merge-soak", Description: "Lane admitted; the pre-merge soak window is running before the merge is attempted", Dwell: PreMergeSoakDwell, StallNote: true, PR: true},
+	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted and soak complete: merge-eligible, waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
 
 // FixingStageFor is the "author must act" stage for a red or blocked PR by
@@ -257,6 +264,15 @@ func FixingStageFor(selfAuthored bool, kind authorkind.Kind) Stage {
 func AuthorBlocked(s Stage) bool {
 	return s == Fixing || s == NeedsAuthor || s == ReturnedToContributor
 }
+
+// PreMergeSoakDwell is how long a PR may sit at 095 before it is called
+// stalled: the default contributor-lane soak (30m, config
+// DefaultContributorLaneSoakMinutes) plus a 15m grace for the sweep that
+// promotes it to 100. The Table is static, so an operator with a longer
+// soak_minutes should raise `governor.labels.stage.dwell.pre-merge-soak`
+// to match; a stall here means the soak has elapsed but the lane never
+// promoted the PR — a lane bug, not an author problem, hence StallNote.
+const PreMergeSoakDwell = 45 * time.Minute
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
 // stages are inserted between existing numbers, never above 100.

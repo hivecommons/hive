@@ -1191,3 +1191,72 @@ func TestStoreStampAdoptedHeadAtMigratesLegacyRecord(t *testing.T) {
 		t.Fatalf("supersession stamped: %+v", r)
 	}
 }
+
+// 095 sits between 090 and 100, is PR-only with a stall note, and a 100 → 095
+// re-evaluation (the lane re-reports a still-soaking head) is a
+// reclassification, not a regression — while leaving 095 for a fix is.
+func TestPreMergeSoakStage(t *testing.T) {
+	if got := PreMergeSoak.Label(); got != "stage/095-pre-merge-soak" {
+		t.Fatalf("label = %q", got)
+	}
+	if !ReadyForHumanMerge.Before(PreMergeSoak) || !PreMergeSoak.Before(MergeQueue) || !AwaitingMergeAdmission.Before(PreMergeSoak) {
+		t.Fatal("095 must order between 080/090 and 100")
+	}
+	if !PreMergeSoak.StallNote() || !PreMergeSoak.Applies(PRItem) || PreMergeSoak.Applies(IssueItem) {
+		t.Fatalf("095 flags: stall=%v pr=%v issue=%v", PreMergeSoak.StallNote(), PreMergeSoak.Applies(PRItem), PreMergeSoak.Applies(IssueItem))
+	}
+	if PreMergeSoak.Dwell() != PreMergeSoakDwell || PreMergeSoakDwell != 45*time.Minute {
+		t.Fatalf("dwell = %s", PreMergeSoak.Dwell())
+	}
+	if IsRegression(MergeQueue, PreMergeSoak) {
+		t.Fatal("100 → 095 must not be a regression")
+	}
+	for _, to := range []Stage{Fixing, Reviewed, ReviewPending, AwaitingMergeAdmission} {
+		if !IsRegression(PreMergeSoak, to) {
+			t.Fatalf("095 → %s must be a regression", to)
+		}
+	}
+	if !IsRegression(MergeQueue, AwaitingMergeAdmission) {
+		t.Fatal("100 → 080 stays a regression")
+	}
+
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 13020)
+	st.Observe(key, AwaitingMergeAdmission, "contributor-lane:no-decision")
+	if tr := st.Observe(key, PreMergeSoak, "contributor-lane:soaking(remaining=30m0s)"); !tr.Changed || tr.Regressed {
+		t.Fatalf("080 → 095: %+v", tr)
+	}
+	if tr := st.Observe(key, MergeQueue, "contributor-lane:merge-eligible"); !tr.Changed || tr.Regressed {
+		t.Fatalf("095 → 100: %+v", tr)
+	}
+	if tr := st.Observe(key, PreMergeSoak, "contributor-lane:soaking(remaining=1m0s)"); !tr.Changed || tr.Regressed {
+		t.Fatalf("100 → 095 must be a plain move, got %+v", tr)
+	}
+	rec, _ := st.Get(key)
+	if rec.RegressedFrom != None {
+		t.Fatalf("100 → 095 must not record a regression: %+v", rec)
+	}
+
+	c := StallComment(PreMergeSoak, PreMergeSoakDwell, "contributor-lane:soaking(remaining=0s)")
+	if !strings.Contains(c, "stage 095-pre-merge-soak: no activity for 45m0s") || !strings.Contains(c, PreMergeSoakStallNote) {
+		t.Fatalf("stall comment = %q", c)
+	}
+	if c := StallComment(MergeQueue, time.Hour, "x"); strings.Contains(c, PreMergeSoakStallNote) {
+		t.Fatalf("100 stall must not carry the soak note: %q", c)
+	}
+
+	for _, tc := range []struct {
+		soak, elapsed time.Duration
+		want          string
+	}{
+		{30 * time.Minute, 12 * time.Minute, "soaking: admitted, 12m0s of 30m0s elapsed"},
+		{30 * time.Minute, 45 * time.Minute, "soaking: admitted, 30m0s of 30m0s elapsed"},
+		{30 * time.Minute, -time.Minute, "soaking: admitted, 0s of 30m0s elapsed"},
+		{0, time.Minute, "soaking: admitted, no soak window"},
+	} {
+		if got := PreMergeSoakSummary(tc.soak, tc.elapsed); got != tc.want {
+			t.Fatalf("PreMergeSoakSummary(%s,%s) = %q, want %q", tc.soak, tc.elapsed, got, tc.want)
+		}
+	}
+}

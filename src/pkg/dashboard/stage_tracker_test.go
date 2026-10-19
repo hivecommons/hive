@@ -27,6 +27,7 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 		stagelabels.Fixing: trackerNumberFixing, stagelabels.NeedsAuthor: trackerNumberNeedsAuthor, stagelabels.ReturnedToContributor: trackerNumberReturned,
 		stagelabels.AdoptedByHive: trackerNumberAdopted, stagelabels.AwaitingMergeAdmission: trackerNumberAwaitingMerge,
 		stagelabels.NeedsDecision: trackerNumberNeedsDecision, stagelabels.ReadyForHumanMerge: trackerNumberReadyForHuman,
+		stagelabels.PreMergeSoak: trackerNumberPreMergeSoak,
 	}
 	for s, n := range pins {
 		if s.Number() != n {
@@ -48,8 +49,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 9 || detours != 6 {
-		t.Fatalf("mains=%d detours=%d, want 9 main segments (045 is the issue parking bay) and 6 detours", mains, detours)
+	if mains != 10 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 10 main segments (045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
 	}
 }
 
@@ -121,9 +122,11 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 	clock = now.Add(-25 * time.Hour)
 	store.Observe(key101, stagelabels.ReturnedToContributor, "reviewer-verdict:changes_requested")
 	store.MarkNudged(key101, "abc123", 1, true, clock)
-	// PR 102: hive PR in the merge queue, fresh.
+	// PR 102: hive PR admitted and soaking, fresh (12m left as of a sweep 5m ago).
 	clock = now.Add(-40 * time.Minute)
-	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.MergeQueue, "contributor-lane:soaking:12m")
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking(remaining=17m0s)")
+	clock = now.Add(-5 * time.Minute)
+	store.Observe(stagelabels.Key("acme/console", 102), stagelabels.PreMergeSoak, "contributor-lane:soaking(remaining=12m0s)")
 	// PR 103: regressed from the merge queue to review-pending.
 	key103 := stagelabels.Key("acme/console", 103)
 	clock = now.Add(-3 * time.Hour)
@@ -132,7 +135,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 	store.Observe(key103, stagelabels.ReviewPending, "contributor-lane:no-verdict")
 	// Issue 7: mirrors PR 102.
 	clock = now.Add(-40 * time.Minute)
-	store.Observe(stagelabels.Key("acme/console", 7), stagelabels.MergeQueue, "mirrors PR #102")
+	store.Observe(stagelabels.Key("acme/console", 7), stagelabels.PreMergeSoak, "mirrors PR #102")
 	clock = now
 
 	status := minimalPayload()
@@ -140,7 +143,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 	status.Repos = []FrontendRepo{{
 		Name: "console", Full: "acme/console",
 		ActionableIssues: []any{
-			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/100-merge-queue"}},
+			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/095-pre-merge-soak"}},
 			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner"}},
 			// Parked on a person: the issue parking bay 045 (owner decision:
 			// issues never wear 085), with needs-human beside it.
@@ -153,7 +156,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 		},
 		OpenPrs: []any{
 			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-returned-to-contributor", "author/contributor", "needs-rebase"}}},
-			FrontendPR{PullRequest: github.PullRequest{Number: 102, Title: "Stabilise test", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/100-merge-queue", "author/trusted", "author/hive"}}, MergeVerdict: &github.MergeVerdict{Tier: "trusted"}},
+			FrontendPR{PullRequest: github.PullRequest{Number: 102, Title: "Stabilise test", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/095-pre-merge-soak", "author/trusted", "author/hive"}}, MergeVerdict: &github.MergeVerdict{Tier: "trusted"}},
 			FrontendPR{PullRequest: github.PullRequest{Number: 103, Title: "Relay PR", Author: "zoe", HiveAttributed: true, Labels: []string{"stage/050-review-pending"}}},
 			// Label only: the store never saw it.
 			FrontendPR{PullRequest: github.PullRequest{Number: 104, Title: "Hand-made", Author: "pat", Labels: []string{"stage/085-needs-decision", "needs-decision"}}},
@@ -266,11 +269,16 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	}
 
 	pr102 := trackerItem(t, resp, "pr", 102)
-	if pr102.Stage != 100 || pr102.Lane != laneHive || pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel || pr102.Tier != "trusted" {
+	if pr102.Stage != 95 || pr102.Lane != laneHive || pr102.AuthorKind != authorKindHive || pr102.AuthorKindSource != authorKindSrcLabel || pr102.Tier != "trusted" {
 		t.Fatalf("pr102 = %+v", pr102)
 	}
-	if pr102.Caption != "In the merge queue; waiting for soak, tide or the merge window — soaking" || pr102.Actor != "tide" || len(pr102.Modifiers) != 0 {
+	if pr102.Caption != "Admitted by the automerge lane; the pre-merge soak window is running — soaking, 12m0s left at the last sweep" || pr102.Actor != "automerge lane" || len(pr102.Modifiers) != 0 {
 		t.Fatalf("pr102 caption=%q actor=%q mods=%v", pr102.Caption, pr102.Actor, pr102.Modifiers)
+	}
+	// 12m left when the sweep wrote it 5m ago → 7m now; the 40m-old entry
+	// time is the stage_since, not the soak clock.
+	if pr102.SoakRemainingSeconds != 7*60 || pr102.StageSince == nil || !pr102.StageSince.Equal(now.Add(-40*time.Minute)) {
+		t.Fatalf("pr102 soak_remaining_seconds=%d since=%v", pr102.SoakRemainingSeconds, pr102.StageSince)
 	}
 
 	pr103 := trackerItem(t, resp, "pr", 103)
@@ -294,16 +302,16 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	}
 
 	issue7 := trackerItem(t, resp, "issue", 7)
-	if issue7.Stage != 100 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
+	if issue7.Stage != 95 || !issue7.Mirrored || issue7.LinkedPR != 102 || issue7.Lane != laneIssue || issue7.AuthorKind != authorKindHuman {
 		t.Fatalf("issue7 = %+v", issue7)
 	}
-	if issue7.Caption != "Covered by PR #102 — merge queue on the PR side" {
+	if issue7.Caption != "Covered by PR #102 — soaking on the PR side" {
 		t.Fatalf("issue7 caption = %q", issue7.Caption)
 	}
 	// The covering PR is resolved onto the issue with what its sub-row
 	// needs, and the PR itself is marked as nested under the issue.
 	if len(issue7.LinkedPRs) != 1 || issue7.LinkedPRs[0].Number != 102 || issue7.LinkedPRs[0].Title != "Stabilise test" || issue7.LinkedPRs[0].Author != "hive-app[bot]" ||
-		issue7.LinkedPRs[0].AuthorKind != authorKindHive || issue7.LinkedPRs[0].Stage != 100 || issue7.LinkedPRs[0].StageSince == nil || !issue7.LinkedPRs[0].StageSince.Equal(*pr102.StageSince) ||
+		issue7.LinkedPRs[0].AuthorKind != authorKindHive || issue7.LinkedPRs[0].Stage != 95 || issue7.LinkedPRs[0].StageSince == nil || !issue7.LinkedPRs[0].StageSince.Equal(*pr102.StageSince) ||
 		issue7.LinkedPRs[0].Caption != pr102.Caption || len(issue7.LinkedPRs[0].Modifiers) != 0 {
 		t.Fatalf("issue7 linked PRs = %+v", issue7.LinkedPRs)
 	}
@@ -320,7 +328,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	for _, it := range resp.Items {
 		order = append(order, it.Number)
 	}
-	// 100: issue7 and pr102 share since; repo tie-break then number → 7, 102.
+	// 095: issue7 and pr102 share since; repo tie-break then number → 7, 102.
 	want := []int{7, 102, 104, 101, 103, 13, 8, 105}
 	for i := range want {
 		if order[i] != want[i] {

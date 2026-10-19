@@ -12589,11 +12589,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        One Domino's-style tracker strip per open work item from
        GET /api/stage-tracker. Issues and PRs share ONE strip:
        Open → 010 Actionable → 020 Claimed → 030 PR in progress →
-       040 Covered by PR → 050 Review → 080 Merge admission → 100 Merge
-       queue → ✓ merged. An issue keeps advancing with its covering PR's
-       stage; a PR filed without an issue shows the issue steps as passed.
-       060 Reviewed lights Merge admission; 070/072/074 ride Review and
-       085/090 ride Merge admission as detour badges. An ISSUE parked on a
+       040 Covered by PR → 050 Review → 080 Merge admission → 095 Soaking →
+       100 Merge queue → ✓ merged. An issue keeps advancing with its
+       covering PR's stage; a PR filed without an issue shows the issue
+       steps as passed. 060 Reviewed, 095 Soaking and 100 Merge queue light
+       Merge admission (the chevron word and tooltip name the real stage);
+       070/072/074 ride Review and 085/090 ride Merge admission as detour
+       badges. An ISSUE parked on a
        person wears 045 (owner decision: 085 is PR-only) before any PR
        exists and so rides Actionable (the issue side), not the merge gate;
        a pre-045 issue still wearing 085 is drawn the same way until the
@@ -12609,10 +12611,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // Stages that share a column (or a detour word) and what the lit chevron says.
-    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
+    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12662,10 +12665,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a human decision' + viaPR;
         case 90: return 'Ready for a human merge' + viaPR;
+        case 95: return 'Pre-merge soak' + stageTrackerSoakLeft(item) + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
         default: return item.stage_label || 'Tracking';
       }
+    }
+
+    // " — Xm left" for a 095 row whose payload carries the soak remaining.
+    function stageTrackerSoakLeft(item) {
+      const sec = Number(item.soak_remaining_seconds) || 0;
+      if (sec <= 0) return '';
+      const min = Math.ceil(sec / 60);
+      return ' — ' + (min >= 60 ? Math.floor(min / 60) + 'h' + (min % 60 ? (min % 60) + 'm' : '') : min + 'm') + ' left';
     }
 
     function stageTrackerHoldLabels(item) {
@@ -12678,8 +12690,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Which strip segment a stage lights: main stages light themselves,
-    // 040 shares the PR in progress column with 030, 060 and 100 share the
-    // Merge gate column with 080, detours light the segment they branch from.
+    // 040 shares the PR in progress column with 030, 060, 095 and 100 share
+    // the Merge gate column with 080, detours light the segment they branch from.
     // kind is 'issue' or 'pr': an issue parked on a person (045, or a
     // pre-045 085) is parked before any PR exists, so it lights Actionable
     // rather than the merge gate.
@@ -12690,7 +12702,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
-      if (cur === 60 || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
+      if (cur === 60 || cur === STAGE_TRACKER_PRE_MERGE_SOAK || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
       const st = (stages || []).find(x => Number(x.number) === cur) || {};
       let from = Number(st.branch_from) || 0;
       if (from === 60) from = 50;
@@ -12706,7 +12718,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== 100)
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur) } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
@@ -12811,8 +12823,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let tip = '';
         if (active) {
           tip = sg.label + (sg.description ? ' — ' + sg.description : '');
-          // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
+          // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
           if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
+          else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
         }
@@ -42926,7 +42939,7 @@ function burnAreaChart() {
           <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
         </div>
         <h4 class="mt-6 mb-3">Stage labels</h4>
-        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-decision, ready-for-human-merge, merge-queue), a role/* admission-tier label, an author/* label saying who wrote the PR (human, clanker = a contributor's hive, hive = this hive), and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-decision, ready-for-human-merge, pre-merge-soak, merge-queue), a role/* admission-tier label, an author/* label saying who wrote the PR (human, clanker = a contributor's hive, hive = this hive), and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-engine-mode">Central stage engine mode ${yamlHint('governor.labels.stage.engine.mode')} ${settingHelpMark('settings', 'labels', 'Central stage engine', `ADR-0025: one reconciler derives every stage/NN label through one writer. shadow (default): the engine derives alongside the sweeps' own logic, writes what the sweeps derived, and counts each disagreement (stage_shadow_mismatch_total, Activity tracker strip, /api/status.stageEngine). enforce: the engine's derivation is written and its admission table rejects out-of-order transitions. off: rollback — the sweeps' derivation is written verbatim and the engine is inert. Rollout gate: run shadow for 48h with zero unexplained mismatches before enforce. Takes effect on the next sweep, no restart.`)}</label>

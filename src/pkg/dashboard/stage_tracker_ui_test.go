@@ -79,6 +79,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR"),
@@ -109,6 +110,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
+		jsFunc(t, html, "stageTrackerSoakLeft"),
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
@@ -141,6 +143,7 @@ const stages = [
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
   { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
   { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
+  { number: 95, label: 'Pre-merge soak', short: 'Soaking', description: 'Lane admitted; the pre-merge soak window is running before the merge is attempted' },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
 // needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
@@ -214,6 +217,17 @@ assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
 assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Ready for auto merge</span><svg class="ham-ico ham-actor-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Next move: hive">' + STAGE_TRACKER_ICONS.hive + '</svg></li>'), '100 lights the Merge gate column as Ready for auto merge');
 assert.ok(strip(row).includes('title="Merge queue — admitted, merging · Next move: hive"'), 'chevron tooltip carries 100: ' + row);
 assert.ok(text(row).includes('#102 Ready for auto merge'), text(row));
+// Full PR row for 095: Merge gate lit as Soaking (not a detour), hive actor,
+// chevron tooltip names the real stage and the time left; headline carries it too.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 13020, kind: 'pr', stage: 95, author: 'hive-bot', author_kind: 'hive', soak_remaining_seconds: 17 * 60 + 1 }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap'], '095 lights the Merge gate column, no detour');
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Soaking</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: hive"'), '095 word is Soaking with the hive actor: ' + row);
+assert.ok(strip(row).includes('title="Pre-merge soak — admitted, soaking — 18m left · Next move: hive"'), 'chevron tooltip carries 095 + time left: ' + row);
+assert.ok(tooltip(row).startsWith('Pre-merge soak — 18m left'), 'headline: ' + tooltip(row));
+assert.strictEqual(stageTrackerHeadline({ stage: 95 }), 'Pre-merge soak', 'no remaining known → plain headline');
+assert.strictEqual(stageTrackerHeadline({ stage: 95, soak_remaining_seconds: 5400 }), 'Pre-merge soak — 1h30m left');
+assert.strictEqual(stageTrackerHeadline({ stage: 95, kind: 'issue', soak_remaining_seconds: 60 }), 'Pre-merge soak — 1m left (its PR)');
+assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COLUMN, '095 anchors on the merge gate column');
 
 // PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{stage:50},{stage:60},{stage:72}] }, stages, ctx);
@@ -478,6 +492,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsFunc(t, html, "stageTrackerDefaultFilter"),
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),

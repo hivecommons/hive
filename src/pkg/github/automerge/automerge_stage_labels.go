@@ -832,8 +832,9 @@ var stageNeedsHumanReasons = map[string]bool{
 	autoMergeReasonNoAppBotLogin: true, "self-authorization-hold-released": true,
 }
 
-// stageMergeQueueReasons are reasons reached only after every gate passed:
-// the merge is imminent or waiting on GitHub.
+// stageMergeQueueReasons are reasons reached only after every gate passed,
+// soak included: the merge is imminent or waiting on GitHub. The soaking
+// reason itself is 095 pre-merge-soak (classifyStage).
 var stageMergeQueueReasons = map[string]bool{
 	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
 	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
@@ -939,7 +940,12 @@ func classifyStage(o stageObservation) stageVerdict {
 		// repair stage, with the check named, never 080 or 100.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 	}
-	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
+	if strings.HasPrefix(reason, contributorLaneReasonSoaking) {
+		// The lane admitted the head and is sitting out the soak window:
+		// 095, not 100 — the merge has not been attempted yet.
+		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
+	}
+	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {

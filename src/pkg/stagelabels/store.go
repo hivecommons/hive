@@ -571,6 +571,11 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
+	case MergeQueue:
+		// 100 → 095 is a reclassification, not a knock-back: the PR was
+		// soaking all along and records written before 095 existed called
+		// that merge-queue. Nothing moved backwards for the author.
+		return to != PreMergeSoak
 	}
 	return true
 }
@@ -1136,8 +1141,18 @@ func StallComment(stage Stage, dwell time.Duration, reason string) string {
 	if reason == "" {
 		reason = "lane has not evaluated this head"
 	}
-	return StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
+	body := StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
+	if stage == PreMergeSoak {
+		body += ". " + PreMergeSoakStallNote
+	}
+	return body
 }
+
+// PreMergeSoakStallNote is appended to the stall comment at 095: the dwell
+// there is the soak window plus a grace, so overrunning it means the soak
+// has elapsed but the lane has not promoted the head to 100 / merged it —
+// a lane problem to look into, not something the author can act on.
+const PreMergeSoakStallNote = "The soak window should have elapsed but the automerge lane has not promoted this PR to the merge queue; this is likely a lane bug, not something the author can act on"
 
 // StallCommentMarker tags the stall note.
 const StallCommentMarker = "<!-- hive:stage-stalled -->"
