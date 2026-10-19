@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,12 @@ var agentHomeDir = "/data/agents"
 // uses /data/policies.
 var clonedPoliciesDir = "/data/policies"
 
+// userOverridePolicyDir is where the dashboard prompt editor writes a template
+// when the copy in userSavedPolicyDir is not writable (hivecommons/hive#13005).
+// It is probed BEFORE userSavedPolicyDir so the override wins over the shipped
+// default. A var only so tests can point it at a temp dir.
+var userOverridePolicyDir = policies.UserOverrideDir
+
 var policyDirMu sync.RWMutex
 
 func policyDirs() (agentHome, userSaved, cloned string) {
@@ -48,12 +55,20 @@ func policyDirs() (agentHome, userSaved, cloned string) {
 	return agentHomeDir, userSavedPolicyDir, clonedPoliciesDir
 }
 
+func overridePolicyDir() string {
+	policyDirMu.RLock()
+	defer policyDirMu.RUnlock()
+	return userOverridePolicyDir
+}
+
 // loadPromptTemplate searches standard paths for an agent's policy template.
 // It checks on-disk paths first, then falls back to embedded default policies.
 func (s *Scheduler) loadPromptTemplate(agentName string) string {
 	agentHome, userSaved, cloned := policyDirs()
 	paths := []string{
 		fmt.Sprintf("%s/%s/CLAUDE.md", agentHome, agentName),
+		// Writable override for a read-only shipped template (#13005).
+		filepath.Join(overridePolicyDir(), agentName+".md"),
 		// User-saved override from the dashboard prompt editor wins over the
 		// git-cloned examples copy and embedded defaults (#3239).
 		fmt.Sprintf("%s/%s.md", userSaved, agentName),
@@ -98,6 +113,9 @@ const TemplateSourceEmbedded = "embedded default"
 func (s *Scheduler) resolveNamedTemplate(templateName string) (content, source string, tried []string) {
 	_, userSaved, cloned := policyDirs()
 	paths := []string{
+		// Writable override the dashboard saves to when the shipped copy in
+		// userSaved cannot be written in place (#13005); it must win.
+		filepath.Join(overridePolicyDir(), templateName),
 		// User-saved override from the dashboard prompt editor wins over the
 		// git-cloned examples copy and embedded defaults (#3239). handleAgentPromptSave
 		// writes the edited template to /data/policies/<KickTemplate>, so when an

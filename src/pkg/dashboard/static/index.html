@@ -41586,11 +41586,21 @@ function burnAreaChart() {
               if (dangling) {
                 items += '<li style="margin:var(--sp-3) var(--sp-0) var(--sp-1);color:var(--yellow,#e6b800);font-size:var(--fs-sm)">⚠ template not found: <code>' + esc(tpl.kickTemplate) + '</code>'
                   + ' — kicks fall back to <strong>' + esc(tpl.fallback || 'the built-in kick') + '</strong>.'
-                  + ' Saving text here creates <code>' + esc((tpl.pathsTried || [])[0] || tpl.kickTemplate) + '</code> as a live override; clear <code>kick_template</code> in General to keep the fallback.'
+                  + ' Saving text here creates <code>' + esc((data.templateFile && data.templateFile.savePath) || (tpl.pathsTried || [])[0] || tpl.kickTemplate) + '</code> as a live override; clear <code>kick_template</code> in General to keep the fallback.'
                   + (tpl.pathsTried && tpl.pathsTried.length ? '<div class="text-muted fs-xs mt-1">looked in: ' + esc(tpl.pathsTried.join(', ')) + '</div>' : '')
                   + '</li>';
               } else if (tpl && tpl.kickTemplate && tpl.source) {
                 items += '<li style="margin:3px 0;color:var(--muted);font-size:0.7rem">resolved from: ' + esc(tpl.source) + '</li>';
+              }
+              // data.templateFile (#13005): a shipped template that cannot be
+              // written in place is flagged before editing, with the override
+              // path a Save will create instead.
+              const tf = data.templateFile || null;
+              if (tf && tf.override) {
+                items += '<li style="margin:3px 0;color:var(--muted);font-size:0.7rem">user override: <code>' + esc(tf.path) + '</code>'
+                  + (tf.readOnly ? ' (shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only)' : '') + '</li>';
+              } else if (tf && tf.readOnly) {
+                items += '<li style="margin:3px 0;color:var(--yellow,#e6b800);font-size:0.7rem">shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only — saving writes a user override to <code>' + esc(tf.savePath) + '</code>, which agent runs use instead.</li>';
               }
               srcEl.innerHTML = '<ul style="list-style:none;padding:var(--sp-0);margin:var(--sp-0)">' + items + '</ul>';
               srcEl.style.display = 'block';
