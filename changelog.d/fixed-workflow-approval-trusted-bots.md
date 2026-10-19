@@ -1,1 +1,0 @@
-- Surface trusted same-repo bot/App/clanker workflow runs stuck in GitHub Actions approval as `workflow-approval-required` attention instead of silently polling or trying to approve them.

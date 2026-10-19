@@ -26,9 +26,9 @@ package automerge
 //
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
-// first-time contributor's held run is never released by automation. Only
-// runs whose head repository is the base repository are approved — a fork head
-// is never released here even for a trusted login.
+// first-time contributor's held run is never nudged by automation. Hive posts
+// `/ok-to-test`; the repository-local caller workflow approves only same-repo
+// heads, never fork heads.
 
 import (
 	"context"
@@ -66,7 +66,10 @@ const (
 	dependabotRebaseComment = "@dependabot rebase"
 	// workflowRunConclusionActionRequired is GitHub's conclusion for a run
 	// waiting on a person's approval.
-	workflowRunConclusionActionRequired = "action_required"
+	workflowRunConclusionActionRequired   = "action_required"
+	workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
+	workflowApprovalCommand               = "/ok-to-test"
+	workflowApprovalGrace                 = 10 * time.Minute
 	// heldRunNeverStartedGrace bounds how long a head with zero workflow runs
 	// is still treated as "GitHub has not scheduled them yet".
 	heldRunNeverStartedGrace = 30 * time.Minute
@@ -75,10 +78,9 @@ const (
 
 // resolveMissingRequiredCheck refines a `required-check-missing:<ctx>` skip
 // for a trusted-lane PR. It returns the original reason when nothing is known,
-// a workflow-approval-required reason when GitHub is waiting for a maintainer
-// to approve held runs, or a never-started/never-ran reason when polling cannot
-// progress. It never approves a run: owners that keep workflow approval enabled
-// must click GitHub's "Approve workflows to run" button or relax the setting.
+// a workflow-approval-required reason when GitHub is waiting for approval and
+// Hive has posted `/ok-to-test`, or a never-started/never-ran reason when
+// polling cannot progress. It never approves a run with the App token.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
@@ -116,8 +118,7 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	if c.sentinelLabelPresent(labelNames(pr.Labels)) {
 		return "sentinel"
 	}
-	c.info("automerge workflow approval required", "repo", displayRepo, "pr", number, "sha", headSHA, "held", len(held), "context", missing)
-	return workflowApprovalRequiredPrefix + missing
+	return c.workflowApprovalAttention(ctx, displayRepo, owner, repo, number, headSHA, missing, len(held))
 }
 
 // detectActionRequiredWorkflowRuns names same-repo workflow runs GitHub is
@@ -161,8 +162,65 @@ func (c *Engine) workflowApprovalRequiredReason(ctx context.Context, displayRepo
 	if contextName == "" {
 		contextName = held[0].GetName()
 	}
-	c.info("automerge workflow approval required", "repo", displayRepo, "pr", number, "sha", headSHA, "held", len(held), "context", contextName)
+	return c.workflowApprovalAttention(ctx, displayRepo, owner, repo, number, headSHA, contextName, len(held))
+}
+
+func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, contextName string, held int) string {
+	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
+	if first {
+		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
+	}
+	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
+		c.warn("automerge workflow approval still required after ok-to-test grace; install the hive ok-to-test workflow caller",
+			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
+		return workflowApprovalWorkflowMissingPrefix + contextName
+	}
+	c.info("automerge workflow approval required; posted ok-to-test command if needed", "repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
 	return workflowApprovalRequiredPrefix + contextName
+}
+
+func (c *Engine) workflowApprovalCommandKey(owner, repo string, number int, headSHA string) string {
+	return "workflow-ok-to-test:" + c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA)
+}
+
+func (c *Engine) markWorkflowApprovalCommandSeen(owner, repo string, number int, headSHA string) (time.Time, bool) {
+	key := c.workflowApprovalCommandKey(owner, repo, number, headSHA)
+	now := time.Now()
+	if c != nil && c.now != nil {
+		now = c.now()
+	}
+	c.workflowApprovalCommandsMu.Lock()
+	defer c.workflowApprovalCommandsMu.Unlock()
+	if c.workflowApprovalCommands == nil {
+		c.workflowApprovalCommands = make(map[string]time.Time)
+	}
+	if first, ok := c.workflowApprovalCommands[key]; ok {
+		return first, false
+	}
+	c.workflowApprovalCommands[key] = now
+	return now, true
+}
+
+func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string) {
+	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueComment,
+		Target: strconv.Itoa(number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(workflowApprovalCommand)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(workflowApprovalCommand)})
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		c.noteOwnStageComment(owner, repo, number)
+		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
+	})
+	if err != nil {
+		c.warn("automerge failed to post ok-to-test workflow approval command", "repo", displayRepo, "pr", number, "sha", headSHA, "command", workflowApprovalCommand, "error", err)
+		return
+	}
+	c.info("automerge posted ok-to-test workflow approval command", "repo", displayRepo, "pr", number, "sha", headSHA, "command", workflowApprovalCommand)
 }
 
 // detectTrustedRegistryClankerWorkflowApprovalRequired surfaces held runs for

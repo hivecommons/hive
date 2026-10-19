@@ -38,8 +38,10 @@ func missingRequiredPR(mutate func(*selfAuthoredPR)) selfAuthoredPR {
 }
 
 func TestTrySweepSelfAuthoredPRSurfacesHeldWorkflowRunsWithoutApproving(t *testing.T) {
+	var comments []string
 	pr := missingRequiredPR(func(p *selfAuthoredPR) {
 		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget"), heldRun(2, "acme/widget")}
+		p.commentBodies = &comments
 	})
 	var merged []int
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
@@ -55,6 +57,9 @@ func TestTrySweepSelfAuthoredPRSurfacesHeldWorkflowRunsWithoutApproving(t *testi
 		if reason != want {
 			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
 		}
+	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
+		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
 	}
 	if len(merged) != 0 {
 		t.Fatalf("merged = %v, want no merge while workflow approval is required", merged)
@@ -337,6 +342,7 @@ func TestTrySweepTrustedBotTreatsSkippedByDesignRequiredCheckAsSatisfied(t *test
 }
 
 func TestTrySweepTrustedBotSurfacesActionRequiredPendingRuns(t *testing.T) {
+	var comments []string
 	pr := missingRequiredPR(func(p *selfAuthoredPR) {
 		p.author = "dependabot[bot]"
 		p.omitStatus = true
@@ -345,6 +351,7 @@ func TestTrySweepTrustedBotSurfacesActionRequiredPendingRuns(t *testing.T) {
 		p.checkConclusion = "success"
 		p.extraChecks = []map[string]string{{"name": "ci/build", "status": "in_progress"}}
 		p.workflowRuns = []map[string]any{heldRun(7, "acme/widget")}
+		p.commentBodies = &comments
 	})
 	var merged []int
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
@@ -359,8 +366,51 @@ func TestTrySweepTrustedBotSurfacesActionRequiredPendingRuns(t *testing.T) {
 	if reason != workflowApprovalRequiredPrefix+"ci/build" {
 		t.Fatalf("reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
 	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
+		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
+	}
 	if len(merged) != 0 {
 		t.Fatalf("merged = %v, want no merge while workflow approval is required", merged)
+	}
+}
+
+func TestTrySweepTrustedBotWorkflowApprovalMissingWorkflowAfterGrace(t *testing.T) {
+	now := time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC)
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.author = "dependabot[bot]"
+		p.omitStatus = true
+		p.statusState = "success"
+		p.checkStatus = "completed"
+		p.checkConclusion = "success"
+		p.extraChecks = []map[string]string{{"name": "ci/build", "status": "in_progress"}}
+		p.workflowRuns = []map[string]any{heldRun(7, "acme/widget")}
+		p.commentBodies = &comments
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
+	c.now = func() time.Time { return now }
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("first tick returned error: %v", err)
+	}
+	if reason != workflowApprovalRequiredPrefix+"ci/build" {
+		t.Fatalf("first reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
+	}
+	now = now.Add(workflowApprovalGrace + time.Minute)
+	_, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("second tick returned error: %v", err)
+	}
+	if reason != workflowApprovalWorkflowMissingPrefix+"ci/build" {
+		t.Fatalf("second reason = %q, want %q", reason, workflowApprovalWorkflowMissingPrefix+"ci/build")
+	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
+		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
 	}
 }
 

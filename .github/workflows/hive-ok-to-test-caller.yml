@@ -1,0 +1,17 @@
+name: Hive ok-to-test
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  ok-to-test:
+    uses: ./.github/workflows/hive-ok-to-test.yml
+    with:
+      hive-app-logins: hivecommons-hive[bot]
