@@ -1,0 +1,1 @@
+- Stop filing a fleet self-report when copilot model discovery fails only because the operator has not completed the dashboard Copilot Login; the condition is still written to the local audit log with its recovery path (#12947).
