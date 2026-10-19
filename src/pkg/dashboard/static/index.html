@@ -126,7 +126,7 @@
       padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
       margin: var(--sp-0); min-height: 100vh; min-height: 100dvh; max-width: 100vw; overflow-x: hidden;
     }
-    [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
+    [data-dashboard-section], #governor, #token-panel, #cost-panel, #lifecycle-section { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
     h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
     h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
@@ -9609,7 +9609,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function ocScrollSectionIntoView(section) {
       const el = document.getElementById(section);
       if (!el) return;
-      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      // scrollIntoView honours the section's scroll-margin-top (sticky
+      // navbar offset); the settle loop only needs the raw Y to detect drift.
+      const targetY = () => el.getBoundingClientRect().top + window.scrollY;
+      ocSettleScroll(targetY, () => el.scrollIntoView({ block: 'start', behavior: 'smooth' }), OC_NAV_SETTLE_MS, el);
       el.classList.remove('anchor-highlight');
       void el.offsetWidth;
       el.classList.add('anchor-highlight');
@@ -9853,55 +9856,76 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
-    // ---- Agent-detail scroll anchoring ------------------------------------
-    // Clicking an agent scrolls to the detail panel, but content that renders
-    // AFTER the click shifts the layout out from under the in-flight scroll:
-    // the 3s status poll re-renders every section above the panel (agents,
-    // repos, gov strip), and ocFetchPane lands async pane content. The scroll
-    // then finishes at a stale Y and the view is anchored on the wrong thing.
-    // ocScrollToAgentDetail() re-anchors for a short settle window: on each
-    // animation frame it recomputes the panel's target Y and, if layout drift
-    // moved it beyond a small tolerance, retargets the scroll (scrollTo with
-    // the same behavior redirects the in-flight smooth scroll — no visible
-    // restart). The window is hard-capped, and ANY user scroll input (wheel,
-    // touch, scrollbar mousedown, keys) cancels correction immediately so
-    // manual scrolling right after a click is never hijacked.
-    const OC_SCROLL_SETTLE_MS = 700;   // correction window after a click; capped so late shifts never fight the user
+    // ---- Scroll anchoring for in-page navigation ---------------------------
+    // Clicking a sidebar item or an agent scrolls to the target, but content
+    // that renders AFTER the click shifts the layout out from under the
+    // in-flight scroll: the status poll / SSE push re-renders every section
+    // above the target, lazy panels and tables fill in, collapsed sections
+    // resize, and ocFetchPane lands async pane content. The scroll then
+    // finishes at a stale Y and the reader has to click the item again.
+    // ocSettleScroll() re-anchors for a short settle window: on each
+    // animation frame it recomputes the target's document Y and, if layout
+    // drift moved it beyond a small tolerance, retargets the scroll (a repeat
+    // smooth scroll redirects the in-flight one — no visible restart). The
+    // window is hard-capped, and ANY user scroll input (wheel, touch,
+    // scrollbar mousedown, keys) cancels correction immediately so manual
+    // scrolling right after a click is never hijacked. While a section hold
+    // is active, render()'s own scroll anchor pins that section too (see
+    // captureScrollAnchor), so a repaint corrects instantly instead of
+    // waiting for the next frame.
+    const OC_SCROLL_SETTLE_MS = 700;   // agent-detail correction window after a click; capped so late shifts never fight the user
+    const OC_NAV_SETTLE_MS = 2500;     // sidebar section window: covers the 3s status tick plus lazy panel loads
     const OC_SCROLL_TOLERANCE_PX = 4;  // re-anchor only when the target drifted beyond this
     const OC_SCROLL_CANCEL_EVENTS = ['wheel', 'touchstart', 'mousedown', 'keydown'];
     let _ocScrollSettleCancel = null;
+    let _ocNavAnchorEl = null;
 
-    function ocScrollToAgentDetail(behavior) {
-      const detail = document.getElementById('oc-agent-detail');
-      if (!detail) return;
+    function ocMaxScrollY() {
+      const doc = document.documentElement;
+      const full = Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0);
+      return Math.max(0, full - window.innerHeight);
+    }
+    // targetY(): the document Y the scroll should rest at; apply(): issues the
+    // scroll. settleMs caps the correction window; anchorEl (optional) is
+    // exposed to captureScrollAnchor for the duration of the hold.
+    function ocSettleScroll(targetY, apply, settleMs, anchorEl) {
       if (_ocScrollSettleCancel) _ocScrollSettleCancel();
-      const mode = behavior || 'smooth';
-      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
-      let lastTarget = targetY();
-      window.scrollTo({ top: lastTarget, behavior: mode });
+      const clampY = () => Math.max(0, Math.min(targetY(), ocMaxScrollY()));
+      let lastTarget = clampY();
+      apply();
       let cancelled = false;
       const cancel = () => {
         if (cancelled) return;
         cancelled = true;
         OC_SCROLL_CANCEL_EVENTS.forEach(t => window.removeEventListener(t, cancel));
         if (_ocScrollSettleCancel === cancel) _ocScrollSettleCancel = null;
+        if (_ocNavAnchorEl === anchorEl) _ocNavAnchorEl = null;
       };
       // Passive listeners: cancellation must never delay the user's own
       // scrolling. Programmatic scrolls fire none of these events, so the
       // settle loop cannot cancel itself.
       OC_SCROLL_CANCEL_EVENTS.forEach(t => window.addEventListener(t, cancel, { passive: true }));
       _ocScrollSettleCancel = cancel;
-      const deadline = performance.now() + OC_SCROLL_SETTLE_MS;
+      _ocNavAnchorEl = anchorEl || null;
+      const deadline = performance.now() + settleMs;
       (function settle() {
         if (cancelled) return;
-        const want = targetY();
+        const want = clampY();
         if (Math.abs(want - lastTarget) > OC_SCROLL_TOLERANCE_PX) {
           lastTarget = want;
-          window.scrollTo({ top: want, behavior: mode });
+          apply();
         }
         if (performance.now() > deadline) { cancel(); return; }
         requestAnimationFrame(settle);
       })();
+    }
+
+    function ocScrollToAgentDetail(behavior) {
+      const detail = document.getElementById('oc-agent-detail');
+      if (!detail) return;
+      const mode = behavior || 'smooth';
+      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
+      ocSettleScroll(targetY, () => window.scrollTo({ top: targetY(), behavior: mode }), OC_SCROLL_SETTLE_MS, null);
     }
 
     function ocSelectAgent(name) {
@@ -29826,6 +29850,15 @@ function burnAreaChart() {
     // so a repaint that resizes content above doesn't move them elsewhere.
     function captureScrollAnchor() {
       const anchor = { el: null, top: 0, scrollY: window.scrollY, cardKey: '', cardTop: 0 };
+      // A sidebar navigation is settling: pin the section the reader asked
+      // for, not whichever section above it still peeks out under the
+      // sticky navbar — otherwise a repaint that resizes that neighbour
+      // drags the target away from the top of the viewport.
+      const navEl = typeof _ocNavAnchorEl !== 'undefined' ? _ocNavAnchorEl : null;
+      if (navEl && navEl.isConnected && navEl.getClientRects().length) {
+        anchor.el = navEl; anchor.top = navEl.getBoundingClientRect().top;
+        return anchor;
+      }
       if (window.scrollY <= 0) return anchor;
       const sections = document.querySelectorAll('[data-dashboard-section]');
       for (let i = 0; i < sections.length; i++) {

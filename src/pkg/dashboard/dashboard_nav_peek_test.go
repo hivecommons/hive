@@ -154,7 +154,15 @@ class El {
   addEventListener(type, fn){ this.listeners[type]=fn; }
   removeEventListener(type, fn){ if (this.listeners[type] === fn) delete this.listeners[type]; }
   scrollIntoView(){ calls.push('scroll:' + this.id); }
+  getBoundingClientRect(){ return { top: 0 }; }
 }
+const performance = { now(){ return 0; } };
+const OC_SCROLL_SETTLE_MS = 700;
+const OC_NAV_SETTLE_MS = 2500;
+const OC_SCROLL_TOLERANCE_PX = 4;
+const OC_SCROLL_CANCEL_EVENTS = ['wheel', 'touchstart', 'mousedown', 'keydown'];
+let _ocScrollSettleCancel = null;
+let _ocNavAnchorEl = null;
 const sections = {};
 function makeSection(id){ sections[id]={ section:new El(id), body:new El(id+'-body', id), chevron:new El(id+'-chevron', id), card:new El(id+'-card', id), header:new El(id+'-header', id) }; return sections[id]; }
 ['repos-section','contributors-section','overview-section'].forEach(makeSection);
@@ -178,10 +186,12 @@ const document = {
     if (sel.includes('.dash-card')) return s.card;
     return null;
   },
-  querySelectorAll(sel){ return sel === '.oc-nav-item' ? navItems : []; }
+  querySelectorAll(sel){ return sel === '.oc-nav-item' ? navItems : []; },
+  documentElement: { scrollHeight: 4000 },
+  body: { scrollHeight: 4000 }
 };
 const history = { replaceState(){} };
-const window = { hiveURLWithHash: h => h };
+const window = { hiveURLWithHash: h => h, scrollY: 0, innerHeight: 800, addEventListener(){}, removeEventListener(){} };
 function dashboardFeatureSectionHidden(){ return false; }
 function dashboardSectionHidden(){ return false; }
 function dashboardSetSectionHidden(){}
@@ -189,7 +199,7 @@ let _ocSelectedAgent = 'agent';
 function ocStopPanePoll(){}
 function ocUpdateFocusedState(){}
 function assert(cond, msg){ if (!cond) throw new Error(msg + ' :: ' + JSON.stringify(calls)); }
-` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "writeSectionCollapsedKey") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocEnsureSectionVisibleForNav") + "\n" + jsFunc(t, html, "ocNavigate") + `
+` + jsFunc(t, html, "isSectionCollapsed") + "\n" + jsFunc(t, html, "writeSectionCollapsedKey") + "\n" + jsFunc(t, html, "setSectionCollapsed") + "\n" + jsFunc(t, html, "toggleSection") + "\nvar _dashboardNavPeekSectionId = null;\n" + jsFunc(t, html, "navPeekSectionId") + "\n" + jsFunc(t, html, "navPeekExpand") + "\n" + jsFunc(t, html, "navPeekRestore") + "\n" + jsFunc(t, html, "ocSectionBody") + "\n" + jsFunc(t, html, "ocAfterNavLayoutSettles") + "\n" + jsFunc(t, html, "ocMaxScrollY") + "\n" + jsFunc(t, html, "ocSettleScroll") + "\n" + jsFunc(t, html, "ocScrollSectionIntoView") + "\n" + jsFunc(t, html, "ocEnsureSectionVisibleForNav") + "\n" + jsFunc(t, html, "ocNavigate") + `
 localStorage.setItem(SECTION_LS_PREFIX + 'repos-section', '1');
 localStorage.setItem(SECTION_LS_PREFIX + 'contributors-section', '1');
 assert(navPeekExpand('repos-section') === true, 'setup peek failed');
