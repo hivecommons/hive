@@ -314,6 +314,15 @@ agents:
   going, and the failed attempt returns its per-user and per-repo rate-limit
   tokens. After three failed attempts it is declined as `thread-count-failed`
   or `kick-failed` and marked, so it cannot hold the watermark forever.
+- A mention or action kick that arrives while its agent is still starting up
+  is queued in a per-agent FIFO (capped at 8, deduped by source) instead of
+  sharing the single coalesced startup slot. The startup delivery and later
+  governor cadence kicks (`governor-eval`) yield to the oldest queued mention;
+  one-shot kicks from other callers are delivered as sent and never consumed.
+  A queued mention is dropped only when the FIFO overflows or the agent is
+  stopped: each drop logs `audit: deferred mention kick dropped` and emits
+  `kick-dropped`, so the mention store releases its pending entry (#12982,
+  #13055).
 - Kick history rows carry `source=mention`, so the dashboard's agent card and
   the kick outcome classifier (#7421) can say the turn was summoned, and the
   per-agent "last kick" no longer implies a cadence fired.

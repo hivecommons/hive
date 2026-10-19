@@ -1283,6 +1283,7 @@ func (m *Manager) Stop(name string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	m.drainDeferredMentionKicksLocked(agent, "agent stopped")
 	if agent.State == StateStopped {
 		agent.OperatorStopped = true
 	}

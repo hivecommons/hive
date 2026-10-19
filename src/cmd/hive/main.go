@@ -8069,7 +8069,9 @@ func runEvalCycle(
 	if len(messages) > 0 {
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
-			sendKick:         agentMgr.SendKick,
+			sendKick: func(agentName, message string) error {
+				return agentMgr.SendKickWithSource(agentName, message, agent.GovernorCadenceKickSource)
+			},
 			startStoppedAgent: func(agentName string) error {
 				if !agentMgr.GovernorMayStart(agentName) {
 					return nil

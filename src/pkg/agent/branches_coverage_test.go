@@ -341,7 +341,7 @@ func TestDeliverStartupKickPrefersDeferredMentionOverCadence(t *testing.T) {
 	if err := m.SendKickWithSource("reviewer", "answer the mention", "mention:IC_1"); err != nil {
 		t.Fatalf("mention kick during startup should defer, got error: %v", err)
 	}
-	if err := m.SendKick("reviewer", "reviewer queue cadence"); err != nil {
+	if err := m.SendKickWithSource("reviewer", "reviewer queue cadence", GovernorCadenceKickSource); err != nil {
 		t.Fatalf("cadence kick during startup should defer, got error: %v", err)
 	}
 
@@ -359,6 +359,49 @@ func TestDeliverStartupKickPrefersDeferredMentionOverCadence(t *testing.T) {
 	}
 	if agent.pendingStartupKick != "" {
 		t.Fatalf("superseded cadence kick left pending: %q", agent.pendingStartupKick)
+	}
+}
+
+func TestSendKickOnlyGovernorCadenceYieldsToQueuedMention(t *testing.T) {
+	if !tmuxAvailable() {
+		t.Skip("tmux not available")
+	}
+	session := "hive-running-queued-mention"
+	newRawTmuxSession(t, session)
+	m := NewManager(map[string]config.AgentConfig{"architect": {Backend: "claude"}}, discardLogger(), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["architect"]
+	agent.tmuxSession = session
+	agent.State = StateRunning
+	agent.deferredMentionKicks = []deferredKick{{message: "answer the mention", source: "mention:IC_1"}}
+	m.mu.Unlock()
+
+	paneInject(t, session, "goose is ready")
+	requirePaneShows(t, session, "goose is ready")
+
+	if err := m.SendKick("architect", "design this epic"); err != nil {
+		t.Fatalf("SendKick: %v", err)
+	}
+	m.mu.RLock()
+	msg, src, queued := agent.LastKickMessage, agent.LastKickSource, len(agent.deferredMentionKicks)
+	m.mu.RUnlock()
+	if msg != "design this epic" || src != "send-kick" {
+		t.Fatalf("delivered (%q,%q), want the caller's one-shot message unchanged", msg, src)
+	}
+	if queued != 1 {
+		t.Fatalf("one-shot kick consumed the queued mention: %d left", queued)
+	}
+
+	if err := m.SendKickWithSource("architect", "cadence", GovernorCadenceKickSource); err != nil {
+		t.Fatalf("governor cadence SendKick: %v", err)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if agent.LastKickMessage != "answer the mention" || agent.LastKickSource != "mention:IC_1" {
+		t.Fatalf("delivered (%q,%q), want the queued mention in place of cadence", agent.LastKickMessage, agent.LastKickSource)
+	}
+	if len(agent.deferredMentionKicks) != 0 {
+		t.Fatalf("delivered mention still queued: %+v", agent.deferredMentionKicks)
 	}
 }
 
