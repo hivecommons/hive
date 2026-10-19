@@ -8,7 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/pkg/companionrepos"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -505,7 +505,7 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 	// its AGENTS.md says to stop when it is missing; four tasks parked on
 	// that in one day. The clone is the intended checkout, so the prompt
 	// provisions it before any tool can miss it.
-	if companions := companionrepos.Instruction(repoFull, hints.Host, companionrepos.Plan("$HIVE_WORKSPACE_DIR", repoFull, hints.Companions)); companions != "" {
+	if companions := config.CompanionCheckoutInstruction(repoFull, hints.Host, config.PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR", repoFull, hints.Companions)); companions != "" {
 		checkoutHint += companions + " "
 	}
 

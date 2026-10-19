@@ -1,4 +1,4 @@
-package companionrepos
+package config
 
 import (
 	"reflect"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestPlanLaysCompanionsOutUnderRoot(t *testing.T) {
-	got := Plan("$HIVE_WORKSPACE_DIR/", "hivecommons/spektacular", []string{
+	got := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR/", "hivecommons/spektacular", []string{
 		"hivecommons/spektacular-website",
 		" HiveCommons/Spektacular-Website ",
 		"hivecommons/spektacular",
@@ -18,7 +18,7 @@ func TestPlanLaysCompanionsOutUnderRoot(t *testing.T) {
 		"org/../up",
 		"a/b/c",
 	})
-	want := []Checkout{
+	want := []CompanionCheckout{
 		{Repo: "hivecommons/spektacular-website", Path: "$HIVE_WORKSPACE_DIR/hivecommons/spektacular-website"},
 		{Repo: "acme/docs", Path: "$HIVE_WORKSPACE_DIR/acme/docs"},
 	}
@@ -28,19 +28,19 @@ func TestPlanLaysCompanionsOutUnderRoot(t *testing.T) {
 }
 
 func TestPlanIsNilWithoutRootOrCompanions(t *testing.T) {
-	if got := Plan("", "o/r", []string{"o/c"}); got != nil {
+	if got := PlanCompanionCheckouts("", "o/r", []string{"o/c"}); got != nil {
 		t.Errorf("no root: %+v", got)
 	}
-	if got := Plan("/home/dev/workspace", "o/r", nil); got != nil {
+	if got := PlanCompanionCheckouts("/home/dev/workspace", "o/r", nil); got != nil {
 		t.Errorf("no companions: %+v", got)
 	}
-	if got := Plan("/home/dev/workspace", "o/r", []string{"o/r", "junk"}); got != nil {
+	if got := PlanCompanionCheckouts("/home/dev/workspace", "o/r", []string{"o/r", "junk"}); got != nil {
 		t.Errorf("only self and junk: %+v", got)
 	}
 }
 
 func TestCloneCommandIsShallowIdempotentAndHostAware(t *testing.T) {
-	c := Checkout{Repo: "hivecommons/spektacular-website", Path: "/home/dev/workspace/hivecommons/spektacular-website"}
+	c := CompanionCheckout{Repo: "hivecommons/spektacular-website", Path: "/home/dev/workspace/hivecommons/spektacular-website"}
 	got := c.CloneCommand("https://github.ibm.com/")
 	want := "[ -d /home/dev/workspace/hivecommons/spektacular-website/.git ] || git clone --depth 1 https://github.ibm.com/hivecommons/spektacular-website /home/dev/workspace/hivecommons/spektacular-website"
 	if got != want {
@@ -52,8 +52,8 @@ func TestCloneCommandIsShallowIdempotentAndHostAware(t *testing.T) {
 }
 
 func TestInstructionRendersEveryCloneAndTheNoParkRule(t *testing.T) {
-	plan := Plan("$HIVE_WORKSPACE_DIR", "hivecommons/spektacular", []string{"hivecommons/spektacular-website", "hivecommons/spektacular-specs"})
-	got := Instruction("hivecommons/spektacular", "https://github.com", plan)
+	plan := PlanCompanionCheckouts("$HIVE_WORKSPACE_DIR", "hivecommons/spektacular", []string{"hivecommons/spektacular-website", "hivecommons/spektacular-specs"})
+	got := CompanionCheckoutInstruction("hivecommons/spektacular", "https://github.com", plan)
 	for _, want := range []string{
 		"hivecommons/spektacular registers 2 companion repositories",
 		"git clone --depth 1 https://github.com/hivecommons/spektacular-website $HIVE_WORKSPACE_DIR/hivecommons/spektacular-website",
@@ -64,10 +64,10 @@ func TestInstructionRendersEveryCloneAndTheNoParkRule(t *testing.T) {
 			t.Errorf("Instruction lacks %q:\n%s", want, got)
 		}
 	}
-	if one := Instruction("o/r", "", plan[:1]); !strings.Contains(one, "1 companion repository ") {
+	if one := CompanionCheckoutInstruction("o/r", "", plan[:1]); !strings.Contains(one, "1 companion repository ") {
 		t.Errorf("singular form: %s", one)
 	}
-	if Instruction("o/r", "", nil) != "" {
+	if CompanionCheckoutInstruction("o/r", "", nil) != "" {
 		t.Error("empty plan must render nothing")
 	}
 }

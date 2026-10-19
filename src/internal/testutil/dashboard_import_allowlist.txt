@@ -18,6 +18,7 @@ github.com/hivecommons/hive/pkg/compliance
 github.com/hivecommons/hive/pkg/config
 github.com/hivecommons/hive/pkg/convergence
 github.com/hivecommons/hive/pkg/dashboard
+github.com/hivecommons/hive/pkg/decisionpolicy
 github.com/hivecommons/hive/pkg/defsrc
 github.com/hivecommons/hive/pkg/evidence
 github.com/hivecommons/hive/pkg/fixqueue

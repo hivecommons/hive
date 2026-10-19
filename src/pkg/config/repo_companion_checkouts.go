@@ -1,4 +1,4 @@
-// Package companionrepos plans the sibling checkouts a target repository's own
+// Companion checkouts plan the sibling checkouts a target repository's own
 // tooling expects beside it (hivecommons/hive#13059).
 //
 // Some repositories register a sibling repository's path relative to the
@@ -13,7 +13,7 @@
 // the paths and clone commands an assignment prompt or kick carries, so the
 // agent has the checkout before any tool asks for it. It does no network or
 // filesystem work itself.
-package companionrepos
+package config
 
 import (
 	"fmt"
@@ -21,8 +21,8 @@ import (
 	"strings"
 )
 
-// Checkout is one planned companion clone.
-type Checkout struct {
+// CompanionCheckout is one planned companion clone.
+type CompanionCheckout struct {
 	// Repo is the org-qualified companion repository.
 	Repo string
 	// Path is where it belongs: <root>/<org>/<repo>, with root rendered as
@@ -32,7 +32,7 @@ type Checkout struct {
 
 // CloneCommand is the shell step that provisions the checkout: a shallow
 // clone into Path, skipped when a git checkout is already there.
-func (c Checkout) CloneCommand(host string) string {
+func (c CompanionCheckout) CloneCommand(host string) string {
 	host = strings.TrimRight(strings.TrimSpace(host), "/")
 	if host == "" {
 		host = "https://github.com"
@@ -44,13 +44,13 @@ func (c Checkout) CloneCommand(host string) string {
 // not org/repo shaped, duplicates (case-insensitive), and the primary repo
 // itself are dropped; root is required. The result is nil when nothing is
 // left, so callers render nothing for a repo without companions.
-func Plan(root, primaryRepo string, companions []string) []Checkout {
+func PlanCompanionCheckouts(root, primaryRepo string, companions []string) []CompanionCheckout {
 	root = strings.TrimRight(strings.TrimSpace(root), "/")
 	if root == "" || len(companions) == 0 {
 		return nil
 	}
 	seen := map[string]bool{strings.ToLower(strings.TrimSpace(primaryRepo)): true}
-	var out []Checkout
+	var out []CompanionCheckout
 	for _, raw := range companions {
 		full := strings.Trim(strings.TrimSpace(raw), "/")
 		org, name, ok := strings.Cut(full, "/")
@@ -62,14 +62,14 @@ func Plan(root, primaryRepo string, companions []string) []Checkout {
 			continue
 		}
 		seen[key] = true
-		out = append(out, Checkout{Repo: full, Path: root + "/" + path.Join(org, name)})
+		out = append(out, CompanionCheckout{Repo: full, Path: root + "/" + path.Join(org, name)})
 	}
 	return out
 }
 
 // Instruction renders the prompt paragraph for a plan: what to clone, where,
 // and why it is not a reason to park. Empty for an empty plan.
-func Instruction(primaryRepo, host string, plan []Checkout) string {
+func CompanionCheckoutInstruction(primaryRepo, host string, plan []CompanionCheckout) string {
 	if len(plan) == 0 {
 		return ""
 	}

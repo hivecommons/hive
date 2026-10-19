@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/classify"
-	"github.com/hivecommons/hive/pkg/companionrepos"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
@@ -800,8 +799,8 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	b.WriteString("ℹ️ " + decisionpolicy.DispatchSatisfiesRepoGates + " " + decisionpolicy.MissingCompanionCheckoutRule + "\n")
 	for _, repo := range active {
 		full := config.QualifyRepo(org, repo)
-		plan := companionrepos.Plan("$HOME/workspace", full, s.cfg.CompanionReposFor(full))
-		if instr := companionrepos.Instruction(full, host, plan); instr != "" {
+		plan := config.PlanCompanionCheckouts("$HOME/workspace", full, s.cfg.CompanionReposFor(full))
+		if instr := config.CompanionCheckoutInstruction(full, host, plan); instr != "" {
 			b.WriteString("ℹ️ " + instr + " (clone the primary to $HOME/workspace/" + full + " so the registered paths resolve.)\n")
 		}
 	}

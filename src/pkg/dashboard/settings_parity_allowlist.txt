@@ -356,6 +356,7 @@ project.repo_policies[].acmm_last_automatic.to # TODO #11854
 project.repo_policies[].acmm_level # TODO #11854
 project.repo_policies[].acmm_pinned # TODO #11854
 project.repo_policies[].auto_merge # TODO #11854
+project.repo_policies[].companion_repos[] # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
 project.repo_policies[].repo # TODO #11854

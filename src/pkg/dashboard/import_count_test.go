@@ -36,8 +36,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// Experiment Lab baseline to the active research question (hivecommons/hive#12501),
 	// plus pkg/stageengine so the contribute hub submits stage facts to the
 	// central engine instead of writing stage/* labels directly (ADR-0025,
-	// hivecommons/hive#13009).
-	const maxDashboardInternalImports = 51
+	// hivecommons/hive#13009), plus pkg/decisionpolicy so the contribute hub
+	// shares the one needs-decision classifier with the issue watcher when a
+	// contributor parks on the target repo's own confirmation gate
+	// (hivecommons/hive#13059).
+	const maxDashboardInternalImports = 52
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
