@@ -333,7 +333,7 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
-		{name: "workflow approval held", obs: stageObservation{Lane: stageLaneSelf, Reason: "required-check-held:build"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "workflow approval held", obs: stageObservation{Lane: stageLaneSelf, Reason: workflowApprovalRequiredPrefix + "build"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
 		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},

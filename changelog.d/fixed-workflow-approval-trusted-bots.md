@@ -1,1 +1,1 @@
-- Auto-approve GitHub Actions workflow runs held for trusted same-repo bot and clanker PRs, while surfacing held approvals that need maintainer action.
+- Surface trusted same-repo bot/App/clanker workflow runs stuck in GitHub Actions approval as `workflow-approval-required` attention instead of silently polling or trying to approve them.

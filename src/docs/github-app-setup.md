@@ -40,10 +40,10 @@ Fine-grained PATs are supported — the token is sent as a plain bearer, same as
 | Issues | Read and write | Read and write | Read and write |
 | Pull requests | Read | Read | Read and write |
 | Checks | Read | Read | Read |
-| Actions | Read | Read | Read (Read and write to release held workflow runs on trusted-bot PRs, see below) |
+| Actions | Read | Read | Read |
 | Commit statuses | Read | Read | Read |
 
-**Actions: Read and write** is required for unattended workflow approvals at L5–L6. The self-merge sweep calls `POST /repos/{owner}/{repo}/actions/runs/{run_id}/approve` for same-repository `pull_request` runs GitHub leaves in `action_required` on trusted Dependabot/Renovate/App PRs and registry-trusted `author/clanker` PRs. The switch is `auto_merge.workflow_approval.trusted_bots` (default `true`). Hive never approves fork heads or PRs carrying `sentinel-alert`. With Actions read-only, those PRs are reported as `required-check-held:<ctx>` and a person approves the runs.
+Hive does not request **Actions: Read and write** for workflow-run approvals. It only needs **Actions: Read** to inspect runs. When GitHub leaves same-repository `pull_request` runs in `action_required` on trusted Dependabot/Renovate/App PRs or registry-trusted `author/clanker` PRs, Hive reports `workflow-approval-required:<ctx>` and routes the PR to `stage/085-needs-decision`; a maintainer must click **Approve and run** or change the repository/org Actions approval setting. Hive never approves fork heads or PRs carrying `sentinel-alert`.
 
 Organization permission: **Members: Read** where contributor/owner identification is configured. Note that Issues read-and-write is needed even at advisory tiers because digests are posted as issue comments.
 
@@ -79,7 +79,7 @@ Repository permissions used by the dashboard setup UI are:
 | Issues | Read/write | Enumerate, comment on, create, and close issues. |
 | Pull requests | Read/write | Create, update, approve/merge, and inspect PRs. |
 | Checks | Read-only | Monitor CI status. |
-| Actions | Read/write | Inspect workflow runs and approve `action_required` runs on trusted same-repository PR heads. Read-only installations can still run Hive, but trusted Dependabot/App/clanker PRs held by GitHub's workflow-approval banner stay at `required-check-held:<ctx>` until a maintainer approves them. |
+| Actions | Read-only | Inspect workflow runs. If GitHub holds trusted Dependabot/App/clanker runs in `action_required`, Hive surfaces `workflow-approval-required:<ctx>` / stage 085 with the maintainer remediation instead of approving them. |
 | Administration | Read-only | Read branch-protection rules before the merge-request watcher lands a PR; Hive refuses closed if it cannot verify the base branch is protected. |
 
 | Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`. Without it GitHub rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |

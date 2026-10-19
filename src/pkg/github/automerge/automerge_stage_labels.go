@@ -843,7 +843,7 @@ func classifyStage(o stageObservation) stageVerdict {
 		// candidate, refined by ApplyStageLabels against the head's evidence.
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
 	}
-	if strings.HasPrefix(reason, requiredCheckHeldPrefix) {
+	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {

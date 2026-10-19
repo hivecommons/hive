@@ -148,19 +148,6 @@ func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) 
 	}
 }
 
-func TestWorkflowApprovalAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) {
-	var a AutoMergeConfig
-	if !a.WorkflowApproval.TrustedBotsEnabled() {
-		t.Fatal("auto_merge.workflow_approval.trusted_bots must default on")
-	}
-	if err := yaml.Unmarshal([]byte("workflow_approval:\n  trusted_bots: false\n"), &a); err != nil {
-		t.Fatal(err)
-	}
-	if a.WorkflowApproval.TrustedBotsEnabled() {
-		t.Fatal("explicit auto_merge.workflow_approval.trusted_bots: false must disable approvals")
-	}
-}
-
 // registry_tiers_sufficient defaults on so an operator-granted registry tier
 // admits a contributor-lane PR without a claim marker; an explicit false
 // turns the registry path off.

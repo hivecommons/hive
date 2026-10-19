@@ -79,10 +79,6 @@ type Options struct {
 	// switch: re-author a trusted github-actions[bot] PR whose
 	// `pull_request` checks can never run (#12003). nil means off.
 	BotTakeoverEnabled func() bool
-	// WorkflowApprovalTrustedBots returns the live
-	// auto_merge.workflow_approval.trusted_bots switch. nil means on so existing
-	// held-run approvals keep working unless an operator disables them.
-	WorkflowApprovalTrustedBots func() bool
 	// TrustedAuthorPolicy returns the live, operator opt-in policy for the
 	// human-authored tier. nil or disabled means the tier is off.
 	TrustedAuthorPolicy func() TrustedAuthorPolicy
@@ -160,7 +156,6 @@ type Engine struct {
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
 	botTakeoverEnabledFn              func() bool
-	workflowApprovalTrustedBots       func() bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
 	contributorLanePolicy             func() ContributorLanePolicy
@@ -175,8 +170,8 @@ type Engine struct {
 	evaluatedHeads                    map[string]string
 	requiredChecksFallbackWarnedMu    sync.Mutex
 	requiredChecksFallbackWarned      map[string]bool
-	// heldRunApprovals remembers PR heads whose held workflow runs the sweep
-	// already tried to approve, so each head costs one approve pass.
+	// heldRunApprovals is the shared per-PR-head one-shot map for rebase
+	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
@@ -213,7 +208,6 @@ func New(transport Transport, opts Options) *Engine {
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
-		workflowApprovalTrustedBots:       opts.WorkflowApprovalTrustedBots,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
 		contributorLanePolicy:             opts.ContributorLanePolicy,
@@ -919,7 +913,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					continue
 				}
 			}
-			if reason := c.approveTrustedRegistryClankerWorkflowRuns(ctx, repo, owner, repoName, pr); reason != "" {
+			if reason := c.detectTrustedRegistryClankerWorkflowApprovalRequired(ctx, repo, owner, repoName, pr); reason != "" {
 				if isTerminalRequiredCheckHold(reason) {
 					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
 				} else {
@@ -1415,7 +1409,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, err
 	}
 	if !green {
-		if approveReason := c.resolveActionRequiredWorkflowRuns(ctx, displayRepo, owner, repo, lane, pr, number, evaluatedHeadSHA, reason); approveReason != "" {
+		if approveReason := c.detectActionRequiredWorkflowRuns(ctx, displayRepo, owner, repo, lane, pr, number, evaluatedHeadSHA, reason); approveReason != "" {
 			return AutoMergeSweepEvent{}, approveReason, nil
 		}
 	}
@@ -1587,10 +1581,6 @@ const trustedBotLaneSkipReason = "trusted-bot-lane"
 func (c *Engine) isTrustedBotLaneAuthor(author string) bool {
 	lane, ok := c.sweepLaneForAuthor(author)
 	return ok && lane == "trusted-bot"
-}
-
-func (c *Engine) workflowApprovalTrustedBotsEnabled() bool {
-	return c == nil || c.workflowApprovalTrustedBots == nil || c.workflowApprovalTrustedBots()
 }
 
 func trustedRegistryClanker(labels []string) bool {

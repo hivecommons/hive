@@ -153,9 +153,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
-		// WorkflowApprovalTrustedBots is auto_merge.workflow_approval.trusted_bots.
-		WorkflowApprovalTrustedBots *bool `json:"workflow_approval_trusted_bots"`
-		TrustedAuthors              *struct {
+		TrustedAuthors     *struct {
 			Enabled                 *bool    `json:"enabled"`
 			Repos                   []string `json:"repos"`
 			RequireRole             *string  `json:"require_role"`
@@ -280,10 +278,6 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
 	}
-	if body.WorkflowApprovalTrustedBots != nil {
-		v := *body.WorkflowApprovalTrustedBots
-		cfg.AutoMerge.WorkflowApproval.TrustedBots = &v
-	}
 	if body.TrustedAuthors != nil {
 		if body.TrustedAuthors.Enabled != nil {
 			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
@@ -384,18 +378,16 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		contributorLaneLabels = append([]string{}, config.DefaultContributorLaneExcludeLabels...)
 	}
 	return map[string]interface{}{
-		"self_authored":                      selfAuthored,
-		"self_authored_set":                  am.SelfAuthored != nil,
-		"max_merges":                         am.MaxMerges,
-		"min_head_age":                       am.EffectiveMinHeadAge().String(),
-		"required_checks":                    checks,
-		"allow_unprotected_base":             allowUnprotected,
-		"no_ci_ok":                           noCIOK,
-		"trusted_bot_authors":                trustedBots,
-		"trusted_bot_authors_set":            am.TrustedBotAuthors != nil,
-		"bot_takeover_enabled":               am.BotTakeover.IsEnabled(),
-		"workflow_approval_trusted_bots":     am.WorkflowApproval.TrustedBotsEnabled(),
-		"workflow_approval_trusted_bots_set": am.WorkflowApproval.TrustedBots != nil,
+		"self_authored":           selfAuthored,
+		"self_authored_set":       am.SelfAuthored != nil,
+		"max_merges":              am.MaxMerges,
+		"min_head_age":            am.EffectiveMinHeadAge().String(),
+		"required_checks":         checks,
+		"allow_unprotected_base":  allowUnprotected,
+		"no_ci_ok":                noCIOK,
+		"trusted_bot_authors":     trustedBots,
+		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"bot_takeover_enabled":    am.BotTakeover.IsEnabled(),
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,

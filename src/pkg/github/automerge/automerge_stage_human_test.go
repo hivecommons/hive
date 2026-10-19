@@ -272,6 +272,9 @@ func TestTrustAndDecisionCauseProse(t *testing.T) {
 	if got := decisionCause(contributorLaneReasonWorkflowPath); !strings.Contains(got, "workflow") {
 		t.Fatalf("workflow = %q", got)
 	}
+	if got := decisionCause(workflowApprovalRequiredPrefix + "ci/build"); !strings.Contains(got, "Approval for running fork pull request workflows") {
+		t.Fatalf("workflow approval = %q", got)
+	}
 	if got := decisionCause("something-new"); got != "the lane reported `something-new`" {
 		t.Fatalf("fallback = %q", got)
 	}
