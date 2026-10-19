@@ -75,7 +75,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
 - [Token collection and usage tracking](token-tracking.md) — session JSONL, `/api/cost`, and hub usage rollups.
-- [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot).
+- [Notifications](notifications.md) — ntfy, Slack, and Discord alert channels, plus the two-way [Discord bot](notifications.md#discord-webhook-vs-discord-bot) and the [Slack Socket Mode / Telegram / Matrix / Teams bots](notifications.md#chat-bots-slack-socket-mode-telegram-matrix-teams).
 - [State-triggered hooks](hooks.md) — declarative `transition → action` rules, the transition catalog, the vetted action set, and the security model (RFC #4001).
 - [GitHub Actions trigger](github-actions-trigger.md) — call a hive from a workflow via the v6 comment-relay composite action, with examples for PR review and scheduled status kicks.
 - [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.

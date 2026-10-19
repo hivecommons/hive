@@ -6,6 +6,8 @@ Hive can send operator notifications through three outbound channels configured 
 - Slack incoming webhooks
 - Discord webhooks
 
+The same block also configures the two-way chat bots (Discord, Slack Socket Mode, Telegram, Matrix, Teams); see [Chat bots](#chat-bots-slack-socket-mode-telegram-matrix-teams) below.
+
 The notifier is implemented in `src/pkg/notify/notify.go` and is constructed from `config.NotificationsConfig` in `src/pkg/config/notifications_config.go`. The same notification is sent to every configured channel.
 
 Every notification title is prefixed with the sending hive's ID as `[<hive-id>] <title>` (`Notifier.SetHiveID` in `src/pkg/notify/notify.go`). Filters or routing rules that match on title - an ntfy topic shared by several hives, for example - should account for the prefix.
@@ -214,3 +216,71 @@ If commands still appear ignored after enabling the intent, check the hive
 log for `discord poll failed` — that indicates a permissions problem
 (e.g. missing Read Message History), not a missing intent, since a missing
 intent produces no error at all, only empty content.
+
+## Chat bots: Slack Socket Mode, Telegram, Matrix, Teams
+
+Besides the one-way webhooks above, v6 ships two-way chat bots on the shared
+chat spine (`src/pkg/chat`). Each bot receives the same notifications as the
+webhooks (relayed from the dashboard SSE stream) and accepts `!` commands such
+as `!status` from allowlisted users. All of them live under the same
+`notifications:` block; the struct is `NotificationsConfig` in
+`src/pkg/config/notifications_config.go`.
+
+Every bot block below shares the same two rules:
+
+- `enabled: true` starts the bot (Discord is the exception: it starts when
+  `bot_token` and `channel_id` are set, see above). Startup fails closed with
+  `<surface> <field>, <field> ... must be configured` if a required field is
+  empty.
+- `allowed_users` is the command allowlist. Entries are `id` or `id:role`
+  (`read`, `read-write`, `merger`, `owner`; see
+  [operator-reference](operator-reference.md)). An **empty list disables
+  commands** for that surface: the bot still posts notifications but ignores
+  every `!` command. Use `${ENV_VAR}` interpolation for tokens.
+
+```yaml
+notifications:
+  slack:
+    enabled: true
+    app_token: ${SLACK_APP_TOKEN}      # xapp-… (Socket Mode)
+    bot_token: ${SLACK_BOT_TOKEN}      # xoxb-…
+    channel_id: C0123456789
+    allowed_users: ["U0123456789:owner"]
+  telegram:
+    enabled: true
+    bot_token: ${TELEGRAM_BOT_TOKEN}   # from @BotFather
+    chat_id: "-1001234567890"
+    allowed_users: ["123456789:owner"] # numeric Telegram user id
+  matrix:
+    enabled: true
+    homeserver_url: https://matrix.org
+    access_token: ${MATRIX_ACCESS_TOKEN}
+    room_id: "!abcdef:matrix.org"
+    allowed_users: ["@you:matrix.org:owner"]
+  msteams:
+    enabled: true
+    tenant_id: ${MSTEAMS_TENANT_ID}
+    client_id: ${MSTEAMS_CLIENT_ID}
+    client_secret: ${MSTEAMS_CLIENT_SECRET}
+    team_id: <team id>
+    channel_id: <channel id>
+    webhook_url: ${MSTEAMS_WEBHOOK_URL}  # Teams Workflows (Power Automate) flow URL
+    allowed_users: ["<aad object id>:owner"]
+```
+
+| Surface | Required fields | Provider-side setup | Startup log line |
+|---|---|---|---|
+| Slack (`notifications.slack`) | `enabled`, `app_token`, `bot_token`, `channel_id` | Slack app with **Socket Mode** on; bot scopes `chat:write`, `connections:write`, `channels:history` (plus `channels:manage` if you want topic updates); event subscription `message.channels`; install to the workspace and invite the bot to `channel_id`. Socket Mode is outbound-only, so it works from pull-only clusters without ingress. Design: [slack-integration](design/slack-integration.md). | `slack bot starting` |
+| Telegram (`notifications.telegram`) | `enabled`, `bot_token`, `chat_id` | Create the bot with @BotFather. Send it one message, then read `chat.id` (and your `from.id` for `allowed_users`) from `https://api.telegram.org/bot<token>/getUpdates`. Messages from any other chat are ignored. | `telegram bot starting` |
+| Matrix (`notifications.matrix`) | `enabled`, `homeserver_url`, `access_token`, `room_id` | A dedicated bot account on any homeserver; log it in once to obtain `access_token`; create the room and invite the bot. `allowed_users` entries are full MXIDs. | `matrix bot starting` |
+| Teams (`notifications.msteams`) | `enabled`, `tenant_id`, `client_id`, `client_secret`, `team_id`, `channel_id`, `webhook_url` | An Entra app registration (client credentials) that can read channel messages, plus a Teams Workflows "post to a channel when a webhook request is received" flow for `webhook_url`. Legacy Office 365 connector URLs are not supported. `allowed_users` entries are Entra (AAD) user object IDs. Inbound replies are only read under the five newest bot-authored posts. | `msteams bot starting` |
+
+Discord's two-way bot is configured by `notifications.discord.bot_token`,
+`channel_id` and `allowed_users`; see
+[Discord webhook vs Discord bot](#discord-webhook-vs-discord-bot).
+
+To verify a bot end to end: watch the hive log for the startup line and
+`chat service starting`, send `!status` in the configured channel, and expect
+a reply. A bot that starts but never answers usually has an empty
+`allowed_users` (commands disabled) or, for Discord, a missing Message Content
+Intent.
