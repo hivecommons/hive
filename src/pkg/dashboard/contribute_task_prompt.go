@@ -499,7 +499,7 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 	if g := strings.TrimSpace(guide); g != "" {
 		guideHint = "\n\n" + g + "\n\n"
 	}
-	// #12913: companion checkouts, right after the primary checkout step
+	// #13059: companion checkouts, right after the primary checkout step
 	// they sit beside. spektacular's `repo list` resolves a registered docs
 	// location to $HIVE_WORKSPACE_DIR/hivecommons/spektacular-website and
 	// its AGENTS.md says to stop when it is missing; four tasks parked on
@@ -529,7 +529,7 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 			"etiquette. Two things they do not override: hive's safety rules (never merge "+
 			"your own PR, never bypass a write gate), and a branch or requirement this "+
 			"assignment names explicitly below. "+
-			// #12913: the repository's conventions win; its confirmation gates
+			// #13059: the repository's conventions win; its confirmation gates
 			// do not apply. Five contributor parks on hivecommons/spektacular
 			// in one day obeyed its "offer a spec and wait for acceptance"
 			// rule on issues the hive had already accepted and dispatched.
