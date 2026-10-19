@@ -60,9 +60,9 @@ func reviewSwarmHolds(in Inputs, current *review.Aggregate, hold *review.HumanRe
 	if current != nil {
 		switch {
 		case current.Verdict == review.VerdictReject:
-			out = append(out, ReviewHold{Kind: ReviewHoldReject, Reason: "review verdict rejects the current head", Since: current.RecordedAt})
+			out = append(out, ReviewHold{Kind: ReviewHoldReject, Reason: "review verdict rejects the current head", Since: current.FirstRecorded()})
 		case RequiresHuman(current):
-			out = append(out, ReviewHold{Kind: ReviewHoldRequiresHuman, Reason: "review verdict requires a human", Since: current.RecordedAt})
+			out = append(out, ReviewHold{Kind: ReviewHoldRequiresHuman, Reason: "review verdict requires a human", Since: current.FirstRecorded()})
 		}
 	}
 	if len(out) == 0 {
@@ -72,7 +72,7 @@ func reviewSwarmHolds(in Inputs, current *review.Aggregate, hold *review.HumanRe
 	}
 	if len(out) > 0 && in.HoldRelease != nil && ghpkg.ReleasesReviewHold(out[0].Since, *in.HoldRelease) {
 		out = nil
-		if blocksOnHead(current) {
+		if blocksOnHead(current) && hold != nil && hold.PlacedByVerdict(*current) {
 			hold = nil
 		}
 	}

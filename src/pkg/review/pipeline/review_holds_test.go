@@ -101,6 +101,10 @@ func TestReviewHolds_PersonRelease12962(t *testing.T) {
 	after := onHead.RecordedAt.Add(30 * time.Minute)
 	before := onHead.RecordedAt.Add(-30 * time.Minute)
 	verdictDispatch := review.DispatchState{Human: []review.HumanReviewHold{{Repo: testRepo, Number: 7, HeadSHA: "head", Reason: "review verdict requires_human", UpdatedAt: after.Add(time.Hour)}}}
+	// Collected again after the owner approved: RecordedAt moved, FirstRecordedAt did not.
+	firstRecorded := onHead
+	firstRecorded.FirstRecordedAt = onHead.RecordedAt.Add(-time.Hour)
+	between := firstRecorded.FirstRecordedAt.Add(30 * time.Minute)
 	cases := []struct {
 		name      string
 		verdicts  []review.Aggregate
@@ -125,6 +129,7 @@ func TestReviewHolds_PersonRelease12962(t *testing.T) {
 		{name: "a newer requires_human on a later head holds again",
 			verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 0), reviewedAgg(review.VerdictRequiresHuman, "head", 2)},
 			release:  personApproval12962(t0.Add(time.Hour)), want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "release between the first recording and a later collect of the same verdict", verdicts: []review.Aggregate{firstRecorded}, release: personApproval12962(between), wantStage: StageApproved},
 		{name: "a release does not lift a dispatch hold the verdict did not place",
 			dispatch: review.DispatchState{Human: []review.HumanReviewHold{{Repo: testRepo, Number: 7, HeadSHA: "head", Reason: "review fix cap reached (6/6)"}}},
 			release:  personApproval12962(after), want: []string{ReviewHoldDispatch}, wantStage: StageHumanHold},

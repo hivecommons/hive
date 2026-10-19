@@ -465,7 +465,7 @@ func approvalReasons(in Inputs, current *review.Aggregate, link *ghpkg.ReviewLin
 			}
 		}
 	}
-	if r := in.HoldRelease; r != nil && blocksOnHead(current) && ghpkg.ReleasesReviewHold(current.RecordedAt, *r) {
+	if r := in.HoldRelease; r != nil && blocksOnHead(current) && ghpkg.ReleasesReviewHold(current.FirstRecorded(), *r) {
 		reasons = append(reasons, fmt.Sprintf("review verdict hold released by @%s", r.By))
 		if since.IsZero() {
 			since = r.At

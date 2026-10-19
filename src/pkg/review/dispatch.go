@@ -759,6 +759,12 @@ func (p *DispatchPlan) addHuman(pr PullRequest, reason string, now time.Time) {
 	p.State.Human = upsertHuman(p.State.Human, hold)
 }
 
+// PlacedByVerdict reports whether h is the hold the dispatcher parks for agg's
+// own reject or requires_human verdict, as opposed to a fix-cap or no-fixer hold.
+func (h HumanReviewHold) PlacedByVerdict(agg Aggregate) bool {
+	return h.Reason == humanReason(agg)
+}
+
 func humanReason(agg Aggregate) string {
 	if len(agg.Reasons) > 0 {
 		return strings.Join(agg.Reasons, "; ")
