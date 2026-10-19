@@ -75,6 +75,7 @@ func TestRepoMergeLaneViewShowsFrontWaitingAndEnforcement(t *testing.T) {
 		Front: &mergelane.Front{
 			PR: 11, Epoch: 4, Stage: mergelane.StageWaitingChecks,
 			EnteredAt: now, DeadlineAt: now.Add(time.Hour), LastReason: holdReason,
+			ChecksPending: true, Extensions: 2,
 		},
 		Waiting: []mergelane.Waiter{
 			{PR: 12, EligibleAt: now.Add(time.Minute), LastSeen: now},
@@ -98,6 +99,9 @@ func TestRepoMergeLaneViewShowsFrontWaitingAndEnforcement(t *testing.T) {
 	front, _ := lane["front"].(map[string]any)
 	if front["pr"] != float64(11) || front["stage"] != mergelane.StageWaitingChecks || front["stage_label"] != "waiting for checks" || front["reason"] != holdReason {
 		t.Errorf("front = %v", front)
+	}
+	if front["checks_pending"] != true || front["extensions"] != float64(2) {
+		t.Errorf("front waiting-on-CI state = %v / %v, want checks_pending=true extensions=2", front["checks_pending"], front["extensions"])
 	}
 	waiting, _ := lane["waiting"].([]any)
 	if len(waiting) != 2 {
