@@ -171,8 +171,10 @@ func decisionCause(reason string) string {
 		return "the PR touches a human-merge path (auto_merge.human_merge_paths)"
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
 		return "the merge intent could not be authorized"
+	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
+		return "GitHub Actions is still waiting after Hive posted `/ok-to-test`. Install `.github/workflows/hive-ok-to-test.yml` from `src/docs/templates/hive-ok-to-test.yml` so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
-		return "GitHub Actions is waiting for maintainer workflow approval. Owner-side fix: Settings → Actions → General → Approval for running fork pull request workflows from contributors; choose a policy that does not hold trusted Dependabot/App PRs, or manually approve the runs from the PR checks banner."
+		return "GitHub Actions is waiting for workflow approval. Hive posted `/ok-to-test`; install `.github/workflows/hive-ok-to-test.yml` from `src/docs/templates/hive-ok-to-test.yml` if the runs do not start, or manually approve them from the PR checks banner."
 	case reason == "approval-desk-withheld":
 		return "the approval desk withheld this merge"
 	case reason == "":

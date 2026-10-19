@@ -1,0 +1,21 @@
+name: Hive ok-to-test
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  ok-to-test:
+    uses: hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5
+    with:
+      hive-app-logins: HIVE_APP_LOGIN[bot]
+      # Optional: trusted-authors defaults to dependabot[bot],renovate[bot]
+      # plus the hive app login(s).
+      # trusted-authors: dependabot[bot],renovate[bot]
+      # command: /ok-to-test

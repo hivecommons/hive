@@ -605,6 +605,9 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 			origin = fmt.Sprintf(" [adopted fork: %s — push to the contributor's branch, never to a same-named base branch]", head)
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, origin, heldMarker(pr.Held), pr.Title))
+		if pr.FromFork {
+			b.WriteString(adoptedPRStatusRule)
+		}
 	}
 	if len(deferred) > 0 {
 		b.WriteString(fmt.Sprintf("DEFERRED TO OPEN SHARED-CI INCIDENTS (%d — no repair: the base/infra failure is tracked on the incident issue; do not push, retry, or comment again; each PR returns to the list above when its incident closes):\n", len(deferred)))

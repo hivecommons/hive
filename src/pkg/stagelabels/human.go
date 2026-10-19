@@ -170,6 +170,11 @@ const (
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
 	laneReasonCheckFailing           = "check-failing:"
+	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
+	// PR (074) whose head sat past the stage dwell with nothing the hive
+	// could push; the suffix is the lane reason it was stuck on
+	// ("adoption-stalled:reviewer-verdict:changes_requested").
+	LaneReasonAdoptionStalledPrefix = "adoption-stalled:"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.

@@ -174,6 +174,11 @@ type Engine struct {
 	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
+	// workflowApprovalCommands records the first time this process saw and
+	// commented /ok-to-test for a PR head. The mutation boundary dedupes the
+	// actual comment across restarts; this clock drives the missing-caller grace.
+	workflowApprovalCommandsMu sync.Mutex
+	workflowApprovalCommands   map[string]time.Time
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
@@ -1424,8 +1429,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if !green {
 		// A missing required check on a trusted-lane head may be a workflow
-		// run GitHub is holding for approval; release it rather than polling
-		// forever (automerge_held_runs.go).
+		// run GitHub is holding for approval; post /ok-to-test and surface it
+		// distinctly rather than polling forever (automerge_held_runs.go).
 		return AutoMergeSweepEvent{}, c.resolveMissingRequiredCheck(ctx, displayRepo, owner, repo, pr, number, evaluatedHeadSHA, reason, headPushedAt), nil
 	}
 

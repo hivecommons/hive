@@ -467,3 +467,25 @@ func TestCommandTreeHasExamples(t *testing.T) {
 		t.Fatalf("help = %q", stdout.String())
 	}
 }
+
+func TestOkToTestTemplateCommandRendersCaller(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	stdout, _, err := execute(t, server, "", "ok-to-test-template", "--hive-app-login", "hivecommons-hive[bot]", "--trusted-authors", "dependabot[bot]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"uses: hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5",
+		"hive-app-logins: hivecommons-hive[bot]",
+		"trusted-authors: dependabot[bot]",
+		"actions: write",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+}

@@ -235,9 +235,13 @@ type stageObservation struct {
 	HeadSHA string
 	Labels  []string
 	Reason  string
-	Merged  bool
-	Err     bool
-	Detail  stageDetail
+	// LaneReason is the lane's own skip reason before the reviewer verdict
+	// or the human route replaced Reason; it is what still says whether CI
+	// is red, pending or green on the head.
+	LaneReason string
+	Merged     bool
+	Err        bool
+	Detail     stageDetail
 	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
 	Author string
 	// AuthorKind is who wrote the PR (authorkind.Detect), set on the
@@ -1104,6 +1108,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// the author-blocked outcome by kind now (human 071 / clanker 072).
 			verdict.Stage = fixingStage(obs)
 		}
+		obs.LaneReason = obs.Reason
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
@@ -1183,8 +1188,21 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// The hive owns this PR: whether the lane sees it red,
 				// pending or awaiting a verdict, the stage is 074 until the
 				// adoption is released or the merge gate takes it
-				// (hivecommons/hive#12736).
+				// (hivecommons/hive#12736) — unless nothing can finish it
+				// there: a dead-end in-place adoption re-homes, and an
+				// adoption nobody is working past the dwell is a person's
+				// (085) with the lane reason named (hivecommons/hive#12858).
 				verdict.Stage = stagelabels.AdoptedByHive
+				esc, n, err := c.escapeStalledAdoption(ctx, store, key, obs, policy, now)
+				result.Comments += n
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				if esc.Escalated {
+					verdict.Stage = stagelabels.NeedsDecision
+					verdict.Rank = stageRankOwned
+					obs.Reason = esc.Reason
+				}
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can

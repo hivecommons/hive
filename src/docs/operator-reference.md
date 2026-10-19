@@ -286,21 +286,26 @@ approval policy; the required contexts never appear and the PR sits at
 registry-trusted clanker lanes only, the sweep now inspects the head's workflow
 runs when a required check is missing or pending:
 
-- held runs whose head repository is the base repository are reported as
-  `workflow-approval-required:<ctx>` and routed to `stage/085-needs-decision`
-  with remediation text. Hive does not call the workflow-run approval API. A
-  maintainer must click **Approve and run** or relax Settings → Actions →
-  General → **Approval for running fork pull request workflows from
-  contributors**.
+- held runs whose head repository is the base repository cause Hive to post one
+  `/ok-to-test` issue comment per head and report `workflow-approval-required:<ctx>`.
+  The repository-local `.github/workflows/hive-ok-to-test.yml` caller listens for
+  that comment and invokes `hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5`;
+  the repository `GITHUB_TOKEN` (not the Hive App token) approves the held runs.
+  No Prow and no Hive App Actions-write permission are required.
+- if the held runs remain `action_required` after the grace period, Hive reports
+  `workflow-approval-required:missing-workflow:<ctx>` so the attention panel and
+  stage entry name the likely missing caller. Install the template from
+  `src/docs/templates/hive-ok-to-test.yml` or render it with
+  `hivectl ok-to-test-template --hive-app-login <app>[bot]`.
 - a head with **no** `pull_request` runs at all that is older than 30 minutes is
   reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
   workflows (seen on hivecommons/hive#11553), and only a new push, a
   close/reopen, or `@dependabot rebase` will create them.
-- `workflow-approval-required:<ctx>` and `required-check-never-started:<ctx>`
-  are logged once per PR head as `automerge hold`; later ticks only count the
-  PR in the skip stats instead of emitting `automerge skip` every tick.
-- fork heads and human-authored lanes are never touched; a first-time
-  contributor's held run is still a person's decision.
+- workflow-approval and never-started holds are logged once per PR head as
+  `automerge hold`; later ticks only count the PR in the skip stats instead of
+  emitting `automerge skip` every tick.
+- fork heads, sentinel-alert PRs, and human-authored lanes are never touched; a
+  first-time contributor's held run is still a person's decision.
 
 Per-repo `project.repo_policies[].auto_merge: false` is stronger than the
 hive-wide L6 setting: the merge relay refuses the repo, the self-authored sweep
