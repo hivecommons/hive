@@ -553,11 +553,11 @@ func (l *Lane) checks(ctx context.Context, repo, branch, head string) checkVerdi
 		if reason == "" {
 			reason = "required check set is empty"
 		}
-		return checkVerdict{ghub.CheckWait, "required checks unknown, no merge: " + reason}
+		return checkVerdict{outcome: ghub.CheckWait, reason: "required checks unknown, no merge: " + reason}
 	}
 	runs, err := l.opts.GitHub.CheckRuns(ctx, repo, head)
 	if err != nil {
-		return checkVerdict{ghub.CheckWait, "reading check results failed: " + err.Error()}
+		return checkVerdict{outcome: ghub.CheckWait, reason: "reading check results failed: " + err.Error()}
 	}
 	var waiting []string
 	// missing: some required check has no run, or finished without a
@@ -572,7 +572,7 @@ func (l *Lane) checks(ctx context.Context, repo, branch, head string) checkVerdi
 		}
 		switch ghub.ClassifyRequiredCheck(run.Status, run.Conclusion) {
 		case ghub.CheckFailed:
-			return checkVerdict{ghub.CheckFailed, fmt.Sprintf("required check %q finished as %s on head %s", name, run.Conclusion, short(head))}
+			return checkVerdict{outcome: ghub.CheckFailed, reason: fmt.Sprintf("required check %q finished as %s on head %s", name, run.Conclusion, short(head))}
 		case ghub.CheckWait:
 			if strings.EqualFold(run.Status, "completed") {
 				missing = true
