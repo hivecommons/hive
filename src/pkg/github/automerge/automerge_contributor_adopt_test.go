@@ -1407,22 +1407,25 @@ func TestAdoptionRefusedByDiffFence(t *testing.T) {
 }
 
 // The dco-rehome takeover of an in-place adoption goes through the same
-// fence (hivecommons/hive#12850). A fenced or unreadable diff releases the
-// adoption: no App PR, no closed original, and the PR drops back to 072,
-// where the fence keeps holding it. A head that moved since the lane observed it is only
-// deferred: the adoption stays and the next sweep re-reads.
+// fence (hivecommons/hive#12850). A fenced diff releases the adoption: no App
+// PR, no closed original, and the PR drops back to 072, where the fence keeps
+// holding it. A head that moved since the lane observed it, or a transient
+// files-API failure, is only deferred: the adoption stays and the next sweep
+// re-reads.
 func TestAlreadyAdoptedInPlaceDCORehomeRefusedByDiffFence(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		files        []map[string]any
 		changedFiles int
 		liveHead     string
+		failFiles    bool
 		wantReleased bool
 	}{
 		{name: "workflow path releases", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantReleased: true},
 		{name: "test file removed releases", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantReleased: true},
 		{name: "incomplete file list releases", changedFiles: 3001, wantReleased: true},
 		{name: "head moved defers", liveHead: "bbb"},
+		{name: "files API failure defers", failFiles: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := adoptPolicy()
@@ -1439,6 +1442,7 @@ func TestAlreadyAdoptedInPlaceDCORehomeRefusedByDiffFence(t *testing.T) {
 			h.adopt.prFiles = tc.files
 			h.adopt.changedFiles = tc.changedFiles
 			h.adopt.liveHead = tc.liveHead
+			h.adopt.failPRFiles = tc.failFiles
 			h.api.reset()
 			h.clock.advance(time.Minute)
 			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")

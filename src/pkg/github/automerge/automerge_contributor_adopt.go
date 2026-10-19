@@ -494,15 +494,21 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
 		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
 			if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
+				if err != nil {
+					// A transient read failure is not a verdict: keep the
+					// adoption so the next sweep re-reads, rather than
+					// releasing it and re-adopting with a duplicate comment.
+					c.warn("stage labels: DCO re-home deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
+					return 0, nil
+				}
 				if refusal == adoptionReasonHeadChanged {
 					// The next sweep observes the new head and re-reads.
 					c.info("stage labels: DCO re-home deferred, head moved", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
 					return 0, nil
 				}
 				// The hive cannot take this head over, so it gives the PR
-				// back: it returns to 072, where the same fence holds it
-				// (a files-evidence failure is re-judged there next sweep).
-				c.info("stage labels: DCO re-home refused by diff fence; releasing adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
+				// back: it returns to 072, where the same fence holds it.
+				c.info("stage labels: DCO re-home refused by diff fence; releasing adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal)
 				store.ClearAdoption(key)
 				return 0, nil
 			}
