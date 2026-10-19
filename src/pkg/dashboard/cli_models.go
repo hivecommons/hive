@@ -1095,31 +1095,47 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 	if r.fallback {
 		served = "static-fallback"
 	}
+	credentialMissing := isCopilotCredentialMissing(backend, r.discoveryErr)
 	if s.logger != nil {
-		s.logger.Warn("audit: model discovery failed; serving a non-authoritative list",
-			"backend", backend, "platform", platform, "served", served,
-			"fallback", r.fallback, "degraded", r.degraded, "err", r.discoveryErr)
+		args := []any{"backend", backend, "platform", platform, "served", served,
+			"fallback", r.fallback, "degraded", r.degraded, "err", r.discoveryErr}
+		if credentialMissing {
+			args = append(args, "recovery", copilotCredentialMissingRecovery)
+		}
+		s.logger.Warn("audit: model discovery failed; serving a non-authoritative list", args...)
 	}
 	// Self-report (#11868): the tracker only surfaces this once it has
 	// persisted for an hour, so a transient discovery blip never files.
-	// credential_missing is excluded (#12947): it is operator-side and the
-	// recovery is the dashboard Copilot Login, so the local warn/audit entry
-	// is enough and an upstream issue would not be actionable.
-	if r.discoveryErr != copilotHTTPCatalogOnlyErr && !isCopilotCredentialMissing(backend, r.discoveryErr) {
+	// credential_missing (#12947) is operator-side: the recovery is the
+	// dashboard Copilot Login, so the local warn/audit entry names it and
+	// no fleet self-report is filed (an upstream issue would not be actionable).
+	// Excluded states Clear instead, so a real failure observed earlier
+	// cannot linger in the tracker and file under the excluded state.
+	if r.discoveryErr != copilotHTTPCatalogOnlyErr && !credentialMissing {
 		fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
-			discoveryDegradedMessage(backend, served, r.discoveryErr), r.discoveryErr)
+			discoveryDegradedMessage(backend, served), r.discoveryErr)
+	} else {
+		fleetreport.Clear(fleetreport.ClassModelDiscoveryDegraded, backend)
 	}
 	if s.audit != nil {
-		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
+		kv := []string{
 			"backend", backend,
 			"platform", platform,
 			"fallback", strconv.FormatBool(r.fallback),
 			"degraded", strconv.FormatBool(r.degraded),
 			"served", served,
 			"error", r.discoveryErr,
-		), "")
+		}
+		if credentialMissing {
+			kv = append(kv, "recovery", copilotCredentialMissingRecovery)
+		}
+		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(kv...), "")
 	}
 }
+
+// copilotCredentialMissingRecovery is the operator action recorded alongside a
+// copilot "Not authenticated" discovery failure (#12947).
+const copilotCredentialMissingRecovery = "credential_missing; operator dashboard device-flow login (Copilot Login)"
 
 // isCopilotCredentialMissing reports whether a discovery failure is the copilot
 // helper refusing because the operator has not completed the Copilot Login.
@@ -1127,15 +1143,10 @@ func isCopilotCredentialMissing(backend, discoveryErr string) bool {
 	return backend == "copilot" && strings.Contains(strings.ToLower(discoveryErr), "not authenticated")
 }
 
-// discoveryDegradedMessage attributes a copilot "Not authenticated" discovery
-// failure to the missing credential so the self-report names the recovery
-// path instead of reading as a generic gateway fault.
-func discoveryDegradedMessage(backend, served, discoveryErr string) string {
-	msg := fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served)
-	if isCopilotCredentialMissing(backend, discoveryErr) {
-		msg += ": credential_missing; recovery: operator dashboard device-flow login (Copilot Login)"
-	}
-	return msg
+// discoveryDegradedMessage is the self-report headline for a discovery failure
+// that is not one of the excluded operator-side states.
+func discoveryDegradedMessage(backend, served string) string {
+	return fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served)
 }
 
 // cliStaticFallback returns the current static model list for a CLI backend.
