@@ -12713,18 +12713,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
       pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
     };
-    function stageTrackerIcon(key, cls, title) {
+    // label is exposed to assistive tech only (aria-label, no <title>): hover
+    // text in a tracker row belongs to the links, titles and the lit chevron.
+    function stageTrackerIcon(key, cls, label) {
       const body = STAGE_TRACKER_ICONS[key];
       if (!body) return '';
-      const t = title ? `<title>${esc(title)}</title>` : '';
-      return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${title ? ' role="img"' : ' aria-hidden="true"'}>${t}${body}</svg>`;
+      return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>${body}</svg>`;
     }
 
     // "[author icon] #N title" for the PR in progress column of the title line.
-    function stageTrackerPRRef(number, url, authorKind, author, title) {
+    // tip, when given, replaces the default "title / Author" hover text.
+    function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
       const ak = authorKind || 'hive';
       const who = ak + (author ? ' · @' + author : '');
-      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + '\n' : '') + 'Author: ' + who)}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
+      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc(tip || ((title ? title + '\n' : '') + 'Author: ' + who))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
     }
 
     // Author kind of whoever must move on the item's current stage ('' = none).
@@ -12763,6 +12765,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Chevrons for one item. range bounds the columns the item owns (an
     // issue row stops at PR in progress, a nested PR row starts there);
     // columns outside it are invisible spacers that keep the grid aligned.
+    // Only the active chevron carries hover text (stage name, description,
+    // whose move it is); passed and upcoming chevrons have none.
     function stageTrackerStripItems(item, stages, range) {
       const segs = stageTrackerSegments(item, stages);
       const curStage = Number(item.stage) || 0;
@@ -12773,15 +12777,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : ''].filter(Boolean).join(' ');
-        let tip = sg.label + (sg.description ? ' — ' + sg.description : '');
-        // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
-        if (sg.state === 'active' && !sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
-        else if (sg.state === 'active' && curStage === 100) tip = sg.label + ' — admitted, merging';
+        const active = sg.state === 'active';
+        let tip = '';
+        if (active) {
+          tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+          // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
+          if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
+          else if (curStage === 100) tip = sg.label + ' — admitted, merging';
+          if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
+        }
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (sg.state === 'active') inner = (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
+        else if (active) inner = (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
+        return `<li class="${cls}"${active ? ` title="${esc(tip)}" aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }
 
@@ -12831,12 +12840,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // A covering PR nested under its issue: "[author icon] #N title" at the
-    // PR column, then the PR's own strip from PR in progress onwards.
+    // PR column, then the PR's own strip from PR in progress onwards. The
+    // PR's full tooltip rides its link; the sub-row container has none.
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
-      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title);
-      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" title="${esc(stageTrackerTooltip(pr, nowMs))}">
+      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
           </div>
@@ -12865,7 +12875,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
     // chevrons carry only a grey icon; the active one carries words.
-    // Everything else is in the tooltip.
+    // Everything else is in the tooltip on the item's #N link (the row
+    // container, kind/author icons, chips and the since cell carry none).
     // An issue with no PR yet, or exactly one covering PR, is a single entry
     // (the PR's stage drives the strip and its "[icon] #N title" sits in the
     // PR column). With two or more covering PRs the issue strip stops at
@@ -12897,11 +12908,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // title may run across it.
       const ak = !isIssue ? (item.author_kind || 'hive') : '';
       const who = ak ? ak + (item.author ? ' · @' + item.author : '') : '';
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(shown, nowMs))}">
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
             ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
           </div>`, stageTrackerChipsHtml(shown))}
         </div>
