@@ -484,16 +484,20 @@ jobs:
     # test failure aborting the run. Now that the gate also runs on
     # pull_request, an unscoped condition would additionally file an issue for
     # every contributor's red PR.
-    # A cancelled coverage job (timeout during post-step cleanup, operator cancel,
-    # or concurrency cancel) carries no coverage verdict and no outputs; filing an
-    # issue from it only produces a false "measured unknown" alarm (#12944).
-    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped' && needs.coverage.result != 'cancelled'
+    # A cancelled coverage job carries no outputs. If it was cancelled AFTER the
+    # measurement finished (timeout during post-step cleanup, #12944) the profile
+    # artifact exists and filing would only produce a false "measured unknown"
+    # alarm, so the script below exits early. If it was cancelled BEFORE the
+    # artifact was uploaded (a hung suite hitting the job timeout, #12951) the
+    # issue is still filed so a persistent hang does not go unreported.
+    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     needs: coverage
     permissions:
       contents: read
       issues: write
+      actions: read
     steps:
       - name: Create or update coverage issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -513,6 +517,23 @@ jobs:
             const total = '${{ needs.coverage.outputs.total }}' || 'unavailable';
             const shortSha = measuredSha.substring(0, 7);
 
+            // Cancelled jobs propagate no outputs, so the profile artifact is the
+            // only evidence that the measurement completed (#12944, #12951).
+            const cancelled = '${{ needs.coverage.result }}' === 'cancelled';
+            if (cancelled) {
+              const profileName = 'coverage-profile-${{ github.run_id }}-${{ github.run_attempt }}';
+              const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+                per_page: 100,
+              });
+              if (arts.some(a => a.name === profileName && !a.expired)) {
+                core.info('Coverage job was cancelled after the measurement completed; no issue (#12944).');
+                return;
+              }
+            }
+
             // The gate fails for two DIFFERENT reasons and they need different
             // fixes: a package under its floor, or a package that could not be
             // scored at all (tests failing / no test files). Conflating them is
@@ -525,7 +546,9 @@ jobs:
             // Calling that "below their coverage floor" sent #9632 to agents
             // that added tests for a workflow failure (#9645).
             const neverMeasured = !'${{ needs.coverage.outputs.measured_ref }}';
-            const cause = neverMeasured
+            const cause = cancelled
+              ? 'The coverage job was **cancelled before the measurement finished** (most likely a hung test suite hitting the job timeout) so no verdict was produced. This is not a coverage shortfall - open the run log to see where it stalled.'
+              : neverMeasured
               ? 'The coverage job **failed before any package was measured** (workflow, setup, or runner failure). This is not a coverage shortfall and adding tests will not fix it - open the run log for the failing step.'
               : cannotScore
               ? 'One or more packages **could not be scored** (tests failing, or no test files). That is a broken-test problem, not a coverage shortfall — fix the tests first; the floor cannot be evaluated until they run.'
@@ -537,7 +560,9 @@ jobs:
             // The title must not claim a shortfall the body contradicts:
             // triage reads titles first (#9664 audit). Both keep the
             // [Coverage] prefix the dedupe below matches on.
-            const title = neverMeasured
+            const title = cancelled
+              ? `[Coverage] gate job cancelled before measuring coverage`
+              : neverMeasured
               ? `[Coverage] gate job failed before measuring coverage`
               : `[Coverage] packages below 90% threshold`;
             const body = `## Coverage gate failed\n\n`
