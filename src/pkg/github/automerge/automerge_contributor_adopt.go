@@ -328,10 +328,10 @@ func adoptionBodyCause(reason string) string {
 // AdoptionStalledComment is the one note left on an adopted PR handed to a
 // person: it names the lane reason the hive was stuck on, so nobody reads
 // "waiting on a maintainer" into a PR the hive still owes a fix.
-func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason string, dwell time.Duration) string {
+func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason string, sat time.Duration) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s reason=%s -->\n", AdoptionStalledMarker, obs.HeadSHA, reason)
-	fmt.Fprintf(&b, "The hive adopted this PR (`%s`) but its head `%s` has not moved for %s and the hive has nothing it can push: `%s`.\n\n", stagelabels.AdoptedByHive.Label(), shortSHA(obs.HeadSHA), formatGrace(dwell), reason)
+	fmt.Fprintf(&b, "The hive adopted this PR (`%s`) but its head `%s` has not moved for %s and the hive has nothing it can push: `%s`.\n\n", stagelabels.AdoptedByHive.Label(), shortSHA(obs.HeadSHA), formatSat(sat), reason)
 	b.WriteString("**Blocker:** ")
 	b.WriteString(adoptionBlockerText(obs, rec))
 	b.WriteString("\n\nMoving to `")
@@ -400,6 +400,15 @@ func formatGrace(d time.Duration) string {
 		return fmt.Sprintf("%dh", int(d/time.Hour))
 	}
 	return d.Round(time.Minute).String()
+}
+
+// formatSat renders how long a head has sat: whole hours as "3h", else
+// minute-rounded without the trailing seconds ("3h1m", "15m").
+func formatSat(d time.Duration) string {
+	if d < time.Minute {
+		d = time.Minute
+	}
+	return strings.TrimSuffix(formatGrace(d), "0s")
 }
 
 func shortSHA(sha string) string {
@@ -756,8 +765,12 @@ func normalizeBotLogin(login string) string {
 // adoption to a supersession — the hive's own PR carries the contributor's
 // commits and the finding, and the hive's normal review-fix route finishes
 // it. Whatever is left sitting at the adopted head past the 074 dwell with
-// CI not running is handed to a person as stage 085 with the exact lane
-// reason, once per head, so the dashboard shows it instead of a silent 074.
+// CI not running and a real blocker named is handed to a person as stage
+// 085 with the exact lane reason, noted once per head, so the dashboard
+// shows it instead of a silent 074. An optional check going red is not a
+// blocker (the merge gate ignores it; hivecommons/hive#13040), and the
+// escalation is re-evaluated every sweep: when the reason clears the PR
+// drops back to 074 and the lane carries on.
 
 // adoptionEscape is what escapeStalledAdoption decided for one sweep.
 type adoptionEscape struct {
@@ -772,11 +785,20 @@ func adoptionCIPending(obs stageObservation) bool {
 	return classifyCIReason(obs.LaneReason) == ciReasonPending
 }
 
+// adoptionOptionalCheckOnly reports whether the only thing the lane holds
+// against the head is an optional check: the merge gate does not read it,
+// so it is nothing a person must decide (hivecommons/hive#13040).
+func adoptionOptionalCheckOnly(obs stageObservation) bool {
+	return strings.HasPrefix(nonEmpty(obs.Reason, obs.LaneReason), stageReasonOptionalCheckFailing) && !verdictBlocks(obs.Detail) && !verdictNeedsHuman(obs.Detail)
+}
+
 // adoptionStale reports whether the adopted head has sat unchanged for the
-// 074 dwell with CI not running.
+// 074 dwell with CI not running. A record whose head clock was never
+// stamped (pre-hivecommons/hive#13040) is not stale: AdoptedAt may predate
+// the head by days; escapeStalledAdoption stamps it first.
 func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) bool {
 	since := rec.AdoptedHeadSince()
-	if since.IsZero() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead {
+	if since.IsZero() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || rec.AdoptedHeadClockUnset() {
 		return false
 	}
 	if adoptionCIPending(obs) {
@@ -803,7 +825,8 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 
 // adoptionStalledReason is the stage-085 reason for an adoption nobody is
 // working, or "": a supersession that opened no PR, or an adopted head that
-// sat past the dwell with CI idle. A live superseder is progress.
+// sat past the dwell with CI idle and a real blocker named. A live
+// superseder is progress; an optional check alone is not a blocker.
 func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
 	if rec.AdoptedBy > 0 || obs.HeadSHA == "" {
 		return ""
@@ -811,7 +834,7 @@ func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy 
 	if rec.AdoptionAttemptedNothingOpened(obs.HeadSHA) {
 		return stagelabels.LaneReasonAdoptionStalledPrefix + "supersede-failed:" + nonEmpty(rec.AdoptReason, obs.Reason)
 	}
-	if !adoptionStale(obs, rec, policy, now) {
+	if adoptionOptionalCheckOnly(obs) || !adoptionStale(obs, rec, policy, now) {
 		return ""
 	}
 	return stagelabels.LaneReasonAdoptionStalledPrefix + nonEmpty(obs.Reason, obs.LaneReason)
@@ -820,15 +843,28 @@ func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy 
 // escapeStalledAdoption runs before the 074 pin for a PR the hive owns whose
 // lane verdict is still below the merge gate. It converts a dead-end
 // in-place adoption to a supersession, or escalates an adoption nobody is
-// working to 085 with a comment naming the lane reason; both once per head.
-// Returns the decision and the number of comments posted.
+// working to 085 with a comment naming the lane reason; the re-home and the
+// note happen once per head. An escalation holds only while its reason
+// does: the sweep re-evaluates it and releases the PR to 074 when the
+// blocker clears (hivecommons/hive#13040). Returns the decision and the
+// number of comments posted.
 func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (adoptionEscape, int, error) {
 	rec, ok := store.Get(key)
 	if !ok {
 		return adoptionEscape{}, 0, nil
 	}
+	if store.StampAdoptedHeadAt(key, obs.HeadSHA) {
+		// Pre-#13040 record: the head clock starts now, not at AdoptedAt.
+		c.info("stage labels: adopted head had no clock; starting the 074 dwell from this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "adopted_at", rec.AdoptedAt)
+		rec, _ = store.Get(key)
+	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {
-		return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
+		if adoptionStalledReason(obs, rec, policy, now) != "" {
+			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
+		}
+		store.ClearAdoptionEscalation(key)
+		c.info("stage labels: adoption escalation reason cleared; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason))
+		rec, _ = store.Get(key)
 	}
 	comments := 0
 	var firstErr error
@@ -850,9 +886,14 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if reason == "" {
 		return adoptionEscape{}, comments, firstErr
 	}
+	noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
-	c.warn("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "adopted_at", rec.AdoptedHeadSince())
-	body := AdoptionStalledComment(obs, rec, reason, stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell))
+	c.warn("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
+	if noted {
+		// The blocker flapped on a head already noted: re-escalate silently.
+		return adoptionEscape{Escalated: true, Reason: reason}, comments, firstErr
+	}
+	body := AdoptionStalledComment(obs, rec, reason, now.Sub(rec.AdoptedHeadSince()))
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: adoption escalation note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		if firstErr == nil {

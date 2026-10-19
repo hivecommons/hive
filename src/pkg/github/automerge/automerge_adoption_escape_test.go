@@ -2,6 +2,9 @@ package automerge
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -192,7 +195,7 @@ func TestAdoptedStalledWithoutFindingEscalatesOncePerHead(t *testing.T) {
 		t.Fatalf("stalled note: res=%+v comments=%v", res, h.api.comments)
 	}
 	wantReason := stagelabels.LaneReasonAdoptionStalledPrefix + "check-failing:unit"
-	for _, want := range []string{"head=aaa reason=" + wantReason, "has not moved for 3h", "`check-failing:unit` on this head and no fix landed", "`" + stagelabels.NeedsDecision.Label() + "`", "not a merge-approval wait"} {
+	for _, want := range []string{"head=aaa reason=" + wantReason, "has not moved for 3h1m and", "`check-failing:unit` on this head and no fix landed", "`" + stagelabels.NeedsDecision.Label() + "`", "not a merge-approval wait"} {
 		if !strings.Contains(notes[0], want) {
 			t.Fatalf("stalled note missing %q:\n%s", want, notes[0])
 		}
@@ -287,6 +290,10 @@ func TestAdoptionEscapeHelpers(t *testing.T) {
 		{"dco-red head is the DCO re-home's", stageObservation{HeadSHA: "aaa", Reason: stagelabels.LaneReasonDCOMissing, Detail: stageDetail{DCOSquashUnsafeHive: 1, DCO: stagelabels.DCONo, DCOUnsigned: 1}}, inPlace, now.Add(time.Minute), "", ""},
 		{"other head is not stale", stageObservation{HeadSHA: "bbb", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", ""},
 		{"stale red head escalates", stageObservation{HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:check-failing:unit"},
+		{"stale required-red head escalates", stageObservation{HeadSHA: "aaa", Reason: "required-check-failing:unit", LaneReason: "required-check-failing:unit"}, inPlace, now.Add(adoptedDwell), "", "adoption-stalled:required-check-failing:unit"},
+		{"stale optional-red head is not a blocker", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "overlap", LaneReason: contributorLaneReasonNoVerdict, Detail: stageDetail{RedChecks: []string{"overlap"}, RedChecksHead: "aaa"}}, inPlace, now.Add(2 * adoptedDwell), "", ""},
+		{"stale optional-red head with finding re-homes", stageObservation{HeadSHA: "aaa", Reason: stageReasonOptionalCheckFailing + "overlap", LaneReason: contributorLaneReasonChangesRequested, Detail: stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}, RedChecks: []string{"overlap"}, RedChecksHead: "aaa"}}, inPlace, now.Add(adoptedDwell), AdoptReasonInPlaceStalled, "adoption-stalled:optional-check-failing:overlap"},
+		{"legacy record without a head clock is not stale", stageObservation{HeadSHA: "92fba9a", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, stagelabels.Record{AdoptedHead: "92fba9a", AdoptMode: stagelabels.AdoptModeInPlace, AdoptedAt: now, HivePushedHeads: []string{"92fba9a"}}, now.Add(28 * time.Hour), "", ""},
 		{"live superseder is progress", stageObservation{HeadSHA: "aaa", Reason: "check-failing:unit", LaneReason: "check-failing:unit"}, stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeSupersede, AdoptedBy: 90, AdoptedAt: now}, now.Add(adoptedDwell), "", ""},
 		{"supersede that opened nothing escalates now", stageObservation{HeadSHA: "aaa", Reason: "check-failing:DCO"}, stagelabels.Record{AdoptedHead: "aaa", AdoptMode: stagelabels.AdoptModeSupersede, AdoptReason: AdoptReasonDCORehome, AdoptedAt: now}, now.Add(time.Minute), "", "adoption-stalled:supersede-failed:dco-rehome"},
 	}
@@ -330,5 +337,219 @@ func TestAdoptionBodyCauseAndBlockerText(t *testing.T) {
 	obs.Reason = "something-else"
 	if got := adoptionBlockerText(obs, stagelabels.Record{}); !strings.Contains(got, "`something-else`") {
 		t.Fatalf("fallback: %q", got)
+	}
+}
+
+// legacyAdoptedHead rewrites PR 7's record as a pre-hivecommons/hive#13040
+// binary left it: adopted in place at adoptedHead, advanced by a recorded
+// hive push to head, with no adopted_head_at on disk.
+func legacyAdoptedHead(t *testing.T, h *adoptHarness, key, adoptedHead, head, escalatedReason string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "legacy-stage.json")
+	store := stagelabels.NewStore(path, h.clock.now)
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	src := h.e.stageStoreOrShared()
+	for _, k := range src.Keys() {
+		r, _ := src.Get(k)
+		store.Observe(k, r.Stage, r.Reason)
+	}
+	store.MarkAdoptedInPlace(key, adoptedHead, AdoptReasonGrace, h.clock.at)
+	store.MarkHivePushedHead(key, head)
+	store.MarkAdoptedHead(key, head)
+	if escalatedReason != "" {
+		store.Observe(key, stagelabels.NeedsDecision, escalatedReason)
+		store.MarkAdoptionEscalated(key, head, escalatedReason)
+	}
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items map[string]map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		t.Fatal(err)
+	}
+	delete(items[key], "adopted_head_at")
+	delete(items[key], "adopt_escalation_noted_head")
+	raw, _ = json.Marshal(items)
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := store.Get(key)
+	if !rec.AdoptedHeadClockUnset() || rec.AdoptedHead != head || !rec.HivePushedHead(head) {
+		t.Fatalf("legacy fixture: %+v", rec)
+	}
+	h.e.stageStore = store
+}
+
+// hivecommons/hive#13040, hivecommons/hive#12858 exactly: adopted in place
+// at 5665cda on 2026-10-18 14:27, the hive pushed 92fba9a at 18:10 under a
+// binary that stamped no head clock, and the new binary first saw the PR
+// 15 minutes later with the optional `overlap` check red and no verdict on
+// the head. The record is not stale (its clock starts now), an optional
+// check is not a blocker, and the PR stays 074 with nothing written — past
+// the dwell too.
+func TestAdoptedLegacyHeadWithOptionalCheckRedStays074(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.clock.at = time.Date(2026, 10, 18, 14, 27, 0, 0, time.UTC)
+	key := adoptInPlaceAt(h, "5665cda", contributorLaneReasonNoVerdict)
+	h.clock.at = time.Date(2026, 10, 18, 18, 10, 33, 0, time.UTC)
+	legacyAdoptedHead(t, h, key, "5665cda", "92fba9a", "")
+	h.adopt.setCommitAuthor("92fba9a", testHiveAppBotLogin)
+	overlapRed := func() { h.e.noteStageRedChecks("acme", "widget", 7, "92fba9a", []string{"overlap"}) }
+
+	h.clock.at = time.Date(2026, 10, 18, 18, 25, 35, 0, time.UTC)
+	overlapRed()
+	res := h.observe(adoptPR(7, "92fba9a", adoptedLabels...), contributorLaneReasonNoVerdict)
+	if res.Comments != 0 || len(h.adopt.pulls) != 0 || h.api.writes() != 0 {
+		t.Fatalf("first sight escalated: res=%+v pulls=%v added=%v removed=%v comments=%v", res, h.adopt.pulls, h.api.added, h.api.removed, h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.AdoptedByHive || rec.AdoptionEscalated("92fba9a") || rec.AdoptedHeadClockUnset() || !rec.AdoptedHeadSince().Equal(h.clock.at) || rec.Reason != stageReasonOptionalCheckFailing+"overlap" {
+		t.Fatalf("legacy record after first sight: %+v", rec)
+	}
+
+	// Past the dwell with only the optional check red: still the hive's
+	// (the generic stalled marker may apply; 085 must not).
+	h.clock.advance(adoptedDwell + time.Hour)
+	overlapRed()
+	h.observe(adoptPR(7, "92fba9a", adoptedLabels...), contributorLaneReasonNoVerdict)
+	for _, l := range h.addedLabels() {
+		if l == stagelabels.NeedsDecision.Label() {
+			t.Fatalf("optional check escalated: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+		}
+	}
+	if len(stalledComments(h.api)) != 0 || len(h.api.removed) != 0 {
+		t.Fatalf("optional check escalated: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.AdoptedByHive || rec.AdoptionEscalated("92fba9a") {
+		t.Fatalf("optional check escalated: %+v", rec)
+	}
+
+	// A required check going red on that head is a blocker: 085, with the
+	// dwell text reading from the head clock, not the adoption.
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "92fba9a", adoptedLabels...), "required-check-failing:unit")
+	notes := stalledComments(h.api)
+	if len(notes) != 1 || !strings.Contains(notes[0], "has not moved for 4h1m and") || !strings.Contains(notes[0], "reason=adoption-stalled:required-check-failing:unit") {
+		t.Fatalf("required red not escalated with the head clock: %v", h.api.comments)
+	}
+	if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || !rec.AdoptionEscalated("92fba9a") {
+		t.Fatalf("required red: %+v", rec)
+	}
+}
+
+// hivecommons/hive#12858 as the buggy binary left it: the legacy record
+// (no head clock) already escalated to 085 for the optional `overlap`
+// check. The fixed binary's first sweep stamps the clock, finds no blocker,
+// releases the escalation and puts the PR back at 074 without a comment.
+func TestAdoptedLegacyEscalationForOptionalCheckReleases(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.clock.at = time.Date(2026, 10, 18, 14, 27, 0, 0, time.UTC)
+	key := adoptInPlaceAt(h, "5665cda", contributorLaneReasonNoVerdict)
+	h.clock.at = time.Date(2026, 10, 18, 18, 10, 33, 0, time.UTC)
+	wasReason := stagelabels.LaneReasonAdoptionStalledPrefix + stageReasonOptionalCheckFailing + "overlap"
+	legacyAdoptedHead(t, h, key, "5665cda", "92fba9a", wasReason)
+	h.adopt.setCommitAuthor("92fba9a", testHiveAppBotLogin)
+
+	h.clock.at = time.Date(2026, 10, 18, 18, 52, 0, 0, time.UTC)
+	h.e.noteStageRedChecks("acme", "widget", 7, "92fba9a", []string{"overlap"})
+	res := h.observe(adoptPR(7, "92fba9a", stagelabels.NeedsDecision.Label(), "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	if added := h.addedLabels(); len(added) != 1 || added[0] != stagelabels.AdoptedByHive.Label() || len(h.api.removed) != 1 || h.api.removed[0] != stagelabels.NeedsDecision.Label() || res.Comments != 0 {
+		t.Fatalf("085 → 074: res=%+v added=%v removed=%v comments=%v", res, h.api.added, h.api.removed, h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.Stage != stagelabels.AdoptedByHive || rec.AdoptionEscalated("92fba9a") || rec.AdoptEscalatedReason != "" || rec.AdoptedHeadClockUnset() || !rec.AdoptedHeadSince().Equal(h.clock.at) || !rec.AdoptedInPlace() {
+		t.Fatalf("legacy escalation not released: %+v", rec)
+	}
+}
+
+// hivecommons/hive#13040: an escalation holds only while its reason does.
+// When the blocker clears on the same head the PR drops back to 074 and the
+// lane carries on; if the blocker returns on that head the PR is 085 again
+// without a second note.
+func TestAdoptedEscalationReleasesWhenReasonClears(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	key := adoptInPlaceAt(h, "aaa", "check-failing:unit")
+	escalated := []string{stagelabels.NeedsDecision.Label(), "role/contributor", "author/clanker"}
+
+	h.clock.advance(adoptedDwell + time.Minute)
+	h.observe(adoptPR(7, "aaa", adoptedLabels...), "check-failing:unit")
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || !rec.AdoptionEscalated("aaa") || len(stalledComments(h.api)) != 1 {
+		t.Fatalf("not escalated: %+v comments=%v", rec, h.api.comments)
+	}
+
+	// Somebody re-ran the check: CI is in flight on the head, so nothing
+	// is stalled and the PR is the hive's again.
+	h.api.reset()
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", escalated...), "check-pending")
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if added := h.addedLabels(); len(added) != 1 || added[0] != stagelabels.AdoptedByHive.Label() || len(h.api.removed) != 1 || h.api.removed[0] != stagelabels.NeedsDecision.Label() {
+		t.Fatalf("085 → 074: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec.Stage != stagelabels.AdoptedByHive || rec.AdoptionEscalated("aaa") || !rec.AdoptionEscalationNoted("aaa") || !rec.AdoptedInPlace() || rec.AdoptedHead != "aaa" {
+		t.Fatalf("escalation not released: %+v", rec)
+	}
+	if len(stalledComments(h.api)) != 0 {
+		t.Fatalf("release wrote a note: %v", h.api.comments)
+	}
+
+	// The same check goes red again on the same head: 085, silently.
+	h.api.reset()
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", adoptedLabels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != stagelabels.NeedsDecision.Label() {
+		t.Fatalf("074 → 085 again: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(stalledComments(h.api)) != 0 {
+		t.Fatalf("flapping blocker noted twice: %v", h.api.comments)
+	}
+	if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || !rec.AdoptionEscalated("aaa") {
+		t.Fatalf("not re-escalated: %+v", rec)
+	}
+
+	// The hive pushes a new head and it goes red past the dwell: a fresh
+	// note for the fresh head.
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", escalated...), "check-failing:unit")
+	if rec, _ = h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.AdoptedByHive || rec.AdoptionEscalated("bbb") || rec.AdoptionEscalationNoted("bbb") {
+		t.Fatalf("new head: %+v", rec)
+	}
+	h.clock.advance(adoptedDwell + time.Minute)
+	h.observe(adoptPR(7, "bbb", adoptedLabels...), "check-failing:unit")
+	if notes := stalledComments(h.api); len(notes) != 1 || !strings.Contains(notes[0], "head=bbb ") {
+		t.Fatalf("new head not noted: %v", h.api.comments)
+	}
+}
+
+func TestFormatSat(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		3 * time.Hour:                   "3h",
+		3*time.Hour + time.Minute:       "3h1m",
+		15*time.Minute + 20*time.Second: "15m",
+		10 * time.Second:                "1m",
+	} {
+		if got := formatSat(d); got != want {
+			t.Fatalf("formatSat(%v)=%q, want %q", d, got, want)
+		}
 	}
 }

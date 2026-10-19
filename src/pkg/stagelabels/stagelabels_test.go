@@ -1,6 +1,7 @@
 package stagelabels
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1067,7 +1068,7 @@ func TestStoreAdoptionEscapeBookkeeping(t *testing.T) {
 	s.Observe(key, Fixing, LaneReasonChangesRequested)
 	s.MarkAdoptedInPlace(key, "5665cda", "grace-elapsed", now)
 	r, _ := s.Get(key)
-	if !r.AdoptedHeadSince().Equal(now) || !r.AdoptedHeadAt.IsZero() {
+	if !r.AdoptedHeadSince().Equal(now) || !r.AdoptedHeadAt.Equal(now) || r.AdoptedHeadClockUnset() {
 		t.Fatalf("fresh in-place adoption clock: %+v", r)
 	}
 	if r.AdoptionEscalated("5665cda") || r.AdoptionAttemptedNothingOpened("5665cda") {
@@ -1094,13 +1095,30 @@ func TestStoreAdoptionEscapeBookkeeping(t *testing.T) {
 	}
 	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
 	r, _ = s.Get(key)
-	if !r.AdoptionEscalated("f72fa44") || r.AdoptionEscalated("5665cda") || r.AdoptEscalatedReason != "adoption-stalled:check-failing:unit" {
+	if !r.AdoptionEscalated("f72fa44") || r.AdoptionEscalated("5665cda") || r.AdoptEscalatedReason != "adoption-stalled:check-failing:unit" || !r.AdoptionEscalationNoted("f72fa44") {
 		t.Fatalf("escalation not recorded: %+v", r)
 	}
 	s.dirty = false
 	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
 	if s.dirty {
 		t.Fatal("re-marking the same escalation dirtied the store")
+	}
+	// hivecommons/hive#13040: the escalation releases when the reason
+	// clears, but the head stays noted so a flapping blocker is noted once.
+	s.ClearAdoptionEscalation(key)
+	r, _ = s.Get(key)
+	if r.AdoptionEscalated("f72fa44") || r.AdoptEscalatedReason != "" || !r.AdoptionEscalationNoted("f72fa44") || r.AdoptionEscalationNoted("5665cda") {
+		t.Fatalf("escalation not released: %+v", r)
+	}
+	s.dirty = false
+	s.ClearAdoptionEscalation(key)
+	s.ClearAdoptionEscalation("missing")
+	if s.dirty {
+		t.Fatal("clearing a released escalation dirtied the store")
+	}
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	if r, _ = s.Get(key); !r.AdoptionEscalated("f72fa44") {
+		t.Fatalf("re-escalation not recorded: %+v", r)
 	}
 
 	// A supersession that opened nothing is an adoption nobody works.
@@ -1115,14 +1133,61 @@ func TestStoreAdoptionEscapeBookkeeping(t *testing.T) {
 
 	// Yield and clear forget the escalation and the head clock.
 	s.MarkYielded(key, "abc")
-	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalatedReason != "" || !r.AdoptedHeadAt.IsZero() {
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalatedReason != "" || r.AdoptEscalationNotedHead != "" || !r.AdoptedHeadAt.IsZero() {
 		t.Fatalf("yield kept escape state: %+v", r)
 	}
 	s.MarkAdoptedInPlace(key, "abc", "grace-elapsed", clock)
 	s.MarkAdoptedHead(key, "abd")
 	s.MarkAdoptionEscalated(key, "abd", "adoption-stalled:x")
 	s.ClearAdoption(key)
-	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || !r.AdoptedHeadAt.IsZero() {
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalationNotedHead != "" || !r.AdoptedHeadAt.IsZero() {
 		t.Fatalf("clear kept escape state: %+v", r)
+	}
+}
+
+// hivecommons/hive#13040: a record written before AdoptedHeadAt existed
+// carries a head the hive pushed but no clock for it. The reconciler stamps
+// the clock on first sight instead of reading the dwell from AdoptedAt.
+func TestStoreStampAdoptedHeadAtMigratesLegacyRecord(t *testing.T) {
+	adoptedAt := time.Date(2026, 10, 18, 14, 26, 0, 0, time.UTC)
+	clock := adoptedAt.Add(28 * time.Hour)
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("hivecommons/hive", 12858)
+	s.Observe(key, AdoptedByHive, "optional-check-failing:overlap")
+	legacy, _ := s.Get(key)
+	legacy.AdoptedHead, legacy.AdoptMode, legacy.AdoptReason = "92fba9a", AdoptModeInPlace, "grace-elapsed"
+	legacy.AdoptedAt, legacy.AdoptCheckedAt = adoptedAt, adoptedAt
+	legacy.HivePushedHeads = []string{"92fba9a"}
+	data, err := json.Marshal(map[string]Record{key: legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items map[string]Record
+	if err := json.Unmarshal(data, &items); err != nil {
+		t.Fatal(err)
+	}
+	s.items = items
+	r, _ := s.Get(key)
+	if !r.AdoptedHeadClockUnset() || !r.AdoptedHeadSince().Equal(adoptedAt) {
+		t.Fatalf("legacy record misread: %+v", r)
+	}
+	if s.StampAdoptedHeadAt(key, "other") || s.StampAdoptedHeadAt(key, "") || s.StampAdoptedHeadAt("missing", "92fba9a") {
+		t.Fatal("stamped the wrong record or head")
+	}
+	if !s.StampAdoptedHeadAt(key, "92fba9a") {
+		t.Fatal("legacy record not stamped")
+	}
+	r, _ = s.Get(key)
+	if r.AdoptedHeadClockUnset() || !r.AdoptedHeadSince().Equal(clock) || !r.AdoptedAt.Equal(adoptedAt) {
+		t.Fatalf("stamp: %+v", r)
+	}
+	s.dirty = false
+	if s.StampAdoptedHeadAt(key, "92fba9a") || s.dirty {
+		t.Fatal("re-stamped a live clock")
+	}
+	// A supersession has no head clock to stamp.
+	s.MarkAdopted(key, "92fba9a", 0, clock)
+	if r, _ = s.Get(key); r.AdoptedHeadClockUnset() || s.StampAdoptedHeadAt(key, "92fba9a") {
+		t.Fatalf("supersession stamped: %+v", r)
 	}
 }

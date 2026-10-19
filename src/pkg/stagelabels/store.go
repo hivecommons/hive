@@ -122,15 +122,23 @@ type Record struct {
 	// the later GitHub commit object cannot link the commit to the App.
 	HivePushedHeads []string `json:"hive_pushed_heads,omitempty"`
 	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
-	// adoption (a hive push); zero when the head is still the one adopted,
-	// in which case AdoptedAt is the clock. AdoptedHeadSince resolves it.
+	// adoption: the adoption itself, then each hive push. Zero only on
+	// records written before it existed (hivecommons/hive#13040); the
+	// reconciler stamps those on first sight (StampAdoptedHeadAt) rather
+	// than reading the dwell from AdoptedAt, which may be a head or more
+	// behind. AdoptedHeadSince resolves it.
 	AdoptedHeadAt time.Time `json:"adopted_head_at,omitempty"`
 	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
-	// sat at this head past the 074 dwell with nothing the hive could push
-	// and was handed to a person (stage 085) with that lane reason. Once per
-	// head: the escalation holds until the head changes.
+	// sits at this head past the 074 dwell with nothing the hive can push
+	// and is a person's (stage 085) for that lane reason. The escalation
+	// holds while the reason holds: ClearAdoptionEscalation releases it
+	// when the blocker clears or the head moves.
 	AdoptEscalatedHead   string `json:"adopt_escalated_head,omitempty"`
 	AdoptEscalatedReason string `json:"adopt_escalated_reason,omitempty"`
+	// AdoptEscalationNotedHead is the head the escalation note was posted
+	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
+	// one head is noted once.
+	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -738,10 +746,22 @@ func (r Record) AdoptedHeadSince() time.Time {
 	return r.AdoptedAt
 }
 
-// AdoptionEscalated reports whether the adoption at head was already handed
-// to a person (stage 085) for sitting past the 074 dwell.
+// AdoptionEscalated reports whether the adoption at head is currently a
+// person's (stage 085) for sitting past the 074 dwell.
 func (r Record) AdoptionEscalated(head string) bool {
 	return head != "" && r.AdoptEscalatedHead == head
+}
+
+// AdoptionEscalationNoted reports whether the escalation note was already
+// posted for head, whether or not the escalation still holds.
+func (r Record) AdoptionEscalationNoted(head string) bool {
+	return head != "" && r.AdoptEscalationNotedHead == head
+}
+
+// AdoptedHeadClockUnset reports a live in-place adoption whose head clock
+// was never stamped: a record written before AdoptedHeadAt existed.
+func (r Record) AdoptedHeadClockUnset() bool {
+	return r.AdoptedInPlace() && r.AdoptedHeadAt.IsZero()
 }
 
 // AdoptionAttemptedNothingOpened reports a supersession that was recorded
@@ -761,9 +781,26 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
-	r.AdoptedHeadAt = time.Time{}
+	r.AdoptedHeadAt = now
 	s.items[key] = r
 	s.dirty = true
+}
+
+// StampAdoptedHeadAt starts the adopted-head clock at now on a live in-place
+// adoption of head that has none (hivecommons/hive#13040: a record written
+// before AdoptedHeadAt existed, whose AdoptedAt may predate the head by
+// days). Reports whether it stamped.
+func (s *Store) StampAdoptedHeadAt(key, head string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AdoptedHead != head || !r.AdoptedHeadClockUnset() {
+		return false
+	}
+	r.AdoptedHeadAt = s.now()
+	s.items[key] = r
+	s.dirty = true
+	return true
 }
 
 // MarkAdoptedHead moves a live adoption to a new head the hive itself
@@ -818,7 +855,7 @@ func (s *Store) MarkYielded(key, head string) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason = "", ""
-	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason = time.Time{}, "", ""
+	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.YieldedHead = head
 	s.items[key] = r
 	s.dirty = true
@@ -866,17 +903,32 @@ func (s *Store) MarkAdoptChecked(key string, now time.Time) {
 	s.dirty = true
 }
 
-// MarkAdoptionEscalated records that the adoption at head was handed to a
-// person with reason (stage 085); AdoptionEscalated(head) then holds until
-// the head changes.
+// MarkAdoptionEscalated records that the adoption at head is a person's
+// for reason (stage 085) and that head has been noted; AdoptionEscalated
+// (head) then holds until ClearAdoptionEscalation or the head changes.
 func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || head == "" || (r.AdoptEscalatedHead == head && r.AdoptEscalatedReason == reason) {
+	if !ok || head == "" || (r.AdoptEscalatedHead == head && r.AdoptEscalatedReason == reason && r.AdoptEscalationNotedHead == head) {
 		return
 	}
-	r.AdoptEscalatedHead, r.AdoptEscalatedReason = head, reason
+	r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = head, reason, head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionEscalation releases a stage-085 escalation whose reason no
+// longer holds (the blocker cleared), returning the adoption to 074 flow.
+// The noted head is kept so the same head is not noted twice.
+func (s *Store) ClearAdoptionEscalation(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.AdoptEscalatedHead == "" && r.AdoptEscalatedReason == "") {
+		return
+	}
+	r.AdoptEscalatedHead, r.AdoptEscalatedReason = "", ""
 	s.items[key] = r
 	s.dirty = true
 }
@@ -891,7 +943,7 @@ func (s *Store) ClearAdoption(key string) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason = "", ""
-	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason = time.Time{}, "", ""
+	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	s.items[key] = r
 	s.dirty = true
 }
