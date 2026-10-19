@@ -306,10 +306,25 @@ func TestIssueStageFor(t *testing.T) {
 		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.IssueNeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
+		// hivecommons/hive#13012: a held issue is paused, not parked — hold
+		// outranks needs-human / needs-decision / needs-spec and the issue
+		// shows as "Open · on hold", never 045. #9846's label set first.
+		{"held: hold + needs-human (#9846) is Open · on hold", IssueStageInput{Held: true, Labels: []string{"hold", "needs-human", stagelabels.IssueNeedsDecision.Label()}}, stagelabels.None, false},
+		{"held: hold alone", IssueStageInput{Held: true, Labels: []string{"hold"}}, stagelabels.None, false},
+		{"held: hold read from labels without the enumeration flag", IssueStageInput{Labels: []string{"hold", "needs-human"}}, stagelabels.None, false},
+		{"held: do-not-merge alone", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"do-not-merge"}}, stagelabels.None, false},
+		{"held: do-not-merge/* + needs-spec", IssueStageInput{Labels: []string{"do-not-merge/blocked-paths", "needs-spec"}}, stagelabels.None, false},
+		{"held: hive-pause/<id> alone", IssueStageInput{Held: true, Labels: []string{"hive-pause/hv-test"}}, stagelabels.None, false},
+		{"not held: provenance hive/<id> is not a hold", IssueStageInput{Labels: []string{"hive/placeholder-r05x", "needs-human"}}, stagelabels.IssueNeedsDecision, false},
+		{"not held: needs-human alone stays 045", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"needs-human"}}, stagelabels.IssueNeedsDecision, false},
+		{"not held: #12964 label set stays actionable", IssueStageInput{Labels: []string{"help wanted", stagelabels.Actionable.Label()}}, stagelabels.Actionable, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, covered, reason := IssueStageFor(tc.in, prStage)
+			if strings.HasPrefix(tc.name, "held:") && !strings.HasPrefix(reason, "held: ") {
+				t.Fatalf("reason %q must name the hold label", reason)
+			}
 			if got != tc.want || covered != tc.covered {
 				t.Fatalf("IssueStageFor = %s/%v, want %s/%v", got, covered, tc.want, tc.covered)
 			}
@@ -352,6 +367,59 @@ func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
 	}
 	if res.NeedsDecisionRestaged != 1 {
 		t.Fatalf("NeedsDecisionRestaged = %d, want 1", res.NeedsDecisionRestaged)
+	}
+}
+
+// hivecommons/hive#13012: #9846 wore stage/045-needs-decision beside `hold`
+// + `needs-human`. The held issue is walked from the Hold list, the 045
+// label comes off, the store record is forgotten (so the dashboard reads
+// Open · on hold), and no stage label is added. A held issue with no stage
+// label costs no write; a hive-pause/<id> hold reaches the classifier
+// through the Hold list.
+func TestSyncIssueStageLabels_HeldIssueLeaves045(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	store.Observe(stagelabels.Key("acme/widgets", 9846), stagelabels.IssueNeedsDecision, "held for a person: needs-human")
+	result := &ActionableResult{}
+	result.Hold.Items = []HoldItem{
+		{Repo: "acme/widgets", Number: 9846, Type: "issue", Labels: []string{"hold", issueNeedsHumanLabel, stagelabels.IssueNeedsDecision.Label()}},
+		{Repo: "acme/widgets", Number: 9735, Type: "issue", Labels: []string{"hold", issueNeedsHumanLabel}},
+		{Repo: "acme/widgets", Number: 9700, Type: "issue", Labels: []string{"hive-pause/hv-test"}},
+		{Repo: "acme/widgets", Number: 77, Type: "pr", Labels: []string{"hold", stagelabels.NeedsDecision.Label()}},
+	}
+	inputs := IssueStageInputs(result)
+	if len(inputs) != 3 {
+		t.Fatalf("inputs = %d, want 3 held issues (the held PR is not an issue)", len(inputs))
+	}
+	for _, in := range inputs {
+		if !in.Held {
+			t.Fatalf("issue %d from the Hold list must be Held", in.Number)
+		}
+		if stage, _, reason := IssueStageFor(in, nil); stage != stagelabels.None || !strings.HasPrefix(reason, "held: ") {
+			t.Fatalf("issue %d: stage %s reason %q, want none/held", in.Number, stage, reason)
+		}
+	}
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Items != 3 {
+		t.Fatalf("items = %d, want 3", res.Items)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Join(fake.removed[9846], ","); got != stagelabels.IssueNeedsDecision.Label() {
+		t.Fatalf("held issue must shed 045: removed=%v", fake.removed[9846])
+	}
+	for _, n := range []int{9846, 9735, 9700} {
+		if len(fake.added[n]) != 0 {
+			t.Fatalf("held issue %d must carry no stage label: added=%v", n, fake.added[n])
+		}
+	}
+	if len(fake.removed[9735])+len(fake.removed[9700])+len(fake.removed[77])+len(fake.added[77]) != 0 {
+		t.Fatalf("unexpected writes: removed=%v added=%v", fake.removed, fake.added)
+	}
+	if _, ok := store.Get(stagelabels.Key("acme/widgets", 9846)); ok {
+		t.Fatal("store must forget a held issue so the tracker reads Open · on hold")
 	}
 }
 

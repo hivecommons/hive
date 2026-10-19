@@ -133,6 +133,12 @@ type IssueStageInput struct {
 	Claim     *IssueClaimContext
 	// Children is set on a decomposed parent (hivecommons/hive#12857).
 	Children *IssueChildren
+	// Held is set for an issue the enumeration put in the Hold list
+	// (Client.isHeld: the hive's hold-label matcher, including the
+	// configured hive-pause/<id> label). IssueStageFor also reads the
+	// labels directly so a caller without the enumeration context agrees
+	// (hivecommons/hive#13012).
+	Held bool
 }
 
 // IssueStageFor classifies one enumerated issue. covered reports whether an
@@ -145,6 +151,12 @@ type IssueStageInput struct {
 func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) (stage stagelabels.Stage, covered bool, reason string) {
 	if issueHasLabel(in.Labels, LikelyDoneLabel) {
 		return stagelabels.None, false, "merged PR awaiting confirmation"
+	}
+	// A held issue is paused, not parked on a person: it shows as
+	// "Open · on hold", and hold outranks needs-human / needs-decision /
+	// needs-spec (hivecommons/hive#13012). PR holds keep 085 (RouteHuman).
+	if label := issueHoldLabel(in); label != "" {
+		return stagelabels.None, false, "held: " + label
 	}
 	if issueHeldByNeedsHuman(in) {
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + issueNeedsHumanLabel
@@ -175,6 +187,31 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 		return stagelabels.CoveredByPR, false, "open PR covers it"
 	}
 	return stagelabels.None, false, "outside the pipeline: " + in.Bucket
+}
+
+// issueHoldLabel returns the hold-class label that pauses the issue, or "".
+// The enumeration's verdict (in.Held, Client.isHeld with the configured
+// hive-pause/<id> label) is authoritative; the label scan covers the
+// static hold family — HoldLabels (hold, on-hold, hold/review) as
+// HasHoldLabel reads them and prow's do-not-merge(/*) — so a direct
+// caller agrees with the dashboard's hold modifier. hive-pause/<id> is
+// only a hold for the hive it names, so it is read from in.Held alone.
+func issueHoldLabel(in IssueStageInput) string {
+	for _, l := range in.Labels {
+		lower := strings.ToLower(strings.TrimSpace(l))
+		if lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/") || HasHoldLabel([]string{l}) {
+			return lower
+		}
+	}
+	if in.Held {
+		for _, l := range in.Labels {
+			if lower := strings.ToLower(strings.TrimSpace(l)); strings.HasPrefix(lower, "hive-pause/") {
+				return lower
+			}
+		}
+		return "hold"
+	}
+	return ""
 }
 
 func issueHeldByNeedsHuman(in IssueStageInput) bool {
@@ -209,6 +246,17 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
 		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, Claim: issue.ClaimContext, Children: issue.Children})
+	}
+	// Held issues leave the pipeline at enumeration (Hold list, no
+	// work-detail row). They still have to be walked so a stage label
+	// written before the hold — #9846 wore stage/045-needs-decision beside
+	// `hold` — comes off and the store record is forgotten
+	// (hivecommons/hive#13012).
+	for _, held := range result.Hold.Items {
+		if held.Number <= 0 || !strings.EqualFold(held.Type, "issue") {
+			continue
+		}
+		out = append(out, IssueStageInput{Repo: held.Repo, Number: held.Number, Labels: held.Labels, Held: true})
 	}
 	repos := make([]string, 0, len(result.WorkDetailsByRepo))
 	for repo := range result.WorkDetailsByRepo {

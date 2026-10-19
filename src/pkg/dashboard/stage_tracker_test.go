@@ -424,3 +424,59 @@ func TestStageTrackerIssueFeedPRsAreNotIssues(t *testing.T) {
 		t.Fatalf("PR #10 should nest under issue #9, got %d", items[1].NestedUnder)
 	}
 }
+
+// hivecommons/hive#13012: a held issue is "Open · on hold" in the tracker
+// whatever stage label or store record the hold caught it with — #9846
+// wore stage/045-needs-decision beside `hold` + `needs-human` and rendered
+// as "Needs a human decision". needs-human without a hold still parks at
+// 045, and a held PR keeps its own stage.
+func TestStageTrackerHeldIssueIsOpenOnHold(t *testing.T) {
+	now := time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC)
+	s := newTestServer()
+	clock := now
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	s.stageStore = store
+	clock = now.Add(-72 * time.Hour)
+	store.Observe(stagelabels.Key("acme/console", 9846), stagelabels.IssueNeedsDecision, "held for a person: needs-human")
+	clock = now
+
+	status := minimalPayload()
+	status.HiveID = "hv-test"
+	status.Repos = []FrontendRepo{{
+		Name: "console", Full: "acme/console",
+		ActionableIssues: []any{
+			github.Issue{Number: 12964, Title: "Plain issue", Author: "pat", AuthorIsHuman: true, Labels: []string{"help wanted", "stage/010-actionable"}},
+			github.Issue{Number: 13, Title: "Parked", Author: "pat", AuthorIsHuman: true, Labels: []string{"stage/045-needs-decision", "needs-human"}},
+		},
+		HeldIssues: []any{
+			github.Issue{Number: 9846, Title: "Held with a stale park", Author: "pat", AuthorIsHuman: true, Labels: []string{"hold", "needs-human", "stage/045-needs-decision"}},
+			github.Issue{Number: 9735, Title: "Held plainly", Author: "pat", AuthorIsHuman: true, Labels: []string{"hold", "needs-human"}},
+			github.Issue{Number: 9700, Title: "Paused by this hive", Author: "pat", AuthorIsHuman: true, Labels: []string{"hive-pause/hv-test"}},
+			github.Issue{Number: 9699, Title: "Prow hold", Author: "pat", AuthorIsHuman: true, Labels: []string{"do-not-merge/hold"}},
+		},
+		HeldPrs: []any{
+			FrontendPR{PullRequest: github.PullRequest{Number: 105, Title: "Parked PR", Author: "pat", Labels: []string{"hold", "stage/085-needs-decision"}}},
+		},
+	}}
+	s.UpdateStatus(status)
+	resp := s.buildStageTracker(s.status, store, now)
+
+	for _, n := range []int{9846, 9735, 9700, 9699} {
+		it := trackerItem(t, resp, "issue", n)
+		if it.Stage != 0 || it.StageSlug != "" || it.StageSince != nil {
+			t.Errorf("held issue #%d = stage %d (%q, since %v), want Open with no record", n, it.Stage, it.StageSlug, it.StageSince)
+		}
+		if !hasMod(it, modHold) {
+			t.Errorf("held issue #%d modifiers %v, want hold", n, it.Modifiers)
+		}
+	}
+	if it := trackerItem(t, resp, "issue", 13); it.Stage != 45 || hasMod(it, modHold) {
+		t.Errorf("needs-human without a hold = stage %d mods %v, want 045 unheld", it.Stage, it.Modifiers)
+	}
+	if it := trackerItem(t, resp, "issue", 12964); it.Stage != 10 || len(it.Modifiers) != 0 {
+		t.Errorf("#12964 = stage %d mods %v, want 010 unchanged", it.Stage, it.Modifiers)
+	}
+	if it := trackerItem(t, resp, "pr", 105); it.Stage != 85 || !hasMod(it, modHold) {
+		t.Errorf("held PR = stage %d mods %v, want 085 + hold (PR path untouched)", it.Stage, it.Modifiers)
+	}
+}
