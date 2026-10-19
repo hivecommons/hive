@@ -44,13 +44,14 @@ ensure_base() {
   git fetch --no-tags origin "+refs/heads/${base}:refs/remotes/origin/${base}" >/dev/null
 }
 
+# Returns git's status when the ref is unavailable; the caller decides whether
+# that is fatal (the target PR) or a skip (a sibling listed by the API whose
+# refs/pull/N/head is briefly unresolvable — a just-closed, force-pushed or
+# deleted-fork head). Under `set -e` the raw fetch used to abort the whole
+# check, so one such sibling failed `overlap` on every other open PR.
 fetch_pr_ref() {
   local number=$1
-  if ! git show-ref --verify --quiet "refs/heads/pr-${number}"; then
-    git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null
-  else
-    git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null
-  fi
+  git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null
 }
 
 pr_field() {
@@ -161,7 +162,10 @@ make_report_for_pr() {
       continue
     fi
     other_ref="pr-${number}"
-    fetch_pr_ref "$number"
+    if ! fetch_pr_ref "$number"; then
+      printf 'skipping #%s: pull/%s/head is not fetchable\n' "$number" "$number" >&2
+      continue
+    fi
     conflict_files=()
     if [[ -n "$target_on_base" ]]; then
       other_on_base=$(pr_on_base_ref "$number" "$base")

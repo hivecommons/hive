@@ -82,6 +82,9 @@ git -C "$SEED" push -q "$ORIGIN" v6
 for n in 1 2 3 4; do
   git -C "$SEED" push -q "$ORIGIN" "pr${n}:refs/pull/${n}/head"
 done
+# PR 5 is listed as open by the API but has no refs/pull/5/head on origin —
+# the head was force-pushed, closed or its fork deleted between the list call
+# and the fetch. It must be skipped, not fail the check for every sibling.
 
 # gh test double: answers the reads pr-overlap.sh makes and logs every write.
 # The PR-list case comes first: its --jq filter mentions .head.repo.full_name.
@@ -94,7 +97,7 @@ shift
 case "$*" in
   -X*) printf '%s\n' "$*" >>"$GH_WRITE_LOG"; exit 0 ;;
   *'/pulls?base=v6'*)
-    for n in 4 3 2 1; do printf '%s\tPR %s\t%s\t2026-01-01T00:00:00Z\n' "$n" "$n" "$REPO_SLUG"; done ;;
+    for n in 5 4 3 2 1; do printf '%s\tPR %s\t%s\t2026-01-01T00:00:00Z\n' "$n" "$n" "$REPO_SLUG"; done ;;
   *'.head.repo.full_name'*) printf '%s\n' "$REPO_SLUG" ;;
   *'.base.ref'*) printf 'v6\n' ;;
   *'/comments?'*) : ;;
@@ -130,6 +133,8 @@ assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` |' 'reports the real b.
 assert_not_contains "$OUT" 'c.txt' 'does not list the cleanly auto-merged c.txt'
 assert_not_contains "$OUT" '| #1 |' 'does not blame PR 1 for its conflict with the base'
 assert_not_contains "$OUT" '| #4 |' 'does not link the unrelated stale PR 4'
+assert_contains "$OUT" 'skipping #5: pull/5/head is not fetchable' 'warns about the sibling whose head ref is gone'
+assert_not_contains "$OUT" '| #5 |' 'does not report the unfetchable sibling'
 # shellcheck disable=SC2059
 assert_contains "$WRITES" "$(printf -- "$LABEL_ADD" 2)" 'labels PR 2 conflicts-with-open-pr'
 
