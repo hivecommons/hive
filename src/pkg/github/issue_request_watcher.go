@@ -768,8 +768,7 @@ func (c *Client) issueDecisionDowngrade(title, body string) issueDecisionDowngra
 		return issueDecisionDowngrade{}
 	}
 	text := strings.TrimSpace(title + "\n" + body)
-	class := decisionpolicy.Classify(text)
-	if class.Escalate {
+	if !decisionpolicy.ResolvesWithoutHuman(text) {
 		return issueDecisionDowngrade{}
 	}
 	question := decisionQuestionSummary(title, body)

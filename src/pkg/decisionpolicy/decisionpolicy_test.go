@@ -91,3 +91,14 @@ func TestEffectivePolicyDefaultsResolve(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyUnclassifiedTextDoesNotResolveWithoutHuman(t *testing.T) {
+	q := "Agents do not edit repository settings; the owner runs: gh api --method PUT repos/o/r/branches/main/protection"
+	got := Classify(q)
+	if got.Escalate || got.Category != "" {
+		t.Fatalf("Classify(%q) = %+v, want zero classification", q, got)
+	}
+	if ResolvesWithoutHuman(q) {
+		t.Fatalf("ResolvesWithoutHuman(%q) = true, want false for unclassified text", q)
+	}
+}

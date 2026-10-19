@@ -192,3 +192,18 @@ func runNeedsDecisionCreateWithPolicy(t *testing.T, filter IssueAdmitter, policy
 	}
 	return got[0]
 }
+
+const neutralDecisionText = "Agents do not edit repository settings; the owner runs: gh api --method PUT repos/o/r/branches/main/protection"
+
+func TestIssueRequestWatcher_NeedsDecisionResolveParksUnclassifiedQuestion(t *testing.T) {
+	labels := runNeedsDecisionCreateWithPolicy(t, nil, "resolve", IssueRequest{
+		Repo: "o/r", Title: "[scanner] Repository settings change", Body: neutralDecisionText,
+		Labels: []string{"agent/scanner"}, Agent: "scanner", NeedsDecision: true,
+	})
+	if !hasLabelFold(labels, NeedsDecisionStageLabel) {
+		t.Fatalf("needs-decision label not applied for unclassified question; labels = %v", labels)
+	}
+	if hasLabelFold(labels, "stage/010-actionable") {
+		t.Fatalf("unclassified question was downgraded; labels = %v", labels)
+	}
+}
