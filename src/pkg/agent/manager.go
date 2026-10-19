@@ -284,6 +284,11 @@ type AgentProcess struct {
 	startupKickGen       int
 	pendingStartupKick   string
 	pendingStartupSource string
+	// deferredMentionKicks is a FIFO of mention/action-sourced kicks that
+	// arrived while startup owned delivery (#12982). Unlike the coalesced
+	// pendingStartupKick, a later cadence kick never evicts them: each one
+	// backs a human-visible 👀 ack and is delivered on its own turn.
+	deferredMentionKicks []deferredKick
 	BootstrapOverride    string // when set, replaces buildBootstrapPrompt output
 	LastError            string // captured from bare copilot diagnostic launch
 	// kickDelivering is true for exactly as long as deliverKickLocked is
