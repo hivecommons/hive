@@ -1170,13 +1170,21 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Reason = verdict.Reason
 		}
 		prevRec, hadPrev := store.Get(key)
+		// pass is what this pass learns past resolveStage; it rides on the
+		// Facts so the engine's DerivePR reproduces the stage written here.
+		pass := &stageengine.PRPassFacts{AuthorIsApp: normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin())}
+		if hadPrev {
+			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead}
+		}
 		if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
 		var route stagelabels.Route
 		if verdict.Human && !verdict.Terminal {
-			route = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
+			var evidence stagelabels.Evidence
+			route, evidence = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
+			pass.Route = &evidence
 			verdict.Stage = route.Stage
 			if route.LaneReason != "" {
 				obs.Reason = route.LaneReason
@@ -1209,6 +1217,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Detail.DCOUnsignedOther = stats.unsignedOther
 			obs.Detail.DCOSquashUnsafeHive = stats.squashUnsafeHive
 			want.DCO = obs.Detail.DCO
+			pass.DCO, pass.DCOKnown = want.DCO, true
+			pass.DCORequired = dcoRequired(policy, obs)
+			pass.SquashUnsafeHive = stats.squashUnsafeHive
 			// The label is written everywhere; the 072 override only where
 			// the repo actually enforces DCO (config, else detected gate).
 			if want.DCO == stagelabels.DCONo && dcoRequired(policy, obs) {
@@ -1250,6 +1261,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// adoption nobody is working past the dwell is a person's
 				// (085) with the lane reason named (hivecommons/hive#12858).
 				verdict.Stage = stagelabels.AdoptedByHive
+				pass.AdoptionLive = true
 				esc, n, err := c.escapeStalledAdoption(ctx, store, key, obs, policy, now)
 				result.Comments += n
 				if err != nil && firstErr == nil {
@@ -1259,6 +1271,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					verdict.Stage = stagelabels.NeedsDecision
 					verdict.Rank = stageRankOwned
 					obs.Reason = esc.Reason
+					pass.EscalationReason = esc.Reason
 				}
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
@@ -1313,6 +1326,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		facts := factsFrom(list)
 		facts.ObservedAt = now
+		pass.AuthorKind = obs.AuthorKind
+		facts.PR.Pass = pass
 		legacy.Set(facts.Ref, stageengine.Decision{
 			Stage: want.Stage, Role: want.Role, Kind: want.Kind, KindLabels: want.KindLabels,
 			Stalled: want.Stalled, DCO: want.DCO, Terminal: verdict.Terminal, Reason: obs.Reason,

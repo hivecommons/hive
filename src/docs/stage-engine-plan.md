@@ -58,7 +58,14 @@ without moving its logic.
 - Adapters (no logic moved yet):
   - `src/pkg/github/automerge/stage_facts.go`: `factsFrom([]stageObservation) stageengine.Facts`
     and `prDeriverAdapter` implementing `stageengine.Deriver` by converting
-    `LaneFact` back to `stageObservation` and calling `resolveStage`.
+    `LaneFact` back to `stageObservation` and calling `resolveStage`, then
+    applying ApplyStageLabels' pure post-steps (07x author-kind split,
+    normalized-fixing guard, `RouteHuman`, DCO override, 074 yield) from
+    `PRFacts.Pass` (`stageengine.PRPassFacts`), which the pass fills with
+    the forge reads and store state those steps consumed. The shadow
+    comparison is therefore written-vs-derived, and
+    `TestStageGoldensEngineParity` holds the deriver to every golden's
+    `final_stage` / `final_reason`.
   - `src/pkg/github/issue_stage_facts.go`: `factsFrom(IssueStageInput) stageengine.Facts`
     and `issueDeriverAdapter` wrapping `IssueStageFor`.
   - Both adapters are what `stageengine.DeriveIssue`/`DerivePR` delegate to

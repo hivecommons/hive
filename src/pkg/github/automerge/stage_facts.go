@@ -20,7 +20,9 @@ import (
 // Details the tracker shares across lanes (verdict, human approval, red
 // checks, reviews, DCO) are folded once into PRFacts; per-lane evidence
 // becomes one LaneFact each, in the list's order. An empty list yields
-// Facts with no PR evidence; the adapter abstains on it.
+// Facts with no PR evidence; the adapter abstains on it. What the stage
+// pass learns after resolveStage (author kind, route evidence, DCO walk,
+// adoption state) is added by ApplyStageLabels as PRFacts.Pass.
 func factsFrom(list []stageObservation) stageengine.Facts {
 	if len(list) == 0 {
 		return stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.PRItem}}
@@ -194,9 +196,10 @@ func PRDeriver() stageengine.Deriver { return prDeriverAdapter{} }
 func (prDeriverAdapter) Kind() stagelabels.Item { return stagelabels.PRItem }
 
 // Derive implements stageengine.Deriver: the lane observations are rebuilt
-// from Facts and resolveStage picks the owning opinion. A verdict with no
-// rank (no lane could classify the PR) is an Abstain, as ApplyStageLabels
-// skips it today.
+// from Facts and resolveStage picks the owning opinion; with PRFacts.Pass
+// present the pass's post-steps are applied too (passDecision), so the
+// Decision is the stage the sweep writes. A verdict with no rank (no lane
+// could classify the PR) is an Abstain, as ApplyStageLabels skips it today.
 func (prDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 	if f.Ref.Kind != stagelabels.PRItem {
 		return stageengine.Decision{Abstain: true, Reason: "stage facts: not a pull request"}
@@ -209,7 +212,84 @@ func (prDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 		return stageengine.Decision{Abstain: true, Reason: "stage facts: no lane observed the PR"}
 	}
 	verdict, role, obs := resolveStage(list)
+	if f.PR.Pass != nil && verdict.Rank != stageRankNone {
+		return passDecision(verdict, role, obs, f)
+	}
 	return decisionFrom(verdict, role, obs, f)
+}
+
+// passDecision applies the pure post-steps ApplyStageLabels runs on the
+// resolved opinion, in its order, from the PRPassFacts the pass recorded:
+// the 07x author-kind split, the normalized-fixing guard, the human route
+// (stagelabels.RouteHuman over the gathered evidence), the DCO override and
+// the 074 adoption yield / stalled-adoption escalation. The forge reads and
+// store state behind them are inputs here, never re-done, so the Decision
+// is the stage the legacy pass wrote for the same Facts.
+func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservation, f stageengine.Facts) stageengine.Decision {
+	pass := f.PR.Pass
+	obs.AuthorKind = pass.AuthorKind
+	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
+		verdict.Stage = fixingStage(obs)
+	}
+	obs.LaneReason = obs.Reason
+	if verdict.Reason != "" {
+		obs.Reason = verdict.Reason
+	}
+	if pass.Prior != nil {
+		prev := stagelabels.Record{Stage: pass.Prior.Stage, Reason: pass.Prior.Reason, ActivityHead: pass.Prior.ActivityHead}
+		if replacement, ok := preserveNormalizedFixingStage(prev, true, obs, verdict); ok {
+			verdict = replacement
+			obs.Reason = replacement.Reason
+		}
+	}
+	var human *stagelabels.Route
+	if verdict.Human && !verdict.Terminal {
+		if pass.Route != nil {
+			route := stagelabels.RouteHuman(*pass.Route)
+			verdict.Stage = route.Stage
+			if route.LaneReason != "" {
+				obs.Reason = route.LaneReason
+			}
+			human = &route
+		} else {
+			human = &stagelabels.Route{Stage: verdict.Stage}
+		}
+	}
+	dco := f.PR.DCO
+	if !verdict.Terminal && verdict.Stage != stagelabels.None && pass.DCOKnown {
+		dco = pass.DCO
+		if pass.DCO == stagelabels.DCONo && pass.DCORequired {
+			verdict.Stage = fixingStage(obs)
+			verdict.Rank = stageRankOwned
+			obs.Reason = stagelabels.LaneReasonDCOMissing
+		} else if pass.SquashUnsafeHive > 0 && !pass.AuthorIsApp {
+			verdict.Stage = stagelabels.Fixing
+			verdict.Rank = stageRankOwned
+			obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
+		}
+	}
+	if !verdict.Terminal && pass.AdoptionLive && verdict.Stage.YieldsToAdoption() {
+		verdict.Stage = stagelabels.AdoptedByHive
+		if pass.EscalationReason != "" {
+			verdict.Stage = stagelabels.NeedsDecision
+			verdict.Rank = stageRankOwned
+			obs.Reason = pass.EscalationReason
+		}
+	}
+	d := stageengine.Decision{
+		Stage:    verdict.Stage,
+		Role:     role,
+		Kind:     pass.AuthorKind,
+		Terminal: verdict.Terminal,
+		Reason:   obs.Reason,
+		DCO:      dco,
+	}
+	if verdict.Terminal {
+		d.Stage = stagelabels.None
+	} else {
+		d.Human = human
+	}
+	return d
 }
 
 // decisionFrom renders resolveStage's answer as a Decision. The recorded

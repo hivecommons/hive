@@ -145,6 +145,51 @@ type PRFacts struct {
 	Soak, SoakElapsed time.Duration
 	SharedCIIncident  int
 	Lanes             []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// Pass is what the sweep's own pass learned after the lanes spoke and
+	// before the stage was written: the inputs of ApplyStageLabels' pure
+	// post-steps (author-kind split, normalized-fixing guard, human route,
+	// DCO override, adoption yield). Additive to the ADR-0025 shape; nil
+	// when the sweep ran none of them. DerivePR reproduces the written
+	// stage only from Facts, so the shadow comparison is written vs derived.
+	Pass *PRPassFacts
+}
+
+// PRPassFacts carries the per-PR evidence the automerge stage pass gathers
+// after resolveStage (forge reads, store state and live policy the lanes
+// never see). Each field is one post-step's input, recorded as the pass
+// read it; the deriver applies the same pure steps in the same order.
+type PRPassFacts struct {
+	// AuthorKind is stageAuthorKind's detection. The lanes record no kind,
+	// so resolveStage classifies with it unknown and the pass splits the
+	// 07x outcome by it afterwards; Facts.Author.Kind stays the lanes' view.
+	AuthorKind authorkind.Kind
+	// Prior is the store record before this pass (the normalized-fixing
+	// guard reads Stage, Reason and ActivityHead).
+	Prior *PriorStage
+	// Route is the human-route evidence (stagelabels.RouteHuman's input)
+	// when the resolved opinion was a hand-off (085/090); nil otherwise.
+	Route *stagelabels.Evidence
+	// DCO is the pass's own commit check for the head and whether the repo
+	// enforces it (the 07x override); SquashUnsafeHive counts hive commits a
+	// squash merge would misattribute; AuthorIsApp says the author is this
+	// App (the attribution override applies only when it is not).
+	DCO              stagelabels.DCOState
+	DCOKnown         bool
+	DCORequired      bool
+	SquashUnsafeHive int
+	AuthorIsApp      bool
+	// AdoptionLive is prev.AdoptionLive(head): the hive owns the PR, so a
+	// stage that yields to adoption reads 074. EscalationReason is set when
+	// the stalled-adoption escape moved it to 085 instead.
+	AdoptionLive     bool
+	EscalationReason string
+}
+
+// PriorStage is the store record a pass started from.
+type PriorStage struct {
+	Stage        stagelabels.Stage
+	Reason       string
+	ActivityHead string
 }
 
 // ReviewFacts is THE "what counts as reviewed" fact (ADR-0025 Decision §6).

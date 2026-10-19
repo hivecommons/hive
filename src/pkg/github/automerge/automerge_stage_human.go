@@ -125,13 +125,16 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 }
 
 // routeHuman refines a lane's human hand-off into the stage the evidence
-// supports. It returns the route and the lane-vocabulary reason to record.
-func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, stage stagelabels.Stage, now time.Time) stagelabels.Route {
+// supports. It returns the route (with the lane-vocabulary reason to
+// record) and the evidence it was decided on, which the stage pass hands
+// the engine as PRPassFacts.Route so DerivePR routes identically.
+func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, stage stagelabels.Stage, now time.Time) (stagelabels.Route, stagelabels.Evidence) {
 	cause := stagelabels.CauseTrust
 	if stage == stagelabels.NeedsDecision {
 		cause = stagelabels.CauseDecision
 	}
-	return stagelabels.RouteHuman(c.humanEvidence(ctx, tracker, key, obs, cause, now))
+	e := c.humanEvidence(ctx, tracker, key, obs, cause, now)
+	return stagelabels.RouteHuman(e), e
 }
 
 // trustCause renders the trust reason for the 090 comment.

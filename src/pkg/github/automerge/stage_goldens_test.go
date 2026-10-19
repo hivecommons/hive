@@ -35,6 +35,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -223,10 +224,20 @@ func (o stageGoldenObservation) toObservation() stageObservation {
 // stageDCO commit walk, settleInPlaceAdoption) are represented by their
 // inputs, never re-implemented.
 func runStageGolden(in stageGoldenInput) stageGoldenWant {
+	w, _ := runStageGoldenWithFacts(in)
+	return w
+}
+
+// runStageGoldenWithFacts is runStageGolden that also returns the Facts
+// ApplyStageLabels would hand the stage engine for the fixture: factsFrom
+// over the raw observations plus the PRPassFacts the pass records at each
+// post-step. TestStageGoldensEngineParity derives them and expects Final*.
+func runStageGoldenWithFacts(in stageGoldenInput) (stageGoldenWant, stageengine.Facts) {
 	list := make([]stageObservation, 0, len(in.Observations))
 	for _, o := range in.Observations {
 		list = append(list, o.toObservation())
 	}
+	facts := factsFrom(list)
 	verdict, role, obs := resolveStage(list)
 	w := stageGoldenWant{
 		Stage: verdict.Stage.String(), Rank: verdict.Rank, Reason: verdict.Reason, Role: stageGoldenRoleString(role),
@@ -234,9 +245,11 @@ func runStageGolden(in stageGoldenInput) stageGoldenWant {
 	}
 	if verdict.Rank == stageRankNone {
 		w.Skipped = true
-		return w
+		return w, facts
 	}
 	obs.AuthorKind = authorkind.Kind(in.AuthorKind)
+	pass := &stageengine.PRPassFacts{AuthorKind: obs.AuthorKind}
+	facts.PR.Pass = pass
 	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
 		verdict.Stage = fixingStage(obs)
 	}
@@ -247,13 +260,16 @@ func runStageGolden(in stageGoldenInput) stageGoldenWant {
 	hadPrev := in.Prev != nil
 	if hadPrev {
 		prevRec = stagelabels.Record{Stage: stageGoldenStage(in.Prev.Stage), Reason: in.Prev.Reason, ActivityHead: in.Prev.ActivityHead, AdoptedHead: in.Prev.AdoptedHead, AdoptMode: in.Prev.AdoptMode}
+		pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead}
 	}
 	if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
 		verdict = replacement
 		obs.Reason = replacement.Reason
 	}
 	if verdict.Human && !verdict.Terminal {
-		route := stagelabels.RouteHuman(goldenHumanEvidence(obs, verdict.Stage, in.Route))
+		evidence := goldenHumanEvidence(obs, verdict.Stage, in.Route)
+		pass.Route = &evidence
+		route := stagelabels.RouteHuman(evidence)
 		verdict.Stage = route.Stage
 		if route.LaneReason != "" {
 			obs.Reason = route.LaneReason
@@ -270,6 +286,9 @@ func runStageGolden(in stageGoldenInput) stageGoldenWant {
 			policy.DCORequired = func(string) (bool, bool) { return false, true }
 		}
 		w.FinalDCO = dcoGoldenString(obs.Detail.DCO)
+		pass.DCO, pass.DCOKnown = obs.Detail.DCO, true
+		pass.DCORequired = dcoRequired(policy, obs)
+		pass.SquashUnsafeHive, pass.AuthorIsApp = in.DCO.SquashUnsafeHive, in.DCO.AuthorIsApp
 		if obs.Detail.DCO == stagelabels.DCONo && dcoRequired(policy, obs) {
 			verdict.Stage = fixingStage(obs)
 			verdict.Rank = stageRankOwned
@@ -282,13 +301,14 @@ func runStageGolden(in stageGoldenInput) stageGoldenWant {
 	}
 	if !verdict.Terminal && hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoption() {
 		verdict.Stage = stagelabels.AdoptedByHive
+		pass.AdoptionLive = true
 	}
 	if verdict.Terminal {
 		w.FinalStage = "terminal"
-		return w
+		return w, facts
 	}
 	w.FinalStage, w.FinalReason = verdict.Stage.String(), obs.Reason
-	return w
+	return w, facts
 }
 
 // goldenHumanEvidence is humanEvidence with its forge reads and live policy
@@ -944,6 +964,46 @@ func goldenJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// TestStageGoldensEngineParity is the shadow gate in miniature: for every
+// golden the engine's PR deriver, given the Facts the pass submits (lane
+// observations plus PRPassFacts), must land on the fixture's final stage
+// and reason — what ApplyStageLabels writes — not merely resolveStage's
+// opinion. A fixture the pass skips must be an Abstain.
+func TestStageGoldensEngineParity(t *testing.T) {
+	deriver := PRDeriver()
+	total := 0
+	for file, cases := range generateStageGoldens() {
+		for _, c := range cases {
+			total++
+			want, facts := runStageGoldenWithFacts(c.Input)
+			got := deriver.Derive(facts)
+			if want.Skipped {
+				if !got.Abstain {
+					t.Errorf("%s: %q: pass skips the PR, engine derived %s (%s)", file, c.Name, got.Stage, got.Reason)
+				}
+				continue
+			}
+			if got.Abstain {
+				t.Errorf("%s: %q: engine abstained (%s), pass wrote %s", file, c.Name, got.Reason, want.FinalStage)
+				continue
+			}
+			if want.FinalStage == "terminal" {
+				if !got.Terminal {
+					t.Errorf("%s: %q: pass is terminal, engine derived %s", file, c.Name, got.Stage)
+				}
+				continue
+			}
+			if got.Terminal || got.Stage.String() != want.FinalStage || got.Reason != want.FinalReason {
+				t.Errorf("%s: %q: engine %s (%s), pass wrote %s (%s)", file, c.Name, got.Stage, got.Reason, want.FinalStage, want.FinalReason)
+			}
+			if want.FinalDCO != "" && dcoGoldenString(got.DCO) != want.FinalDCO {
+				t.Errorf("%s: %q: engine DCO %s, pass wrote %s", file, c.Name, dcoGoldenString(got.DCO), want.FinalDCO)
+			}
+		}
+	}
+	t.Logf("engine reproduced %d stage goldens", total)
 }
 
 // TestStageGoldensCoverEveryPRStage guards the corpus: every PR-side stage,
