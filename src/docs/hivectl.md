@@ -105,6 +105,20 @@ hivectl system events --follow --timeout 2m -o jsonl   # SSE stream as JSONL
 
 `events` is a stream, so `--follow` is required and output must be `jsonl`.
 
+### ok-to-test-template — render held-workflow approval helper
+
+```bash
+hivectl ok-to-test-template --hive-app-login my-hive[bot] > .github/workflows/hive-ok-to-test.yml
+```
+
+This prints a self-contained GitHub Actions workflow for a managed repository.
+When Hive posts `/ok-to-test` on a trusted same-repo bot/App PR whose runs are
+stuck in `action_required`, the generated workflow uses that repository's
+`GITHUB_TOKEN` with `actions: write` to approve the held runs. The Hive App
+still only needs Actions read. Use `--trusted-authors` to bake in a hive-specific
+trusted bot list; by default the workflow trusts Dependabot, Renovate, and the
+configured Hive App login(s).
+
 ### agent — manage and operate agents
 
 ```bash

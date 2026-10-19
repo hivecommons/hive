@@ -1,1 +1,1 @@
-- Add the reusable Hive `/ok-to-test` workflow and caller template so trusted same-repo bot/App workflow runs can be approved by a repository `GITHUB_TOKEN` without granting the Hive App Actions write.
+- Add the self-contained Hive `/ok-to-test` workflow template so trusted same-repo bot/App workflow runs can be approved by a repository `GITHUB_TOKEN` without granting the Hive App Actions write or depending on a shared reusable workflow.

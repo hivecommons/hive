@@ -1,39 +1,27 @@
-name: Hive ok-to-test reusable
+name: Hive ok-to-test
 
 on:
-  workflow_call:
-    inputs:
-      hive-app-logins:
-        description: Comma-separated Hive App bot logins allowed to issue the command.
-        required: true
-        type: string
-      trusted-authors:
-        description: Comma-separated PR author logins whose same-repo held runs may be approved.
-        required: false
-        default: dependabot[bot],renovate[bot]
-        type: string
-      command:
-        description: Slash command Hive posts to release trusted same-repo held workflow runs.
-        required: false
-        default: /ok-to-test
-        type: string
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
 
 jobs:
   ok-to-test:
     name: Approve trusted bot workflow runs
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-      issues: write
-      pull-requests: read
+    env:
+      HIVE_APP_LOGINS: hivecommons-hive[bot]
+      TRUSTED_AUTHORS: dependabot[bot],renovate[bot],hivecommons-hive[bot]
+      COMMAND: /ok-to-test
     steps:
       - name: Approve held trusted same-repo workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
-          HIVE_APP_LOGINS: ${{ inputs.hive-app-logins }}
-          TRUSTED_AUTHORS: ${{ inputs.trusted-authors }}
-          COMMAND: ${{ inputs.command }}
         run: |
           set -euo pipefail
 

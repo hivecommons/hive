@@ -43,31 +43,17 @@ Fine-grained PATs are supported — the token is sent as a plain bearer, same as
 | Actions | Read | Read | Read |
 | Commit statuses | Read | Read | Read |
 
-Hive does not request **Actions: Read and write** for workflow-run approvals. It only needs **Actions: Read** to inspect runs. When GitHub leaves same-repository `pull_request` runs in `action_required` on trusted Dependabot/Renovate/App PRs or registry-trusted `author/clanker` PRs, Hive posts `/ok-to-test` once for that head and reports `workflow-approval-required:<ctx>` / `stage/085-needs-decision` until the repository's own caller workflow approves the held runs. The approval is performed by that repository's `GITHUB_TOKEN` through `.github/workflows/hive-ok-to-test.yml`; no Prow and no Hive App Actions-write grant are required. Hive never approves fork heads or PRs carrying `sentinel-alert`.
+Hive does not request **Actions: Read and write** for workflow-run approvals. It only needs **Actions: Read** to inspect runs. When GitHub leaves same-repository `pull_request` runs in `action_required` on trusted Dependabot/Renovate/App PRs or registry-trusted `author/clanker` PRs, Hive posts `/ok-to-test` once for that head and reports `workflow-approval-required:<ctx>` / `stage/085-needs-decision` until the repository's own helper workflow approves the held runs. The approval is performed by that repository's `GITHUB_TOKEN` through `.github/workflows/hive-ok-to-test.yml`; no Prow, no reusable workflow, and no Hive App Actions-write grant are required. Hive never approves fork heads or PRs carrying `sentinel-alert`.
 
-Install the caller workflow in each governed repository (or render it with `hivectl ok-to-test-template --hive-app-login <your-app>[bot]`). Replace the login with the App bot login shown by Hive for that installation:
+### Approving held workflow runs without Actions: write
 
-```yaml
-name: Hive ok-to-test
+Install the self-contained helper workflow in every governed repository. Render the workflow with this hive's App bot login(s) and trusted author list baked in:
 
-on:
-  issue_comment:
-    types: [created]
-
-permissions:
-  actions: write
-  contents: read
-  issues: write
-  pull-requests: read
-
-jobs:
-  ok-to-test:
-    uses: hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5
-    with:
-      hive-app-logins: YOUR-HIVE-APP[bot]
+```sh
+hivectl ok-to-test-template --hive-app-login <your-hive-app>[bot] > .github/workflows/hive-ok-to-test.yml
 ```
 
-The reusable workflow checks that the commenter is the configured Hive App (or a write/maintain/admin collaborator), the PR is same-repository, the author is trusted (`dependabot[bot]`, `renovate[bot]`, or the Hive App login by default), and no `sentinel-alert` label is present before approving only that head's `action_required` runs.
+If you manage the repository by hand or run in an air-gapped/private org, copy `src/docs/templates/hive-ok-to-test.yml` and replace `{{HIVE_APP_LOGINS}}`, `{{TRUSTED_AUTHORS}}`, and `{{COMMAND}}` (normally `/ok-to-test`). The generated file is complete: it listens to `issue_comment: created`, grants only the job's `GITHUB_TOKEN` `actions: write`, and checks that the commenter is the configured Hive App (or a write/maintain/admin collaborator), the PR is same-repository, the author is trusted (`dependabot[bot]`, `renovate[bot]`, and the Hive App login by default), and no `sentinel-alert` label is present before approving only that head's `action_required` runs.
 
 Organization permission: **Members: Read** where contributor/owner identification is configured. Note that Issues read-and-write is needed even at advisory tiers because digests are posted as issue comments.
 

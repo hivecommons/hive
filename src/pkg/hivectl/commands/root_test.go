@@ -468,7 +468,7 @@ func TestCommandTreeHasExamples(t *testing.T) {
 	}
 }
 
-func TestOkToTestTemplateCommandRendersCaller(t *testing.T) {
+func TestOkToTestTemplateCommandRendersSelfContainedWorkflow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 	}))
@@ -479,13 +479,34 @@ func TestOkToTestTemplateCommandRendersCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"uses: hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5",
-		"hive-app-logins: hivecommons-hive[bot]",
-		"trusted-authors: dependabot[bot]",
+		"on:\n  issue_comment:",
+		`HIVE_APP_LOGINS: "hivecommons-hive[bot]"`,
+		`TRUSTED_AUTHORS: "dependabot[bot]"`,
+		"gh api -X POST \"repos/${repo}/actions/runs/${run_id}/approve\"",
 		"actions: write",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout)
+		}
+	}
+	for _, forbidden := range []string{"uses: hivecommons/hive", "workflow_call"} {
+		if strings.Contains(stdout, forbidden) {
+			t.Fatalf("stdout contains reusable workflow dependency %q:\n%s", forbidden, stdout)
+		}
+	}
+}
+
+func TestOkToTestTemplateCommandDefaultsTrustedAuthors(t *testing.T) {
+	stdout := renderOkToTestWorkflow("my-hive[bot]", "", "")
+	for _, want := range []string{
+		`HIVE_APP_LOGINS: "my-hive[bot]"`,
+		`TRUSTED_AUTHORS: "dependabot[bot],renovate[bot],my-hive[bot]"`,
+		`COMMAND: "/ok-to-test"`,
+		`permission="$(gh api "repos/${repo}/collaborators/${commenter}/permission"`,
+		"sentinel-alert is present",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("rendered workflow missing %q:\n%s", want, stdout)
 		}
 	}
 }

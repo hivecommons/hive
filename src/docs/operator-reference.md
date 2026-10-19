@@ -288,15 +288,16 @@ runs when a required check is missing or pending:
 
 - held runs whose head repository is the base repository cause Hive to post one
   `/ok-to-test` issue comment per head and report `workflow-approval-required:<ctx>`.
-  The repository-local `.github/workflows/hive-ok-to-test.yml` caller listens for
-  that comment and invokes `hivecommons/hive/.github/workflows/hive-ok-to-test.yml@v5`;
-  the repository `GITHUB_TOKEN` (not the Hive App token) approves the held runs.
-  No Prow and no Hive App Actions-write permission are required.
+  The repository-local `.github/workflows/hive-ok-to-test.yml` workflow is
+  self-contained; it listens for that comment and uses that repository's
+  `GITHUB_TOKEN` (not the Hive App token) to approve the held runs. No Prow,
+  no reusable workflow dependency, and no Hive App Actions-write permission are
+  required.
 - if the held runs remain `action_required` after the grace period, Hive reports
-  `workflow-approval-required:missing-workflow:<ctx>` so the attention panel and
-  stage entry name the likely missing caller. Install the template from
-  `src/docs/templates/hive-ok-to-test.yml` or render it with
-  `hivectl ok-to-test-template --hive-app-login <app>[bot]`.
+  `workflow-approval-required:missing-workflow:<ctx>` so the per-repo attention
+  panel and stage entry name the likely missing helper. Install the template
+  from `src/docs/templates/hive-ok-to-test.yml` or render the exact workflow
+  for this hive with `hivectl ok-to-test-template --hive-app-login <app>[bot]`.
 - a head with **no** `pull_request` runs at all that is older than 30 minutes is
   reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
   workflows (seen on hivecommons/hive#11553), and only a new push, a
