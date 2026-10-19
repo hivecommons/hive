@@ -68,7 +68,11 @@ Prerequisites:
   (`src/docs/design/github-mention-triggers.md:3-11`).
 - Configure `github.mentions.enabled`, the managed repo list, a
   `github.mentions.default_agent` or an unambiguous mention-capable agent, and
-  either a trusted dashboard role floor or explicit summoners. The config fields
+  either a trusted dashboard role floor or explicit summoners from the
+  dashboard: **Settings → Channels → GitHub @-mentions** edits every
+  `github.mentions.*` key, validates summoner logins and the poll interval, and
+  hot-reloads the poller on save, so no `hive.yaml` hand-edit in the pod is
+  needed ([Channels](settings.md#channels)). The config fields
   and defaults include `summoners`, `min_role`, and the default `eyes` ack
   reaction (`src/pkg/config/github_integration_config.go:10-23`). If webhook acceleration is
   used, set `github.mentions.webhook_secret_env`; polling alone is acceptable
@@ -121,7 +125,9 @@ Prerequisites:
   `status`) and `github-actions[bot]` in `trusted_comment_authors` (the
   default). For the OIDC row also set `github.actions.oidc.enabled: true` and
   `github.actions.oidc.audience`; the workflow's `audience` input must match it
-  exactly. The keys are documented in
+  exactly. Set all of these from **Settings → Channels → GitHub Actions
+  trigger** (allowed commands are checkboxes over the known vocabulary; the save
+  hot-reloads) rather than editing YAML in the pod. The keys are documented in
   [GitHub Actions trigger](github-actions-trigger.md#hive-configuration).
 - The smoke is [`hive-action-smoke`](../../.github/workflows/hive-action-smoke.yml),
   a `workflow_dispatch` with inputs `issue`, `prompt`, `transport`
@@ -206,7 +212,9 @@ Prerequisites:
   The Slack design says Socket Mode is the shipped, pull-only-friendly transport
   (`src/docs/design/slack-integration.md:3-12`,
   `src/docs/design/slack-integration.md:54-69`).
-- Configure the `slack` notification block with `enabled: true`,
+- Configure the `slack` notification block (editable under **Settings →
+  Channels → Chat surfaces**, as are the Discord bot, Matrix, Telegram and Teams
+  blocks; bots connect at startup so restart after saving) with `enabled: true`,
   `app_token: ${SLACK_APP_TOKEN}`, `bot_token: ${SLACK_BOT_TOKEN}`,
   `channel_id`, and `allowed_users` containing the maintainer's Slack user ID
   (`src/docs/design/slack-integration.md:113-128`). The backend refuses to
@@ -532,7 +540,8 @@ Prerequisites:
   shipped on v6 and explicitly says inbound reply-to-act is not built yet
   (`src/docs/design/escalation-surfaces.md:3-10`). Record that deferral in the
   evidence unless a later PR adds the inbound path.
-- Configure `escalation.email.enabled`, `smtp.host`, optional `smtp.port`,
+- Configure (from **Settings → Channels → Escalation & on-call**, which
+  hot-reloads the dispatcher on save) `escalation.email.enabled`, `smtp.host`, optional `smtp.port`,
   `smtp.username`, `smtp.password`, `from`, and at least one `to` recipient;
   digest recipients are optional. The design shows the operator-facing block
   (`src/docs/design/escalation-surfaces.md:73-103`), while the config schema
@@ -573,7 +582,8 @@ Prerequisites:
 
 - Use the v6 push/on-call sinks. The escalation design records ntfy, Pushover,
   and PagerDuty as the shipped push providers (`src/docs/design/escalation-surfaces.md:130-155`).
-- Configure `escalation.push.enabled`, `min_severity` (`decision` or `page`),
+- Configure (also from **Settings → Channels → Escalation & on-call**)
+  `escalation.push.enabled`, `min_severity` (`decision` or `page`),
   and at least one provider: `ntfy.url` plus optional `token`, Pushover
   `app_token` and `user_key`, or PagerDuty `routing_key`. The config schema and
   validation enforce provider presence and the severity values

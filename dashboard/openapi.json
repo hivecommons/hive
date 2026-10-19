@@ -24793,6 +24793,149 @@
         }
       }
     },
+    "/api/config/channels": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get inbound channel settings",
+        "description": "Returns the Settings → Channels payload: github.mentions and github.actions trigger settings, chat bot surfaces (discord, slack, matrix, telegram, msteams), escalation email/push sinks, read-only dashboardChat and adminMcp status, and the per-agent mention eligibility list. Secrets are never echoed; each has a has* boolean instead. Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Channel settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "githubMentions": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "githubActions": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "discord": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "slack": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "matrix": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "telegram": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "msteams": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "escalationEmail": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "escalationPush": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "dashboardChat": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "adminMcp": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "mentionAgents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update inbound channel settings",
+        "description": "Partial update: each top-level surface object is optional and, inside it, absent fields are left unchanged. Secret fields treat an empty string as clear and a masked • echo as keep. The body is validated against a copy of the live config (allowed_commands vocabulary, poll_interval duration, summoner logins, enabled bots must have credentials) and committed only when valid, then the mention poller and escalation dispatcher hot-reload. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "githubMentions": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "githubActions": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "discord": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "slack": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "matrix": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "telegram": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "msteams": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "escalationEmail": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "escalationPush": {
+                    "type": "object",
+                    "additionalProperties": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated channel settings (same shape as GET)"
+          },
+          "400": {
+            "description": "Validation error; nothing applied"
+          },
+          "403": {
+            "description": "Not owner"
+          }
+        }
+      }
+    },
     "/api/config/escalation": {
       "get": {
         "tags": [
