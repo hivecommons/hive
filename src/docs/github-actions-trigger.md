@@ -31,10 +31,10 @@ github:
 
 The comment-relay transport posts a comment that @-mentions the hive's GitHub App, and the hive only acts on it when the mention matches the App's bot login (with or without the `[bot]` suffix). Tell the action your App's bot handle, for example `hivecommons-hive`:
 
-- `app_handle` input on the action step, or
-- a `HIVE_APP_HANDLE` repository or organization variable passed as `app_handle: ${{ inputs.app_handle || vars.HIVE_APP_HANDLE }}` (as `hive-action-smoke` does) or exported as the `HIVE_APP_HANDLE` environment variable for the job.
+- `mention_login` input on the action step (`app_handle` remains as a deprecated alias; `mention_login` wins when both are set), or
+- a `HIVE_APP_HANDLE` repository or organization variable passed as `mention_login: ${{ inputs.mention_login || vars.HIVE_APP_HANDLE }}` (as `hive-action-smoke` does) or exported as the `HIVE_APP_HANDLE` environment variable for the job.
 
-Resolution order is the `app_handle` input, then `HIVE_APP_HANDLE`, then the backward-compatible default `hive`. A leading `@` and a trailing `[bot]` are accepted and stripped, so `hivecommons-hive`, `@hivecommons-hive`, and `@hivecommons-hive[bot]` all post `@hivecommons-hive`. A value that is not a valid GitHub login fails the step. The OIDC transport does not post a comment and ignores the handle.
+Resolution order is the `mention_login` input, then the `app_handle` alias, then `HIVE_APP_HANDLE`, then the default `hivecommons-hive`. A leading `@` and a trailing `[bot]` are accepted and stripped, so `hivecommons-hive`, `@hivecommons-hive`, and `@hivecommons-hive[bot]` all post `@hivecommons-hive`. A value that is not a valid GitHub login fails the step. The OIDC transport does not post a comment and ignores the handle.
 
 ## Review on a PR
 
@@ -57,7 +57,7 @@ jobs:
         with:
           command: review
           issue: ${{ github.event.pull_request.number }}
-          app_handle: ${{ vars.HIVE_APP_HANDLE }}
+          mention_login: ${{ vars.HIVE_APP_HANDLE }}
           prompt: Please review this PR and reply with findings only.
 ```
 

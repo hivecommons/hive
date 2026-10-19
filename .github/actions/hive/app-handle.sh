@@ -10,8 +10,8 @@
 # Sourced by action.yml and by .github/scripts/test-hive-action-app-handle.sh.
 
 # HIVE_DEFAULT_APP_HANDLE is the backward-compatible fallback used when no
-# handle is configured: it matches an App whose handle is "hive".
-HIVE_DEFAULT_APP_HANDLE='hive'
+# handle is configured: it matches the hivecommons-hive App.
+HIVE_DEFAULT_APP_HANDLE='hivecommons-hive'
 
 # hive_normalize_app_handle prints the bare handle for one candidate value.
 # It accepts the handle with or without a leading "@" and with or without the
@@ -37,13 +37,14 @@ hive_normalize_app_handle() {
 }
 
 # hive_resolve_app_handle prints the handle to mention, in resolution order:
-# explicit action input ($1), then the fallback ($2, callers pass
-# vars.HIVE_APP_HANDLE or the HIVE_APP_HANDLE environment variable), then
-# HIVE_DEFAULT_APP_HANDLE. The first non-blank value wins; an invalid
-# non-blank value fails rather than silently falling through.
+# the mention_login input ($1), then the legacy app_handle input ($2), then the
+# fallback ($3, callers pass vars.HIVE_APP_HANDLE or the HIVE_APP_HANDLE
+# environment variable), then HIVE_DEFAULT_APP_HANDLE. The first non-blank
+# value wins; an invalid non-blank value fails rather than silently falling
+# through.
 hive_resolve_app_handle() {
   local candidate normalized
-  for candidate in "$1" "${2:-}"; do
+  for candidate in "${1:-}" "${2:-}" "${3:-}"; do
     normalized="$(hive_normalize_app_handle "${candidate}")" || return 1
     if [[ -n "${normalized}" ]]; then
       printf '%s\n' "${normalized}"
