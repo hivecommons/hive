@@ -115,8 +115,11 @@ type DispatchOptions struct {
 	// threads (hivecommons/hive#9360).
 	ReviewBotLogins      []string
 	ReviewBotMinPriority string
-	// AllAuthors lifts the agent-authored restriction so every open PR is
-	// eligible for review, whoever opened it.
+	// AllAuthors is a no-op kept for configs that still set
+	// review.all_authors. Every open PR is reviewed regardless of author
+	// (hivecommons/hive#12974); the planner never reads this field.
+	//
+	// Deprecated: review dispatch no longer filters by author.
 	AllAuthors bool
 	// FixHumanPRs mirrors review.fix_human_prs. It no longer lets a fix kick
 	// push onto a PR this hive's agents did not open: that commit would be
@@ -368,13 +371,11 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if pr.Number <= 0 || pr.Repo == "" {
 			continue
 		}
-		// Review is normally limited to the hive's own output, because that is
-		// the work the hive is answerable for. AllAuthors lifts that: on a repo
-		// where the queue is the problem, a human's PR waiting on a reviewer is
-		// no less stuck than an agent's.
-		if !opts.AllAuthors && !isAgentAuthored(pr.Author, opts.AIAuthor) {
-			continue
-		}
+		// Every open PR is reviewed, whoever opened it — hive agent, human,
+		// clanker, dependabot or any other bot (hivecommons/hive#12974). The
+		// only switch is whether review itself is on (RequireApproval and
+		// FanOut, checked above). Author kind still decides what happens AFTER
+		// the verdict: fixPushAllowed and the merge lanes, not this loop.
 		revisiting := false
 		var delivered map[Perspective]Verdict
 		if agg, ok := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest); ok {

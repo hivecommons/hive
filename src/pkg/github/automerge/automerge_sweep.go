@@ -1472,7 +1472,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
 	// Shadow (the default) records and merges; enforce holds.
-	if reviewReason := c.selfMergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
+	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
@@ -1737,7 +1737,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
 	c.noteStageVerdict(owner, repo, number, verdict)
-	c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
+	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
+	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
 	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
 	if policy.RequireGitHubPermission {
 		var err error
@@ -1827,6 +1828,13 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	if currentHeadSHA == "" || currentHeadSHA != headSHA {
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+	}
+	// The swarm reviews human PRs too (hivecommons/hive#12974), so the same
+	// review gate the self-authored lane runs sits in front of this merge:
+	// a trusted author's role vouches for who they are, not for an
+	// unreviewed head.
+	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, current, headSHA, priorApprover, priorChecked); reviewReason != "" {
+		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
 	var mergeResult *gh.PullRequestMergeResult

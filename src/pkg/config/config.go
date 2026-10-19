@@ -7112,6 +7112,7 @@ func (c *Config) applyDefaults() {
 	// path (boot, reload, dashboard save) and Save() persists the explicit
 	// value, after which this is a no-op for the life of the hive.
 	c.MigrateReviewFixHumanPRs()
+	c.WarnDeprecatedReviewAllAuthors()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
 	// matching org prefix off both primary_repo and every repos entry on load.
@@ -8782,12 +8783,15 @@ type ReviewConfig struct {
 	// replies excepted). 0 derives the cap: 1 with combined_perspectives, one
 	// per perspective otherwise. Negative disables the backstop.
 	MaxReviewsPerHead int `yaml:"max_reviews_per_head,omitempty" json:"max_reviews_per_head,omitempty"`
-	// AllAuthors makes every open PR eligible for review regardless of who
-	// opened it. By default the review swarm looks only at agent-authored
-	// PRs — the work the hive is answerable for. On a repo whose queue is the
-	// problem that restriction is backwards: a contributor's PR waiting on a
-	// reviewer is no less stuck than an agent's, and it is the one with a
-	// person waiting on the other end.
+	// AllAuthors is accepted for backwards compatibility and does nothing.
+	// Every open PR is reviewed regardless of who opened it — hive agent,
+	// human, clanker, dependabot or any other bot — whenever review is on
+	// (require_approval and fan_out); there is no author-class opt-out below
+	// that switch (hivecommons/hive#12974). A set value is logged once as
+	// deprecated by WarnDeprecatedReviewAllAuthors. The field stays so that
+	// MigrateReviewFixHumanPRs can still read the legacy pairing.
+	//
+	// Deprecated: review dispatch no longer filters by author.
 	AllAuthors bool `yaml:"all_authors,omitempty" json:"all_authors,omitempty"`
 	// FixHumanPRs once let the review-fix kick push commits onto PRs that
 	// this hive's agents did NOT open: a contributor's fork branch (through
@@ -9601,6 +9605,25 @@ func (c *Config) MigrateReviewFixHumanPRs() bool {
 	c.Review.FixHumanPRs = &enabled
 	reviewFixHumanPRsMigrationLogOnce.Do(func() {
 		log.Printf("[config] migrating review.fix_human_prs: all_authors is on and fix_human_prs was never set, so it is now stored as true for audit/UI continuity. Review-fix pushes still require hive authorship; turn the legacy setting off under Features > Review Gate > Reviewers if it is not wanted.")
+	})
+	return true
+}
+
+// reviewAllAuthorsDeprecationLogOnce keeps the deprecation notice to one
+// line per process across boot and every reload.
+var reviewAllAuthorsDeprecationLogOnce sync.Once
+
+// WarnDeprecatedReviewAllAuthors logs once when review.all_authors is set.
+// The knob is a no-op: every open PR is reviewed whenever review is on
+// (hivecommons/hive#12974). The value is left in place for audit/UI
+// continuity and for MigrateReviewFixHumanPRs. Returns true when the knob
+// is set.
+func (c *Config) WarnDeprecatedReviewAllAuthors() bool {
+	if c == nil || !c.Review.AllAuthors {
+		return false
+	}
+	reviewAllAuthorsDeprecationLogOnce.Do(func() {
+		log.Printf("[config] review.all_authors is deprecated and has no effect: the review swarm reviews every open PR regardless of author whenever review is on (require_approval and fan_out). Remove it from hive.yaml.")
 	})
 	return true
 }

@@ -65,8 +65,9 @@ GitHub, and says so in the request's `.result.json` `note`
 approval counts and gates merge queues — and belongs to the humans who own the
 repository. A PR whose author cannot be read is treated as a contributor's: the
 relay never resolves "we could not tell" into approving someone else's work.
-There is no setting to turn this off; `review.all_authors` widens what is
-reviewed, never what may be approved.
+There is no setting to turn this off. Every PR is reviewed regardless of
+author ([#12974](https://github.com/hivecommons/hive/issues/12974)); being
+reviewed never widens what may be approved.
 
 ### `label` refuses hive-controlled labels
 

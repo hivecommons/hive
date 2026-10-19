@@ -102,9 +102,11 @@ Where it shows up:
   `review_rank_reasons`. The lists keep their existing class-then-age order.
 - **`review-priority/*` labels** - option 2, off by default; see below.
 
-The queue ranks contributor PRs, but ranking is not reviewing: whether the
-review swarm reviews a contributor PR is still governed by
-`review.all_authors` ([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-and-the-retired-fix_human_prs-push)).
+The queue ranks contributor PRs, but ranking is not reviewing: the review
+swarm reviews every open PR regardless of author whenever review is on
+([review-swarm.md](review-swarm.md#who-may-be-pushed-to-all_authors-and-the-retired-fix_human_prs-push),
+[#12974](https://github.com/hivecommons/hive/issues/12974)); ranking only
+decides the order.
 
 ## Mechanism options (maintainer decision, cheapest first)
 

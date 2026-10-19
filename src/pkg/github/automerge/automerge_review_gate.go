@@ -180,16 +180,20 @@ type reviewEvidenceStarter interface {
 	StartReviewEvidence(repo string, number int, head string, pr *gh.PullRequest)
 }
 
-// selfMergeReviewGate evaluates the review gate for an App-authored PR head
-// immediately before the merge call. It returns "" when the merge may
-// proceed and a skip reason ("review-gate:<outcome>") when an enforcing gate
-// holds it. Only the self-authored lane is gated; trusted-bot PRs are not
-// reviewed by the swarm and pass untouched. priorChecked reports that the
-// caller already looked up the trusted human approval for head (priorApprover
-// is its result), so the reviews are not listed again.
-func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string, priorApprover string, priorChecked bool) string {
+// mergeReviewGate evaluates the review gate for a PR head immediately before
+// an automerge lane's merge call. It returns "" when the merge may proceed
+// and a skip reason ("review-gate:<outcome>") when an enforcing gate holds
+// it. Every sweep lane is gated — self-authored, trusted-bot and
+// trusted-author — because the swarm reviews every open PR regardless of
+// author whenever review is on (hivecommons/hive#12974); before that, the
+// gate covered the self-authored lane only and a human's PR could merge
+// through the trusted-author tier with no swarm verdict at all (#12966).
+// priorChecked reports that the caller already looked up the trusted human
+// approval for head (priorApprover is its result), so the reviews are not
+// listed again.
+func (c *Engine) mergeReviewGate(ctx context.Context, displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string, priorApprover string, priorChecked bool) string {
 	gate := c.currentReviewGate()
-	if gate == nil || lane != stageLaneSelf {
+	if gate == nil {
 		return ""
 	}
 	mode := gate.effectiveMode()
@@ -221,19 +225,20 @@ func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, re
 	if starter, ok := c.transport.(reviewEvidenceStarter); ok {
 		starter.StartReviewEvidence(fullRepo, number, head, pr)
 	}
+	recordLane := reviewGateRecordLane(lane)
 	if gate.RecordEvaluation != nil {
 		gate.RecordEvaluation(ReviewGateEvaluation{
-			Lane: intentLaneSelfMerge, Repo: fullRepo, Number: number, HeadSHA: head,
+			Lane: recordLane, Repo: fullRepo, Number: number, HeadSHA: head,
 			Outcome: outcome, WouldHold: wouldHold, Enforced: enforce, HumanApprover: humanApprover,
 		})
 	}
 	if enforce {
 		if wouldHold {
-			c.info("self-authored automerge sweep review gate holding merge", "repo", displayRepo, "pr", number, "head", head, "outcome", outcome)
+			c.info("automerge sweep review gate holding merge", "lane", lane, "repo", displayRepo, "pr", number, "head", head, "outcome", outcome)
 			return autoMergeReasonReviewGatePrefix + outcome
 		}
 		if humanApprover != "" {
-			c.info("self-authored automerge sweep review gate cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", head, "approver", humanApprover)
+			c.info("automerge sweep review gate cleared by trusted human approval", "lane", lane, "repo", displayRepo, "pr", number, "head", head, "approver", humanApprover)
 		}
 		return ""
 	}
@@ -241,12 +246,23 @@ func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, re
 		gate.RecordShadow(fullRepo, number, head, evidence.ShadowGate{
 			WouldHaveHeld: &wouldHold,
 			Reason:        outcome,
-			Lane:          intentLaneSelfMerge,
+			Lane:          recordLane,
 			Confidence:    1,
 			EvaluatedAt:   time.Now(),
 		})
 	}
 	return ""
+}
+
+// reviewGateRecordLane names the lane on the audit line and the evidence
+// bundle. The App's own PRs keep the historical "self-merge" so existing
+// shadow-gate rollups (review_gate_by_lane.self_merge) stay continuous; the
+// other sweep lanes record under their own name.
+func reviewGateRecordLane(lane string) string {
+	if lane == stageLaneSelf {
+		return intentLaneSelfMerge
+	}
+	return lane
 }
 
 func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo string, number int, head string) (string, bool) {

@@ -164,8 +164,9 @@ auto_merge:
 
 ### Self-merge review gate
 
-Immediately before the self-authored sweep merges one of the App's own PRs
-(after the head SHA is re-verified), it reads the swarm review verdict for that
+Immediately before an automerge lane merges a PR — the self-authored sweep for
+the App's own and trusted-bot PRs, and the trusted-author tier for a human's
+(after the head SHA is re-verified) — it reads the swarm review verdict for that
 head from the same `review-verdicts.json` the merge-eligible lane uses and
 classifies it as `no-review-bundle`, `awaiting-review-approval`,
 `changes-requested:<perspectives>` or `approved`
@@ -177,18 +178,23 @@ takes effect without a restart.
 
 - **shadow** (default): the merge proceeds as before; the evidence bundle for
   the head (started on the spot when none exists) records
-  `shadow.review_gate` with `lane: self-merge`, `would_have_held` and the
-  reason, so the Evidence card's Shadow gates panel can show what the gate
+  `shadow.review_gate` with `lane: self-merge` (the App's own PRs),
+  `trusted-bot` or `trusted-author`, `would_have_held` and the reason, so the Evidence card's Shadow gates panel can show what the gate
   would have held.
 - **enforce**: anything but `approved` holds the merge with reason
   `review-gate:<outcome>`; the PR is retried on a later sweep.
 - **off**: no evaluation.
 
 Each evaluation writes one audit line, action `review_evaluated`, detail
-`lane=self-merge would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
-The gate applies to the `self-authored` lane only; trusted-bot PRs are
-unchanged. The merge and the CI snapshot are recorded in the evidence bundle
-in every mode, including when the bundle is created at merge time.
+`lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
+The gate covers every sweep lane because the swarm reviews every PR
+regardless of author ([#12974](https://github.com/hivecommons/hive/issues/12974));
+until then it covered the `self-authored` lane only, and a trusted human's PR
+(hivecommons/hive#12966) could merge through the trusted-author tier with no
+swarm verdict at all. The contributor lane has its own
+`auto_merge.contributor_lane.require_reviewer_verdict` (default on). The merge
+and the CI snapshot are recorded in the evidence bundle in every mode,
+including when the bundle is created at merge time.
 
 ### Trusted bot authors
 

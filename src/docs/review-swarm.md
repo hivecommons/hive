@@ -174,7 +174,7 @@ review:
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
   self_authored_decision_policy: resolve    # resolve (default) or escalate low-risk Hive-authored decision questions
-  all_authors: true                         # optional; review every open PR, not only agent-authored ones
+  # all_authors: true                       # deprecated no-op; every open PR is reviewed regardless of author
   fix_human_prs: false                      # optional; also answer review-bot threads on PRs Hive did not open, by suggestion only (default off)
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
@@ -276,6 +276,8 @@ Source: `dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`.
 
 `pkg/review` provides prompt builders for one prompt per perspective plus a sequential fallback prompt. These prompts instruct review-capable agents to emit the extended AgentReport JSON shape above.
 
+**Who gets reviewed: every PR, regardless of author.** When review is on (`review.require_approval` and `review.fan_out`), the planner dispatches reviews for every open PR in the hive's repositories — hive-agent PRs, human PRs, clanker PRs at either trust tier, dependabot and any other bot. There is no author-class filter and no opt-out below the review feature switch itself; the only way to stop reviews is to turn review off ([#12974](https://github.com/hivecommons/hive/issues/12974): *"if pr review is selected in hive, then all prs should be reviewed"*). Before this, the swarm reviewed only agent and `[bot]` authors unless `review.all_authors` was set, and human PRs such as hivecommons/hive#12966 reached merge with zero swarm reviews. Author kind still decides what happens *after* the verdict — who may be pushed to (below), which auto-merge lane may act on it ([hive-merge.md](hive-merge.md#self-merge-review-gate)), and whether the hive may approve at all (a contributor-tier clanker's PR is reviewed like any other, then still parks at `090-ready-for-human-merge`; the hive never approves on their behalf).
+
 Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
 
 ### Pending-review expiry (`review.pending_ttl`, `review.max_redispatch`)
@@ -292,9 +294,9 @@ When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick 
 
 ### Who may be pushed to: `all_authors` and the retired `fix_human_prs` push
 
-A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. The two settings are therefore separate:
+A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. Reviewing and pushing are therefore separate:
 
-- `review.all_authors` makes every open PR eligible for **review**, whoever opened it. It never implies pushing.
+- Every open PR is **reviewed**, whoever opened it ([#12974](https://github.com/hivecommons/hive/issues/12974)). `review.all_authors` used to be the switch for this; it is now a deprecated no-op that is still accepted (so existing `hive.yaml` files load) and logged once at boot. Remove it. Being reviewed never implies being pushed to.
 - `review.fix_human_prs` is retained as an audited refusal setting only. It no longer lets the fix kick be dispatched for a PR the hive did **not** open: GitHub's squash attributes the landing commit to the PR author, so a hive follow-up commit can only pass "Sign-off survives the squash" by forging that author's `Signed-off-by`, which Hive must not do.
 - `review.contributor_prs.base_sync` (default off) is narrower: it only lets PR follow-up call GitHub's update-branch API for a hive-authored lane PR whose head is in a contributor fork, whose base moved (`behind`/`dirty`), and whose author enabled "allow edits by maintainers". `behind` produces a GitHub-authored merge commit; `dirty` falls back to the base-moved repair note and kick. Fork pushes still do not pass through Hive, so stale-head prevention is a post-push note/kick rather than a true pre-push rejection.
 
@@ -304,7 +306,7 @@ Before every fix kick the planner checks authorship. A PR counts as the hive's o
 
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and the setting's value at the time (`setting=review.fix_human_prs=<value>`; a reason naming the squash sign-off gate when it was on), so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
 
-**Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. The value is left in config for audit/UI continuity, but branch-push fix kicks still require hive authorship.
+**Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. Both values are left in config for audit/UI continuity — `all_authors` no longer does anything, and branch-push fix kicks still require hive authorship.
 
 ## Revising a recorded verdict
 
