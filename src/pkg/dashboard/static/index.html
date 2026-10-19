@@ -6102,7 +6102,7 @@
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
-      <a class="oc-nav-item" href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
+      <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
       <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
       <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
     </div>
@@ -50902,7 +50902,7 @@ function burnAreaChart() {
         title: 'Welcome to your hive',
         // Reading this step is step one — opening the dialog completes it.
         auto: () => true,
-        body: 'Your hive is a fleet of AI <strong>agents</strong> that work your projects — triaging issues, writing fixes, opening PRs. The <strong>governor</strong> paces them automatically as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
+        body: 'Hive is a <strong>co-maintainer</strong> for your project that never sleeps. It watches the things that pile up — issues, pull requests, failing CI, security alerts — and sends <strong>agents</strong> (AI coding tools such as Claude, Copilot or Codex, each run for one task and then stopped) to deal with them: triage, fixes, reviews. You decide how much they are allowed to do; humans keep every decision that matters. The <strong>governor</strong> is the scheduler that paces the agents as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
       },
       {
         id: 'github-app',
@@ -50916,7 +50916,7 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
         autoNote: 'Checks itself once the app is detected on your project.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },
@@ -50931,7 +50931,7 @@ function burnAreaChart() {
           if (agents.length === 0) return false;
           return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
         },
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → Model Gateways). Mix and match per agent.',
+        body: 'Each agent card has a <strong>method dropdown</strong> — the method is the tool that actually runs the agent. <strong>claude / copilot / codex / goose / gemini / agy / omp / bob</strong> are command-line tools you log into (or give an API key), while <strong>vllm / llm-d / litellm / openrouter / watsonx</strong> talk to an inference endpoint — a server that answers model requests — set up under Settings → Model Gateways (endpoint + API key). Mix and match per agent.',
         autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', action: 'welcomeShowAgentCard' }]
       },
@@ -50942,7 +50942,7 @@ function burnAreaChart() {
           if (!data || !Array.isArray(data.agents) || data.agents.length === 0) return null;
           return data.agents.every(a => !_welcomeAgentNeedsLogin(a));
         },
-        body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm) never log in; they use the endpoint + key instead.',
+        body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm / openrouter / watsonx) never log in; they use the endpoint + key from Settings → Model Gateways instead.',
         autoNote: 'Checks itself once every agent’s method is authenticated.',
         actions: [{ label: 'Show me', action: 'welcomeShowLogin' }]
       },
@@ -50984,14 +50984,14 @@ function burnAreaChart() {
         id: 'add-agent',
         title: 'Add a custom agent',
         auto: null,
-        body: 'The built-in agents are a starting point, not a limit. Use <strong>＋ Add agent</strong> in the Agents sidebar, the Agents section header, or this guide to open the create dialog. Start from scanner/reviewer/quality/CI/guide templates, then pick the method, model, prompt template, and cadences — or <strong>Import</strong> one from the community registry.',
+        body: 'The built-in agents are a starting point, not a limit. Use <strong>＋ Add agent</strong> in the Agents sidebar, the Agents section header, or this guide to open the create dialog. Start from the scanner / reviewer / quality / CI maintainer / guide templates, then pick the method, model, prompt template, and cadences — or <strong>Import</strong> one from the community registry.',
         actions: [{ label: '＋ Add an agent', action: 'welcomeAddAgent' }]
       },
       {
         id: 'acmm',
         title: 'Set your ACMM level',
         auto: (data) => !!(data && data.acmmLevelConfigured === true),
-        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.',
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (fully autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
         autoNote: 'Checks itself once an ACMM level is explicitly saved on the hive.',
         actions: [{ label: 'Show me', action: 'welcomeShowACMM' }]
       }
@@ -51014,9 +51014,11 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', action: 'welcomeShowConfigTab', actionArg: 'Budget' },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', action: 'welcomeShowConfigTab', actionArg: 'Notifications' },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', action: 'welcomeShowSection', actionArg: 'knowledge-section' },
-      { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend contributor agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
+      { id: 'inception', label: 'Inception', desc: 'turn a raw idea (or an existing project) into knowledge-base facts and a starter project scaffold, step by step.', action: 'welcomeShowSection', actionArg: 'inception-section' },
+      { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend their own agents to your hive, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', action: 'welcomeShowConfigTab', actionArg: 'Hub' },
       { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', action: 'welcomeShowConfigTab', actionArg: 'Security' },
+      { id: 'experiment-lab', label: 'Experiment Lab <span class="welcome-more-tag">experimental</span>', desc: 'ask a research question about your hive (for example “does a stricter review prompt cut PR churn?”), let the lab collect a baseline, then test hypotheses against it. Off by default — switch it on under Settings → Dashboard.', action: 'welcomeShowConfigTab', actionArg: 'Dashboard' },
       { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Settings → Features).', action: 'welcomeShowConfigTab', actionArg: TRAJECTORY_CONFIG_TAB },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', action: 'toggleLayout' }
     ];
@@ -51040,7 +51042,7 @@ function burnAreaChart() {
         _welcomeOpenSteps.add(firstUndone ? firstUndone.id : WELCOME_STEPS[0].id);
       }
       let html = '';
-      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
+      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
       let n = 0;
       for (const step of WELCOME_STEPS) {
         n++;
