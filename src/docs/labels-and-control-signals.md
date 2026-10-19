@@ -110,7 +110,7 @@ Some hive-authored labels look like provenance but are read as signals, so they 
 | `needs-triage`, `discussion`, `question`, `tracking`, `epic` | Issues | Contributor queue | Default contributor skip labels/patterns. | Contributor hard skip | Human/Hive | Contributor admission | Remove label or config | `hub.contribute_skip_labels`, `HIVE_CONTRIBUTE_SKIP_LABELS` (`src/pkg/config/config.go:4585-4685`) |
 | Contributor allow/deny label filters | Issues | Contributor queue | Hive-wide label filters can run in deny mode (skip if any label matches) or allow mode (offer only if at least one label matches); per-repo filters layer on top and can only narrow offers. Patterns use Hive wildcard/substring matching, not GitHub hold matching. | Contributor hard gate | Operator | Contributor admission | Edit filter mode/list or per-repo filter | `hub.contribute_labels_mode`, `contribute_deny_labels`, `contribute_allow_labels`, `contribute_repo_filters` (`src/pkg/config/config.go:4388-4420`, `src/pkg/config/config.go:6940-6994`, `src/pkg/config/config.go:7008-7055`) |
 | `1-triage`, `2-discussing`, stage labels | Issues | Dashboard repo-card bands/legend | Stage vocabulary is display-only unless another consumer names the same label. `2-discussing` ships in the default waiting band; `1-triage` is just a visible repo taxonomy label unless configured elsewhere. | Display-only | Human/repo automation | Dashboard render | Remove label or change band config | `dashboard.issue_bands` (`src/docs/dashboard.md:105-140`) |
-| `claimed` (**retired → `stage/020-claimed`**), `preempted:<login>`, `hive/claimed-by-<agent>` | Issues | Claims/dashboard | A claim is a comment; the `claimed` label is a mirror Hive keeps in sync. Go claim gates use comments/assignees/ledger, not these labels. | Display-only | Hive/claim flows | Dashboard render | Cleared by claim flow or human | `governor.claims.*` (`src/docs/dashboard.md:105-140`) |
+| `claimed` (**retired → `stage/020-claimed`**), `preempted:<login>`, `hive/claimed-by-human` / `hive/claimed-by-<agent>` (the per-login `hive/claimed-by-<login>` is **retired**, read-only during migration) | Issues | Claims/dashboard | A claim is a comment; the `claimed` label is a mirror Hive keeps in sync. Go claim gates use comments/assignees/ledger, not these labels. | Display-only | Hive/claim flows | Dashboard render | Cleared by claim flow or human | `governor.claims.*` (`src/docs/dashboard.md:105-140`) |
 | `hive/in-progress` (**retired → `stage/020-claimed` / `stage/030-pr-in-progress`**; the claim marker comment below remains the detection signal) | Issues | Agent claim relay, ledger mirror, enumeration sweep and dashboard in-progress band | States that a hive agent (normally the scanner) has started work on a PR for this issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Applied by `hive-open-issue claim` next to `hive/claimed-by-<agent>` in one label call, together with a bot comment carrying `<!-- hive:claim who=<agent> kind=agent hive=<spoke> at=<RFC3339> until=<at+agent TTL> -->` (the ledger's 🔒 comment carries the same `at=` when `governor.claims` is on). While the marker is live (`until` in the future) every hive scanning the repo withholds the issue from kicks, so two spokes never start the same issue; the `at=` instant is the start timestamp for per-repo SLA spans (`kicked → started → pr_opened`). | Kick withhold while marker live; display | Hive | Claim relay, ledger `OnClaimed`, enumeration sweep | Hive removes when the agent's PR opens (`hive-open-pr --issues`), when the ledger releases the agent claim, or at enumeration once PR evidence exists (`hive/covered-by-pr`, `hive/likely-done`, linked PRs) or the marker lapsed (default 2h `agent_ttl_s`); `governor.claims.label: false` disables it | Fixed label (`src/pkg/github/issue_inprogress.go`, `src/cmd/hive/claimswire.go`) |
 | `origin/<source>` (non-lane only) / `agent/<lane>` (agent lanes) | Issues | Every hive issue-create path, GitHub proxy, origin-label reconciler | Marks which hive component created an issue (see [Origin sources](#origin-sources)). Agent filings use exactly one lane/provenance label, `agent/<lane>`; the redundant `origin/<lane>` and bare `<lane>` aliases are stripped. Non-lane hive filers use `origin/selfreport`, `origin/governor`, `origin/dashboard`, `origin/forge`, or `origin/convergence`. Humans get none. No code path uses `origin/*` as a gate. At startup, open items carrying retired reviewer spellings (`from-review`, `origin/review`, `origin/reviewer`) are swapped to `agent/reviewer`, redundant lane-origin labels are removed, and older `hive/selfreport` issues are backfilled with `origin/selfreport`. | Informational | Hive | Issue creation/display; one-time migration at startup (`/data/origin-label-migration-v4.done`) | Remove label | `review.backlog.labels` (default `[agent/reviewer]`; `from-review`, `origin/review`, and `origin/reviewer` accepted and mapped) (`src/pkg/config/origin_labels.go`, `src/pkg/github/origin_labels.go`, `src/pkg/github/review_backlog.go`) |
 | `hive: churn-triaged` | Issues | Contributor churn guard | Marks churn triage acknowledgement for contributor flow. | Workflow signal | Human/Hive | Contributor/churn checks | Remove label to re-triage | Fixed phrase in contributor flow docs/config (`src/pkg/dashboard/contribute_admission.go:302-338`) |
@@ -942,36 +942,61 @@ retired.
 
 #### `hive/claimed-by-<who>`: one rule for the suffix
 
-`<who>` names the party **accountable** for the claim, derived from the claim
-marker by `claims.ClaimedByLabel` (`src/pkg/claims/claimedby.go`):
+`<who>` names the **kind of party** accountable for the claim, derived from
+the claim marker by `claims.ClaimedByLabel` (`src/pkg/claims/claimedby.go`).
+A GitHub login is **never** part of a label name (owner decision 2026-10-19,
+reported from #13041 / #13042 where `hive/claimed-by-clubanderson` appeared):
+a per-login label mints one label per person in every repo and leaks
+identities into the label vocabulary. The claimant's login lives in the
+claim record (ledger), the `<!-- hive:claim who=<login> … -->` marker
+comment and the dashboard claim detail (`@login` next to the claim).
 
 | Claim | Marker | Label |
 |---|---|---|
-| A person — dashboard, `/claim`, hivectl, or a Copilot CLI / Claude Code / Codex session acting on their behalf | `kind=human who=<login>` | `hive/claimed-by-<login>` (e.g. `hive/claimed-by-clubanderson`) |
-| A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-<login>` |
+| A person — dashboard, `/claim`, hivectl, or a Copilot CLI / Claude Code / Codex session acting on their behalf | `kind=human who=<login>` | `hive/claimed-by-human` |
+| A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-human` |
 | A hive agent with no human principal | `kind=agent who=<agent>` | `hive/claimed-by-<agent>` (e.g. `hive/claimed-by-scanner`) |
 
 A backend or model name (`copilot`, `claude`, `codex`, `gemini`, `pi`) is
 **never** a suffix: it names the tool, not who answers for the work. A
 hive-agent claim whose name is a backend falls back to
 `hive/claimed-by-agent`; a human/contributor claim with no usable login gets
-no label. The suffix keeps the login's case and is reduced to
-`[A-Za-z0-9_-]`; `session=` / `hive=` are not inputs. The writers all go
-through the helper — the claim relay (`hive-open-issue claim`,
+no label. An agent name is reduced to `[A-Za-z0-9_-]`; `human` is reserved
+(no agent may be named `human`); `session=` / `hive=` are not inputs. The
+writers all go through the helper — the claim relay (`hive-open-issue claim`,
 `src/pkg/github/issue_inprogress.go`) and the claim-ledger hooks
 (`src/cmd/hive/claimswire.go`, `Client.ApplyClaimedByLabel`), which add the
 claim's own label and strip only backend-named `hive/claimed-by-*` labels
-when a claim lands (another party's principal label is kept), and remove
-the holder's label — only the holder's — when the ledger releases or hands
-the claim over. The ledger maintains at most one live claim per (repo, issue);
-thus, co-party `hive/claimed-by-*` labels on the same issue arise only from
-hand-applied labels or persistent debris left by an earlier holder, never
-from the ledger modeling concurrent co-parties. The issue reconciler heals
-the one malformed form a hand-applied label can introduce: a backend-named
-suffix is swapped for the live holder's login (dropped when the issue carries
-no live claim); a label naming a principal is never touched, so an issue may
-carry one label per party (a person's and a contributor's) while both claims
-are live.
+and the claim holder's own retired per-login label when a claim lands
+(another party's label is kept), and remove the holder's labels — only the
+holder's, generic plus legacy per-login — when the ledger releases or hands
+the claim over. The ledger maintains at most one live claim per (repo,
+issue); thus, co-party `hive/claimed-by-*` labels on the same issue arise
+only from hand-applied labels or persistent debris left by an earlier holder,
+never from the ledger modeling concurrent co-parties. The issue reconciler
+heals the malformed forms a hand-applied or pre-upgrade label can introduce:
+a backend-named suffix is swapped for the live holder's label (dropped when
+the issue carries no live claim) and the live human holder's
+`hive/claimed-by-<login>` is swapped for `hive/claimed-by-human`; any other
+label is never touched.
+
+**Retired per-login spelling.** `hive/claimed-by-<login>` is still *read* as
+a human claim everywhere — every consumer (GFI exclusion, the dashboard
+claimed band, the `issue:claimed` your-turn kind, the origin-marker signal
+list) matches the `hive/claimed-by-` prefix, so nothing changes meaning
+during the transition. Nothing writes it any more. On boot the one-shot
+`MigrateClaimedByHumanLabels` sweep (`src/pkg/github/claimed_by_human_migration.go`,
+marker `/data/claimed-by-human-label-v1.done`, report
+`/data/claimed-by-human-label-v1.json`) lists the `hive/claimed-by-*`
+definitions in each configured repo, skips the generic label, the `agent`
+fallback, backend names and this hive's agent names, moves every open item
+carrying a remaining (per-login) label to `hive/claimed-by-human`, records
+the login it carried in the report and the write audit
+(`claimed_by_label_migrated`), and deletes the per-login definition once no
+open item carries it. An item whose live ledger claim is a hive-agent claim
+named by the label (another hive's agent on a shared repo) is skipped and
+that definition kept. A failed write leaves the marker unwritten so the
+next boot retries.
 
 ### Migration from retired labels
 

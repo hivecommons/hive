@@ -9,24 +9,31 @@ import (
 )
 
 // The `hive/claimed-by-<who>` "who" modifier. One rule for the suffix lives
-// in pkg/claims (ClaimedByPrefix): the GitHub login of the principal for any
-// claim with a human behind it, the agent name for hive-agent claims, never
-// a backend name. The writers here enforce it; the issue reconciler heals the
-// malformed backend-named form a hand-applied label can introduce.
+// in pkg/claims (ClaimedByPrefix): the generic `human` for any claim with a
+// human behind it, the agent name for hive-agent claims, never a login and
+// never a backend name. The writers here enforce it; the issue reconciler
+// heals the malformed backend-named form a hand-applied label can introduce
+// and swaps the retired per-login spelling of the live holder for the
+// generic label.
 
 // ApplyClaimedByLabel puts the claim's own claimed-by label on the issue (one
-// label per party): backend-named `hive/claimed-by-*` labels are removed and
-// the derived one is added when absent. Other parties' principal-named labels
-// are left alone — a person's label survives a contributor's claim, matching
-// healBackendClaimedByLabels and RemoveClaimedByLabel; a stale holder's label
-// is removed on release or takeover. A claim with no usable holder
-// (claims.ClaimedByLabel == "") only strips backend-named labels. Returns the
-// labels it removed and whether it added one.
+// label per party): backend-named `hive/claimed-by-*` labels and this
+// holder's retired per-login label are removed and the derived one is added
+// when absent. Other parties' labels are left alone — a person's label
+// survives a contributor's claim, matching healBackendClaimedByLabels and
+// RemoveClaimedByLabel; a stale holder's label is removed on release or
+// takeover. A claim with no usable holder (claims.ClaimedByLabel == "") only
+// strips backend-named labels. Returns the labels it removed and whether it
+// added one.
 func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number int, claim claims.Claim) (removed []string, added bool, err error) {
 	if c == nil {
 		return nil, false, ErrNoGitHubClient
 	}
 	want := claims.ClaimedByLabel(claim)
+	legacy := ""
+	if claim.Kind != claims.KindAgent {
+		legacy = claims.LegacyClaimedByLabel(claim.Holder)
+	}
 	owner, name := c.splitRepo(repo)
 	labeler := c.StageLabeler()
 	current, err := labeler.Labels(ctx, owner, name, number)
@@ -42,7 +49,7 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 			have = true
 			continue
 		}
-		if !claims.ClaimedByLabelIsBackend(l) {
+		if !claims.ClaimedByLabelIsBackend(l) && !(legacy != "" && strings.EqualFold(l, legacy)) {
 			continue
 		}
 		if rerr := labeler.RemoveLabel(ctx, owner, name, number, l); rerr != nil {
@@ -59,40 +66,49 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 	return removed, true, nil
 }
 
-// RemoveClaimedByLabel removes the claimed-by label derived from claim. It
-// never touches another holder's label: a human's `hive/claimed-by-<login>`
-// survives the release of a contributor claim on the same issue.
+// RemoveClaimedByLabel removes the claimed-by label(s) derived from claim:
+// the current one and, for a human-principal claim, the retired per-login
+// spelling. It never touches another holder's label: an agent's
+// `hive/claimed-by-scanner` survives the release of a human claim on the
+// same issue.
 func (c *Client) RemoveClaimedByLabel(ctx context.Context, repo string, number int, claim claims.Claim) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
-	label := claims.ClaimedByLabel(claim)
-	if label == "" {
-		return nil
+	for _, label := range claims.ClaimedByLabels(claim) {
+		if err := c.RemoveLabel(ctx, repo, number, label); err != nil {
+			return err
+		}
 	}
-	return c.RemoveLabel(ctx, repo, number, label)
+	return nil
 }
 
 // healBackendClaimedByLabels replaces a backend-named `hive/claimed-by-*`
 // label (`-copilot`, `-claude`, `-pi`, …) on an issue the reconciler sees
 // with the label of its live claim holder, or just removes it when the issue
-// carries no live claim. Only the malformed form is touched: a label naming
-// a principal is left alone even when it is not the live holder, because an
-// issue may legitimately carry one label per party (a human's and a
-// contributor's). Returns how many labels it rewrote.
+// carries no live claim. When the live holder is a human principal, its
+// retired per-login label (`hive/claimed-by-<login>`) is swapped for the
+// generic `hive/claimed-by-human` the same way. Only those forms are
+// touched: an unrelated label is left alone even when it is not the live
+// holder, because an issue may legitimately carry one label per party (a
+// human's and a contributor's). Returns how many labels it rewrote.
 func healBackendClaimedByLabels(ctx context.Context, client *Client, in IssueStageInput, logger *slog.Logger) int {
+	want, legacy := "", ""
+	if in.Bucket == workBucketClaimed && in.ClaimedBy != "" {
+		live := claims.Claim{Holder: in.ClaimedBy, Kind: claims.Kind(strings.ToLower(in.ClaimKind))}
+		want = claims.ClaimedByLabel(live)
+		if live.Kind != claims.KindAgent {
+			legacy = claims.LegacyClaimedByLabel(live.Holder)
+		}
+	}
 	var bad []string
 	for _, l := range in.Labels {
-		if claims.ClaimedByLabelIsBackend(l) {
+		if claims.ClaimedByLabelIsBackend(l) || (legacy != "" && strings.EqualFold(l, legacy)) {
 			bad = append(bad, l)
 		}
 	}
 	if len(bad) == 0 || client == nil {
 		return 0
-	}
-	want := ""
-	if in.Bucket == workBucketClaimed && in.ClaimedBy != "" {
-		want = claims.ClaimedByLabel(claims.Claim{Holder: in.ClaimedBy, Kind: claims.Kind(strings.ToLower(in.ClaimKind))})
 	}
 	healed := 0
 	for _, l := range bad {

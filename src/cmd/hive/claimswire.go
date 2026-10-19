@@ -117,8 +117,9 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					run("claimed stage", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.StageFacts().Claimed(ctx, gh.IssueStageRef(c.Repo, c.Issue), claimFactFor(c))
 					})
-					// The "who" modifier: login of the principal, agent name for
-					// a hive-agent claim, never a backend name (claims.ClaimedByPrefix).
+					// The "who" modifier: generic `human` for a human principal,
+					// agent name for a hive-agent claim, never a login or a
+					// backend name (claims.ClaimedByPrefix).
 					run("claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
 						_, _, err := gh.ApplyClaimedByLabel(ctx, c.Repo, c.Issue, c)
 						return err
@@ -158,15 +159,13 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					// replayed as "already applied" the second time a claim on
 					// the same issue lapsed (hivecommons/hive#12512). The
 					// preempted label names the holder this claim DISPLACED,
-					// not the holder being released. The claimed-by label is
-					// this claim's own; another holder's survives. The stage
-					// is the engine's: the release is a fact and the engine
-					// re-derives the issue (010 while it is open, nothing once
-					// it closed).
-					var remove []string
-					if l := claims.ClaimedByLabel(c); l != "" {
-						remove = append(remove, l)
-					}
+					// not the holder being released. The claimed-by labels are
+					// this claim's own (generic human label plus the retired
+					// per-login spelling); another holder's survives. The
+					// stage is the engine's: the release is a fact and the
+					// engine re-derives the issue (010 while it is open,
+					// nothing once it closed).
+					remove := claims.ClaimedByLabels(c)
 					if c.TakenFrom != "" {
 						remove = append(remove, claims.PreemptedLabel(c.TakenFrom))
 					}

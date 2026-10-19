@@ -5969,6 +5969,22 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
 			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
 		}
+		// The claim "who" modifier for a human principal is the generic
+		// hive/claimed-by-human; the per-login spelling is retired (owner
+		// decision 2026-10-19). Open items still wearing a login are moved
+		// once and the per-login definitions deleted. Display only: every
+		// reader matches the prefix, so a failure leaves stale names and
+		// retries next boot.
+		claimedByOpts := github.ClaimedByHumanMigrationOptions{Logger: b.logger}
+		for name := range b.cfg.Agents {
+			claimedByOpts.AgentNames = append(claimedByOpts.AgentNames, name)
+		}
+		if b.issueClaims != nil {
+			claimedByOpts.LookupClaim = b.issueClaims.Lookup
+		}
+		if _, err := b.ghClient.MigrateClaimedByHumanLabels(b.ctx, claimedByOpts); err != nil {
+			b.logger.Warn("claimed-by-human label migration incomplete; open issues may still carry a per-login hive/claimed-by-<login> label", "error", err)
+		}
 	}
 	b.evalCycles++
 	deps.runEval(b, nil)
