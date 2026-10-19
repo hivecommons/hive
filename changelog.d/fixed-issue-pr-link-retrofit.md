@@ -1,0 +1,1 @@
+- Issue-stage lane marks its merged-full-fix close comment with `<!-- hive:closed-by-merged-pr pr=N -->` and checks for it first, so a failed close is retried without posting the note again.

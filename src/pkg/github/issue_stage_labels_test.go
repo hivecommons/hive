@@ -50,11 +50,14 @@ type issueStageServer struct {
 	prPatches map[int]string
 	// commentBodies keeps every comment body posted per issue.
 	commentBodies map[int][]string
+	// closeFails makes PATCH state=closed answer 502 for the issue so a
+	// close that fails after its comment landed can be replayed.
+	closeFails map[int]bool
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, prBodies: map[int]string{}, prBases: map[int]string{}, prAuthors: map[int]string{}, prPatches: map[int]string{}, commentBodies: map[int][]string{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, prBodies: map[int]string{}, prBases: map[int]string{}, prAuthors: map[int]string{}, prPatches: map[int]string{}, commentBodies: map[int][]string{}, closeFails: map[int]bool{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
@@ -182,6 +185,10 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				StateReason string `json:"state_reason"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.State == "closed" && s.closeFails[n] {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			if body.State == "closed" {
 				s.closed[n] = body.StateReason
 			}
@@ -777,23 +784,51 @@ func TestSyncIssueStageLabels_MergedReferencePRMovesIssueBackToActionable(t *tes
 }
 
 func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
-	fake := newIssueStageServer(t)
-	c := issueStageTestClient(t, fake.srv, true)
-	store := stagelabels.NewStore("", stageNow)
-	result := &ActionableResult{}
-	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true}}})
+	const marker = "<!-- hive:closed-by-merged-pr pr=67 -->"
+	tests := []struct {
+		name          string
+		priorComments []string
+		closeFails    bool
+		wantClosed    int
+		wantComments  int
+		wantBodies    int
+	}{
+		{name: "first pass comments once and closes", wantClosed: 1, wantComments: 1, wantBodies: 1},
+		{name: "close failure keeps the single comment", closeFails: true, wantClosed: 0, wantComments: 1, wantBodies: 1},
+		{name: "retry after a failed close does not comment again", priorComments: []string{marker + "\nFixed by #67 (merged)."}, wantClosed: 1, wantComments: 0, wantBodies: 1},
+		{name: "another PR's marker does not suppress the note", priorComments: []string{"<!-- hive:closed-by-merged-pr pr=12 -->\nFixed by #12 (merged)."}, wantClosed: 1, wantComments: 1, wantBodies: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			fake.commentBodies[64] = append([]string(nil), tt.priorComments...)
+			fake.closeFails[64] = tt.closeFails
+			c := issueStageTestClient(t, fake.srv, true)
+			store := stagelabels.NewStore("", stageNow)
+			result := &ActionableResult{}
+			result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true}}})
 
-	res := syncSeeded(fake, c, result, store, stageNow())
-	if res.MergedPRIssuesClosed != 1 || res.Comments != 1 {
-		t.Fatalf("result = %+v, want close and comment", res)
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.closed[64] != IssueStateReasonCompleted {
-		t.Fatalf("closed reason = %q, want completed", fake.closed[64])
-	}
-	body := strings.Join(fake.commentBodies[64], "\n")
-	if !strings.Contains(body, "Fixed by #67") || !strings.Contains(body, "full fix") {
-		t.Fatalf("comment body = %q", body)
+			res := syncSeeded(fake, c, result, store, stageNow())
+			if res.MergedPRIssuesClosed != tt.wantClosed || res.Comments != tt.wantComments {
+				t.Fatalf("result = %+v, want closed=%d comments=%d", res, tt.wantClosed, tt.wantComments)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if tt.wantClosed == 1 && fake.closed[64] != IssueStateReasonCompleted {
+				t.Fatalf("closed reason = %q, want completed", fake.closed[64])
+			}
+			if tt.wantClosed == 0 && fake.closed[64] != "" {
+				t.Fatalf("issue closed = %q, want it left open after the failed close", fake.closed[64])
+			}
+			if len(fake.commentBodies[64]) != tt.wantBodies {
+				t.Fatalf("comment bodies = %q, want %d", fake.commentBodies[64], tt.wantBodies)
+			}
+			if tt.wantComments == 1 {
+				body := fake.commentBodies[64][len(fake.commentBodies[64])-1]
+				if !strings.HasPrefix(body, marker) || !strings.Contains(body, "Fixed by #67") || !strings.Contains(body, "full fix") {
+					t.Fatalf("comment body = %q", body)
+				}
+			}
+		})
 	}
 }
