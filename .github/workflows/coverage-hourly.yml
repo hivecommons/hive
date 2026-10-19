@@ -442,6 +442,14 @@ jobs:
             echo -e "${REPORT}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Written once the verdict is known and before either outcome (the
+          # `exit 1` shortfall below or success), so it means "measurement
+          # reached a verdict", not "gate passed". The profile artifact cannot
+          # serve as this signal: a hung run leaves a partial cover-run.log
+          # that the always() upload still ships during cancellation cleanup
+          # (#12951).
+          echo "$GITHUB_SHA" > coverage-measured.marker
+
           if [ -n "$BROKEN" ] || [ -n "$FAILED" ]; then
             echo "below_threshold=true" >> "$GITHUB_OUTPUT"
             {
@@ -462,13 +470,6 @@ jobs:
 
           echo "below_threshold=false" >> "$GITHUB_OUTPUT"
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
-
-      # Written only when every step above finished, i.e. the verdict was
-      # produced. The profile artifact cannot serve as this signal: a hung run
-      # leaves a partial cover-run.log that the always() upload still ships
-      # during cancellation cleanup (#12951).
-      - name: Mark measurement complete
-        run: echo "$GITHUB_SHA" > coverage-measured.marker
 
       # `if: always()` keeps the profile when the gate above fails; `uses:`
       # steps ignore defaults.run.working-directory, hence the src/ prefix.
@@ -565,7 +566,7 @@ jobs:
             // that added tests for a workflow failure (#9645).
             const neverMeasured = !'${{ needs.coverage.outputs.measured_ref }}';
             const cause = cancelled
-              ? 'The coverage job was **cancelled before the measurement finished** (most likely a hung test suite hitting the job timeout) so no verdict was produced. This is not a coverage shortfall - open the run log to see where it stalled.'
+              ? 'The coverage job was **cancelled before any coverage verdict reached this job** (for example a hung test suite hitting the job timeout, or a cancellation during setup). No verdict was recorded, so this is not evidence of a coverage shortfall - open the run log to see where it stopped.'
               : neverMeasured
               ? 'The coverage job **failed before any package was measured** (workflow, setup, or runner failure). This is not a coverage shortfall and adding tests will not fix it - open the run log for the failing step.'
               : cannotScore
@@ -579,7 +580,7 @@ jobs:
             // triage reads titles first (#9664 audit). Both keep the
             // [Coverage] prefix the dedupe below matches on.
             const title = cancelled
-              ? `[Coverage] gate job cancelled before measuring coverage`
+              ? `[Coverage] gate job cancelled before a coverage verdict`
               : neverMeasured
               ? `[Coverage] gate job failed before measuring coverage`
               : `[Coverage] packages below 90% threshold`;
