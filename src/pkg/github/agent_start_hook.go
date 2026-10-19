@@ -1,21 +1,39 @@
 package github
 
-import (
-	"regexp"
-	"strings"
-)
+import "regexp"
 
 // Agent start signals (hivecommons/hive#10527).
 //
 // A governor kick lists many issues and the agent starts on few of them, so
 // the hive no longer claims an issue for being listed. It claims it when the
-// agent's own relay request first shows it working the issue: a comment,
-// label or claim request on the issue (hive-open-issue), or a pull-request
-// request naming it (hive-open-pr --issues). The relays below report those
-// requests through AgentStartHook once the request is authorized, so the
-// agent name is the verified requester, not text the agent wrote.
+// agent's own relay request first shows it STARTING WORK on the issue. A
+// start signal is one of exactly these, reported through AgentStartHook once
+// the request is authorized, so the agent name is the verified requester,
+// not text the agent wrote:
+//
+//   - a `claim` request on the issue (hive-open-issue claim) — the explicit
+//     "I am implementing this" the kick asks for;
+//   - a pull-request request naming it (hive-open-pr --issues);
+//   - a `comment` request whose body carries an explicit start statement:
+//     the structured marker `<!-- hive:start -->` or a start phrase such as
+//     "starting now" / "working on this now" / an opening "Starting …" /
+//     "Implementing …" (commentIsStart), and no explicit deferral or
+//     escalation that it does not override.
+//
+// Nothing else is. A comment that reports — a triage verdict, a
+// verification result, a gate check, a status update, a deferral or an
+// escalation — is posted and starts nothing, and a `label` request is never
+// a start signal: the labels an agent may add through the relay are triage
+// and verification verdicts (kind/*, area/*, hive/verified-open, the
+// parking labels), none of which says work began. hivecommons/hive#13011
+// was claimed and staged stage/030-pr-in-progress on the scanner's "Gate
+// check … no implementation started" comment, and the epic #12999 on the
+// scanner's hive/verified-open label, when any comment or label counted.
 
-// Start signals reported through AgentStartHook.
+// Start signals reported through AgentStartHook. AgentStartSignalLabel is
+// retired: a label request no longer starts anything (see the file comment);
+// the constant stays so consumers that recorded it keep compiling and
+// recognising historical journal entries.
 const (
 	AgentStartSignalComment   = "comment"
 	AgentStartSignalLabel     = "label"
@@ -81,24 +99,71 @@ var commentDeferral = regexp.MustCompile(`(?i)` +
 // the issue (#10527). Group 1 captures a negation ("not starting now"),
 // which does not count.
 var commentStartNow = regexp.MustCompile(`(?i)\b((?:not|never|won't|can't|cannot)\s+)?(?:` +
-	`(?:starting|started|resuming|resumed)\s+(?:work\s+|on\s+(?:this|it)\s+)?now` +
+	`(?:starting|started|resuming|resumed|implementing)\s+(?:work\s+|on\s+(?:this|it)\s+)?now` +
 	`|(?:working\s+on|picking\s+up)\s+(?:this|it)\s+now` +
 	`|picking\s+(?:this|it)\s+up\s+now` +
 	`|no\s+longer\s+blocked|now\s+unblocked|unblocked\s+now` +
 	`)\b`)
 
+// commentStartOpener matches a comment that OPENS (after markdown and an
+// optional "Status:"/"Update:" label) with a verb of beginning work:
+// "Starting …", "Started …", "Resuming …", "Implementing …", "Working on …",
+// "Picking this up …", "Taking this …". Group 1 captures a negation ("Not
+// starting"), which does not count.
+var commentStartOpener = regexp.MustCompile(`(?i)` +
+	`^\W*(?:(?:status|update)\s*:\W*)?((?:not|never|won't|can't|cannot)\s+)?(?:` +
+	`start(?:ing|ed)\b` +
+	`|resum(?:ing|ed)\b` +
+	`|implementing\b` +
+	`|working\s+on\b` +
+	`|picking\s+(?:this|it)\s+up\b` +
+	`|taking\s+(?:this|it)\b` +
+	`)`)
+
+// commentStartMarker is the structured start marker an agent (or the relay
+// helper) may put in a comment to state unambiguously that it is beginning
+// work on the issue: `<!-- hive:start -->`, optionally with attributes.
+var commentStartMarker = regexp.MustCompile(`<!--\s*hive:start\b[^>]*-->`)
+
+// CommentStartMarker is the canonical spelling of the start marker.
+const CommentStartMarker = "<!-- hive:start -->"
+
+// commentSaysStartNow reports whether body carries a non-negated
+// commentStartNow phrase.
+func commentSaysStartNow(body string) bool {
+	for _, m := range commentStartNow.FindAllStringSubmatch(body, -1) {
+		if m[1] == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// commentIsStart reports whether a comment body is an explicit start
+// statement: it carries the start marker, a start-now phrase, or opens with a
+// verb of beginning work, and is not an explicit deferral or escalation that
+// it fails to override. Anything else — a progress note, a triage verdict, a
+// verification result, a gate check, a status report — is not a start.
+func commentIsStart(body string) bool {
+	if commentStartMarker.MatchString(body) {
+		return true
+	}
+	if commentIsDeferral(body) || commentIsEscalation(body) {
+		return false
+	}
+	if commentSaysStartNow(body) {
+		return true
+	}
+	if m := commentStartOpener.FindStringSubmatch(body); m != nil && m[1] == "" {
+		return true
+	}
+	return false
+}
+
 // commentIsDeferral reports whether a comment body is an explicit deferral
 // with no statement that work is starting now.
 func commentIsDeferral(body string) bool {
-	if !commentDeferral.MatchString(body) {
-		return false
-	}
-	for _, m := range commentStartNow.FindAllStringSubmatch(body, -1) {
-		if m[1] == "" {
-			return false
-		}
-	}
-	return true
+	return commentDeferral.MatchString(body) && !commentSaysStartNow(body)
 }
 
 // commentEscalation matches a comment that parks the issue on a person
@@ -125,63 +190,22 @@ var commentEscalation = regexp.MustCompile(`(?i)` +
 // commentIsEscalation reports whether a comment body parks the issue on a
 // person (see commentEscalation) with no statement that work is starting.
 func commentIsEscalation(body string) bool {
-	if !commentEscalation.MatchString(body) {
-		return false
-	}
-	for _, m := range commentStartNow.FindAllStringSubmatch(body, -1) {
-		if m[1] == "" {
-			return false
-		}
-	}
-	return true
-}
-
-// escalationLabels are the labels an agent puts on an issue to hand it to a
-// person. A label request that adds nothing else is the agent stepping
-// AWAY from the issue, so it must not record the claim that stages it
-// "pr-in-progress" (hivecommons/hive#12481 carried needs-direction and
-// stage/030 together for five hours).
-var escalationLabels = map[string]bool{
-	issueNeedsHumanLabel:                true,
-	NeedsDecisionStageLabel:             true,
-	legacyIssueNeedsDecisionStageLabel:  true,
-	issueNeedsDirectionLabel:            true,
-	issueNeedsDecisionLabel:             true,
-	issueNeedsSpecLabel:                 true,
-	NeedsSignalLabel:                    true,
-	issueNeedsReporterConfirmationLabel: true,
-}
-
-// labelsOnlyEscalate reports whether every label in labels is an escalation
-// label. An empty list (a remove-only request) is not a start either.
-func labelsOnlyEscalate(labels []string) bool {
-	for _, l := range labels {
-		if !escalationLabels[strings.ToLower(strings.TrimSpace(l))] {
-			return false
-		}
-	}
-	return true
+	return commentEscalation.MatchString(body) && !commentSaysStartNow(body)
 }
 
 // issueRequestStartSignal maps a successful issue request to the start
-// signal it is, or "" for requests that are not one: creating an issue,
-// closing one, asking for a review, a deferral comment (#12387), an
-// escalation comment or a label request that only parks the issue on a
-// person do not show the agent working an existing issue. labels are the
-// labels a "label" request adds. A claim request is a start signal
-// whatever an accompanying comment said.
-func issueRequestStartSignal(kind, body string, labels []string) string {
+// signal it is, or "" for requests that are not one (see the file comment):
+// a claim request is a start signal whatever an accompanying comment said; a
+// comment is one only when commentIsStart says it states a start; creating
+// an issue, closing one, asking for a review and every label request are
+// not.
+func issueRequestStartSignal(kind, body string) string {
 	switch kind {
 	case "comment":
-		if commentIsDeferral(body) || commentIsEscalation(body) {
-			return ""
+		if commentIsStart(body) {
+			return AgentStartSignalComment
 		}
-		return AgentStartSignalComment
-	case "label":
-		if labelsOnlyEscalate(labels) {
-			return ""
-		}
-		return AgentStartSignalLabel
+		return ""
 	case "claim":
 		return AgentStartSignalClaim
 	}

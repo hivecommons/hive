@@ -2560,6 +2560,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -5646,6 +5647,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
+				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)

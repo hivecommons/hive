@@ -149,25 +149,33 @@ hive. The flag only applies to a create; on any other kind the script exits
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
-A posted comment is also the agent's **start signal** on that issue: the hub
-records a 2h agent claim the first time the agent's own comment, label or
-claim request (or a `hive-open-pr --issues` request) names it, so a second
-agent is not kicked onto the same work
-([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment that
-is an explicit *deferral* is posted but records no claim
-([#12387](https://github.com/hivecommons/hive/issues/12387)): one that opens
-(after markdown and an optional `Status:`/`Update:` label) with
-"Deferred"/"Deferring", "Not starting", "[This is] [still] blocked by/on
-&lt;ref&gt;" or "Waiting on/for &lt;ref&gt;", where &lt;ref&gt; is `#N`,
-`owner/repo#N` or a GitHub issue/PR URL; or one that says "deferred this
-cycle", "pick(s) [this/it] up once/when …" or "pick(s) up after &lt;ref&gt;
-merges/lands" anywhere. A comment that also says work is starting now
-("starting now", "resuming now", "working on it now", "no longer blocked")
-still records the claim, as does a resume such as "Picking this up after #N
-merged, starting now." The opening forms only look at how the comment starts,
-so a progress comment with a deferral aside later on still claims. Label and
-claim requests are start signals whatever an accompanying comment said. To
-park an issue without claiming it, open the comment with the deferral.
+A posted comment is the agent's **start signal** on that issue only when it
+says work is starting. The hub records a 2h agent claim the first time the
+agent's own `claim` request, a `hive-open-pr --issues` request, or a comment
+with an *explicit start statement* names an issue a live kick listed to it,
+so a second agent is not kicked onto the same work
+([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment states a
+start when it carries the structured marker `<!-- hive:start -->` (anywhere in
+the body, attributes allowed), says "starting now" / "started now" /
+"resuming now" / "implementing now" / "working on it now" / "picking this up
+now" / "no longer blocked", or opens (after markdown and an optional
+`Status:`/`Update:` label) with "Starting", "Started", "Resuming",
+"Implementing", "Working on", "Picking this up" or "Taking this". A negation
+("not starting now") does not count. Every other comment is posted and
+records **no claim**: a triage verdict, a verification result, a gate check,
+a status report, a progress note that does not say work begins, an explicit
+*deferral* ("Deferred …", "Blocked by #N", "Waiting on #N", "picks up once
+…", [#12387](https://github.com/hivecommons/hive/issues/12387)) or an
+*escalation* (`needs-decision (scanner): …`, "Parking this …"). A start phrase
+or the marker overrides a deferral or escalation in the same comment
+("Picking this up after #N merged, starting now."). `label` requests are
+never start signals — the labels an agent may add through the relay are
+triage and verification verdicts — and `claim` requests always are. The
+scanner's "Gate check … no implementation started" on
+[#13011](https://github.com/hivecommons/hive/issues/13011) and its
+`hive/verified-open` on the epic
+[#12999](https://github.com/hivecommons/hive/issues/12999) were taken as
+starts when any comment or label counted; neither is now.
 
 ### `claim`
 
@@ -181,7 +189,14 @@ watcher posts one bot comment carrying a timestamped start marker
 until=<at+agent TTL> -->`) so maintainers can see exactly when an agent
 began a PR for the issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Every kick
 instructs the agent to claim before touching an issue; while the marker is
-live every hive that scans the repo withholds the issue from kicks. The
+live every hive that scans the repo withholds the issue from kicks. The claim
+is refused (exit non-zero, reason in the result) on a pull request, on an
+issue labelled `needs-human` or held, on an issue parked on a person's
+decision (`stage/045-needs-decision`, `needs-spec`, the retired decision
+labels), and on an umbrella issue wearing a never-claim label
+(`governor.claims.never_claim_labels`, default `epic`, case-insensitive):
+an epic is the list of work, not the work. The same gate admits every
+automated claim producer, so a start signal on such an issue records nothing. The
 `stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
 the agent's `hive-open-pr --issues` request opens the PR, and cleared when the
 claim is released or at enumeration once PR evidence exists or the marker

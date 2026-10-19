@@ -81,8 +81,12 @@ type Client struct {
 	exemptLabels  []string
 	holdLabelsMu  sync.RWMutex
 	holdLabels    []string
-	sentinelMu    sync.RWMutex
-	sentinelLabel string
+	// neverClaimLabels is governor.claims.never_claim_labels as resolved by
+	// the config (nil = package default; see SetNeverClaimLabels).
+	neverClaimMu     sync.RWMutex
+	neverClaimLabels []string
+	sentinelMu       sync.RWMutex
+	sentinelLabel    string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,

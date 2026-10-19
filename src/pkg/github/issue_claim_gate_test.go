@@ -20,6 +20,15 @@ func TestIssueClaimBlockReason(t *testing.T) {
 		{" NEEDS-HUMAN ", "needs-human"},
 		{"needs-human-followup", ""},
 		{"bug", ""},
+		// Parked on a person's decision: nobody starts until the un-park.
+		{NeedsDecisionStageLabel, ClaimBlockReasonParkedPrefix + NeedsDecisionStageLabel},
+		{legacyIssueNeedsDecisionStageLabel, ClaimBlockReasonParkedPrefix + legacyIssueNeedsDecisionStageLabel},
+		{"needs-spec", ClaimBlockReasonParkedPrefix + "needs-spec"},
+		{"needs-direction", ClaimBlockReasonParkedPrefix + "needs-direction"},
+		// Umbrella issues are never a unit of agent work (#12999).
+		{"Epic", ClaimBlockReasonNeverClaimPrefix + "Epic"},
+		{"epic", ClaimBlockReasonNeverClaimPrefix + "epic"},
+		{"approved-direction", ""},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,5 +153,70 @@ func TestIssueRequestWatcher_ClaimRefusesPullRequest(t *testing.T) {
 	}
 	if len(*calls) != 0 {
 		t.Fatalf("refused claim on a pull request reported start signals: %+v", *calls)
+	}
+}
+
+// governor.claims.never_claim_labels replaces the default set: a configured
+// set without `epic` lets an epic through and refuses its own entries; an
+// empty set turns the gate off; nil restores the default.
+func TestIssueClaimBlockReasonNeverClaimLabelsConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		never []string
+		label string
+		want  string
+	}{
+		{"configured tracking refuses tracking", []string{"tracking"}, "Tracking", ClaimBlockReasonNeverClaimPrefix + "Tracking"},
+		{"configured tracking admits epic", []string{"tracking"}, "Epic", ""},
+		{"empty set admits epic", []string{}, "Epic", ""},
+		{"nil restores default", nil, "Epic", ClaimBlockReasonNeverClaimPrefix + "Epic"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"number":42,"labels":[{"name":%q}]}`, tc.label)
+			}))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.SetNeverClaimLabels(tc.never)
+			t.Cleanup(func() { c.SetNeverClaimLabels(nil) })
+			got, err := c.IssueClaimBlockReason(context.Background(), "o/r", 42)
+			if err != nil || got != tc.want {
+				t.Fatalf("reason = %q, %v; want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+// The `claim` relay request on an epic or a parked issue is refused before
+// any write, and reports no start signal.
+func TestIssueRequestWatcher_ClaimRefusesEpicAndParked(t *testing.T) {
+	for _, label := range []string{"Epic", NeedsDecisionStageLabel} {
+		t.Run(label, func(t *testing.T) {
+			writes := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					fmt.Fprintf(w, `{"number":12999,"labels":[{"name":%q},{"name":"help wanted"}]}`, label)
+					return
+				}
+				writes++
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			calls := recordStarts(c)
+			dir := withIssueDir(t)
+			path, err := WriteIssueRequest(dir, IssueRequest{Kind: "claim", Repo: "o/r", Number: 12999, Agent: "scanner"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+			res := readIssueResultFile(t, path)
+			if res.OK || !strings.Contains(res.Error, label) || writes != 0 {
+				t.Fatalf("claim on %s: result %+v, writes %d", label, res, writes)
+			}
+			if len(*calls) != 0 {
+				t.Fatalf("refused claim reported start signals: %+v", *calls)
+			}
+		})
 	}
 }

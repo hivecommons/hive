@@ -83,6 +83,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 		return
 	}
 	client.SetHoldLabels(b.githubHoldLabels())
+	// Umbrella issues no automated claim may take and no claim stages
+	// (governor.claims.never_claim_labels, default `epic`).
+	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 	client.SetAdditionalBotLogins(b.cfg.GitHub.AdditionalBotLogins)
 	client.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 	client.SetAPIBudgetThresholds(b.cfg.GitHub.APIReserve, b.cfg.GitHub.APICritical)
@@ -345,9 +348,9 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// dedupes with the audit-sink bridge by (ref, kind).
 		recordPROpened(b.dashSrv, b.cfg.Project.Org, agentName, repo, number, url)
 	})
-	// #10527: an agent's own comment, label/claim or PR request on an issue a
-	// kick listed to it is its start signal; that is when the agent claim (and
-	// its 🔒 comment) is recorded. The ledger is read per call because the
+	// #10527: an agent's own claim request, explicit start comment or PR
+	// request on an issue a kick listed to it is its start signal; that is
+	// when the agent claim (and its 🔒 comment) is recorded. The ledger is read per call because the
 	// client can be configured before it is built.
 	gfiRelease := gfiReleaseOnHiveStart(b.ctx, b.cfg, b.gfiState(), func() *github.Client { return b.ghClient }, b.dashSrv, b.logger)
 	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {

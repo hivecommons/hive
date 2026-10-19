@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -147,6 +148,29 @@ func TestStageFacts_DefaultSinkWritesDerivedStage(t *testing.T) {
 	labels, _, _ = srv.snapshot()
 	if stagelabels.Current(labels) != stagelabels.Actionable {
 		t.Fatalf("labels after release = %v, want 010", labels)
+	}
+}
+
+// hivecommons/hive#12999: an agent claim fact on an epic (a never-claim
+// label the fresh read supplies) never stages it 030 — the umbrella issue
+// is healed to 010 and the stale 030 comes off.
+func TestStageFacts_ClaimOnEpicNeverStages030(t *testing.T) {
+	srv := newStageFactsServer(t, "Epic", "help wanted", stagelabels.PRInProgress.Label())
+	c := testClient(t, srv.srv.URL)
+	ref := c.IssueStageRef("o/r", 7)
+
+	if err := c.StageFacts().Claimed(context.Background(), ref, stageengine.ClaimFact{Holder: "scanner", Kind: claims.KindAgent}); err != nil {
+		t.Fatal(err)
+	}
+	labels, added, removed := srv.snapshot()
+	if stagelabels.Current(labels) != stagelabels.Actionable {
+		t.Fatalf("labels = %v, want 010 on an epic", labels)
+	}
+	if issueHasLabel(labels, stagelabels.PRInProgress.Label()) || strings.Join(removed, ",") != stagelabels.PRInProgress.Label() {
+		t.Fatalf("labels=%v removed=%v, want the stale 030 removed", labels, removed)
+	}
+	if strings.Join(added, ",") != stagelabels.Actionable.Label() {
+		t.Fatalf("added=%v, want only 010", added)
 	}
 }
 

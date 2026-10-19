@@ -170,6 +170,14 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	if label := parkedOnPersonLabel(in); label != "" {
 		return stagelabels.IssueNeedsDecision, false, "parked on a person: " + label
 	}
+	// An umbrella issue (governor.claims.never_claim_labels, default
+	// `epic`) is the list of work, not the work: a claim or start mark on
+	// it is never staged 020/030 — admission refuses new ones, and one that
+	// exists (recorded before the gate, or by a human) leaves the epic at
+	// its umbrella stage, 010 while open (hivecommons/hive#12999).
+	if label := issueUmbrellaLabel(in.Labels); label != "" && (in.Bucket == workBucketClaimed || in.Bucket == inProgressWorkBucket) {
+		return stagelabels.Actionable, false, "umbrella issue (" + label + "): claim not staged"
+	}
 	switch in.Bucket {
 	case "":
 		return stagelabels.Actionable, false, "actionable"

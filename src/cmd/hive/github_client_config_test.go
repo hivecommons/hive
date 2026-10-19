@@ -69,6 +69,7 @@ var clientSetterAllowlist = map[string]string{
 var clientResyncSetters = map[string]bool{
 	"SetRepos":              true,
 	"SetHoldLabels":         true,
+	"SetNeverClaimLabels":   true,
 	"SetSentinelAlertLabel": true,
 	"SetExemptLabels":       true,
 	"SetAutoMergeLabel":     true,

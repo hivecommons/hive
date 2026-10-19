@@ -31,7 +31,7 @@ func TestAgentStartHook_FiresOnRelayComment(t *testing.T) {
 	calls := recordStarts(c)
 	dir := withIssueDir(t)
 
-	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "verified on v5", Agent: "scanner"}); err != nil {
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "Starting on this now; repro confirmed on v5.", Agent: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := WriteIssueRequest(dir, IssueRequest{Repo: "o/r", Title: "new finding", Agent: "scanner"}); err != nil {
@@ -106,16 +106,58 @@ func TestAgentStartHook_SetAndClear(t *testing.T) {
 
 func TestIssueRequestStartSignal(t *testing.T) {
 	for kind, want := range map[string]string{
-		"comment": AgentStartSignalComment, "label": AgentStartSignalLabel, "claim": AgentStartSignalClaim,
-		"issue": "", "close": "", "request_review": "",
+		"comment": AgentStartSignalComment, "claim": AgentStartSignalClaim,
+		"label": "", "issue": "", "close": "", "request_review": "",
 	} {
-		if got := issueRequestStartSignal(kind, "verified on v5", []string{"bug"}); got != want {
+		if got := issueRequestStartSignal(kind, "Starting on this now."); got != want {
 			t.Errorf("issueRequestStartSignal(%q) = %q, want %q", kind, got, want)
 		}
 	}
 }
 
-// #12387: a deferral comment parks the issue; it is not a start signal.
+// A start signal is an explicit start (hivecommons/hive#13011 wore
+// stage/030-pr-in-progress on a "Gate check … no implementation started"
+// comment when any comment counted): the start marker, a start-now phrase or
+// an opening verb of beginning work. Reports, verdicts and status updates
+// are not.
+func TestIssueRequestStartSignal_CommentMustStateStart(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"gate check (#13011)", "Gate check (scanner, 2026-10-19T20:20Z) — still blocked per the maintainer decision above; no implementation started.\n\n- A #13019 merged ✅\n\nSkipping each kick until then; no further comments unless the gate state changes.", ""},
+		{"verification report", "Verified on v5 at d62fe5a: the issue reproduces; the fix in #13054 does not cover it.", ""},
+		{"triage verdict", "Triage (scanner): confirmed, kind/bug, area/relay. Priority P2.", ""},
+		{"status report", "Status: CI on #5 is red on the podman lane; nothing to do here until it clears.", ""},
+		{"progress note without a start", "Opened PR #5, waiting on #6 CI.", ""},
+		{"finding without a start", "Confirmed: this is not a config problem but a real bug in the parser; fixing.", ""},
+		{"empty body", "", ""},
+		{"start marker", CommentStartMarker + "\nTaking a look at the parser.", AgentStartSignalComment},
+		{"start marker with attributes", "Plan below.\n<!-- hive:start agent=scanner at=2026-10-19T20:00:00Z -->", AgentStartSignalComment},
+		{"starting now phrase", "Repro confirmed; starting now.", AgentStartSignalComment},
+		{"working on it now", "Reviewed the thread, working on it now.", AgentStartSignalComment},
+		{"implementing now", "Implementing now; PR to follow.", AgentStartSignalComment},
+		{"opening Starting", "Starting on the parser fix; repro confirmed on v5.", AgentStartSignalComment},
+		{"opening Working on", "Working on a fix; repro confirmed on v5.", AgentStartSignalComment},
+		{"opening Implementing", "**Implementing** the relay guard described above.", AgentStartSignalComment},
+		{"opening Picking this up", "Picking this up — plan: …", AgentStartSignalComment},
+		{"opening Taking this", "Update: taking this one.", AgentStartSignalComment},
+		{"negated opener", "Not starting yet: #12322 touches the same files.", ""},
+		{"negated start now", "Deferred: not starting now.", ""},
+		{"started mid-sentence is not an opener", "The maintainer started a thread on this; summarising it here.", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueRequestStartSignal("comment", tc.body); got != tc.want {
+				t.Errorf("issueRequestStartSignal(comment, %q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// #12387: a deferral comment parks the issue; it is not a start signal, and
+// a start phrase overrides the deferral.
 func TestIssueRequestStartSignal_Deferral(t *testing.T) {
 	cases := []struct {
 		name string
@@ -134,24 +176,17 @@ func TestIssueRequestStartSignal_Deferral(t *testing.T) {
 		{"picks up after cross-repo merges", "comment", "Picks up after hivecommons/hive#12322 merges.", ""},
 		{"negated start does not override", "comment", "Deferred: not starting now.", ""},
 		{"resume after merge with comma", "comment", "Picking this up after #12322 merged, starting now.", AgentStartSignalComment},
-		{"resume after cross-repo merge", "comment", "Picking this up after hivecommons/hive#12322 merged.", AgentStartSignalComment},
+		{"resume after cross-repo merge opens with picking up", "comment", "Picking this up after hivecommons/hive#12322 merged.", AgentStartSignalComment},
 		{"historical blocker then start", "comment", "Blocked by #12322 earlier; that merged, starting now.", AgentStartSignalComment},
 		{"deferral then unblocked", "comment", "Deferred earlier; no longer blocked, working on it now.", AgentStartSignalComment},
-		{"progress comment", "comment", "Working on a fix; repro confirmed on v5.", AgentStartSignalComment},
-		{"progress with wait aside", "comment", "Opened PR #5, waiting on #6 CI.", AgentStartSignalComment},
 		{"progress with deferral aside", "comment", "Implementing now. Deferring the rename until #9 lands.", AgentStartSignalComment},
-		{"past blocker", "comment", "Previously blocked by #12322, which has merged.", AgentStartSignalComment},
-		{"label request with deferral text", "label", "Deferred this cycle.", AgentStartSignalLabel},
-		{"label request with escalation text", "label", "needs-direction: parking this.", AgentStartSignalLabel},
+		{"start marker overrides deferral", "comment", "Deferred this cycle.\n<!-- hive:start -->", AgentStartSignalComment},
+		{"label request with deferral text", "label", "Deferred this cycle.", ""},
 		{"claim request with deferral text", "claim", "Blocked by #1.", AgentStartSignalClaim},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var labels []string
-			if tc.kind == "label" {
-				labels = []string{"kind/bug"}
-			}
-			if got := issueRequestStartSignal(tc.kind, tc.body, labels); got != tc.want {
+			if got := issueRequestStartSignal(tc.kind, tc.body); got != tc.want {
 				t.Errorf("issueRequestStartSignal(%q, %q) = %q, want %q", tc.kind, tc.body, got, tc.want)
 			}
 		})
@@ -159,7 +194,7 @@ func TestIssueRequestStartSignal_Deferral(t *testing.T) {
 }
 
 // hivecommons/hive#12570, #12481: an escalation comment parks the issue on a
-// person; it is not a start signal either.
+// person; it is not a start signal either, unless it also says work starts.
 func TestIssueRequestStartSignal_Escalation(t *testing.T) {
 	cases := []struct {
 		name string
@@ -173,42 +208,26 @@ func TestIssueRequestStartSignal_Escalation(t *testing.T) {
 		{"parks it mid-comment", "Read through the thread; this parks it until a maintainer answers.", ""},
 		{"out of the work queue", "Taking this out of the work queue pending a decision.", ""},
 		{"escalation then start now", "needs-direction earlier; maintainer answered, starting now.", AgentStartSignalComment},
-		{"progress mentions a bug", "Confirmed: this is not a config problem but a real bug in the parser; fixing.", AgentStartSignalComment},
-		{"progress mentions parking lot", "Added the parking-lot note to the design doc and started on the loader.", AgentStartSignalComment},
-		{"needs-signal filed as aside", "Repro confirmed; filed a needs-signal issue for the flaky check and working on the fix here.", AgentStartSignalComment},
+		{"start opener mentions parking lot", "Started on the loader; added the parking-lot note to the design doc.", AgentStartSignalComment},
+		{"start opener with needs-signal aside", "Working on the fix here; filed a needs-signal issue for the flaky check.", AgentStartSignalComment},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := issueRequestStartSignal("comment", tc.body, nil); got != tc.want {
+			if got := issueRequestStartSignal("comment", tc.body); got != tc.want {
 				t.Errorf("issueRequestStartSignal(comment, %q) = %q, want %q", tc.body, got, tc.want)
 			}
 		})
 	}
 }
 
-// hivecommons/hive#12481: a label request that only hands the issue to a
-// person (needs-direction, needs-spec, …) is not a start signal; one that
-// adds any other label still is.
-func TestIssueRequestStartSignal_EscalationLabels(t *testing.T) {
-	cases := []struct {
-		name   string
-		labels []string
-		want   string
-	}{
-		{"needs-direction only", []string{"needs-direction"}, ""},
-		{"needs-decision only", []string{"needs-decision"}, ""},
-		{"needs-spec and needs-signal", []string{"needs-spec", "needs-signal"}, ""},
-		{"needs-human mixed case", []string{"Needs-Human"}, ""},
-		{"remove-only request", nil, ""},
-		{"escalation plus work label", []string{"needs-direction", "area/relay"}, AgentStartSignalLabel},
-		{"work label", []string{"kind/bug"}, AgentStartSignalLabel},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := issueRequestStartSignal("label", "", tc.labels); got != tc.want {
-				t.Errorf("issueRequestStartSignal(label, %v) = %q, want %q", tc.labels, got, tc.want)
-			}
-		})
+// A label request is never a start signal: the labels an agent may add
+// through the relay are triage and verification verdicts. The epic
+// hivecommons/hive#12999 was claimed on the scanner's hive/verified-open.
+func TestIssueRequestStartSignal_LabelNeverStarts(t *testing.T) {
+	for _, body := range []string{"", "Starting now.", CommentStartMarker} {
+		if got := issueRequestStartSignal("label", body); got != "" {
+			t.Errorf("issueRequestStartSignal(label, %q) = %q, want none", body, got)
+		}
 	}
 }
 

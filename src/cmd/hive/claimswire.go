@@ -282,8 +282,9 @@ func recordAgentKickListings(dashSrv *dashboard.Server, org, agentName string, i
 }
 
 // recordAgentStart is the start-signal seam (#10527): the agent's own request
-// shows it working the issue — a comment, label or claim request, or a
-// pull-request request naming it. The first such signal on an issue a kick
+// shows it STARTING the issue — a claim request, a comment with an explicit
+// start statement, or a pull-request request naming it (never a report-only
+// comment or a label request; see pkg/github/agent_start_hook.go). The first such signal on an issue a kick
 // listed to the agent records the agent claim (comment and label included)
 // that the escalation gate counts; a later one renews it. A signal on an
 // issue no kick listed to the agent records nothing.
@@ -301,8 +302,9 @@ func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue 
 	}
 	switch res.Outcome {
 	case claims.OutcomeRefused, claims.OutcomeHeld:
-		// Refused by admission (res.Reason set: hold, needs-human, or the
-		// number is a pull request) or by another holder's live claim.
+		// Refused by admission (res.Reason set: hold, needs-human, a park
+		// label, a never-claim label such as `epic`, or the number is a
+		// pull request) or by another holder's live claim.
 		logger.Warn("issue-claims: agent start signal did not record a claim",
 			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "reason", res.Reason, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
 	case claims.OutcomeClaimed, claims.OutcomeTakenOver:

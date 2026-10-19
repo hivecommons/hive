@@ -113,18 +113,21 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 	const repo = "hivecommons/hive"
 	buckets := []string{"", workBucketClaimed, inProgressWorkBucket, workBucketClaimedByPR, workBucketFiltered, "draft"}
 	labelSets := map[string][]string{
-		"nolabel":        nil,
-		"bug":            {"bug", "good first issue"},
-		"likely-done":    {LikelyDoneLabel},
-		"needs-human":    {issueNeedsHumanLabel},
-		"stage-045":      {NeedsDecisionStageLabel},
-		"stage-085":      {legacyIssueNeedsDecisionStageLabel},
-		"needs-spec":     {issueNeedsSpecLabel},
-		"needs-decision": {issueNeedsDecisionLabel},
-		"needs-dir":      {issueNeedsDirectionLabel},
-		"park+stage030":  {issueNeedsDirectionLabel, stagelabels.PRInProgress.Label()},
-		"human+done":     {issueNeedsHumanLabel, LikelyDoneLabel},
-		"mixed-case":     {"Needs-Human "},
+		"nolabel":          nil,
+		"bug":              {"bug", "good first issue"},
+		"likely-done":      {LikelyDoneLabel},
+		"needs-human":      {issueNeedsHumanLabel},
+		"stage-045":        {NeedsDecisionStageLabel},
+		"stage-085":        {legacyIssueNeedsDecisionStageLabel},
+		"needs-spec":       {issueNeedsSpecLabel},
+		"needs-decision":   {issueNeedsDecisionLabel},
+		"needs-dir":        {issueNeedsDirectionLabel},
+		"park+stage030":    {issueNeedsDirectionLabel, stagelabels.PRInProgress.Label()},
+		"human+done":       {issueNeedsHumanLabel, LikelyDoneLabel},
+		"mixed-case":       {"Needs-Human "},
+		"epic":             {"Epic", "help wanted"},
+		"epic+stage030":    {"epic", stagelabels.PRInProgress.Label()},
+		"epic+needs-human": {"Epic", issueNeedsHumanLabel},
 	}
 	claimKinds := []string{"", string(claims.KindAgent), string(claims.KindHuman), string(claims.KindContributor), "AGENT"}
 	reasons := []string{"", issueNeedsHumanLabel, issueNeedsSpecLabel, NeedsDecisionStageLabel, issueNeedsDirectionLabel, "wontfix", " needs-human "}
@@ -247,6 +250,31 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		{
 			Name:  "regression/agent-claim-kind-is-case-insensitive",
 			Input: issueStageGoldenInput{Repo: repo, Number: 12456, Bucket: workBucketClaimed, ClaimKind: "Agent"},
+		},
+		{
+			Name:  "regression/12999-epic-with-agent-claim-stays-010",
+			Note:  "hivecommons/hive#12999 (label Epic) wore stage/030-pr-in-progress on a scanner claim; an umbrella issue never derives 020/030 from a claim.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 12999, Labels: []string{"Epic", "help wanted", stagelabels.PRInProgress.Label()}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+		},
+		{
+			Name:  "regression/12999-epic-with-human-claim-stays-010",
+			Note:  "A human claim on an epic is not staged 020 either.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 12999, Labels: []string{"epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindHuman), ClaimedBy: "alice"},
+		},
+		{
+			Name:  "regression/12999-epic-in-progress-mark-stays-010",
+			Note:  "An in-progress start mark on an epic is not staged 030.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 12999, Labels: []string{"Epic"}, Bucket: inProgressWorkBucket, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner"},
+		},
+		{
+			Name:  "regression/epic-parked-still-045",
+			Note:  "The park family outranks the umbrella rule: a parked epic derives 045.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 12998, Labels: []string{"Epic", NeedsDecisionStageLabel}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)},
+		},
+		{
+			Name:  "regression/epic-covered-by-pr-still-040",
+			Note:  "A PR that names the epic still covers it; only claim/in-progress buckets are suppressed.",
+			Input: issueStageGoldenInput{Repo: repo, Number: 12997, Labels: []string{"Epic"}, Bucket: workBucketClaimedByPR, ClaimPresent: true, ClaimPR: 13054, CoveringPRStage: stagelabels.ReviewPending.String()},
 		},
 	} {
 		add("regressions.json", c)
