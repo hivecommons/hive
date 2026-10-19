@@ -66,9 +66,10 @@ Actions (also in --json as "action"):
 
 Transient triage (no action of its own): when your diagnosis finds the
 failure transient or infrastructure-related, not caused by the diff, and you
-cannot re-run the check, end the triage comment with
-  <!-- hive-ci-transient head=<sha> check=<encoded name> run=<check run id> -->
-pinned like external_marker; the dependency-bot red-CI hand-off then asks for
+cannot re-run the check, end the triage comment with the transient_marker
+value (--json, with a PR argument; it is
+<!-- hive-ci-transient head=<sha> check=<encoded name> run=<check run id> -->
+pinned like external_marker) verbatim; the dependency-bot red-CI hand-off then asks for
 a re-run instead of blaming the bump (hivecommons/hive#12977).
 EOF
 }
@@ -390,7 +391,8 @@ fi
 # The PR's newest run of the check must be the red one the marker covers; no
 # marker when it cannot be read or is not red (nothing to defer yet).
 EXTERNAL_MARKER=""
-if [[ "$ACTION" == "DEFER_EXTERNAL" && "$PR_OID" =~ ^[0-9a-f]{40}$ ]] &&
+TRANSIENT_MARKER=""
+if [[ "$PR_OID" =~ ^[0-9a-f]{40}$ ]] &&
   PR_RUNS_JSON="$(gh api "repos/$REPO/commits/$PR_OID/check-runs?check_name=$CHECK_NAME_URI&per_page=100" 2>/dev/null)"; then
   PR_RUN_ID="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
       [.check_runs[]? | select(.name == $check)]
@@ -400,7 +402,10 @@ if [[ "$ACTION" == "DEFER_EXTERNAL" && "$PR_OID" =~ ^[0-9a-f]{40}$ ]] &&
         then (.id // "" | tostring) else "" end
     ' <<<"$PR_RUNS_JSON" 2>/dev/null)"
   if [[ "$PR_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-    EXTERNAL_MARKER="<!-- hive-ci-external head=$PR_OID check=$CHECK_NAME_URI run=$PR_RUN_ID -->"
+    if [[ "$ACTION" == "DEFER_EXTERNAL" ]]; then
+      EXTERNAL_MARKER="<!-- hive-ci-external head=$PR_OID check=$CHECK_NAME_URI run=$PR_RUN_ID -->"
+    fi
+    TRANSIENT_MARKER="<!-- hive-ci-transient head=$PR_OID check=$CHECK_NAME_URI run=$PR_RUN_ID -->"
   fi
 fi
 
@@ -430,6 +435,7 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     --arg upstream_conclusion "$UPSTREAM_CONCLUSION" \
     --arg upstream_completed_at "$UPSTREAM_COMPLETED_AT" \
     --arg external_marker "$EXTERNAL_MARKER" \
+    --arg transient_marker "$TRANSIENT_MARKER" \
     '{repo:$repo, check:$check, shared:$shared, reason:$reason, action:$action,
       base_branch:$base_branch, base_conclusion:$base_conclusion,
       base_completed_at:$base_completed_at, base_age_hours:$base_age_hours, base_stale:$base_stale,
@@ -444,7 +450,8 @@ if [[ "$JSON_OUTPUT" == true ]]; then
           {pr:($pr|tonumber), pr_fork:$pr_fork,
            pr_behind_by:(if $pr_behind_by == "unknown" then null else ($pr_behind_by|tonumber) end)}
         end)
-     + (if $external_marker == "" then {} else {external_marker:$external_marker} end)'
+     + (if $external_marker == "" then {} else {external_marker:$external_marker} end)
+     + (if $transient_marker == "" then {} else {transient_marker:$transient_marker} end)'
 else
   case "$REASON" in
     upstream)

@@ -304,6 +304,8 @@ check_output '"reason":"upstream"' "JSON names the upstream evidence"
 check_output '"upstream":{"repo":"upstream/widgets","branch":"main","conclusion":"failure"' "JSON carries the upstream baseline"
 check_output "\"external_marker\":\"<!-- hive-ci-external head=$UP_HEAD check=Check%20ogc-lts%20%2844%29 run=4401 -->\"" \
   "the marker pins the PR head, the encoded check name and the newest red run"
+check_output "\"transient_marker\":\"<!-- hive-ci-transient head=$UP_HEAD check=Check%20ogc-lts%20%2844%29 run=4401 -->\"" \
+  "the transient marker pins the same head, encoded check name and newest red run"
 MOCK_PARENT=upstream/widgets MOCK_COMPARE="{\"$UP_HEAD\":0}" run_helper acme/widgets "Check ogc-lts (44)" 66
 check_output 'is red (failure) on upstream upstream/widgets default branch "main"' "human output names the upstream"
 check_output "End that comment with this marker: <!-- hive-ci-external head=$UP_HEAD" "human output prints the marker"

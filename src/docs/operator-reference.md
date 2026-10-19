@@ -339,7 +339,8 @@ workflow runs when a required check is missing:
   closes.
 - Dependency-bot PRs stay out of the fix loop. The governor's dependency-bot
   sweep hands them to a person the same way when a required check stays red on
-  the same head for 4 hours, or when the PR conflicts with its base for 24
+  the same head for 4 hours (the comment asks for a re-run instead when every
+  failing run carries a `hive-ci-transient` triage marker), or when the PR conflicts with its base for 24
   hours (at once for a Renovate PR whose config rebases never). It skips PRs
   already labelled `needs-human`, `hold` or `do-not-merge`, comments once per
   head and reason, and removes only the `needs-human` label it added once CI
