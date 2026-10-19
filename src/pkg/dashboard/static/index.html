@@ -41597,10 +41597,10 @@ function burnAreaChart() {
               // path a Save will create instead.
               const tf = data.templateFile || null;
               if (tf && tf.override) {
-                items += '<li style="margin:3px 0;color:var(--muted);font-size:0.7rem">user override: <code>' + esc(tf.path) + '</code>'
+                items += '<li class="text-muted fs-xs">user override: <code>' + esc(tf.path) + '</code>'
                   + (tf.readOnly ? ' (shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only)' : '') + '</li>';
               } else if (tf && tf.readOnly) {
-                items += '<li style="margin:3px 0;color:var(--yellow,#e6b800);font-size:0.7rem">shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only — saving writes a user override to <code>' + esc(tf.savePath) + '</code>, which agent runs use instead.</li>';
+                items += '<li class="text-warn fs-xs">shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only — saving writes a user override to <code>' + esc(tf.savePath) + '</code>, which agent runs use instead.</li>';
               }
               srcEl.innerHTML = '<ul style="list-style:none;padding:var(--sp-0);margin:var(--sp-0)">' + items + '</ul>';
               srcEl.style.display = 'block';
