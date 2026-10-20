@@ -5487,6 +5487,8 @@
         min-width: var(--tap-target);
         min-height: var(--tap-target);
       }
+      /* Include the shared input padding/borders around two visible lines. */
+      .hive-chat-input { min-height: calc(2lh + var(--sp-4) + var(--sp-4) + 2px); }
       .hive-chat-fab {
         width: var(--tap-target);
         height: var(--tap-target);
