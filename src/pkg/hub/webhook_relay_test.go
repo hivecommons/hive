@@ -166,3 +166,74 @@ func TestRelayWebhookToSpokeDoesNotFollowRedirects(t *testing.T) {
 	// Give a (wrongly) followed redirect time to land before the test ends.
 	<-time.After(200 * time.Millisecond)
 }
+
+func TestRelayWebhookToSpokeFansOutToEveryTrackingHive(t *testing.T) {
+	allowLoopbackRelay(t)
+	got := make(chan relayedWebhook, 4)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- relayedWebhook{path: r.URL.Path, event: r.Header.Get("X-GitHub-Event"), signature: r.Header.Get("X-Hub-Signature-256"), body: body}
+		w.WriteHeader(http.StatusOK)
+	})
+	spokeA := httptest.NewServer(handler)
+	defer spokeA.Close()
+	spokeB := httptest.NewServer(handler)
+	defer spokeB.Close()
+
+	s := newWebhookHub()
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", Org: "acme", Repos: []string{"widgets"}, DashboardURL: spokeA.URL},
+		{ID: "nodash", Org: "acme", Repos: []string{"widgets"}},
+		{ID: "h2", Org: "acme", PrimaryRepo: "widgets", DashboardURL: spokeB.URL},
+		{ID: "other", Org: "acme", Repos: []string{"gadgets"}, DashboardURL: spokeB.URL},
+	}
+	body := []byte(`{"repository":{"name":"widgets","full_name":"acme/widgets","owner":{"login":"acme"}}}`)
+	hdr := http.Header{}
+	hdr.Set("X-GitHub-Event", "pull_request")
+	hdr.Set("X-Hub-Signature-256", "sha256=abc")
+	s.relayWebhookToSpoke("pull_request", hdr, body)
+
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-got:
+			if r.path != spokeWebhookPath || r.event != "pull_request" || r.signature != "sha256=abc" || !bytes.Equal(r.body, body) {
+				t.Fatalf("relayed %+v, want the original delivery on %s", r, spokeWebhookPath)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of 2 tracking hives received the relay", i)
+		}
+	}
+	select {
+	case r := <-got:
+		t.Fatalf("unexpected third relay: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestFindHivesByOrgRepos(t *testing.T) {
+	s := newWebhookHub()
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", Org: "acme", Repos: []string{"widgets"}},
+		{ID: "h2", Org: "acme", PrimaryRepo: "Widgets"},
+		{ID: "h3", Org: "acme", Repos: []string{"gadgets"}},
+	}
+	ids := func(hs []*RegistryEntry) string {
+		out := ""
+		for _, h := range hs {
+			out += h.ID + ","
+		}
+		return out
+	}
+	if got := ids(s.findHivesByOrgRepos("acme", []string{"widgets"})); got != "h1,h2," {
+		t.Errorf("exact match = %q, want h1,h2,", got)
+	}
+	if got := ids(s.findHivesByOrgRepos("acme", nil)); got != "h1,h2,h3," {
+		t.Errorf("org-only fallback = %q, want h1,h2,h3,", got)
+	}
+	if got := s.findHivesByOrgRepos("acme", []string{"unknown"}); len(got) != 0 {
+		t.Errorf("unknown repo matched %q", ids(got))
+	}
+	if h := s.findHiveByOrgRepos("acme", nil); h == nil || h.ID != "h1" {
+		t.Errorf("single lookup org fallback = %+v, want h1", h)
+	}
+}
