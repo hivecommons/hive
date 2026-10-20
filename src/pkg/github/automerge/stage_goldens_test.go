@@ -294,7 +294,7 @@ func runStageGoldenWithFacts(in stageGoldenInput) (stageGoldenWant, stageengine.
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonDCOMissing
 		} else if in.DCO.SquashUnsafeHive > 0 && !in.DCO.AuthorIsApp {
-			verdict.Stage = stagelabels.Fixing
+			verdict.Stage = fixingStage(obs)
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
 		}

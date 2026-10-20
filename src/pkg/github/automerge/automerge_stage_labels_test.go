@@ -327,6 +327,11 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "human changes requested", obs: stageObservation{AuthorKind: authorkind.Human, Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
 		{name: "hive kind ci red on contributor lane", obs: stageObservation{AuthorKind: authorkind.Hive, Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.Fixing, rank: stageRankOwned},
 		{name: "unknown kind ci red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
+		// The trusted-author lane's enforcing review gate: held for the
+		// swarm is 060, never no opinion (the PR sat unlabelled otherwise).
+		{name: "review gate no bundle is review pending", obs: stageObservation{AuthorKind: authorkind.Human, Lane: stageLaneTrusted, Reason: autoMergeReasonReviewGatePrefix + ReviewGateOutcomeNoBundle}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "review gate awaiting approval is review pending", obs: stageObservation{AuthorKind: authorkind.Human, Lane: stageLaneTrusted, Reason: autoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "review gate changes requested is the author's", obs: stageObservation{AuthorKind: authorkind.Human, Lane: stageLaneTrusted, Reason: autoMergeReasonReviewGatePrefix + ReviewGateOutcomeChangesRequested + ":security"}, want: stagelabels.NeedsAuthor, rank: stageRankOwned, reason: stagelabels.LaneReasonChangesRequested},
 		{name: "self changes requested", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, want: stagelabels.Fixing, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
 		{name: "changes requested while head too young", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
 		{name: "changes requested behind no-verdict", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
@@ -1933,7 +1938,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	}
 }
 
-func TestApplyStageLabelsHiveBotSignoffOnContributorHeadIsHiveOwned(t *testing.T) {
+func TestApplyStageLabelsHiveBotSignoffOnClankerHeadReturnsToContributor(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}, commitDetails: map[int][]stageCommitFixture{
 		80: {{
 			message:     "docs: follow-up\n\nSigned-off-by: hivecommons-hive[bot] <280983584+hivecommons-hive[bot]@users.noreply.github.com>",
@@ -1958,18 +1963,97 @@ func TestApplyStageLabelsHiveBotSignoffOnContributorHeadIsHiveOwned(t *testing.T
 	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	// The branch owner is the only one who can rewrite the commit: the
+	// clanker keeps 072 (never 070, where no lane acts on a non-App
+	// branch) and its nudge names the exact command.
 	rec, ok := store.Get(stageKey("acme", "widget", 80))
-	if !ok || rec.Stage != stagelabels.Fixing || rec.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
+	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
 		t.Fatalf("record %+v ok=%v", rec, ok)
 	}
 	if rec.DCOSquashUnsafeHive != 1 || rec.DCO("sha") != stagelabels.DCOYes {
 		t.Fatalf("dco cache %+v", rec)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{stagelabels.DCOLabel, "stage/070-fixing"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{stagelabels.DCOLabel}}) || len(api.removed) != 0 {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], ContributorNudgeMarkerPrefix) || !strings.Contains(api.comments[0], "git commit --amend --reset-author -s") {
+		t.Fatalf("comments %q", api.comments)
+	}
+}
+
+func TestApplyStageLabelsHiveBotSignoffOnHumanHeadNeedsAuthorWithInstructions(t *testing.T) {
+	// hivecommons/pluk#315 (2026-10-20): a human's OWNERS commit, made in a
+	// hive pod, carried the App's noreply address and sign-off. GitHub
+	// linked the commit to the App, so the squash gate would misattribute
+	// it; the stage pass sent it to 070-fixing, where no agent could act.
+	api := &stageAPI{labels: map[string]string{}, commitDetails: map[int][]stageCommitFixture{
+		315: {{
+			message:     "Add OWNERS file\n\nSigned-off-by: Andy Anderson <280983584+hivecommons-hive[bot]@users.noreply.github.com>",
+			authorLogin: testHiveAppBotLogin,
+			authorName:  "Andy Anderson",
+			authorEmail: "280983584+hivecommons-hive[bot]@users.noreply.github.com",
+		}},
+	}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 15, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, ContributorNudge: true} }
+
+	pr := stagePR(315, "role/trusted")
+	pr.User = &gh.User{Login: gh.Ptr("clubanderson")}
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, autoMergeReasonReviewGatePrefix+ReviewGateOutcomeAwaiting, false, nil)
+	e.noteStageRole("acme", "widget", 315, stagelabels.RoleTrusted)
+
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := store.Get(stageKey("acme", "widget", 315))
+	if !ok || rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
+		t.Fatalf("record %+v ok=%v", rec, ok)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", stagelabels.DCOLabel, "stage/071-needs-author"}}) {
 		t.Fatalf("added %v", api.added)
 	}
-	if !reflect.DeepEqual(api.removed, []string{"stage/072-returned-to-contributor"}) || len(api.comments) != 0 {
-		t.Fatalf("removed=%v comments=%v", api.removed, api.comments)
+	if len(api.comments) != 1 {
+		t.Fatalf("comments %q", api.comments)
+	}
+	for _, want := range []string{SignoffAttributionMarkerPrefix + " head=sha -->", "@clubanderson", "`stage/071-needs-author`", "git commit --amend --reset-author -s && git push --force-with-lease", "git config user.email"} {
+		if !strings.Contains(api.comments[0], want) {
+			t.Fatalf("comment lacks %q:\n%s", want, api.comments[0])
+		}
+	}
+	if rec.NudgeHead != "sha" {
+		t.Fatalf("nudge head not recorded: %+v", rec)
+	}
+
+	// Same head, next sweep: the labels stand and the author is not told twice.
+	clock.at = clock.at.Add(10 * time.Minute)
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(315, "role/trusted", "author/human", "dco", "stage/071-needs-author"), autoMergeReasonReviewGatePrefix+ReviewGateOutcomeAwaiting, false, nil)
+	e.noteStageRole("acme", "widget", 315, stagelabels.RoleTrusted)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.comments) != 1 {
+		t.Fatalf("second pass re-commented: %q", api.comments)
+	}
+}
+
+func TestSignoffAttributionAsk(t *testing.T) {
+	one := signoffAttributionAsk(stageDetail{DCOTotal: 1, DCOSquashUnsafeHive: 1})
+	if !strings.Contains(one, "1 commit is signed off as the hive App") || !strings.Contains(one, "`git commit --amend --reset-author -s && git push --force-with-lease`") {
+		t.Fatalf("one: %s", one)
+	}
+	many := signoffAttributionAsk(stageDetail{DCOTotal: 3, DCOSquashUnsafeHive: 2})
+	if !strings.Contains(many, "2 commits are signed off as the hive App") || !strings.Contains(many, "git rebase --exec 'git commit --amend --no-edit --reset-author -s' HEAD~3 && git push --force-with-lease") {
+		t.Fatalf("many: %s", many)
+	}
+	if zero := signoffAttributionAsk(stageDetail{}); !strings.Contains(zero, "1 commit is") {
+		t.Fatalf("zero: %s", zero)
+	}
+	_, asks, _ := nudgeDiagnosis(stagelabels.LaneReasonHiveSignoffAttribution, stageDetail{DCOTotal: 1, DCOSquashUnsafeHive: 1})
+	if len(asks) != 1 || asks[0] != one {
+		t.Fatalf("diagnosis asks %q", asks)
 	}
 }
 

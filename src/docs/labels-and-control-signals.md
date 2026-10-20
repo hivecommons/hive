@@ -390,10 +390,10 @@ used to admit the PR:
 |---|---|
 | merged / `closed` / `gone` | terminal: every hive-owned label removed, timing forgotten |
 | `draft` | no stage (stale stage removed) |
-| `contributor-lane:no-verdict`, CI pending with no verdict | `050-review-pending` |
+| `contributor-lane:no-verdict`, `review-gate:no-review-bundle`, `review-gate:awaiting-review-approval`, CI pending with no verdict | `050-review-pending` |
 | CI pending, verdict approve | `060-reviewed` |
 | CI green, verdict approve, no modifier, yet the lane stopped on a reason no stage claims or tripped on a transient error (`review-state-check`, …) | `080-awaiting-merge-admission` (weak opinion: any lane's definite stage wins) |
-| CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane or `author/hive`) / `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`) — see [Stage 07x by author kind](#stage-07x-by-author-kind). Exception: when the failing head contains an App-linked hive follow-up commit whose `Signed-off-by` cannot survive squash attribution to the PR author, the hive owns the breakage and the PR stays at `070-fixing` until the hive drops/amends/re-homes that commit. |
+| CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane or `author/hive`) / `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`) — see [Stage 07x by author kind](#stage-07x-by-author-kind). A head whose App-linked commits carry a `Signed-off-by` the squash would misattribute to the PR author (`hive-signoff-attribution`) follows the same split: the branch owner is the only one who can rewrite them. |
 | `contributor-lane:soaking(...)` — and no red check on the head | `095-pre-merge-soak` |
 | `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `behind-update-budget-exhausted` (a behind self-authored PR the sweep did not update only because this tick's branch-update budget was spent; retried next tick, waits on the hive, [#12607](https://github.com/hivecommons/hive/issues/12607)), `release-hold*` — and no red check on the head | `100-merge-queue` |
 | CI red (required or optional check) while the PR is deferred to an open `[shared-ci]` incident (`<!-- hive-shared-ci-<n> -->`, the governor's `deferred_incident`) for the same head | `050-review-pending` / `060-reviewed`, reason `shared-ci-incident:<n>`: the base or a shared check is what is red, so the PR is never sent to 070/071/072, never nudged and never stalled; once the incident closes a still-red head is handed back as usual. Conflicts and requested changes stay author-facing ([#12606](https://github.com/hivecommons/hive/issues/12606)) |
@@ -588,14 +588,21 @@ the label, and with it the tracker word and whether the hive has anyone to
 | `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's hive is poked to fix its own PR | yes — after the grace, the hive adopts |
 | `author/hive` (and any self-authored PR) | `stage/070-fixing` | Fixing | n/a — the hive's own lanes rework the head | n/a |
 
-The split applies only to breakage caused by the PR head's author. If the hive
-already pushed a follow-up commit onto a human/clanker branch and that commit
-is what makes the required "Sign-off survives the squash" check red, the hive
-does not hand the PR back: it records `hive-signoff-attribution`, keeps
-`stage/070-fixing`, and either removes/amends that hive commit on a pushable
-branch or re-homes the work through the DCO adoption/supersede path. The hive
-must not forge the PR author's `Signed-off-by`, and `review.fix_human_prs`
-does not authorize new follow-up commits on non-App-authored branches.
+The split also covers a head whose commits GitHub links to the hive App while
+the PR author is someone else — a hive follow-up commit on the branch, or a
+contributor who committed from inside a hive pod with the App's noreply
+address (hivecommons/pluk#315 and the other OWNERS PRs of 2026-10-20). The
+required "Sign-off survives the squash" check is red there, and no hive push
+lands on a non-App-authored branch (`review.fix_human_prs` does not authorize
+one and the hive must not forge the author's `Signed-off-by`), so the PR
+goes back to its author by kind under `hive-signoff-attribution`: `071` for
+a human, `072` for a clanker — never `070`, where nothing can act. The human
+gets one comment per head (`<!-- hive:signoff-attribution head=… -->`) with
+the exact fix (`git commit --amend --reset-author -s && git push
+--force-with-lease`, or the `git rebase --exec` form for several commits);
+the clanker's regular 072 nudge carries the same ask, and after the grace
+the adoption path re-homes the work (`reason=signoff-rehome`). A
+self-authored PR stays `070`.
 
 Only a clanker PR has a hive on the other end, so only 072 gets the nudge
 comment, the relay interrupt and adoption; a human PR at 071 just sits there
@@ -712,8 +719,7 @@ does not bump itself.
   (`stage.history[]` on the review-queue entry, newest last, capped at 12).
   Leaving a repair stage (`070`/`071`/`072`/`074`) for `050`/`060` is the repair
   route itself and is not commented; nor is a move *between* `070`/`071`/`072`
-  (`072 → 070` on `hive-signoff-attribution`, `072 → 071` when the author
-  kind is learned late) — that re-attributes who owes the fix, it does not
+  (`070 → 071`/`072` when the author kind is learned late) — that re-attributes who owes the fix, it does not
   knock the head back.
 - **A decomposed parent with an open child never stalls** (see above): it
   is waiting on its children, not on a person.
