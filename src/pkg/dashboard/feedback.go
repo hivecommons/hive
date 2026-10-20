@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -262,6 +263,7 @@ func (s *Server) handleFeedbackReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateFeedbackRequest(&req); err != nil {
+		slog.Warn("feedback report rejected", "error", err)
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
