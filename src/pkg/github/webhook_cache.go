@@ -326,7 +326,14 @@ type webhookEventPayload struct {
 	Number      int    `json:"number"`
 	Action      string `json:"action"`
 	PullRequest *struct {
-		Number int `json:"number"`
+		Number   int        `json:"number"`
+		Title    string     `json:"title"`
+		Body     string     `json:"body"`
+		Merged   bool       `json:"merged"`
+		MergedAt *time.Time `json:"merged_at"`
+		Head     struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
 	} `json:"pull_request"`
 	Issue *struct {
 		Number      int              `json:"number"`
@@ -380,6 +387,11 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		if hook := issueReopenedHook(); hook != nil {
 			hook(configured, n, sharedWebhookTracker.now())
 		}
+	}
+	if merged, ok := webhookMergedPR(event, p); ok {
+		// A merged revert names the PR it undid; the payload already carries
+		// the title and body, so this costs no GitHub call (#13241).
+		c.RecordReviewEvidenceRevert(merged)
 	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	for _, n := range numbers {

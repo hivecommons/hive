@@ -83,7 +83,7 @@ func TestEvidenceCardsFromSummaryFields(t *testing.T) {
 	cards := evidenceCards(&resp, evidenceWindow{Hours: 720, From: now.Add(-720 * time.Hour), To: now}, now)
 
 	want := map[string]struct{ letter, summary string }{
-		evidenceCardOutcome:         {"B-", "Agents: 17 merged, 1 reverted. Humans: 2 merged, 0 reverted. 3 outcomes not recorded yet."},
+		evidenceCardOutcome:         {"B-", "Agents: 17 merged, 1 reverted, 0 re-opened (5.9%). Humans: 2 merged, 0 undone. 3 outcomes not recorded yet."},
 		evidenceCardCalibration:     {"A", "When reviewers were most sure (0.9-1.0), 95% of 21 PRs merged."},
 		evidenceCardAccuracy:        {"A", "Reviewers wrongly approved 3% and wrongly blocked 0% of 40 PRs with a known result."},
 		evidenceCardMaintainability: {"A", "Code complexity across 1 repo: median flat, 12 complex functions (was 14)."},

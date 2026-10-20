@@ -264,16 +264,42 @@ func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
 // only, no merge event and no ledger row: the PR may be open, merged by
 // someone else or closed by hand and nothing on this hive says which. Rates
 // must use Merged+Closed+Open as their denominator and report Unknown beside
-// them, never fold it into "not merged". RevertedWithin14d is nil because
-// revert tracking is not recorded in bundles.
+// them, never fold it into "not merged".
+//
+// Change failures (hivecommons/hive#13241): RevertedWithin14d counts merged
+// PRs with a reverted_by link (the linker only writes one for a revert
+// merged within 14 days of the original); IssueReopenedWithin14d counts
+// merged PRs with an issue_reopens entry dated within 14 days of the merge.
+// A PR counts once in each. ChangeFailures is their sum and
+// ChangeFailureRate is ChangeFailures ÷ Merged, nil with no merges.
 type EvidenceOutcomes struct {
-	N                 int  `json:"n"`
-	Merged            int  `json:"merged"`
-	MergedElsewhere   int  `json:"merged_elsewhere"`
-	Closed            int  `json:"closed"`
-	Open              int  `json:"open"`
-	Unknown           int  `json:"unknown"`
-	RevertedWithin14d *int `json:"reverted_14d"`
+	N                      int      `json:"n"`
+	Merged                 int      `json:"merged"`
+	MergedElsewhere        int      `json:"merged_elsewhere"`
+	Closed                 int      `json:"closed"`
+	Open                   int      `json:"open"`
+	Unknown                int      `json:"unknown"`
+	RevertedWithin14d      *int     `json:"reverted_14d"`
+	IssueReopenedWithin14d int      `json:"issue_reopened_14d"`
+	ChangeFailures         int      `json:"change_failures"`
+	ChangeFailureRate      *float64 `json:"change_failure_rate"`
+}
+
+// finishChangeFailures fills ChangeFailures and ChangeFailureRate from the
+// two counts once the window has been folded.
+func (o *EvidenceOutcomes) finishChangeFailures() {
+	reverted := 0
+	if o.RevertedWithin14d != nil {
+		reverted = *o.RevertedWithin14d
+	} else {
+		o.RevertedWithin14d = new(int)
+	}
+	o.ChangeFailures = reverted + o.IssueReopenedWithin14d
+	o.ChangeFailureRate = nil
+	if o.Merged > 0 {
+		r := float64(o.ChangeFailures) / float64(o.Merged)
+		o.ChangeFailureRate = &r
+	}
 }
 
 type EvidencePerspectiveCalib struct {
@@ -795,6 +821,17 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 			if b.MergedElsewhere {
 				o.MergedElsewhere++
 			}
+			if reverted, reopened := b.ChangeFailure(); reverted || reopened {
+				if o.RevertedWithin14d == nil {
+					o.RevertedWithin14d = new(int)
+				}
+				if reverted {
+					*o.RevertedWithin14d++
+				}
+				if reopened {
+					o.IssueReopenedWithin14d++
+				}
+			}
 		case b.Closed:
 			o.Closed++
 		case known:
@@ -987,5 +1024,9 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 	}
 	resp.ShadowGate.WouldHaveHeld = resp.ShadowGate.ReviewGate.Held.N
 	resp.ShadowGate.WouldHaveBlocked = resp.ShadowGate.Intent.Held.N
+	for k, o := range resp.Outcomes {
+		o.finishChangeFailures()
+		resp.Outcomes[k] = o
+	}
 	return resp
 }

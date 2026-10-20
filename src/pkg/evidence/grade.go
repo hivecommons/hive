@@ -3,6 +3,7 @@ package evidence
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -111,7 +112,10 @@ func plural(n int, one, many string) string {
 
 // ---- Outcome by author kind ----------------------------------------------
 
-// OutcomeStats is one author kind's PR outcomes in the window.
+// OutcomeStats is one author kind's PR outcomes in the window. Reverted and
+// Reopened are the two change-failure signals (hivecommons/hive#13241): a
+// merged PR undone by a later revert, or one whose closed issue a person
+// reopened, each within 14 days of the merge. A PR counts once in each.
 type OutcomeStats struct {
 	Kind     string
 	N        int
@@ -120,33 +124,58 @@ type OutcomeStats struct {
 	Open     int
 	Unknown  int
 	Reverted int // reverted within 14 d of merge
+	Reopened int // a closed issue reopened within 14 d of merge
 }
 
-const outcomeRubric = "score = merged share of PRs with a known outcome × (1 − reverted share of merged); A+ ≥ 97% … C- < 73%; needs 20 PRs with a known outcome"
+// ChangeFailures is the number of merged PRs that failed either way.
+func (s OutcomeStats) ChangeFailures() int { return s.Reverted + s.Reopened }
+
+// ChangeFailureRate is (reverted + reopened) ÷ merged, or nil with no merges.
+func (s OutcomeStats) ChangeFailureRate() *float64 {
+	if s.Merged <= 0 {
+		return nil
+	}
+	r := float64(s.ChangeFailures()) / float64(s.Merged)
+	return &r
+}
+
+const outcomeRubric = "score = merged share of PRs with a known outcome × (1 − change-failure share of merged, where change failures = reverted + issue re-opened within 14 d); A+ ≥ 97% … C- < 73%; needs 20 PRs with a known outcome"
 
 // GradeOutcome grades PR outcomes across every author kind: how many PRs with
-// a known outcome merged, discounted by how many of those were reverted.
+// a known outcome merged, discounted by how many of those failed afterwards
+// (reverted, or a closed issue reopened, within 14 days).
 func GradeOutcome(stats []OutcomeStats) Grade {
-	var known, merged, reverted int
+	var known, merged, reverted, reopened int
 	for _, s := range stats {
 		known += s.Merged + s.Closed + s.Open
 		merged += s.Merged
 		reverted += s.Reverted
+		reopened += s.Reopened
 	}
 	if known < GradeMinN {
 		return NoGrade(fmt.Sprintf("needs %d PRs with a known outcome (have %d)", GradeMinN, known), outcomeRubric)
 	}
 	mergeShare := float64(merged) / float64(known)
-	revertShare := 0.0
+	failShare := 0.0
+	failed := reverted + reopened
 	if merged > 0 {
-		revertShare = float64(reverted) / float64(merged)
+		failShare = float64(failed) / float64(merged)
+		if failShare > 1 {
+			failShare = 1
+		}
 	}
-	score := mergeShare * (1 - revertShare)
-	reason := fmt.Sprintf("%s of %d PRs with a known outcome merged; %d of %d merged %s reverted", pct(merged, known), known, reverted, merged, plural(reverted, "was", "were"))
+	score := mergeShare * (1 - failShare)
+	reason := fmt.Sprintf("%s of %d PRs with a known outcome merged; %d of %d merged failed within 14 d (%d reverted, %d re-opened)", pct(merged, known), known, failed, merged, reverted, reopened)
 	return graded(letterFromScore(score), reason, outcomeRubric)
 }
 
-// SummarizeOutcome is the plain sentence for the Outcome card.
+// SummarizeOutcome is the plain sentence for the Outcome card, e.g.
+// "Agents: 418 merged, 1 reverted, 0 re-opened (0.2%). Humans: 346 merged, 0
+// reverted, 2 re-opened (0.6%)." The percentage is the change-failure rate
+// (reverted + re-opened) ÷ merged. A kind with no failures reads "17 merged,
+// 0 undone"; when the full form would pass PlainSummaryMaxWords the failures
+// are folded into "N undone (rate)" and the unknown tail is shortened, so
+// three author kinds and an unknown count always fit.
 func SummarizeOutcome(stats []OutcomeStats) string {
 	byKind := map[string]OutcomeStats{}
 	total, unknown := 0, 0
@@ -158,23 +187,56 @@ func SummarizeOutcome(stats []OutcomeStats) string {
 	if total == 0 {
 		return "No PRs with an evidence record in this window."
 	}
-	part := func(label, kind string) string {
+	part := func(label, kind string, compact bool) string {
 		s, ok := byKind[kind]
 		if !ok || s.N == 0 {
 			return ""
 		}
-		return fmt.Sprintf("%s: %d merged, %d reverted.", label, s.Merged, s.Reverted)
+		failed := s.ChangeFailures()
+		if failed == 0 {
+			return fmt.Sprintf("%s: %d merged, 0 undone.", label, s.Merged)
+		}
+		rate := "—"
+		if r := s.ChangeFailureRate(); r != nil {
+			rate = pctFloat(*r)
+		}
+		if compact {
+			return fmt.Sprintf("%s: %d merged, %d undone (%s).", label, s.Merged, failed, rate)
+		}
+		return fmt.Sprintf("%s: %d merged, %d reverted, %d re-opened (%s).", label, s.Merged, s.Reverted, s.Reopened, rate)
 	}
-	parts := []string{}
-	for _, p := range []string{part("Agents", AuthorAgent), part("Humans", AuthorHuman), part("Bots", AuthorBot)} {
-		if p != "" {
-			parts = append(parts, p)
+	render := func(compact, shortUnknown bool) string {
+		parts := []string{}
+		for _, p := range []string{part("Agents", AuthorAgent, compact), part("Humans", AuthorHuman, compact), part("Bots", AuthorBot, compact)} {
+			if p != "" {
+				parts = append(parts, p)
+			}
+		}
+		switch {
+		case unknown > 0 && shortUnknown:
+			parts = append(parts, fmt.Sprintf("%d unrecorded.", unknown))
+		case unknown > 0:
+			parts = append(parts, fmt.Sprintf("%d %s not recorded yet.", unknown, plural(unknown, "outcome", "outcomes")))
+		}
+		return strings.Join(parts, " ")
+	}
+	for _, tier := range []struct{ compact, shortUnknown bool }{{false, false}, {true, false}, {true, true}} {
+		if out := render(tier.compact, tier.shortUnknown); len(strings.Fields(out)) <= PlainSummaryMaxWords || tier.shortUnknown {
+			return out
 		}
 	}
-	if unknown > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s not recorded yet.", unknown, plural(unknown, "outcome", "outcomes")))
+	return render(true, true)
+}
+
+// pctFloat renders a 0–1 rate as a percentage with one decimal below 10%
+// ("0.2%") and none above ("12%"), so small change-failure rates stay
+// visible.
+func pctFloat(r float64) string {
+	v := r * 100
+	if v > 0 && v < 10 {
+		return strconv.FormatFloat(math.Round(v*10)/10, 'f', 1, 64) + "%"
 	}
-	return strings.Join(parts, " ")
+	return fmt.Sprintf("%d%%", int(math.Round(v)))
 }
 
 // ---- Reviewer calibration ------------------------------------------------

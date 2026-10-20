@@ -603,10 +603,10 @@ func TestBuildEvidenceSummaryUnknownOutcome(t *testing.T) {
 	if got.N != 5 {
 		t.Fatalf("n = %d, want 5", got.N)
 	}
-	if o := got.Outcomes["agent"]; o != (EvidenceOutcomes{N: 4, Merged: 1, Closed: 1, Open: 0, Unknown: 2}) {
+	if o := outcomeCounts(got.Outcomes["agent"]); o != (EvidenceOutcomes{N: 4, Merged: 1, Closed: 1, Open: 0, Unknown: 2}) {
 		t.Errorf("agent outcomes = %+v, want merged 1 / closed 1 / unknown 2", o)
 	}
-	if o := got.Outcomes["human"]; o != (EvidenceOutcomes{N: 1, Open: 1}) {
+	if o := outcomeCounts(got.Outcomes["human"]); o != (EvidenceOutcomes{N: 1, Open: 1}) {
 		t.Errorf("a backfilled still-open record is a known Open, got %+v", o)
 	}
 	if got.Missing.PRsOutcomeUnknown != 2 {
@@ -795,10 +795,10 @@ func TestBuildEvidenceSummaryLedgerOutcomes(t *testing.T) {
 	if got.N != 7 {
 		t.Fatalf("n = %d, want 7", got.N)
 	}
-	if o := got.Outcomes["human"]; o != (EvidenceOutcomes{N: 4, Merged: 1, MergedElsewhere: 1, Closed: 1, Open: 1, Unknown: 1}) {
+	if o := outcomeCounts(got.Outcomes["human"]); o != (EvidenceOutcomes{N: 4, Merged: 1, MergedElsewhere: 1, Closed: 1, Open: 1, Unknown: 1}) {
 		t.Errorf("human outcomes = %+v, want merged 1 (elsewhere 1) / closed 1 / open 1 / unknown 1", o)
 	}
-	if o := got.Outcomes["agent"]; o != (EvidenceOutcomes{N: 3, Merged: 2, MergedElsewhere: 1, Closed: 1}) {
+	if o := outcomeCounts(got.Outcomes["agent"]); o != (EvidenceOutcomes{N: 3, Merged: 2, MergedElsewhere: 1, Closed: 1}) {
 		t.Errorf("agent outcomes = %+v, want merged 2 (elsewhere 1) / closed 1", o)
 	}
 	if got.Missing.PRsOutcomeUnknown != 1 || got.Missing.PRsOutcomeFromLedger != 5 {
@@ -824,5 +824,85 @@ func TestBuildEvidenceSummaryLedgerOutcomes(t *testing.T) {
 	plain := buildEvidenceSummaryWindow(bundles, win, "", "")
 	if plain.Missing.PRsOutcomeUnknown != 4 || plain.Missing.PRsOutcomeFromLedger != 2 {
 		t.Errorf("without hints: unknown %d / from_ledger %d, want 4 / 2", plain.Missing.PRsOutcomeUnknown, plain.Missing.PRsOutcomeFromLedger)
+	}
+}
+
+// outcomeCounts strips the pointer-valued change-failure fields so a test can
+// compare the plain counts by value.
+func outcomeCounts(o EvidenceOutcomes) EvidenceOutcomes {
+	o.RevertedWithin14d = nil
+	o.ChangeFailureRate = nil
+	return o
+}
+
+// hivecommons/hive#13241: reverts and issue re-opens are counted per author
+// kind as change failures, with rate = (reverts + re-opens) ÷ merged.
+func TestBuildEvidenceSummaryChangeFailures(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-2 * time.Hour)
+	mergedAt := now.Add(-time.Hour)
+	withMerge := func(b *evidence.Bundle) *evidence.Bundle {
+		b.Merge.At = mergedAt
+		return b
+	}
+	reverted := withMerge(evSummaryBundle("a/b", 1, evidence.AuthorAgent, recent, true, nil, 0, true))
+	reverted.RevertedBy = []string{"a/b#9@merged"}
+	reopened := withMerge(evSummaryBundle("a/b", 2, evidence.AuthorAgent, recent, true, nil, 0, true))
+	reopened.IssueReopens = []evidence.IssueReopen{{Issue: 7, At: mergedAt.Add(30 * time.Minute), Source: evidence.IssueReopenSourceClaimLedger}}
+	// A reopen outside the 14-day window is not a change failure.
+	lateReopen := withMerge(evSummaryBundle("a/b", 3, evidence.AuthorHuman, recent, true, nil, 0, true))
+	lateReopen.IssueReopens = []evidence.IssueReopen{{Issue: 8, At: mergedAt.Add(evidence.LinkWindow + time.Hour), Source: evidence.IssueReopenSourceClaimLedger}}
+	both := withMerge(evSummaryBundle("a/b", 4, evidence.AuthorHuman, recent, true, nil, 0, true))
+	both.RevertedBy = []string{"a/b#10@merged"}
+	both.IssueReopens = []evidence.IssueReopen{{Issue: 9, At: mergedAt.Add(time.Hour), Source: evidence.IssueReopenSourceClaimLedger}}
+	// An unmerged PR with links never counts.
+	unmerged := evSummaryBundle("a/b", 5, evidence.AuthorHuman, recent, false, nil, 0, true)
+	unmerged.IssueReopens = []evidence.IssueReopen{{Issue: 10, At: mergedAt, Source: evidence.IssueReopenSourceClaimLedger}}
+	bundles := []*evidence.Bundle{
+		reverted, reopened, lateReopen, both, unmerged,
+		withMerge(evSummaryBundle("a/b", 6, evidence.AuthorAgent, recent, true, nil, 0, true)),
+		withMerge(evSummaryBundle("a/b", 7, evidence.AuthorAgent, recent, true, nil, 0, true)),
+	}
+
+	got := buildEvidenceSummary(bundles, now, 24, "", "")
+	agent := got.Outcomes["agent"]
+	if agent.Merged != 4 || agent.RevertedWithin14d == nil || *agent.RevertedWithin14d != 1 || agent.IssueReopenedWithin14d != 1 || agent.ChangeFailures != 2 {
+		t.Errorf("agent = %+v", agent)
+	}
+	if agent.ChangeFailureRate == nil || *agent.ChangeFailureRate != 0.5 {
+		t.Errorf("agent change_failure_rate = %v, want 0.5", agent.ChangeFailureRate)
+	}
+	human := got.Outcomes["human"]
+	if human.Merged != 2 || human.RevertedWithin14d == nil || *human.RevertedWithin14d != 1 || human.IssueReopenedWithin14d != 1 || human.ChangeFailures != 2 {
+		t.Errorf("human = %+v", human)
+	}
+	if human.ChangeFailureRate == nil || *human.ChangeFailureRate != 1 {
+		t.Errorf("human change_failure_rate = %v, want 1", human.ChangeFailureRate)
+	}
+	if human.Unknown != 1 {
+		t.Errorf("unmerged live PR must be unknown, got %+v", human)
+	}
+	// A kind with no merges carries zero counts and no rate.
+	none := buildEvidenceSummary(bundles[4:5], now, 24, "", "").Outcomes["human"]
+	if none.RevertedWithin14d == nil || *none.RevertedWithin14d != 0 || none.ChangeFailureRate != nil || none.ChangeFailures != 0 {
+		t.Errorf("no-merge kind = %+v", none)
+	}
+
+	raw, err := json.Marshal(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"reverted_14d":1`, `"issue_reopened_14d":1`, `"change_failures":2`, `"change_failure_rate":0.5`} {
+		if !strings.Contains(string(raw), key) {
+			t.Errorf("JSON %s lacks %s", raw, key)
+		}
+	}
+
+	cards := evidenceCards(&got, evidenceWindow{Hours: 24, From: now.Add(-24 * time.Hour), To: now}, now)
+	card := cards[evidenceCardOutcome]
+	// Both kinds have failures and an unknown trails, so the summary falls back
+	// to the compact "undone" form to stay inside the 20-word budget.
+	if want := "Agents: 4 merged, 2 undone (50%). Humans: 2 merged, 2 undone (100%). 1 outcome not recorded yet."; card.PlainSummary != want {
+		t.Errorf("plain summary = %q, want prefix %q", card.PlainSummary, want)
 	}
 }

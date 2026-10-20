@@ -9705,6 +9705,10 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#13241: an issue a person reopens after its closing PR
+	// merged is a change failure on that PR's evidence record, from both the
+	// issues.reopened webhook and the enumeration reopen check.
+	github.SetIssueReopenRecorder(client.RecordReviewEvidenceIssueReopen)
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.

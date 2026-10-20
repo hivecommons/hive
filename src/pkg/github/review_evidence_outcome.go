@@ -29,6 +29,12 @@ func (c *Client) RecordReviewEvidenceOutcome(repo string, number int, st PRState
 	if !ok {
 		return
 	}
+	if !st.MergedAt.IsZero() {
+		// A merged revert the hive did not perform still names the PR it
+		// undid; the state fetch already carried its text (#13241).
+		c.RecordReviewEvidenceRevert(MergedPRText{Repo: repo, Number: number, HeadSHA: st.HeadSHA,
+			Title: st.Title, Body: st.Body, MergedAt: st.MergedAt})
+	}
 
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()

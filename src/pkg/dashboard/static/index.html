@@ -23446,6 +23446,7 @@ function burnAreaChart() {
     const EV_CALIB_MIN_BUCKET_N = 5;        // calibration buckets with fewer known-outcome verdicts are drawn hollow and not joined
     const EV_DATA_SINCE = '2026-10-08';     // first live evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
+    const EV_REOPENS_SINCE = '2026-10-20';  // issue_reopens recorded from this date (#13241)
     // `ungraded` is for report-only panels that have no threshold to hold
     // them to; unlike `none`, more data would not produce a grade.
     const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };
@@ -23510,7 +23511,7 @@ function burnAreaChart() {
     function evLimitsSentence() {
       const hrs = evWindowHours();
       const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
-      return `Merged is not the same as correct. A PR whose outcome is not recorded (reviewed here, but merged by someone else, closed by hand, or still open — the bundle cannot tell) is reported as unknown and left out of every rate, never counted as "not merged". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.${short}`;
+      return `Merged is not the same as correct. A PR whose outcome is not recorded (reviewed here, but merged by someone else, closed by hand, or still open — the bundle cannot tell) is reported as unknown and left out of every rate, never counted as "not merged". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE}, reverts only since ${EV_REVERTS_SINCE} and issue re-opens only since ${EV_REOPENS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.${short}`;
     }
     function evGradeLine(grade, why) {
       const label = grade === 'ungraded' ? EV_GRADES.ungraded : `Rated: ${EV_GRADES[grade]}`;
@@ -23523,21 +23524,23 @@ function burnAreaChart() {
       'outcome-by-author': (dto) => {
         const o = dto.outcomes_by_author_kind || {};
         const kinds = Object.keys(o).filter((k) => Number(o[k] && o[k].n) > 0);
-        let merged = 0, decided = 0, reverted = 0, unknown = 0;
+        let merged = 0, decided = 0, reverted = 0, reopened = 0, unknown = 0;
         const parts = kinds.map((k) => {
           const x = o[k]; const d = (Number(x.merged) || 0) + (Number(x.closed) || 0) + (Number(x.open) || 0);
-          merged += Number(x.merged) || 0; decided += d; reverted += Number(x.reverted_14d) || 0; unknown += Number(x.unknown) || 0;
-          return `${k}: ${Number(x.merged) || 0} of ${d} with a known outcome merged (${evPct(evRate(x.merged, d))}), ${Number(x.closed) || 0} closed, ${Number(x.open) || 0} open, ${Number(x.unknown) || 0} unknown`;
+          const rv = Number(x.reverted_14d) || 0, ro = Number(x.issue_reopened_14d) || 0;
+          merged += Number(x.merged) || 0; decided += d; reverted += rv; reopened += ro; unknown += Number(x.unknown) || 0;
+          return `${k}: ${Number(x.merged) || 0} of ${d} with a known outcome merged (${evPct(evRate(x.merged, d))}), ${rv} reverted, ${ro} re-opened (${evPct(evRate(rv + ro, x.merged))} change failure), ${Number(x.closed) || 0} closed, ${Number(x.open) || 0} open, ${Number(x.unknown) || 0} unknown`;
         });
-        const rr = evRate(reverted, merged);
+        const failed = reverted + reopened;
+        const rr = evRate(failed, merged);
         const grade = evGrade(rr, merged, EV_REVERT_STRONG, EV_REVERT_FAIR, false);
         return {
-          matters: 'If agent-written PRs merge far less often, or get reverted far more often, than human ones, the agents are making work rather than saving it.',
-          measured: 'For every pull request (PR) that has an evidence record, who wrote it — a human, an AI agent, or a bot — and what happened to it: merged, closed without merging, still open, or merged and then undone ("reverted") within 14 days.',
-          how: 'We take every PR opened in the chosen window (by the PR\u2019s open time, not when its record was written) and count outcomes per author kind, folding the newest live record with any backfilled record of the same PR. Bars are plain counts scaled to the biggest group. Merged share = merged ÷ PRs with a known outcome (merged, closed or open). The revert share is reverts within 14 days ÷ merged. A live record only knows a merge this hive performed, and never a close, so the governor\u2019s review-outcome ledger fills the rest: when a reviewed PR leaves the open list the ledger asks GitHub what became of it (one fetch it already makes) and stamps the bundle merged-elsewhere or closed; a PR the ledger still sees open counts as open. A PR with no merge event, no backfilled record and no ledger row is "outcome unknown": counted and shown as a dashed bar, left out of the shares.',
-          good: `Similar merged shares across author kinds, and a revert share at or below ${Math.round(EV_REVERT_STRONG * 100)}% (Strong). ${Math.round(EV_REVERT_FAIR * 100)}% or less is Fair; above that is Weak. A big gap between agent and human merged shares is worth a look either way.`,
-          ours: `${parts.length ? parts.join(' · ') + '. ' : 'No PRs in this window. '}${merged} merged in total, ${reverted} reverted within 14 d (${evPct(rr)}).${unknown ? ` ${unknown} PR(s) have no recorded outcome and are not in any share.` : ''} ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}` : `revert share ${evPct(rr)} of ${merged} merged`,
+          matters: 'A PR being accepted is not the same as the project being better off. If agent-written PRs merge far less often, or get undone (reverted, or their issue re-opened) far more often than human ones, the agents are making work rather than saving it.',
+          measured: 'For every pull request (PR) that has an evidence record, who wrote it — a human, an AI agent, or a bot — and what happened to it: merged, closed without merging, still open, or merged and then undone within 14 days — either reverted by a later PR, or an issue it closed was re-opened by a person.',
+          how: 'We take every PR opened in the chosen window (by the PR\u2019s open time, not when its record was written) and count outcomes per author kind, folding the newest live record with any backfilled record of the same PR. Bars are plain counts scaled to the biggest group. Merged share = merged ÷ PRs with a known outcome (merged, closed or open). Change-failure rate = (reverted + re-opened) within 14 days ÷ merged. A revert is found from text already fetched — a merged PR whose title or body says `Reverts #N`, `Revert "…"` or `This reverts commit <sha>` and names a PR merged in the previous 14 days — so a revert that names nothing is missed. A re-open is an issue the PR closed with a closing keyword that a person re-opened after the merge (issues.reopened webhook, or GitHub listing it as re-opened); the governor already tracks these to re-queue the issue. A live record only knows a merge this hive performed, and never a close, so the governor\u2019s review-outcome ledger fills the rest: when a reviewed PR leaves the open list the ledger asks GitHub what became of it (one fetch it already makes) and stamps the bundle merged-elsewhere or closed; a PR the ledger still sees open counts as open. A PR with no merge event, no backfilled record and no ledger row is "outcome unknown": counted and shown as a dashed bar, left out of the shares.',
+          good: `Similar merged shares across author kinds, and a change-failure rate at or below ${Math.round(EV_REVERT_STRONG * 100)}% (Strong). ${Math.round(EV_REVERT_FAIR * 100)}% or less is Fair; above that is Weak. A big gap between agent and human merged shares is worth a look either way.`,
+          ours: `${parts.length ? parts.join(' · ') + '. ' : 'No PRs in this window. '}${merged} merged in total, ${reverted} reverted and ${reopened} re-opened within 14 d (${evPct(rr)} change failure).${unknown ? ` ${unknown} PR(s) have no recorded outcome and are not in any share.` : ''} ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}` : `change-failure rate ${evPct(rr)} of ${merged} merged`,
         };
       },
       calibration: (dto) => {
@@ -23798,7 +23801,8 @@ function burnAreaChart() {
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
       const rows = kinds.map((kind) => {
         const o = outcomes[kind] || {};
-        return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, mergedElsewhere: Number(o.merged_elsewhere) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0, reverted: Number(o.reverted_14d) || 0 };
+        const reverted = Number(o.reverted_14d) || 0, reopened = Number(o.issue_reopened_14d) || 0;
+        return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, mergedElsewhere: Number(o.merged_elsewhere) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0, reverted, reopened, failed: reverted + reopened };
       }).filter((r) => r.n > 0);
       if (!rows.length) return '<div class="ev-empty">— no PRs with an evidence bundle in this window</div>';
       const w = EV_SVG_W, label = 70, valW = 40, barH = 7, gap = 2, rowH = 4 * (barH + gap) + 8, t = 4;
@@ -23809,14 +23813,14 @@ function burnAreaChart() {
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
         const known = row.merged + row.closed + row.open;
-        const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, known)} of ${known} with a known outcome; ${row.mergedElsewhere} merged by someone other than this hive) · closed ${row.closed} · open ${row.open} · reverted within 14 d ${row.reverted} (${pct(row.reverted, row.merged)} of merged) · outcome unknown ${row.unknown} (not in any rate) · n=${row.n}`);
+        const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, known)} of ${known} with a known outcome; ${row.mergedElsewhere} merged by someone other than this hive) · closed ${row.closed} · open ${row.open} · undone within 14 d ${row.failed} (${row.reverted} reverted, ${row.reopened} issue re-opened; ${pct(row.failed, row.merged)} of merged = change-failure rate) · outcome unknown ${row.unknown} (not in any rate) · n=${row.n}`);
         const bar = (cls, v, k) => {
           const yy = y0 + k * (barH + gap);
           return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + barH}" text-anchor="end">${v}</text>`;
         };
-        return `<g><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(row.kind)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 24}">n=${row.n}</text>${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}${bar('ou', row.unknown, 3)}</g>`;
+        return `<g><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(row.kind)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 24}">n=${row.n}</text>${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.failed, 2)}${bar('ou', row.unknown, 3)}</g>`;
       }).join('');
-      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="PR outcome by author kind: merged, closed, reverted within 14 days and outcome unknown for human, agent and bot authors">${body}</svg><div class="ev-legend"><span><i class="om"></i>merged</span><span><i class="oc"></i>closed without merge</span><span><i class="or"></i>reverted within 14 d of merge</span><span><i class="ou"></i>outcome unknown (not in rates)</span></div>`;
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="PR outcome by author kind: merged, closed, undone within 14 days (reverted or issue re-opened) and outcome unknown for human, agent and bot authors">${body}</svg><div class="ev-legend"><span><i class="om"></i>merged</span><span><i class="oc"></i>closed without merge</span><span><i class="or"></i>undone within 14 d of merge (reverted or issue re-opened)</span><span><i class="ou"></i>outcome unknown (not in rates)</span></div>`;
     }
 
     function evCalibrationSvg(calib) {
@@ -24313,7 +24317,7 @@ function burnAreaChart() {
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
-          `PRs are placed in the window by their open time, never by when a record was written. Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
+          `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),

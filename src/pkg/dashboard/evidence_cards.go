@@ -34,7 +34,7 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	sort.Strings(kinds)
 	for _, k := range kinds {
 		o := resp.Outcomes[k]
-		s := evidence.OutcomeStats{Kind: k, N: o.N, Merged: o.Merged, Closed: o.Closed, Open: o.Open, Unknown: o.Unknown}
+		s := evidence.OutcomeStats{Kind: k, N: o.N, Merged: o.Merged, Closed: o.Closed, Open: o.Open, Unknown: o.Unknown, Reopened: o.IssueReopenedWithin14d}
 		if o.RevertedWithin14d != nil {
 			s.Reverted = *o.RevertedWithin14d
 		}
