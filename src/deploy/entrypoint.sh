@@ -378,7 +378,9 @@ hive_reown_agent_token_caches_if_needed() {
   _token_group="$2"
   _token_root="${HIVE_AGENT_TOKEN_ROOT:-/var/run/hive-metrics/agent-tokens}"
   _token_expected="$(id -u dev 2>/dev/null || echo 1001):${_token_group}"
-  for _token_path in "$_token_root"/*"${_token_agent}"*; do
+  for _token_path in "$_token_root/gh-token-${_token_agent}.cache" \
+    "$_token_root/gh-token-${_token_agent}.cache".* \
+    "$_token_root/gh-token-${_token_agent}"-[0-9]*.cache; do
     [ -e "$_token_path" ] || continue
     _token_owner="$(stat -c '%u:%G' "$_token_path" 2>/dev/null || echo 0:unknown)"
     if [ "$_token_owner" != "$_token_expected" ]; then
