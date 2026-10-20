@@ -356,15 +356,15 @@ func (e *commandEnv) runHivesHubRefresh(cmd *cobra.Command, name string, yes boo
 		}
 		for _, target := range plan.targets {
 			row := &plan.rows[target.row]
-			profile, profileErr := set.FindHive(target.hive.HubURL)
+			existing, profileErr := set.FindHive(target.hive.HubURL)
 			if profileErr != nil {
 				row.Status = "unavailable: " + profileErr.Error()
 				failedReview[target.hive.ID] = true
 				failures = append(failures, fmt.Sprintf("%s/%s: %s", plan.hub.Name, target.hive.ID, row.Status))
 				continue
 			}
-			if profile != nil {
-				row.Profile, row.Reused, row.Status = profile.Name, true, "ready"
+			if existing != nil {
+				row.Profile, row.Reused, row.Status = existing.Name, true, "ready"
 				continue
 			}
 			follow := plan.hub.EffectiveFollow()
