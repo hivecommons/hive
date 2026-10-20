@@ -339,6 +339,10 @@ func doOwnerDeleteAsUser(s *Server, path, user string) *httptest.ResponseRecorde
 // drops the campaign archive (state + wiki snapshot) and the row vanishes,
 // while the other revisions in the chain and the Jam state are untouched.
 func TestCampaignDeleteRemovesArchiveOnly(t *testing.T) {
+	// The unfiltered list folds completed runs from the process-wide
+	// lifecycle store in; isolate it so journeys recorded by earlier tests
+	// (e.g. the wavefront completion tests) cannot show up here (#13167).
+	resetLifecycleStore()
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
 	state, err := s.deps.Inception.StartBrownfield("https://github.com/hivecommons/hive")
