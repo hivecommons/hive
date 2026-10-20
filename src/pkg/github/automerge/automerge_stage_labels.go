@@ -839,6 +839,12 @@ func classifyStage(o stageObservation) stageVerdict {
 		if hasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		if verdictNeedsHuman(o.Detail) && !trustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
+			// The reviewer already asked for a person: a 090 candidate would
+			// be dropped for the non-approve verdict and fall to 050, where
+			// the quiet dwell stalls it (hivecommons/hive#13115).
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
+		}
 		// Trust is the only thing this lane holds against the PR: a 090
 		// candidate, refined by ApplyStageLabels against the head's evidence.
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
