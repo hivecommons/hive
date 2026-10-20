@@ -103,10 +103,7 @@ func (h *ContributeWSHub) gateParkRekicked(key string) bool {
 // that the dispatch is the acceptance, and records the reason.
 func gateParkReleaseComment(reporter, reason, label string) string {
 	reporter = strings.TrimSpace(reporter)
-	if len(reason) > noWorkReasonMaxLen {
-		reason = reason[:noWorkReasonMaxLen]
-	}
-	reason = strings.TrimSpace(reason)
+	reason = sanitizeReportedReason(reason)
 	who := "a contributor's agent"
 	if reporter != "" {
 		who = "@" + reporter + "'s agent"
