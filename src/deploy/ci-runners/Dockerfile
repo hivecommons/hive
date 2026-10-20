@@ -127,17 +127,19 @@ RUN set -eux; \
     command -v gh
 
 # CA trust bundle refresh: distrust two Mozilla roots the root programs
-# withdrew on 2026-10-17..20 that Ubuntu 24.04's ca-certificates still ships
+# withdrew on 2026-10-17..20 where Ubuntu 24.04's ca-certificates still ships them
 # (no fixed package yet — drop once it carries the change). curl, git, gh and
-# any Go built in a job read the regenerated system bundle. The checks make a
-# renamed upstream entry fail the build instead of silently re-trusting.
+# any Go built in a job read the regenerated system bundle. Ubuntu 24.04 no
+# longer ships Comodo_AAA_Services_root at all, so that entry is asserted
+# absent-or-disabled; the emSign check makes a renamed upstream entry fail
+# the build instead of silently re-trusting.
 RUN set -eux; \
     sed -i \
       -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
       -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
       /etc/ca-certificates.conf; \
     grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf; \
-    grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf; \
+    ! grep -q '^mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf; \
     update-ca-certificates --fresh; \
     ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem; \
     ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
