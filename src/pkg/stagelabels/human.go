@@ -380,7 +380,11 @@ func ReadyComment(r Route, blockedBy string) string {
 func DecisionComment(r Route) string {
 	var b strings.Builder
 	b.WriteString(DecisionCommentMarker)
-	b.WriteString("\nNeeds a decision, not a merge")
+	if r.ManualMerge {
+		b.WriteString("\nNeeds a manual merge decision")
+	} else {
+		b.WriteString("\nNeeds a decision, not a merge")
+	}
 	if len(r.Reasons) == 1 {
 		b.WriteString(": ")
 		b.WriteString(r.Reasons[0])

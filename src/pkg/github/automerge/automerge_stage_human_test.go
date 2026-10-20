@@ -495,3 +495,35 @@ func TestWorkflowApprovalSnippetRendersSelfContainedWorkflowForOwnAppLogin(t *te
 		t.Fatalf("missing-workflow cause = %q", got)
 	}
 }
+
+// TestDecisionCommentNamesLaneAction is arteeh's lane matrix from #13092,
+// re-pointed at the Evidence-derived route so the engine's passDecision
+// and the entry comment cannot disagree.
+func TestDecisionCommentNamesLaneAction(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason, want string
+		self               bool
+		holds              []string
+		manual             bool
+	}{
+		{name: "self", self: true, want: "`/hive approve` reply posted after the verdict"},
+		{name: "contributor", want: "the PR author cannot release their own PR"},
+		{name: "workflow", reason: contributorLaneReasonWorkflowPath, want: "merge this PR manually", manual: true},
+		{name: "tests removed", reason: contributorLaneReasonTestsRemoved, want: "merge this PR manually", manual: true},
+		{name: "human path", self: true, reason: autoMergeReasonHumanMergePath, want: "merge this PR manually", manual: true},
+		{name: "human path evidence is not a lane rule", reason: autoMergeReasonHumanMergePathEvidence, want: "trusted merger approves"},
+		{name: "label hold", self: true, holds: []string{"hold"}, want: "remove that label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := stagelabels.Evidence{Verdict: stagelabels.VerdictRequiresHuman, Head: "abcdef1234567890", SelfAuthored: tc.self, Holds: tc.holds, ManualMerge: manualMergeReason(tc.reason)}
+			route := stagelabels.RouteHuman(e)
+			body := stagelabels.DecisionComment(route)
+			if route.ManualMerge != tc.manual || !strings.Contains(body, tc.want) {
+				t.Fatalf("manual=%v body=%q", route.ManualMerge, body)
+			}
+			if tc.manual && strings.Contains(body, "not a merge") {
+				t.Fatalf("contradictory manual guidance: %q", body)
+			}
+		})
+	}
+}
