@@ -898,10 +898,6 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
 	fullRepo := owner + "/" + repo
 	verdict := c.contributorLaneVerdictFor(fullRepo, number, headSHA)
-	approver, humanApproved := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, headSHA, verdict)
-	if !humanApproved {
-		approver, humanApproved = c.contributorLaneReviewHoldRelease(ctx, displayRepo, owner, repo, number, headSHA, verdict)
-	}
 	c.noteStageVerdict(owner, repo, number, verdict)
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
@@ -917,6 +913,11 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if claim.admittedByAutoPromotion() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", "contributor-lane:auto-promoted", "merged_prs", claim.AutoPromoted)
+	}
+	// Looked up only for admitted authors: a refused PR would never use the release (#13089).
+	approver, humanApproved := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, headSHA, verdict)
+	if !humanApproved {
+		approver, humanApproved = c.contributorLaneReviewHoldRelease(ctx, displayRepo, owner, repo, number, headSHA, verdict)
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
 	if err != nil {
