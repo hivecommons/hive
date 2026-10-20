@@ -1196,6 +1196,44 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	}
 }
 
+// A contributor-lane admission reason (author-association) with a
+// requires_human verdict must reach 085, not the 090 candidate that the
+// apply pass drops to 050 where the quiet dwell stalls it
+// (hivecommons/hive#13115).
+func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	observe := func(labels []string) {
+		pr := stagePR(336, labels...)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
+		e.noteStageRole("acme", "widget", 336, stagelabels.RoleContributor)
+		pr.Comments = gh.Ptr(0)
+		e.noteStagePR("acme", "widget", 336, pr)
+		e.noteStageVerdict("acme", "widget", 336, requiresHuman)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe([]string{"stage/050-review-pending", "role/contributor", "author/human"})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
+		t.Fatalf("requires_human must hand off to 085: added=%v", api.added)
+	}
+	api.reset()
+	clock.advance(48 * time.Hour)
+	observe([]string{"stage/085-needs-decision", "role/contributor", "author/human"})
+	if api.writes() != 0 {
+		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
+	}
+}
+
 // The sweep's own comments (Dependabot rebase request, stale-approval note,
 // hold release) land after the lane's deep fetch and before
 // ApplyStageLabels, so the credit must go on this cycle's observation, not
