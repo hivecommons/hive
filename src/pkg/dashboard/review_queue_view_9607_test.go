@@ -175,3 +175,33 @@ const evil = entry({ title: '<img src=x onerror=alert(1)>' });
 assert.doesNotMatch(evil, /<img src=x/);
 assert.match(evil, /&lt;img src=x/);
 `
+
+func TestReviewQueueSupersededActionsWithoutAutoClose(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable")
+	}
+	html := indexHTML(t)
+	source := jsFunc(t, html, "esc") + "\n" + jsFunc(t, html, "reviewQueueSupersededHtml") + `
+const assert = require('node:assert/strict');
+global.window = { _hiveRole: 'owner' };
+function dashboardRoleAtLeast(role, required) { return role === required; }
+function formatDashboardDateTime(at) { return at.toISOString(); }
+const entry = {repo: 'myorg/repo1', number: 2, superseded: {
+  closer_repo: 'myorg/repo1', closer_pr: 9, closer_url: 'https://github.com/myorg/repo1/pull/9'
+}};
+let html = reviewQueueSupersededHtml(entry);
+assert.match(html, /myorg\/repo1#9/);
+assert.match(html, /data-action="reviewQueueSupersededClose"/);
+assert.match(html, /data-action="reviewQueueSupersededKeepOpen"/);
+assert.match(html, /close as superseded or keep open/);
+assert.doesNotMatch(html, /auto-closes|closes on the next sweep|grace window/);
+entry.superseded.grace_ends_at = new Date(Date.now() + 3600000).toISOString();
+assert.match(reviewQueueSupersededHtml(entry), /auto-closes/);
+window._hiveRole = 'read';
+assert.doesNotMatch(reviewQueueSupersededHtml(entry), /data-action=/);
+`
+	if out, err := exec.Command(node, "-e", source).CombinedOutput(); err != nil {
+		t.Fatalf("superseded renderer failed: %v\n%s", err, out)
+	}
+}

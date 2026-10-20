@@ -28684,8 +28684,8 @@ function burnAreaChart() {
       '</div>';
     }
 
-    // reviewQueueSupersededHtml renders the supersession grace-window strip
-    // (#11430): the superseding PR, when the sweep will close this one, and
+    // reviewQueueSupersededHtml renders the supersession recommendation:
+    // the superseding PR, an optional auto-close deadline, and
     // owner-only Close now / Keep open actions.
     function reviewQueueSupersededHtml(e) {
       var sup = e && e.superseded;
@@ -28695,7 +28695,7 @@ function burnAreaChart() {
         ? '<a href="' + esc(String(sup.closer_url)) + '" target="_blank" rel="noopener noreferrer">' + closerRef + '</a>'
         : closerRef;
       var ends = sup.grace_ends_at ? new Date(sup.grace_ends_at) : null;
-      var endsText = 'grace window end unknown';
+      var endsText = 'close as superseded or keep open';
       if (ends && !isNaN(ends.getTime())) {
         endsText = ends.getTime() <= Date.now()
           ? 'grace window ended ' + esc(formatDashboardDateTime(ends)) + '; closes on the next sweep'
@@ -28721,7 +28721,7 @@ function burnAreaChart() {
       var ref = repo + '#' + number;
       var closing = action === 'close';
       var ok = await hiveConfirm(closing
-        ? { title: 'Close ' + ref + ' as superseded?', message: 'Hive posts the superseded comment, adds hive/superseded and closes the PR now instead of waiting for the grace window. It can be reopened.', confirmLabel: 'Close now', danger: true }
+        ? { title: 'Close ' + ref + ' as superseded?', message: 'Hive posts the superseded comment, adds hive/superseded and closes the PR now. It can be reopened.', confirmLabel: 'Close now', danger: true }
         : { title: 'Keep ' + ref + ' open?', message: 'Hive adds hive/keep-open so the supersession sweep never auto-closes this PR.', confirmLabel: 'Keep open' });
       if (!ok) return;
       try {
@@ -45904,7 +45904,7 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
           <div class="config-field-row">
-            <div class="config-field"><label>Supersession grace period ${yamlHint('supersession_sweep.grace_period')} ${settingHelpMark('settings', 'features', 'Supersession grace period', `How long a superseded human-authored PR stays open after the supersession notice before it may be closed. Go duration; empty uses the default (${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.supersessionGracePeriod || '')}" placeholder="${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="supersessionGracePeriod" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Supersession grace period ${yamlHint('supersession_sweep.grace_period')} ${settingHelpMark('settings', 'features', 'Supersession grace period', `How long a superseded human-authored PR stays open after the supersession notice before it may be closed automatically. Applies only when supersession_sweep.close_contributor_prs is enabled in hive.yaml; otherwise the Review Queue offers Close now and Keep open without an automatic-close countdown. Go duration; empty uses the default (${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.supersessionGracePeriod || '')}" placeholder="${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="supersessionGracePeriod" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-help">Applies on the next sweep.</div>
         </div>

@@ -9027,7 +9027,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
 				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
-			dashSrv.AuditLogRecord("system", "supersession-sweep-"+event.Action, detail, "", event.Repo, event.Number)
+			dashSrv.AuditLogRecord("system", github.SupersessionSweepAuditPrefix+event.Action, detail, "", event.Repo, event.Number)
 		},
 	})
 	if err != nil {

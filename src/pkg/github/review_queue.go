@@ -266,17 +266,16 @@ func reviewQueueStage(store *stagelabels.Store, full string, number int, opts Re
 // ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason.
 const ReviewQueueSupersededReason = "superseded"
 
-// ReviewQueueSuperseded describes a PR in the supersession grace window: a
-// different merged PR closed its claimed issue, and the sweep will close it
-// at GraceEndsAt unless someone replies or an operator keeps it open.
+// ReviewQueueSuperseded describes a PR whose claimed issue was closed by a
+// different merged PR. Grace timestamps are present only for automatic closure.
 type ReviewQueueSuperseded struct {
 	Reason         string    `json:"reason"`
 	Issue          string    `json:"issue,omitempty"`
 	CloserRepo     string    `json:"closer_repo,omitempty"`
 	CloserPR       int       `json:"closer_pr"`
 	CloserURL      string    `json:"closer_url,omitempty"`
-	GraceStartedAt time.Time `json:"grace_started_at"`
-	GraceEndsAt    time.Time `json:"grace_ends_at"`
+	GraceStartedAt time.Time `json:"grace_started_at,omitzero"`
+	GraceEndsAt    time.Time `json:"grace_ends_at,omitzero"`
 }
 
 // ReviewQueueOptions carries the inputs BuildReviewQueue needs besides the PRs.

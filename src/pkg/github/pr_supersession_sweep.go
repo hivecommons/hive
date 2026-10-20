@@ -14,6 +14,17 @@ const (
 	supersessionSweepMarker            = "<!-- hive:pr-supersession-sweep -->"
 )
 
+// Supersession sweep audit actions the dashboard replays from the audit log
+// (recorded as SupersessionSweepAuditPrefix + action), so producer and
+// consumer share one name per action.
+const (
+	SupersessionSweepAuditPrefix           = "supersession-sweep-"
+	SupersessionActionDetectedContributor  = "detected-contributor"
+	SupersessionActionKeptOpen             = "kept-open"
+	SupersessionActionCommentedContributor = "commented-contributor"
+	SupersessionActionCommentedGrace       = "commented-grace"
+)
+
 type SupersessionSweepOptions struct {
 	MaxActions       int
 	ACMMLevelForRepo func(repo string) int
@@ -21,7 +32,8 @@ type SupersessionSweepOptions struct {
 	// CloseContributorPRs lets the sweep close a superseded human-authored PR
 	// once the guards in DecideSupersessionAutoClose hold and GracePeriod has
 	// elapsed since the notice with no human reply (hivecommons/hive#11418).
-	// Off by default: without it contributor PRs only get the notice.
+	// Off by default: without it contributor PRs get a notice and an
+	// operator recommendation, but are never closed automatically.
 	CloseContributorPRs bool
 	// GracePeriod is how long a contributor PR stays open after the
 	// supersession notice. Non-positive means DefaultSupersessionGracePeriod.
@@ -190,10 +202,23 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	ownPR := identity.Matches(event.Author)
 	if !ownPR {
+		// Record every detection, even when the notice is already present or
+		// automatic closure is disabled. This does not consume a write action.
+		if opts.Audit != nil {
+			detected := event
+			detected.Action = SupersessionActionDetectedContributor
+			opts.Audit(detected)
+		}
+		if supersessionHasLabel(pr, SupersessionKeepOpenLabel) {
+			if opts.Audit != nil {
+				event.Action = SupersessionActionKeptOpen
+				opts.Audit(event)
+			}
+		}
 		if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
 			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 		}
-		event.Action = "commented-contributor"
+		event.Action = SupersessionActionCommentedContributor
 		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(prOwner, closer, reason))
 		changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 		if err != nil {

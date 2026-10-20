@@ -457,8 +457,9 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   Once the notice is on the PR, the sweep re-applies `needs-human` only when
   the notice changes (a different merged PR or reason); clearing the label
   for an unchanged notice sticks.
-- **Human-authored PRs** only get the notice unless
-  `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).
+- **Human-authored PRs** get the notice and are surfaced to operators in the
+  dashboard Review Queue (below); they are never closed automatically
+  unless `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).
   With it set, the sweep closes the PR only when **all** of these hold: every
   file it touches was also touched by the merged PR; it is
   `size/XS`–`size/M` (or under 100 changed lines when unlabeled);
@@ -470,15 +471,17 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   `<!-- hive:pr-supersession-autoclose -->` comment naming the merged PR and
   its merge time, with "reopen if that's wrong". Reopening and commenting
   keeps it open on the next pass.
-- While a PR is in the grace window, the dashboard Review Queue tags it
-  `superseded`, links the merged PR and shows when the window ends. An owner
-  can **Close now** (same comment, label and close as the sweep) or **Keep
-  open**, which adds `hive/keep-open`; the sweep never auto-closes a PR with
-  that label.
+- Every human-authored PR the sweep detects as superseded — whether or not
+  automatic closure is on — is tagged `superseded` in the dashboard Review
+  Queue with a link to the merged PR. When auto-close is active the
+  entry also shows when the grace window ends; otherwise there is no
+  countdown. An owner can **Close now** (same comment, label and close as the
+  sweep) or **Keep open**, which adds `hive/keep-open`; the sweep never
+  auto-closes a PR with that label.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
+| `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they get the notice and a Review Queue close/keep-open decision, but are never closed automatically. |
 | `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
 
 ## Stage labels (`governor.labels.stage`)
