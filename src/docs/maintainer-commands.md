@@ -80,6 +80,19 @@ PRs, [review-swarm.md](review-swarm.md)) is released by a person's GitHub
 PR also leaves `human_hold` on `/api/review/pipeline` and the owner's "your
 turn" inbox; a newer blocking verdict puts it back.
 
+On the contributor lane (PRs opened under a person's login, including the
+owner's own) a trusted merger releases a `requires_human` verdict the same
+way: an **Approve** review or a `/hive approve` reply posted after the verdict.
+GitHub does not let the author approve their own PR, so the reply is how an
+owner who opened the PR records the decision. Only a trusted merger's release
+counts there, so a contributor cannot release their own PR. The lane records
+the release in the same ledger, so the PR leaves "your turn" and
+`stage/085-needs-decision` (hivecommons/hive#13085).
+
+The merge-request relay an agent uses to land a PR refuses one the swarm holds
+with `requires_human` or `reject` until a trusted merger has released it that
+way, whatever `review.require_approval` says (hivecommons/hive#13085).
+
 `/fixed` and `/reopen` are intentionally narrower: they work for the issue's own
 reporter or for `write`/`maintain`/`admin` collaborators. `/fixed` plain prose is
 only meaningful when Hive has already asked whether a merged referenced fix can

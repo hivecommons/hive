@@ -23,20 +23,13 @@ const (
 	autoMergeReasonReviewHoldEvidence = "review-verdict-hold-evidence"
 )
 
-// ReviewVerdictHold is the review swarm's hold on one pull request: the
-// latest decisive verdict asked for a person (requires_human) or rejected it.
-// HeadSHA is the head the verdict was recorded on, which may be older than
-// the PR's current head: a fix push does not clear the hold.
-type ReviewVerdictHold struct {
-	Held       bool
-	Verdict    string
-	HeadSHA    string
-	RecordedAt time.Time
-}
+// ReviewVerdictHold is the review swarm's hold on one pull request; see
+// hgithub.ReviewVerdictHold. The merge-request relay reads the same hold.
+type ReviewVerdictHold = hgithub.ReviewVerdictHold
 
 // ReviewVerdictHoldFunc resolves the review verdict hold for repo#number.
 // repo is owner/repo. It is consulted regardless of review.require_approval.
-type ReviewVerdictHoldFunc func(repo string, number int) ReviewVerdictHold
+type ReviewVerdictHoldFunc = hgithub.ReviewVerdictHoldFunc
 
 // ReviewHoldReleaseFunc records the person's release the gate found for
 // repo#number, so the review pipeline and the dashboard's your-turn decision
@@ -81,71 +74,61 @@ func (c *Engine) reviewVerdictGate(ctx context.Context, displayRepo, owner, repo
 	return reason, nil
 }
 
+// contributorLaneReviewHoldRelease lets a trusted merger release a
+// contributor-lane PR the review swarm holds for a person, the same way the
+// self-authored sweep's reviewVerdictGate does: an approving review or a
+// `/hive approve` reply posted after the holding verdict (#13085). Unlike the
+// self-authored lane, the release must come from a trusted merger, because
+// the PR author here is a contributor who could otherwise release their own
+// PR. A release is recorded in the release ledger so the dashboard's
+// your-turn decision drops the PR, and noted on the stage tracker so the
+// stage label moves on. It returns the releaser's login.
+func (c *Engine) contributorLaneReviewHoldRelease(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string, verdict ContributorLaneVerdict) (string, bool) {
+	if c == nil || c.reviewVerdictHold == nil || !verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true}) {
+		return "", false
+	}
+	hold := c.reviewVerdictHold(owner+"/"+repo, number)
+	if !hold.Held || hold.RecordedAt.IsZero() {
+		return "", false
+	}
+	trusted := func(login string) bool {
+		ok, configured := c.isTrustedMerger(login)
+		return configured && ok
+	}
+	release, released, err := c.findReviewHoldRelease(ctx, owner, repo, number, hold.RecordedAt, trusted)
+	if err != nil {
+		c.warn("contributor-lane could not read the PR's reviews and comments for a person's release", "repo", displayRepo, "pr", number, "error", err)
+		return "", false
+	}
+	if !released {
+		return "", false
+	}
+	c.info("contributor-lane review verdict hold released by a trusted merger", "repo", displayRepo, "pr", number, "verdict", hold.Verdict, "verdict_head", hold.HeadSHA, "by", release.By, "via", release.Via)
+	if c.recordReviewHoldRelease != nil {
+		c.recordReviewHoldRelease(owner+"/"+repo, number, release)
+	}
+	c.noteStageTrustedHumanApproval(owner, repo, number, headSHA, release.By)
+	return release.By, true
+}
+
 // personReleasedReviewHold returns the first review or comment on the PR
 // that releases a hold whose verdict was recorded at since, by
 // hgithub.ReleasesReviewHold: a person's approving review or `/hive approve`
 // reply posted after the verdict.
 func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo string, number int, since time.Time) (hgithub.ReviewHoldRelease, bool, error) {
+	return c.findReviewHoldRelease(ctx, owner, repo, number, since, nil)
+}
+
+func (c *Engine) findReviewHoldRelease(ctx context.Context, owner, repo string, number int, since time.Time, releaser func(login string) bool) (hgithub.ReviewHoldRelease, bool, error) {
 	ctx = hgithub.WithRESTCaller(ctx, "hive:automerge_sweep")
-	reviewOpts := &gh.ListOptions{PerPage: 100}
-	for {
-		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, reviewOpts)
-		if err != nil {
-			return hgithub.ReviewHoldRelease{}, false, err
-		}
-		for _, r := range reviews {
-			release := hgithub.ReviewHoldRelease{
-				Via:    hgithub.ReviewHoldReleaseViaReview,
-				State:  r.GetState(),
-				By:     hgithub.SafeGetLogin(r.GetUser()),
-				Person: c.isPersonLogin(r.GetUser()),
-				At:     r.GetSubmittedAt().Time,
-			}
-			if hgithub.ReleasesReviewHold(since, release) {
-				return release, true, nil
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		reviewOpts.Page = resp.NextPage
-	}
-	commentOpts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
-	if !since.IsZero() {
-		commentOpts.Since = gh.Ptr(since)
-	}
-	for {
-		comments, resp, err := c.gh.Issues.ListComments(ctx, owner, repo, number, commentOpts)
-		if err != nil {
-			return hgithub.ReviewHoldRelease{}, false, err
-		}
-		for _, comment := range comments {
-			release := hgithub.ReviewHoldRelease{
-				Via:    hgithub.ReviewHoldReleaseViaComment,
-				Body:   comment.GetBody(),
-				By:     hgithub.SafeGetLogin(comment.GetUser()),
-				Person: c.isPersonLogin(comment.GetUser()),
-				At:     comment.GetCreatedAt().Time,
-			}
-			if hgithub.ReleasesReviewHold(since, release) {
-				return release, true, nil
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			return hgithub.ReviewHoldRelease{}, false, nil
-		}
-		commentOpts.Page = resp.NextPage
-	}
+	return hgithub.FindReviewHoldRelease(ctx, c.gh, owner, repo, number, since, c.isPersonLogin, releaser)
 }
 
 // isPersonLogin reports whether u is a person, not the App or another bot.
 func (c *Engine) isPersonLogin(u *gh.User) bool {
-	login := strings.TrimSpace(hgithub.SafeGetLogin(u))
-	if login == "" || strings.EqualFold(u.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") {
-		return false
+	appLogin := ""
+	if c.transport != nil {
+		appLogin = c.transport.AppBotLogin()
 	}
-	if c.transport != nil && strings.EqualFold(login, strings.TrimSpace(c.transport.AppBotLogin())) {
-		return false
-	}
-	return true
+	return hgithub.IsPersonLogin(u, appLogin)
 }

@@ -329,6 +329,10 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 	// is the loop-safety authority that decides when to STOP nudging.
 	client.SetMergeReEngageHook(mergeReEngageHook(b.cfg, agentKicker{mgr: b.agentMgr},
 		agentAvailability(b.cfg, b.agentMgr), b.logger))
+	// #13085: the merge-request relay honours the review swarm's verdict hold
+	// the self-merge sweep applies (#12374), released only by a trusted
+	// merger's approving review or `/hive approve` reply.
+	client.SetMergeReviewVerdictGate(reviewVerdictHoldFunc(b.logger), trustedMergerFunc(b.cfg))
 	// Merge-request CIWaits/attempts, poll backoff and "exhausted on this
 	// SHA" records live on the PVC so a restart cannot reset them (#11894).
 	client.SetMergeRequestStatePath(github.MergeRequestStatePath)

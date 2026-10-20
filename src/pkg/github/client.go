@@ -338,6 +338,12 @@ type Client struct {
 	// falls back to the original quarantine behavior. Set by
 	// SetMergeReEngageHook.
 	mergeReEngage MergeReEngageFunc
+	// mergeReviewVerdictHold and mergeReviewHoldReleaser gate the
+	// merge-request watcher on the review swarm's verdict (#13085): a PR the
+	// swarm holds for a person merges only once a trusted merger released
+	// it. nil hold disables the gate. Set by SetMergeReviewVerdictGate.
+	mergeReviewVerdictHold  ReviewVerdictHoldFunc
+	mergeReviewHoldReleaser func(login string) bool
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.

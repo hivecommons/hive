@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // ReviewHoldReleaseCommand is the reply a person posts to release a review
@@ -56,6 +59,98 @@ func ReleasesReviewHold(heldSince time.Time, r ReviewHoldRelease) bool {
 		return IsReviewHoldReleaseCommand(r.Body)
 	}
 	return false
+}
+
+// ReviewVerdictHold is the review swarm's hold on one pull request: the
+// latest decisive verdict asked for a person (requires_human) or rejected it.
+// HeadSHA is the head the verdict was recorded on, which may be older than
+// the PR's current head: a fix push does not clear the hold.
+type ReviewVerdictHold struct {
+	Held       bool
+	Verdict    string
+	HeadSHA    string
+	RecordedAt time.Time
+}
+
+// ReviewVerdictHoldFunc resolves the review verdict hold for repo#number.
+// repo is owner/repo. It is consulted regardless of review.require_approval.
+type ReviewVerdictHoldFunc func(repo string, number int) ReviewVerdictHold
+
+// FindReviewHoldRelease returns the first review or comment on the PR that
+// releases a hold whose verdict was recorded at since, by ReleasesReviewHold:
+// a person's approving review or `/hive approve` reply posted after the
+// verdict. isPerson tells a person from the App and other bots. releaser,
+// when set, further limits who may release (a trusted merger on lanes where
+// the PR author is not one); nil accepts any person.
+func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo string, number int, since time.Time, isPerson func(*gh.User) bool, releaser func(login string) bool) (ReviewHoldRelease, bool, error) {
+	if client == nil {
+		return ReviewHoldRelease{}, false, errors.New("no GitHub client to list the PR's reviews and comments")
+	}
+	accept := func(r ReviewHoldRelease) bool {
+		return ReleasesReviewHold(since, r) && (releaser == nil || releaser(r.By))
+	}
+	reviewOpts := &gh.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, number, reviewOpts)
+		if err != nil {
+			return ReviewHoldRelease{}, false, err
+		}
+		for _, r := range reviews {
+			release := ReviewHoldRelease{
+				Via:    ReviewHoldReleaseViaReview,
+				State:  r.GetState(),
+				By:     SafeGetLogin(r.GetUser()),
+				Person: isPerson != nil && isPerson(r.GetUser()),
+				At:     r.GetSubmittedAt().Time,
+			}
+			if accept(release) {
+				return release, true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		reviewOpts.Page = resp.NextPage
+	}
+	commentOpts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	if !since.IsZero() {
+		commentOpts.Since = gh.Ptr(since)
+	}
+	for {
+		comments, resp, err := client.Issues.ListComments(ctx, owner, repo, number, commentOpts)
+		if err != nil {
+			return ReviewHoldRelease{}, false, err
+		}
+		for _, comment := range comments {
+			release := ReviewHoldRelease{
+				Via:    ReviewHoldReleaseViaComment,
+				Body:   comment.GetBody(),
+				By:     SafeGetLogin(comment.GetUser()),
+				Person: isPerson != nil && isPerson(comment.GetUser()),
+				At:     comment.GetCreatedAt().Time,
+			}
+			if accept(release) {
+				return release, true, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return ReviewHoldRelease{}, false, nil
+		}
+		commentOpts.Page = resp.NextPage
+	}
+}
+
+// IsPersonLogin reports whether u is a person: not appBotLogin, nor any
+// other bot.
+func IsPersonLogin(u *gh.User, appBotLogin string) bool {
+	login := strings.TrimSpace(SafeGetLogin(u))
+	if login == "" || strings.EqualFold(u.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") {
+		return false
+	}
+	if app := strings.TrimSpace(appBotLogin); app != "" && strings.EqualFold(login, app) {
+		return false
+	}
+	return true
 }
 
 // IsReviewHoldReleaseCommand reports whether a comment body carries the

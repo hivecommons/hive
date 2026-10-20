@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // MergeRequestDir is where agents drop merge requests. An agent that wants a PR
@@ -116,6 +118,61 @@ func (c *Client) SetMergeReEngageHook(fn MergeReEngageFunc) {
 		return
 	}
 	c.mergeReEngage = fn
+}
+
+// SetMergeReviewVerdictGate installs the merge-request watcher's review
+// verdict gate (#13085): hold reports the review swarm's hold on a PR and
+// releaser tells which logins may release it (a trusted merger). Safe to call
+// once at startup before the watcher goroutine runs; a nil hold disables the
+// gate.
+func (c *Client) SetMergeReviewVerdictGate(hold ReviewVerdictHoldFunc, releaser func(login string) bool) {
+	if c == nil {
+		return
+	}
+	c.mergeReviewVerdictHold = hold
+	c.mergeReviewHoldReleaser = releaser
+}
+
+// mergeRequestReviewHoldRefusal refuses a merge request for a PR whose latest
+// decisive review verdict is requires_human or reject and that no trusted
+// merger has released with an approving review or a `/hive approve` reply
+// posted after the verdict — the hold the self-merge sweep has applied since
+// #12374, on the relay an agent can reach regardless of
+// review.require_approval (#13085). An error means the PR's reviews or
+// comments could not be read; the caller fails closed through its retry path.
+func (c *Client) mergeRequestReviewHoldRefusal(ctx context.Context, req MergeRequest) (string, error) {
+	if c.mergeReviewVerdictHold == nil {
+		return "", nil
+	}
+	owner, name := c.splitRepo(req.Repo)
+	hold := c.mergeReviewVerdictHold(owner+"/"+name, req.Number)
+	if !hold.Held {
+		return "", nil
+	}
+	verdict := strings.TrimSpace(hold.Verdict)
+	if verdict == "" {
+		verdict = "requires_human"
+	}
+	releaser := c.mergeReviewHoldReleaser
+	if releaser == nil {
+		releaser = func(string) bool { return false }
+	}
+	isPerson := func(u *gh.User) bool { return IsPersonLogin(u, c.AppBotLogin()) }
+	release, released, err := FindReviewHoldRelease(WithRESTCaller(ctx, "hive:merge_request_watcher"), c.client, owner, name, req.Number, hold.RecordedAt, isPerson, releaser)
+	if err != nil {
+		return "", fmt.Errorf("the review verdict %s holds this PR for a person but its reviews and comments could not be read to look for a release (fail closed): %w", verdict, err)
+	}
+	if released {
+		c.logger.Info("merge-request watcher: review verdict hold released by a trusted merger",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("verdict", verdict), slog.String("by", release.By), slog.String("via", release.Via))
+		return "", nil
+	}
+	on := ""
+	if head := strings.TrimSpace(hold.HeadSHA); head != "" {
+		on = " on " + shortSHA(head)
+	}
+	return fmt.Sprintf("review verdict %s%s holds this PR for a person; it merges only after a trusted merger approves it on GitHub or replies %q", verdict, on, ReviewHoldReleaseCommand), nil
 }
 
 // isRequiredCheckMergeBlocker classifies a merge-attempt error string as
@@ -328,6 +385,18 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// a configured repo fails closed through the bounded retry path. Checked
 	// before the optional branch-update so a refused PR receives no push.
 	if refusal, err := c.mergeRequestHumanMergePathRefusal(ctx, req); err != nil {
+		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+		return
+	} else if refusal != "" {
+		c.denyMergeRequest(path, req, refusal, nowFn)
+		return
+	}
+
+	// Review verdict hold (#13085): a PR the review swarm holds for a person
+	// is not merged on an agent's request until a trusted merger releases
+	// it, whatever review.require_approval says. Checked before the optional
+	// branch-update so a refused PR receives no push.
+	if refusal, err := c.mergeRequestReviewHoldRefusal(ctx, req); err != nil {
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
 		return
 	} else if refusal != "" {
