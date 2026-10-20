@@ -176,6 +176,14 @@ const HUBS_SEEN_MIN_WRITE_MS = 60000;
 let hubsSeenWriteTimer = null;
 let hubsSeenDirty = false;
 let lastHubsSeenWrite = 0;
+// #13293: owner-only, bounded JSONL of terminal task attempts ("what I've
+// done"). Retained history, not lifetime totals: pruned to the newest
+// RELAY_ACTIVITY_MAX_ENTRIES within RELAY_ACTIVITY_RETENTION_DAYS. Never holds
+// prompts, task payloads, tokens, credentials or log text.
+const RELAY_ACTIVITY_FILE = process.env.HIVE_RELAY_ACTIVITY_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-activity.jsonl');
+const RELAY_ACTIVITY_MAX_ENTRIES = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_MAX_ENTRIES', 1000);
+const RELAY_ACTIVITY_RETENTION_DAYS = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_RETENTION_DAYS', 90);
+const activityAttempts = new Map();
 const MCP_CONFIG_FILE = process.env.HIVE_MCP_CONFIG_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'mcp.json');
 
 // --- Delivery mode (kubestellar/hive#2538) -------------------------------
@@ -1397,17 +1405,7 @@ function assignmentInScope(hub, msg) {
   if (hub.repoScope == null) return true;
   // Never infer an unknown forge/host from a bare owner/name. New hubs can
   // supply explicit identity; the existing GitHub task URL also identifies it.
-  let forge = msg.forge, host = msg.host;
-  if (!forge && !host && typeof msg.url === 'string') {
-    try {
-      const url = new URL(msg.url);
-      if (url.protocol === 'https:' && url.host === 'github.com' &&
-          url.pathname.toLowerCase().startsWith(`/${String(msg.repo).toLowerCase()}/`)) {
-        forge = 'github'; host = 'github.com';
-      }
-    } catch (_) {}
-  }
-  const id = canonicalRepositoryID(`${forge}/${host}/${msg.repo}`);
+  const id = assignmentRepositoryID(msg);
   return hubScopeReady(hub) && !!id && hub.repoScope.includes(id);
 }
 
@@ -1416,6 +1414,7 @@ function refuseOutOfScopeAssignment(hub, msg) {
   console.log(`Declining ${taskKey(msg)} — out of contributor repository scope`);
   sendTo(hub, { type: 'task_declined', seq: nextSeq(), task_id: msg.task_id,
     task_gen: msg.task_gen, reason: 'out_of_contributor_scope' });
+  if (msg.task_id != null) appendTaskActivity(activityTaskFacts(hub, msg), 'scope-refused');
   return true;
 }
 
@@ -2049,6 +2048,7 @@ function sendTo(hub, msg) {
   // rationale. Everything else about the task is unchanged — it still runs,
   // still ticks locally, and still reports task_complete/ready when it ends.
   if (msg && HUB_OWNERSHIP_FRAMES.has(msg.type) && isLocalOnlyTaskId(msg.task_id)) return;
+  recordActivityForFrame(msg);
   // #6541: while the provider has refused this account on quota, do not ask for
   // work. Enforced HERE, at the one point every frame passes through, rather
   // than at each of the eight `ready` call sites — a guard per call site is the
@@ -2503,6 +2503,133 @@ function recordHubSeen(hub, now = Date.now()) {
   } else if (!hubsSeenWriteTimer) {
     hubsSeenWriteTimer = setTimeout(writeHubsSeenNow, wait);
     if (typeof hubsSeenWriteTimer.unref === 'function') hubsSeenWriteTimer.unref();
+  }
+}
+
+function activityAttemptKey(taskId, taskGen) {
+  return `${taskId}\u0000${taskGen == null ? '' : taskGen}`;
+}
+
+function assignmentRepositoryID(msg) {
+  let forge = msg.forge, host = msg.host;
+  if (!forge && !host && typeof msg.url === 'string') {
+    try {
+      const url = new URL(msg.url);
+      if (url.protocol === 'https:' && url.host === 'github.com' &&
+          url.pathname.toLowerCase().startsWith(`/${String(msg.repo).toLowerCase()}/`)) {
+        forge = 'github'; host = 'github.com';
+      }
+    } catch (_) {}
+  }
+  return canonicalRepositoryID(`${forge}/${host}/${msg.repo}`);
+}
+
+// Only identity fields are copied: the assignment also carries the prompt,
+// a task-scoped token and MCP config, none of which may reach the store.
+function activityTaskFacts(hub, msg) {
+  const number = Number(msg.number);
+  return {
+    hub: hub ? (hub.sourceURL || hubPublicURL(hub.url)) : '',
+    contributor_id: (hub && hub.contributorId) || '',
+    repository: assignmentRepositoryID(msg) || '',
+    repo: typeof msg.repo === 'string' ? msg.repo : '',
+    number: Number.isSafeInteger(number) && number > 0 ? number : undefined,
+    kind: typeof msg.kind === 'string' ? msg.kind : '',
+    task_id: String(msg.task_id),
+    task_gen: msg.task_gen == null ? undefined : msg.task_gen,
+  };
+}
+
+function noteTaskAttemptStart(hub, msg) {
+  if (!msg || msg.task_id == null || isLocalOnlyTaskId(msg.task_id)) return;
+  activityAttempts.set(activityAttemptKey(msg.task_id, msg.task_gen), {
+    ...activityTaskFacts(hub, msg),
+    started_at: new Date().toISOString(),
+  });
+}
+
+// Terminal frames all pass through sendTo; a frame for an attempt this relay
+// never started (an assignment rejected before work began) is not activity.
+function recordActivityForFrame(msg) {
+  if (!msg || (msg.type !== 'task_complete' && msg.type !== 'task_failed')) return;
+  // Rejecting a duplicate offer of the running task is not its outcome.
+  if (msg.type === 'task_failed' && msg.reason === 'Already has active task') return;
+  const key = activityAttemptKey(msg.task_id, msg.task_gen);
+  const facts = activityAttempts.get(key);
+  if (!facts) return;
+  activityAttempts.delete(key);
+  appendTaskActivity(facts, msg.type === 'task_complete' ? 'success' : 'failure');
+}
+
+function recordCancelledActivity(task) {
+  if (!task) return;
+  const key = activityAttemptKey(task.task_id, task.task_gen);
+  const facts = activityAttempts.get(key);
+  if (!facts) return;
+  activityAttempts.delete(key);
+  appendTaskActivity(facts, 'cancelled');
+}
+
+function readActivityRecords() {
+  let raw;
+  try { raw = fs.readFileSync(RELAY_ACTIVITY_FILE, 'utf8'); } catch (_) { return []; }
+  const records = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line);
+      if (record && typeof record === 'object' && typeof record.key === 'string') records.push(record);
+    } catch (_) {}
+  }
+  return records;
+}
+
+function pruneActivityRecords(records, now = Date.now()) {
+  const cutoff = now - RELAY_ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  const kept = records.filter(r => {
+    const ended = Date.parse(r.ended_at);
+    return !Number.isFinite(ended) || ended >= cutoff;
+  });
+  return kept.slice(Math.max(0, kept.length - RELAY_ACTIVITY_MAX_ENTRIES));
+}
+
+function appendTaskActivity(facts, outcome, now = Date.now()) {
+  // Keyed by subscription (hub + contributor) and Hive task/lease generation,
+  // so a replayed frame or a reconnect cannot count one attempt twice. A scope
+  // refusal is an offer, not a run, so it never shadows a later execution.
+  const key = [facts.hub, facts.contributor_id, facts.task_id, facts.task_gen == null ? '' : facts.task_gen,
+    outcome === 'scope-refused' ? 'offer' : 'run'].join('|');
+  const record = {
+    v: 1,
+    key,
+    hub: facts.hub,
+    contributor_id: facts.contributor_id || undefined,
+    repository: facts.repository || undefined,
+    repo: facts.repo || undefined,
+    number: facts.number,
+    kind: facts.kind || undefined,
+    task_id: facts.task_id,
+    task_gen: facts.task_gen,
+    outcome,
+    started_at: facts.started_at || new Date(now).toISOString(),
+    ended_at: new Date(now).toISOString(),
+    backend: BACKEND,
+    model: MODEL || undefined,
+  };
+  try {
+    const existing = readActivityRecords();
+    if (existing.some(r => r.key === key)) return false;
+    const records = pruneActivityRecords([...existing, record], now);
+    const dir = path.dirname(RELAY_ACTIVITY_FILE);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const tmp = `${RELAY_ACTIVITY_FILE}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+    try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+    fs.renameSync(tmp, RELAY_ACTIVITY_FILE);
+    return true;
+  } catch (e) {
+    console.error(`WARNING: could not record task activity in ${RELAY_ACTIVITY_FILE}: ${e.message}`);
+    return false;
   }
 }
 
@@ -3870,6 +3997,7 @@ function handleFixPRInterrupt(msg, hub) {
     console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already handling it`);
     return;
   }
+  noteTaskAttemptStart(hub, msg);
   if (msg.github_token) {
     // The fix works the same repos the primary task was authorized for; a
     // fresh task-scoped credential supersedes the primary's for both.
@@ -8798,6 +8926,7 @@ function handleMessage(data, hub) {
       // (TypeError: Converting circular structure to JSON), which crashed the
       // process, on the very first task after adding multi-hub support.
       Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+      noteTaskAttemptStart(hub, msg);
       activeHubIndex = hubs.indexOf(hub);
       console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(taskDisplay(msg))} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
       if (msg.github_token) {
@@ -8929,6 +9058,7 @@ function handleMessage(data, hub) {
       // produced the utah leftovers, and it is the one path that clears
       // currentTask before stopping the agent.
       const revokedTask = currentTask;
+      recordCancelledActivity(revokedTask);
       currentTask = null;
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
@@ -9599,6 +9729,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     reloadHubsFromProjection,
     recordHubSeen,
     writeHubsSeenNow,
+    appendTaskActivity,
+    RELAY_ACTIVITY_FILE,
     handleProfileSwitchSignal,
     hubs,
     HUBS_SEEN_FILE,

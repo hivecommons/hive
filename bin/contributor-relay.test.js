@@ -313,6 +313,9 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.HIVE_HEADLESS_STATUS_FILE = headlessStatusFile;
   process.env.HIVE_TASK_FILE = path.join(tmpDir, 'contributor-task.json');
   process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
+  // #13293: every terminal task frame now appends local activity; keep it in
+  // the per-test scratch dir unless a test names its own file.
+  process.env.HIVE_RELAY_ACTIVITY_FILE = path.join(tmpDir, 'relay-activity.jsonl');
   if (env) Object.assign(process.env, env);
 
   // The cache must be cleared on every load so each test gets a fresh module
@@ -3845,6 +3848,121 @@ test('relay records last-seen hubs without registration tokens', () => {
     assert.ok(raw.includes('wss://hub-a.example/contribute'));
     assert.ok(raw.includes('2026-09-21T15:04:05.000Z') || raw.includes('2026-09-21T15:04:05Z'));
     assert.ok(!raw.includes('tok-a'), 'hubs-seen.json must not contain registration tokens');
+  } finally { teardown(relay); }
+});
+
+// #13293: durable local activity — one record per terminal attempt.
+function readActivity(relay) {
+  try {
+    return fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+  } catch (_) { return []; }
+}
+
+const ACTIVITY_TASK = { type: 'task_assign', task_id: 'act-1', task_gen: 3, kind: 'issue', repo: 'org/a', forge: 'github', host: 'github.com', number: 42, title: 'work', prompt: 'SECRET PROMPT TEXT', github_token: 'ghs_activitysecret' };
+
+test('#13293 a completed task appends one success record; a replayed completion does not add another', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', summary: 'log text', tmux_output: ['pane text'] });
+    relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed' });
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    const [r] = records;
+    assert.strictEqual(r.outcome, 'success');
+    assert.strictEqual(r.hub, hubs[0].sourceURL);
+    assert.strictEqual(r.repository, 'github/github.com/org/a');
+    assert.strictEqual(r.number, 42);
+    assert.strictEqual(r.task_id, 'act-1');
+    assert.strictEqual(r.task_gen, 3);
+    assert.ok(r.started_at && r.ended_at && r.key);
+    assert.strictEqual(r.backend, 'copilot');
+    assert.strictEqual(relay.appendTaskActivity({ hub: r.hub, contributor_id: r.contributor_id || '', task_id: 'act-1', task_gen: 3 }, 'failure'), false,
+      'a replay of the same attempt under another outcome must not add a record');
+    assert.strictEqual(readActivity(relay).length, 1);
+    if (process.platform !== 'win32') {
+      assert.strictEqual(fs.statSync(relay.RELAY_ACTIVITY_FILE).mode & 0o777, 0o600);
+    }
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 activity never records prompts, tokens, reasons, summaries or pane text', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.failCurrentTask('agent said: SECRET REASON', { kind: 'task' });
+    const raw = fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8');
+    for (const secret of ['SECRET PROMPT TEXT', 'ghs_activitysecret', 'SECRET REASON', 'tok-a']) {
+      assert.ok(!raw.includes(secret), `activity store leaked ${secret}`);
+    }
+    const [r] = readActivity(relay);
+    assert.strictEqual(r.outcome, 'failure');
+    for (const field of ['prompt', 'github_token', 'mcp', 'title', 'summary', 'reason', 'tmux_output', 'token']) {
+      assert.ok(!(field in r), `activity record carries ${field}`);
+    }
+  } finally { console.log = log; console.error = err; teardown(relay); }
+});
+
+test('#13293 a revoked task is recorded as cancelled, not completed', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    relay.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'act-1', reason: 'hub restart' }), hubs[0]);
+    const records = readActivity(relay);
+    assert.deepStrictEqual(records.map(r => r.outcome), ['cancelled']);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 an out-of-scope offer is recorded once as scope-refused', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    const offer = { type: 'task_assign', kind: 'issue', task_id: 'out', task_gen: 1, repo: 'org/z', forge: 'github', host: 'github.com', number: 7, prompt: 'SECRET PROMPT TEXT' };
+    relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual(records[0].outcome, 'scope-refused');
+    assert.strictEqual(records[0].repository, 'github/github.com/org/z');
+    assert.ok(!fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').includes('SECRET PROMPT TEXT'));
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13293 activity is pruned to the newest entries inside the retention window', () => {
+  const relay = loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_ACTIVITY_MAX_ENTRIES: '3', HIVE_RELAY_ACTIVITY_RETENTION_DAYS: '30' } });
+  try {
+    const now = Date.now();
+    const facts = id => ({ hub: 'wss://hub-a.example/contribute', contributor_id: 'c1', repository: 'github/github.com/org/a', task_id: id, task_gen: 1 });
+    relay.appendTaskActivity(facts('old'), 'success', now - 31 * 24 * 60 * 60 * 1000);
+    relay.appendTaskActivity(facts('t1'), 'success', now);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t1'], 'entries past the retention window are pruned');
+    for (const id of ['t2', 't3', 't4']) relay.appendTaskActivity(facts(id), 'success', now);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t2', 't3', 't4'], 'the store keeps only the newest entries');
+  } finally { teardown(relay); }
+});
+
+test('#13293 malformed activity lines are skipped rather than blocking new records', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  try {
+    fs.mkdirSync(path.dirname(relay.RELAY_ACTIVITY_FILE), { recursive: true });
+    fs.writeFileSync(relay.RELAY_ACTIVITY_FILE, 'not json\n{"no":"key"}\n', { mode: 0o600 });
+    assert.strictEqual(relay.appendTaskActivity({ hub: 'h', task_id: 't', task_gen: 1 }, 'success'), true);
+    assert.deepStrictEqual(readActivity(relay).map(r => r.task_id), ['t']);
   } finally { teardown(relay); }
 });
 

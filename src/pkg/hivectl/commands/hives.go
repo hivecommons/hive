@@ -80,11 +80,13 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives export acme --out acme.hive-profile
   hivectl hives import acme.hive-profile --name acme-laptop
   hivectl hives session acme --label review
+  hivectl hives activity
   hivectl hives rename acme acme-prod
   hivectl hives remove acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
+	cmd.AddCommand(newHivesActivityCommand(env))
 	cmd.AddCommand(newHivesPresetCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))

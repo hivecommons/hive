@@ -826,6 +826,8 @@ hivectl hives strategy spread                                 # ranked|spread|ne
 hivectl hives disable acme                                    # pause new work, keep credentials
 hivectl hives enable acme                                     # resume without registering again
 hivectl hives web                                             # loopback web UI for The Commons
+hivectl hives activity                                        # local completed-task history
+hivectl hives activity --clear                                # forget it; profiles untouched
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
 ```
@@ -878,6 +880,17 @@ paths reuse the saved endpoint, contributor ID, token and personal consent.
 Unrelated origins require separate credentials. Deliberate legacy profiles
 with different contributor IDs at the same origin remain separate; onboarding
 must ask which identity to use instead of silently merging them.
+
+`hivectl hives activity` summarizes the relay's local activity store
+(`~/.config/hive/relay-activity.jsonl`, see
+[contributor-relay.md](contributor-relay.md#local-activity-history-hivectl-hives-activity)):
+per-repository completed tasks, per-outcome counts (`success`, `failure`,
+`cancelled`, `scope-refused`) and last activity. Each task attempt counts once
+and a repository reached through several hives is one row. Counts cover
+retained history (last 90 days, up to 1000 attempts), not lifetime totals; with
+no history it prints `unavailable (retention: …)` rather than zeros.
+`--clear` deletes that file only — profiles, consent and repository selection
+are unchanged. `-o json|yaml` prints the same rollup with `available`.
 
 `~/.config/hive/contributor.env` becomes a **generated projection** of that
 file. The relay, `src/compose-contributor.yaml` and `just contribute-k8s` keep

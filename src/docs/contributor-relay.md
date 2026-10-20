@@ -669,7 +669,17 @@ hivectl hives remove staging                              # asks you to type the
 
 The active profile is written first in each list, which is the hub the relay solicits from when it starts. When a relay is **already running**, `hivectl hives use <name>` writes the projection and signals that relay to reload it, so the next solicitation goes to the new active hive without a restart. Work already in flight stays with the hub that assigned it and completes there.
 
-The relay writes two non-secret control files beside the profiles: `contributor-relay.pid`, so `hivectl hives use` can signal the native process or recorded docker/podman container, and `hubs-seen.json`, so `hivectl hives list` can show when each hub last authenticated or heartbeated successfully without probing every hub.
+The relay writes two non-secret control files beside the profiles (plus the activity history below): `contributor-relay.pid`, so `hivectl hives use` can signal the native process or recorded docker/podman container, and `hubs-seen.json`, so `hivectl hives list` can show when each hub last authenticated or heartbeated successfully without probing every hub.
+
+### Local activity history (`hivectl hives activity`)
+
+The relay also keeps `relay-activity.jsonl` beside the profiles ([#13293](https://github.com/hivecommons/hive/issues/13293)): one JSON line per **terminal** task attempt, so `hivectl hives activity` can show what this machine has done. Override the path with `HIVE_RELAY_ACTIVITY_FILE`.
+
+- **Outcomes.** `success` (the relay reported `task_complete`), `failure` (`task_failed` after the task started), `cancelled` (the hive revoked the task) and `scope-refused` (an offer outside your repository selection). Only `success` counts as completed, and it means the local task finished — not that a PR was approved or merged. Assignments rejected before work began (busy, disabled, quota or login hold) are not recorded.
+- **No double counting.** Each record is keyed by the subscription (hive URL plus contributor ID) and the hive's task ID and task generation; a replayed completion or a reconnect never adds a second record. Renaming a profile does not orphan history because records are keyed by hive URL, not profile name. `hivectl hives activity` rolls up by canonical repository, so a repository shared by several hives is one row.
+- **What is recorded.** Hive URL, contributor ID, canonical repository, issue number, task kind, task ID and generation, outcome, `started_at`/`ended_at`, and the executing backend and model. Token or compute figures are not recorded because the relay has no measured value for them. Prompts, task payloads, titles, summaries, pane or log text, GitHub tokens, MCP config and registration tokens are **never** written.
+- **Retention.** The file is mode 0600 in a 0700 directory, rewritten atomically, and pruned on every append to the newest `HIVE_RELAY_ACTIVITY_MAX_ENTRIES` (default 1000) records whose `ended_at` is within `HIVE_RELAY_ACTIVITY_RETENTION_DAYS` (default 90). Counts are therefore retained history, not lifetime totals. A missing file is shown as `unavailable (retention: …)`, not as zero activity; unreadable lines are skipped.
+- **Clearing.** `hivectl hives activity --clear` deletes the file. It does not touch `profiles.yml`, consent or repository selection. Nothing in it is uploaded or shared with any hive.
 
 The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
 
