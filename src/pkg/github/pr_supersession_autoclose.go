@@ -21,6 +21,11 @@ const (
 	// keep open (the dashboard Review Queue's keep-open action,
 	// hivecommons/hive#11430). The sweep never auto-closes a PR carrying it.
 	SupersessionKeepOpenLabel = "hive/keep-open"
+	// supersessionReasonKeptOpen and supersessionReasonExtraFiles are the
+	// keep reasons the decision notice words differently; both the decision
+	// and the sweep's pre-check must use these exact strings.
+	supersessionReasonKeptOpen   = "an operator chose to keep this PR open"
+	supersessionReasonExtraFiles = "this PR touches files the merged PR did not"
 	// DefaultSupersessionGracePeriod is how long a human-authored PR stays
 	// open after the supersession notice before the sweep may close it.
 	DefaultSupersessionGracePeriod = 24 * time.Hour
@@ -94,13 +99,13 @@ func DecideSupersessionAutoClose(f SupersessionAutoCloseFacts) SupersessionAutoC
 		return SupersessionAutoCloseDecision{Verdict: SupersessionKeep, Reason: reason}
 	}
 	if f.KeptOpen {
-		return keep("an operator chose to keep this PR open")
+		return keep(supersessionReasonKeptOpen)
 	}
 	if f.OpenClaimRemaining {
 		return keep("this PR also claims another issue that is still open")
 	}
 	if !f.FilesSubset {
-		return keep("this PR touches files the merged PR did not")
+		return keep(supersessionReasonExtraFiles)
 	}
 	if ok, why := supersessionSizeAllowsAutoClose(f.SizeLabel, f.ChangedLines); !ok {
 		return keep(why)
@@ -384,7 +389,7 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		return event, "commented", nil
 	default:
 		event.Action = "commented-contributor"
-		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review: "+decision.Reason+".")
+		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(owner, closer, decision.Reason))
 		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
 			return event, "", err
 		}

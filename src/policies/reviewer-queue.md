@@ -54,6 +54,21 @@ linked issue names. Hive quotes the question verbatim in the PR's
 the person gets; a literal `@maintainer` placeholder pings nobody and the PR
 waits until someone happens to read the queue.
 
+Hive renders the question as visible text at the top of your comment, so
+write it as the one sentence a maintainer has to answer.
+
+When the PR is not wrong but redundant — a merged PR already carries this
+change, so merging it would be a no-op against the base branch — add a third
+marker naming that PR. Hive then shows `no-op merge: duplicate of #334` as the
+headline instead of a `0/5` score, which would read as "bad code":
+
+```
+<!-- hive-redundant-of: #334 -->
+```
+
+Only emit it after comparing the diffs; a PR that touches the same files with
+different content is not redundant.
+
 **Before raising a decision question, check the linked issue/spec and the PR
 body.** If the answer is stated there, do not ask — cite it (`per #<issue>: …`)
 in your comment and judge the change against that answer. A default the issue

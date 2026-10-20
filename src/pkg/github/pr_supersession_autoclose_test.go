@@ -295,8 +295,15 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			if len(res.Commented) != 1 || res.Commented[0].Action != "commented-contributor" {
 				t.Fatalf("guard %q result = %+v", tc.name, res)
 			}
-			if got := obs.edits[900]; !strings.Contains(got, "Leaving this contributor PR open") {
-				t.Fatalf("guard %q did not rewrite the notice to the keep-open text: %q", tc.name, got)
+			want := "**Decision needed (@"
+			if tc.name == "operator kept open" {
+				want = "An operator chose to keep this PR open"
+			}
+			if got := obs.edits[900]; !strings.Contains(got, want) {
+				t.Fatalf("guard %q did not rewrite the notice to the decision text: %q", tc.name, got)
+			}
+			if got := obs.edits[900]; tc.name == "operator kept open" && strings.Contains(got, "Decision needed") {
+				t.Fatalf("guard %q re-asked a decision the operator already made: %q", tc.name, got)
 			}
 		})
 	}

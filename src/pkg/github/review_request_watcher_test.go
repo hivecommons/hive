@@ -425,6 +425,37 @@ func TestReviewRequestWatcher_ConfidenceLine(t *testing.T) {
 	}
 }
 
+func TestLeadWithDecisionQuestion(t *testing.T) {
+	marker := "<!-- hive-decision-question: Close #12 as a duplicate of #10? -->"
+	body := "review text\n" + marker
+	got := leadWithDecisionQuestion(body)
+	if !strings.HasPrefix(got, "**Decision needed:** Close #12 as a duplicate of #10?\n\n") {
+		t.Fatalf("question not leading: %q", got)
+	}
+	if !strings.Contains(got, marker) {
+		t.Fatalf("marker must be kept: %q", got)
+	}
+	if again := leadWithDecisionQuestion(got); again != got {
+		t.Fatalf("not idempotent: %q", again)
+	}
+	if plain := "no marker"; leadWithDecisionQuestion(plain) != plain {
+		t.Fatal("body without a marker must be untouched")
+	}
+}
+
+func TestAppendConfidenceLine_RedundantReplacesScore(t *testing.T) {
+	report := validVerdictJSON(t, "o/r", 5, "correctness", "reject")
+	set := review.PerspectiveSet{}
+	plain := appendConfidenceLine("body", report, set)
+	if !strings.Contains(plain, "Confidence: 0/5") {
+		t.Fatalf("baseline should keep the score: %q", plain)
+	}
+	got := appendConfidenceLine("body\n<!-- hive-redundant-of: #334 -->", report, set)
+	if !strings.Contains(got, "no-op merge: duplicate of #334") || strings.Contains(got, "Confidence:") {
+		t.Fatalf("redundant headline = %q", got)
+	}
+}
+
 func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
 	dir := withReviewDir(t)
 	stateDir := t.TempDir()

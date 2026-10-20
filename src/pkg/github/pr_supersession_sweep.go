@@ -181,7 +181,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		return SupersessionSweepEvent{}, "", err
 	}
 	if !subset {
-		reason = "this PR touches files the merged PR did not"
+		reason = supersessionReasonExtraFiles
 	}
 
 	level := 0
@@ -194,7 +194,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 		}
 		event.Action = "commented-contributor"
-		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review.")
+		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(prOwner, closer, reason))
 		changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 		if err != nil {
 			return event, "", err
@@ -383,6 +383,31 @@ func (c *Client) prFileSet(ctx context.Context, owner, repo string, number int) 
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// supersessionDecisionNotice leads a contributor PR's notice with the one call
+// the repo operator has to make, not a request for code review
+// (hivecommons/hive#13116). operator is the repository owner, who can merge or
+// close; the PR author is deliberately not mentioned. note is the keep reason
+// from DecideSupersessionAutoClose or the sweep, "" when the sweep had none.
+func supersessionDecisionNotice(operator string, closer supersessionCloser, note string) string {
+	addressee := "maintainers"
+	if operator = strings.TrimSpace(operator); operator != "" {
+		addressee = "@" + operator
+	}
+	switch note {
+	case supersessionReasonKeptOpen:
+		// The decision is already recorded on the PR; do not reopen it.
+		return fmt.Sprintf("An operator chose to keep this PR open (label `%s`), so the sweep will not close it even though #%d already merged and closed the claimed issue. Remove the label to let the sweep decide again.", SupersessionKeepOpenLabel, closer.Number)
+	case supersessionReasonExtraFiles:
+		return fmt.Sprintf("**Decision needed (%s):** #%d already merged and closed the claimed issue, but %s. Recommended: **keep open** until the extra changes are reviewed, or close as superseded if they are not wanted. Another option: merge anyway.", addressee, closer.Number, note)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "**Decision needed (%s):** this PR appears to duplicate #%d, which already merged: every file it touches was also changed there (the sweep compares file names, not contents). Recommended: **close as superseded**. Other options: keep open, or merge anyway.", addressee, closer.Number)
+	if note != "" {
+		fmt.Fprintf(&b, " The sweep did not close it automatically: %s.", note)
+	}
+	return b.String()
 }
 
 func renderSupersessionComment(event SupersessionSweepEvent, closer supersessionCloser, reason string) string {
