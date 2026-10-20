@@ -187,16 +187,30 @@ func decisionCause(reason string) string {
 	return "the lane reported `" + reason + "`"
 }
 
-// postHumanEntry writes the 085 / 090 entry comment once per stage visit.
-// Returns the comments posted.
+// postHumanEntry writes the 085 / 090 entry comment once per stage visit,
+// and again when a parked 085 PR's decision cause changes on the same head
+// to one this visit has not explained yet: the maintainer who cleared the
+// sentinel alert the comment named must be told the workflow-path fence is
+// what now holds the PR, not left reading a stale cause. Each distinct
+// cause is posted once per head. Returns the comments posted.
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
-	if !ok || rec.EntryCommented || rec.Stage != route.Stage {
+	if !ok || rec.Stage != route.Stage {
 		return 0, nil
 	}
-	if obs.HeadSHA != "" && rec.EntryCommentedStage == route.Stage && rec.EntryCommentedHead == obs.HeadSHA {
-		// Same stage and head already explained on an earlier visit.
-		store.MarkEntryCommented(key, obs.HeadSHA)
+	cause := stagelabels.EntryCause(route.Reasons)
+	if rec.EntryCommented {
+		if route.Stage != stagelabels.NeedsDecision || obs.HeadSHA == "" || cause == "" || rec.EntryCommentedHead != obs.HeadSHA {
+			return 0, nil
+		}
+		if rec.EntryCommentExplains(obs.HeadSHA, cause) {
+			// Also seeds the cause on records from before causes were kept.
+			store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
+			return 0, nil
+		}
+	} else if obs.HeadSHA != "" && rec.EntryCommentExplains(obs.HeadSHA, cause) {
+		// Same stage, head and cause already explained on an earlier visit.
+		store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 		return 0, nil
 	}
 	var body string
@@ -212,7 +226,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		c.warn("stage labels: entry comment failed", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "error", err)
 		return 0, err
 	}
-	store.MarkEntryCommented(key, obs.HeadSHA)
+	store.MarkEntryCommentedCause(key, obs.HeadSHA, cause)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
 }
