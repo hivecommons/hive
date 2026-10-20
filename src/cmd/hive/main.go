@@ -7346,6 +7346,41 @@ func runEvalCycle(
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
 
+	// buildStatusSnapshot assembles the full dashboard snapshot from this
+	// cycle's evaluation. It is called twice: once BEFORE the kick dispatch
+	// below and once at the end of the cycle. Kicks are delivered serially
+	// and each one can wait up to the input-prompt timeout for a busy pane,
+	// so with a dozen due agents the dispatch alone has taken 10-15 minutes
+	// on hosted hives — during which /api/status (and everything derived from
+	// it: stage tracker, agent states, governor.nextKickAt) kept showing the
+	// previous cycle's data, and a rolling upgrade landing mid-dispatch meant
+	// the evaluation never reached the dashboard at all.
+	buildStatusSnapshot := func() *dashboard.StatusPayload {
+		payload := dashboard.BuildFrontendStatus(
+			govState,
+			actionable,
+			agentMgr.AllStatuses(),
+			cfg,
+			tokenCollector,
+			gov,
+			beadStores,
+			ghClient,
+			ctx,
+			metricsCollector,
+		)
+		// Green on a PR pill means "the sweep would merge this now" — the
+		// verdict writeMergeEligible reached for this same actionable set,
+		// not a re-derivation from mergeable_state (#7478).
+		dashboard.AttachMergeVerdicts(payload, mergeVerdicts)
+		// A PR pill also carries the hive's OWN review on that PR, so the
+		// queue view shows where the hive has already spoken. Read from the
+		// durable ledger, so this costs no GitHub call per PR; a missing or
+		// unreadable ledger simply means no review pills this cycle.
+		attachReviewLinksForDashboard(payload, logger)
+		return payload
+	}
+	publishStatusBeforeKicks(dashSrv, len(messages), buildStatusSnapshot, logger)
+
 	// Kick dispatch lives behind a seam (#7232): the skip rules and the
 	// single-probe rule are the decisions worth testing, and they were
 	// previously unreachable without a tmux session and a live governor.
@@ -7467,29 +7502,7 @@ func runEvalCycle(
 	// lands mid-build (restart-count/budget reset) drops this snapshot instead
 	// of letting it revert the mutation on the dashboard (#4348).
 	buildEpoch := dashSrv.BeginStatusSnapshot()
-	agentStatuses := agentMgr.AllStatuses()
-
-	statusPayload := dashboard.BuildFrontendStatus(
-		govState,
-		actionable,
-		agentStatuses,
-		cfg,
-		tokenCollector,
-		gov,
-		beadStores,
-		ghClient,
-		ctx,
-		metricsCollector,
-	)
-	// Green on a PR pill means "the sweep would merge this now" — the
-	// verdict writeMergeEligible reached for this same actionable set a
-	// few lines up, not a re-derivation from mergeable_state (#7478).
-	dashboard.AttachMergeVerdicts(statusPayload, mergeVerdicts)
-	// A PR pill also carries the hive's OWN review on that PR, so the queue
-	// view shows where the hive has already spoken. Read from the durable
-	// ledger, so this costs no GitHub call per PR; a missing or unreadable
-	// ledger simply means no review pills this cycle.
-	attachReviewLinksForDashboard(statusPayload, logger)
+	statusPayload := buildStatusSnapshot()
 	statusPublished := false
 	// Ingest any JSONL findings agents wrote and persist them as beads.
 	if advisoryStore != nil {
@@ -7811,7 +7824,7 @@ func runEvalCycle(
 		if tokenCollector != nil {
 			tokenSummary = tokenCollector.Summary()
 		}
-		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentStatuses, tokenSummary); err != nil {
+		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentMgr.AllStatuses(), tokenSummary); err != nil {
 			logger.Warn("failed to record nous snapshot", "error", err)
 		}
 	}
