@@ -9485,6 +9485,18 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	// The PR-claim guard runs FIRST: an open PR that fixes the issue is the
+	// stronger evidence, and the guards below only walk what is still in
+	// the actionable set. With the live-claim filter ahead of it, an issue
+	// whose agent claim was still live when its PR opened was withheld as
+	// "claimed" before the ledger could bucket it "claimed_by_pr", so every
+	// sweep re-derived 020 under the PR-opened 040 and the stage store
+	// recorded a spurious regression (hivecommons/hive#13174 et al.). The
+	// ledger's open-issue set (OpenIssuesOf) likewise needs the full list.
+	ledger := getClaimLedger(logger)
+	if ledger != nil {
+		github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	}
 	// #8380: a LIVE issue claim covers an issue the same way an open PR does,
 	// for every kick prompt (the scanner's included). The claim fields are
 	// only ever set while governor.claims.enabled is on, so with the feature
@@ -9494,11 +9506,9 @@ func applyDuplicatePRGuard(
 			logger.Info("issue-claim guard applied", "withheld", withheld)
 		}
 	}
-	ledger := getClaimLedger(logger)
 	if ledger == nil {
 		return
 	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
 	// The in-progress sweep runs after the PR-claim guard so an issue whose
 	// PR just opened sheds the start mark here, and a lapsed mark frees the
 	// issue before kicks are built. Independent of governor.claims: the
