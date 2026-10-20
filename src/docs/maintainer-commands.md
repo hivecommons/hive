@@ -106,7 +106,11 @@ PRs, [review-swarm.md](review-swarm.md)) is released by a person's GitHub
 **Approve** review or a `/hive approve` reply posted after the swarm's
 `requires_human` or `reject` verdict. Once the sweep has seen that release, the
 PR also leaves `human_hold` on `/api/review/pipeline` and the owner's "your
-turn" inbox; a newer blocking verdict puts it back.
+turn" inbox; a newer blocking verdict puts it back. A fresh verdict drawn only
+by a base-branch merge (a `Merge branch 'main'` update that leaves the PR's own
+non-merge commits unchanged) is not newer in that sense: the release counts
+from the first blocking verdict on that content, on every lane below too
+(hivecommons/hive#13086).
 
 On the contributor lane (PRs opened under a person's login, including the
 owner's own) a trusted merger releases a `requires_human` verdict the same

@@ -162,7 +162,7 @@ func (c *Client) mergeRequestReviewHoldRefusal(ctx context.Context, req MergeReq
 		releaser = func(string) bool { return false }
 	}
 	isPerson := func(u *gh.User) bool { return IsPersonLogin(u, c.AppBotLogin()) }
-	release, released, err := FindReviewHoldRelease(WithRESTCaller(ctx, "hive:merge_request_watcher"), c.client, owner, name, req.Number, hold.RecordedAt, isPerson, releaser)
+	release, released, err := FindReviewHoldRelease(WithRESTCaller(ctx, "hive:merge_request_watcher"), c.client, owner, name, req.Number, hold, isPerson, releaser)
 	if err != nil {
 		return "", fmt.Errorf("the review verdict %s holds this PR for a person but its reviews and comments could not be read to look for a release (fail closed): %w", verdict, err)
 	}

@@ -3,7 +3,6 @@ package automerge
 import (
 	"context"
 	"strings"
-	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
@@ -63,7 +62,7 @@ func (c *Engine) reviewVerdictGate(ctx context.Context, displayRepo, owner, repo
 		// A hold without a recording time (unreadable ledger) fails closed: no approval can postdate it.
 		return reason, nil
 	}
-	release, released, err := c.personReleasedReviewHold(ctx, owner, repo, number, hold.RecordedAt)
+	release, released, err := c.personReleasedReviewHold(ctx, owner, repo, number, hold)
 	if err != nil {
 		return autoMergeReasonReviewHoldEvidence, err
 	}
@@ -99,7 +98,7 @@ func (c *Engine) contributorLaneReviewHoldRelease(ctx context.Context, displayRe
 		ok, configured := c.isTrustedMerger(login)
 		return configured && ok
 	}
-	release, released, err := c.findReviewHoldRelease(ctx, owner, repo, number, hold.RecordedAt, trusted)
+	release, released, err := c.findReviewHoldRelease(ctx, owner, repo, number, hold, trusted)
 	if err != nil {
 		c.warn("contributor-lane could not read the PR's reviews and comments for a person's release", "repo", displayRepo, "pr", number, "error", err)
 		return "", false
@@ -116,16 +115,16 @@ func (c *Engine) contributorLaneReviewHoldRelease(ctx context.Context, displayRe
 }
 
 // personReleasedReviewHold returns the first review or comment on the PR
-// that releases a hold whose verdict was recorded at since, by
-// hgithub.ReleasesReviewHold: a person's approving review or `/hive approve`
-// reply posted after the verdict.
-func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo string, number int, since time.Time) (hgithub.ReviewHoldRelease, bool, error) {
-	return c.findReviewHoldRelease(ctx, owner, repo, number, since, nil)
+// that releases hold, by hgithub.FindReviewHoldRelease: a person's approving
+// review or `/hive approve` reply posted after the first blocking verdict on
+// the content the hold's verdict judged.
+func (c *Engine) personReleasedReviewHold(ctx context.Context, owner, repo string, number int, hold ReviewVerdictHold) (hgithub.ReviewHoldRelease, bool, error) {
+	return c.findReviewHoldRelease(ctx, owner, repo, number, hold, nil)
 }
 
-func (c *Engine) findReviewHoldRelease(ctx context.Context, owner, repo string, number int, since time.Time, releaser func(login string) bool) (hgithub.ReviewHoldRelease, bool, error) {
+func (c *Engine) findReviewHoldRelease(ctx context.Context, owner, repo string, number int, hold ReviewVerdictHold, releaser func(login string) bool) (hgithub.ReviewHoldRelease, bool, error) {
 	ctx = hgithub.WithRESTCaller(ctx, "hive:automerge_sweep")
-	return hgithub.FindReviewHoldRelease(ctx, c.gh, owner, repo, number, since, c.isPersonLogin, releaser)
+	return hgithub.FindReviewHoldRelease(ctx, c.gh, owner, repo, number, hold, c.isPersonLogin, releaser)
 }
 
 // isPersonLogin reports whether u is a person, not the App or another bot.

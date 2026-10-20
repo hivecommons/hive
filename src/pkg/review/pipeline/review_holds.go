@@ -51,13 +51,16 @@ func ReviewHolds(in Inputs) []ReviewHold {
 // from an earlier verdict no approving verdict has cleared since (a fix push
 // does not clear it, #12374); and the dispatcher's hold for the current head.
 //
-// A person's release recorded after the verdict (ghpkg.ReleasesReviewHold,
-// the rule the self-merge sweep applies) lifts the verdict hold, and with a
+// A person's release recorded after the verdict (ghpkg.ReleasesRecordedReviewHold,
+// the rule the self-merge sweep applies, including its earlier start for a
+// verdict a base-branch merge redrew on unchanged content, #13086) lifts the verdict hold, and with a
 // blocking verdict on the current head also the dispatcher's hold, which that
 // verdict placed (#12962).
 func reviewSwarmHolds(in Inputs, current *review.Aggregate, hold *review.HumanReviewHold) []ReviewHold {
 	var out []ReviewHold
+	var heldHead string
 	if current != nil {
+		heldHead = current.HeadSHA
 		switch {
 		case current.Verdict == review.VerdictReject:
 			out = append(out, ReviewHold{Kind: ReviewHoldReject, Reason: "review verdict rejects the current head", Since: current.FirstRecorded()})
@@ -66,11 +69,12 @@ func reviewSwarmHolds(in Inputs, current *review.Aggregate, hold *review.HumanRe
 		}
 	}
 	if len(out) == 0 {
-		if carried, ok := carriedVerdictHold(in.Verdicts, in.PR); ok {
+		if carried, head, ok := carriedVerdictHold(in.Verdicts, in.PR); ok {
 			out = append(out, carried)
+			heldHead = head
 		}
 	}
-	if len(out) > 0 && in.HoldRelease != nil && ghpkg.ReleasesReviewHold(out[0].Since, *in.HoldRelease) {
+	if len(out) > 0 && in.HoldRelease != nil && ghpkg.ReleasesRecordedReviewHold(heldHead, out[0].Since, *in.HoldRelease) {
 		out = nil
 		if blocksOnHead(current) && hold != nil && hold.PlacedByVerdict(*current) {
 			hold = nil
@@ -90,7 +94,8 @@ func blocksOnHead(current *review.Aggregate) bool {
 
 // carriedVerdictHold is review.LatestVerdictHold over the PR's verdicts: the
 // hold the self-merge sweep enforces, so the board shows what blocks a merge.
-func carriedVerdictHold(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (ReviewHold, bool) {
+// It also returns the head the holding verdict was recorded on.
+func carriedVerdictHold(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (ReviewHold, string, bool) {
 	var mine []review.Aggregate
 	for _, a := range items {
 		if samePR(a.Repo, a.Number, pr) {
@@ -99,7 +104,7 @@ func carriedVerdictHold(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (Re
 	}
 	h, ok := review.LatestVerdictHold(mine)
 	if !ok {
-		return ReviewHold{}, false
+		return ReviewHold{}, "", false
 	}
 	kind, what := ReviewHoldRequiresHuman, "required a human"
 	if h.Verdict == review.VerdictReject {
@@ -109,7 +114,7 @@ func carriedVerdictHold(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (Re
 	if !sameHead(h.HeadSHA, pr.HeadSHA) {
 		where = "an earlier head (" + shortSHA(h.HeadSHA) + ")"
 	}
-	return ReviewHold{Kind: kind, Reason: fmt.Sprintf("review verdict on %s %s; no approving verdict or person's approval since", where, what), Since: h.RecordedAt}, true
+	return ReviewHold{Kind: kind, Reason: fmt.Sprintf("review verdict on %s %s; no approving verdict or person's approval since", where, what), Since: h.RecordedAt}, h.HeadSHA, true
 }
 
 func shortSHA(sha string) string {

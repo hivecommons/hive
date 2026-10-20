@@ -92,6 +92,15 @@ func personApproval12962(at time.Time) *ghpkg.ReviewHoldRelease {
 	return &ghpkg.ReviewHoldRelease{Via: ghpkg.ReviewHoldReleaseViaReview, State: "APPROVED", By: "owner", Person: true, At: at}
 }
 
+// baseMergeRelease13086 is a release the sweep recorded against the hold on
+// holdHead after finding that the verdict on "old" (t0) judged the same
+// non-merge commits, so the hold began at t0 (#13086).
+func baseMergeRelease13086(holdHead string) *ghpkg.ReviewHoldRelease {
+	r := personApproval12962(t0.Add(time.Hour))
+	r.HoldHeadSHA, r.HeldSince = holdHead, t0
+	return r
+}
+
 // A person's approving review or `/hive approve` reply after the verdict
 // releases the review-swarm hold, as the self-merge sweep does (#12962). An
 // earlier release, a bot's approval, or a plain comment does not, and a newer
@@ -129,6 +138,12 @@ func TestReviewHolds_PersonRelease12962(t *testing.T) {
 		{name: "a newer requires_human on a later head holds again",
 			verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 0), reviewedAgg(review.VerdictRequiresHuman, "head", 2)},
 			release:  personApproval12962(t0.Add(time.Hour)), want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
+		{name: "a release the sweep found before a base-branch merge redrew the verdict",
+			verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 0), reviewedAgg(review.VerdictRequiresHuman, "head", 2)},
+			release:  baseMergeRelease13086("head"), wantStage: StageApproved},
+		{name: "a recorded release against another verdict's head does not move the start",
+			verdicts: []review.Aggregate{reviewedAgg(review.VerdictRequiresHuman, "old", 0), reviewedAgg(review.VerdictRequiresHuman, "head", 2)},
+			release:  baseMergeRelease13086("old"), want: []string{ReviewHoldRequiresHuman}, wantStage: StageHumanHold},
 		{name: "release between the first recording and a later collect of the same verdict", verdicts: []review.Aggregate{firstRecorded}, release: personApproval12962(between), wantStage: StageApproved},
 		{name: "a release does not lift a dispatch hold the verdict did not place",
 			dispatch: review.DispatchState{Human: []review.HumanReviewHold{{Repo: testRepo, Number: 7, HeadSHA: "head", Reason: "review fix cap reached (6/6)"}}},

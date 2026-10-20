@@ -1,6 +1,8 @@
 package review
 
 import (
+	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -23,6 +25,19 @@ type VerdictHold struct {
 	// (hivecommons/hive#12957).
 	RecordedAt time.Time `json:"recorded_at,omitzero"`
 	Reasons    []string  `json:"reasons,omitempty"`
+	// Verdicts are the blocking verdicts recorded since the last one that
+	// cleared a hold, oldest first; the last is the hold itself. A base-branch
+	// merge moves the head and draws a fresh verdict without changing the
+	// PR's own commits, so a person's release after an earlier verdict on the
+	// same content still stands (hivecommons/hive#13086).
+	Verdicts []HeldVerdict `json:"verdicts,omitempty"`
+}
+
+// HeldVerdict is one blocking verdict behind a VerdictHold: the head it was
+// recorded on and when it was first recorded.
+type HeldVerdict struct {
+	HeadSHA    string    `json:"head_sha,omitempty"`
+	RecordedAt time.Time `json:"recorded_at,omitzero"`
 }
 
 // BlocksSelfMerge reports whether an aggregate asks for a person:
@@ -45,25 +60,39 @@ func clearsVerdictHold(a Aggregate) bool {
 // most recently first-recorded decisive aggregate wins: a blocking one holds the PR, a
 // merge-eligible approve releases it. changes_requested and incomplete
 // aggregates neither hold nor release.
+//
+// Verdicts lists the blocking verdicts first-recorded after the latest
+// clearing one, oldest first, ending with the hold's own verdict.
 func LatestVerdictHold(items []Aggregate) (VerdictHold, bool) {
-	var latest *Aggregate
+	var decisive []*Aggregate
 	for i := range items {
 		a := &items[i]
-		if !BlocksSelfMerge(*a) && !clearsVerdictHold(*a) {
-			continue
-		}
-		if latest == nil || a.FirstRecorded().After(latest.FirstRecorded()) {
-			latest = a
+		if BlocksSelfMerge(*a) || clearsVerdictHold(*a) {
+			decisive = append(decisive, a)
 		}
 	}
-	if latest == nil || !BlocksSelfMerge(*latest) {
+	// Stable, so equal first-recorded times keep the input order and the
+	// first-listed aggregate stays the latest, as before.
+	sort.SliceStable(decisive, func(i, j int) bool {
+		return decisive[i].FirstRecorded().After(decisive[j].FirstRecorded())
+	})
+	if len(decisive) == 0 || !BlocksSelfMerge(*decisive[0]) {
 		return VerdictHold{}, false
 	}
+	latest := decisive[0]
+	var held []HeldVerdict
+	for _, a := range decisive {
+		if !BlocksSelfMerge(*a) {
+			break
+		}
+		held = append(held, HeldVerdict{HeadSHA: a.HeadSHA, RecordedAt: a.FirstRecorded()})
+	}
+	slices.Reverse(held)
 	verdict := latest.Verdict
 	if verdict != VerdictReject {
 		verdict = VerdictRequiresHuman
 	}
-	return VerdictHold{Verdict: verdict, HeadSHA: latest.HeadSHA, RecordedAt: latest.FirstRecorded(), Reasons: latest.Reasons}, true
+	return VerdictHold{Verdict: verdict, HeadSHA: latest.HeadSHA, RecordedAt: latest.FirstRecorded(), Reasons: latest.Reasons, Verdicts: held}, true
 }
 
 // VerdictHoldFor is LatestVerdictHold over the artifact's entries for

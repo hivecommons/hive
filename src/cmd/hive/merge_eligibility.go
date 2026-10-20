@@ -223,7 +223,7 @@ func reviewVerdictHoldFunc(logger *slog.Logger) automerge.ReviewVerdictHoldFunc 
 		if !ok {
 			return automerge.ReviewVerdictHold{}
 		}
-		return automerge.ReviewVerdictHold{Held: true, Verdict: string(hold.Verdict), HeadSHA: hold.HeadSHA, RecordedAt: hold.RecordedAt}
+		return automerge.ReviewVerdictHold{Held: true, Verdict: string(hold.Verdict), HeadSHA: hold.HeadSHA, RecordedAt: hold.RecordedAt, Verdicts: hold.Verdicts}
 	}
 }
 

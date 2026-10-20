@@ -14,6 +14,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // ReviewHoldReleaseCommand is the reply a person posts to release a review
@@ -37,6 +38,13 @@ type ReviewHoldRelease struct {
 	By     string    `json:"by"`
 	Person bool      `json:"person"`
 	At     time.Time `json:"at"`
+	// HoldHeadSHA and HeldSince are the hold the release was found against:
+	// the head of its latest blocking verdict and the time the hold began on
+	// that verdict's content (ReviewHoldSince). They let the review pipeline
+	// honour a release posted before a base-branch merge drew a fresh verdict
+	// on the same content, as the sweep does (hivecommons/hive#13086).
+	HoldHeadSHA string    `json:"hold_head_sha,omitempty"`
+	HeldSince   time.Time `json:"held_since,omitzero"`
 }
 
 // ReleasesReviewHold reports whether r releases a review verdict hold whose
@@ -61,15 +69,34 @@ func ReleasesReviewHold(heldSince time.Time, r ReviewHoldRelease) bool {
 	return false
 }
 
+// ReleasesRecordedReviewHold is ReleasesReviewHold for a release read back
+// from the ledger, against a hold whose latest blocking verdict was recorded
+// on holdHeadSHA at heldSince. When the release was found against that same
+// verdict, the earlier start the finder established for its content
+// (r.HeldSince) is honoured, so the board agrees with the sweep that a
+// base-branch merge did not undo the release (hivecommons/hive#13086).
+func ReleasesRecordedReviewHold(holdHeadSHA string, heldSince time.Time, r ReviewHoldRelease) bool {
+	since := heldSince
+	head := strings.TrimSpace(holdHeadSHA)
+	if head != "" && strings.EqualFold(strings.TrimSpace(r.HoldHeadSHA), head) && !r.HeldSince.IsZero() && r.HeldSince.Before(since) {
+		since = r.HeldSince
+	}
+	return ReleasesReviewHold(since, r)
+}
+
 // ReviewVerdictHold is the review swarm's hold on one pull request: the
 // latest decisive verdict asked for a person (requires_human) or rejected it.
 // HeadSHA is the head the verdict was recorded on, which may be older than
 // the PR's current head: a fix push does not clear the hold.
+//
+// Verdicts are the blocking verdicts behind the hold, oldest first, ending
+// with the one on HeadSHA (review.VerdictHold.Verdicts).
 type ReviewVerdictHold struct {
 	Held       bool
 	Verdict    string
 	HeadSHA    string
 	RecordedAt time.Time
+	Verdicts   []review.HeldVerdict
 }
 
 // ReviewVerdictHoldFunc resolves the review verdict hold for repo#number.
@@ -77,17 +104,25 @@ type ReviewVerdictHold struct {
 type ReviewVerdictHoldFunc func(repo string, number int) ReviewVerdictHold
 
 // FindReviewHoldRelease returns the first review or comment on the PR that
-// releases a hold whose verdict was recorded at since, by ReleasesReviewHold:
-// a person's approving review or `/hive approve` reply posted after the
-// verdict. isPerson tells a person from the App and other bots. releaser,
-// when set, further limits who may release (a trusted merger on lanes where
-// the PR author is not one); nil accepts any person.
-func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo string, number int, since time.Time, isPerson func(*gh.User) bool, releaser func(login string) bool) (ReviewHoldRelease, bool, error) {
+// releases hold, by ReleasesReviewHold: a person's approving review or
+// `/hive approve` reply posted after the first blocking verdict on the
+// content the hold's verdict judged (ReviewHoldSince), so a base-branch
+// merge that drew a fresh verdict does not undo it (hivecommons/hive#13086).
+// isPerson tells a person from the App and other bots. releaser, when set,
+// further limits who may release (a trusted merger on lanes where the PR
+// author is not one); nil accepts any person. The returned release carries
+// the hold it was found against (HoldHeadSHA, HeldSince).
+func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo string, number int, hold ReviewVerdictHold, isPerson func(*gh.User) bool, releaser func(login string) bool) (ReviewHoldRelease, bool, error) {
 	if client == nil {
 		return ReviewHoldRelease{}, false, errors.New("no GitHub client to list the PR's reviews and comments")
 	}
-	accept := func(r ReviewHoldRelease) bool {
-		return ReleasesReviewHold(since, r) && (releaser == nil || releaser(r.By))
+	since := ReviewHoldSince(ctx, client, owner, repo, number, hold)
+	accept := func(r *ReviewHoldRelease) bool {
+		if !ReleasesReviewHold(since, *r) || (releaser != nil && !releaser(r.By)) {
+			return false
+		}
+		r.HoldHeadSHA, r.HeldSince = hold.HeadSHA, since
+		return true
 	}
 	reviewOpts := &gh.ListOptions{PerPage: 100}
 	for {
@@ -103,7 +138,7 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 				Person: isPerson != nil && isPerson(r.GetUser()),
 				At:     r.GetSubmittedAt().Time,
 			}
-			if accept(release) {
+			if accept(&release) {
 				return release, true, nil
 			}
 		}
@@ -129,7 +164,7 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 				Person: isPerson != nil && isPerson(comment.GetUser()),
 				At:     comment.GetCreatedAt().Time,
 			}
-			if accept(release) {
+			if accept(&release) {
 				return release, true, nil
 			}
 		}
@@ -138,6 +173,104 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 		}
 		commentOpts.Page = resp.NextPage
 	}
+}
+
+// ReviewHoldSince returns when hold began on the content its latest verdict
+// judged: the first-recorded time of the earliest verdict in the unbroken run
+// of blocking verdicts, ending with the latest, whose heads carry the same
+// non-merge commits. A head the latest verdict's head reaches only through
+// merge commits (a `Merge branch 'main'` update) is the same content; any
+// other commit, a rewritten history, or a new verdict on the same head (a
+// changed description) starts a new hold. It lists the PR's commits only
+// when there is an earlier verdict to consider, and falls back to the latest
+// verdict's time (hold.RecordedAt) whenever the commits cannot be read.
+func ReviewHoldSince(ctx context.Context, client *gh.Client, owner, repo string, number int, hold ReviewVerdictHold) time.Time {
+	if client == nil || len(hold.Verdicts) < 2 || hold.RecordedAt.IsZero() {
+		return hold.RecordedAt
+	}
+	var commits []*gh.RepositoryCommit
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		page, resp, err := client.PullRequests.ListCommits(ctx, owner, repo, number, opts)
+		if err != nil {
+			return hold.RecordedAt
+		}
+		commits = append(commits, page...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return reviewHoldSinceForCommits(hold, commits)
+}
+
+// reviewHoldSinceForCommits is ReviewHoldSince over the PR's commits.
+func reviewHoldSinceForCommits(hold ReviewVerdictHold, commits []*gh.RepositoryCommit) time.Time {
+	since := hold.RecordedAt
+	n := len(hold.Verdicts)
+	if n < 2 || since.IsZero() {
+		return since
+	}
+	parents := make(map[string][]string, len(commits))
+	for _, c := range commits {
+		var ps []string
+		for _, p := range c.Parents {
+			ps = append(ps, strings.ToLower(p.GetSHA()))
+		}
+		parents[strings.ToLower(c.GetSHA())] = ps
+	}
+	latest := strings.ToLower(strings.TrimSpace(hold.Verdicts[n-1].HeadSHA))
+	reach := prCommitAncestors(parents, latest)
+	if reach == nil {
+		return since
+	}
+	for i := n - 2; i >= 0; i-- {
+		v := hold.Verdicts[i]
+		head := strings.ToLower(strings.TrimSpace(v.HeadSHA))
+		if v.RecordedAt.IsZero() || head == latest || !sameNonMergeCommits(parents, reach, head) {
+			break
+		}
+		since = v.RecordedAt
+	}
+	return since
+}
+
+// prCommitAncestors returns head and the PR commits it reaches through their
+// parents, or nil when head is not one of the PR's commits. parents holds the
+// PR's commits only, so the walk stops at the base branch.
+func prCommitAncestors(parents map[string][]string, head string) map[string]bool {
+	if _, ok := parents[head]; !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	stack := []string{head}
+	for len(stack) > 0 {
+		sha := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		ps, ok := parents[sha]
+		if !ok || seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		stack = append(stack, ps...)
+	}
+	return seen
+}
+
+// sameNonMergeCommits reports whether head, an earlier verdict's head, is
+// one of the commits in reach (the later head and its PR ancestors) and
+// every commit reach adds over head's own ancestors is a merge commit.
+func sameNonMergeCommits(parents map[string][]string, reach map[string]bool, head string) bool {
+	if !reach[head] {
+		return false
+	}
+	earlier := prCommitAncestors(parents, head)
+	for sha := range reach {
+		if !earlier[sha] && len(parents[sha]) < 2 {
+			return false
+		}
+	}
+	return true
 }
 
 // IsPersonLogin reports whether u is a person: not appBotLogin, nor any
@@ -237,6 +370,9 @@ func RecordReviewHoldRelease(path, repo string, number int, r ReviewHoldRelease)
 		r.Body = ReviewHoldReleaseCommand
 	}
 	r.At = r.At.UTC()
+	if !r.HeldSince.IsZero() {
+		r.HeldSince = r.HeldSince.UTC()
+	}
 	reviewHoldReleasesMu.Lock()
 	defer reviewHoldReleasesMu.Unlock()
 
@@ -266,7 +402,8 @@ func RecordReviewHoldRelease(path, repo string, number int, r ReviewHoldRelease)
 }
 
 func sameReviewHoldRelease(a, b ReviewHoldRelease) bool {
-	return a.Via == b.Via && a.State == b.State && a.Body == b.Body && a.By == b.By && a.Person == b.Person && a.At.Equal(b.At)
+	return a.Via == b.Via && a.State == b.State && a.Body == b.Body && a.By == b.By && a.Person == b.Person && a.At.Equal(b.At) &&
+		a.HoldHeadSHA == b.HoldHeadSHA && a.HeldSince.Equal(b.HeldSince)
 }
 
 func pruneReviewHoldReleases(releases map[string]ReviewHoldRelease) {

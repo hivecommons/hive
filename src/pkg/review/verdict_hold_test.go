@@ -69,3 +69,41 @@ func TestArtifactVerdictHoldForMatchesPR(t *testing.T) {
 		t.Fatal("another repo's verdict must not hold this PR")
 	}
 }
+
+// Verdicts lists the blocking verdicts since the last clearing one, oldest
+// first, so a release can be judged against the first verdict on unchanged
+// content (hivecommons/hive#13086).
+func TestLatestVerdictHoldVerdictsSinceLastClear13086(t *testing.T) {
+	t0 := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
+	reviewed := map[Perspective]Verdict{PerspectiveSecurity: VerdictRequiresHuman}
+	agg := func(head string, v Verdict, at time.Duration) Aggregate {
+		a := Aggregate{Repo: "acme/widget", Number: 91, HeadSHA: head, Verdict: v, Perspectives: reviewed, FirstRecordedAt: t0.Add(at), RecordedAt: t0.Add(at + time.Hour)}
+		if v == VerdictApprove {
+			a.MergeEligible = true
+		}
+		return a
+	}
+	items := []Aggregate{
+		agg("d", VerdictRequiresHuman, 3*time.Hour),
+		agg("a", VerdictRequiresHuman, 0),
+		agg("b", VerdictApprove, time.Hour),
+		agg("c", VerdictRequiresHuman, 2*time.Hour),
+		agg("c2", VerdictChangesRequested, 150*time.Minute),
+	}
+	got, ok := LatestVerdictHold(items)
+	if !ok {
+		t.Fatal("expected a hold")
+	}
+	want := []HeldVerdict{{HeadSHA: "c", RecordedAt: t0.Add(2 * time.Hour)}, {HeadSHA: "d", RecordedAt: t0.Add(3 * time.Hour)}}
+	if len(got.Verdicts) != len(want) {
+		t.Fatalf("Verdicts = %+v, want %+v", got.Verdicts, want)
+	}
+	for i := range want {
+		if got.Verdicts[i].HeadSHA != want[i].HeadSHA || !got.Verdicts[i].RecordedAt.Equal(want[i].RecordedAt) {
+			t.Fatalf("Verdicts = %+v, want %+v", got.Verdicts, want)
+		}
+	}
+	if got.HeadSHA != "d" || !got.RecordedAt.Equal(t0.Add(3*time.Hour)) {
+		t.Fatalf("hold = %+v, want head d recorded at %v", got, t0.Add(3*time.Hour))
+	}
+}
