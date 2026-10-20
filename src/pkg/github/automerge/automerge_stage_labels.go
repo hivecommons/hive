@@ -749,12 +749,16 @@ var stageHandoffReasons = map[string]bool{
 
 // stageAdmissionReasons are reasons that mean "this lane cannot vouch for
 // the author": the trusted-author lane's role check and the contributor
-// lane's registry/claim admission. They yield a WEAK needs-human opinion
+// lane's registry/claim admission. They yield a WEAK opinion
 // (stageRankRole / stageRankAdmission): another lane that admits the author
-// owns the stage, and when the resolved tier is trusted the opinion is
-// dropped altogether (hivecommons/hive#12403 was flipped to 090 by the
-// trusted-author lane's role check whenever the contributor lane — which
-// admitted the author from the registry — had no classified opinion).
+// owns the stage. The opinion is normally a 090 candidate, which is dropped
+// altogether when the resolved tier is trusted (hivecommons/hive#12403 was
+// flipped to 090 by the trusted-author lane's role check whenever the
+// contributor lane — which admitted the author from the registry — had no
+// classified opinion). When the reviewer verdict for the head is already
+// requires_human the weak opinion is 085 instead, and that one is kept
+// whatever the tier: a person owes a decision, not a merge click
+// (hivecommons/hive#13115).
 var stageAdmissionReasons = map[string]int{
 	"untrusted-author-role":      stageRankRole,
 	contributorLaneReasonNoClaim: stageRankAdmission, contributorLaneReasonClaimAuthor: stageRankAdmission,
@@ -984,7 +988,9 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 			role = stagelabels.RoleUntrusted
 		case best.Stage == stagelabels.ReadyForHumanMerge && role == stagelabels.RoleTrusted:
 			// Some lane admits this author; a lane that cannot vouch for
-			// them has nothing to say about the stage. Leave it as is.
+			// them has nothing to say about the stage. Leave it as is. A
+			// weak 085 (requires_human verdict, #13115) is deliberately
+			// kept: the decision is owed whoever the author is.
 			best = stageVerdict{}
 		}
 	}
