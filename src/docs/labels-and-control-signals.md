@@ -710,7 +710,10 @@ does not bump itself.
   check-failing:unit` — and records the hop in the item's history
   (`stage.history[]` on the review-queue entry, newest last, capped at 12).
   Leaving a repair stage (`070`/`071`/`072`/`074`) for `050`/`060` is the repair
-  route itself and is not commented.
+  route itself and is not commented; nor is a move *between* `070`/`071`/`072`
+  (`072 → 070` on `hive-signoff-attribution`, `072 → 071` when the author
+  kind is learned late) — that re-attributes who owes the fix, it does not
+  knock the head back.
 - **A decomposed parent with an open child never stalls** (see above): it
   is waiting on its children, not on a person.
 - **Filter `label:stage/stalled` across repos = every PR a person has

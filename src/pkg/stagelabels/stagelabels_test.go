@@ -350,6 +350,15 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 	if IsRegression(AdoptedByHive, ReturnedToContributor) || IsRegression(AdoptedByHive, ReviewPending) || !IsRegression(AdoptedByHive, Claimed) {
 		t.Fatal("IsRegression adoption hand-back exception wrong")
 	}
+	// 070/071/072 re-attribute the fix among hive, human and clanker; none
+	// of those moves is a knock-back (hive-signoff-attribution 072 → 070).
+	for _, from := range []Stage{Fixing, NeedsAuthor, ReturnedToContributor} {
+		for _, to := range []Stage{Fixing, NeedsAuthor, ReturnedToContributor} {
+			if IsRegression(from, to) {
+				t.Errorf("%v → %v flagged as regression", from, to)
+			}
+		}
+	}
 	if tr = st.Observe(key, Reviewed, "y"); tr.Recovered {
 		t.Fatal("not yet back to the regressed-from stage")
 	}
