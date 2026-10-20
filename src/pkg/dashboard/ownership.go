@@ -492,12 +492,13 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	if env.sentinelLabel != "" && labels[strings.ToLower(env.sentinelLabel)] {
 		return yourTurn(OwnershipReasonSentinelFlagged, "Flagged by the sentinel — inspect it")
 	}
-	// (3) covered by an open PR: the PR closes it on merge. Someone else's
+	// (3) supersession applies to pull requests only; see decidePROwnership.
+	// (4) covered by an open PR: the PR closes it on merge. Someone else's
 	// move, and the safety net does not cover it.
 	if in.bucket == repoWorkBucketClaimedByPR || in.openLinkedPR {
 		return waitingElsewhere()
 	}
-	// (4) parking buckets.
+	// (5) parking buckets.
 	var parking string
 	if !in.actionable && !in.held {
 		// The enumeration recorded one bucket per issue by label order;
@@ -515,11 +516,11 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	if parking != "" {
 		return parkedOwnership(parking)
 	}
-	// (5) untrusted reporter awaiting an admission label.
+	// (6) untrusted reporter awaiting an admission label.
 	if in.bucket == repoWorkBucketReporterTriage {
 		return yourTurn(OwnershipReasonUntrustedReporter, "Reporter is not trusted — add an admission label to let agents work on it")
 	}
-	// (6) awaiting the reporter's confirmation: the label or bucket, or a
+	// (7) awaiting the reporter's confirmation: the label or bucket, or a
 	// likely-done issue the reporter-confirmation gate applies to.
 	// hive/verified-open cancels likely-done: the agent found the work not
 	// finished, so nothing awaits the reporter's confirmation.
@@ -530,15 +531,15 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		}
 		return waitingElsewhere()
 	}
-	// (7) verified done but not closed.
+	// (8) verified done but not closed.
 	if ownershipVerifiedDone(in, labels, env) {
 		return yourTurn(OwnershipReasonVerifiedDone, "Hive verified this is done but could not close it")
 	}
-	// (8) agent-filed and unacknowledged while acknowledgment is required.
+	// (9) agent-filed and unacknowledged while acknowledgment is required.
 	if role := issueAgentRole(in.labels); role != "" && !in.acknowledged && !labels[ownershipLabelApprovedDirection] && env.selfAuthorizationHoldFor(in.repo) {
 		return yourTurn(OwnershipReasonAgentFiledUnacknowledged, "Filed by agent "+role+" — acknowledge it or close it")
 	}
-	// (10) otherwise not your turn; the safety net may still apply.
+	// (11) otherwise not your turn; the safety net may still apply.
 	if issueSafetyNetCovers(in, labels, env) && env.stale(in.createdAt, in.updatedAt) {
 		return safetyNetOwnership(env.untouchedDays(in.createdAt, in.updatedAt))
 	}
@@ -596,8 +597,8 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	if env.sentinelLabel != "" && labels[strings.ToLower(env.sentinelLabel)] {
 		return yourTurn(OwnershipReasonSentinelFlagged, "Flagged by the sentinel — inspect it before it merges")
 	}
-	// Supersession is a concrete close/keep-open decision, ahead of generic
-	// review holds. Explicit human holds and sentinel warnings still win.
+	// (3) superseded by a merged PR: a concrete close/keep-open decision, ahead
+	// of generic review holds. Explicit human holds and sentinel warnings win.
 	if env.supersededPR != nil && !labels[github.SupersessionKeepOpenLabel] {
 		if info, ok := env.supersededPR(pr.Repo, pr.Number); ok {
 			out := yourTurn(OwnershipReasonSupersededRecommendedClose, fmt.Sprintf("Superseded by %s#%d — close as superseded or keep open", info.CloserRepo, info.CloserPR))
@@ -605,7 +606,7 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 			return out
 		}
 	}
-	// (9) a held PR is decided by its hold sources and nothing later.
+	// (10) a held PR is decided by its hold sources and nothing later.
 	if held {
 		return holdSourcesOwnership(sources)
 	}
@@ -636,7 +637,7 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	if o, ok := env.reviewHoldOwnership(pr, withinAdjudicatorWait); ok {
 		return o
 	}
-	// (10) otherwise not your turn; the safety net covers non-draft, unheld
+	// (11) otherwise not your turn; the safety net covers non-draft, unheld
 	// hive PRs at L3 and above that no lane has claimed.
 	if hive && !pr.Draft && env.levelFor(pr.Repo) >= ownershipLanePRMinLevel && !prClaimed(pr, env) && env.stale(pr.CreatedAt, pr.UpdatedAt) {
 		return safetyNetOwnership(env.untouchedDays(pr.CreatedAt, pr.UpdatedAt))

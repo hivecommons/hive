@@ -382,13 +382,13 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		}
 		return event, "closed", nil
 	case SupersessionWaitGrace:
-		event.Action = "commented-grace"
+		event.Action = SupersessionActionCommentedGrace
 		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, graceBody); err != nil {
 			return event, "", err
 		}
 		return event, "commented", nil
 	default:
-		event.Action = "commented-contributor"
+		event.Action = SupersessionActionCommentedContributor
 		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(owner, closer, decision.Reason))
 		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
 			return event, "", err

@@ -523,9 +523,10 @@ adjudicator's pass, or an item the safety net surfaced), `TRIAGE` (an
 agent-filed proposal awaiting acknowledgment), `ADMIT` (an untrusted
 reporter's issue awaiting an admission label), `INSPECT` (a sentinel-flagged
 PR) and `CLOSE` (an issue Hive verified as done but could not close, an issue
-whose reporter confirmation has gone unanswered for the stale period, or a PR
-the adjudicator recommended closing). `CLOSE` items always sort after every
-other verb.
+whose reporter confirmation has gone unanswered for the stale period, a PR
+the adjudicator recommended closing, or a contributor PR the supersession
+sweep found superseded by a merged PR and left for a close/keep-open
+decision). `CLOSE` items always sort after every other verb.
 
 **Reason codes.** Every your-turn decision carries exactly one code from a
 fixed set; tests, the review-queue tool and the audit entries key on the code,
@@ -546,6 +547,7 @@ so the reason text can change without breaking them.
 | `hive_pr_needs_human` (L3–L4) | `REVIEW` |
 | `adjudicator_wait_elapsed`, `reviewer_unavailable` | `REVIEW` |
 | `adjudicator_recommended_close` | `CLOSE` |
+| `superseded_recommended_close` | `CLOSE` |
 | `adjudicator_reescalated` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
 | `review_requires_human`, `review_rejected`, `review_dispatch_hold`, `review_loop_cap` | `REVIEW` |
@@ -576,6 +578,7 @@ means the situation cannot occur at that level.
 | Hive PR with `needs-human`, adjudicator has not passed | — | Yours — `REVIEW` | Not yours until the adjudicator wait rule elapses, then Yours — `REVIEW` | same |
 | Hive PR with `needs-human`, adjudicator recommended close, PR still open | — | — (no adjudicator lane below L5) | Yours — `CLOSE` | same |
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
+| Contributor PR the supersession sweep detected as superseded by a merged PR, without `hive/keep-open` | Yours — `CLOSE` (`superseded_recommended_close`: close as superseded or keep open, whether or not `supersession_sweep.close_contributor_prs` is on) | same | same | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
 | PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
@@ -591,16 +594,19 @@ means the situation cannot occur at that level.
 
 **Precedence.** When an item matches more than one row, the first matching rule
 decides: (1) a hold whose sources include `person` or `dashboard_pause` → Not
-yours; (2) sentinel-flagged → `INSPECT`; (3) covered by an open PR → Not yours;
-(4) on an issue, a parking bucket, checked in the order `needs_human`,
-`needs_direction`, `needs_decision`, `needs_spec` → `REVIEW`, `STEER`,
-`DECIDE`, `SPEC`; (5) untrusted reporter awaiting admission → `ADMIT`; (6)
-awaiting reporter confirmation → Not yours until it has had no activity for the
-stale period, then `CLOSE` (`reporter_confirmation_stale`); (7) verified done
-but not closed → `CLOSE`; (8) agent-filed and unacknowledged where
-acknowledgment is required → `TRIAGE`; (9) for a pull request with a hold, the
-hold sources decide and no later row applies; for any other pull request, the
-PR rows of the table; (10) otherwise Not yours. The safety net then applies
+yours; (2) sentinel-flagged → `INSPECT`; (3) a pull request the supersession
+sweep detected as superseded by a merged PR, without `hive/keep-open` →
+`CLOSE` (`superseded_recommended_close`), ahead of any other hold source; (4)
+covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
+in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
+→ `REVIEW`, `STEER`, `DECIDE`, `SPEC`; (6) untrusted reporter awaiting
+admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
+has had no activity for the stale period, then `CLOSE`
+(`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
+(9) agent-filed and unacknowledged where acknowledgment is required →
+`TRIAGE`; (10) for a pull request with a hold, the hold sources decide and no
+later row applies; for any other pull request, the PR rows of the table; (11)
+otherwise Not yours. The safety net then applies
 only to items that came out Not yours. Last, the gate rules apply to items
 that came out Not yours or only through the safety net (never to a held PR or
 an item waiting elsewhere): an issue labelled `blocked` is waiting elsewhere
@@ -774,7 +780,7 @@ The badge is derived from Hive's own PR-claim evidence — the same source that 
 
 ## Review pipeline board
 
-The **Review** section opens with a separately collapsible **Pipeline** tile that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position. The sibling **Queue** tile is separately collapsible too, ranking the same open PRs in Hive’s suggested review order from `GET /api/review/queue` without hiding the Pipeline tile. A PR in the supersession sweep’s grace window is tagged **superseded** there, with a link to the merged PR and the time the sweep will close it; owners get **Close now** and **Keep open** (adds `hive/keep-open`, which the sweep never auto-closes). Each queue row reflects the PR's `stage` from the stage-label store ([labels-and-control-signals.md](labels-and-control-signals.md#stagestalled--nobody-is-working-this)): the `stage/stalled` label's tooltip reads "no activity for Xh — nobody is working this PR", a red **waiting on hive Xh** pill marks a PR past its stage dwell while the hive itself holds it (checks running or reviewer verdict pending — the reviewer lane, not the author, needs attention), and an **N hops, M back** pill carries the stage transition history (`stage.history[]`) in its tooltip, replacing the retired `stage/regressed` label.
+The **Review** section opens with a separately collapsible **Pipeline** tile that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position. The sibling **Queue** tile is separately collapsible too, ranking the same open PRs in Hive’s suggested review order from `GET /api/review/queue` without hiding the Pipeline tile. A contributor PR the supersession sweep detected as superseded by a merged PR is tagged **superseded** there, with a link to the merged PR, whether or not `supersession_sweep.close_contributor_prs` is on; only when auto-close is on does the tag also show when the grace window ends and the sweep will close it, otherwise it reads "close as superseded or keep open" with no countdown. Owners get **Close now** and **Keep open** (adds `hive/keep-open`, which the sweep never auto-closes). Each queue row reflects the PR's `stage` from the stage-label store ([labels-and-control-signals.md](labels-and-control-signals.md#stagestalled--nobody-is-working-this)): the `stage/stalled` label's tooltip reads "no activity for Xh — nobody is working this PR", a red **waiting on hive Xh** pill marks a PR past its stage dwell while the hive itself holds it (checks running or reviewer verdict pending — the reviewer lane, not the author, needs attention), and an **N hops, M back** pill carries the stage transition history (`stage.history[]`) in its tooltip, replacing the retired `stage/regressed` label.
 
 ## Hive activity monitor
 

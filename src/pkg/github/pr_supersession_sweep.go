@@ -14,6 +14,17 @@ const (
 	supersessionSweepMarker            = "<!-- hive:pr-supersession-sweep -->"
 )
 
+// Supersession sweep audit actions the dashboard replays from the audit log
+// (recorded as SupersessionSweepAuditPrefix + action), so producer and
+// consumer share one name per action.
+const (
+	SupersessionSweepAuditPrefix           = "supersession-sweep-"
+	SupersessionActionDetectedContributor  = "detected-contributor"
+	SupersessionActionKeptOpen             = "kept-open"
+	SupersessionActionCommentedContributor = "commented-contributor"
+	SupersessionActionCommentedGrace       = "commented-grace"
+)
+
 type SupersessionSweepOptions struct {
 	MaxActions       int
 	ACMMLevelForRepo func(repo string) int
@@ -195,19 +206,19 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		// automatic closure is disabled. This does not consume a write action.
 		if opts.Audit != nil {
 			detected := event
-			detected.Action = "detected-contributor"
+			detected.Action = SupersessionActionDetectedContributor
 			opts.Audit(detected)
 		}
 		if supersessionHasLabel(pr, SupersessionKeepOpenLabel) {
 			if opts.Audit != nil {
-				event.Action = "kept-open"
+				event.Action = SupersessionActionKeptOpen
 				opts.Audit(event)
 			}
 		}
 		if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
 			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 		}
-		event.Action = "commented-contributor"
+		event.Action = SupersessionActionCommentedContributor
 		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(prOwner, closer, reason))
 		changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 		if err != nil {

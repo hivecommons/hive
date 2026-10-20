@@ -14,8 +14,9 @@ import (
 // grace entries still start a countdown; detection entries only offer a decision.
 const (
 	supersessionAuditPrefix          = "supersession-"
-	supersessionDetectedAuditAction  = "supersession-sweep-detected-contributor"
-	supersessionGraceAuditAction     = "supersession-sweep-commented-grace"
+	supersessionDetectedAuditAction  = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionDetectedContributor
+	supersessionGraceAuditAction     = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionCommentedGrace
+	supersessionCommentedAuditAction = ghpkg.SupersessionSweepAuditPrefix + ghpkg.SupersessionActionCommentedContributor
 	supersessionConfirmCloseAction   = "supersession-review-confirm-close"
 	supersessionKeepOpenAction       = "supersession-review-keep-open"
 	supersessionAuditLookback        = 14 * 24 * time.Hour
@@ -79,7 +80,7 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 		key := ghpkg.ReviewQueueKey(repo, e.Target)
 		switch e.Action {
 		case supersessionDetectedAuditAction, supersessionGraceAuditAction:
-		case "supersession-sweep-commented-contributor":
+		case supersessionCommentedAuditAction:
 			if detected[key] {
 				info := out[key]
 				info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
@@ -129,8 +130,12 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 // supersededReviewStates also accounts for an operator disabling auto-close
 // after a grace notice was recorded, so the UI never advertises a disabled close.
 func (s *Server) supersededReviewStates(org string, now time.Time) map[string]ghpkg.ReviewQueueSuperseded {
+	if s == nil {
+		return map[string]ghpkg.ReviewQueueSuperseded{}
+	}
 	states := supersededGraceStates(s.supersessionAuditEntries(now), org, s.supersessionGracePeriod())
-	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.SupersessionSweep.CloseContributorPRs {
+	autoClose := s.deps != nil && s.deps.Config != nil && s.deps.Config.SupersessionSweep.CloseContributorPRs
+	if !autoClose {
 		for key, info := range states {
 			info.GraceStartedAt, info.GraceEndsAt = time.Time{}, time.Time{}
 			states[key] = info
