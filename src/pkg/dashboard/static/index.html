@@ -2682,7 +2682,11 @@
     /* Governor cadence matrix table */
     /* Reserve readable agent/model columns; smaller cards scroll the table
        locally instead of squeezing identifiers into narrow vertical pills. */
-    .gov-matrix-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .gov-matrix-wrap { overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+    .mobile-table-hint { display: none; margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+    @media (max-width: 640px) {
+      .mobile-table-hint { display: block; position: sticky; left: 0; max-width: 100%; }
+    }
     .gov-matrix-templates-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }
     .gov-matrix-templates-label { font-size: var(--fs-xs); color: var(--muted); font-weight: 600; }
     .gov-matrix-templates-buttons { display: inline-flex; gap: var(--sp-2); flex-wrap: wrap; }
@@ -3768,8 +3772,10 @@
       width: 10px; height: 10px; border-radius: 50%; background: var(--red);
     }
     .hive-chat-panel {
-      position: fixed; bottom: 80px; right: 24px; z-index: 9001;
-      width: 560px; height: 560px; min-width: 360px; min-height: 280px; max-width: calc(100vw - 32px); max-height: 92vh;
+      --chat-available-height: calc(100dvh - var(--navbar-sticky-height) - 96px);
+      container: hive-chat / inline-size;
+      position: fixed; bottom: 80px; right: 24px; z-index: calc(var(--navbar-sticky-z) + 1);
+      width: 560px; height: 560px; min-width: min(360px, calc(100vw - 32px)); min-height: min(280px, var(--chat-available-height)); max-width: calc(100vw - 32px); max-height: var(--chat-available-height);
       border-radius: var(--r-lg);
       background: var(--bg); border: 1px solid var(--border);
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
@@ -3798,7 +3804,7 @@
     .hive-chat-resize:hover { background: var(--purple); }
     .hive-chat-panel.open { display: flex; }
     .hive-chat-header {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2);
       padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--border);
       background: var(--surface); font-size: 0.8rem; font-weight: 600;
     }
@@ -3900,9 +3906,11 @@
     .hive-chat-shortcut-card h3 { margin:var(--sp-0) var(--sp-0) var(--sp-3); }
     .hive-chat-shortcut-card dl { display:grid; grid-template-columns:max-content 1fr; gap:var(--sp-3) var(--sp-5); margin:var(--sp-0); font-size:var(--fs-sm); }
     .hive-chat-shortcut-card dt { color:var(--amber); font-family:var(--font-mono); }
+    @container hive-chat (max-width: 500px) {
+      .hive-chat-cheatsheet { display: none; }
+    }
     @media (max-width: 500px) {
       .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
-      .hive-chat-cheatsheet { display: none; }
       /* Phone: the fixed FAB used to sit on top of in-flow controls at the
          bottom of the page (audit-log Save button, right edge of the last
          section). Shrink it into the corner and give the body matching
@@ -4545,7 +4553,7 @@
     .gh-api-budget-fill.debug-quota-ok { fill: var(--green); }
     .gh-api-budget-fill.debug-quota-warn { fill: var(--yellow); }
     .gh-api-budget-fill.debug-quota-bad { fill: var(--red); }
-    .gh-api-budget-table-wrap { overflow-x: auto; max-width: 100%; margin-top: var(--sp-4); }
+    .gh-api-budget-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; max-width: 100%; margin-top: var(--sp-4); }
     .gh-api-budget-table { width: 100%; min-width: 36rem; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-xs); }
     .gh-api-budget-table th, .gh-api-budget-table td { text-align: left; padding: var(--sp-1) var(--sp-3) var(--sp-1) 0; white-space: normal; overflow-wrap: anywhere; }
     .gh-api-budget-table th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
@@ -5443,34 +5451,42 @@
       .config-footer > * {
         min-width: 0;
       }
-      /* Chat: the floating 560px panel at bottom:80px/max-height:92vh pokes
-         above the viewport and under the topbar; go full-screen instead. */
-      .hive-chat-panel:not(.maximized):not(.docked) {
+      /* iOS Safari zooms the page when a focused control is under 16px. */
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+      select,
+      textarea {
+        font-size: var(--fs-touch) !important;
+      }
+    }
+    /* Touch phones use one full-screen chat layout in either orientation.
+       Desktop docking/resizing controls do not apply to this layout. */
+    @media (max-width: 768px) and (pointer: coarse),
+           (max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
+      .hive-chat-panel,
+      .hive-chat-panel.maximized,
+      .hive-chat-panel.docked {
         inset: 0;
         width: auto !important;
-        height: auto !important;
+        height: 100dvh !important;
         min-width: 0;
         min-height: 0;
         max-width: none;
         max-height: none;
         border-radius: var(--sp-0);
-      }
-      .hive-chat-panel.docked {
-        height: 100dvh !important;
-      }
-      /* The panel sits below the fixed topbar in the stack (9001 vs 9400), so
-         once it covers the viewport its own header and close button would be
-         painted over; lift it above the bar while it is full-screen. */
-      .hive-chat-panel.open {
-        z-index: calc(var(--navbar-sticky-z) + 1);
-        padding-top: env(safe-area-inset-top);
-        padding-left: env(safe-area-inset-left);
-        padding-right: env(safe-area-inset-right);
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
       }
       .hive-chat-cheatsheet,
       .hive-chat-resize,
-      .hive-chat-resize-width {
+      .hive-chat-resize-width,
+      #hiveChatCheatToggle,
+      #hiveChatDock,
+      #hiveChatMax {
         display: none;
+      }
+      #hiveChatClose,
+      #hiveChatSend {
+        min-width: var(--tap-target);
+        min-height: var(--tap-target);
       }
       .hive-chat-fab {
         width: var(--tap-target);
@@ -5478,12 +5494,6 @@
         right: max(var(--sp-5), env(safe-area-inset-right));
         bottom: max(var(--sp-5), env(safe-area-inset-bottom));
         font-size: var(--tap-glyph);
-      }
-      /* iOS Safari zooms the page when a focused control is under 16px. */
-      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
-      select,
-      textarea {
-        font-size: var(--fs-touch) !important;
       }
     }
     @media (max-width: 480px) {
@@ -6645,7 +6655,8 @@
         <button class="hv-btn btn-danger btn-sm" data-action="clearAuditSearches" title="Clear saved searches">✕</button>
         <span id="audit-match-count" style="font-size:0.7rem;color:var(--muted);white-space:nowrap"></span>
       </div>
-      <div id="audit-panel" class="audit-resizable" style="padding:var(--sp-5)">
+      <p class="mobile-table-hint">Scroll horizontally for more columns.</p>
+      <div id="audit-panel" class="audit-resizable" tabindex="0" role="region" aria-label="Audit log table" style="padding:var(--sp-5)">
         <div class="loading">Loading audit log...</div>
       </div>
     </div>
@@ -16972,7 +16983,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyCadenceTemplate" data-arg0="daily" title="Daily cadence: sets active daily cadence (surge: 30m, busy: 1h, quiet: 2h, idle: 4h) for all agents">Daily cadence</button>
         </div>
       </div>`;
-      return `${templateBar}<div class="gov-matrix-wrap"><table class="gov-matrix">
+      return `${templateBar}<div class="gov-matrix-wrap" tabindex="0" role="region" aria-label="Agent cadence table"><p class="mobile-table-hint">Scroll horizontally for more columns.</p><table class="gov-matrix">
         <thead><tr><th class="power-col" title="Agent power: 1 enabled, 0 disabled">Power</th><th></th>${headers}<th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
@@ -33000,7 +33011,8 @@ function burnAreaChart() {
         <div class="gh-api-budget-row"><span>Core remaining${ghApiBudgetHelpMark('core', 'Core remaining')}</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
         <div class="gh-api-budget-row"><span>ETag hit rate${ghApiBudgetHelpMark('etag', 'ETag hit rate')}</span><span class="gh-api-budget-strong">${etagPct}%</span></div>
         ${bar}
-        <div class="gh-api-budget-table-wrap">
+        <div class="gh-api-budget-table-wrap" tabindex="0" role="region" aria-label="GitHub API consumers table">
+          <p class="mobile-table-hint">Scroll horizontally for more columns.</p>
           <table id="gh-api-budget-consumers" class="gh-api-budget-table">
             <thead><tr><th class="gh-api-budget-col-caller">Caller</th><th class="gh-api-budget-col-endpoint">Endpoint</th><th class="gh-api-budget-col-num" title="Rate-limit points charged">Charged</th><th class="gh-api-budget-col-num" title="Requests">Req</th><th class="gh-api-budget-col-num" title="304 Not Modified (ETag hits)">304</th><th class="gh-api-budget-col-num" title="429 / rate-limited responses">429</th></tr></thead>
             <tbody>${rows || '<tr><td colspan="6" class="gh-api-budget-empty">No recent GitHub API traffic</td></tr>'}</tbody>
