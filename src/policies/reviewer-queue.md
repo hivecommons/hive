@@ -47,6 +47,21 @@ exact question:
 <!-- hive-decision-question: @maintainer should decide whether this groundwork should land before its consumer. -->
 ```
 
+Hive renders the question as visible text at the top of your comment, so
+write it as the one sentence a maintainer has to answer.
+
+When the PR is not wrong but redundant — a merged PR already carries this
+change, so merging it would be a no-op against the base branch — add a third
+marker naming that PR. Hive then shows `no-op merge: duplicate of #334` as the
+headline instead of a `0/5` score, which would read as "bad code":
+
+```
+<!-- hive-redundant-of: #334 -->
+```
+
+Only emit it after comparing the diffs; a PR that touches the same files with
+different content is not redundant.
+
 So never drop the JSON because you have already said your piece in prose. The
 two artifacts answer two different readers, and only one of them is a person.
 

@@ -93,26 +93,43 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 	return recorded
 }
 
-func reviewDecisionRequestFromBody(body string) (bool, string) {
-	const (
-		verdictMarker  = "<!-- hive-verdict: needs-decision -->"
-		questionPrefix = "<!-- hive-decision-question:"
-	)
-	var requested bool
-	var question string
+const (
+	reviewNeedsDecisionMarker    = "<!-- hive-verdict: needs-decision -->"
+	reviewDecisionQuestionMarker = "<!-- hive-decision-question:"
+	// reviewRedundantOfMarker names the PR a review found already carries this
+	// change (`<!-- hive-redundant-of: #334 -->`); see reviewer-queue.md.
+	reviewRedundantOfMarker = "<!-- hive-redundant-of:"
+)
+
+// hiddenMarkerValue returns the payload of the first `<!-- prefix ... -->`
+// line in body, or "" when absent. The prefix match is case-insensitive.
+func hiddenMarkerValue(body, prefix string) string {
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
-		lower := strings.ToLower(trimmed)
-		if lower == verdictMarker {
-			requested = true
-			continue
+		if strings.HasPrefix(strings.ToLower(trimmed), prefix) && strings.HasSuffix(trimmed, "-->") {
+			return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[len(prefix):]), "-->"))
 		}
-		if strings.HasPrefix(lower, questionPrefix) && strings.HasSuffix(trimmed, "-->") {
-			question = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[len(questionPrefix):]), "-->"))
+	}
+	return ""
+}
+
+// decisionQuestionFromBody reads the `<!-- hive-decision-question: ... -->`
+// marker, the single grammar shared by the verdict relay and the comment
+// renderer.
+func decisionQuestionFromBody(body string) string {
+	return hiddenMarkerValue(body, reviewDecisionQuestionMarker)
+}
+
+func reviewDecisionRequestFromBody(body string) (bool, string) {
+	var requested bool
+	for _, line := range strings.Split(body, "\n") {
+		if strings.ToLower(strings.TrimSpace(line)) == reviewNeedsDecisionMarker {
+			requested = true
+			break
 		}
 	}
 	if requested {
-		return true, question
+		return true, decisionQuestionFromBody(body)
 	}
 	if fallback := maintainerCallQuestion(body); fallback != "" {
 		return true, fallback

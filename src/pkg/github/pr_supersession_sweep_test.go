@@ -620,3 +620,33 @@ func TestSupersessionCandidateClaims(t *testing.T) {
 		t.Fatalf("nil in, empty out: %+v", got)
 	}
 }
+
+func TestSupersessionDecisionNotice(t *testing.T) {
+	closer := supersessionCloser{Repo: "o/r", Number: 334}
+	cases := []struct {
+		name, operator, note string
+		want                 []string
+		reject               []string
+	}{
+		{"duplicate", "owner", "", []string{"**Decision needed (@owner):**", "duplicate #334", "**close as superseded**", "file names, not contents"}, []string{"did not close it automatically"}},
+		{"duplicate with keep reason", "owner", "the author replied", []string{"**Decision needed (@owner):**", "**close as superseded**", "did not close it automatically: the author replied."}, nil},
+		{"extra files", "owner", supersessionReasonExtraFiles, []string{"**Decision needed (@owner):**", supersessionReasonExtraFiles, "**keep open**"}, []string{"close as superseded**"}},
+		{"kept open", "owner", supersessionReasonKeptOpen, []string{"An operator chose to keep this PR open", SupersessionKeepOpenLabel, "#334"}, []string{"Decision needed", "Recommended", "@owner"}},
+		{"no operator", "", "", []string{"**Decision needed (maintainers):**"}, []string{"@"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := supersessionDecisionNotice(tc.operator, closer, tc.note)
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Fatalf("notice missing %q: %q", w, got)
+				}
+			}
+			for _, r := range tc.reject {
+				if strings.Contains(got, r) {
+					t.Fatalf("notice must not contain %q: %q", r, got)
+				}
+			}
+		})
+	}
+}

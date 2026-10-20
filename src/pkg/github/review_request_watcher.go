@@ -729,18 +729,10 @@ func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) str
 	return body + "\n\n" + line
 }
 
-const redundantOfMarker = "<!-- hive-redundant-of:"
-
 // redundantOfFromBody reads the PR a review marked as already containing this
 // change (`<!-- hive-redundant-of: #334 -->`), or "" when it did not.
 func redundantOfFromBody(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToLower(trimmed), redundantOfMarker) && strings.HasSuffix(trimmed, "-->") {
-			return strings.TrimSpace(strings.TrimSuffix(trimmed[len(redundantOfMarker):], "-->"))
-		}
-	}
-	return ""
+	return hiddenMarkerValue(body, reviewRedundantOfMarker)
 }
 
 // leadWithDecisionQuestion renders the question carried by the
@@ -748,19 +740,11 @@ func redundantOfFromBody(body string) string {
 // the comment (hivecommons/hive#13116). GitHub hides the marker, which stays
 // untouched for machine parsing.
 func leadWithDecisionQuestion(body string) string {
-	const questionPrefix = "<!-- hive-decision-question:"
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(strings.ToLower(trimmed), questionPrefix) || !strings.HasSuffix(trimmed, "-->") {
-			continue
-		}
-		question := strings.TrimSpace(strings.TrimSuffix(trimmed[len(questionPrefix):], "-->"))
-		if question == "" || strings.Contains(body, "**Decision needed:** "+question) {
-			return body
-		}
-		return "**Decision needed:** " + question + "\n\n" + body
+	question := decisionQuestionFromBody(body)
+	if question == "" || strings.Contains(body, "**Decision needed:** "+question) {
+		return body
 	}
-	return body
+	return "**Decision needed:** " + question + "\n\n" + body
 }
 
 // malformedVerdictRefusal is the result an agent reads when its --verdict-file
