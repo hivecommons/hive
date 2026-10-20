@@ -214,6 +214,11 @@ func TestReviewVerdictGateReleaseSurvivesArtifactRefresh(t *testing.T) {
 		{name: "new head's requires_human after the approval holds again",
 			hold:       ReviewVerdictHold{Held: true, Verdict: "requires_human", HeadSHA: "d00dfee", RecordedAt: t1.Add(10 * time.Minute)},
 			wantReason: autoMergeReasonReviewRequiresHuman},
+		// hivecommons/hive#13091: an unreadable artifact reports a hold with
+		// no recorded time; no earlier approval may release it.
+		{name: "zero RecordedAt hold is not released by an earlier approval",
+			hold:       ReviewVerdictHold{Held: true, Verdict: "requires_human", HeadSHA: "d00dfee"},
+			wantReason: autoMergeReasonReviewRequiresHuman},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			merges := 0

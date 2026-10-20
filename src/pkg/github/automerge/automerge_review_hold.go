@@ -59,6 +59,10 @@ func (c *Engine) reviewVerdictGate(ctx context.Context, displayRepo, owner, repo
 	if strings.EqualFold(hold.Verdict, "reject") {
 		reason = autoMergeReasonReviewRejected
 	}
+	if hold.RecordedAt.IsZero() {
+		// A hold without a recording time (unreadable ledger) fails closed: no approval can postdate it.
+		return reason, nil
+	}
 	release, released, err := c.personReleasedReviewHold(ctx, owner, repo, number, hold.RecordedAt)
 	if err != nil {
 		return autoMergeReasonReviewHoldEvidence, err

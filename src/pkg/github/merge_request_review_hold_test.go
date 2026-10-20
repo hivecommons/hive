@@ -90,6 +90,8 @@ func TestMergeRequestWatcher_ReviewVerdictHold13085(t *testing.T) {
 			comments: []relayHoldActivity{{login: "contributor", body: "/hive approve", at: after}}},
 		{name: "bot /hive approve does not release", hold: held, wantDenied: true,
 			comments: []relayHoldActivity{{login: "owner[bot]", userType: "Bot", body: "/hive approve", at: after}}},
+		{name: "zero RecordedAt hold is not released by an earlier approval", hold: ReviewVerdictHold{Held: true, Verdict: "requires_human"}, wantDenied: true,
+			reviews: []relayHoldActivity{{login: "owner", state: "APPROVED", at: before}}},
 		{name: "unreadable reviews fail closed without denying", hold: held, reviewStatus: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

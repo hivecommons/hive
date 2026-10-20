@@ -153,6 +153,10 @@ func (c *Client) mergeRequestReviewHoldRefusal(ctx context.Context, req MergeReq
 	if verdict == "" {
 		verdict = "requires_human"
 	}
+	if hold.RecordedAt.IsZero() {
+		// An unreadable verdict ledger yields no timestamp; no approval can be proven to postdate it.
+		return fmt.Sprintf("review verdict %s holds this PR for a person and its recording time is unknown, so no approval can release it (fail closed); a fresh review verdict must be recorded instead of replying %q", verdict, ReviewHoldReleaseCommand), nil
+	}
 	releaser := c.mergeReviewHoldReleaser
 	if releaser == nil {
 		releaser = func(string) bool { return false }
