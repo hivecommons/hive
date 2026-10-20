@@ -85,6 +85,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
+	cmd.AddCommand(newHivesTreeCommand(env))
 	cmd.AddCommand(newHivesPresetCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))
