@@ -322,6 +322,40 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 	}
 }
 
+// TestApplyPackPreservesUnownedDeniedBackend verifies a hand-set backend with
+// no owner stamp is kept and stamped operator even when the backends policy
+// denies it, so it is never silently replaced (#13221).
+func TestApplyPackPreservesUnownedDeniedBackend(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "claude"
+	if scannerPackBackend(t) == "claude" {
+		scanner.Backend = "copilot"
+	}
+	handSet := scanner.Backend
+	scanner.BackendOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+	srv.deps.Config.Backends.Deny = []string{handSet}
+
+	res, err := srv.ApplyPack(2)
+	if err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != handSet || got.BackendOwner != config.FieldOwnerOperator {
+		t.Errorf("got backend %q owner %q, want %q owner %q", got.Backend, got.BackendOwner, handSet, config.FieldOwnerOperator)
+	}
+	found := false
+	for _, n := range res.Preserved {
+		found = found || n == "scanner"
+	}
+	if !found {
+		t.Errorf("scanner missing from Preserved: %v", res.Preserved)
+	}
+}
+
 // TestApplyPackReconcilesPackOwnedBackendOffDeniedBackend verifies a
 // pack-owned backend is still reconciled when the backends policy denies it.
 func TestApplyPackReconcilesPackOwnedBackendOffDeniedBackend(t *testing.T) {

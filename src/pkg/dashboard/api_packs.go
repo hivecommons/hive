@@ -286,7 +286,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice. The spoke's backends
 			// allow/deny list (#11310) replaces a denied pack backend, and moves
-			// a still pack-owned agent off a backend that has since been denied.
+			// a stamped pack-owned agent off a backend that has since been denied; an
+			// unstamped (hand-set) one is kept and warned about (#13221).
 			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
 				existing.Backend = packBackend
 				existing.BackendOwner = config.FieldOwnerPack
@@ -294,7 +295,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 					existing.Model = ""
 				}
 				changed = true
-			} else if existing.Backend != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
+			} else if existing.Backend != "" && existing.BackendOwner != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
 				s.logger.Info("moving pack-owned agent off backend denied by spoke backends config", "agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
 				existing.Backend = packBackend
 				existing.BackendOwner = config.FieldOwnerPack
@@ -312,6 +313,12 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				} else {
 					existing.BackendOwner = config.FieldOwnerOperator
 					preserved = append(preserved, pa.Name)
+					if !s.deps.Config.BackendAllowed(existing.Backend) {
+						// Never swap it silently: the agent should fail loudly
+						// on the denied backend rather than run on another one.
+						s.logger.Warn("hand-set agent backend is denied by the spoke backends config; keeping it so the agent fails loudly instead of silently switching",
+							"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
+					}
 					s.logger.Info("keeping hand-set agent backend that differs from the ACMM pack default",
 						"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
 				}
