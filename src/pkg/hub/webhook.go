@@ -97,8 +97,11 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// spokeWebhookPath is the spoke dashboard's GitHub webhook receiver.
-const spokeWebhookPath = "/api/webhook/github"
+// spokeWebhookPath is the spoke dashboard's GitHub webhook receiver. It is the
+// same constant the hub's auth-check waves through (spokeWebhookRelayPath in
+// saas_auth.go); keep them one value so a relay can never target a path the
+// hosted Ingress gate turns into a login redirect (#13231).
+const spokeWebhookPath = spokeWebhookRelayPath
 
 // spokeWebhookRelayGuard refuses relay targets whose host is or resolves to a
 // private/internal address. DashboardURL is self-reported by the spoke over
