@@ -213,7 +213,10 @@ const ownershipClockFormat = "15:04Z"
 
 // adjudicatorHandoffReason is the reason text of the adjudicator's HAND-OFF
 // verdict. The verdict comment's first line is the maintainer's next step.
-const adjudicatorHandoffReason = "The adjudicator handed this pull request to you — do the step in its \"Next step for a maintainer\" comment, then clear needs-human"
+// Hive never removes reviewer labels, so the maintainer removes
+// reviewer-handoff with needs-human; otherwise the verdict label outlives the
+// step it asked for and a later re-escalation repeats this reason (#13183).
+const adjudicatorHandoffReason = "The adjudicator handed this pull request to you — do the step in its \"Next step for a maintainer\" comment, then remove the reviewer-handoff and needs-human labels"
 
 func yourTurn(code, reason string) Ownership {
 	return Ownership{YourTurn: true, Verb: ownershipReasonVerbs[code], ReasonCode: code, Reason: reason}

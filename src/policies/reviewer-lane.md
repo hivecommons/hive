@@ -47,7 +47,9 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
         "Run Build And Promote Main Image with rebuild_akmods=true, then rerun checks":
           hive-review <number> --repo <owner/repo> --comment --body "${REVIEWER_HANDOFF_PREFIX} <one concrete action>
 
-          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>"
+          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>
+
+          When the step is done, remove the ${REVIEWER_HANDOFF_LABEL} and needs-human labels — Hive never removes them."
      `hive-review` is asynchronous: poll the `.result.json` path it prints and do
      not proceed until that file reports `"ok": true`. A queued request is not yet
      an audit record; an error result must leave the PR in `needs-human`.

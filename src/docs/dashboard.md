@@ -659,7 +659,11 @@ agent is paused or unscheduled in the current mode (the advisory `reviewer`
 agent does not count). It is also your turn immediately, with
 `adjudicator_handed_off`, once the adjudicator delivers a HAND-OFF verdict
 (`reviewer-handoff`): the change is fine but only a maintainer can unblock it,
-and the verdict comment's first line is the **Next step for a maintainer**.
+and the verdict comment's first line is the **Next step for a maintainer**. The
+reason tells the maintainer to remove `reviewer-handoff` together with
+`needs-human` once the step is done: Hive never removes reviewer labels, and a
+`reviewer-handoff` left on makes a later re-escalation repeat the hand-off
+reason for a step already taken.
 Otherwise it waits elsewhere, with a reason such as "Waiting for the
 adjudicator (escalated 14:32Z); your turn at 18:32Z if it doesn't act", and
 becomes your turn four hours after escalation, with `adjudicator_wait_elapsed`
@@ -751,6 +755,11 @@ or bands (hivecommons/hive#11566).
   needs-human badge tooltip names the label ("Labelled needs-human: automated
   fix attempts exhausted. ☐ appears when it is your turn."); band titles, chip
   words and tooltips say what state or label an item has, never whose turn it is.
+  The one exception is a row that is waiting on someone else: its PR tooltip and
+  its needs-human tooltip end with the ownership reason in the form
+  `[waiting on someone else: Waiting for the adjudicator (escalated 14:32Z);
+  your turn at 18:32Z if it doesn't act]`, because no marker renders that reason
+  (#13183).
 
 ### Other consumers of the decision
 
