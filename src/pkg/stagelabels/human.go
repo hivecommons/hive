@@ -25,6 +25,7 @@ package stagelabels
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -220,6 +221,9 @@ func RouteHuman(e Evidence) Route {
 	case VerdictRequiresHuman:
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
 		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
+			if decisionQuestionPlaceholderMention(q) {
+				q += " _(the reviewer named no specific person; repository approvers/owners, this is yours)_"
+			}
 			decide = append(decide, "reviewer question: "+q)
 		} else {
 			for _, summary := range e.HumanSummaries {
@@ -260,6 +264,18 @@ func RouteHuman(e Evidence) Route {
 		return Route{Stage: Reviewed, Reasons: wait, Summary: summary}
 	}
 	return Route{Stage: ReadyForHumanMerge, Summary: summary}
+}
+
+// decisionQuestionPlaceholderMentionRE matches the policy example's
+// `@maintainer` / `@maintainers` placeholder copied verbatim into a decision
+// question; GitHub notifies no one for it.
+var decisionQuestionPlaceholderMentionRE = regexp.MustCompile(`(?i)(^|[^\w/])@maintainers?($|[^\w-])`)
+
+// decisionQuestionPlaceholderMention reports whether a decision question
+// addresses the `@maintainer` placeholder instead of a real login, so the
+// 085 comment can say that nobody was pinged.
+func decisionQuestionPlaceholderMention(q string) bool {
+	return decisionQuestionPlaceholderMentionRE.MatchString(q)
 }
 
 // ShortSHA is the 7-char head rendering used in comments.

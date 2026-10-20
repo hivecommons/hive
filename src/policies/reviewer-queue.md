@@ -44,8 +44,15 @@ exact question:
 
 ```
 <!-- hive-verdict: needs-decision -->
-<!-- hive-decision-question: @maintainer should decide whether this groundwork should land before its consumer. -->
+<!-- hive-decision-question: @<approver-login> should decide whether this groundwork should land before its consumer. -->
 ```
+
+Address the question to a real login — an approver from the repository's
+`OWNERS`/`CODEOWNERS`, the repository owner, or the maintainer the PR body or
+linked issue names. Hive quotes the question verbatim in the PR's
+`stage/085-needs-decision` comment and that mention is the only notification
+the person gets; a literal `@maintainer` placeholder pings nobody and the PR
+waits until someone happens to read the queue.
 
 **Before raising a decision question, check the linked issue/spec and the PR
 body.** If the answer is stated there, do not ask — cite it (`per #<issue>: …`)
