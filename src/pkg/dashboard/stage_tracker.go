@@ -181,13 +181,16 @@ const (
 	trackerNumberNeedsDecision = 85
 	// trackerNumberIssueDecision is the issue parking stage (045): a main
 	// issue-side stop, not a detour off the merge gate.
-	trackerNumberIssueDecision  = 45
-	trackerNumberReadyForHuman  = 90
-	trackerNumberPreMergeSoak   = 95
-	trackerNumberCoveredByPR    = 40
-	trackerNumberClaimed        = 20
-	trackerNumberPRInProgress   = 30
-	trackerNumberActionable     = 10
+	trackerNumberIssueDecision = 45
+	trackerNumberReadyForHuman = 90
+	trackerNumberPreMergeSoak  = 95
+	trackerNumberCoveredByPR   = 40
+	trackerNumberClaimed       = 20
+	trackerNumberPRInProgress  = 30
+	trackerNumberActionable    = 10
+	// trackerNumberTriageNeeded is the untriaged-actionable stage (015): it
+	// lights the Actionable column with the word "Triage needed".
+	trackerNumberTriageNeeded   = 15
 	stageTrackerHistoryMaxItems = stagelabels.HistoryLimit
 )
 
@@ -242,6 +245,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	switch s {
 	case stagelabels.Actionable:
 		return "Actionable"
+	case stagelabels.TriageNeeded:
+		return "Triage needed"
 	case stagelabels.Claimed:
 		return "Claimed"
 	case stagelabels.PRInProgress:
@@ -558,6 +563,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	switch stage {
 	case stagelabels.Actionable:
 		return joinClause("Triaged and eligible; waiting for the scanner to pick it up", clause), "scanner"
+	case stagelabels.TriageNeeded:
+		return joinClause("Actionable, but no maintainer has looked at it yet; waiting for triage", clause), "maintainer"
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:
@@ -701,6 +708,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// stage.
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
+		}
+		// Likewise 015 says "Triage needed" itself; the needs-triage chip
+		// only adds information on another stage (a claimed or covered
+		// issue the gate is still holding).
+		if stage == stagelabels.TriageNeeded {
+			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)

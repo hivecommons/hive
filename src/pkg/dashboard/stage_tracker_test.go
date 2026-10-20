@@ -20,7 +20,7 @@ import (
 // stagelabels.Table so a renumbered stage cannot silently move a segment.
 func TestStageTrackerNumbersPinned(t *testing.T) {
 	pins := map[stagelabels.Stage]int{
-		stagelabels.Actionable: trackerNumberActionable, stagelabels.Claimed: trackerNumberClaimed,
+		stagelabels.Actionable: trackerNumberActionable, stagelabels.TriageNeeded: trackerNumberTriageNeeded, stagelabels.Claimed: trackerNumberClaimed,
 		stagelabels.PRInProgress: trackerNumberPRInProgress, stagelabels.CoveredByPR: trackerNumberCoveredByPR,
 		stagelabels.IssueNeedsDecision: trackerNumberIssueDecision,
 		stagelabels.ReviewPending:      trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
@@ -49,8 +49,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 10 || detours != 6 {
-		t.Fatalf("mains=%d detours=%d, want 10 main segments (045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
+	if mains != 11 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 11 main segments (015 shares the Actionable column; 045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
 	}
 }
 

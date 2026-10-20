@@ -105,11 +105,15 @@ const (
 	BucketInProgress  IssueBucket = "in_progress"
 	BucketCoveredByPR IssueBucket = "claimed_by_pr"
 	BucketFiltered    IssueBucket = "filtered"
+	// BucketReporterTriage is a human-filed issue the reporter-trust gate
+	// (#9665) holds out until a maintainer adds the triage label; it
+	// derives 015-triage-needed.
+	BucketReporterTriage IssueBucket = "reporter_triage"
 )
 
 // IssueFacts is the issue-side evidence.
 type IssueFacts struct {
-	Bucket         IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason)
+	Bucket         IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason) | ReporterTriage
 	FilteredReason string
 	Claim          *ClaimFact
 	LikelyDone     bool

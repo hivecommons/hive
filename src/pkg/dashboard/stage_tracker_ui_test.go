@@ -78,6 +78,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
@@ -134,6 +135,7 @@ const assert = require('assert');
 const now = Date.parse('2026-01-01T12:00:00Z');
 const stages = [
   { number: 10, label: 'Actionable', short: 'Actionable', description: 'Ready to be picked up' },
+  { number: 15, label: 'Triage needed', short: 'Triage needed', description: 'Actionable but no maintainer has looked at it yet' },
   { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' },
   { number: 40, label: 'Covered by PR', short: 'Covered by PR' },
   { number: 45, label: 'Needs human decision', short: 'Needs human decision' },
@@ -191,12 +193,32 @@ assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Open · hold
 assert.ok(row.includes('ham-mod-hold">hold</span>'), row);
 assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage recorded yet · acme/console'), tooltip(row));
 
-// Open and awaiting triage: the action chip reads "triage needed" and the
-// tooltip headline says so; the Open segment itself stays plain.
+// Open and awaiting triage: the action chip reads "triage needed"; the Open
+// column itself is untouched (owner: the Open column keeps its behaviour —
+// "triage needed" is the 015 stage's word in the Actionable column).
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', title: 'New report', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 assert.ok(row.includes('ham-mod-needs-triage">triage needed</span>'), row);
-assert.ok(tooltip(row).startsWith('Open · triage needed'), tooltip(row));
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Open</span></li>'), row);
+assert.ok(tooltip(row).startsWith('Open No stage recorded yet') && tooltip(row).includes('Flags: triage needed'), tooltip(row));
+
+// 015 triage-needed: the Actionable column lights (not a detour) with the
+// word "Triage needed" and a human (maintainer) next move; the headline and
+// chevron tooltip name the stage; the server already dropped the chip.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 13262, kind: 'issue', title: 'Review backlog (security)', stage: 15, author: 'hive-bot', author_kind: 'hive', caption: 'Actionable, but no maintainer has looked at it yet; waiting for triage' }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap'], '015 lights the Actionable column: ' + row);
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Triage needed</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: human"'), '015 word + maintainer move: ' + row);
+assert.ok(!row.includes('ham-detour'), '015 is not a detour');
+assert.ok(strip(row).includes('title="Triage needed — Actionable but no maintainer has looked at it yet · Next move: human"'), 'chevron tooltip names 015: ' + row);
+assert.ok(tooltip(row).startsWith('Triage needed Actionable, but no maintainer has looked at it yet; waiting for triage'), tooltip(row));
+assert.ok(text(row).includes('#13262 Review backlog (security) Triage needed'), text(row));
+assert.strictEqual(stageTrackerHeadline({ stage: 15, kind: 'issue' }), 'Triage needed');
+assert.strictEqual(stageTrackerAnchor(15, stages, 'issue'), 10, '015 anchors on the Actionable column');
+assert.ok(!stageTrackerNeedsAttention({ kind: 'issue', stage: 15 }), '015 is a tracking state, not an attention flag');
+// A plain 010 row is unchanged by the new stage.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 12999, kind: 'issue', title: 'Epic', stage: 10 }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap']);
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Actionable</span></li>'), row);
 
 // Issue with exactly one covering PR (only its number known, legacy linked_pr):
 // a single entry whose strip is driven by the PR; with no PR stage it lights
@@ -365,6 +387,7 @@ assert.ok(/<li class="ham-seg ham-head-lead ham-head-wide"><div class="ham-head-
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
 // An issue parked on 045 (or a pre-045 085) with no PR sorts at Actionable, not past the merge gate.
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 45 }, stages).anchor, 10);
+assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 15 }, stages).anchor, 10, '015 sorts with Actionable');
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 85 }, stages).anchor, 10);
 assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 85 }, stages).anchor, 80);
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1 }] }, stages).anchor, 30, 'unknown PR stage falls back to the issue');
@@ -498,6 +521,7 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
 		jsFunc(t, html, "stageTrackerDefaultFilter"),

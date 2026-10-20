@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -324,7 +325,9 @@ func TestIssueStageFor(t *testing.T) {
 		{"renamed needs-human bucket is parked at 045", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.IssueNeedsDecision, false},
 		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.IssueNeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
-		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
+		// hivecommons/hive#13268: the reporter-trust gate's bucket is
+		// "actionable but untriaged" — 015, not "outside the pipeline".
+		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.TriageNeeded, false},
 		// hivecommons/hive#13012: a held issue is paused, not parked — hold
 		// outranks needs-human / needs-decision / needs-spec and the issue
 		// shows as "Open · on hold", never 045. #9846's label set first.
@@ -357,6 +360,83 @@ func TestIssueStageFor(t *testing.T) {
 				t.Fatal("issue derivation must never emit the PR-only 085")
 			}
 		})
+	}
+}
+
+// TestIssueStageFor_TriageNeeded pins the 015 rule (hivecommons/hive#13268):
+// an actionable issue is 015-triage-needed when it carries needs-triage (or
+// sits in the reporter_triage bucket), or when the hive / an agent filed it
+// and no maintainer label (triage/accepted, hive/verified-open,
+// approved-direction) is on it. Human-filed issues stay 010, and 015 never
+// outranks a claim, a covering PR or a park.
+func TestIssueStageFor_TriageNeeded(t *testing.T) {
+	const (
+		accepted = "triage/accepted"
+		awaiting = "needs-triage"
+	)
+	if triageAwaitingLabel != awaiting || triageAcceptedLabels[0] != accepted {
+		t.Fatalf("defaults moved: %q %v", triageAwaitingLabel, triageAcceptedLabels)
+	}
+	cases := []struct {
+		name string
+		in   IssueStageInput
+		want stagelabels.Stage
+		why  string
+	}{
+		{"hive-filed, nothing else (#13262)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"kind/review-backlog"}}, stagelabels.TriageNeeded, "filed by the hive (hive)"},
+		{"agent-filed (clanker)", IssueStageInput{AuthorKind: authorkind.Clanker}, stagelabels.TriageNeeded, "filed by the hive (clanker)"},
+		{"hive-filed + triage/accepted", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{accepted}}, stagelabels.Actionable, ""},
+		{"hive-filed + hive/verified-open", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{VerifiedOpenLabel}}, stagelabels.Actionable, ""},
+		{"hive-filed + approved-direction", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{HumanAckLabel}}, stagelabels.Actionable, ""},
+		{"hive-filed epic without a maintainer label", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"Epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.TriageNeeded, "filed by the hive"},
+		{"human-filed, no labels", IssueStageInput{AuthorKind: authorkind.Human}, stagelabels.Actionable, ""},
+		{"human-filed epic + verified-open (#12999)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"Epic", VerifiedOpenLabel}}, stagelabels.Actionable, ""},
+		{"unknown author is read as human", IssueStageInput{}, stagelabels.Actionable, ""},
+		{"human-filed + needs-triage", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{awaiting}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"needs-triage beats triage/accepted", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{awaiting, accepted}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"needs-triage is case-insensitive", IssueStageInput{Labels: []string{"Needs-Triage"}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"reporter_triage bucket, human", IssueStageInput{Bucket: workBucketReporterTriage, AuthorKind: authorkind.Human, Labels: []string{accepted}}, stagelabels.TriageNeeded, "reporter-trust gate"},
+		// 015 is a tracking state, not a gate: everything that outranks
+		// 010 outranks it too.
+		{"claim from an untriaged issue is 020", IssueStageInput{AuthorKind: authorkind.Hive, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Claimed, ""},
+		{"claim with PR evidence is 030", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{awaiting}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), PRStarted: true}, stagelabels.PRInProgress, ""},
+		{"covered untriaged issue is 040", IssueStageInput{AuthorKind: authorkind.Hive, Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5}}, stagelabels.CoveredByPR, ""},
+		{"parked untriaged issue is 045", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{awaiting, "needs-human"}}, stagelabels.IssueNeedsDecision, ""},
+		{"held untriaged issue is Open · on hold", IssueStageInput{AuthorKind: authorkind.Hive, Held: true, Labels: []string{"hold"}}, stagelabels.None, ""},
+		{"likely-done untriaged issue leaves the pipeline", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{LikelyDoneLabel}}, stagelabels.None, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, covered, reason := IssueStageFor(tc.in, nil)
+			if got != tc.want || covered {
+				t.Fatalf("IssueStageFor = %s/%v %q, want %s", got, covered, reason, tc.want)
+			}
+			if got == stagelabels.TriageNeeded && (!strings.HasPrefix(reason, "triage needed: ") || !strings.Contains(reason, tc.why)) {
+				t.Fatalf("reason %q must explain the triage verdict (%q)", reason, tc.why)
+			}
+			if got == stagelabels.Actionable && strings.Contains(reason, "triage") {
+				t.Fatalf("010 reason %q must not mention triage", reason)
+			}
+		})
+	}
+}
+
+// issueAuthorKind maps the enumeration's human verdict onto the stage
+// input; IssueStageInputs carries it for every actionable item.
+func TestIssueStageInputs_CarriesAuthorKind(t *testing.T) {
+	res := &ActionableResult{}
+	res.Issues.Items = []Issue{
+		{Repo: "o/r", Number: 1, Author: "alice", AuthorIsHuman: true},
+		{Repo: "o/r", Number: 2, Author: "hive-app[bot]"},
+		// No login at all is "could not tell", read as human downstream.
+		{Repo: "o/r", Number: 3},
+	}
+	var got []authorkind.Kind
+	for _, in := range IssueStageInputs(res) {
+		got = append(got, in.AuthorKind)
+	}
+	if len(got) != 3 || got[0] != authorkind.Human || got[1] != authorkind.Hive || got[2] != authorkind.Unknown {
+		t.Fatalf("author kinds = %v", got)
 	}
 }
 
