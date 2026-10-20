@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
@@ -241,10 +240,12 @@ func countDisabledConfiguredAgents(agents []FrontendConfiguredAgent) int {
 	return count
 }
 
+// countNoCadenceAgents mirrors the NoCadence predicate in status_builder.go and
+// governor/no_cadence.go (#5594): on-demand agents with an empty cadence are not counted.
 func countNoCadenceAgents(agents []FrontendAgent) int {
 	count := 0
 	for _, a := range agents {
-		if a.Enabled && (a.NoCadence || strings.TrimSpace(a.Cadence) == "") {
+		if a.Enabled && a.NoCadence {
 			count++
 		}
 	}
