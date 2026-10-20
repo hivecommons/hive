@@ -17,7 +17,9 @@ import (
 // bucket (claimed, covered by a PR, advisory, filtered) and the PRs it
 // sidelines (drafts, exempt labels) are rows too, with the bucket named,
 // the labels carried, and a stage derived from the bucket when neither a
-// stage label nor a store record exists. Nothing is listed twice.
+// stage label nor a store record exists. Nothing is listed twice. Standing
+// meta issues (hive_advisory, dependency_dashboard) are the exception: they
+// are not pipeline work and stay off the tracker (hivecommons/hive#13257).
 func TestStageTrackerListsSidelinedItems(t *testing.T) {
 	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
 	s, store := stageTrackerFixture(t, now)
@@ -41,8 +43,8 @@ func TestStageTrackerListsSidelinedItems(t *testing.T) {
 	s.statusMu.Unlock()
 
 	resp := s.buildStageTracker(s.status, store, now)
-	if len(resp.Items) != 14 {
-		t.Fatalf("items = %d, want 14 (8 fixture + 4 parked issues + 2 sidelined PRs)", len(resp.Items))
+	if len(resp.Items) != 13 {
+		t.Fatalf("items = %d, want 13 (8 fixture + 3 parked issues + 2 sidelined PRs; the advisory stays off)", len(resp.Items))
 	}
 	seen := map[string]int{}
 	for _, it := range resp.Items {
@@ -60,9 +62,8 @@ func TestStageTrackerListsSidelinedItems(t *testing.T) {
 	if len(issue9.LinkedPRs) != 1 || issue9.LinkedPRs[0].Number != 103 || issue9.LinkedPRs[0].Title != "Relay PR" {
 		t.Fatalf("issue9 linked PRs = %+v", issue9.LinkedPRs)
 	}
-	issue10 := trackerItem(t, resp, "issue", 10)
-	if issue10.Stage != 0 || issue10.Bucket != "hive_advisory" || issue10.AuthorKind != authorKindHive || issue10.Caption != "No stage recorded yet" {
-		t.Fatalf("issue10 = %+v", issue10)
+	if _, listed := seen["issue#10"]; listed {
+		t.Fatalf("standing hive_advisory issue10 must stay off the tracker (#13257)")
 	}
 	issue11 := trackerItem(t, resp, "issue", 11)
 	// A pre-045 issue still wearing 085 keeps that stage until the reconciler
