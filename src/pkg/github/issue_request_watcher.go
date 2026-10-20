@@ -561,6 +561,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		if err == nil && parkLabel != "" {
 			err = c.StageFacts().Parked(ctx, c.IssueStageRef(req.Repo, req.Number), parkLabel)
+			if err == nil {
+				err = c.verifyIssueParkLanded(ctx, req.Repo, req.Number, parkLabel)
+			}
 		}
 		if err == nil {
 			resp.LabelsAdded = addLabels

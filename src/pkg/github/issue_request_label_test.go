@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 // newLabelMockServer records the label adds and removes a label request makes.
@@ -559,5 +560,71 @@ func TestIssueRequestWatcher_LabelResolveParksUnclassifiedQuestion(t *testing.T)
 	}
 	if resp := readIssueResultFile(t, reqPath); !resp.OK {
 		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
+// A park the stage engine did not land must not be reported as done
+// (hivecommons/hive#13069): when the issue still wears stage/010-actionable
+// after the Parked fact, the relay answers ok:false with the reason and
+// keeps the request on the retry path; once the park stage is on the
+// issue the same request succeeds.
+func TestIssueRequestWatcher_LabelParkReportsFailureWhenStageDidNotLand(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stage  string
+		wantOK bool
+	}{
+		{"still actionable", "stage/010-actionable", false},
+		{"parked", NeedsDecisionStageLabel, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+					_, _ = io.WriteString(w, `[]`)
+				case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/"):
+					_, _ = fmt.Fprintf(w, `{"number":219,"state":"open","labels":[{"name":"security"},{"name":%q}]}`, tc.stage)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.SetAgentIssueDecisionPolicy("escalate")
+			sink := &stageenginetest.Recorder{}
+			c.SetStageFactSink(sink)
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "o/site", Number: 219, Agent: "scanner",
+				Labels: []string{NeedsDecisionStageLabel},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			if len(sink.Facts) != 1 || sink.Facts[0].Method != "Parked" {
+				t.Fatalf("facts = %+v, want one Parked", sink.Facts)
+			}
+			resp := readIssueResultFile(t, reqPath)
+			_, statErr := os.Stat(reqPath)
+			if tc.wantOK {
+				if !resp.OK || strings.Join(resp.LabelsAdded, ",") != NeedsDecisionStageLabel {
+					t.Fatalf("result = %+v, want ok with the park", resp)
+				}
+				if !os.IsNotExist(statErr) {
+					t.Fatal("a fulfilled park should be consumed")
+				}
+				return
+			}
+			if resp.OK || len(resp.LabelsAdded) != 0 || !strings.Contains(resp.Error, tc.stage) {
+				t.Fatalf("result = %+v, want ok:false naming %s", resp, tc.stage)
+			}
+			if statErr != nil {
+				t.Fatalf("an unlanded park should stay on the retry path: %v", statErr)
+			}
+		})
 	}
 }
