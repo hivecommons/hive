@@ -38,7 +38,7 @@ Either divergence exits nonzero. CI runs this via
 | `Sweeper` proctype | `runEscalationSweep` (`cmd/hive/main.go`) driving `Store.Sweep` (`pkg/escalation/escalation.go`) once per governor tick |
 | `Reaper` proctype | `reapStuckRedPRs` (`cmd/hive/main.go`) → `Store.TryReEngage` |
 | `Agent` proctype | the FIX-BEFORE-NEW fix lane (`addRedPRFixFirst` / `formatRedPRFixData`, `pkg/scheduler/policy_overlays.go:184-307`): red, non-escalated PRs are routed back to their author agent, which pushes another attempt |
-| `Reviewer` proctype | the reviewer lane (`pkg/scheduler/reviewer_lane.go`): adjudicates escalated rows from `ci-failing.json`, excluding rows labeled `reviewer-passed` or `reviewer-recommend-close`; REPAIR and DE-ESCALATE are collapsed into one branch (both = label swap + push); RECOMMEND-CLOSE closes at ACMM ≥ 6 (`-DACMM6`), else comments, adds `reviewer-recommend-close`, and stands down |
+| `Reviewer` proctype | the reviewer lane (`pkg/scheduler/reviewer_lane.go`): adjudicates escalated rows from `ci-failing.json`, excluding rows labeled `reviewer-passed`, `reviewer-recommend-close` or `reviewer-handoff`; REPAIR and DE-ESCALATE are collapsed into one branch (both = label swap + push); RECOMMEND-CLOSE closes at ACMM ≥ 6 (`-DACMM6`), else comments, adds `reviewer-recommend-close`, and stands down; HAND-OFF comments, adds `reviewer-handoff`, leaves `needs-human` in place and stands down at every level |
 | `Human` proctype | the operator watching the `needs-human` label queue; eventually takes ownership or closes. **The queue is the label** — a PR without `needs-human` is invisible to the human |
 | `CI` proctype | per-SHA check verdict: each pushed SHA resolves nondeterministically red or green, once |
 | `Merger` proctype | the auto-merge sweep: a green open PR is eventually merged |
@@ -49,7 +49,7 @@ Either divergence exits nonzero. CI runs this via
 | `headCounted` | `containsSHA(e.RedSHAs, o.HeadSHA)` for the current head (sound: SHAs are never reused, so only the current head's membership is ever queried) |
 | `stale` | `now − e.FirstRedAt ≥ RedPRStaleAfter` (`Store.StaleRed`) |
 | `escalatedView` | the `escalatedPRs` map returned by `runEscalationSweep` and consumed same-tick by `reapStuckRedPRs` and `writeMergeEligible` (`ci-failing.json` `row.Escalated`); refreshed at the end of each sweep pass |
-| `needsHuman`, `reviewerPassed`, `recommendedClose` | the `needs-human` / `reviewer-passed` / `reviewer-recommend-close` labels on the forge |
+| `needsHuman`, `reviewerPassed`, `recommendedClose`, `handedOff` | the `needs-human` / `reviewer-passed` / `reviewer-recommend-close` / `reviewer-handoff` labels on the forge |
 | `amnesty_check()` inline | the machinery-amnesty block shared by `Store.Sweep` (escalation.go:181-186) and `Store.TryReEngage` (escalation.go:372-377) |
 | `THRESHOLD=3`, `MAX_REENG=6` | `DefaultThreshold`, `MaxReEngagements` (actual production constants) |
 | `NSHA=4`, `GEN_MAX=3` | finite bounds: distinct head SHAs per PR, machinery generations |
@@ -66,7 +66,8 @@ an `Escalated` entry whose observation labels carry `reviewer-passed` without
 `needs-human` (gap G1); `TryReEngage` refuses escalated entries after the
 amnesty check (gap G3); a below-ACMM-6 RECOMMEND-CLOSE marks the row with
 `reviewer-recommend-close`, which the work list excludes like
-`reviewer-passed` (gap G4).
+`reviewer-passed` (gap G4). The HAND-OFF verdict (#13183) marks the row with
+`reviewer-handoff` the same way, at every level.
 
 ## What is abstracted away
 
@@ -98,8 +99,9 @@ Spin 6.5.2, exhaustive (`./pan -m500000`, DFS + COLLAPSE; liveness with weak
 fairness `-a -f`). Every state count is a completed full search, on the
 post-#5511 model (the G1/G3/G4 fixes are the modeled default, so the counts
 differ from the pre-fix runs recorded in the #5511 discussion). The #5617 G2
-fix changes the Sweeper's pending branch, so counts will shift slightly on
-the next full run — the CI `formal-verify` workflow reports current numbers.
+fix changes the Sweeper's pending branch and the #13183 HAND-OFF verdict adds
+a Reviewer branch, so counts will shift slightly on the next full run — the CI
+`formal-verify` workflow reports current numbers.
 
 | # | Property | Run(s) | Result | States |
 |---|---|---|---|---|
@@ -110,7 +112,7 @@ the next full run — the CI `formal-verify` workflow reports current numbers.
 | P4b | …and such a PR, if (still) escalated, eventually reaches the human queue | `p4b_handoff` (LTL, weak fairness) | **holds** — gap G1 FIXED (#5511: sweep-side reviewer-verdict ledger sync) | 3,217,019 |
 | P5 | Every escalated PR eventually terminal (merged / closed / human-owned) | `p5_termination` (LTL, weak fairness) | **holds** — gap G1 FIXED | 3,224,760 |
 | P6 | Escalated entries are invisible to the reaper and to FIX-BEFORE-NEW | `p4a_p6_safety`, `p6_watcher_safety` (asserts) | **holds** | 3,215,657 / 27,818,920 |
-| W1 | "One reviewer pass per PR, ever" — every verdict class, every level | `w_onepass_acmm5` / `w_onepass_acmm6` | **holds** at both levels — gap G4 FIXED (#5511: `reviewer-recommend-close` marker) | 3,215,657 / 2,140,034 |
+| W1 | "One reviewer pass per PR, ever" — every verdict class (including HAND-OFF, #13183), every level | `w_onepass_acmm5` / `w_onepass_acmm6` | **holds** at both levels — gap G4 FIXED (#5511: `reviewer-recommend-close` marker; `reviewer-handoff` follows the same shape) | 3,215,657 / 2,140,034 |
 | W2 | Ledger history survives until green | `w_pending_wipe` | **holds** — gap G2 FIXED (#5617 follow-up: pending is a no-op observation; pre-fix witness at 7,706 states) | see CI |
 | W3 | The merge watcher never burns re-engage budget on an escalated PR | `w_watcher_reengage` (`-DWATCHER`) | **holds** — gap G3 FIXED (#5511: `TryReEngage` escalated guard) | 27,818,920 |
 

@@ -189,6 +189,7 @@ func TestBuildReviewerMessage_ContractAtL5(t *testing.T) {
 		"If either record fails, leave `needs-human` in place",
 		"--add-label " + ReviewerRecommendCloseLabel,
 		"HAND-OFF",
+		"gh label create " + ReviewerHandoffLabel + " --repo <owner/repo>",
 		"--add-label " + ReviewerHandoffLabel,
 		"--body \"" + ReviewerHandoffNextStepPrefix + " <one concrete action>\n",
 		"Reviewer adjudication: HAND-OFF",

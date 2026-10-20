@@ -337,8 +337,9 @@ agents:
   display_name: adjudicator
   role: reviewer
   description: 'Escalated-PR adjudicator (the reviewer lane). Works hive-authored PRs
-    carrying needs-human and delivers exactly one verdict per PR: REPAIR, DE-ESCALATE
-    or RECOMMEND-CLOSE. Gets no kick_template on purpose, so its kick is routed by
+    carrying needs-human and delivers exactly one verdict per PR: REPAIR, DE-ESCALATE,
+    RECOMMEND-CLOSE or HAND-OFF (only a maintainer can unblock it; the verdict names
+    the next step). Gets no kick_template on purpose, so its kick is routed by
     role to reviewer-lane.md (hivecommons/hive#9477). Never merges.
 
     '
@@ -353,7 +354,8 @@ agents:
   on_demand: false
   stale_timeout: 3600  # 1h — must exceed the 30m cadence
   interactions: 'Adjudicates escalated (needs-human) hive-authored PRs at most three
-    per kick, one pass per PR (reviewer-passed / reviewer-recommend-close). Pushes
+    per kick, one pass per PR (reviewer-passed / reviewer-recommend-close /
+    reviewer-handoff). Pushes
     repairs to the same branch; never opens a replacement PR and never merges.
 
     '

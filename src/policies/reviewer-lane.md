@@ -28,7 +28,9 @@ ${REVIEWER_CLOSE_AUTHORITY}
      workflow dispatch with maintainer-only inputs, a secret, a stale shared cache
      rebuild, a repository setting): complete the mandatory audit below using its
      hand-off review body, leave needs-human in place, then mark the verdict
-     delivered so the maintainer is told now rather than after a timeout:
+     delivered so the maintainer is told now rather than after a timeout
+     (the label is created first because a missing label fails the whole edit):
+        gh label create ${REVIEWER_HANDOFF_LABEL} --repo <owner/repo> --description "Adjudicator handed this PR to a maintainer" --color d93f0b || true
         gh pr edit <number> --add-label ${REVIEWER_HANDOFF_LABEL}
   ⛔ There is NO other verdict (no HOLD, no WAIT): a verdict without its label is
      invisible to Hive and leaves the PR waiting on nobody.

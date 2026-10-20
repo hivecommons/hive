@@ -666,9 +666,9 @@ becomes your turn four hours after escalation, with `adjudicator_wait_elapsed`
 ("Escalated over 4 hours ago and no verdict Hive recognises was recorded" — a
 comment without a verdict label is not a verdict). Escalation time is the
 escalation ledger's label-applied time, or the first status refresh that saw
-the label. Once the adjudicator adds `reviewer-passed` or
-`reviewer-recommend-close`, or removes `needs-human`, the rows for an
-adjudicated PR apply instead.
+the label. Once the adjudicator adds `reviewer-passed`,
+`reviewer-recommend-close` or `reviewer-handoff`, or removes `needs-human`, the
+rows for an adjudicated PR apply instead.
 
 **Safety net.** Anything Hive should be progressing can wait unnoticed at most
 one stale period (`dashboard.issue_bands.stale_days`, default 14; there is no
