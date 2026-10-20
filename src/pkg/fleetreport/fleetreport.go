@@ -75,6 +75,13 @@ type Observation struct {
 	// HiveSlug is the hub-assigned slug for a hub-managed spoke. Empty keeps
 	// the hive anonymous (instance digest only) in runtime-error reports.
 	HiveSlug string
+	// HiveName is the hive's human display name (the hub's project_name,
+	// else the spoke's project.name) and SpokeURL its public dashboard URL.
+	// Both are set only for a hub-managed spoke (HiveSlug != ""), so an
+	// anonymous hive stays anonymous; empty values render as the hive id
+	// and "—" (#13211).
+	HiveName string
+	SpokeURL string
 	// ProjectOrg is the project owner only. Observation reports deliberately
 	// never carry the watched repository names or paths.
 	ProjectOrg string
@@ -169,6 +176,10 @@ type Report struct {
 	// Class and Hive are set for runtime-error and observation reports.
 	Class string `json:"class,omitempty"`
 	Hive  string `json:"hive,omitempty"`
+	// HiveName and SpokeURL are Observation.HiveName / SpokeURL (#13211);
+	// they travel on the relay wire so the hub can render or complete them.
+	HiveName string `json:"hive_name,omitempty"`
+	SpokeURL string `json:"spoke_url,omitempty"`
 	// Repos are the owner/repo names this report attributes to the hive:
 	// its watched repos plus the triggering item's repo, already filtered by
 	// the operator's include_repos policy. Joining merges them into the

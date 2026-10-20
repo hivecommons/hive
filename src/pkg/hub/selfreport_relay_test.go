@@ -596,3 +596,92 @@ func TestHubSelfReportIngestCommentFailureIs502(t *testing.T) {
 		t.Fatalf("comment failure status=%d", rec.Code)
 	}
 }
+
+// TestHubSelfReportIngestNamesHiveAndLinksSpoke (#13211): the hub fills the
+// hive's display name and dashboard URL on the affected line and in the
+// evidence table — its own project_name / vanity URL win over the spoke's
+// view, the spoke's values are kept when the hub has none, and a hive the
+// hub has no record of keeps the id only.
+func TestHubSelfReportIngestNamesHiveAndLinksSpoke(t *testing.T) {
+	resetSelfReportRate(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	writeMeta := func(id, meta string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(saasHivesDir, id), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(saasHivesDir, id, "meta.json"), []byte(meta), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeMeta("h1", `{"id":"h1","owner":"dana","project_name":"kellya","status":"running","vanity_url":"https://kellya.hive.example.dev/"}`)
+	writeMeta("h2", `{"id":"h2","owner":"dana","org":"acme","primary_repo":"widgets","status":"running"}`)
+	table := `## Evidence\n\n| Field | Value |\n|---|---|\n| hive | HIVE |\n| anonymous instance | abcd |\n`
+	for _, tc := range []struct {
+		name, hive, extra, wantLine, wantRows string
+	}{
+		{"hub overlays spoke", "h1", `"hive_name":"stale name","spoke_url":"https://placeholder.example.dev",`,
+			"- kellya (h1) — [open](https://kellya.hive.example.dev) — owner(s): @dana — seen 1, last ",
+			"| hive | h1 |\n| hive name | kellya |\n| spoke | [kellya](https://kellya.hive.example.dev) |\n| anonymous instance | abcd |"},
+		{"hub fills legacy spoke", "h1", ``,
+			"- kellya (h1) — [open](https://kellya.hive.example.dev) — owner(s): @dana — seen 1, last ",
+			"| hive | h1 |\n| hive name | kellya |\n| spoke | [kellya](https://kellya.hive.example.dev) |\n| anonymous instance | abcd |"},
+		{"spoke values kept, org fallback", "h2", `"spoke_url":"https://h2.spoke.example.dev/",`,
+			"- acme (h2) — [open](https://h2.spoke.example.dev) — owner(s): @dana — seen 1, last ",
+			"| hive | h2 |\n| hive name | acme |\n| spoke | [acme](https://h2.spoke.example.dev) |\n| anonymous instance | abcd |"},
+		{"unknown hive stays id only", "h3", ``,
+			"- h3 — owner(s): unknown — seen 1, last ",
+			"| hive | h3 |\n| anonymous instance | abcd |"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetSelfReportRate(t)
+			handler, _ := selfReportGitHubScript(false)
+			gh := interceptFeedbackGitHub(t, handler)
+			s := npsTestHub(tc.hive)
+			block := strings.ReplaceAll(fleetreport.AffectedBlockStart+"\n**Affected hives (1):** "+tc.hive+"\nseen_count: 1\n"+fleetreport.AffectedBlockEnd, "\n", `\n`)
+			body := strings.Replace(selfReportValidBody, `"hive_id":"h1",`, `"hive_id":"`+tc.hive+`",`+tc.extra, 1)
+			body = strings.Replace(body, `\nbody"`, `\n`+strings.ReplaceAll(table, "HIVE", tc.hive)+`\n`+block+`"`, 1)
+			rec := selfReportIngest(s, body, s.heartbeatKeyFor(tc.hive))
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.Unmarshal(gh.bodies[1], &payload)
+			if !strings.Contains(payload.Body, tc.wantLine) || !strings.Contains(payload.Body, tc.wantRows) {
+				t.Fatalf("created body = %q\nwant line %q\nwant rows %q", payload.Body, tc.wantLine, tc.wantRows)
+			}
+			if tc.name == "hub overlays spoke" && strings.Contains(payload.Body, "placeholder.example.dev") {
+				t.Fatalf("spoke placeholder URL survived the hub overlay: %q", payload.Body)
+			}
+		})
+	}
+}
+
+// TestSelfReportHiveIdentityFallsBackToRegistryAndPlaceholder: with no
+// vanity URL and no spoke URL the hub uses the heartbeat-reported dashboard
+// URL, then the placeholder host of the hive's cluster.
+func TestSelfReportHiveIdentityFallsBackToRegistryAndPlaceholder(t *testing.T) {
+	s := npsTestHub("h1")
+	s.registry.Hives[0].DashboardURL = "https://h1.reported.example.dev/"
+	hive := &SaaSHive{ID: "h1", Status: "running", PrimaryRepo: "acme/widgets"}
+	name, u := s.selfReportHiveIdentity(selfReportRelayRequest{HiveID: "h1"}, hive)
+	if name != "acme/widgets" || u != "https://h1.reported.example.dev" {
+		t.Fatalf("registry fallback = %q %q", name, u)
+	}
+	s.registry.Hives[0].DashboardURL = ""
+	s.clusters = map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, Domain: "hive.example.dev."}}
+	if _, u := s.selfReportHiveIdentity(selfReportRelayRequest{HiveID: "h1"}, hive); u != "https://h1.hive.example.dev" {
+		t.Fatalf("placeholder fallback = %q", u)
+	}
+	// An unclaimed placeholder's vanity URL is not used (claimedVanityURL).
+	if _, u := s.selfReportHiveIdentity(selfReportRelayRequest{HiveID: "h1", SpokeURL: "https://spoke.example.dev"}, &SaaSHive{ID: "h1", Status: statusAvailable, VanityURL: "https://vanity.example.dev"}); u != "https://spoke.example.dev" {
+		t.Fatalf("unclaimed vanity leaked = %q", u)
+	}
+	if name, u := s.selfReportHiveIdentity(selfReportRelayRequest{HiveID: "h9"}, nil); name != "" || u != "" {
+		t.Fatalf("unknown hive = %q %q", name, u)
+	}
+}
