@@ -257,6 +257,10 @@ stateDiagram-v2
     s020 --> s010: claim released or lapsed with no PR
     s030 --> s040: PR opened
     s030 --> s010: PR request failed / start mark lapsed with no PR
+    s030 --> s020: PR evidence lapsed while the claim is still held (backward hop, commented)
+    s040 --> s010: covering PR closed unmerged with no live claim or start marker (backward hop, commented)
+    s040 --> s030: covering PR closed while a PR request / start marker is still live (backward hop, commented)
+    s040 --> s020: covering PR closed while the claim is still held (backward hop, commented)
     s040 --> s050: the PR takes over (issue stays 040)
     s050 --> s060: swarm approve
     s060 --> s080: CI green, author side done
