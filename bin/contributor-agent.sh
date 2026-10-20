@@ -835,7 +835,11 @@ case "$STATUS" in
     # command that does run: local mode uses the host CLI (#7661). The
     # predicate is the root-owned marker src/Dockerfile.contributor bakes in,
     # the same one the codex sandbox probe keys off.
-    if declare -F codex_inside_contributor_container >/dev/null 2>&1 \
+    # An unknown backend (e.g. `krun`, #13249) has no host CLI to fall back
+    # to, so never suggest `just contribute-hive <it> local` for it.
+    if [[ -n "${KNOWN_BACKENDS:-}" && " ${KNOWN_BACKENDS} " != *" ${AGENT_BACKEND} "* ]]; then
+      echo "'$AGENT_BACKEND' is not a supported backend. Supported: ${KNOWN_BACKENDS}"
+    elif declare -F codex_inside_contributor_container >/dev/null 2>&1 \
         && codex_inside_contributor_container; then
       echo "$AGENT_BACKEND is not in the contributor image, so container mode cannot run it."
       echo "(Your host's $AGENT_BACKEND, if any, is not what the container sees.)"

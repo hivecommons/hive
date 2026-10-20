@@ -12,7 +12,11 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:latest")
+# :edge is the channel this v6 branch publishes (.github/workflows/docker.yml,
+# "v6 false edge"); :latest is v5's channel and lacks v6 entrypoint features
+# such as the krun VM console (#12278), which left interactive krun sessions
+# unreachable (#13248). Pin another tag with HIVE_CONTRIBUTOR_IMAGE.
+hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/hivecommons/hive-contributor:edge")
 # The hosted hub moved to hive.hivecommons.dev on 2026-09-04; the old
 # hive.kubestellar.io host answers every path with a 301 to the new one, which
 # a WebSocket handshake does not follow and `curl -sf` (no -L) reports as
@@ -884,6 +888,12 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
 # Usage: just contribute-hive              (container, default CLI from setup)
 #        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (UNCONFINED, on your host — see #4918)
+#        just contribute-hive omp krun     (container in a krun microVM — #12199)
+#
+# Accepted modes: docker (the default container mode), local, krun. `krun` is
+# the same as HIVE_CONTAINER_OCI_RUNTIME=krun and goes through the same
+# preflight. An unknown backend or mode is refused before anything is pulled
+# or started (#13249).
 #
 # Container mode is the default and is the confined one. Local mode runs the
 # backend CLI as your own user on your own machine with permission gating
@@ -912,7 +922,7 @@ contribute-hive backend="" mode="docker": check-version
     # Handle "just contribute-hive local" (backward compat)
     _BACKEND="{{backend}}"
     _MODE="{{mode}}"
-    if [[ "$_BACKEND" == "local" || "$_BACKEND" == "docker" ]]; then
+    if [[ "$_BACKEND" == "local" || "$_BACKEND" == "docker" || "$_BACKEND" == "krun" ]]; then
       _MODE="$_BACKEND"
       _BACKEND=""
     fi
@@ -921,6 +931,38 @@ contribute-hive backend="" mode="docker": check-version
     else
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
+    # Refuse an unknown backend before the image pull (#13249): the container
+    # would otherwise start and only then report "<backend> CLI not found".
+    # Same list contribute-check-backend accepts.
+    case "$BACKEND" in
+      claude|copilot|gemini|bob|goose|codex|pi|litellm|agy|opencode|kilo|openhands|muse|omp) ;;
+      *)
+        echo "ERROR: Unknown backend '${BACKEND}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+        ;;
+    esac
+    # Refuse an unknown mode too (#13249): anything but `local` used to fall
+    # through to a plain container, so `claude krun` silently ran without krun.
+    # `krun` as a mode is HIVE_CONTAINER_OCI_RUNTIME=krun (container mode in a
+    # microVM) and goes through the krun preflight below.
+    case "$_MODE" in
+      docker|local) ;;
+      krun)
+        if [[ -n "${HIVE_CONTAINER_OCI_RUNTIME:-}" && "${HIVE_CONTAINER_OCI_RUNTIME}" != "krun" ]]; then
+          echo "ERROR: mode 'krun' conflicts with HIVE_CONTAINER_OCI_RUNTIME=${HIVE_CONTAINER_OCI_RUNTIME}."
+          echo "  Unset HIVE_CONTAINER_OCI_RUNTIME (environment and contributor.env), or drop 'krun'."
+          exit 1
+        fi
+        HIVE_CONTAINER_OCI_RUNTIME=krun
+        _MODE=docker
+        ;;
+      *)
+        echo "ERROR: Unknown mode '${_MODE}'. Accepted: docker (default), local, krun"
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+        ;;
+    esac
     export AGENT_BACKEND="$BACKEND"
     # krun mode (#12199): HIVE_CONTAINER_OCI_RUNTIME=krun runs the contributor
     # container inside a libkrun microVM. Opt-in only; unset or empty leaves

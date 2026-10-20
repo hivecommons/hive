@@ -259,7 +259,7 @@ Current public recipes are centered on the **contribute** workflow:
 
 - `just contribute-check <backend>` — read-only preflight for an agent backend CLI.
 - `just contribute-setup <backend>` — one-time setup for GitHub auth, hub registration, and backend readiness.
-- `just contribute-hive [backend] [mode]` — start contributing work to a hive, using a container by default or local mode when requested.
+- `just contribute-hive [backend] [mode]` — start contributing work to a hive, using a container by default or local mode when requested. `mode` is `docker` (default), `local` or `krun` (same as `HIVE_CONTAINER_OCI_RUNTIME=krun`); an unknown backend or mode is refused before anything starts.
 - `just contribute-status`, `just contribute-browse`, and `just contribute-stop` — inspect, discover, or stop contributor relay activity.
 - `just contribute-move [backend]` — move a legacy positional contributor relay to another machine by reissuing its credential instead of hand-copying `contributor.env`; see [contributor-relay.md](../src/docs/contributor-relay.md#option-2--reissue-the-credential).
 - `just contribute-k8s [namespace] [outfile] [image_tag]` — print Kubernetes manifests for a headless contributor workload; it prints or writes the manifest you request and does not apply it.

@@ -129,10 +129,14 @@ contribute.
 export HIVE_CONTAINER_OCI_RUNTIME=krun   # or put it in ~/.config/hive/contributor.env
 CONTRIBUTOR_MODE=headless just contribute-hive claude
 just contribute-hive omp                 # interactive, through the VM console
+just contribute-hive omp krun            # same as HIVE_CONTAINER_OCI_RUNTIME=krun, for one launch
 ```
 
 `HIVE_CONTAINER_OCI_RUNTIME` is honoured from the environment or from
-`contributor.env`. Once it is set, the launch never falls back to a plain
+`contributor.env`; `krun` as the recipe's mode argument is equivalent and
+goes through the same preflight. The accepted modes are `docker` (the
+default), `local` and `krun`; an unknown mode or backend is refused before
+the image is pulled (#13249). Once it is set, the launch never falls back to a plain
 container, to docker or to local mode: it either starts the contributor under
 krun or refuses with the reason. `krun` is the only accepted value; Kata
 Containers is not supported here because it does not run under podman.
