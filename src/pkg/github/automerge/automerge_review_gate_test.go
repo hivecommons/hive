@@ -31,6 +31,10 @@ var (
 	reviewGateChanges   = ReviewGateVerdict{Loaded: true, Found: true, ChangesRequested: []string{"security", "correctness"}}
 	reviewGateApproved  = ReviewGateVerdict{Loaded: true, Found: true, Approved: true}
 	reviewGateArtifactX = ReviewGateVerdict{}
+	// The live rationguard#296 shape: aggregate requires_human, one
+	// perspective changes_requested. The gate follows the aggregate, as the
+	// contributor lane and the 085 stage do.
+	reviewGateRequiresHuman = ReviewGateVerdict{Loaded: true, Found: true, Verdict: "requires_human", ChangesRequested: []string{"style"}}
 )
 
 // The four outcomes x {enforce, shadow, off} (#12592): enforce holds every
@@ -46,6 +50,7 @@ func TestSelfAuthoredSweepReviewGateOutcomesByMode(t *testing.T) {
 		{name: "artifact unreadable", verdict: reviewGateArtifactX, wantOutcome: ReviewGateOutcomeNoBundle},
 		{name: "awaiting approval", verdict: reviewGateAwaiting, wantOutcome: ReviewGateOutcomeAwaiting},
 		{name: "changes requested", verdict: reviewGateChanges, wantOutcome: "changes-requested:correctness,security"},
+		{name: "requires human aggregate", verdict: reviewGateRequiresHuman, wantOutcome: ReviewGateOutcomeRequiresHuman},
 		{name: "approved", verdict: reviewGateApproved, wantOutcome: ReviewGateOutcomeApproved},
 	}
 	modes := []struct {
@@ -195,16 +200,18 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 		wantReason   string
 		wantOutcome  string
 		wantApprover string
+		wantOverrode string
 		wantCalls    int
 	}{
 		{
-			name:    "human approval clears requires human",
+			name:    "human approval clears awaiting approval",
 			verdict: reviewGateAwaiting,
 			reviews: []map[string]any{{
 				"state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "bob"},
 			}},
 			wantOutcome:  ReviewGateOutcomeHumanApproved,
 			wantApprover: "bob",
+			wantOverrode: ReviewGateOutcomeAwaiting,
 			wantCalls:    1,
 		},
 		{
@@ -224,10 +231,44 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 			wantCalls:   1,
 		},
 		{
-			name:        "changes requested is not overridden",
+			name:        "changes requested holds without a human approval",
 			verdict:     reviewGateChanges,
 			wantReason:  autoMergeReasonReviewGatePrefix + "changes-requested:correctness,security",
 			wantOutcome: "changes-requested:correctness,security",
+			wantCalls:   1,
+		},
+		{
+			// rationguard#296: the swarm aggregate was requires_human while
+			// the style perspective had asked for changes; the owner's
+			// APPROVED review on the head never cleared the gate because the
+			// human lookup was skipped for any changes-requested outcome.
+			name:    "human approval on head overrides changes requested",
+			verdict: reviewGateChanges,
+			reviews: []map[string]any{{
+				"state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "bob"},
+			}},
+			wantOutcome:  ReviewGateOutcomeHumanApproved,
+			wantApprover: "bob",
+			wantOverrode: "changes-requested:correctness,security",
+			wantCalls:    1,
+		},
+		{
+			name:    "human approval on head overrides requires human aggregate",
+			verdict: reviewGateRequiresHuman,
+			reviews: []map[string]any{{
+				"state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "bob"},
+			}},
+			wantOutcome:  ReviewGateOutcomeHumanApproved,
+			wantApprover: "bob",
+			wantOverrode: ReviewGateOutcomeRequiresHuman,
+			wantCalls:    1,
+		},
+		{
+			name:        "requires human aggregate holds without a human approval",
+			verdict:     reviewGateRequiresHuman,
+			wantReason:  autoMergeReasonReviewGatePrefix + ReviewGateOutcomeRequiresHuman,
+			wantOutcome: ReviewGateOutcomeRequiresHuman,
+			wantCalls:   1,
 		},
 		{
 			name:        "swarm approval makes no review API call",
@@ -263,8 +304,8 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 				t.Fatalf("evaluations = %+v, want one", rec.evals)
 			}
 			e := rec.evals[0]
-			if e.Outcome != tt.wantOutcome || e.HumanApprover != tt.wantApprover || e.WouldHold != (tt.wantReason != "") {
-				t.Fatalf("evaluation = %+v, want outcome %q approver %q", e, tt.wantOutcome, tt.wantApprover)
+			if e.Outcome != tt.wantOutcome || e.HumanApprover != tt.wantApprover || e.Overrode != tt.wantOverrode || e.WouldHold != (tt.wantReason != "") {
+				t.Fatalf("evaluation = %+v, want outcome %q approver %q overrode %q", e, tt.wantOutcome, tt.wantApprover, tt.wantOverrode)
 			}
 		})
 	}
@@ -355,7 +396,7 @@ func TestSelfMergeReviewGateReusesPriorApproval(t *testing.T) {
 	if reviewCalls != 0 {
 		t.Fatalf("review API calls = %d, want 0", reviewCalls)
 	}
-	if len(rec.evals) != 1 || rec.evals[0].HumanApprover != "alice" || rec.evals[0].Outcome != ReviewGateOutcomeHumanApproved {
-		t.Fatalf("evaluations = %+v, want human-approved by alice", rec.evals)
+	if len(rec.evals) != 1 || rec.evals[0].HumanApprover != "alice" || rec.evals[0].Outcome != ReviewGateOutcomeHumanApproved || rec.evals[0].Overrode != ReviewGateOutcomeNoBundle {
+		t.Fatalf("evaluations = %+v, want human-approved by alice overriding no-review-bundle", rec.evals)
 	}
 }

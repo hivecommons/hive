@@ -7185,6 +7185,11 @@ func runEvalCycle(
 		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
 		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
 	}
+	// A fix kick (a maintainer's changes_requested / `/hive decision`, or
+	// the swarm's) goes ahead of the governor kick for the same agent, or
+	// the governor kick owns the agent and the fix kick times out every
+	// cycle (hivecommons/hive#13100).
+	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
 	// #4294: drop EVERY assembled kick while the provider is refusing on a
 	// spending limit. Placed after all three sources have contributed —
 	// governor-due agents, the CEL union, and the review swarm — because gating
@@ -7304,6 +7309,9 @@ func runEvalCycle(
 			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
 				gov.RecordKickFailure(msg.Agent, err, time.Now())
+				if k, ok := reviewKickByMessage[reviewKickKey(msg)]; ok {
+					logUndeliveredReviewKick(logger, dashSrv, k, err)
+				}
 			},
 			onDelivered: func(msg scheduler.KickMessage) {
 				gov.RecordKickForRepo(msg.Agent, msg.Repo)
