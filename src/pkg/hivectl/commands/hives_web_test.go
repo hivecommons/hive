@@ -231,7 +231,7 @@ func TestRunHivesWebPrintsTokenizedLoopbackURLAndStopsOnContext(t *testing.T) {
 	}
 }
 
-func TestCommonsWebEmptyStoreAndQueryToken(t *testing.T) {
+func TestCommonsWebAPIRequiresHeaderToken(t *testing.T) {
 	server, _, _ := newCommonsWebHarness(t, nil)
 	defer server.Close()
 
@@ -239,14 +239,12 @@ func TestCommonsWebEmptyStoreAndQueryToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("query-token list status = %d", resp.StatusCode)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query-token list status = %d, want 401", resp.StatusCode)
 	}
-	var list commonsWebListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		t.Fatal(err)
-	}
+
+	_, list := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
 	if list.Strategy != hivectl.CommonsStrategyRanked || len(list.Hives) != 0 {
 		t.Fatalf("empty list = %+v", list)
 	}

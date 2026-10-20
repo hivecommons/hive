@@ -147,9 +147,6 @@ func (s *commonsWebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *commonsWebServer) authorized(r *http.Request) bool {
 	token := strings.TrimSpace(r.Header.Get(commonsWebAuthHeader))
-	if token == "" {
-		token = strings.TrimSpace(r.URL.Query().Get("token"))
-	}
 	return token != "" && token == s.token
 }
 
