@@ -1,0 +1,1 @@
+- refactor: co-locate truncateReasonBytes with noWorkReasonMaxLen (#13121)
