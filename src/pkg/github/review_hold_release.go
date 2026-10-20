@@ -178,12 +178,15 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 // ReviewHoldSince returns when hold began on the content its latest verdict
 // judged: the first-recorded time of the earliest verdict in the unbroken run
 // of blocking verdicts, ending with the latest, whose heads carry the same
-// non-merge commits. A head the latest verdict's head reaches only through
-// merge commits (a `Merge branch 'main'` update) is the same content; any
-// other commit, a rewritten history, or a new verdict on the same head (a
-// changed description) starts a new hold. It lists the PR's commits only
-// when there is an earlier verdict to consider, and falls back to the latest
-// verdict's time (hold.RecordedAt) whenever the commits cannot be read.
+// non-merge commits and the same patch. A head the latest verdict's head
+// reaches only through clean base-branch merges (a `Merge branch 'main'`
+// update that leaves the PR's patch against its merge-base unchanged, compared
+// like a patch-id) is the same content. Any other commit, a merge that carries
+// conflict resolution, a merge whose cleanliness cannot be read, a rewritten
+// history, or a new verdict on the same head (a changed description) starts a
+// new hold. It lists the PR's commits only when there is an earlier verdict to
+// consider, and falls back to the latest verdict's time (hold.RecordedAt)
+// whenever the commits cannot be read.
 func ReviewHoldSince(ctx context.Context, client *gh.Client, owner, repo string, number int, hold ReviewVerdictHold) time.Time {
 	if client == nil || len(hold.Verdicts) < 2 || hold.RecordedAt.IsZero() {
 		return hold.RecordedAt
@@ -201,11 +204,78 @@ func ReviewHoldSince(ctx context.Context, client *gh.Client, owner, repo string,
 		}
 		opts.Page = resp.NextPage
 	}
-	return reviewHoldSinceForCommits(hold, commits)
+	patches := map[string]string{}
+	patchID := func(base, head string) (string, bool) {
+		key := base + "..." + head
+		if id, ok := patches[key]; ok {
+			return id, id != ""
+		}
+		cmp, _, err := client.Repositories.CompareCommits(ctx, owner, repo, base, head, nil)
+		id, ok := "", false
+		if err == nil && cmp != nil {
+			id, ok = comparePatchID(cmp.Files)
+		}
+		if !ok {
+			id = ""
+		}
+		patches[key] = id
+		return id, ok
+	}
+	clean := func(merge, prParent, baseParent string) bool {
+		before, ok := patchID(baseParent, prParent)
+		if !ok {
+			return false
+		}
+		after, ok := patchID(baseParent, merge)
+		return ok && before == after
+	}
+	return reviewHoldSinceForCommits(hold, commits, clean)
 }
 
-// reviewHoldSinceForCommits is ReviewHoldSince over the PR's commits.
-func reviewHoldSinceForCommits(hold ReviewVerdictHold, commits []*gh.RepositoryCommit) time.Time {
+// cleanMergeFunc reports whether merge, a merge of the base-branch commit
+// baseParent into the PR commit prParent, leaves the PR's patch against its
+// merge-base unchanged. It returns false when that cannot be determined.
+type cleanMergeFunc func(merge, prParent, baseParent string) bool
+
+// comparePatchID returns a patch-id-like digest of a compare's files: per
+// file, its name and status and the added and removed lines with whitespace
+// and line numbers dropped, so a clean merge of base-branch changes elsewhere
+// keeps it. ok is false when the patch is missing or may be truncated.
+func comparePatchID(files []*gh.CommitFile) (string, bool) {
+	// GitHub's compare lists at most 300 files.
+	if len(files) >= 300 {
+		return "", false
+	}
+	entries := make([]string, 0, len(files))
+	for _, f := range files {
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s\x00%s\x00%s\x00", f.GetFilename(), f.GetPreviousFilename(), f.GetStatus())
+		patch := f.GetPatch()
+		if patch == "" {
+			// Binary, too large, or a rename without changes: compare the blob.
+			if f.GetSHA() == "" && f.GetChanges() > 0 {
+				return "", false
+			}
+			b.WriteString("blob:" + f.GetSHA())
+		}
+		for _, line := range strings.Split(patch, "\n") {
+			if line == "" || (line[0] != '+' && line[0] != '-') {
+				continue
+			}
+			b.WriteByte(line[0])
+			b.WriteString(strings.Join(strings.Fields(line[1:]), ""))
+			b.WriteByte('\n')
+		}
+		entries = append(entries, b.String())
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, "\x01"), true
+}
+
+// reviewHoldSinceForCommits is ReviewHoldSince over the PR's commits; clean
+// decides whether a base-branch merge commit kept the PR's patch (nil treats
+// every merge as changing it).
+func reviewHoldSinceForCommits(hold ReviewVerdictHold, commits []*gh.RepositoryCommit, clean cleanMergeFunc) time.Time {
 	since := hold.RecordedAt
 	n := len(hold.Verdicts)
 	if n < 2 || since.IsZero() {
@@ -227,7 +297,7 @@ func reviewHoldSinceForCommits(hold ReviewVerdictHold, commits []*gh.RepositoryC
 	for i := n - 2; i >= 0; i-- {
 		v := hold.Verdicts[i]
 		head := strings.ToLower(strings.TrimSpace(v.HeadSHA))
-		if v.RecordedAt.IsZero() || head == latest || !sameNonMergeCommits(parents, reach, head) {
+		if v.RecordedAt.IsZero() || head == latest || !sameContent(parents, reach, head, clean) {
 			break
 		}
 		since = v.RecordedAt
@@ -257,16 +327,40 @@ func prCommitAncestors(parents map[string][]string, head string) map[string]bool
 	return seen
 }
 
-// sameNonMergeCommits reports whether head, an earlier verdict's head, is
-// one of the commits in reach (the later head and its PR ancestors) and
-// every commit reach adds over head's own ancestors is a merge commit.
-func sameNonMergeCommits(parents map[string][]string, reach map[string]bool, head string) bool {
+// sameContent reports whether head, an earlier verdict's head, is one of the
+// commits in reach (the later head and its PR ancestors) and every commit
+// reach adds over head's own ancestors is a clean merge of a base-branch
+// commit: two parents, the first a PR commit and the second not, and clean
+// reports the PR's patch unchanged across it. A merge that carries conflict
+// resolution changes the PR's content like any other commit.
+func sameContent(parents map[string][]string, reach map[string]bool, head string, clean cleanMergeFunc) bool {
 	if !reach[head] {
 		return false
 	}
 	earlier := prCommitAncestors(parents, head)
+	var merges []string
 	for sha := range reach {
-		if !earlier[sha] && len(parents[sha]) < 2 {
+		if earlier[sha] {
+			continue
+		}
+		ps := parents[sha]
+		if len(ps) != 2 {
+			return false
+		}
+		if _, ok := parents[ps[0]]; !ok {
+			return false
+		}
+		if _, ok := parents[ps[1]]; ok {
+			return false
+		}
+		merges = append(merges, sha)
+	}
+	if len(merges) > 0 && clean == nil {
+		return false
+	}
+	sort.Strings(merges)
+	for _, sha := range merges {
+		if !clean(sha, parents[sha][0], parents[sha][1]) {
 			return false
 		}
 	}
