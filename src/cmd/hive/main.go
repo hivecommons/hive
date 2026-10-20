@@ -2195,6 +2195,21 @@ func resolveSpokeDashboardURL(cfg *config.Config, servedHost func() string) stri
 	return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 }
 
+// chatPublicURL is the dashboard origin chat clients can open, or "" when none
+// is configured: the loopback fallback of resolveSpokeDashboardURL is useless
+// outside the container, so notifications omit their details link instead.
+func (b *boot) chatPublicURL() string {
+	loopback := fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port)
+	var servedHost func() string
+	if b.ctx != nil {
+		servedHost = func() string { return spoke.SpokeServedHost(b.ctx) }
+	}
+	if u := resolveSpokeDashboardURL(b.cfg, servedHost); u != loopback {
+		return u
+	}
+	return ""
+}
+
 // taskMCPLaunchTokenForAgents mints the lease-scoped bearer one launch
 // presents to the task MCP endpoint (#8348). It is signed with the same
 // secret the dashboard verifies remote-contributor lease tokens with, bound
@@ -4759,6 +4774,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 	if deps.startDashChat != nil {
 		bot, err := deps.startDashChat(b.ctx, dashchat.Config{
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    dashboardChatAllowedUsers(b.cfg),
 			PersonaStore:    personaStore("dashboard"),
@@ -4784,6 +4800,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			Token:           b.cfg.Notifications.Discord.BotToken,
 			ChannelID:       b.cfg.Notifications.Discord.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Discord.AllowedUsers,
 			PersonaStore:    personaStore("discord"),
@@ -4804,6 +4821,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Slack.BotToken,
 			ChannelID:       b.cfg.Notifications.Slack.ChannelID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Slack.AllowedUsers,
 			PersonaStore:    personaStore("slack"),
@@ -4823,6 +4841,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			BotToken:        b.cfg.Notifications.Telegram.BotToken,
 			ChatID:          b.cfg.Notifications.Telegram.ChatID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Telegram.AllowedUsers,
 			PersonaStore:    personaStore("telegram"),
@@ -4843,6 +4862,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			AccessToken:     b.cfg.Notifications.Matrix.AccessToken,
 			RoomID:          b.cfg.Notifications.Matrix.RoomID,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.Matrix.AllowedUsers,
 			PersonaStore:    personaStore("matrix"),
@@ -4866,6 +4886,7 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			ChannelID:       b.cfg.Notifications.MSTeams.ChannelID,
 			WebhookURL:      b.cfg.Notifications.MSTeams.WebhookURL,
 			DashboardURL:    fmt.Sprintf("http://localhost:%d", b.cfg.Dashboard.Port),
+			PublicURL:       b.chatPublicURL(),
 			DashboardToken:  b.chatDashboardToken(),
 			AllowedUsers:    b.cfg.Notifications.MSTeams.AllowedUsers,
 			PersonaStore:    personaStore("msteams"),

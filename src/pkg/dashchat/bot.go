@@ -29,6 +29,7 @@ var (
 
 type Config struct {
 	DashboardURL   string
+	PublicURL      string // user-facing dashboard origin; empty omits notification links
 	DashboardToken string
 	AllowedUsers   []string
 	// PersonaStore persists each author's persona; nil keeps personas in
@@ -91,6 +92,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 	b := &backend{logger: logger, inbox: make(chan inbound, inboxCap), epoch: uuid.NewString()}
 	service := chat.NewService(b, chat.Config{
 		DashboardURL:      cfg.DashboardURL,
+		PublicURL:         cfg.PublicURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
 		PersonaStore:      cfg.PersonaStore,

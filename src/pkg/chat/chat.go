@@ -122,6 +122,9 @@ type CommandRefuser interface {
 
 type Config struct {
 	DashboardURL      string
+	// PublicURL is the externally reachable dashboard origin used for
+	// user-facing "details" links. DashboardURL is loopback and never linked.
+	PublicURL         string
 	DashboardToken    string
 	AllowedUsers      []string
 	MessageLimit      int
@@ -145,6 +148,7 @@ type Service struct {
 	inbound           recentMessages
 	backend           Backend
 	dashboardURL      string
+	publicURL         string
 	dashboardToken    string
 	allowedUsers      map[string]allowedUser
 	allowedUsersMu    sync.RWMutex
@@ -211,6 +215,7 @@ func NewService(backend Backend, cfg Config, logger *slog.Logger) *Service {
 	return &Service{
 		backend:        backend,
 		dashboardURL:   cfg.DashboardURL,
+		publicURL:      cfg.PublicURL,
 		dashboardToken: cfg.DashboardToken,
 		allowedUsers:   allowed,
 		commands:       make(map[string]CommandHandler),

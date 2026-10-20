@@ -55,6 +55,11 @@ type agentSnapshot struct {
 	LiveSummary string `json:"liveSummary"`
 	LastKickAt  string `json:"lastKickAt"`
 	Paused      bool   `json:"paused"`
+
+	NeedsLogin        bool   `json:"needsLogin"`
+	AuthKnown         bool   `json:"authKnown"`
+	AuthAvailable     bool   `json:"authAvailable"`
+	BackendAuthStatus string `json:"backendAuthStatus"`
 }
 
 type governorSnapshot struct {
@@ -312,6 +317,9 @@ func (s *Service) agentCompletionText(agent, old agentSnapshot) string {
 	duration := agentDurationSuffix(agent.LastKickAt)
 	details := s.agentDetailsSuffix(agent.Name)
 
+	if reason := cliCannotRunReason(agent); reason != "" {
+		return fmt.Sprintf("Failed — agent CLI could not run (%s)%s%s", reason, duration, details)
+	}
 	if outcome := completionOutcome(summary); outcome != "" {
 		if work != "" && outcome != "no new work" {
 			return fmt.Sprintf("Completed — %s: %s%s%s", work, outcome, duration, details)
@@ -322,6 +330,21 @@ func (s *Service) agentCompletionText(agent, old agentSnapshot) string {
 		return fmt.Sprintf("Completed — finished a pass on %s%s%s", work, duration, details)
 	}
 	return fmt.Sprintf("Completed — finished a pass — no new work%s%s", duration, details)
+}
+
+// cliCannotRunReason reports why the agent's CLI could not do a pass (not
+// signed in, no credential for its backend, or a failing backend auth canary),
+// or "" when nothing says it was unable to run.
+func cliCannotRunReason(agent agentSnapshot) string {
+	switch {
+	case agent.NeedsLogin:
+		return "CLI is not signed in"
+	case agent.AuthKnown && !agent.AuthAvailable:
+		return "no credential for its backend"
+	case agent.BackendAuthStatus != "" && agent.BackendAuthStatus != "ok":
+		return "backend auth: " + agent.BackendAuthStatus
+	}
+	return ""
 }
 
 func truncateRunes(s string, limit int) string {
@@ -394,10 +417,10 @@ func compactDuration(d time.Duration) string {
 }
 
 func (s *Service) agentDetailsSuffix(name string) string {
-	if strings.TrimSpace(s.dashboardURL) == "" || strings.TrimSpace(name) == "" {
+	if strings.TrimSpace(s.publicURL) == "" || strings.TrimSpace(name) == "" {
 		return ""
 	}
-	return " — details: " + strings.TrimRight(s.dashboardURL, "/") + "/#" + url.PathEscape(name)
+	return " — details: " + strings.TrimRight(s.publicURL, "/") + "/#" + url.PathEscape(name)
 }
 
 func (s *Service) diffGovernor(prev, cur *statusSnapshot) {
