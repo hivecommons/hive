@@ -4262,7 +4262,7 @@
     .kb-fact-conf-fill { height: 100%; border-radius: 2px; }
     .kb-fact-body { flex: 1; min-width: 0; }
     .kb-fact-title { font-size: var(--fs-base); font-weight: 600; color: var(--fg); margin-bottom: var(--sp-1); overflow-wrap: anywhere; }
-    .kb-fact-snippet { font-size: 0.72rem; color: var(--muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .kb-fact-snippet { font-size: 0.72rem; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .kb-fact-tags { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
     /* kb-type / kb-layer chips — pill recipe; the Phase-0 hardcoded pastel
        pairs become token tints so they read in BOTH modes. */
@@ -5235,7 +5235,6 @@
         white-space: normal;
       }
       /* Long unbroken tokens (test names, URLs) wrap inside facts/advice. */
-      .kb-fact-snippet,
       .advisory-agent-body,
       #kb-subs-content,
       .config-body {
