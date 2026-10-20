@@ -1314,6 +1314,9 @@
     .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
     .ham-input:focus { border-color: var(--line-strong); }
     .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
+    /* Merge sound toggle: a speaker chip at the toolbar's far end; pressed = on. */
+    .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
+    .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
@@ -6601,6 +6604,7 @@
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
+        <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Merge sound off — turn on (plays a test zap)" title="Merge sound off — turn on (plays a test zap)">🔇</button>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
@@ -13231,7 +13235,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data) {
-      if (data && typeof data === 'object') _stageTracker = data;
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); }
       const el = document.getElementById('activity-monitor-panel');
       if (!el) return;
       const d = _stageTracker;
@@ -13286,7 +13290,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is restored from storage on the first fetch.
     async function fetchStageTracker() {
       try {
-        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadFilter();
+        if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) { stageTrackerTickClock(); return; }
         if (!r.ok) return;
@@ -13297,6 +13301,164 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         renderStageTracker(JSON.parse(text));
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) { /* keep the previous render */ }
+    }
+
+    /* ---- Activity monitor merge sound (#13275) ----------------------------
+       Opt-in "bug zapper" when a PR the tab was already watching merges.
+       The detector is pure (stageTrackerMergeState + stageTrackerNewlyMerged,
+       run under node by stage_tracker_merge_sound_test.go): a PR counts as
+       newly merged when the previous payload listed it open and the next
+       one lists it merged — a stage at/after the terminal cap, or its key
+       in recently_merged (the audit log's pr_merged entries, which is how
+       a PR that simply dropped out of the open list is told apart from one
+       closed unmerged). First load has no previous payload, so it never
+       fires; issues never fire; a per-PR "zapped" set stops replays; N
+       merges in one refresh play at most STAGE_TRACKER_SOUND_MAX_PLAYS
+       zaps. The sound is synthesised with the Web Audio API (no asset, no
+       URL — the CSP allows neither): a short burst of crackling white
+       noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a low
+       sine "thunk" at onset, all under one master gain. The AudioContext
+       is created lazily on a user gesture and resumed when suspended. */
+    const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
+    const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
+    const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
+    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.3;
+    const STAGE_TRACKER_ZAP_S = 0.34;
+    const STAGE_TRACKER_ZAP_BAND_FROM_HZ = 3600;
+    const STAGE_TRACKER_ZAP_BAND_TO_HZ = 1200;
+    const STAGE_TRACKER_ZAP_BAND_Q = 5;
+    const STAGE_TRACKER_ZAP_CRACKLE_FLIP = 0.006;
+    const STAGE_TRACKER_ZAP_CRACKLE_FLOOR = 0.12;
+    const STAGE_TRACKER_THUNK_HZ = 90;
+    const STAGE_TRACKER_THUNK_S = 0.14;
+    const STAGE_TRACKER_GAIN_FLOOR = 0.0001;
+    var _stageTrackerMergeState = null;
+    var _stageTrackerZapped = {};
+    var _stageTrackerAudioCtx = null;
+    var _stageTrackerSoundOn = false;
+    var _stageTrackerSoundPrimed = false;
+
+    function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
+
+    // Pure: PR key → merged? for one payload. Issues are not tracked.
+    function stageTrackerMergeState(d) {
+      const out = {};
+      if (!d || typeof d !== 'object') return out;
+      for (const it of (Array.isArray(d.items) ? d.items : [])) {
+        if (!it || it.kind !== 'pr') continue;
+        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+      }
+      for (const m of (Array.isArray(d.recently_merged) ? d.recently_merged : [])) {
+        if (m && m.repo && m.number) out[stageTrackerPRKey(m.repo, m.number)] = true;
+      }
+      return out;
+    }
+
+    // Pure: PR keys open in prev and merged in next, sorted. No prev → none.
+    function stageTrackerNewlyMerged(prev, next) {
+      if (!prev || !next) return [];
+      return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
+    }
+
+    function stageTrackerNoteMerges(d) {
+      const next = stageTrackerMergeState(d);
+      const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
+      _stageTrackerMergeState = next;
+      if (!fresh.length) return;
+      fresh.forEach(k => { _stageTrackerZapped[k] = true; });
+      if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
+    }
+
+    function stageTrackerAudioContext() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      if (!_stageTrackerAudioCtx) { try { _stageTrackerAudioCtx = new AC(); } catch { return null; } }
+      if (_stageTrackerAudioCtx.state === 'suspended') { try { _stageTrackerAudioCtx.resume(); } catch {} }
+      return _stageTrackerAudioCtx;
+    }
+
+    // Prime the context on the first gesture after load when sound was left
+    // on in a previous visit, so a merge that lands before the user clicks
+    // anything in the tracker can still play (autoplay policy).
+    function stageTrackerSoundPrime() {
+      if (_stageTrackerSoundPrimed) return;
+      _stageTrackerSoundPrimed = true;
+      const prime = () => { if (_stageTrackerSoundOn) stageTrackerAudioContext(); };
+      document.addEventListener('pointerdown', prime, { once: true, passive: true });
+      document.addEventListener('keydown', prime, { once: true, passive: true });
+    }
+
+    function stageTrackerZapVoice(ctx, out, at) {
+      const sr = ctx.sampleRate;
+      const buf = ctx.createBuffer(1, Math.ceil(sr * STAGE_TRACKER_ZAP_S), sr);
+      const data = buf.getChannelData(0);
+      let gate = 1;
+      for (let i = 0; i < data.length; i++) {
+        if (Math.random() < STAGE_TRACKER_ZAP_CRACKLE_FLIP) gate = gate ? 0 : 1;
+        data[i] = (Math.random() * 2 - 1) * (gate ? 1 : STAGE_TRACKER_ZAP_CRACKLE_FLOOR);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.Q.value = STAGE_TRACKER_ZAP_BAND_Q;
+      band.frequency.setValueAtTime(STAGE_TRACKER_ZAP_BAND_FROM_HZ, at);
+      band.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_ZAP_BAND_TO_HZ, at + STAGE_TRACKER_ZAP_S);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at);
+      env.gain.exponentialRampToValueAtTime(1, at + 0.012);
+      env.gain.exponentialRampToValueAtTime(0.6, at + STAGE_TRACKER_ZAP_S * 0.5);
+      env.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_ZAP_S);
+      src.connect(band); band.connect(env); env.connect(out);
+      src.start(at); src.stop(at + STAGE_TRACKER_ZAP_S);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(STAGE_TRACKER_THUNK_HZ, at);
+      osc.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_THUNK_HZ / 2, at + STAGE_TRACKER_THUNK_S);
+      const thunk = ctx.createGain();
+      thunk.gain.setValueAtTime(0.7, at);
+      thunk.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_THUNK_S);
+      osc.connect(thunk); thunk.connect(out);
+      osc.start(at); osc.stop(at + STAGE_TRACKER_THUNK_S);
+    }
+
+    function stageTrackerPlayZap(count) {
+      const ctx = stageTrackerAudioContext();
+      if (!ctx) return false;
+      try {
+        const master = ctx.createGain();
+        master.gain.value = STAGE_TRACKER_SOUND_MASTER_GAIN;
+        master.connect(ctx.destination);
+        const n = Math.max(1, Math.min(Number(count) || 1, STAGE_TRACKER_SOUND_MAX_PLAYS));
+        for (let i = 0; i < n; i++) stageTrackerZapVoice(ctx, master, ctx.currentTime + i * STAGE_TRACKER_SOUND_OFFSET_S);
+        return true;
+      } catch { return false; }
+    }
+
+    function stageTrackerSoundSyncButton() {
+      const b = document.getElementById('activity-monitor-sound');
+      if (!b) return;
+      const on = _stageTrackerSoundOn;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.textContent = on ? '🔊' : '🔇';
+      const label = on ? 'Merge sound on — turn off' : 'Merge sound off — turn on (plays a test zap)';
+      b.setAttribute('aria-label', label);
+      b.setAttribute('title', label);
+    }
+
+    function stageTrackerSoundInit() {
+      try { _stageTrackerSoundOn = localStorage.getItem(STAGE_TRACKER_SOUND_KEY) === '1'; } catch { _stageTrackerSoundOn = false; }
+      stageTrackerSoundSyncButton();
+      if (_stageTrackerSoundOn) stageTrackerSoundPrime();
+    }
+
+    // Toolbar speaker chip: flips the preference, persists it, and plays one
+    // test zap when turning on so the user hears what they opted into.
+    function hamSoundToggle() {
+      _stageTrackerSoundOn = !_stageTrackerSoundOn;
+      try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
+      stageTrackerSoundSyncButton();
+      if (_stageTrackerSoundOn) { stageTrackerSoundPrime(); stageTrackerPlayZap(1); }
     }
 
     function parseCadenceMinutes(cadence) {

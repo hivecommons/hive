@@ -13,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -55,6 +56,80 @@ type StageTrackerResponse struct {
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
+	// RecentlyMerged lists the pull requests the hive saw merge within
+	// stageTrackerMergedWindow, from the audit log's pr_merged entries
+	// (sweep, queue, relay and human merges observed by the PR poller
+	// alike). Items only ever lists open work, so a merged PR simply
+	// drops out of Items on the next build; this side list is what lets
+	// the SPA tell "merged" from "closed" between two polls and play its
+	// opt-in merge sound for the right rows.
+	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+}
+
+// StageTrackerMerged is one recently merged pull request.
+type StageTrackerMerged struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	MergedAt time.Time `json:"merged_at"`
+}
+
+// stageTrackerMergedWindow bounds RecentlyMerged. It is deliberately much
+// longer than the cache TTL plus the SPA's 30 s poll: a tab that missed a
+// few polls (throttled in the background) still sees the merge it was
+// watching for, and the SPA dedupes per PR so a longer list never replays.
+const stageTrackerMergedWindow = 30 * time.Minute
+
+var stageTrackerAuditNumberRe = regexp.MustCompile(`(?:^|[,\s])number=(\d+)`)
+
+// stageTrackerRecentlyMerged reads the pr_merged audit entries newer than
+// now-stageTrackerMergedWindow from the in-memory ring: newest first, one
+// entry per (repo, number). The ring holds auditRingCap entries and is the
+// only source consulted — a window this short never needs the on-disk log,
+// and reading files on every tracker build would defeat its cache.
+func (s *Server) stageTrackerRecentlyMerged(now time.Time) []StageTrackerMerged {
+	if s == nil || s.audit == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []StageTrackerMerged
+	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-stageTrackerMergedWindow), github.AuditActionPRMerged) {
+		if e.Action != github.AuditActionPRMerged {
+			continue
+		}
+		repo, ok := collect.AuditEntryRepo(e)
+		if !ok {
+			continue
+		}
+		number := e.Target
+		if number == 0 {
+			if m := stageTrackerAuditNumberRe.FindStringSubmatch(e.Detail); m != nil {
+				number, _ = strconv.Atoi(m[1])
+			}
+		}
+		if number <= 0 {
+			continue
+		}
+		key := repo + "#" + strconv.Itoa(number)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		at, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil {
+			at = now
+		}
+		out = append(out, StageTrackerMerged{Repo: repo, Number: number, MergedAt: at.UTC()})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].MergedAt.Equal(out[j].MergedAt) {
+			return out[i].MergedAt.After(out[j].MergedAt)
+		}
+		if out[i].Repo != out[j].Repo {
+			return out[i].Repo < out[j].Repo
+		}
+		return out[i].Number < out[j].Number
+	})
+	return out
 }
 
 // StageTrackerStage is one row of stagelabels.Table as the strip needs it.
@@ -661,6 +736,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		st := s.deps.StageEngineStatus()
 		resp.Engine = &st
 	}
+	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now)
 	if status == nil {
 		return resp
 	}
