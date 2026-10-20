@@ -6,13 +6,14 @@ package github
 // decided about each one — no extra GitHub reads:
 //
 //   - still in the actionable set            → stage/010-actionable, or
-//     stage/015-triage-needed when the issue is UNTRIAGED: it carries the
-//     reporter-trust awaiting label (needs-triage), or the hive / an agent
-//     filed it and no maintainer-looked-at-it label (triage/accepted,
-//     hive/verified-open, approved-direction) is on it (issueUntriaged).
-//     015 is a tracking state, not a gate: the scanner claims from it
-//     exactly as from 010. A human-filed issue the #9665 reporter gate
-//     holds out (bucket reporter_triage) is 015 too, and still withheld.
+//     stage/015-triage-needed when the #9665 reporter gate is holding it:
+//     it carries the reporter-trust awaiting label (needs-triage) or sits
+//     in the gate's reporter_triage bucket (issueUntriaged). Issues the
+//     hive or an agent files, and issues from trusted humans, are triaged
+//     by construction and stay 010 — 015 is never derived from who filed
+//     it. 015 is a tracking state, not a gate: the gate withholds the
+//     issue; the scanner claims from 015 exactly as from 010 once it lets
+//     go.
 //   - withheld by a live issue claim or by the in-progress sweep (a live
 //     kind=agent start mark)                 → stage/020-claimed, or
 //     stage/030-pr-in-progress only when the claim carries PR evidence
@@ -143,15 +144,9 @@ const (
 	workBucketReporterTriage = string(stageengine.BucketReporterTriage)
 )
 
-// Triage evidence for stage/015-triage-needed (stagelabels.TriageNeeded).
-// The awaiting label is the reporter-trust gate's default
-// (`reporter_trust.awaiting_label`); the accepted labels are the gate's
-// default triage label plus the two other labels only a maintainer's
-// action puts on an issue.
-var (
-	triageAwaitingLabel  = config.DefaultReporterTrustAwaitingLabel
-	triageAcceptedLabels = append(append([]string(nil), config.DefaultUntrustedRequireLabels...), VerifiedOpenLabel, HumanAckLabel)
-)
+// Triage evidence for stage/015-triage-needed (stagelabels.TriageNeeded):
+// the reporter-trust gate's awaiting label (`reporter_trust.awaiting_label`).
+var triageAwaitingLabel = config.DefaultReporterTrustAwaitingLabel
 
 // IssueStageInput is the one shape both actionable items and work-detail
 // rows reduce to before classification.
@@ -178,18 +173,16 @@ type IssueStageInput struct {
 	Held bool
 	// AuthorKind is who filed the issue, as the enumeration judged it
 	// (issueAuthorKind: Human, Hive, or Unknown when no login was seen).
-	// Unknown means "no opinion" and is read as human-filed, so a caller
-	// without the author never demotes a triaged issue to 015
-	// (hivecommons/hive#13268).
+	// Carried through to the stage engine's AuthorFacts; the 010/015
+	// derivation does not read it.
 	AuthorKind authorkind.Kind
 }
 
 // issueUntriaged reports whether an actionable issue derives
 // 015-triage-needed instead of 010: it carries the reporter-trust awaiting
-// label (or sits in the gate's reporter_triage bucket), or a non-human
-// (hive / agent / bot) filed it and no maintainer has marked it looked-at
-// (triage/accepted, hive/verified-open, approved-direction). A human-filed
-// issue without needs-triage is triaged by its trusted reporter.
+// label or sits in the gate's reporter_triage bucket. Who filed the issue
+// is deliberately not consulted — hive-, agent- and trusted-human-filed
+// issues are 010 (owner decision, hivecommons/hive#13287 follow-up).
 func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
 	if issueHasLabel(in.Labels, triageAwaitingLabel) {
 		return true, "carries " + triageAwaitingLabel
@@ -197,15 +190,7 @@ func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
 	if in.Bucket == workBucketReporterTriage {
 		return true, "reporter-trust gate: awaiting the triage label"
 	}
-	if in.AuthorKind == authorkind.Unknown || in.AuthorKind == authorkind.Human {
-		return false, ""
-	}
-	for _, l := range triageAcceptedLabels {
-		if issueHasLabel(in.Labels, l) {
-			return false, ""
-		}
-	}
-	return true, "filed by the hive (" + string(in.AuthorKind) + "), no maintainer triage label"
+	return false, ""
 }
 
 // actionableStage is 010-actionable or, for an untriaged issue, 015.
