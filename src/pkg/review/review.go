@@ -1280,7 +1280,7 @@ func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) 
 	var ok bool
 	for _, item := range a.Items {
 		item = item.Normalize()
-		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || !SameHeadSHA(item.HeadSHA, wantSHA) {
 			continue
 		}
 		if !ok || item.RecordedAt.After(match.RecordedAt) {

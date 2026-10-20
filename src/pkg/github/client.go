@@ -2089,7 +2089,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
 	// Snapshot the CI verdict for the evidence bundle once it is known. Never
 	// affects the verdict or any merge decision.
-	defer func() { c.recordReviewEvidenceCI(pr.Repo, pr.Number, pr.HeadSHA, pr.CIStatus, full, latestCheckRuns) }()
+	// Keyed by owner/name: pr.Repo may be the bare repo name, and a bundle
+	// filed under it validates as "repo must be owner/name" and is dropped,
+	// leaving the lane's bundle at <owner>/<name>/<n>/<head>.json without
+	// its CI snapshot.
+	defer func() {
+		c.recordReviewEvidenceCI(owner+"/"+repoName, pr.Number, pr.HeadSHA, pr.CIStatus, full, latestCheckRuns)
+	}()
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {

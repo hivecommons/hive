@@ -166,6 +166,9 @@ type StageTrackerItem struct {
 	Title  string `json:"title"`
 	URL    string `json:"url,omitempty"`
 	Author string `json:"author,omitempty"`
+	// Head is the PR head SHA the lane last evaluated ("" for issues), so
+	// a "waiting for a verdict" caption can name the revision it waits on.
+	Head string `json:"head,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
 	Labels    []string   `json:"labels,omitempty"`
@@ -498,6 +501,21 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 	return out
 }
 
+// noVerdictClause is the bare no-verdict clause; stageTrackerCaption swaps
+// in "awaiting review of head <sha7>" when the item's head is known.
+const noVerdictClause = "no review verdict yet"
+
+// shortHeadLen is the abbreviated SHA length the captions print.
+const shortHeadLen = 7
+
+func shortHead(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > shortHeadLen {
+		return sha[:shortHeadLen]
+	}
+	return sha
+}
+
 // humanizeStageReason turns a lane reason token into a short clause with
 // no leading capital and no trailing period, or "" when the token adds
 // nothing to the stage description.
@@ -517,7 +535,7 @@ func humanizeStageReason(reason string) string {
 	case "untrusted-author-role":
 		return "author's role is not trusted for unattended merge"
 	case "contributor-lane:no-verdict":
-		return "no review verdict yet"
+		return noVerdictClause
 	case "contributor-lane:no-claim":
 		return "no verified claim links this PR to an issue"
 	case "contributor-lane:claim-tier-untrusted":
@@ -648,8 +666,13 @@ func joinClause(head, clause string) string {
 }
 
 // stageTrackerCaption builds the human sentence and the actor for an item.
-func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
+func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int, head string) (caption, actor string) {
 	clause := humanizeStageReason(reason)
+	if clause == noVerdictClause {
+		if sha := shortHead(head); sha != "" {
+			clause = "awaiting review of head " + sha
+		}
+	}
 	who := strings.TrimSpace(author)
 	if who == "" {
 		who = "the author"
@@ -819,7 +842,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.TriageNeeded {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
 		}
-		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
+		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -879,7 +902,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
 		pr.Repo = nonEmpty(pr.Repo, repoName)
 		rec, ok := lookup(repoName, pr.Number)
-		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author,
+		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author, Head: pr.HeadSHA,
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}

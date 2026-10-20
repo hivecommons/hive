@@ -524,7 +524,7 @@ func reviewQueueDispatchReason(e *ReviewQueueEntry, pr PullRequest, full string,
 	e.RedispatchCount = count
 	var exhausted string
 	for _, h := range opts.Dispatch.Human {
-		if h.Number == pr.Number && strings.TrimSpace(h.HeadSHA) == strings.TrimSpace(pr.HeadSHA) &&
+		if h.Number == pr.Number && review.SameHeadSHA(h.HeadSHA, pr.HeadSHA) &&
 			(strings.EqualFold(strings.TrimSpace(h.Repo), full) || strings.EqualFold(strings.TrimSpace(h.Repo), pr.Repo)) &&
 			strings.HasPrefix(h.Reason, review.HoldReasonDispatchExhausted) {
 			exhausted = h.Reason
