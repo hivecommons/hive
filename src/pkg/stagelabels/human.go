@@ -199,7 +199,10 @@ func RouteHuman(e Evidence) Route {
 	if len(fix) > 0 {
 		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
 	}
-	if e.Verdict == VerdictPending || e.HeadFresh {
+	// A fresh head waits for its verdict — unless the reviewer has already
+	// answered requires_human for this very head, in which case the person
+	// is owed a decision now, not after CI reports (hivecommons/hive#13115).
+	if e.Verdict == VerdictPending || e.HeadFresh && e.Verdict != VerdictRequiresHuman {
 		return Route{Stage: ReviewPending, Reasons: []string{"no reviewer verdict for this head yet"}, Summary: summary}
 	}
 	var decide []string

@@ -115,6 +115,20 @@ func TestRouteHumanPendingStaysAtReview(t *testing.T) {
 	if r := RouteHuman(e); r.Stage != ReviewPending {
 		t.Fatalf("fresh head + hold route = %+v", r)
 	}
+	// Unless the verdict for that head is already requires_human: the
+	// reviewer has answered, so the PR is a decision, not a wait
+	// (hivecommons/hive#13115).
+	e = readyEvidence()
+	e.HeadFresh = true
+	e.Checks = CheckSummary{Known: true}
+	e.Verdict = VerdictRequiresHuman
+	if r := RouteHuman(e); r.Stage != NeedsDecision {
+		t.Fatalf("fresh head + requires_human route = %+v", r)
+	}
+	e.Cause = CauseDecision
+	if r := RouteHuman(e); r.Stage != NeedsDecision {
+		t.Fatalf("fresh head + requires_human decision route = %+v", r)
+	}
 }
 
 // TestRouteHumanDecision: sentinel, hold-class labels, no reviewer, or a
