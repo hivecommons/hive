@@ -458,6 +458,7 @@ func TestResolveStageTrustedHumanApprovalClearsRequiresHuman(t *testing.T) {
 // admit the author only says needs-human when no lane admits them.
 func TestResolveStageAdmissionOpinions(t *testing.T) {
 	trusted := stageDetail{Role: stagelabels.RoleTrusted}
+	requiresHumanDetail := stageDetail{Role: stagelabels.RoleContributor, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
 	cases := []struct {
 		name   string
 		list   []stageObservation
@@ -521,6 +522,28 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
 			},
 			stage: stagelabels.NeedsDecision, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneContributor,
+		},
+		{
+			// #13115: a requires_human verdict on an admission reason is 085,
+			// as weak as the reason that carries it, from the lane that
+			// cannot vouch for the author.
+			name: "requires_human with author-association is needs-decision from the contributor lane",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role", Detail: requiresHumanDetail},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonAuthorAssociation, Detail: requiresHumanDetail},
+			},
+			stage: stagelabels.NeedsDecision, rank: stageRankAdmission, author: stagelabels.RoleContributor, lane: stageLaneContributor,
+		},
+		{
+			// The trusted lane's role check must not outrank the contributor
+			// lane's own evaluation of the head: a conflict is the author's
+			// problem first, whatever the reviewer said.
+			name: "requires_human with role check loses to contributor conflicting",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role", Detail: requiresHumanDetail},
+				{Lane: stageLaneContributor, Reason: "conflicting", Detail: requiresHumanDetail},
+			},
+			stage: stagelabels.NeedsAuthor, rank: stageRankOwned, author: stagelabels.RoleContributor, lane: stageLaneContributor,
 		},
 	}
 	for _, tc := range cases {
@@ -1195,6 +1218,55 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	api.reset()
 	clock.advance(48 * time.Hour)
 	observe([]string{"stage/085-needs-decision", "role/trusted", "author/human"}, contributorLaneReasonNoVerdict, &requiresHuman, 1)
+	if api.writes() != 0 {
+		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
+	}
+}
+
+// A contributor-lane admission reason (author-association) with a
+// requires_human verdict must reach 085, not the 090 candidate that the
+// apply pass drops to 050 where the quiet dwell stalls it
+// (hivecommons/hive#13115). The specimen (Danathar/tududi#336) had both
+// lanes declining on trust, the verdict hook answering requires_human for
+// the head, and nothing reported on that head yet — the fresh-head exit in
+// RouteHuman is what produced 050.
+func TestApplyStageLabelsRequiresHumanBeatsAdmissionReason(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return requiresHuman }
+	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
+		return hgithub.CommitChecksSummary{}, nil
+	}
+	ctx := context.Background()
+	observe := func(labels []string) {
+		pr := stagePR(336, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, "untrusted-author-role", false, nil)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonAuthorAssociation, false, nil)
+		e.noteStageRole("acme", "widget", 336, stagelabels.RoleContributor)
+		pr.Comments = gh.Ptr(0)
+		e.noteStagePR("acme", "widget", 336, pr)
+		e.noteStageVerdict("acme", "widget", 336, requiresHuman)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe([]string{"stage/050-review-pending", "role/contributor", "author/human"})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
+		t.Fatalf("requires_human must hand off to 085: added=%v", api.added)
+	}
+	if rec, ok := store.Get(stageKey("acme", "widget", 336)); !ok || rec.Stage != stagelabels.NeedsDecision || rec.Reason != stageReasonVerdictRequiresHuman {
+		t.Fatalf("record = %+v, want 085 %s", rec, stageReasonVerdictRequiresHuman)
+	}
+	api.reset()
+	clock.advance(48 * time.Hour)
+	observe([]string{"stage/085-needs-decision", "role/contributor", "author/human"})
 	if api.writes() != 0 {
 		t.Fatalf("085 has no dwell and never stalls: added=%v", api.added)
 	}

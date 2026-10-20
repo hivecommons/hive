@@ -438,8 +438,8 @@ conflict reason and the contributor lane's soak — and
 | Evidence | Stage |
 |---|---|
 | verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `071-needs-author` (`author/human`) / `072-returned-to-contributor` (`author/clanker`); `070-fixing` when self-authored or `author/hive`. The 072 nudge lists every reason. Moving 085/090 → 071/072 is not a regression |
-| no verdict for this head yet, or nothing has reported on the head (just pushed) | `050-review-pending` — never 090 without a current-head approve |
-| sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
+| no verdict for this head yet, or nothing has reported on the head (just pushed) and the verdict is not already `requires_human` | `050-review-pending` — never 090 without a current-head approve |
+| verdict `requires_human` at the head (even on a fresh head nothing has reported on yet, [#13115](https://github.com/hivecommons/hive/issues/13115)), sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
 | checks still running / unreadable, or the lane's soak not yet elapsed | `060-reviewed` (not 095: that stage means the lane has *admitted* the head, which a trust-blocked PR never is) |
 | everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." |
 

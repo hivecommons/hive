@@ -804,12 +804,16 @@ var stageHandoffReasons = map[string]bool{
 
 // stageAdmissionReasons are reasons that mean "this lane cannot vouch for
 // the author": the trusted-author lane's role check and the contributor
-// lane's registry/claim admission. They yield a WEAK needs-human opinion
+// lane's registry/claim admission. They yield a WEAK opinion
 // (stageRankRole / stageRankAdmission): another lane that admits the author
-// owns the stage, and when the resolved tier is trusted the opinion is
-// dropped altogether (hivecommons/hive#12403 was flipped to 090 by the
-// trusted-author lane's role check whenever the contributor lane — which
-// admitted the author from the registry — had no classified opinion).
+// owns the stage. The opinion is normally a 090 candidate, which is dropped
+// altogether when the resolved tier is trusted (hivecommons/hive#12403 was
+// flipped to 090 by the trusted-author lane's role check whenever the
+// contributor lane — which admitted the author from the registry — had no
+// classified opinion). When the reviewer verdict for the head is already
+// requires_human the weak opinion is 085 instead, and that one is kept
+// whatever the tier: a person owes a decision, not a merge click
+// (hivecommons/hive#13115).
 var stageAdmissionReasons = map[string]int{
 	"untrusted-author-role":      stageRankRole,
 	contributorLaneReasonNoClaim: stageRankAdmission, contributorLaneReasonClaimAuthor: stageRankAdmission,
@@ -895,6 +899,14 @@ func classifyStage(o stageObservation) stageVerdict {
 		if hasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
+		if v, ok := requiresHumanStage(o, rank); ok {
+			// The reviewer already asked for a person: a 090 candidate would
+			// be dropped for the non-approve verdict and fall to 050, where
+			// the quiet dwell stalls it (hivecommons/hive#13115). The opinion
+			// stays as weak as the admission reason that carries it, so a
+			// lane that evaluated the head (conflict, red check) still owns.
+			return v
+		}
 		// Trust is the only thing this lane holds against the PR: a 090
 		// candidate, refined by ApplyStageLabels against the head's evidence.
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
@@ -916,13 +928,13 @@ func classifyStage(o stageObservation) stageVerdict {
 		// (CI pending, no-verdict, …) is not what the author has to act on.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
-	if verdictNeedsHuman(o.Detail) && !trustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
+	if v, ok := requiresHumanStage(o, stageRankOwned); ok {
 		// The reviewer DID answer — requires_human / needs-decision — but
 		// the lane folds every non-approve verdict into non-mergeable reasons
 		// such as no-verdict or pending CI. Hand it to a person instead of
 		// leaving it in review-pending while the reviewer skips it as already
 		// reviewed (hive #12417/#12438).
-		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
+		return v
 	}
 	if v, ok := sharedCIDeferredStage(o); ok {
 		// The red is the shared incident's, not the head's.
@@ -963,6 +975,16 @@ func classifyStage(o stageObservation) stageVerdict {
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}, humanApprovalReason)
 	}
 	return stageVerdict{}
+}
+
+// requiresHumanStage is the 085 opinion for a head whose reviewer verdict
+// is requires_human / needs-decision and that no trusted human has approved
+// since; rank is the strength the caller's reason carries.
+func requiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
+	if !verdictNeedsHuman(o.Detail) || trustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
+		return stageVerdict{}, false
+	}
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: rank, Human: true, Reason: stageVerdictReason(o.Detail)}, true
 }
 
 func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
@@ -1030,7 +1052,9 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 			role = stagelabels.RoleUntrusted
 		case best.Stage == stagelabels.ReadyForHumanMerge && role == stagelabels.RoleTrusted:
 			// Some lane admits this author; a lane that cannot vouch for
-			// them has nothing to say about the stage. Leave it as is.
+			// them has nothing to say about the stage. Leave it as is. A
+			// weak 085 (requires_human verdict, #13115) is deliberately
+			// kept: the decision is owed whoever the author is.
 			best = stageVerdict{}
 		}
 	}

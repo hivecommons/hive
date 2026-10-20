@@ -170,3 +170,49 @@ func TestPRDeriverParksUnobservedPR(t *testing.T) {
 		t.Fatalf("closed PR must abstain: %+v", got)
 	}
 }
+
+// TestPRDeriverRequiresHumanBeatsAdmissionReason is hivecommons/hive#13115
+// on the engine path: both lanes decline on trust (the trusted lane's role
+// check, the contributor lane's author-association admission), the
+// reviewer verdict for the head is requires_human, and nothing has
+// reported on the head yet. The engine must derive stage/085, never the
+// 050 the fresh-head wait used to produce (and the quiet dwell then
+// stalled), and the human route must agree (hivecommons/hive#13117).
+func TestPRDeriverRequiresHumanBeatsAdmissionReason(t *testing.T) {
+	human := stageDetail{Role: stagelabels.RoleContributor, VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}
+	list := []stageObservation{
+		{Owner: "acme", Repo: "widgets", Number: 336, Author: "dev", HeadSHA: "sha", Lane: stageLaneTrusted, Reason: "untrusted-author-role", Detail: human},
+		{Owner: "acme", Repo: "widgets", Number: 336, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonAuthorAssociation, Detail: human},
+	}
+	f := factsFrom(list)
+	f.PR.Pass = &stageengine.PRPassFacts{
+		AuthorKind: authorkind.Human,
+		Route: &stagelabels.Evidence{
+			Head:      "sha",
+			HeadFresh: true,
+			Verdict:   stagelabels.VerdictRequiresHuman,
+			Checks:    stagelabels.CheckSummary{Known: true},
+			Cause:     stagelabels.CauseTrust,
+		},
+	}
+	got := PRDeriver().Derive(f)
+	if got.Abstain || got.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("engine derived %+v, want stage %v", got, stagelabels.NeedsDecision)
+	}
+	if got.Human == nil || got.Human.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("human route %+v, want %v", got.Human, stagelabels.NeedsDecision)
+	}
+	if got.Role != stagelabels.RoleContributor {
+		t.Fatalf("role %v, want contributor", got.Role)
+	}
+	// Once the reviewer's verdict is pending again (new head), the same
+	// shape waits at 050 — the carve-out is for requires_human only.
+	f.PR.Pass.Route.Verdict = stagelabels.VerdictPending
+	for i := range f.PR.Lanes {
+		f.PR.Lanes[i].Reason = contributorLaneReasonNoVerdict
+	}
+	f.PR.Review = stageengine.ReviewFacts{}
+	if got := PRDeriver().Derive(f); !got.Abstain && got.Stage == stagelabels.NeedsDecision {
+		t.Fatalf("pending verdict derived %+v, want not 085", got)
+	}
+}
