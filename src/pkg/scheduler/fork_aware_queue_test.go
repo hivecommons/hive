@@ -200,3 +200,32 @@ func TestBuildCIFailingList_NonAdoptedForkWithMaintainerEditsStaysCommentOnly(t 
 		t.Errorf("adopted fork PR must be pushable and name the fork head:\n%s", push)
 	}
 }
+
+// An adopted (stage 074) contributor PR is the hive's to repair: its row is
+// listed under FIX-BEFORE-NEW with push instructions to the PR's own branch,
+// and a still-present sentinel alert is named as a label to leave alone. A
+// contributor fork PR the hive did not adopt is never listed as push work.
+func TestFormatRedPRFixData_AdoptedPRListedNonAdoptedForkIsNot(t *testing.T) {
+	fixture := `{"ci_failing":[
+	 {"number":13251,"repo":"hivecommons/hive","title":"reviewer confidence","agent":"scanner","from_fork":true,"reachable_action":"push","adopted":true,"head_repo":"arteeh/hive","conflict":true,"mergeable_state":"dirty"},
+	 {"number":13252,"repo":"hivecommons/hive","title":"contribute-watch","agent":"scanner","from_fork":true,"reachable_action":"push","adopted":true,"sentinel_alert":true,"head_repo":"mendezr/hive","failing_checks":["test (rest 5/5)","coverage"]},
+	 {"number":13213,"repo":"hivecommons/hive","title":"not adopted","agent":"scanner","from_fork":true,"reachable_action":"comment-only","head_repo":"hanthor/hive","failing_checks":["test"]}
+	]}`
+	out := formatRedPRFixData([]byte(fixture), "scanner")
+	for _, want := range []string{
+		"#13251 hivecommons/hive",
+		"conflict: mergeable_state=dirty — merge the base branch or rebase the PR branch",
+		"#13252 hivecommons/hive",
+		"ADOPTED contributor PR (stage 074, head repo mendezr/hive)",
+		adoptedSentinelNote,
+		"failing: test (rest 5/5), coverage",
+		"(1 red PR(s) from forks are NOT listed here",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fix block missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "#13213") {
+		t.Errorf("non-adopted fork PR listed as push work:\n%s", out)
+	}
+}

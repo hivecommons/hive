@@ -532,6 +532,28 @@ func stageTrackerSoakRemaining(rec stagelabels.Record, now time.Time) time.Durat
 	return left
 }
 
+// adoptedWorkCaption names what the hive is doing on a PR it adopted in
+// place (stage 074) from the lane's reason token: the 074 label stays
+// whether the head is conflicted, red or awaiting rework, so the caption is
+// where "hive rebasing" vs "hive fixing CI" shows. Unknown reasons fall back
+// to the bare ownership sentence.
+func adoptedWorkCaption(reason string) string {
+	const owned = "Hive adopted this PR"
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case lower == "":
+		return owned
+	case lower == "conflicting" || lower == "not-mergeable" || strings.Contains(lower, "rebase"):
+		return owned + "; hive is rebasing it onto the base branch"
+	case strings.HasPrefix(lower, "check-failing:") || strings.HasPrefix(lower, "required-check-failing:") ||
+		strings.HasPrefix(lower, "optional-check-failing:") || lower == "ci-red" || lower == "check-runs":
+		return owned + "; hive is fixing CI"
+	case strings.HasPrefix(lower, "reviewer-verdict:") || strings.Contains(lower, "changes-requested") || strings.Contains(lower, "changes_requested"):
+		return owned + "; hive is addressing the review findings"
+	}
+	return owned
+}
+
 func joinClause(head, clause string) string {
 	if clause == "" {
 		return head
@@ -579,7 +601,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		}
 		return c, strings.TrimPrefix(who, "@")
 	case stagelabels.AdoptedByHive:
-		c := "Hive adopted this PR"
+		c := adoptedWorkCaption(reason)
 		if hasRec && rec.AdoptedBy > 0 {
 			c += " (superseded by #" + strconv.Itoa(rec.AdoptedBy) + ")"
 		}

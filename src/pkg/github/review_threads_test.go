@@ -379,6 +379,8 @@ func TestIsHiveMediatedPR(t *testing.T) {
 		{"human author, no trailer", PullRequest{Author: "carol"}, false},
 		{"no author, no trailer", PullRequest{}, false},
 		{"no author, trailer", PullRequest{HiveAttributed: true}, true},
+		{"contributor PR adopted in place (074)", PullRequest{Author: "carol", Labels: []string{"stage/074-adopted-by-hive"}}, true},
+		{"contributor PR returned to contributor (072)", PullRequest{Author: "carol", Labels: []string{"stage/072-returned-to-contributor"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

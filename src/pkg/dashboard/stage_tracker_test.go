@@ -488,3 +488,23 @@ func TestStageTrackerHeldIssueIsOpenOnHold(t *testing.T) {
 		t.Errorf("held PR = stage %d mods %v, want 085 + hold (PR path untouched)", it.Stage, it.Modifiers)
 	}
 }
+
+// A PR the hive adopted in place keeps the 074 label whatever the head
+// needs, so the caption is where the work shows: rebasing, fixing CI, or
+// addressing review findings.
+func TestStageTrackerAdoptedCaptionNamesTheWork(t *testing.T) {
+	cases := map[string]string{
+		"conflicting":                        "Hive adopted this PR; hive is rebasing it onto the base branch — conflicting",
+		"label:needs-rebase":                 "Hive adopted this PR; hive is rebasing it onto the base branch — needs a rebase",
+		"check-failing:coverage":             "Hive adopted this PR; hive is fixing CI — CI is red (check-failing:coverage)",
+		"required-check-failing:test":        "Hive adopted this PR; hive is fixing CI — check test failing",
+		"reviewer-verdict:changes_requested": "Hive adopted this PR; hive is addressing the review findings — review swarm requested changes",
+		"":                                   "Hive adopted this PR",
+	}
+	for reason, want := range cases {
+		caption, actor := stageTrackerCaption(stagelabels.AdoptedByHive, reason, "arteeh", "pr", false, stagelabels.Record{}, false, 0)
+		if caption != want || actor != "hive" {
+			t.Errorf("074 reason %q: caption = %q actor = %q, want %q / hive", reason, caption, actor, want)
+		}
+	}
+}

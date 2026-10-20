@@ -46,6 +46,8 @@ type failingEntry struct {
 	FromFork         bool     `json:"from_fork"`
 	ReachableAction  string   `json:"reachable_action"`
 	Held             bool     `json:"held"`
+	Adopted          bool     `json:"adopted"`
+	SentinelAlert    bool     `json:"sentinel_alert"`
 	MergeableState   string   `json:"mergeable_state"`
 	Conflict         bool     `json:"conflict"`
 	ReroutedFrom     string   `json:"rerouted_from"`

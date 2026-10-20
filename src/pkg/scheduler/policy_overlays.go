@@ -231,6 +231,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		FromFork         bool     `json:"from_fork"`
 		ReachableAction  string   `json:"reachable_action"`
 		Adopted          bool     `json:"adopted"`
+		SentinelAlert    bool     `json:"sentinel_alert"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`
 		MergeableState   string   `json:"mergeable_state"`
@@ -310,6 +311,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 		if pr.Adopted {
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
 			b.WriteString(adoptedPRStatusRule)
+			if pr.SentinelAlert {
+				b.WriteString("    " + adoptedSentinelNote + "\n")
+			}
 		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
@@ -610,6 +614,11 @@ func (s *Scheduler) reviewPerspectivesSection() string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// adoptedSentinelNote follows an adopted-PR line whose PR still carries the
+// sentinel alert: the alert is a merge checkpoint for a maintainer, not a
+// repair checkpoint, so the fixer repairs the head and leaves the label.
+const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do NOT remove the sentinel-alert label — a maintainer clears it before the merge"
 
 // adoptedPRStatusRule follows every adopted-PR line in a fix kick: the
 // stage label, not the check list, says what the hive still owes, and a

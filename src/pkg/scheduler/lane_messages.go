@@ -511,6 +511,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		FromFork         bool     `json:"from_fork"`
 		ReachableAction  string   `json:"reachable_action"`
 		Adopted          bool     `json:"adopted"`
+		SentinelAlert    bool     `json:"sentinel_alert"`
 		Held             bool     `json:"held"`
 		FailingChecks    []string `json:"failing_checks"`
 		Excerpt          string   `json:"excerpt"`
@@ -611,6 +612,9 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, origin, heldMarker(pr.Held), pr.Title))
 		if pr.FromFork {
 			b.WriteString(adoptedPRStatusRule)
+		}
+		if pr.SentinelAlert {
+			b.WriteString("    " + adoptedSentinelNote + "\n")
 		}
 	}
 	if len(deferred) > 0 {

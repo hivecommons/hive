@@ -431,6 +431,10 @@ type mergeGates struct {
 	reviewArtifact        review.Artifact
 	reviewLoaded          bool
 	requiredChecks        map[string]bool
+	// adopted marks a contributor PR the hive adopted in place (stage 074):
+	// the hive's fix lane owns its branch, so merge-only blocks such as the
+	// sentinel alert do not keep its red CI or conflict from the fixer.
+	adopted bool
 }
 
 // classifyMergeEligibility is THE merge-eligibility rule: the one place that
@@ -470,8 +474,18 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// conflict bucket below so the fix lane rebases the PR. Skipping on it
 	// here left every conflicting PR prow had labelled (including adopted
 	// contributor PRs) out of ci-failing.json for good.
+	// The sentinel alert is likewise a MERGE block, not a repair block, on
+	// a PR the hive adopted in place (stage 074): the hive owns that branch
+	// now, so a red or conflicted adopted PR still reaches its fixer below
+	// and only the merge stays with a maintainer. Skipping on it here left
+	// hivecommons/hive#13252 (adopted, sentinel-alert, red tests) out of
+	// ci-failing.json for hours with nobody kicked to fix it.
+	sentinelMergeBlock := false
 	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" && reason != blockLabelNeedsRebase {
-		return mergeBucketSkip, blockedOrOutstanding(reason), ""
+		if !(g.adopted && reason == blockLabelSentinel) {
+			return mergeBucketSkip, blockedOrOutstanding(reason), ""
+		}
+		sentinelMergeBlock = true
 	}
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
 	// App self-merge sweep gates on the same function (#6258).
@@ -533,6 +547,9 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 
 	if conflictMergeState(pr) {
 		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
+	}
+	if sentinelMergeBlock {
+		return mergeBucketSkip, blockedOrOutstanding(blockLabelSentinel), ""
 	}
 
 	// A PR whose CI is still "pending" is nonetheless merge-eligible when
@@ -631,6 +648,11 @@ func needsDecisionParkLabel(labels []string) string {
 // needs-rebase label; the classifier routes it to the conflict bucket.
 const blockLabelNeedsRebase = "label:needs-rebase"
 
+// blockLabelSentinel is the automergeBlockLabelReason result for the
+// sentinel-alert label on a PR the hive did not author; on an adopted PR
+// the classifier treats it as a merge block only (see classifyMergeEligibility).
+const blockLabelSentinel = "sentinel"
+
 func automergeBlockLabelReason(labels []string, trusted bool) string {
 	for _, label := range labels {
 		trimmed := strings.TrimSpace(label)
@@ -638,7 +660,7 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 		switch {
 		case lower == "sentinel-alert":
 			if !trusted {
-				return "sentinel"
+				return blockLabelSentinel
 			}
 		case lower == "needs-rebase":
 			return blockLabelNeedsRebase
@@ -908,6 +930,11 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// rows included — and the kick says push to THAT branch (GitHub's
 		// maintainer_can_modify or a same-repo head made it reachable).
 		Adopted bool `json:"adopted,omitempty"`
+		// SentinelAlert marks an adopted row that still carries the
+		// sentinel-alert label: the fixer repairs CI or rebases but must
+		// leave the label alone — a maintainer clears the alert before the
+		// merge. Only adopted rows reach the buckets with it set.
+		SentinelAlert bool `json:"sentinel_alert,omitempty"`
 		// DeferredIncident is the open [shared-ci] incident issue this red
 		// PR was already deferred to (github.PullRequest.SharedCIIncident,
 		// hivecommons/hive#10528); only red PRs carry one. It applies to a
@@ -996,6 +1023,8 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			}
 		}
 
+		adopted := adoptedInPlace(fullRepo, pr.Number)
+		prGates.adopted = adopted
 		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, prGates)
 		verdicts[github.MergeVerdictKey(pr)] = verdict
 		if intentReason != "" {
@@ -1007,9 +1036,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			recordReviewShadow(cfg, logger, pr, fullRepo, prGates, now)
 			recordIntentShadow(cfg, logger, enforceIntent, intentVerdicts, pr, fullRepo, now)
 		}
-		adopted := adoptedInPlace(fullRepo, pr.Number)
 		row := failingPR{
 			Adopted:         adopted,
+			SentinelAlert:   adopted && hasLabel(pr.Labels, "sentinel-alert"),
 			Number:          pr.Number,
 			Repo:            fullRepo,
 			Title:           pr.Title,
@@ -1055,6 +1084,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.Conflict = true
 			row.ReroutedFrom = reroutedFrom
 			row.DeferredIncident = pr.SharedCIIncident
+			if adopted {
+				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "rebase", "mergeable_state", pr.MergeableState, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+			}
 			failing = append(failing, row)
 			continue
 		case mergeBucketFailing:
@@ -1068,6 +1100,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			row.Conflict = false
 			row.ReroutedFrom = reroutedFrom
 			row.DeferredIncident = pr.SharedCIIncident
+			if adopted {
+				logger.Info("adopted PR routed to fixer", "repo", fullRepo, "number", pr.Number, "work", "fix-ci", "failing_checks", pr.FailingChecks, "fixer", agent, "sentinel_alert", row.SentinelAlert)
+			}
 			failing = append(failing, row)
 			continue
 		}
