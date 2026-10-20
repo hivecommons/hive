@@ -8305,6 +8305,8 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 		Excerpt:            pr.CIFailureExcerpt,
 		Labels:             pr.Labels,
 		FailingChecks:      pr.FailingChecks,
+		BaseRedChecks:      pr.BaseRedChecks,
+		SharedCIIncident:   pr.SharedCIIncident,
 		Agent:              owners[escalation.Key(repo, pr.Number)],
 		IndependentControl: isIndependentCIControl(cfg, pr),
 	}
@@ -8719,6 +8721,18 @@ func runEscalationSweep(
 		}
 		if r.Escalated {
 			escalated[key] = true
+		}
+		if r.BaseRedHold {
+			// Every failing check is red on the base branch too: say so
+			// once per head, count nothing, kick no one. The hold clears
+			// by itself when the base recovers and the head is re-evaluated.
+			body := escalation.BaseRedHoldCommentBody(o.BaseRedChecks, o.SharedCIIncident)
+			if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
+				logger.Warn("base-branch-red hold comment failed; will retry next pass", "repo", o.Repo, "pr", o.Number, "error", err)
+			} else {
+				escalationStore.MarkBaseRedHeld(o.Repo, o.Number, o.HeadSHA)
+				logger.Info("fix loop holding: base branch red", "repo", o.Repo, "pr", o.Number, "head_sha", o.HeadSHA, "checks", strings.Join(o.BaseRedChecks, ","))
+			}
 		}
 		if r.NeedsLabel && !o.Labeled {
 			// Escalated on an earlier pass but the label never landed (the

@@ -65,6 +65,9 @@ func factsFrom(list []stageObservation) stageengine.Facts {
 		if pr.SharedCIIncident == 0 {
 			pr.SharedCIIncident = o.SharedCIIncident
 		}
+		if len(pr.BaseRedChecks) == 0 {
+			pr.BaseRedChecks = append([]string(nil), o.BaseRedChecks...)
+		}
 		// After StageTracker.drain every lane carries the same shared
 		// detail; the first lane that knows the verdict (or any detail at
 		// all) is the one folded.
@@ -180,6 +183,7 @@ func observationsFrom(f stageengine.Facts) []stageObservation {
 			AuthorKind:       f.Author.Kind,
 			BaseRef:          pr.BaseRef,
 			SharedCIIncident: pr.SharedCIIncident,
+			BaseRedChecks:    append([]string(nil), pr.BaseRedChecks...),
 		})
 	}
 	return out

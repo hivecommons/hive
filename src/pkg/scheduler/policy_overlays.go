@@ -237,6 +237,8 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Conflict         bool     `json:"conflict"`
 		ReroutedFrom     string   `json:"rerouted_from"`
 		DeferredIncident int      `json:"deferred_incident"`
+		BaseRedChecks    []string `json:"base_red_checks"`
+		BaseRed          bool     `json:"base_red"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -244,7 +246,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 	if json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
-	var mine, deferred []ciFailingRow
+	var mine, deferred, baseRed []ciFailingRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -276,6 +278,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 			deferred = append(deferred, pr)
 			continue
 		}
+		if pr.BaseRed {
+			// Every failing check is red on the base branch too: no fix
+			// the agent pushes can turn it green, so it is named but never
+			// listed for repair (base_branch_red.go).
+			baseRed = append(baseRed, pr)
+			continue
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -293,6 +302,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 			refs = append(refs, fmt.Sprintf("%s#%d → incident #%d", pr.Repo, pr.Number, pr.DeferredIncident))
 		}
 		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already deferred to a still-open shared-CI incident — do not repair or re-triage them; they return here when the incident closes: %s)\n", len(deferred), strings.Join(refs, ", ")))
+	}
+	if len(baseRed) > 0 {
+		refs := make([]string, 0, len(baseRed))
+		for _, pr := range baseRed {
+			refs = append(refs, fmt.Sprintf("%s#%d (%s)", pr.Repo, pr.Number, strings.Join(pr.BaseRedChecks, ", ")))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: their only failing checks are red on the base branch too — not your PR's fault; do not push, retry or re-triage them; they return here if still red once the base recovers: %s)\n", len(baseRed), strings.Join(refs, ", ")))
 	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")

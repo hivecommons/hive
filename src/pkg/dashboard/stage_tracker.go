@@ -457,6 +457,12 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, "optional-check-failing:"); ok {
 		return "optional check " + rest + " failing"
 	}
+	if rest, ok := strings.CutPrefix(r, "base-branch-red:"); ok {
+		return "waiting for the base branch's CI to recover (" + strings.ReplaceAll(rest, ",", ", ") + ") — not this PR's fault"
+	}
+	if rest, ok := strings.CutPrefix(r, "shared-ci-incident:"); ok {
+		return "deferred to shared-CI incident #" + rest + " — not this PR's fault"
+	}
 	if rest, ok := strings.CutPrefix(lower, "reviewer-verdict:"); ok {
 		switch rest {
 		case "changes_requested", "request_changes":

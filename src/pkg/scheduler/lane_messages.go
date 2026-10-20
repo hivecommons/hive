@@ -515,6 +515,8 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		FailingChecks    []string `json:"failing_checks"`
 		Excerpt          string   `json:"excerpt"`
 		DeferredIncident int      `json:"deferred_incident"`
+		BaseRedChecks    []string `json:"base_red_checks"`
+		BaseRed          bool     `json:"base_red"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -545,7 +547,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// under the repair queue had agents re-derive the DEFER_TO_INCIDENT
 	// verdict on every kick. It is named under its own heading, without
 	// repair instructions, until the incident closes.
-	var deferred []ciFailingRow
+	var deferred, baseRed []ciFailingRow
 	kept := payload.Items[:0]
 	for _, pr := range payload.Items {
 		if pr.Held {
@@ -554,6 +556,12 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 		if pr.DeferredIncident > 0 {
 			deferred = append(deferred, pr)
+			continue
+		}
+		if pr.BaseRed {
+			// Red only on checks that are red on the base branch too
+			// (base_branch_red.go): nothing to repair on the PR.
+			baseRed = append(baseRed, pr)
 			continue
 		}
 		kept = append(kept, pr)
@@ -621,6 +629,16 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 				break
 			}
 			b.WriteString(fmt.Sprintf("  #%d %s — deferred to incident #%d — %s\n", pr.Number, pr.Repo, pr.DeferredIncident, pr.Title))
+		}
+	}
+	if len(baseRed) > 0 {
+		b.WriteString(fmt.Sprintf("RED ONLY BECAUSE THE BASE BRANCH IS RED (%d — no repair: the same checks fail on the base branch tip, so this is not the PR's fault; do not push, retry, or comment; each PR returns to the list above if it is still red once the base recovers):\n", len(baseRed)))
+		for i, pr := range baseRed {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(baseRed)-i, limit))
+				break
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s — base branch red on %s — %s\n", pr.Number, pr.Repo, strings.Join(pr.BaseRedChecks, ", "), pr.Title))
 		}
 	}
 	if len(forks) > 0 {

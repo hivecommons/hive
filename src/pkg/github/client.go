@@ -834,6 +834,12 @@ type PullRequest struct {
 	// or the lookup failed. Kick builders keep such a PR out of their repair
 	// lists until the incident closes (hivecommons/hive#10528).
 	SharedCIIncident int `json:"shared_ci_incident,omitempty"`
+	// BaseRedChecks names the failing checks that are also red on the base
+	// branch's tip while the PR touches no CI-owning path (base_branch_red.go).
+	// When it covers every failing check (AllFailuresBaseRed) the red is the
+	// base branch's, not this PR's: no 070/071/072, no fix kick, no
+	// escalation attempt counted.
+	BaseRedChecks []string `json:"base_red_checks,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
 	// repo-grounded review can be pinned to a specific commit rather than to
@@ -1992,7 +1998,9 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 //
 // For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528):
 // one comment listing per red PR, plus one issue GET per distinct incident
-// number named by a `<!-- hive-shared-ci-<n> -->` marker in this pass.
+// number named by a `<!-- hive-shared-ci-<n> -->` marker in this pass — and
+// BaseRedChecks (base_branch_red.go): one check-run listing per distinct
+// base branch, plus one file listing per red PR whose failures overlap it.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	if c == nil {
 		return
@@ -2006,6 +2014,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		}
 		facts.attach(ctx, &prs[i], reported)
 	}
+	c.enrichBaseBranchRed(ctx, prs)
 }
 
 // EnrichReviewSignals stamps only the review-decision and repo-card triage

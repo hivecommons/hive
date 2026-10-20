@@ -118,6 +118,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			AuthorKindLabels:          cfg.Governor.Labels.Author.Names(),
 			RelayKnown:                contributorRelayKnown,
 			SharedCIIncident:          stageSharedCIIncident,
+			BaseBranchRed:             stageBaseBranchRed,
 			DCORequired:               stage.DCO.RequiredFor,
 		}
 	}
@@ -916,6 +917,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// with its conflict instructions once the incident is closed. Kick
 		// builders list such a row as deferred, with no repair instructions.
 		DeferredIncident int `json:"deferred_incident,omitempty"`
+		// BaseRedChecks names the failing checks that are also red on the
+		// base branch tip (github.PullRequest.BaseRedChecks); BaseRed is
+		// set when they are ALL of the failing checks. Kick builders list
+		// such a row as held for the base branch, with no repair
+		// instructions: nothing the fixer pushes can turn it green.
+		BaseRedChecks []string `json:"base_red_checks,omitempty"`
+		BaseRed       bool     `json:"base_red,omitempty"`
 		// Mergeable and CIStatus are set on the escalated rows only
 		// (hivecommons/hive#9477): an escalated PR that is conflicted, green
 		// or pending has no failing check to explain it, so the reviewer lane
@@ -1026,6 +1034,8 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			FromFork:        pr.FromFork,
 			ReachableAction: github.ReachableAction(pr),
 			Held:            held,
+			BaseRedChecks:   pr.BaseRedChecks,
+			BaseRed:         pr.AllFailuresBaseRed(),
 		}
 		if adopted {
 			row.ReachableAction = github.ReachableActionPush
