@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -56,10 +55,7 @@ func TestTmuxTerminal_SendLiteral_TypesTextStartingWithDash(t *testing.T) {
 
 // Exercise the production terminal adapter without a live tmux server.
 func TestTmuxTerminalReturnsWriteErrors(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte("#!/bin/sh\nexit 17\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	dir := filepath.Dir(writeFakeTmux(t, "#!/bin/sh\nexit 17\n"))
 	t.Setenv("PATH", dir)
 	m, a, _ := kickLogTestManager(t, "")
 	terminal := tmuxTerminal{manager: m}
