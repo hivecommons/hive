@@ -1,0 +1,1 @@
+- Add `just contribute-watch` / `hivectl tui --watch` to mirror a running contributor's session and relay log, attach interactively, control quota and confirm Stop without changing the Hives configuration screen; local relays also keep a private, size-capped live-tail log buffer ([#13236](https://github.com/hivecommons/hive/issues/13236)).

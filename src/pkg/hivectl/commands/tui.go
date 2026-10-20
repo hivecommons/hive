@@ -13,6 +13,7 @@ import (
 var (
 	runTUI          = tui.Run
 	runTUIHivesOnly = tui.RunHivesOnly
+	runTUIWatch     = tui.RunWatch
 )
 
 // newTUICommand registers the full-screen terminal dashboard (#4907) on the
@@ -35,7 +36,7 @@ var (
 // names too. Later tasks in the epic that need a configured client get those
 // for free here, rather than re-deriving them in a standalone main.
 func newTUICommand(_ *commandEnv) *cobra.Command {
-	var hivesOnly bool
+	var hivesOnly, watch bool
 	cmd := &cobra.Command{
 		Use:   "tui",
 		Short: "Open the full-screen terminal dashboard",
@@ -43,11 +44,15 @@ func newTUICommand(_ *commandEnv) *cobra.Command {
 			"agent fleet, governor, token spend and event feed, over the same dashboard\n" +
 			"API that hivectl's non-interactive subcommands use.\n\n" +
 			"Use --hives to open only the contributor Hives overlay, without a\n" +
-			"dashboard API client or dashboard credentials.\n\n" +
+			"dashboard API client or dashboard credentials.\n" +
+			"Use --watch to watch and steer a running contributor, also without credentials.\n\n" +
 			"Requires a terminal. Press q or ctrl+c to exit.",
 		Args:    argsNone(),
 		Example: "  hivectl tui\n  hivectl tui --hives",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if watch {
+				return runTUIWatch()
+			}
 			if hivesOnly {
 				return runTUIHivesOnly()
 			}
@@ -56,6 +61,8 @@ func newTUICommand(_ *commandEnv) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&hivesOnly, "hives", false, "open only the contributor Hives overlay")
+	cmd.Flags().BoolVar(&watch, "watch", false, "watch and steer the running contributor")
+	cmd.MarkFlagsMutuallyExclusive("hives", "watch")
 	return cmd
 }
 

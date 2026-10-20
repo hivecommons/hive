@@ -517,9 +517,43 @@ The relay writes two non-secret control files beside the profiles: `contributor-
 
 The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
 
-The same list is available in the terminal UI: `just contribute-tui` (or `hivectl tui --hives` directly) opens the [Hives overlay](hivectl.md#hives-switching-the-hive-you-contribute-to) — the same rows in the same order, with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls the same functions the commands above do, so either surface leaves `profiles.yml` and the generated `contributor.env` in the same state.
+### Watching a running contributor
 
-From a fresh checkout, `just contribute-tui` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
+Run `just contribute-watch` from this checkout (or `hivectl tui --watch`) in
+another terminal. Unlike `just contribute-tui`, which configures **where** your
+contributor works, this is a viewer for **what it is doing**. It needs no dashboard
+API credentials and discovers the running relay from `contributor-relay.pid`.
+It never launches a contributor. Restart an older relay to publish its session
+and log location; old records show an explicit unknown-session message.
+
+The upper pane mirrors the agent with `tmux capture-pane` once a second; it is
+not a tmux client and does not defer automatic retry recovery. The lower pane
+follows the relay log. In local mode this is a private `0600` live-tail buffer,
+`~/.config/hive/contributor-relay.log`, capped at 10 MiB with one previous file
+and reset each launch. Output still appears in the launch terminal. Container
+mode follows the recorded Docker or Podman runtime's logs instead. Headless
+contributors explicitly show that no session is available. This v5 view does
+not include v6-only krun console support.
+
+Keys: `a` suspends the viewer for interactive attach; detach with `Ctrl-B D` to
+return. While attached, the relay intentionally defers automatic retries.
+`c` opens the six existing quota actions (including status); results can be
+scrolled with arrows and dismissed with `esc`. Quota actions reuse
+`just contribute-quota`, including its `contributor.env` environment, so run
+from the Hive checkout. `s` asks for confirmation before stopping the recorded
+contributor (container stop or local relay SIGTERM). `tab`/`f` gives the log
+more space; `?` shows help. `q`/`Ctrl-C` quits **only the viewer**; it never
+stops or removes the contributor. The original `contribute-hive` terminal
+retains its existing stop-and-cleanup-on-exit behavior.
+
+`--watch` and `--hives` are mutually exclusive. Profile/placement controls stay
+in `just contribute-tui`; there are no configuration controls in the watch view.
+
+### Hives configuration screen
+
+The profile list is available in the terminal UI: `just contribute-tui` (or `hivectl tui --hives` directly) opens the [Hives overlay](hivectl.md#hives-switching-the-hive-you-contribute-to) — the same rows in the same order, with `enter` to switch and `a`/`d`/`r` to add, remove and rename. It calls the same functions the commands above do, so either surface leaves `profiles.yml` and the generated `contributor.env` in the same state.
+
+From a fresh checkout, `just contribute-tui`, `just contribute-watch` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
 
 See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
 

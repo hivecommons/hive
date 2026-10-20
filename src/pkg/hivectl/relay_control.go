@@ -27,10 +27,68 @@ type RelaySwitchResult struct {
 	Target  string
 }
 
-type relayPIDFile struct {
+// ContributorRelay is the existing relay PID record, shared by profile switching
+// and the contributor watch view. New fields remain optional for older relays.
+type ContributorRelay struct {
 	PID              int    `json:"pid"`
+	StartedAt        string `json:"started_at,omitempty"`
+	EnvFile          string `json:"env_file,omitempty"`
 	ContainerRuntime string `json:"container_runtime,omitempty"`
 	ContainerName    string `json:"container_name,omitempty"`
+	TmuxSession      string `json:"tmux_session,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	LogFile          string `json:"log_file,omitempty"`
+}
+
+type relayPIDFile = ContributorRelay
+
+// RunningContributor reads the one existing PID record and checks liveness in
+// the correct namespace (container PIDs are not host PIDs). It never starts work.
+func RunningContributor(ctx context.Context, store *ProfileStore) (*ContributorRelay, error) {
+	data, err := readRelayPIDFile(store.RelayPIDPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var r ContributorRelay
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("parse contributor PID record: %w", err)
+	}
+	if r.ContainerName != "" {
+		if r.ContainerRuntime == "" {
+			r.ContainerRuntime = "docker"
+		}
+		if r.ContainerRuntime != "docker" && r.ContainerRuntime != "podman" {
+			return nil, fmt.Errorf("unsupported contributor runtime %q", r.ContainerRuntime)
+		}
+		out, err := runRelayCommand(ctx, r.ContainerRuntime, "inspect", "-f", "{{.State.Running}}", r.ContainerName)
+		if err != nil || strings.TrimSpace(string(out)) != "true" {
+			return nil, nil
+		}
+	} else if r.PID <= 0 || signalRelayPID(r.PID, 0) != nil {
+		return nil, nil
+	}
+	return &r, nil
+}
+
+// StopContributor stops only the recorded contributor, never unrelated containers.
+func StopContributor(ctx context.Context, r ContributorRelay) error {
+	if r.ContainerName != "" {
+		if r.ContainerRuntime != "docker" && r.ContainerRuntime != "podman" {
+			return fmt.Errorf("unsupported contributor runtime")
+		}
+		out, err := runRelayCommand(ctx, r.ContainerRuntime, "stop", r.ContainerName)
+		if err != nil {
+			return fmt.Errorf("stop contributor: %w: %s", err, out)
+		}
+		return nil
+	}
+	if r.PID <= 0 {
+		return fmt.Errorf("invalid contributor PID")
+	}
+	return signalRelayPID(r.PID, syscall.SIGTERM)
 }
 
 // SignalRunningRelay asks the relay recorded by contributor-relay.pid to

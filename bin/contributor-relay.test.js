@@ -12746,6 +12746,85 @@ test('#7932 a hub that advertises no limit keeps the default budget', () => {
 
 // ---------------------------------------------------------------------------
 
+test('#13236 local relay log is private, bounded, rotated and fresh each launch', () => {
+  const { createRelayLog } = require('./lib/contributor-relay-log.js');
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-'));
+  const file = path.join(dir, 'relay.log');
+  try {
+    fs.writeFileSync(file, 'old launch', { mode: 0o644 });
+    const log = createRelayLog(file, 16);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), '');
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+    log.write(Buffer.from('a'.repeat(16)));
+    log.write('new output');
+    assert.strictEqual(fs.readFileSync(file + '.1', 'utf8'), 'a'.repeat(16));
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'new output');
+    log.write('b'.repeat(100));
+    assert.ok(fs.statSync(file).size <= 16);
+    assert.ok(fs.statSync(file + '.1').size <= 16);
+    assert.strictEqual(fs.statSync(file + '.1').mode & 0o777, 0o600);
+    log.close();
+    const next = createRelayLog(file, 16);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), '');
+    assert.ok(!fs.existsSync(file + '.1'));
+    next.close();
+    fs.unlinkSync(file);
+    const target = path.join(dir, 'target');
+    fs.writeFileSync(target, 'do not truncate');
+    fs.symlinkSync(target, file);
+    assert.throws(() => createRelayLog(file, 16));
+    assert.strictEqual(fs.readFileSync(target, 'utf8'), 'do not truncate');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13236 local log mirrors both streams without losing terminal output', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-mirror-'));
+  try {
+    const file = path.join(dir, 'relay.log');
+    const helper = path.join(__dirname, 'lib/contributor-relay-log.js');
+    const code = `require(${JSON.stringify(helper)}).mirrorRelayOutput(${JSON.stringify(file)}); process.stdout.write('normal'); process.stderr.write('error');`;
+    const child = require('child_process').spawnSync(process.execPath, ['-e', code], { encoding: 'utf8' });
+    assert.strictEqual(child.status, 0, child.stderr);
+    assert.strictEqual(child.stdout, 'normal');
+    assert.strictEqual(child.stderr, 'error');
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), 'normalerror');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13236 PID record advertises session, mode and local log without another state file', () => {
+  const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-watch-pid-'));
+  function writeRecord(relay, env) {
+    const previous = { ...process.env };
+    try { Object.assign(process.env, env); relay.writeRelayPidFile(); }
+    finally { process.env = previous; }
+  }
+  try {
+    for (const mode of ['interactive', 'headless']) {
+      const relay = loadRelay({ mode, env: {
+        HIVE_RELAY_PID_FILE: path.join(dir, 'contributor-relay.pid'),
+        HIVE_AGENT_SESSION: 'hive-pi-abcd', HIVE_RELAY_LOG_FILE: path.join(dir, 'relay.log'),
+        HIVE_CONTAINER_NAME: '', HIVE_CONTAINER_RUNTIME: '',
+      } });
+      try {
+        writeRecord(relay, { HIVE_CONTAINER_NAME: '', HIVE_CONTAINER_RUNTIME: '', HIVE_RELAY_LOG_FILE: path.join(dir, 'relay.log') });
+        const record = JSON.parse(fs.readFileSync(relay.RELAY_PID_FILE, 'utf8'));
+        assert.strictEqual(record.mode, mode === 'headless' ? 'headless' : 'local');
+        assert.strictEqual(record.tmux_session, mode === 'headless' ? undefined : 'hive-pi-abcd');
+        assert.strictEqual(record.log_file, path.join(dir, 'relay.log'));
+      } finally { teardown(relay); }
+    }
+    const relay = loadRelay({ env: { HIVE_RELAY_PID_FILE: path.join(dir, 'contributor-relay.pid'),
+      HIVE_CONTAINER_NAME: 'hive-contributor-pi', HIVE_CONTAINER_RUNTIME: 'podman', HIVE_RELAY_LOG_FILE: '/not-a-host-log' } });
+    try {
+      writeRecord(relay, { HIVE_CONTAINER_NAME: 'hive-contributor-pi', HIVE_CONTAINER_RUNTIME: 'podman', HIVE_RELAY_LOG_FILE: '/not-a-host-log' });
+      const record = JSON.parse(fs.readFileSync(relay.RELAY_PID_FILE, 'utf8'));
+      assert.strictEqual(record.mode, 'container');
+      assert.strictEqual(record.container_runtime, 'podman');
+      assert.strictEqual(record.log_file, undefined);
+    } finally { teardown(relay); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 let failed = 0;
 // RELAY_TEST_ONLY=<substring> runs a single test, for debugging in isolation.
 

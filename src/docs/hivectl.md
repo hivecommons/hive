@@ -415,6 +415,13 @@ For contributor profile switching without the dashboard panes, use
 `hivectl tui --hives`. That mode opens directly to the Hives overlay and does
 not build a dashboard API client.
 
+For watching a running contributor instead, use `just contribute-watch` or
+`hivectl tui --watch`. This separate, credential-free view mirrors the tmux
+session and follows the relay log, with `a` attach, `c` quota actions, `s`
+confirmed Stop, and `q` to leave the contributor running. It reads the existing
+relay PID record and never launches work. `--watch` and `--hives` cannot be
+combined. See [Watching a running contributor](contributor-relay.md#watching-a-running-contributor).
+
 #### Credentials
 
 The dashboard has two credential lanes and they are **not** interchangeable.

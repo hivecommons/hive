@@ -2428,6 +2428,9 @@ function writeRelayPidFile() {
       env_file: CONTRIBUTOR_ENV_FILE,
       container_runtime: (process.env.HIVE_CONTAINER_RUNTIME || '').trim() || undefined,
       container_name: (process.env.HIVE_CONTAINER_NAME || '').trim() || undefined,
+      tmux_session: CONTRIBUTOR_MODE === MODE_HEADLESS ? undefined : TMUX_SESSION,
+      mode: CONTRIBUTOR_MODE === MODE_HEADLESS ? 'headless' : (process.env.HIVE_CONTAINER_NAME ? 'container' : 'local'),
+      log_file: process.env.HIVE_CONTAINER_NAME ? undefined : (process.env.HIVE_RELAY_LOG_FILE || undefined),
     };
     fs.writeFileSync(RELAY_PID_FILE, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 });
   } catch (e) {
@@ -9440,11 +9443,15 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     hubs,
     HUBS_SEEN_FILE,
     RELAY_PID_FILE,
+    writeRelayPidFile,
     // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
     // expiry pruning can be exercised without waiting an hour.
     __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
   };
 } else {
+  if (process.env.HIVE_RELAY_LOG_FILE && !process.env.HIVE_CONTAINER_NAME) {
+    require('./lib/contributor-relay-log.js').mirrorRelayOutput(process.env.HIVE_RELAY_LOG_FILE);
+  }
   if (BACKEND === 'pi' && !PI_SELECTION.valid) {
     console.error(`FATAL: ${PI_SELECTION.error}`);
     if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
