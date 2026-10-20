@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/agent"
@@ -13,6 +14,25 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
+
+// syncLog is a log sink safe for background goroutines that log through the
+// boot's logger while the test reads the captured output.
+type syncLog struct {
+	mu sync.Mutex
+	sb strings.Builder
+}
+
+func (l *syncLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sb.Write(p)
+}
+
+func (l *syncLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sb.String()
+}
 
 type bootDashboardFake struct {
 	deps bootDashboardDeps
@@ -209,7 +229,7 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg.Ioscan.Enabled = &on
 		cfg.Ioscan.Classifier.Enabled = true
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		var log syncLog
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
@@ -230,7 +250,7 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg.Ioscan.Classifier.Model = "judge-small"
 		cfg.Governor.Trajectory.Endpoint = "http://127.0.0.1:1/v1"
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		var log syncLog
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
