@@ -1182,6 +1182,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			LastError:              redactTokens(proc.LastError),
 			LoginURL:               proc.LoginURL,
 			StallNudges:            proc.StallNudges,
+			StallRecoveries:        proc.StallRecoveries,
 			ActionNudges:           proc.ActionNudges,
 			// #4697: transient-API-error retry nudges, surfaced beside the
 			// other two nudge counters.

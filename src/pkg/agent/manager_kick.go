@@ -976,6 +976,12 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		return
 	}
 
+	if agent.stallNudgeSent {
+		// The pane moved after a stall nudge: the nudge recovered the stall.
+		agent.StallRecoveries++
+		agent.stallNudgeSent = false
+	}
+
 	// The pane moved since the kick — the CLI consumed it and the response
 	// completed (idle prompt, no active-work indicator). That is the end of
 	// the kicked turn: classify how it ended (#7421) before deciding whether

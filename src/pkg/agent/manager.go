@@ -389,6 +389,7 @@ type AgentProcess struct {
 	busyNoActivityRestartAt time.Time
 	busyNoActivityRestarts  int
 	StallNudges             int // total post-kick stall nudges sent (surfaced to the dashboard)
+	StallRecoveries         int // stall nudges after which the pane moved again (the nudge recovered the stall)
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
 	// on screen after the nudge is typed, so without it one incident would fire
