@@ -222,7 +222,7 @@ What allowed each step, in order:
 2. **No level-hold on the PR.** The repo runs at an ACMM level where this
    agent's PRs are not held-gated, so #9762 never carried the level-hold
    `hold` label the L3–L5 packs would apply.
-3. **No prow gate.** Prow bot activity on the PR (`dco-signoff: yes` — now the hive's own `dco`,
+3. **No prow gate.** Prow bot activity on the PR (Prow's `dco-signoff: yes|no` coexist with the hive's `dco` / `no-dco`;
    `size/XS`) is CI plumbing, not a merge gate for Hive's own merges — Prow's
    `tide` merge queue requires `lgtm`+`approved` labels that only a *human
    reviewer* can apply, and the Forge App can never review its own PR. Hive's

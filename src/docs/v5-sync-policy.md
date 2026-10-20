@@ -140,9 +140,9 @@ different identity. A common example is an author email such as
 checks compare the trailer email to the commit author email, not just the human
 name.
 
-Do not hand-swap the `dco` / `no-dco` label (or the legacy `dco-signoff`
-pair) as the normal response — the hive rewrites it from the commits on the
-next cycle anyway. Instead:
+Do not hand-swap the `dco` / `no-dco` label (or Prow's `dco-signoff: yes|no` pair,
+which coexist on Prow-gated repos) as the normal response — the hive rewrites it
+from the commits on the next cycle anyway. Instead:
 
 **Merge-method policy (decided by #6312):** `hive` PRs are merged by
 **rebase**, not squash. Squash is not used on `v4`/`v5` because Tide rebuilds
