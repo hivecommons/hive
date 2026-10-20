@@ -190,7 +190,8 @@ func TestPlanReviewDispatch_ChangesRequestedVerdictDispatchesFixer(t *testing.T)
 		t.Fatalf("seed verdict artifact: %v", err)
 	}
 
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot"), nil, nil, restoreTestLogger())
+	// Only a bot-shaped login may be pushed to (hivecommons/hive#13129).
+	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("hive-bot[bot]"), nil, nil, restoreTestLogger())
 	if len(plan.ReviewKicks) != 0 {
 		t.Errorf("PR with an aggregate verdict must not be re-reviewed, got %d review kicks", len(plan.ReviewKicks))
 	}
