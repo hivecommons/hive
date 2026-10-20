@@ -592,7 +592,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/inference/models/{backend}` | Dashboard auth/session | Inference Models | `pkg/dashboard/api.go:369` |
 | `GET` | `/api/hive-id` | Dashboard auth/session | Hive IDGet | `pkg/dashboard/api.go:431` |
 | `PUT` | `/api/hive-id` | Owner only | Hive IDSet | `pkg/dashboard/api.go:432` |
-| `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:461` |
+| `POST` | `/api/chat` | Dashboard auth/session | Chat. JSON body `{"query": "<text>", "history": [...]}`; `message` is accepted as an alias for `query` (`query` wins when both are set). A missing or blank field returns 400 `query is required`. `!`-prefixed commands go to the chat spine (`{"accepted":true,"seq":N}`, read-write); while an inception is in `clarify` with unanswered questions, an owner's unprefixed reply also goes to the spine, which submits it as the answer to the next unanswered question. | `pkg/dashboard/api.go:461` |
 | `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:499` |
 | `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:251` |
 | `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:252` |

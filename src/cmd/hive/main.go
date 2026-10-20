@@ -3963,7 +3963,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	}
 
 	if brainstormBeads, ok := b.beadStores["brainstorm"]; ok {
-		deps.startInceptionWatcher(b.ctx, dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger))
+		watcher := dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger)
+		watcher.SetPhaseChangeHook(func() {
+			if b.refreshDashboard != nil {
+				b.refreshDashboard()
+			}
+		})
+		deps.startInceptionWatcher(b.ctx, watcher)
 	}
 }
 
