@@ -10044,6 +10044,13 @@ type prStateGetter interface {
 	GetPRState(ctx context.Context, repo string, number int) (github.PRState, error)
 }
 
+// reviewEvidenceOutcomeRecorder is the optional slice of the GitHub client
+// that stamps a resolved outcome onto the PR's evidence bundle, so a PR this
+// hive reviewed but did not merge stops reading as "outcome unknown".
+type reviewEvidenceOutcomeRecorder interface {
+	RecordReviewEvidenceOutcome(repo string, number int, st github.PRState, now time.Time)
+}
+
 // recordReviewOutcomes folds this cycle's open-PR enumeration into the
 // review-outcome ledger (pkg/review/outcomes.go): every open PR is upserted,
 // review evidence from the verdict artifact and the posted-review ledger is
@@ -10121,6 +10128,9 @@ func recordReviewOutcomesAt(ctx context.Context, cfg *config.Config, gh prStateG
 			}
 			ledger.Resolve(m.Repo, m.Number, st.State, st.MergedAt, st.ClosedAt)
 			resolved++
+			if rec, ok := gh.(reviewEvidenceOutcomeRecorder); ok {
+				rec.RecordReviewEvidenceOutcome(m.Repo, m.Number, st, now)
+			}
 		}
 	}
 	ledger.Snapshot(now)

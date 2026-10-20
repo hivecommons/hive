@@ -57,8 +57,11 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"reverted: Number(o.reverted_14d) || 0",
 		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}${bar('ou', row.unknown, 3)}",
 		"no PRs with an evidence bundle in this window",
-		"A live bundle records a merge only when this hive merged, and never a close-without-merge, so a PR reviewed here and then merged by someone else, closed by hand or still open has no recorded outcome",
-		"it is shown as unknown and excluded from every rate, not counted as open or as not merged.",
+		"A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead",
+		"${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open.",
+		"prs_outcome_from_ledger",
+		"merged_elsewhere",
+		"is shown as unknown and excluded from every rate, not counted as open or as not merged.",
 		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
 		// Unknown-outcome policy (#12514 follow-up): never a denominator, always a count.
 		"prs_outcome_unknown",

@@ -23522,7 +23522,7 @@ function burnAreaChart() {
         return {
           matters: 'If agent-written PRs merge far less often, or get reverted far more often, than human ones, the agents are making work rather than saving it.',
           measured: 'For every pull request (PR) that has an evidence record, who wrote it — a human, an AI agent, or a bot — and what happened to it: merged, closed without merging, still open, or merged and then undone ("reverted") within 14 days.',
-          how: 'We take every PR opened in the chosen window (by the PR\u2019s open time, not when its record was written) and count outcomes per author kind, folding the newest live record with any backfilled record of the same PR. Bars are plain counts scaled to the biggest group. Merged share = merged ÷ PRs with a known outcome (merged, closed or confirmed open by a backfill). The revert share is reverts within 14 days ÷ merged. A live record only knows a merge this hive performed, and never a close, so a PR reviewed here with no merge event and no backfilled record is "outcome unknown": counted and shown as a dashed bar, left out of the shares. Until a backfill covers the window, almost every known outcome on a live-only hive is a merge, so the merged share is an upper bound and the unknown count is the honest measure of how much is unresolved.',
+          how: 'We take every PR opened in the chosen window (by the PR\u2019s open time, not when its record was written) and count outcomes per author kind, folding the newest live record with any backfilled record of the same PR. Bars are plain counts scaled to the biggest group. Merged share = merged ÷ PRs with a known outcome (merged, closed or open). The revert share is reverts within 14 days ÷ merged. A live record only knows a merge this hive performed, and never a close, so the governor\u2019s review-outcome ledger fills the rest: when a reviewed PR leaves the open list the ledger asks GitHub what became of it (one fetch it already makes) and stamps the bundle merged-elsewhere or closed; a PR the ledger still sees open counts as open. A PR with no merge event, no backfilled record and no ledger row is "outcome unknown": counted and shown as a dashed bar, left out of the shares.',
           good: `Similar merged shares across author kinds, and a revert share at or below ${Math.round(EV_REVERT_STRONG * 100)}% (Strong). ${Math.round(EV_REVERT_FAIR * 100)}% or less is Fair; above that is Weak. A big gap between agent and human merged shares is worth a look either way.`,
           ours: `${parts.length ? parts.join(' · ') + '. ' : 'No PRs in this window. '}${merged} merged in total, ${reverted} reverted within 14 d (${evPct(rr)}).${unknown ? ` ${unknown} PR(s) have no recorded outcome and are not in any share.` : ''} ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}` : `revert share ${evPct(rr)} of ${merged} merged`,
@@ -23762,7 +23762,7 @@ function burnAreaChart() {
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
       const rows = kinds.map((kind) => {
         const o = outcomes[kind] || {};
-        return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0, reverted: Number(o.reverted_14d) || 0 };
+        return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, mergedElsewhere: Number(o.merged_elsewhere) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0, reverted: Number(o.reverted_14d) || 0 };
       }).filter((r) => r.n > 0);
       if (!rows.length) return '<div class="ev-empty">— no PRs with an evidence bundle in this window</div>';
       const w = EV_SVG_W, label = 70, valW = 40, barH = 7, gap = 2, rowH = 4 * (barH + gap) + 8, t = 4;
@@ -23773,7 +23773,7 @@ function burnAreaChart() {
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
         const known = row.merged + row.closed + row.open;
-        const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, known)} of ${known} with a known outcome) · closed ${row.closed} · open ${row.open} · reverted within 14 d ${row.reverted} (${pct(row.reverted, row.merged)} of merged) · outcome unknown ${row.unknown} (not in any rate) · n=${row.n}`);
+        const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, known)} of ${known} with a known outcome; ${row.mergedElsewhere} merged by someone other than this hive) · closed ${row.closed} · open ${row.open} · reverted within 14 d ${row.reverted} (${pct(row.reverted, row.merged)} of merged) · outcome unknown ${row.unknown} (not in any rate) · n=${row.n}`);
         const bar = (cls, v, k) => {
           const yy = y0 + k * (barH + gap);
           return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + barH}" text-anchor="end">${v}</text>`;
@@ -24256,6 +24256,10 @@ function burnAreaChart() {
       const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
       const pendingCI = Number((dto.missing || {}).records_ci_pending) || 0;
       const outcomeUnknown = Number((dto.missing || {}).prs_outcome_unknown) || 0;
+      const outcomeLedger = Number((dto.missing || {}).prs_outcome_from_ledger) || 0;
+      const outcomeElsewhere = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].merged_elsewhere) || 0), 0);
+      const outcomeClosed = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].closed) || 0), 0);
+      const outcomeOpen = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].open) || 0), 0);
       const balance = Array.isArray(dto.work_balance) ? dto.work_balance : [];
       const balanceN = balance.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
       const balanceSrc = dto.work_balance_sources && typeof dto.work_balance_sources === 'object' ? dto.work_balance_sources : {};
@@ -24268,11 +24272,11 @@ function burnAreaChart() {
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
-          `PRs are placed in the window by their open time, never by when a record was written. Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. A live bundle records a merge only when this hive merged, and never a close-without-merge, so a PR reviewed here and then merged by someone else, closed by hand or still open has no recorded outcome${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''}: it is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
+          `PRs are placed in the window by their open time, never by when a record was written. Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
-          `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+          `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here but never resolved by the review-outcome ledger or a backfill) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('maintainability', 'Maintainability trend', complexityN, evMaintainabilitySvg(complexity, dto.acmm_changes),
           'Report-only; Go-only cyclomatic complexity. No causal claim: complexity may rise. n = repos with at least 2 monthly snapshots in the selected window (boundary months included). Monthly repo measurements ignore author kind. Tool measurements can be unavailable; gaps are not zero. ACMM markers show the first month each level is seen in stored bundles, not the exact configuration change; returns to an earlier level are not shown.')
         + evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),
@@ -24282,7 +24286,7 @@ function burnAreaChart() {
         + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),
           `${issueSourceNote} PR opens, merges and closes come from evidence bundles for PRs opened in the window (live and backfilled), so PRs never seen by this hive are missing. Week-end queue depth is the governor’s actionable open issues / PRs (held items excluded) from its last snapshot of the week, kept ${balanceSrc.queue_retention_days || 30} days${balanceSrc.queue_samples === 0 ? ' — no snapshot in this window' : ''}. Nothing is weighted by size, and an opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
-          'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
+          'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records and the review-outcome ledger; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
 
     async function fetchEvidenceSummary() {

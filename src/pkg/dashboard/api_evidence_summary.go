@@ -250,18 +250,21 @@ func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
 }
 
 // EvidenceOutcomes counts PRs for one author kind. Merged is any record of
-// the PR with a merge event. Closed and Open come only from a backfilled
-// record (hivecommons/hive#12371): closed without merge, or still open when
-// the backfill ran. Unknown is a PR with live bundles only and no merge
-// event: a live bundle records a merge only when this hive merged, and never
-// a close, so the PR may be open, merged by someone else or closed by hand
-// and nothing on disk says which. Rates must use Merged+Closed+Open as their
-// denominator and report Unknown beside them, never fold it into "not
-// merged". RevertedWithin14d is nil because revert tracking is not recorded
-// in bundles.
+// the PR with a merge event: one this hive performed, or one the forge
+// reported (MergedElsewhere, a subset of Merged: merged by hand, by another
+// bot or by a different hive, learned from the review-outcome ledger or a
+// backfill). Closed and Open come from a backfilled record
+// (hivecommons/hive#12371) or from the review-outcome ledger: closed without
+// merge, or still open when last observed. Unknown is a PR with live bundles
+// only, no merge event and no ledger row: the PR may be open, merged by
+// someone else or closed by hand and nothing on this hive says which. Rates
+// must use Merged+Closed+Open as their denominator and report Unknown beside
+// them, never fold it into "not merged". RevertedWithin14d is nil because
+// revert tracking is not recorded in bundles.
 type EvidenceOutcomes struct {
 	N                 int  `json:"n"`
 	Merged            int  `json:"merged"`
+	MergedElsewhere   int  `json:"merged_elsewhere"`
 	Closed            int  `json:"closed"`
 	Open              int  `json:"open"`
 	Unknown           int  `json:"unknown"`
@@ -422,11 +425,16 @@ type EvidenceMissing struct {
 	// RecordsCIPending counts PRs whose captured checks had not all finished
 	// when the snapshot was taken; they are in neither CI column.
 	RecordsCIPending int `json:"records_ci_pending"`
-	// PRsOutcomeUnknown counts PRs in the window with live bundles only and
-	// no merge event (EvidenceOutcomes.Unknown summed over author kinds).
-	PRsOutcomeUnknown int  `json:"prs_outcome_unknown"`
-	RecordsUnreadable int  `json:"records_unreadable"`
-	ReviewerAccuracy  bool `json:"reviewer_accuracy_unavailable"`
+	// PRsOutcomeUnknown counts PRs in the window with live bundles only, no
+	// merge event and no review-outcome ledger row (EvidenceOutcomes.Unknown
+	// summed over author kinds): truly unresolved.
+	PRsOutcomeUnknown int `json:"prs_outcome_unknown"`
+	// PRsOutcomeFromLedger counts PRs in the window whose outcome (merged
+	// elsewhere, closed or open) is known only from the review-outcome
+	// ledger, stamped on the bundle or applied at read time.
+	PRsOutcomeFromLedger int  `json:"prs_outcome_from_ledger"`
+	RecordsUnreadable    int  `json:"records_unreadable"`
+	ReviewerAccuracy     bool `json:"reviewer_accuracy_unavailable"`
 	// IssuesHumanOpensUnobserved is true while some work_balance row relies on
 	// the audit log for issues: the audit log only records hive-mediated issue
 	// writes, so issues humans or third-party bots open directly on GitHub
@@ -550,7 +558,10 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	resp := buildEvidenceSummaryWindow(bundles, win, repo, kind)
+	artifact, aerr := review.LoadArtifact("")
+	ledger, lerr := review.LoadOutcomeLedger("")
+	hints := evidenceOutcomeHints(ledger)
+	resp := buildEvidenceSummaryWindowHints(bundles, hints, win, repo, kind)
 	resp.AvailableWindows = evidenceAvailableWindows(bundles, now, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
@@ -560,12 +571,12 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		Entries: evidenceWorkBalanceEntries(s.audit),
 		Rollup:  loadIssueActivityRollup(issueActivityPath),
 		Series:  evidence.LoadIssueSeries(ghpkg.ReviewEvidenceRoot),
-		PRs:     evidence.FoldPRs(bundles, repo, ""),
+		PRs:     evidenceFoldWithHints(bundles, hints, repo, ""),
 		Buckets: s.evidenceWorkBalanceBuckets(win),
 	}, win, repo)
 	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == "" && (resp.WorkBalanceSources.IssueSeriesWeeks == 0 || resp.WorkBalanceSources.AuditOnlyWeeks > 0)
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
-	allPRs := evidence.FoldPRs(bundles, "", "")
+	allPRs := evidenceFoldWithHints(bundles, hints, "", "")
 	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, allPRs), evidenceGateMerges(bundles, allPRs), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
 
 	days := (hours + 23) / 24
@@ -575,8 +586,6 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 			days = (hours + 23) / 24
 		}
 	}
-	artifact, aerr := review.LoadArtifact("")
-	ledger, lerr := review.LoadOutcomeLedger("")
 	if (aerr != nil && !errors.Is(aerr, os.ErrNotExist)) || lerr != nil {
 		resp.Missing.ReviewerAccuracy = true
 	} else {
@@ -636,10 +645,11 @@ func evidenceWindowHas(win evidenceWindow, opened time.Time) bool {
 	return true
 }
 
-// evidenceLatestPerPR folds bundles per PR (evidence.FoldPRs) and keeps the
-// PRs opened in win.
-func evidenceLatestPerPR(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) map[string]*evidence.PR {
-	prs := evidence.FoldPRs(bundles, repo, kind)
+// evidenceLatestPerPR folds bundles per PR (evidence.FoldPRs), resolves the
+// outcome of PRs whose records state none from hints (the review-outcome
+// ledger; nil when unavailable) and keeps the PRs opened in win.
+func evidenceLatestPerPR(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, win evidenceWindow, repo, kind string) map[string]*evidence.PR {
+	prs := evidenceFoldWithHints(bundles, hints, repo, kind)
 	for k, p := range prs {
 		if !evidenceWindowHas(win, p.OpenedAt) {
 			delete(prs, k)
@@ -689,6 +699,48 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 // buildEvidenceSummaryWindow is buildEvidenceSummary over an explicit window;
 // a custom range keeps PRs opened in [From, To).
 func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) EvidenceSummary {
+	return buildEvidenceSummaryWindowHints(bundles, nil, win, repo, kind)
+}
+
+// evidenceOutcomeHints turns the review-outcome ledger into per-PR hints
+// keyed like evidence.PRKey, so a PR the ledger resolved (or still sees
+// open) but whose bundle carries no outcome is not reported as unknown. The
+// ledger does not record the merger, so a hinted merge has no actor.
+func evidenceOutcomeHints(ledger *review.OutcomeLedger) map[string]evidence.OutcomeHint {
+	if ledger == nil || len(ledger.Items) == 0 {
+		return nil
+	}
+	hints := make(map[string]evidence.OutcomeHint, len(ledger.Items))
+	for _, o := range ledger.Items {
+		if o == nil {
+			continue
+		}
+		h := evidence.OutcomeHint{At: o.OutcomeAt}
+		switch o.Outcome {
+		case review.OutcomeMerged:
+			h.State, h.MergedAt = evidence.BackfillStateMerged, o.OutcomeAt
+		case review.OutcomeClosed:
+			h.State, h.ClosedAt = evidence.BackfillStateClosed, o.OutcomeAt
+		case review.OutcomeOpen:
+			h.State, h.At = evidence.BackfillStateOpen, ledger.GeneratedAt
+		default:
+			continue
+		}
+		hints[evidence.PRKey(o.Repo, o.Number)] = h
+	}
+	return hints
+}
+
+// evidenceFoldWithHints is evidence.FoldPRs followed by ApplyOutcomeHints.
+func evidenceFoldWithHints(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, repo, kind string) map[string]*evidence.PR {
+	prs := evidence.FoldPRs(bundles, repo, kind)
+	evidence.ApplyOutcomeHints(prs, hints)
+	return prs
+}
+
+// buildEvidenceSummaryWindowHints is buildEvidenceSummaryWindow with
+// review-outcome ledger hints for PRs whose records state no outcome.
+func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, win evidenceWindow, repo, kind string) EvidenceSummary {
 	hours := win.Hours
 	resp := EvidenceSummary{
 		Hours: hours, AllTime: hours == 0 && !win.Custom, Repo: repo, AuthorKind: kind,
@@ -708,7 +760,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		resp.From = win.From.Format(time.RFC3339)
 		resp.To = win.To.Format(time.RFC3339)
 	}
-	latest := evidenceLatestPerPR(bundles, win, repo, kind)
+	latest := evidenceLatestPerPR(bundles, hints, win, repo, kind)
 	keys := make([]string, 0, len(latest))
 	for k := range latest {
 		keys = append(keys, k)
@@ -734,6 +786,9 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		switch {
 		case merged:
 			o.Merged++
+			if b.MergedElsewhere {
+				o.MergedElsewhere++
+			}
 		case b.Closed:
 			o.Closed++
 		case known:
@@ -741,6 +796,9 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		default:
 			o.Unknown++
 			resp.Missing.PRsOutcomeUnknown++
+		}
+		if known && b.Outcome != nil && !b.Backfilled && (!merged || b.MergedElsewhere) {
+			resp.Missing.PRsOutcomeFromLedger++
 		}
 		resp.Outcomes[b.Author.Kind] = o
 		ciState := evidenceCIState(b.Bundle)
