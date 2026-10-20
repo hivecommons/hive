@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -129,6 +130,17 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 	}
 	if f.Author.Login == "" {
 		f.Author.Login = issue.GetUser().GetLogin()
+	}
+	// An out-of-cycle fact (claim release, un-park) carries no author
+	// kind; without it a hive-filed issue would re-derive 010 instead of
+	// 015-triage-needed until the next sweep.
+	if f.Author.Kind == authorkind.Unknown && f.Issue != nil {
+		switch {
+		case c.isHumanAuthor(issue.GetUser()):
+			f.Author.Kind = authorkind.Human
+		case c.isKnownNonHumanAuthor(issue.GetUser()):
+			f.Author.Kind = authorkind.Hive
+		}
 	}
 	return f, nil
 }

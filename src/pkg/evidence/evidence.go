@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -100,13 +101,15 @@ type Policy struct {
 
 // Verdict is one reviewer's verdict for the head SHA.
 type Verdict struct {
-	Perspective string    `json:"perspective"`
-	Model       string    `json:"model"`
-	Backend     string    `json:"backend"`
-	Verdict     string    `json:"verdict"`
-	Confidence  float64   `json:"confidence"`
-	Findings    []Finding `json:"findings,omitempty"`
-	RecordedAt  time.Time `json:"recorded_at"`
+	Perspective       string    `json:"perspective"`
+	Model             string    `json:"model"`
+	Backend           string    `json:"backend"`
+	Verdict           string    `json:"verdict"`
+	Confidence        float64   `json:"confidence"`
+	ConfidenceRaw     *float64  `json:"confidence_raw,omitempty"`
+	ConfidenceDerived *float64  `json:"confidence_derived,omitempty"`
+	Findings          []Finding `json:"findings,omitempty"`
+	RecordedAt        time.Time `json:"recorded_at"`
 	// AuthorModel is the model the verdict's report named as the PR's
 	// author (the attribution trailer), when it did. The bundle's Author
 	// carries the audit-recorded model; this is the reviewer's view of it.
@@ -326,6 +329,12 @@ func (b *Bundle) Validate() error {
 		}
 		if v.Confidence < 0 || v.Confidence > 1 {
 			bad("verdicts[%d]: confidence %v outside [0,1]", i, v.Confidence)
+		}
+		if v.ConfidenceDerived != nil && (math.IsNaN(*v.ConfidenceDerived) || math.IsInf(*v.ConfidenceDerived, 0) || *v.ConfidenceDerived < 0 || *v.ConfidenceDerived > 1) {
+			bad("verdicts[%d]: confidence_derived outside [0,1]", i)
+		}
+		if v.ConfidenceRaw != nil && (math.IsNaN(*v.ConfidenceRaw) || math.IsInf(*v.ConfidenceRaw, 0)) {
+			bad("verdicts[%d]: confidence_raw must be finite", i)
 		}
 		if v.RecordedAt.IsZero() {
 			bad("verdicts[%d]: recorded_at is required", i)

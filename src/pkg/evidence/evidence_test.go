@@ -273,6 +273,8 @@ func TestVerifyFailsOnMutation(t *testing.T) {
 		"policy perspective": func(b *Bundle) { b.Policy.Perspectives = nil },
 		"verdict":            func(b *Bundle) { b.Verdicts[0].Verdict = "reject" },
 		"confidence":         func(b *Bundle) { b.Verdicts[0].Confidence = 0.1 },
+		"confidence raw":     func(b *Bundle) { b.Verdicts[0].ConfidenceRaw = fptr(.82) },
+		"confidence derived": func(b *Bundle) { b.Verdicts[0].ConfidenceDerived = fptr(.75) },
 		"finding line":       func(b *Bundle) { b.Verdicts[0].Findings[0].Line++ },
 		"verdict dropped":    func(b *Bundle) { b.Verdicts = nil },
 		"posted review":      func(b *Bundle) { b.PostedReviews[0].URL = "https://evil" },

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // ReviewThreadsPath is the pre-kick artifact listing every unresolved
@@ -325,7 +326,22 @@ func (c *Client) fetchReviewThreads(ctx context.Context, owner, repo string, num
 // Setting project.ai_author to the person's login is NOT the answer: that
 // would make every PR they write by hand hive-authored too.
 func (c *Client) isHiveMediatedPR(pr PullRequest) bool {
-	return c.isHiveLogin(pr.Author) || pr.HiveAttributed
+	// A PR the hive adopted in place (stage 074) is the hive's to push to,
+	// so its bot threads are repaired like a hive-authored PR's, not
+	// answered with a suggestion.
+	return c.isHiveLogin(pr.Author) || pr.HiveAttributed || adoptedByHiveLabel(pr.Labels)
+}
+
+// adoptedByHiveLabel reports whether the PR wears stage/074-adopted-by-hive
+// (case-insensitive).
+func adoptedByHiveLabel(labels []string) bool {
+	want := stagelabels.AdoptedByHive.Label()
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), want) {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectReviewThreads builds the review-threads report for the given open

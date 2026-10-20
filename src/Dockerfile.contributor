@@ -77,19 +77,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # CA trust bundle refresh: distrust two Mozilla roots the root programs
-# withdrew on 2026-10-17..20 that bookworm's ca-certificates still ships (no
-# fixed package yet — drop once it carries the change). curl/git, the venv
+# withdrew on 2026-10-17..20. Bookworm's ca-certificates still ships the
+# entries today, trixie's 20250419+deb13u1 already dropped them; each entry is
+# rewritten only when present so a package refresh cannot break the build
+# either way, and the final tests prove the roots are absent. curl/git, the venv
 # Python (Debian certifi → system bundle), and the codex binary all read the
 # regenerated /etc/ssl/certs/ca-certificates.crt. Node keeps its own copy of
 # the Mozilla store, so NODE_OPTIONS=--use-openssl-ca below points node, the
 # Copilot CLI (Node SEA) and kilo at the system store instead;
 # NODE_EXTRA_CA_CERTS still layers on top of it. Same recipe as src/Dockerfile.
-RUN sed -i \
-      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
-      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
-      /etc/ca-certificates.conf \
-  && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
-  && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
+      if grep -q "^${cert}" /etc/ca-certificates.conf; then \
+        sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf \
+        && grep -q "^!${cert}" /etc/ca-certificates.conf || exit 1; \
+      fi; \
+    done \
   && update-ca-certificates --fresh \
   && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
   && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem

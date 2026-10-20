@@ -143,3 +143,24 @@ func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing
 		t.Fatalf("verdict = %+v, want newest body aggregate", got)
 	}
 }
+
+// hivecommons/hive#13205: the reviewer wrote head_sha "98489e7" and the
+// aggregate was keyed by it, so the lane's full-head lookup found nothing
+// and logged contributor-lane:no-verdict every cycle although the swarm had
+// approved the current head.
+func TestContributorLaneVerdictFromArtifactMatchesAbbreviatedHead(t *testing.T) {
+	const full = "98489e7ba141fc60c30c9aaf47774dc42f9b1c76"
+	artifact := review.Artifact{Items: []review.Aggregate{{
+		Repo:          "hivecommons/hive",
+		Number:        13205,
+		HeadSHA:       "98489e7",
+		Verdict:       review.VerdictApprove,
+		MergeEligible: true,
+	}}}
+
+	got := contributorLaneVerdictFromArtifact(artifact, "hivecommons/hive", 13205, full, artifact.HasAggregateApproval("hivecommons/hive", 13205, full))
+
+	if !got.Configured || !got.Approved || got.Verdict != string(review.VerdictApprove) {
+		t.Fatalf("verdict = %+v, want approved verdict found via the abbreviated head", got)
+	}
+}

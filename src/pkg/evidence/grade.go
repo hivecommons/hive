@@ -671,3 +671,52 @@ func SummarizeShadow(s ShadowStats) string {
 	}
 	return fmt.Sprintf("The shadow gates would have held %d of %d PRs; nothing was actually blocked.", s.Held, s.N)
 }
+
+// SummarizeCalibrationComparison compares monotonic merged-share slopes across
+// equally spaced bins, pooling perspectives. Each series needs two buckets
+// with at least five known outcomes; thin/unknown buckets cannot imply a trend.
+// The slope is the endpoint rise per bin, not a probability or causal claim.
+func SummarizeCalibrationComparison(self, derived []CalibrationBucket) string {
+	s, sm, sok := calibrationSlope(self)
+	d, dm, dok := calibrationSlope(derived)
+	if !sok || !dok {
+		return "Not enough data to compare slopes: each series needs two bins with at least five known outcomes."
+	}
+	switch {
+	case !sm && !dm:
+		return "Neither series has a monotonic rise in merged share."
+	case sm && !dm:
+		return "Self-reported confidence has a monotonic merged-share slope; derived confidence does not."
+	case !sm && dm:
+		return "Derived confidence has a monotonic merged-share slope; self-reported confidence does not."
+	case s > d+1e-9:
+		return "Self-reported confidence has the steeper monotonic merged-share slope."
+	case d > s+1e-9:
+		return "Derived confidence has the steeper monotonic merged-share slope."
+	default:
+		return "Self-reported and derived confidence have equal monotonic merged-share slopes."
+	}
+}
+
+func calibrationSlope(buckets []CalibrationBucket) (slope float64, monotonic, enough bool) {
+	first, last, count := -1, -1, 0
+	firstRate, lastRate := 0.0, 0.0
+	monotonic = true
+	for i, b := range buckets {
+		if b.Known < calibMinBucketN {
+			continue
+		}
+		rate := float64(b.Merged) / float64(b.Known)
+		if first < 0 {
+			first, firstRate = i, rate
+		} else if rate < lastRate {
+			monotonic = false
+		}
+		last, lastRate = i, rate
+		count++
+	}
+	if count < 2 {
+		return 0, false, false
+	}
+	return (lastRate - firstRate) / float64(last-first), monotonic, true
+}

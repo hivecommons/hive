@@ -3,6 +3,7 @@ package github
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -37,6 +38,9 @@ func TestIssueDeriverReproducesIssueStageFor(t *testing.T) {
 		{"parked label on claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}},
 		{"exempt label", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}},
+		{"hive-filed untriaged (015)", IssueStageInput{AuthorKind: authorkind.Hive}},
+		{"hive-filed accepted (010)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"triage/accepted"}}},
+		{"human-filed needs-triage (015)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"needs-triage"}}},
 	}
 	deriver := IssueDeriver()
 	if deriver.Kind() != stagelabels.IssueItem {

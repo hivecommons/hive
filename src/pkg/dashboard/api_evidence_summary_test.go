@@ -73,7 +73,7 @@ func TestBuildEvidenceSummary(t *testing.T) {
 		t.Fatalf("calibration = %+v", got.Calibration)
 	}
 	bk := got.Calibration[0].Buckets
-	if bk[0].N != 1 || bk[0].Blocks != 1 || bk[1].N != 1 || bk[1].Unknown != 1 || bk[3].N != 1 || bk[3].Merged != 1 || bk[3].Unknown != 0 {
+	if bk[0].N != 1 || bk[0].Blocks != 1 || bk[1].N != 1 || bk[1].Unknown != 1 || bk[4].N != 1 || bk[4].Merged != 1 || bk[4].Unknown != 0 {
 		t.Errorf("buckets = %+v", bk)
 	}
 	if m1 := got.ReviewerModels[0]; m1.Model != "m1" || m1.ByAuthor["human"].Approvals != 1 || m1.ByAuthor["human"].ApprovedNotMerged != 0 || m1.ByAuthor["human"].ApprovedUnknown != 1 {
@@ -501,7 +501,7 @@ func TestBuildEvidenceSummaryBackfilledWindows(t *testing.T) {
 	if got.Missing.PRsOutcomeUnknown != 0 || got.Outcomes["agent"].Unknown != 0 || got.Outcomes["human"].Unknown != 0 {
 		t.Errorf("every PR here has a recorded outcome: %+v", got.Outcomes)
 	}
-	if len(got.Calibration) != 1 || got.Calibration[0].Buckets[3].Merged != 1 {
+	if len(got.Calibration) != 1 || got.Calibration[0].Buckets[4].Merged != 1 {
 		t.Errorf("calibration must see the merge: %+v", got.Calibration)
 	}
 	if sg := got.ShadowGate; sg.N != 1 || sg.ReviewGate.Held.Merged != 1 || sg.ReviewGate.Held.Reverted != 1 || sg.ReviewGate.Held.Open != 0 {
@@ -633,7 +633,7 @@ func TestBuildEvidenceSummaryUnknownOutcome(t *testing.T) {
 	if len(got.Calibration) != 1 {
 		t.Fatalf("calibration = %+v", got.Calibration)
 	}
-	top := got.Calibration[0].Buckets[3]
+	top := got.Calibration[0].Buckets[4]
 	if top.N != 4 || top.Merged != 1 || top.Unknown != 2 {
 		t.Errorf("top bucket = %+v, want n 4 / merged 1 / unknown 2 (merged rate 1 of 2 known, not 1 of 4)", top)
 	}
@@ -904,5 +904,42 @@ func TestBuildEvidenceSummaryChangeFailures(t *testing.T) {
 	// to the compact "undone" form to stay inside the 20-word budget.
 	if want := "Agents: 4 merged, 2 undone (50%). Humans: 2 merged, 2 undone (100%). 1 outcome not recorded yet."; card.PlainSummary != want {
 		t.Errorf("plain summary = %q, want prefix %q", card.PlainSummary, want)
+	}
+}
+
+func TestCalibrationFiveBinsAndDerivedCoverage(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	var verdicts []evidence.Verdict
+	for _, confidence := range []float64{.55, .65, .75, .85, .95} {
+		raw, derived := confidence, confidence
+		verdicts = append(verdicts, evidence.Verdict{Perspective: "security", Model: "m", Verdict: "approve", Confidence: confidence, ConfidenceRaw: &raw, ConfidenceDerived: &derived})
+	}
+	// Historical verdicts remain in self-report/fallback only.
+	verdicts = append(verdicts, evidence.Verdict{Perspective: "security", Model: "m", Verdict: "changes_requested", Confidence: .6})
+	merged := evSummaryBundle("o/r", 1, evidence.AuthorAgent, now.Add(-time.Hour), true, verdicts, 0, false)
+	derived := .85
+	unknown := evSummaryBundle("o/r", 2, evidence.AuthorHuman, now.Add(-time.Hour), false, []evidence.Verdict{{Perspective: "security", Model: "m", Verdict: "approve", Confidence: .95, ConfidenceDerived: &derived}}, 0, false)
+	got := buildEvidenceSummary([]*evidence.Bundle{merged, unknown}, now, 24, "", "")
+	if len(got.Calibration) != 1 || len(got.CalibrationDerived) != 1 {
+		t.Fatalf("missing series: %+v", got)
+	}
+	self, other := got.Calibration[0], got.CalibrationDerived[0]
+	if self.N != 7 || other.N != 6 || got.CalibrationLegacy != 2 {
+		t.Fatalf("coverage self=%d derived=%d legacy=%d", self.N, other.N, got.CalibrationLegacy)
+	}
+	if len(other.Buckets) != 5 || len(self.Buckets) != 5 {
+		t.Fatal("not five bins")
+	}
+	for i, b := range other.Buckets {
+		if b.Merged != 1 {
+			t.Errorf("bin %d missing merge: %+v", i, b)
+		}
+	}
+	if other.Buckets[3].Unknown != 1 || self.Buckets[4].Unknown != 1 || self.Buckets[1].Blocks != 1 {
+		t.Fatal("unknown/legacy bucket accounting wrong")
+	}
+	legacyOnly := buildEvidenceSummary([]*evidence.Bundle{evSummaryBundle("o/r", 3, evidence.AuthorHuman, now.Add(-time.Hour), true, []evidence.Verdict{{Perspective: "security", Verdict: "approve", Confidence: 1}}, 0, false)}, now, 24, "", "")
+	if len(legacyOnly.CalibrationDerived) != 0 {
+		t.Fatal("invented derived confidence for old bundles")
 	}
 }

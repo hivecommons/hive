@@ -1314,6 +1314,9 @@
     .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
     .ham-input:focus { border-color: var(--line-strong); }
     .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
+    /* Merge sound toggle: a speaker chip at the toolbar's far end; pressed = on. */
+    .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
+    .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
@@ -1379,6 +1382,7 @@
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+    .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -4474,8 +4478,11 @@
     .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"] { --component-status: var(--status-info); }
     .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
-    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
-    .oc-nav-count { margin-left: auto; flex-shrink: 0; }
+    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero.
+       order:1 keeps the pill the last flex child so every row's pill shares one right edge: the
+       hover-revealed hide toggle (⊘) is appended after the pill on hideable rows and would otherwise
+       hold a 20px slot that nudges those pills left of Overview's, which is not hideable. */
+    .oc-nav-count { margin-left: auto; flex: none; order: 1; }
     /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
     .oc-nav-count[hidden] { display: none; }
     /* pill size steps */
@@ -6600,6 +6607,7 @@
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
+        <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Merge sound off — turn on (plays a test zap)" title="Merge sound off — turn on (plays a test zap)">🔇</button>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
@@ -12633,12 +12641,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45;
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
+    // 015 triage-needed: actionable but no maintainer has looked at it yet.
+    // It lights the Actionable column too, with its own word; a maintainer's
+    // move. The Open column is untouched by it.
+    const STAGE_TRACKER_TRIAGE_NEEDED = 15;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
-    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12675,6 +12687,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (n) {
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
+        case 15: return 'Triage needed';
         case 20: return 'Claimed';
         case 30: return 'PR in progress';
         case 40: return 'Covered by a PR, not yet in review';
@@ -12721,7 +12734,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerAnchor(stage, stages, kind) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
+      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
@@ -12741,7 +12754,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur) } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
@@ -12759,8 +12772,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision' };
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -13229,7 +13242,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data) {
-      if (data && typeof data === 'object') _stageTracker = data;
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); }
       const el = document.getElementById('activity-monitor-panel');
       if (!el) return;
       const d = _stageTracker;
@@ -13284,7 +13297,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is restored from storage on the first fetch.
     async function fetchStageTracker() {
       try {
-        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadFilter();
+        if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) { stageTrackerTickClock(); return; }
         if (!r.ok) return;
@@ -13295,6 +13308,164 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         renderStageTracker(JSON.parse(text));
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) { /* keep the previous render */ }
+    }
+
+    /* ---- Activity monitor merge sound (#13275) ----------------------------
+       Opt-in "bug zapper" when a PR the tab was already watching merges.
+       The detector is pure (stageTrackerMergeState + stageTrackerNewlyMerged,
+       run under node by stage_tracker_merge_sound_test.go): a PR counts as
+       newly merged when the previous payload listed it open and the next
+       one lists it merged — a stage at/after the terminal cap, or its key
+       in recently_merged (the audit log's pr_merged entries, which is how
+       a PR that simply dropped out of the open list is told apart from one
+       closed unmerged). First load has no previous payload, so it never
+       fires; issues never fire; a per-PR "zapped" set stops replays; N
+       merges in one refresh play at most STAGE_TRACKER_SOUND_MAX_PLAYS
+       zaps. The sound is synthesised with the Web Audio API (no asset, no
+       URL — the CSP allows neither): a short burst of crackling white
+       noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a low
+       sine "thunk" at onset, all under one master gain. The AudioContext
+       is created lazily on a user gesture and resumed when suspended. */
+    const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
+    const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
+    const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
+    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.3;
+    const STAGE_TRACKER_ZAP_S = 0.34;
+    const STAGE_TRACKER_ZAP_BAND_FROM_HZ = 3600;
+    const STAGE_TRACKER_ZAP_BAND_TO_HZ = 1200;
+    const STAGE_TRACKER_ZAP_BAND_Q = 5;
+    const STAGE_TRACKER_ZAP_CRACKLE_FLIP = 0.006;
+    const STAGE_TRACKER_ZAP_CRACKLE_FLOOR = 0.12;
+    const STAGE_TRACKER_THUNK_HZ = 90;
+    const STAGE_TRACKER_THUNK_S = 0.14;
+    const STAGE_TRACKER_GAIN_FLOOR = 0.0001;
+    var _stageTrackerMergeState = null;
+    var _stageTrackerZapped = {};
+    var _stageTrackerAudioCtx = null;
+    var _stageTrackerSoundOn = false;
+    var _stageTrackerSoundPrimed = false;
+
+    function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
+
+    // Pure: PR key → merged? for one payload. Issues are not tracked.
+    function stageTrackerMergeState(d) {
+      const out = {};
+      if (!d || typeof d !== 'object') return out;
+      for (const it of (Array.isArray(d.items) ? d.items : [])) {
+        if (!it || it.kind !== 'pr') continue;
+        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+      }
+      for (const m of (Array.isArray(d.recently_merged) ? d.recently_merged : [])) {
+        if (m && m.repo && m.number) out[stageTrackerPRKey(m.repo, m.number)] = true;
+      }
+      return out;
+    }
+
+    // Pure: PR keys open in prev and merged in next, sorted. No prev → none.
+    function stageTrackerNewlyMerged(prev, next) {
+      if (!prev || !next) return [];
+      return Object.keys(next).filter(k => next[k] === true && prev[k] === false).sort();
+    }
+
+    function stageTrackerNoteMerges(d) {
+      const next = stageTrackerMergeState(d);
+      const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
+      _stageTrackerMergeState = next;
+      if (!fresh.length) return;
+      fresh.forEach(k => { _stageTrackerZapped[k] = true; });
+      if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
+    }
+
+    function stageTrackerAudioContext() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      if (!_stageTrackerAudioCtx) { try { _stageTrackerAudioCtx = new AC(); } catch { return null; } }
+      if (_stageTrackerAudioCtx.state === 'suspended') { try { _stageTrackerAudioCtx.resume(); } catch {} }
+      return _stageTrackerAudioCtx;
+    }
+
+    // Prime the context on the first gesture after load when sound was left
+    // on in a previous visit, so a merge that lands before the user clicks
+    // anything in the tracker can still play (autoplay policy).
+    function stageTrackerSoundPrime() {
+      if (_stageTrackerSoundPrimed) return;
+      _stageTrackerSoundPrimed = true;
+      const prime = () => { if (_stageTrackerSoundOn) stageTrackerAudioContext(); };
+      document.addEventListener('pointerdown', prime, { once: true, passive: true });
+      document.addEventListener('keydown', prime, { once: true, passive: true });
+    }
+
+    function stageTrackerZapVoice(ctx, out, at) {
+      const sr = ctx.sampleRate;
+      const buf = ctx.createBuffer(1, Math.ceil(sr * STAGE_TRACKER_ZAP_S), sr);
+      const data = buf.getChannelData(0);
+      let gate = 1;
+      for (let i = 0; i < data.length; i++) {
+        if (Math.random() < STAGE_TRACKER_ZAP_CRACKLE_FLIP) gate = gate ? 0 : 1;
+        data[i] = (Math.random() * 2 - 1) * (gate ? 1 : STAGE_TRACKER_ZAP_CRACKLE_FLOOR);
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      const band = ctx.createBiquadFilter();
+      band.type = 'bandpass';
+      band.Q.value = STAGE_TRACKER_ZAP_BAND_Q;
+      band.frequency.setValueAtTime(STAGE_TRACKER_ZAP_BAND_FROM_HZ, at);
+      band.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_ZAP_BAND_TO_HZ, at + STAGE_TRACKER_ZAP_S);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at);
+      env.gain.exponentialRampToValueAtTime(1, at + 0.012);
+      env.gain.exponentialRampToValueAtTime(0.6, at + STAGE_TRACKER_ZAP_S * 0.5);
+      env.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_ZAP_S);
+      src.connect(band); band.connect(env); env.connect(out);
+      src.start(at); src.stop(at + STAGE_TRACKER_ZAP_S);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(STAGE_TRACKER_THUNK_HZ, at);
+      osc.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_THUNK_HZ / 2, at + STAGE_TRACKER_THUNK_S);
+      const thunk = ctx.createGain();
+      thunk.gain.setValueAtTime(0.7, at);
+      thunk.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_THUNK_S);
+      osc.connect(thunk); thunk.connect(out);
+      osc.start(at); osc.stop(at + STAGE_TRACKER_THUNK_S);
+    }
+
+    function stageTrackerPlayZap(count) {
+      const ctx = stageTrackerAudioContext();
+      if (!ctx) return false;
+      try {
+        const master = ctx.createGain();
+        master.gain.value = STAGE_TRACKER_SOUND_MASTER_GAIN;
+        master.connect(ctx.destination);
+        const n = Math.max(1, Math.min(Number(count) || 1, STAGE_TRACKER_SOUND_MAX_PLAYS));
+        for (let i = 0; i < n; i++) stageTrackerZapVoice(ctx, master, ctx.currentTime + i * STAGE_TRACKER_SOUND_OFFSET_S);
+        return true;
+      } catch { return false; }
+    }
+
+    function stageTrackerSoundSyncButton() {
+      const b = document.getElementById('activity-monitor-sound');
+      if (!b) return;
+      const on = _stageTrackerSoundOn;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.textContent = on ? '🔊' : '🔇';
+      const label = on ? 'Merge sound on — turn off' : 'Merge sound off — turn on (plays a test zap)';
+      b.setAttribute('aria-label', label);
+      b.setAttribute('title', label);
+    }
+
+    function stageTrackerSoundInit() {
+      try { _stageTrackerSoundOn = localStorage.getItem(STAGE_TRACKER_SOUND_KEY) === '1'; } catch { _stageTrackerSoundOn = false; }
+      stageTrackerSoundSyncButton();
+      if (_stageTrackerSoundOn) stageTrackerSoundPrime();
+    }
+
+    // Toolbar speaker chip: flips the preference, persists it, and plays one
+    // test zap when turning on so the user hears what they opted into.
+    function hamSoundToggle() {
+      _stageTrackerSoundOn = !_stageTrackerSoundOn;
+      try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
+      stageTrackerSoundSyncButton();
+      if (_stageTrackerSoundOn) { stageTrackerSoundPrime(); stageTrackerPlayZap(1); }
     }
 
     function parseCadenceMinutes(cadence) {
@@ -23336,6 +23507,19 @@ function burnAreaChart() {
     // nothing here changes merge behaviour.
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
+    let evConfidenceSeries = 'self-reported';
+
+    function evCalibrationSeries(dto) {
+      const rows = evConfidenceSeries === 'derived' ? dto.reviewer_calibration_derived : dto.reviewer_calibration;
+      return Array.isArray(rows) ? rows : [];
+    }
+    function evSelectConfidence(series) {
+      evConfidenceSeries = series === 'derived' ? 'derived' : 'self-reported';
+      if (evLast) renderEvidenceSummary(evLast);
+    }
+    function evCalibrationControls() {
+      return `<div class="lc-window" role="group" aria-label="Confidence series">${['self-reported', 'derived'].map((series) => `<button type="button" class="${evConfidenceSeries === series ? 'active' : ''}" aria-pressed="${evConfidenceSeries === series}" data-action="evSelectConfidence" data-arg0="${series}" data-stop="1">${series === 'derived' ? 'Derived' : 'Self-reported'}</button>`).join('')}</div>`;
+    }
 
     // Evidence window (#12062): 24h · 7d · 30d · custom from/to, independent of
     // the throughput pills and remembered per browser. The repo filter is
@@ -23414,6 +23598,7 @@ function burnAreaChart() {
       const range = `<div id="ev-custom-range" class="ev-custom-range" role="group" aria-label="Custom evidence date range" data-stop="1"${evCustomOpen ? '' : ' hidden'}><label>from <input type="date" name="from" value="${escapeHtml(evWindow.from || '')}" max="${today}"></label><label>to <input type="date" name="to" value="${escapeHtml(evWindow.to || '')}" max="${today}"></label><button type="button" data-action="applyEvidenceCustomRange" data-arg-types="t" data-stop="1">Apply</button>${evCustomError ? `<span class="ev-range-err" role="alert">${escapeHtml(evCustomError)}</span>` : ''}</div>`;
       return `<div class="gov-pr-models-toggle window-pills-toolbar ev-window-controls" data-stop="1">${pills}</div>${range}`;
     }
+    window.evSelectConfidence = evSelectConfidence;
     window.setEvidenceWindow = setEvidenceWindow;
     window.toggleEvidenceCustomRange = toggleEvidenceCustomRange;
     window.applyEvidenceCustomRange = applyEvidenceCustomRange;
@@ -23553,7 +23738,7 @@ function burnAreaChart() {
         };
       },
       calibration: (dto) => {
-        const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+        const calib = evCalibrationSeries(dto);
         let topN = 0, topMerged = 0, lowN = 0, lowMerged = 0, topName = '', unknown = 0;
         calib.forEach((p) => (p && p.buckets || []).forEach((b, i, arr) => {
           if (!b) return;
@@ -23566,10 +23751,10 @@ function burnAreaChart() {
         const grade = evGrade(topRate, topN, EV_CALIB_STRONG, EV_CALIB_FAIR, true);
         return {
           matters: 'Humans decide how much to trust a review by its confidence. If 90%-sure verdicts are wrong as often as 50%-sure ones, the number is noise and should not be shown to people.',
-          measured: 'Whether the AI reviewers\u2019 confidence means anything. Each review verdict comes with a confidence number from 0 to 1. "Calibration" asks: when a reviewer says it is 90% sure, is it right about 90% of the time?',
-          how: `Verdicts are grouped into confidence buckets (0.0–0.5, 0.5–0.7, 0.7–0.9, 0.9–1.0). For each bucket we plot how often the PR ended up merged (filled dot; merged ÷ verdicts on PRs with a known outcome) and how often the verdict was a block (hollow circle; blocks ÷ all verdicts in the bucket). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective. A bucket with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts is drawn dashed and not joined to the line: one or two PRs cannot show a trend.`,
-          good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.9–1.0'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
-          ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} verdicts with a known outcome merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome and are not in these rates.` : ''} A well-calibrated reviewer would be near 90–100% in the top bucket. ${evLimitsSentence()}`,
+          measured: 'Whether self-reported certainty or evidence strength better predicts merges. Self-reports use a fixed verification rubric; derived scores use finding anchors, test changes, diff size, known CI and same-head perspective agreement. Neither series is a probability of correctness.',
+          how: `Verdicts are grouped into confidence buckets (0.55, 0.65, 0.75, 0.85, 0.95; nearest bin, with midpoints rounded up). For each bucket we plot how often the PR ended up merged (filled dot; merged ÷ verdicts on PRs with a known outcome) and how often the verdict was a block (hollow circle; blocks ÷ all verdicts in the bucket). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective. A bucket with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts is drawn dashed and not joined to the line: one or two PRs cannot show a trend.`,
+          good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.95'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
+          ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} verdicts with a known outcome merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome and are not in these rates.` : ''} Merged share measures association with merges, not correctness. ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} known-outcome verdicts in the top bucket${evWindowHint(dto)}` : `${evPct(topRate)} merged at ${topName} confidence`,
         };
       },
@@ -23740,6 +23925,7 @@ function burnAreaChart() {
     // Letter grade (A+ … C-, or — for not enough data) computed by the server
     // in pkg/evidence/grade.go and shipped as /api/evidence/summary cards[key].
     function evServerCard(dto, key) {
+      if (key === 'calibration' && evConfidenceSeries === 'derived') key = 'calibration-derived';
       const c = dto && dto.cards && typeof dto.cards === 'object' ? dto.cards[key] : null;
       return c && typeof c === 'object' ? c : null;
     }
@@ -24291,7 +24477,7 @@ function burnAreaChart() {
       dto = dto || {};
       evLast = dto;
       Object.keys(evDetails).forEach((k) => { delete evDetails[k]; });
-      const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+      const calib = evCalibrationSeries(dto);
       const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
       const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
@@ -24327,8 +24513,8 @@ function burnAreaChart() {
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
-        + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
-          `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
+        + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
+          `The self-reported series includes ${Number(dto.reviewer_calibration_legacy) || 0} legacy verdict(s) using the old verdict-based confidence. The derived series excludes verdicts without a recorded derived score; n counts only the selected series. Slopes pool perspectives and compare the endpoint rise per bin across bins with at least five known outcomes, using each series’ available records. Later CI results never rewrite a recorded derived score. This calibration panel plots merge and block rates. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
           `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here but never resolved by the review-outcome ledger or a backfill) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('maintainability', 'Maintainability trend', complexityN, evMaintainabilitySvg(complexity, dto.acmm_changes),

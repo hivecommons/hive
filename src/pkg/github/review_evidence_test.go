@@ -9,6 +9,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -428,5 +429,88 @@ func TestSetReviewEvidenceNilClient(t *testing.T) {
 	c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
 	if _, ok := c.reviewEvidenceSettings("o/r"); ok {
 		t.Fatal("nil client reported evidence enabled")
+	}
+}
+
+func TestReviewEvidenceConfidenceSnapshot(t *testing.T) {
+	root := withEvidenceRoot(t)
+	comparisons := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/o/r/compare/base000...h1" && r.URL.Path != "/repos/o/r/compare/base000...h2" {
+			t.Errorf("unexpected request %s", r.URL)
+			w.WriteHeader(404)
+			return
+		}
+		comparisons++
+		_, _ = w.Write([]byte(`{"files":[{"filename":"src/a_test.go","additions":10,"deletions":2}]}`))
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
+	pr := &gh.PullRequest{User: &gh.User{Login: gh.Ptr("alice")}, Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("h1")}}
+	c.StartReviewEvidence("o/r", 7, "h1", pr)
+	c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, []*gh.CheckRun{{Name: gh.Ptr("build"), Status: gh.Ptr("completed"), Conclusion: gh.Ptr("success")}})
+	now := time.Now().UTC().Add(time.Second)
+	raw := .82
+	a := evidenceReport(review.PerspectiveCorrectness, review.VerdictApprove, "h1", outputschema.Finding{File: "a.go", Line: 1, Title: "ok", Summary: "verified", Severity: outputschema.SeverityInfo})
+	a.Confidence = &raw
+	peer := evidenceReport(review.PerspectiveSecurity, review.VerdictApprove, "h1")
+	req := ReviewRequest{Repo: "o/r", Number: 7}
+	c.recordReviewEvidence(context.Background(), req, []review.PerspectiveReport{a, peer}, nil, now)
+	b := mustLoadBundle(t, root, "h1")
+	if len(b.Verdicts) != 2 {
+		t.Fatalf("verdicts %+v", b.Verdicts)
+	}
+	v := b.Verdicts[0]
+	if v.Confidence != .85 || v.ConfidenceRaw == nil || *v.ConfidenceRaw != raw || v.ConfidenceDerived == nil || math.Abs(*v.ConfidenceDerived-.95) > 1e-9 {
+		t.Fatalf("confidence %+v", v)
+	}
+	if b.Verdicts[1].Confidence != 1 || b.Verdicts[1].ConfidenceRaw != nil {
+		t.Fatal("legacy fallback changed")
+	}
+	if got := *b.Verdicts[1].ConfidenceDerived; math.Abs(got-.85) > 1e-9 {
+		t.Fatalf("peer score %v", got)
+	}
+	// A later CI result changes the bundle but not either recorded score.
+	c.recordReviewEvidenceCI("o/r", 7, "h1", "failure", nil, []*gh.CheckRun{{Name: gh.Ptr("build"), Status: gh.Ptr("completed"), Conclusion: gh.Ptr("failure")}})
+	before, _ := os.ReadFile(ReviewEvidencePath(root, "o/r", 7, "h1"))
+	c.recordReviewEvidence(context.Background(), req, []review.PerspectiveReport{a, peer}, nil, now.Add(time.Hour))
+	after, _ := os.ReadFile(ReviewEvidencePath(root, "o/r", 7, "h1"))
+	if string(before) != string(after) || comparisons != 1 {
+		t.Fatalf("retry recomputed evidence or fetched diff: comparisons=%d", comparisons)
+	}
+	// Another head has neither the old head's CI nor its peer agreement.
+	c.StartReviewEvidence("o/r", 7, "h2", pr)
+	next := evidenceReport(review.PerspectiveCorrectness, review.VerdictApprove, "h2")
+	c.recordReviewEvidence(context.Background(), req, []review.PerspectiveReport{next}, nil, now)
+	v = mustLoadBundle(t, root, "h2").Verdicts[0]
+	if v.ConfidenceDerived == nil || math.Abs(*v.ConfidenceDerived-.75) > 1e-9 {
+		t.Fatalf("other-head signals leaked: %+v", v)
+	}
+}
+
+func TestReviewConfidenceDiffUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		files  int
+	}{
+		{"API error", 500, 0}, {"truncated", 200, 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				files := make([]map[string]any, tc.files)
+				for i := range files {
+					files[i] = map[string]any{"filename": "x_test.go", "additions": 1}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			if s := c.reviewConfidenceDiff(context.Background(), "o", "r", "base", "head"); s.DiffKnown || s.TouchesTests {
+				t.Fatalf("unknown diff presented as evidence: %+v", s)
+			}
+		})
 	}
 }

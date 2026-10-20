@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
@@ -241,6 +242,20 @@ func TestEnrichStageFacts(t *testing.T) {
 	}
 	if issueHasLabel(f.Labels, NeedsDecisionStageLabel) || issueHasLabel(f.Labels, issueNeedsDirectionLabel) || strings.Join(f.Park.Holds, ",") != "hold" {
 		t.Fatalf("un-park enriched = %+v, want decision-park labels gone and the hold kept", f)
+	}
+
+	// hivecommons/hive#13268: the author kind is filled in from the issue
+	// when the fact has none, so an out-of-cycle re-derivation knows
+	// whether 015-triage-needed applies; a stated kind is kept.
+	if f.Author.Kind != authorkind.Human {
+		t.Fatalf("author kind = %q, want human for login dev", f.Author.Kind)
+	}
+	f, err = c.enrichStageFacts(context.Background(), stageengine.Facts{Ref: ref, Author: stageengine.AuthorFacts{Kind: authorkind.Hive}, Issue: &stageengine.IssueFacts{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Author.Kind != authorkind.Hive {
+		t.Fatalf("author kind = %q, want the fact's own kind kept", f.Author.Kind)
 	}
 
 	var nilClient *Client

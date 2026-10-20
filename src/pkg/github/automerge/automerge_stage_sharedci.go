@@ -14,6 +14,15 @@ import (
 // no contributor nudge until the incident closes (hivecommons/hive#12606).
 const stageReasonSharedCIIncident = "shared-ci-incident:"
 
+// stageReasonBaseBranchRed prefixes the recorded reason when every failing
+// check on a red PR head is also red on the base branch's tip and the PR
+// touches no CI-owning path (hgithub.PullRequest.AllFailuresBaseRed). The
+// checks follow, comma-separated. The base branch is what is red, so the
+// author has nothing to fix: the PR stays out of 070/071/072, gets no
+// contributor nudge and no fix kick, and is handed back as usual once the
+// base recovers and the head is still red.
+const stageReasonBaseBranchRed = "base-branch-red:"
+
 // autoMergeReasonBehindBudgetExhausted is the self-authored sweep's reason
 // for a `behind` PR it did not update only because this tick's branch-update
 // budget (selfAuthoredSweepMaxBranchUpdates) was spent. The next tick retries
@@ -27,6 +36,40 @@ func stageSharedCIIncident(policy StageLabelPolicy, owner, repo string, number i
 		return 0
 	}
 	return policy.SharedCIIncident(owner+"/"+repo, number, head)
+}
+
+// stageBaseBranchRed asks the policy which failing checks on the PR's head
+// are the base branch's; empty unless all of them are.
+func stageBaseBranchRed(policy StageLabelPolicy, owner, repo string, number int, head string) []string {
+	if policy.BaseBranchRed == nil || number <= 0 {
+		return nil
+	}
+	return policy.BaseBranchRed(owner+"/"+repo, number, head)
+}
+
+// baseBranchRedReason formats the recorded reason for checks.
+func baseBranchRedReason(checks []string) string {
+	return stageReasonBaseBranchRed + strings.Join(checks, ",")
+}
+
+// baseBranchRedStage keeps a red PR whose every failure is the base
+// branch's out of the repair stages, exactly as sharedCIDeferredStage does
+// for an open incident: CI still pending (050, or 060 with an approve
+// verdict), with the checks named in the recorded reason. It only applies
+// when the lane's red is CI; changes requested and conflicts stay
+// author-facing.
+func baseBranchRedStage(o stageObservation) (stageVerdict, bool) {
+	if len(o.BaseRedChecks) == 0 {
+		return stageVerdict{}, false
+	}
+	if classifyCIReason(o.Reason) != ciReasonRed && o.Detail.redCheck(o.HeadSHA) == "" {
+		return stageVerdict{}, false
+	}
+	stage := stagelabels.ReviewPending
+	if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
+		stage = stagelabels.Reviewed
+	}
+	return stageVerdict{Stage: stage, Rank: stageRankOwned, Reason: baseBranchRedReason(o.BaseRedChecks)}, true
 }
 
 // sharedCIDeferredStage keeps a red PR whose failure is the shared incident's
@@ -49,8 +92,9 @@ func sharedCIDeferredStage(o stageObservation) (stageVerdict, bool) {
 }
 
 // stageReasonWaitsOnHive reports reasons that leave the PR waiting on the
-// hive rather than a person (no stall): a shared-CI incident being repaired
-// and a branch update deferred to the next sweep tick.
+// hive rather than a person (no stall): a shared-CI incident being repaired,
+// a red base branch, and a branch update deferred to the next sweep tick.
 func stageReasonWaitsOnHive(reason string) bool {
-	return reason == autoMergeReasonBehindBudgetExhausted || strings.HasPrefix(reason, stageReasonSharedCIIncident)
+	return reason == autoMergeReasonBehindBudgetExhausted || strings.HasPrefix(reason, stageReasonSharedCIIncident) ||
+		strings.HasPrefix(reason, stageReasonBaseBranchRed)
 }

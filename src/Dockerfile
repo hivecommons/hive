@@ -128,21 +128,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- Layer 1b: CA trust bundle refresh ---
 # Distrust two Mozilla roots that the browser/OS root programs withdrew trust
-# from on 2026-10-17..20 but that the Debian ca-certificates package in this
-# base image still ships (no fixed package yet; drop this block once the
-# package carries the change). Static-bundle clients — curl, git, Python
+# from on 2026-10-17..20. Debian's ca-certificates 20250419+deb13u1 already
+# drops the entries while older package builds still ship them; each entry is
+# rewritten only when present so a package refresh cannot break the build
+# either way. Static-bundle clients — curl, git, Python
 # (Debian's certifi points at the system bundle), Go via the system store and
 # the entrypoint's SSL_CERT_FILE combined bundle (built FROM this file), and
 # codex (OpenSSL system store) — all read /etc/ssl/certs/ca-certificates.crt,
 # so one regeneration here covers them. The `!` prefix is Debian's documented
-# way to keep a cert out of the bundle; the greps prove the edit actually hit
-# so a renamed entry upstream fails the build instead of silently re-trusting.
-RUN sed -i \
-      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
-      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
-      /etc/ca-certificates.conf \
- && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
- && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+# way to keep a cert out of the bundle; the final tests prove the roots are
+# absent from the regenerated bundle whichever package build is installed.
+# Drop the block once every base image in use ships a package without them.
+RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
+      if grep -q "^${cert}" /etc/ca-certificates.conf; then \
+        sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf \
+        && grep -q "^!${cert}" /etc/ca-certificates.conf || exit 1; \
+      fi; \
+    done \
  && update-ca-certificates --fresh \
  && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
  && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem

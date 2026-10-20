@@ -1,6 +1,6 @@
 header:
   schema-version: 2.1.0
-  last-updated: '2026-09-22'
+  last-updated: '2026-10-20'
   last-reviewed: '2026-09-22'
   url: https://raw.githubusercontent.com/hivecommons/hive/v5/security-insights.yml
   comment: |
@@ -54,6 +54,9 @@ project:
     - name: homebrew-hive
       url: https://github.com/hivecommons/homebrew-hive
       comment: Homebrew tap for the Hive contribute app. Packaging only.
+    - name: homebrew-repo
+      url: https://github.com/hivecommons/homebrew-repo
+      comment: Homebrew tap for Spektacular. Packaging only.
     - name: docs
       url: https://github.com/hivecommons/docs
       comment: Source for docs.hivecommons.dev. Project docs are synced from their repositories at build time.
@@ -66,6 +69,12 @@ project:
     - name: .github
       url: https://github.com/hivecommons/.github
       comment: Organization profile and community health files.
+    - name: .project
+      url: https://github.com/hivecommons/.project
+      comment: CNCF .project metadata for Hive Commons, read by CNCF services automation.
+    - name: cncf-sandbox-onboarding
+      url: https://github.com/hivecommons/cncf-sandbox-onboarding
+      comment: Tracker for completing CNCF Sandbox onboarding.
     - name: hive-redirect
       url: https://github.com/hivecommons/hive-redirect
       comment: GitHub Pages redirect from hive.hivecommons.dev to the hosted hub. Placeholder.

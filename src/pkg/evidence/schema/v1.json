@@ -133,6 +133,8 @@
         "backend": {"type": "string"},
         "verdict": {"type": "string", "minLength": 1},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence_raw": {"type": "number"},
+        "confidence_derived": {"type": "number", "minimum": 0, "maximum": 1},
         "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}},
         "recorded_at": {"type": "string", "format": "date-time"}
       }

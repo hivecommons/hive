@@ -40,3 +40,31 @@ func TestStageSharedCIIncidentIndex(t *testing.T) {
 		t.Fatalf("after an empty snapshot = %d, want 0", got)
 	}
 }
+
+func TestStageBaseBranchRedIndex(t *testing.T) {
+	t.Cleanup(func() { stageSharedCIIndex.Store(nil) })
+	act := &github.ActionableResult{}
+	act.PRs.Items = []github.PullRequest{
+		// Every failing check is red on the base: base-red.
+		{Repo: "acme/widget", Number: 13270, HeadSHA: "aaa", FailingChecks: []string{"docker (hive)", "docker (hub)"}, BaseRedChecks: []string{"docker (hive)", "docker (hub)"}},
+		// One PR-local failure on top of the base's: the author's.
+		{Repo: "acme/widget", Number: 8, HeadSHA: "bbb", FailingChecks: []string{"docker (hive)", "lint"}, BaseRedChecks: []string{"docker (hive)"}},
+	}
+	publishStageSharedCIIncidents(act)
+
+	if got := stageBaseBranchRed("acme/widget", 13270, "aaa"); len(got) != 2 || got[0] != "docker (hive)" {
+		t.Fatalf("base-red PR = %v", got)
+	}
+	if got := stageBaseBranchRed("Acme/Widget", 13270, ""); len(got) != 2 {
+		t.Fatalf("case/head-agnostic lookup = %v", got)
+	}
+	if got := stageBaseBranchRed("acme/widget", 13270, "new-head"); got != nil {
+		t.Fatalf("new head must not inherit the old head's classification: %v", got)
+	}
+	if got := stageBaseBranchRed("acme/widget", 8, "bbb"); got != nil {
+		t.Fatalf("mixed PR must stay author-facing: %v", got)
+	}
+	if got := stageSharedCIIncident("acme/widget", 13270, "aaa"); got != 0 {
+		t.Fatalf("base-red without an incident reported incident %d", got)
+	}
+}

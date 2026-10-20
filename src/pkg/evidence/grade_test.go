@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -391,5 +392,41 @@ func TestNoGradeShape(t *testing.T) {
 	g := NoGrade("why", "how")
 	if g.Letter != NoGradeLetter || g.Band != BandNone || g.EnoughData || g.Reason != "why" || g.Rubric != "how" {
 		t.Errorf("unexpected NoGrade %+v", g)
+	}
+}
+
+func TestCalibrationSlopeComparison(t *testing.T) {
+	series := func(merged ...int) []CalibrationBucket {
+		var out []CalibrationBucket
+		for _, n := range merged {
+			out = append(out, CalibrationBucket{Known: 10, Merged: n})
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name          string
+		self, derived []CalibrationBucket
+		want          string
+	}{
+		{"derived steeper", series(2, 4, 6), series(1, 5, 9), "Derived confidence has the steeper"},
+		{"self steeper", series(1, 5, 9), series(2, 4, 6), "Self-reported confidence has the steeper"},
+		{"equal", series(1, 5, 9), series(1, 5, 9), "equal monotonic"},
+		{"both nonmonotonic", series(1, 9, 8), series(1, 9, 8), "Neither series"},
+		{"derived nonmonotonic", series(1, 5, 9), series(1, 9, 8), "Self-reported confidence has a monotonic"},
+		{"self nonmonotonic", series(1, 9, 8), series(1, 5, 9), "Derived confidence has a monotonic"},
+		{"legacy no derived", series(1, 5, 9), nil, "Not enough data"},
+		{"one supported bin", series(9), series(1, 5, 9), "Not enough data"},
+		{"thin bins", []CalibrationBucket{{Known: 4, Merged: 1}, {Known: 10, Merged: 9}}, series(1, 5), "Not enough data"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SummarizeCalibrationComparison(tc.self, tc.derived); !strings.Contains(got, tc.want) {
+				t.Fatalf("%s", got)
+			}
+		})
+	}
+	// Ignore thin interior bins but retain their spacing in the slope.
+	slope, monotonic, enough := calibrationSlope([]CalibrationBucket{{Known: 10, Merged: 2}, {Known: 1, Merged: 0}, {Known: 10, Merged: 8}})
+	if !enough || !monotonic || math.Abs(slope-.3) > 1e-9 {
+		t.Fatalf("%v %v %v", slope, monotonic, enough)
 	}
 }

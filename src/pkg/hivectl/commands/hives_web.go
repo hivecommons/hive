@@ -121,6 +121,18 @@ func newCommonsWebServer(deps *hivesDeps, token string) http.Handler {
 }
 
 func (s *commonsWebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := w.Header()
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Content-Type-Options", "nosniff")
+	if !validCommonsHost(r) {
+		http.Error(w, "forbidden host", http.StatusForbidden)
+		return
+	}
+	if !validCommonsOrigin(r) {
+		http.Error(w, "forbidden origin", http.StatusForbidden)
+		return
+	}
 	if r.URL.Path == "/" && r.Method == http.MethodGet {
 		s.servePage(w, r)
 		return
@@ -143,6 +155,46 @@ func (s *commonsWebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// validCommonsHost rejects Host headers that are not a loopback host on the
+// port the server is actually listening on (DNS-rebinding protection).
+func validCommonsHost(r *http.Request) bool {
+	host, port, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		return false
+	}
+	if addr, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if _, listenPort, err := net.SplitHostPort(addr.String()); err == nil && listenPort != port {
+			return false
+		}
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// validCommonsOrigin rejects browser requests that are not same-origin with
+// this server (CSRF protection). Requests without Origin/Sec-Fetch-Site
+// (non-browser clients) are left to token auth.
+func validCommonsOrigin(r *http.Request) bool {
+	switch strings.ToLower(r.Header.Get("Sec-Fetch-Site")) {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.Path != "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 func (s *commonsWebServer) authorized(r *http.Request) bool {
@@ -482,6 +534,7 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 <p class="muted">Profile store: <span id="path"></span>; projection: <span id="envpath"></span></p>
 <script>
 const token = {{printf "%q" .Token}};
+history.replaceState(null, '', location.pathname);
 const headers = {'Content-Type':'application/json', 'X-Hive-Commons-Token': token};
 const message = document.getElementById('message');
 const nameInput = document.getElementById('name');

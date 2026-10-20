@@ -287,7 +287,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		b.WriteString(planMatchSection(pr))
 	}
 	writeReviewWritingGuide(&b, opts)
-	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
+	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(modelStampInstruction(pr, opts))
 	b.WriteString(findingSchemaInstruction)
@@ -585,7 +585,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
-	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
+	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, confidence, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
 	b.WriteString(modelStampInstruction(pr, opts))
@@ -695,9 +695,16 @@ const permissionsTighteningGuidance = "Narrowing GitHub Actions permissions is n
 // the gap with {"repo","pr","verdict","summary"}: every verdict it produced
 // was rejected and every PR it judged was handed straight back to it.
 // TestVerdictSchemaExampleValidates keeps this literal honest.
-const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","body_digest":"<review body digest>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
+const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","confidence":0.75,"repo":"owner/repo","number":123,"head_sha":"<head commit sha>","body_digest":"<review body digest>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
 
-const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
+const reportedConfidenceInstruction = "Each perspective MUST include confidence, chosen independently of its verdict from these fixed bins:\n" +
+	"0.95 = claim verified directly in the diff and tests.\n" +
+	"0.85 = verified in the diff, tests not checked or absent.\n" +
+	"0.75 = inferred from context, not directly verified.\n" +
+	"0.65 = plausible but uncertain.\n" +
+	"0.55 = mostly a guess / outside this perspective's expertise.\n"
+
+const findingSchemaInstruction = reportedConfidenceInstruction + "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional), review_scope (required for new reports; exactly \"in-scope\" or \"out-of-scope\"). A finding missing title, severity or summary, or carrying any other review_scope value, fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
 
 func perspectiveNames(ps []Perspective) []string {

@@ -231,12 +231,15 @@ func formatRedPRFixData(data []byte, agent string) string {
 		FromFork         bool     `json:"from_fork"`
 		ReachableAction  string   `json:"reachable_action"`
 		Adopted          bool     `json:"adopted"`
+		SentinelAlert    bool     `json:"sentinel_alert"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`
 		MergeableState   string   `json:"mergeable_state"`
 		Conflict         bool     `json:"conflict"`
 		ReroutedFrom     string   `json:"rerouted_from"`
 		DeferredIncident int      `json:"deferred_incident"`
+		BaseRedChecks    []string `json:"base_red_checks"`
+		BaseRed          bool     `json:"base_red"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -244,7 +247,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 	if json.Unmarshal(data, &payload) != nil {
 		return ""
 	}
-	var mine, deferred []ciFailingRow
+	var mine, deferred, baseRed []ciFailingRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -276,6 +279,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 			deferred = append(deferred, pr)
 			continue
 		}
+		if pr.BaseRed {
+			// Every failing check is red on the base branch too: no fix
+			// the agent pushes can turn it green, so it is named but never
+			// listed for repair (base_branch_red.go).
+			baseRed = append(baseRed, pr)
+			continue
+		}
 		mine = append(mine, pr)
 	}
 	if len(mine) == 0 {
@@ -294,6 +304,13 @@ func formatRedPRFixData(data []byte, agent string) string {
 		}
 		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: already deferred to a still-open shared-CI incident — do not repair or re-triage them; they return here when the incident closes: %s)\n", len(deferred), strings.Join(refs, ", ")))
 	}
+	if len(baseRed) > 0 {
+		refs := make([]string, 0, len(baseRed))
+		for _, pr := range baseRed {
+			refs = append(refs, fmt.Sprintf("%s#%d (%s)", pr.Repo, pr.Number, strings.Join(pr.BaseRedChecks, ", ")))
+		}
+		b.WriteString(fmt.Sprintf("(%d of your red PR(s) are NOT listed: their only failing checks are red on the base branch too — not your PR's fault; do not push, retry or re-triage them; they return here if still red once the base recovers: %s)\n", len(baseRed), strings.Join(refs, ", ")))
+	}
 	b.WriteString("These PRs are YOURS and they are red or conflicted. Repairing them comes BEFORE claiming\n")
 	b.WriteString("new issues or opening ANY new PR. For each one:\n")
 	b.WriteString("  gh pr checkout <number> → fix using the evidence below → commit -s → git push\n")
@@ -310,6 +327,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 		if pr.Adopted {
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
 			b.WriteString(adoptedPRStatusRule)
+			if pr.SentinelAlert {
+				b.WriteString("    " + adoptedSentinelNote + "\n")
+			}
 		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
@@ -610,6 +630,11 @@ func (s *Scheduler) reviewPerspectivesSection() string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// adoptedSentinelNote follows an adopted-PR line whose PR still carries the
+// sentinel alert: the alert is a merge checkpoint for a maintainer, not a
+// repair checkpoint, so the fixer repairs the head and leaves the label.
+const adoptedSentinelNote = "sentinel-alert: repair CI / rebase as usual, but do NOT remove the sentinel-alert label — a maintainer clears it before the merge"
 
 // adoptedPRStatusRule follows every adopted-PR line in a fix kick: the
 // stage label, not the check list, says what the hive still owes, and a

@@ -21,11 +21,12 @@ import (
 const evidenceSummaryModelUnknown = "unknown"
 
 // evidenceSummaryBuckets are the confidence calibration buckets, lower bound
-// inclusive; the last bucket also includes 1.0.
+// inclusive at the midpoint between rubric bins. Legacy values use the
+// nearest bin, including values below 0.55 and above 0.95.
 var evidenceSummaryBuckets = []struct {
 	name string
 	low  float64
-}{{"0.0-0.5", 0}, {"0.5-0.7", 0.5}, {"0.7-0.9", 0.7}, {"0.9-1.0", 0.9}}
+}{{"0.55", 0}, {"0.65", 0.6}, {"0.75", 0.7}, {"0.85", 0.8}, {"0.95", 0.9}}
 
 // EvidenceSummary is the GET /api/evidence/summary response. It is read-only
 // reporting over stored evidence bundles; nothing here gates or alters a merge.
@@ -50,6 +51,8 @@ type EvidenceSummary struct {
 	// for an agent whose model was not recorded) — hivecommons/hive#13243.
 	OutcomesByAuthorFamily map[string]EvidenceOutcomes     `json:"outcomes_by_author_family"`
 	Calibration            []EvidencePerspectiveCalib      `json:"reviewer_calibration"`
+	CalibrationDerived     []EvidencePerspectiveCalib      `json:"reviewer_calibration_derived"`
+	CalibrationLegacy      int                             `json:"reviewer_calibration_legacy"`
 	ReviewerModels         []EvidenceModelAccuracy         `json:"reviewer_accuracy_by_model"`
 	SentinelPerWeek        EvidenceSentinelSeries          `json:"sentinel_hits_per_week"`
 	ShadowGate             EvidenceShadowGate              `json:"shadow_gate"`
@@ -880,9 +883,10 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 	hours := win.Hours
 	resp := EvidenceSummary{
 		Hours: hours, AllTime: hours == 0 && !win.Custom, Repo: repo, AuthorKind: kind,
-		ACMMChanges: evidenceACMMChanges(bundles, repo),
-		Outcomes:    map[string]EvidenceOutcomes{},
-		Calibration: []EvidencePerspectiveCalib{},
+		ACMMChanges:        evidenceACMMChanges(bundles, repo),
+		Outcomes:           map[string]EvidenceOutcomes{},
+		Calibration:        []EvidencePerspectiveCalib{},
+		CalibrationDerived: []EvidencePerspectiveCalib{},
 
 		OutcomesByAuthorFamily: map[string]EvidenceOutcomes{},
 		ReviewerModels:         []EvidenceModelAccuracy{},
@@ -910,6 +914,7 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 		buckets []EvidenceCalibBucket
 	}
 	calibs := map[string]*calib{}
+	derivedCalibs := map[string]*calib{}
 	models := map[string]*EvidenceModelAccuracy{}
 	weeks := map[string]int{}
 	claims := map[string]*EvidenceClaimWeek{}
@@ -1003,33 +1008,46 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 			approve := v.Verdict == string(review.VerdictApprove)
 			block := v.Verdict == string(review.VerdictChangesRequested) || v.Verdict == string(review.VerdictReject)
 
-			c := calibs[v.Perspective]
-			if c == nil {
-				c = &calib{buckets: make([]EvidenceCalibBucket, len(evidenceSummaryBuckets))}
+			if v.ConfidenceRaw == nil {
+				resp.CalibrationLegacy++
+			}
+			for _, series := range []struct {
+				buckets    map[string]*calib
+				confidence *float64
+			}{
+				{calibs, &v.Confidence}, {derivedCalibs, v.ConfidenceDerived},
+			} {
+				if series.confidence == nil {
+					continue
+				}
+				c := series.buckets[v.Perspective]
+				if c == nil {
+					c = &calib{buckets: make([]EvidenceCalibBucket, len(evidenceSummaryBuckets))}
+					for i, bk := range evidenceSummaryBuckets {
+						c.buckets[i].Bucket = bk.name
+					}
+					series.buckets[v.Perspective] = c
+				}
+				c.n++
+				idx := 0
 				for i, bk := range evidenceSummaryBuckets {
-					c.buckets[i].Bucket = bk.name
+					if *series.confidence >= bk.low {
+						idx = i
+					}
 				}
-				calibs[v.Perspective] = c
-			}
-			c.n++
-			idx := 0
-			for i, bk := range evidenceSummaryBuckets {
-				if v.Confidence >= bk.low {
-					idx = i
+				c.buckets[idx].N++
+				if approve {
+					c.buckets[idx].Approvals++
 				}
-			}
-			c.buckets[idx].N++
-			if approve {
-				c.buckets[idx].Approvals++
-			}
-			if block {
-				c.buckets[idx].Blocks++
-			}
-			if merged {
-				c.buckets[idx].Merged++
-			}
-			if !known {
-				c.buckets[idx].Unknown++
+				if block {
+					c.buckets[idx].Blocks++
+				}
+				if merged {
+					c.buckets[idx].Merged++
+				}
+				if !known {
+					c.buckets[idx].Unknown++
+				}
 			}
 
 			m := models[model]
@@ -1052,13 +1070,21 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 		}
 	}
 
-	persp := make([]string, 0, len(calibs))
-	for p := range calibs {
-		persp = append(persp, p)
-	}
-	sort.Strings(persp)
-	for _, p := range persp {
-		resp.Calibration = append(resp.Calibration, EvidencePerspectiveCalib{Perspective: p, N: calibs[p].n, Buckets: calibs[p].buckets})
+	for _, series := range []struct {
+		buckets map[string]*calib
+		dest    *[]EvidencePerspectiveCalib
+	}{
+		{calibs, &resp.Calibration}, {derivedCalibs, &resp.CalibrationDerived},
+	} {
+		persp := make([]string, 0, len(series.buckets))
+		for p := range series.buckets {
+			persp = append(persp, p)
+		}
+		sort.Strings(persp)
+		for _, p := range persp {
+			c := series.buckets[p]
+			*series.dest = append(*series.dest, EvidencePerspectiveCalib{Perspective: p, N: c.n, Buckets: c.buckets})
+		}
 	}
 	names := make([]string, 0, len(models))
 	for n := range models {

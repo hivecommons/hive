@@ -67,12 +67,18 @@ RUN apk add --no-cache ca-certificates curl && \
     echo "${KUBECTL_SHA256}  /usr/local/bin/kubectl" | sha256sum -c - && \
     chmod +x /usr/local/bin/kubectl
 # CA trust bundle refresh: distrust a Mozilla root the root programs withdrew
-# on 2026-10-17..20 that Alpine's ca-certificates still ships (no fixed
-# package yet — drop once it carries the change). The hub's Go binary and curl
-# both read the regenerated /etc/ssl/certs/ca-certificates.crt. Alpine does
-# not ship Comodo_AAA_Services_root, so only the one entry needs the `!`.
-RUN sed -i -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' /etc/ca-certificates.conf && \
-    grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf && \
+# on 2026-10-17..20. Alpine's ca-certificates-20261020-r0 already dropped the
+# entry, older package builds still ship it; handle both so a package refresh
+# cannot break the image either way. The `!` prefix is the conf's way to keep
+# a cert out of the bundle when the entry is present; the final test proves
+# the cert is absent from the regenerated bundle regardless of which case ran.
+# The hub's Go binary and curl both read /etc/ssl/certs/ca-certificates.crt.
+# Alpine does not ship Comodo_AAA_Services_root, so only this entry is handled.
+# Drop the block once every base image in use ships a package without it.
+RUN if grep -q '^mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf; then \
+      sed -i -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' /etc/ca-certificates.conf && \
+      grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf; \
+    fi && \
     update-ca-certificates --fresh && \
     ! test -e /etc/ssl/certs/ca-cert-emSign_ECC_Root_CA_-_G3.pem
 COPY --from=builder /hive /usr/local/bin/hive

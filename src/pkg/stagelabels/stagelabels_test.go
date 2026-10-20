@@ -41,7 +41,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 		}
 	}
 	want := map[Stage]string{
-		Actionable: "stage/010-actionable", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
+		Actionable: "stage/010-actionable", TriageNeeded: "stage/015-triage-needed", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
 		CoveredByPR: "stage/040-covered-by-pr", IssueNeedsDecision: "stage/045-needs-decision", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
 		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
 		Fixing:                 "stage/070-fixing", NeedsAuthor: "stage/071-needs-author", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
@@ -1063,6 +1063,7 @@ func TestYieldsToAdoption(t *testing.T) {
 	}{
 		{None, false},
 		{Actionable, true},
+		{TriageNeeded, true},
 		{ReviewPending, true},
 		{Reviewed, true},
 		{Fixing, true},
@@ -1312,5 +1313,56 @@ func TestPreMergeSoakStage(t *testing.T) {
 		if got := PreMergeSoakSummary(tc.soak, tc.elapsed); got != tc.want {
 			t.Fatalf("PreMergeSoakSummary(%s,%s) = %q, want %q", tc.soak, tc.elapsed, got, tc.want)
 		}
+	}
+}
+
+// TestTriageNeededStage: 015 is an issue-only tracking stage between 010
+// and 020 (hivecommons/hive#13268). A maintainer triaging the issue moves
+// it 015 → 010, which is lateral, never a regression; 010 → 015 is forward
+// (the awaiting label landed); falling back from a claim / PR to 015 is a
+// regression exactly like falling back to 010.
+func TestTriageNeededStage(t *testing.T) {
+	if TriageNeeded.Number() != 15 || TriageNeeded.Slug() != "triage-needed" || TriageNeeded.String() != "015-triage-needed" {
+		t.Fatalf("015 identity: %d %q %q", TriageNeeded.Number(), TriageNeeded.Slug(), TriageNeeded.String())
+	}
+	if !TriageNeeded.Applies(IssueItem) || TriageNeeded.Applies(PRItem) {
+		t.Fatal("015 must be issue-only")
+	}
+	if !Actionable.Before(TriageNeeded) || !TriageNeeded.Before(Claimed) {
+		t.Fatal("015 sits between 010 and 020")
+	}
+	if TriageNeeded.Dwell() != TriageNeededDwell || TriageNeededDwell != Actionable.Dwell() {
+		t.Fatalf("015 dwell %v, want the 010 dwell %v", TriageNeeded.Dwell(), Actionable.Dwell())
+	}
+	if _, ok := StageBySlug("triage-needed"); !ok {
+		t.Fatal("StageBySlug(triage-needed)")
+	}
+	found := false
+	for _, d := range AllLabelDefs() {
+		if d.Name == TriageNeeded.Label() {
+			found = true
+			if d.Color != StageColor || d.Description == "" || len(d.Description) > 100 {
+				t.Fatalf("015 label def %+v", d)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("AllLabelDefs lacks stage/015-triage-needed")
+	}
+	for _, to := range []Stage{Actionable, Claimed, PRInProgress, CoveredByPR, IssueNeedsDecision} {
+		if IsRegression(TriageNeeded, to) {
+			t.Errorf("015 → %v flagged as regression", to)
+		}
+	}
+	if IsRegression(Actionable, TriageNeeded) {
+		t.Fatal("010 → 015 is forward")
+	}
+	for _, from := range []Stage{Claimed, PRInProgress, CoveredByPR} {
+		if !IsRegression(from, TriageNeeded) {
+			t.Errorf("%v → 015 must be a regression, like → 010", from)
+		}
+	}
+	if IsRegression(IssueNeedsDecision, TriageNeeded) {
+		t.Fatal("un-parking 045 → 015 is not a step back")
 	}
 }

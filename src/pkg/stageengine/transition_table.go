@@ -11,15 +11,23 @@ import "github.com/hivecommons/hive/pkg/stagelabels"
 var diagramEdges = map[Edge]bool{
 	{stagelabels.Actionable, stagelabels.Claimed}:                       true, // scanner / relay claim
 	{stagelabels.Actionable, stagelabels.IssueNeedsDecision}:            true, // needs-human / park label (agent escalates)
+	{stagelabels.Actionable, stagelabels.TriageNeeded}:                  true, // needs-triage added, or a hive-filed issue staged 010 before 015 existed (reclassification)
+	{stagelabels.TriageNeeded, stagelabels.Actionable}:                  true, // maintainer triages: triage/accepted, hive/verified-open or approved-direction added, or needs-triage removed (not a regression)
+	{stagelabels.TriageNeeded, stagelabels.Claimed}:                     true, // scanner / relay claim (015 is not a gate)
+	{stagelabels.TriageNeeded, stagelabels.IssueNeedsDecision}:          true, // needs-human / park label (agent escalates)
 	{stagelabels.Claimed, stagelabels.IssueNeedsDecision}:               true, // claim lapses on a parked issue
 	{stagelabels.IssueNeedsDecision, stagelabels.Actionable}:            true, // /hive approve or /hive decision
+	{stagelabels.IssueNeedsDecision, stagelabels.TriageNeeded}:          true, // park label removed by hand on an untriaged issue (approved-direction itself counts as triage)
 	{stagelabels.Claimed, stagelabels.PRInProgress}:                     true, // PR under way (hive-open-pr request or start marker naming a branch)
 	{stagelabels.Claimed, stagelabels.CoveredByPR}:                      true, // PR opened straight from the claim
 	{stagelabels.Claimed, stagelabels.Actionable}:                       true, // claim released or lapsed with no PR
+	{stagelabels.Claimed, stagelabels.TriageNeeded}:                     true, // claim released or lapsed with no PR on an untriaged issue
 	{stagelabels.PRInProgress, stagelabels.CoveredByPR}:                 true, // PR opened
 	{stagelabels.PRInProgress, stagelabels.Actionable}:                  true, // PR request failed / start mark lapsed with no PR
+	{stagelabels.PRInProgress, stagelabels.TriageNeeded}:                true, // PR request failed / start mark lapsed with no PR on an untriaged issue
 	{stagelabels.PRInProgress, stagelabels.Claimed}:                     true, // PR evidence lapsed while the claim is still held (backward hop, commented)
 	{stagelabels.CoveredByPR, stagelabels.Actionable}:                   true, // covering PR closed unmerged with no live claim or start marker (backward hop, narrated on the PR)
+	{stagelabels.CoveredByPR, stagelabels.TriageNeeded}:                 true, // covering PR closed unmerged on an untriaged issue (backward hop, narrated on the PR)
 	{stagelabels.CoveredByPR, stagelabels.PRInProgress}:                 true, // covering PR closed while a PR request / start marker is still live (backward hop, narrated on the PR)
 	{stagelabels.CoveredByPR, stagelabels.Claimed}:                      true, // covering PR closed while the claim is still held (backward hop, narrated on the PR)
 	{stagelabels.CoveredByPR, stagelabels.ReviewPending}:                true, // the PR takes over (issue stays 040; cross-kind)
