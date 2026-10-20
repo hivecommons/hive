@@ -4459,6 +4459,8 @@
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
     /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
     .oc-nav-count { margin-left: auto; flex-shrink: 0; }
+    /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
+    .oc-nav-count[hidden] { display: none; }
     /* pill size steps */
     .token-model-chip { padding: 4px 10px; font-size: var(--fs-sm); }
     .nous-config-pill { padding: 3px 10px; font-size: var(--fs-sm); }
@@ -6059,9 +6061,9 @@
     </div>
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
-      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
+      <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span></a>
+      <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
@@ -13240,6 +13242,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       if (badge) { badge.textContent = String(attentionAll); if (attentionAll) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      const openCounts = stageTrackerOpenCounts(d.items);
+      setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), openCounts.issues, openCounts.prs, openCounts.issues + ' issues / ' + openCounts.prs + ' PRs');
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       const meta = document.getElementById('activity-monitor-meta');
@@ -15397,6 +15401,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const issueCount = Number(sharedActionable.issues ?? gov.issues ?? 0) || 0;
       const prCount = Number(sharedActionable.prs ?? gov.prs ?? 0) || 0;
       const govPressure = Number(sharedActionable.total ?? (issueCount + prCount)) || 0;
+      if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs');
       const fallbackGovEquations = overviewKPIGovernorFallbackEquations(data, issueCount, prCount);
       const issueEquation = sharedActionable.issueEquation || fallbackGovEquations.issueEq;
       const prEquation = sharedActionable.prEquation || fallbackGovEquations.prEq;
@@ -26090,6 +26095,40 @@ function burnAreaChart() {
       el.hidden = false;
       el.textContent = n;
       if (n === 0) el.setAttribute('data-zero', '');
+      else el.removeAttribute('data-zero');
+      if (title) el.title = title;
+      else el.removeAttribute('title');
+    }
+
+    /* Sidebar "x/y" pills. Overview counts the hive's working set from
+       GET /api/stage-tracker (every open issue / open PR on the tracker);
+       Governor shows the shared Actionable now split from /api/status
+       (actionableNow.issues / .prs, the same numbers the Governor tiles
+       print). Both stay hidden until their feed has answered once.
+       stageTrackerOpenCounts() and sidebarPairBadgeText() are pure so
+       sidebar_pair_badge_test.go can execute them under node. */
+    function stageTrackerOpenCounts(items) {
+      const out = { issues: 0, prs: 0 };
+      if (!Array.isArray(items)) return out;
+      for (const it of items) {
+        if (!it) continue;
+        if (it.kind === 'pr') out.prs++;
+        else if (it.kind === 'issue') out.issues++;
+      }
+      return out;
+    }
+
+    function sidebarPairBadgeText(issues, prs) {
+      return (Number(issues) || 0) + '/' + (Number(prs) || 0);
+    }
+
+    function setSidebarPairBadge(el, issues, prs, title) {
+      if (!el) return;
+      const i = Number(issues) || 0;
+      const p = Number(prs) || 0;
+      el.hidden = false;
+      el.textContent = sidebarPairBadgeText(i, p);
+      if (i === 0 && p === 0) el.setAttribute('data-zero', '');
       else el.removeAttribute('data-zero');
       if (title) el.title = title;
       else el.removeAttribute('title');
