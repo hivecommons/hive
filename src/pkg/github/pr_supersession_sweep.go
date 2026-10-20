@@ -21,7 +21,8 @@ type SupersessionSweepOptions struct {
 	// CloseContributorPRs lets the sweep close a superseded human-authored PR
 	// once the guards in DecideSupersessionAutoClose hold and GracePeriod has
 	// elapsed since the notice with no human reply (hivecommons/hive#11418).
-	// Off by default: without it contributor PRs only get the notice.
+	// Off by default: without it contributor PRs get a notice and an
+	// operator recommendation, but are never closed automatically.
 	CloseContributorPRs bool
 	// GracePeriod is how long a contributor PR stays open after the
 	// supersession notice. Non-positive means DefaultSupersessionGracePeriod.
@@ -190,6 +191,19 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	ownPR := identity.Matches(event.Author)
 	if !ownPR {
+		// Record every detection, even when the notice is already present or
+		// automatic closure is disabled. This does not consume a write action.
+		if opts.Audit != nil {
+			detected := event
+			detected.Action = "detected-contributor"
+			opts.Audit(detected)
+		}
+		if supersessionHasLabel(pr, SupersessionKeepOpenLabel) {
+			if opts.Audit != nil {
+				event.Action = "kept-open"
+				opts.Audit(event)
+			}
+		}
 		if reason == "" && opts.CloseContributorPRs && level >= acmmLevelFullyAutonomous {
 			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 		}

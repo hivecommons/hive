@@ -91,10 +91,13 @@ Where it shows up:
   reasons, paged (`limit` 1-200, default 50; `total` and `has_more` for
   walking it). Reads only the last enumeration snapshot and the verdict
   artifact; never calls GitHub.
-  A PR in the supersession sweep's grace window
+  A contributor PR detected as superseded by the sweep
   ([operator-reference.md](operator-reference.md)) also carries a
-  `superseded` object (merged PR, `grace_ends_at`) and a `superseded: ...`
-  reason, read from the sweep's audit entries. Owners act on it with
+  `superseded` object (merged PR) and a `superseded: ...` reason, read from
+  the sweep's audit entries, even when `close_contributor_prs` is off.
+  `grace_started_at` and `grace_ends_at` are present only for an active
+  auto-close countdown. The inbox recommends `CLOSE` with reason code
+  `superseded_recommended_close`. Owners act on it with
   `POST /api/review/queue/{owner}/{repo}/{number}/superseded/close` or
   `.../superseded/keep-open`.
 - **`last-actionable.json`** - each PR in `prs.items` and `prs.held` carries

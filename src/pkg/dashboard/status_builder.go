@@ -352,6 +352,7 @@ func BuildAgentOnlyStatus(
 }
 
 type statusOptions struct {
+	supersededPR         func(repo string, number int) (github.ReviewQueueSuperseded, bool)
 	hub                  *ContributeWSHub
 	mergeVerdicts        map[string]github.MergeVerdict
 	mergeLaneTakesAuthor func(repo, author string) bool
@@ -382,6 +383,7 @@ func WithMergeLaneTakesAuthor(takes func(repo, author string) bool) StatusOption
 // environment.
 func (o statusOptions) ownershipEnvAdjust(env *ownershipEnv) {
 	env.mergeLaneTakesAuthor = o.mergeLaneTakesAuthor
+	env.supersededPR = o.supersededPR
 }
 
 func BuildFrontendStatus(

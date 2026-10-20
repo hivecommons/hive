@@ -401,8 +401,8 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 const SupersessionAutoCloseMarker = supersessionAutoCloseMarker
 
 // RenderSupersessionOperatorCloseComment is the close comment for a PR an
-// operator closed from the dashboard Review Queue before the grace window
-// ended. It carries the auto-close marker so the sweep never posts its own.
+// operator closed from the dashboard Review Queue. It carries the auto-close
+// marker so the sweep never posts its own.
 func RenderSupersessionOperatorCloseComment(closerRef, user string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, supersessionAutoCloseMarker)
@@ -410,7 +410,7 @@ func RenderSupersessionOperatorCloseComment(closerRef, user string) string {
 	if user != "" {
 		by = "@" + user
 	}
-	fmt.Fprintf(&b, "Closing as superseded by %s: %s confirmed the close from the Hive dashboard before the grace window ended.\n", closerRef, by)
+	fmt.Fprintf(&b, "Closing as superseded by %s: %s confirmed the close from the Hive dashboard.\n", closerRef, by)
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Reopen if that's wrong. The `%s` label marks PRs the supersession sweep closed.\n", SupersededLabel)
 	return b.String()

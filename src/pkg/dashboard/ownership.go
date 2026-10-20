@@ -66,6 +66,7 @@ const (
 	OwnershipReasonHivePRNeedsHuman            = "hive_pr_needs_human"
 	OwnershipReasonAdjudicatorWaitElapsed      = "adjudicator_wait_elapsed"
 	OwnershipReasonReviewerUnavailable         = "reviewer_unavailable"
+	OwnershipReasonSupersededRecommendedClose  = "superseded_recommended_close"
 	OwnershipReasonAdjudicatorRecommendedClose = "adjudicator_recommended_close"
 	OwnershipReasonAdjudicatorReescalated      = "adjudicator_reescalated"
 	OwnershipReasonPersonPRNeedsHuman          = "person_pr_needs_human"
@@ -93,6 +94,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonAdjudicatorWaitElapsed:      OwnershipVerbReview,
 	OwnershipReasonReviewerUnavailable:         OwnershipVerbReview,
 	OwnershipReasonAdjudicatorRecommendedClose: OwnershipVerbClose,
+	OwnershipReasonSupersededRecommendedClose:  OwnershipVerbClose,
 	OwnershipReasonAdjudicatorReescalated:      OwnershipVerbReview,
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
 	OwnershipReasonReviewRequiresHuman:         OwnershipVerbReview,
@@ -203,6 +205,8 @@ type ownershipEnv struct {
 	sentinelLabel string
 	parking       []ownershipParking
 
+	// supersededPR reads the same audit recommendations as the Review Queue.
+	supersededPR          func(repo string, number int) (github.ReviewQueueSuperseded, bool)
 	repoLevel             func(repo string) int
 	selfAuthorizationHold func(repo string) bool
 	reviewerLaneAvailable func(repo string) bool
@@ -591,6 +595,15 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	// (2) sentinel-flagged.
 	if env.sentinelLabel != "" && labels[strings.ToLower(env.sentinelLabel)] {
 		return yourTurn(OwnershipReasonSentinelFlagged, "Flagged by the sentinel — inspect it before it merges")
+	}
+	// Supersession is a concrete close/keep-open decision, ahead of generic
+	// review holds. Explicit human holds and sentinel warnings still win.
+	if env.supersededPR != nil && !labels[github.SupersessionKeepOpenLabel] {
+		if info, ok := env.supersededPR(pr.Repo, pr.Number); ok {
+			out := yourTurn(OwnershipReasonSupersededRecommendedClose, fmt.Sprintf("Superseded by %s#%d — close as superseded or keep open", info.CloserRepo, info.CloserPR))
+			out.Link = "#section-review-queue-section"
+			return out
+		}
 	}
 	// (9) a held PR is decided by its hold sources and nothing later.
 	if held {

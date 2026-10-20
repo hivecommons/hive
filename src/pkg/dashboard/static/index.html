@@ -30440,8 +30440,8 @@ function burnAreaChart() {
       '</div>';
     }
 
-    // reviewQueueSupersededHtml renders the supersession grace-window strip
-    // (#11430): the superseding PR, when the sweep will close this one, and
+    // reviewQueueSupersededHtml renders the supersession recommendation:
+    // the superseding PR, an optional auto-close deadline, and
     // owner-only Close now / Keep open actions.
     function reviewQueueSupersededHtml(e) {
       var sup = e && e.superseded;
@@ -30451,7 +30451,7 @@ function burnAreaChart() {
         ? '<a href="' + esc(String(sup.closer_url)) + '" target="_blank" rel="noopener noreferrer">' + closerRef + '</a>'
         : closerRef;
       var ends = sup.grace_ends_at ? new Date(sup.grace_ends_at) : null;
-      var endsText = 'grace window end unknown';
+      var endsText = 'close as superseded or keep open';
       if (ends && !isNaN(ends.getTime())) {
         endsText = ends.getTime() <= Date.now()
           ? 'grace window ended ' + esc(formatDashboardDateTime(ends)) + '; closes on the next sweep'
@@ -30477,7 +30477,7 @@ function burnAreaChart() {
       var ref = repo + '#' + number;
       var closing = action === 'close';
       var ok = await hiveConfirm(closing
-        ? { title: 'Close ' + ref + ' as superseded?', message: 'Hive posts the superseded comment, adds hive/superseded and closes the PR now instead of waiting for the grace window. It can be reopened.', confirmLabel: 'Close now', danger: true }
+        ? { title: 'Close ' + ref + ' as superseded?', message: 'Hive posts the superseded comment, adds hive/superseded and closes the PR now. It can be reopened.', confirmLabel: 'Close now', danger: true }
         : { title: 'Keep ' + ref + ' open?', message: 'Hive adds hive/keep-open so the supersession sweep never auto-closes this PR.', confirmLabel: 'Keep open' });
       if (!ok) return;
       try {

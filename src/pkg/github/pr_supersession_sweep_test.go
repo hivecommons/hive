@@ -621,6 +621,46 @@ func TestSupersessionCandidateClaims(t *testing.T) {
 	}
 }
 
+func TestSweepSupersededOpenPRs_AuditsDetectionWithoutAutoClose(t *testing.T) {
+	event := SupersessionSweepEvent{Repo: autoCloseRepo, Number: 12, Author: "contributor", IssueRepo: autoCloseRepo, Issue: 3, CloserPR: 22}
+	closer := supersessionCloser{Repo: event.IssueRepo, Number: 22, URL: "https://github.com/" + autoCloseOrg + "/" + autoCloseRepo + "/pull/22"}
+	body := renderSupersessionComment(event, closer, supersessionDecisionNotice(autoCloseOrg, closer, ""))
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing-notice=%t", existing), func(t *testing.T) {
+			pr := supersessionPRFixture{}
+			if existing {
+				pr.Comments = []supersessionCommentFixture{noticeComment(body, time.Now().Add(-48*time.Hour))}
+			}
+			var events []SupersessionSweepEvent
+			res, obs := runAutoCloseSweep(t, pr, SupersessionSweepOptions{
+				Audit: func(e SupersessionSweepEvent) { events = append(events, e) },
+			})
+			if len(events) == 0 || events[0].Action != "detected-contributor" || events[0].Number != 12 || events[0].CloserPR != 22 {
+				t.Fatalf("missing detection: %+v", events)
+			}
+			if len(res.Closed) != 0 || len(obs.closed) != 0 || len(obs.labels[12]) != 0 {
+				t.Fatalf("detection must not close or label: result=%+v observations=%+v", res, obs)
+			}
+			if existing && (len(events) != 1 || len(res.Commented) != 0 || len(obs.comments[12]) != 0 || len(obs.edits) != 0) {
+				t.Fatalf("existing notice should only audit detection: events=%+v result=%+v observations=%+v", events, res, obs)
+			}
+		})
+	}
+}
+
+func TestSweepSupersededOpenPRs_KeptOpenDetection(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		var events []SupersessionSweepEvent
+		res, _ := runAutoCloseSweep(t, supersessionPRFixture{Labels: []string{"size/S", SupersessionKeepOpenLabel}}, SupersessionSweepOptions{
+			CloseContributorPRs: enabled,
+			Audit:               func(e SupersessionSweepEvent) { events = append(events, e) },
+		})
+		if len(res.Closed) != 0 || len(events) < 2 || events[0].Action != "detected-contributor" || events[1].Action != "kept-open" {
+			t.Fatalf("auto-close=%t: result=%+v events=%+v", enabled, res, events)
+		}
+	}
+}
+
 func TestSupersessionDecisionNotice(t *testing.T) {
 	closer := supersessionCloser{Repo: "o/r", Number: 334}
 	cases := []struct {

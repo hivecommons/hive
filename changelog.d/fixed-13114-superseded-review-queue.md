@@ -1,0 +1,1 @@
+- Show superseded contributor PRs with close / keep-open actions in the Review Queue and a CLOSE recommendation in the inbox even when automatic closure is disabled ([#13114](https://github.com/hivecommons/hive/issues/13114)).
