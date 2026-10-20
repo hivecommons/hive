@@ -77,10 +77,14 @@ type selfReportRelayRequest struct {
 	Repos       []string `json:"repos,omitempty"`
 	// Owners / OwnersHidden name the hive's owner login(s) for the
 	// affected block; see fleetreport.Report.
-	Owners       []string                        `json:"owners,omitempty"`
-	OwnersHidden bool                            `json:"owners_hidden,omitempty"`
-	Evidence     fleetreport.Evidence            `json:"evidence"`
-	Observation  *fleetreport.ObservationFinding `json:"observation,omitempty"`
+	Owners       []string `json:"owners,omitempty"`
+	OwnersHidden bool     `json:"owners_hidden,omitempty"`
+	// HiveName / SpokeURL are the hive's display name and dashboard URL
+	// for the evidence table and affected block (#13211).
+	HiveName    string                          `json:"hive_name,omitempty"`
+	SpokeURL    string                          `json:"spoke_url,omitempty"`
+	Evidence    fleetreport.Evidence            `json:"evidence"`
+	Observation *fleetreport.ObservationFinding `json:"observation,omitempty"`
 	// HiveState is the reporting hive's 24 h / 7 d state trends (#12339).
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
@@ -269,6 +273,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 					HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: report.Class, Title: report.Title, Body: report.Body,
 					Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
 					InstanceID: report.InstanceID, Repos: report.Repos, Owners: report.Owners, OwnersHidden: report.OwnersHidden,
+					HiveName: report.HiveName, SpokeURL: report.SpokeURL,
 				})
 				if err == nil {
 					write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}

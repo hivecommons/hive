@@ -22,6 +22,8 @@ func TestPRApproveReply(t *testing.T) {
 		{name: "trusted owner on own contributor PR", author: "owner", actor: "owner", want: "does not consume it on a pull request"},
 		{name: "trusted merger on contributor PR", author: "contributor", actor: "owner", want: "does not consume it on a pull request"},
 		{name: "trusted-author lane", author: "maintainer", actor: "owner", trustedAuthor: true, want: "does not consume it on a pull request"},
+		{name: "untrusted person on trusted-author lane", author: "maintainer", actor: "stranger", trustedAuthor: true, want: "not a trusted merger"},
+		{name: "untrusted person on App lane", author: testHiveAppBotLogin, actor: "stranger", want: "not a trusted merger"},
 		{name: "names the release lever", author: "contributor", actor: "owner", want: "GitHub **Approve** review for the current head (`sha7`)"},
 		{name: "untrusted self release", author: "contributor", actor: "contributor", want: "cannot release their own PR"},
 		{name: "untrusted other release", author: "contributor", actor: "stranger", want: "not a trusted merger"},

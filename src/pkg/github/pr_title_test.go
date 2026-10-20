@@ -92,3 +92,58 @@ func TestNormalizePRTitle_LengthBoundary(t *testing.T) {
 		t.Fatalf("title exceeding GitHub's limit after normalization = %q, want unchanged %q", got, tooLongInput)
 	}
 }
+
+func TestNormalizePRTitleEmoji(t *testing.T) {
+	cases := []struct {
+		name, input, want string
+	}{
+		// hivecommons/hive#13131: a docs PR opened as 📝 failed the PR Type gate.
+		{name: "docs under proposal emoji", input: "📝 docs: describe Prow dco-signoff labels as coexisting with hive's dco pair", want: "📖 docs: describe Prow dco-signoff labels as coexisting with hive's dco pair"},
+		{name: "docs already right", input: "📖 docs: explain exit 77", want: "📖 docs: explain exit 77"},
+		{name: "proposal keeps its emoji", input: "📝 proposal: central stage engine", want: "📝 proposal: central stage engine"},
+		{name: "rfc is a proposal", input: "📖 rfc: opportunity lab", want: "📝 rfc: opportunity lab"},
+		{name: "fix under docs emoji", input: "📖 fix(ci): retry GHCR", want: "🐛 fix(ci): retry GHCR"},
+		{name: "fix under lock emoji", input: "🔒 fix: polkit defaults", want: "🐛 fix: polkit defaults"},
+		{name: "feat", input: "🐛 feat: owner-only sharing", want: "✨ feat: owner-only sharing"},
+		{name: "breaking marker wins", input: "✨ feat(api)!: drop v1", want: "⚠️ feat(api)!: drop v1"},
+		{name: "breaking presentation variant is equal", input: "⚠ feat!: drop v1", want: "⚠ feat!: drop v1"},
+		{name: "chore", input: "📖 chore: bump deps", want: "🌱 chore: bump deps"},
+		{name: "scoped docs", input: "📝 docs(readme): fix link", want: "📖 docs(readme): fix link"},
+		{name: "extra spaces", input: "📝   docs: spaced", want: "📖 docs: spaced"},
+		// Never invent an emoji: repositories gating on a bare header keep it.
+		{name: "bare conventional header", input: "docs: explain foo", want: "docs: explain foo"},
+		{name: "lane-suffixed bare header", input: "fix: retry [scanner]", want: "fix: retry [scanner]"},
+		// Unknown type: the emoji is the author's, not the convention's.
+		{name: "unknown type keeps emoji", input: "📝 planning: Q4", want: "📝 planning: Q4"},
+		{name: "no header", input: "📝 sweep the docs", want: "📝 sweep the docs"},
+		{name: "upper-case type", input: "📝 Docs: title case", want: "📖 Docs: title case"},
+		{name: "empty", input: "", want: ""},
+		{name: "unicode letter first is not an emoji", input: "Ärger fix: nope", want: "Ärger fix: nope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NormalizePRTitleEmoji(tc.input); got != tc.want {
+				t.Fatalf("NormalizePRTitleEmoji(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+	long := "📝 docs: " + strings.Repeat("x", maxGitHubPRTitleLength)
+	if got := NormalizePRTitleEmoji(long); got != long {
+		t.Fatalf("over-long title must be returned unchanged")
+	}
+}
+
+func TestPRTitleEmojiFor(t *testing.T) {
+	if got := PRTitleEmojiFor("docs", false); got != PRTitleEmojiDocs {
+		t.Fatalf("docs → %q", got)
+	}
+	if got := PRTitleEmojiFor("PROPOSAL", false); got != PRTitleEmojiProposal {
+		t.Fatalf("proposal → %q", got)
+	}
+	if got := PRTitleEmojiFor("docs", true); got != PRTitleEmojiBreaking {
+		t.Fatalf("breaking → %q", got)
+	}
+	if got := PRTitleEmojiFor("featx", false); got != "" {
+		t.Fatalf("unknown → %q", got)
+	}
+}

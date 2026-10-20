@@ -141,6 +141,16 @@ Family is the normalized vendor prefix before the first dash (`claude`,
 `gpt`, `gemini`, `grok`, …), the same rule the reviewer-accuracy family
 metrics use.
 
+> **Note (#13243).** Before [#13243](https://github.com/hivecommons/hive/issues/13243)
+> the pool was only applied to the cadence queue kick's `${PR_LIST}` lines; on
+> fan-out hives (`review.fan_out: true`, every reviewer on one model) the
+> per-perspective swarm kicks ignored it, so this arm was inert there. The
+> swarm now honours `review_models` per perspective, stamps `author_model` /
+> `review_model` on every verdict, and the Accuracy card reports
+> `same_family` vs cross-family accuracy, which is the measurement this arm
+> needs. `review.perspective_models` can additionally pin one model per
+> perspective for a finer-grained arm.
+
 ### Arm 2 — shadow gates
 
 ```diff

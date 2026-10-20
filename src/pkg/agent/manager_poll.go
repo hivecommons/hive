@@ -121,14 +121,14 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				if lastKick != nil && time.Since(*lastKick) < tokenRestartKickGrace {
 					continue
 				}
-				if time.Since(agent.lastRateLimitRestart).Seconds() < float64(rateLimitRestartCooldownSec) {
+				if !m.claimRateLimitRelaunch(agent, time.Now()) {
 					continue
 				}
-				agent.lastRateLimitRestart = time.Now()
 				agent.LastError = "copilot start-up blocked: GitHub rate-limited the token validation call (token intact; relaunching after cooldown)"
 				m.logger.Warn("copilot token validation rate-limited by GitHub; relaunching after cooldown",
 					"agent", agent.Name,
 					"cooldown_sec", rateLimitRestartCooldownSec,
+					"fleet_spacing_sec", int(rateLimitRelaunchFleetSpacing/time.Second),
 				)
 				go func() {
 					if err := m.RestartWithReason(ctx, agent.Name, "github rate limit on token validation"); err != nil {
@@ -639,4 +639,32 @@ func findOverlap(prev, curr []string) int {
 		}
 	}
 	return -1
+}
+
+// rateLimitRelaunchDue is the pacing rule for a rate-limit relaunch: the
+// agent's own cooldown must have passed AND the fleet must not have
+// relaunched anyone within rateLimitRelaunchFleetSpacing. Zero times mean
+// "never", so the first relaunch is always due.
+func rateLimitRelaunchDue(lastAgent, lastFleet, now time.Time) bool {
+	if !lastAgent.IsZero() && now.Sub(lastAgent) < time.Duration(rateLimitRestartCooldownSec)*time.Second {
+		return false
+	}
+	if !lastFleet.IsZero() && now.Sub(lastFleet) < rateLimitRelaunchFleetSpacing {
+		return false
+	}
+	return true
+}
+
+// claimRateLimitRelaunch applies rateLimitRelaunchDue and, when due, records
+// now on both the agent and the fleet clock so a second poller waking in the
+// same window is turned away. Takes only rateLimitRelaunchMu.
+func (m *Manager) claimRateLimitRelaunch(agent *AgentProcess, now time.Time) bool {
+	m.rateLimitRelaunchMu.Lock()
+	defer m.rateLimitRelaunchMu.Unlock()
+	if !rateLimitRelaunchDue(agent.lastRateLimitRestart, m.lastRateLimitRelaunch, now) {
+		return false
+	}
+	agent.lastRateLimitRestart = now
+	m.lastRateLimitRelaunch = now
+	return true
 }

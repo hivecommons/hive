@@ -489,6 +489,9 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	fmt.Fprintf(&b, "A hive hit an unusual runtime error (class `%s`) and is reporting it so the same defect across the fleet lands in one issue.\n\n", ev.Class)
 	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
 	fmt.Fprintf(&b, "| hive | %s |\n", hive)
+	name, spokeURL := NormalizeHiveName(obs.HiveName), NormalizeSpokeURL(obs.SpokeURL)
+	fmt.Fprintf(&b, "| %s | %s |\n", HiveNameField, emptyDash(name))
+	fmt.Fprintf(&b, "| %s | %s |\n", SpokeField, SpokeLink(name, hive, spokeURL))
 	fmt.Fprintf(&b, "| anonymous instance | %s |\n", instance)
 	fmt.Fprintf(&b, "| owner(s) | %s |\n", OwnerMentions(obs.Owners, obs.OwnersHidden))
 	fmt.Fprintf(&b, "| hive version | %s |\n", version)
@@ -516,11 +519,11 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if obs.OwnersHidden {
 		owners = nil
 	}
-	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1, Last: now}}, Repos: repos, Seen: 1}.Render())
+	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Name: name, URL: spokeURL, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1, Last: now}}, Repos: repos, Seen: 1}.Render())
 	if ev.Diagnostics != "" {
 		fmt.Fprintf(&b, "\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>\n", ev.Diagnostics)
 	}
-	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
+	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, HiveName: name, SpokeURL: spokeURL, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
 }
 
 // maxReposInTable bounds the repos / owners cells of the evidence table; the

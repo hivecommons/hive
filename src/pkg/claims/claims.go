@@ -695,6 +695,44 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 	return out
 }
 
+// ReasonHolderRelaunched is the release reason recorded when a hive agent's
+// CLI was relaunched (hive boot, operator or self-heal restart): the context
+// that held the claim is gone, so the issue goes back to the pool at once
+// instead of sitting at stage/020-claimed until the agent TTL lapses.
+const ReasonHolderRelaunched = "holding agent relaunched"
+
+// ReleaseAgentClaims drops every live KindAgent claim held by agent and fires
+// OnReleased for each. Unlike ReleaseByHolderID it never touches a human or
+// contributor claim whose login happens to spell the agent's name.
+func (l *Ledger) ReleaseAgentClaims(agent, reason string) []Claim {
+	agent = strings.TrimSpace(agent)
+	if l == nil || agent == "" {
+		return nil
+	}
+	l.mu.Lock()
+	now := l.now()
+	var out []Claim
+	for k, c := range l.claims {
+		if c.Kind != KindAgent || c.Holder != agent {
+			continue
+		}
+		out = append(out, c)
+		delete(l.claims, k)
+		l.endAttemptLocked(c, reason, now)
+	}
+	if len(out) > 0 {
+		_ = l.saveLocked()
+	}
+	hooks := l.hooks
+	l.mu.Unlock()
+	for _, c := range out {
+		if hooks.OnReleased != nil {
+			hooks.OnReleased(c, reason)
+		}
+	}
+	return out
+}
+
 // Lookup returns the live claim on an issue, if any.
 func (l *Ledger) Lookup(repo string, issue int) (Claim, bool) {
 	if l == nil {

@@ -1,0 +1,1 @@
+- The hub's SaaS auth-check now waves `/api/webhook/github` through to hosted spokes, so relayed GitHub App webhooks reach the spoke's HMAC-verified receiver instead of being answered by nginx with a login redirect; hosted hives no longer report `webhooks.healthy=false` / `events_1h=0` while the hub relays events ([#13231](https://github.com/hivecommons/hive/issues/13231)).

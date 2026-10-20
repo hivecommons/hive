@@ -36,6 +36,13 @@ type PullRequest struct {
 	// login the squash is attributed to that person, so a hive-signed fix
 	// would fail the sign-off gate (hivecommons/hive#13124).
 	HiveAttributed bool
+	// AuthorModel is the model that wrote the PR, from the `— hive:`
+	// attribution trailer (github.PullRequest.HiveModel). It is what
+	// review_models exclusions compare against, and it is stamped into the
+	// perspective prompt and the verdict artifact as author_model so the
+	// author/reviewer model pair is recorded even on a hive with no pool.
+	// Empty when the PR carries no trailer (a person's PR).
+	AuthorModel string
 	// MergeBase is the commit the reviewer should ground its reading in. When
 	// set, the prompt instructs the reviewer to read the repository at this
 	// commit rather than reasoning from the diff alone — see groundingSection
@@ -236,6 +243,14 @@ type PromptOptions struct {
 	// hive has not named any, and the prompt says nothing about bot threads.
 	ReviewBotLogins      []string
 	ReviewBotMinPriority string
+	// ReviewBackend/ReviewModel are the model this review must run with, as
+	// chosen by the planner from agents.<name>.review_models (and
+	// review.perspective_models). Empty means no pool is configured and the
+	// prompt says nothing about models; set, the prompt carries the same
+	// "Independent review" instruction the cadence kick overlay uses and
+	// tells the reviewer to record the model as review_model.
+	ReviewBackend string
+	ReviewModel   string
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -261,7 +276,9 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
+	writeAuthorModelLine(&b, pr)
 	fmt.Fprintf(&b, "Focus ONLY on %s. Do not duplicate other perspectives unless the issue is severe.\n\n", focus)
+	writeIndependentReviewSection(&b, opts)
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
@@ -272,6 +289,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
+	b.WriteString(modelStampInstruction(pr, opts))
 	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Use approve only when this perspective finds no IN-SCOPE blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower the verdict.\n")
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
@@ -553,9 +571,11 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
+	writeAuthorModelLine(&b, pr)
 	fmt.Fprintf(&b, "\nJudge this PR from ALL %d perspectives, in one pass: %s. Read the PR once; apply every perspective to what you read.\n", len(perspectives), joinPerspectives(perspectives))
 	b.WriteString("These are distinct questions, not one question asked several ways. A change can be correct and still leak a secret, or secure and still not do what its issue asked. Ask each one separately and answer it on its own evidence.\n")
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
+	writeIndependentReviewSection(&b, opts)
 
 	b.WriteString(combinedSharedHeader)
 	b.WriteString(scopeContractSection(pr))
@@ -568,6 +588,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
+	b.WriteString(modelStampInstruction(pr, opts))
 	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Give each perspective its OWN verdict. Use approve only when THAT perspective finds no in-scope blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower any verdict.\n")
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
@@ -685,4 +706,43 @@ func perspectiveNames(ps []Perspective) []string {
 		out = append(out, string(p))
 	}
 	return out
+}
+
+// writeAuthorModelLine names the PR's authoring model in the prompt header,
+// next to the login author, when the attribution trailer recorded one.
+func writeAuthorModelLine(b *strings.Builder, pr PullRequest) {
+	if m := strings.TrimSpace(pr.AuthorModel); m != "" {
+		fmt.Fprintf(b, "Author model: %s\n", m)
+	}
+}
+
+// writeIndependentReviewSection adds the shared independent-review
+// instruction when the planner chose a model for this kick.
+func writeIndependentReviewSection(b *strings.Builder, opts PromptOptions) {
+	if section := PerspectiveIndependentReviewSection(opts.ReviewBackend, opts.ReviewModel); section != "" {
+		b.WriteString(section)
+		b.WriteString("\n\n")
+	}
+}
+
+// modelStampInstruction tells the reviewer which author_model and
+// review_model values to put in its JSON report, so the verdict artifact
+// carries the pair without the reviewer having to infer either. The planner
+// also stamps both at collect time from the dispatch state (ModelStamps), so
+// a reviewer that omits them still produces a complete record; the
+// instruction makes the posted comment and the artifact agree.
+func modelStampInstruction(pr PullRequest, opts PromptOptions) string {
+	author := strings.TrimSpace(pr.AuthorModel)
+	model := strings.TrimSpace(opts.ReviewModel)
+	if author == "" && model == "" {
+		return ""
+	}
+	var parts []string
+	if author != "" {
+		parts = append(parts, fmt.Sprintf("author_model to %q", author))
+	}
+	if model != "" {
+		parts = append(parts, fmt.Sprintf("review_model to %q (the model the sub-agent ran with)", model))
+	}
+	return "Set " + strings.Join(parts, " and ") + ".\n"
 }

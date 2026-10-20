@@ -147,9 +147,6 @@ func (s *commonsWebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *commonsWebServer) authorized(r *http.Request) bool {
 	token := strings.TrimSpace(r.Header.Get(commonsWebAuthHeader))
-	if token == "" {
-		token = strings.TrimSpace(r.URL.Query().Get("token"))
-	}
 	return token != "" && token == s.token
 }
 
@@ -177,6 +174,10 @@ type commonsWebListResponse struct {
 	Path     string           `json:"path"`
 	EnvPath  string           `json:"env_path"`
 	Hives    []commonsWebHive `json:"hives"`
+	// Revision is the profiles.yml revision this listing shows. The page sends
+	// it back as If-Match with every edit so a change reviewed against an older
+	// file is refused (409) rather than merged.
+	Revision string `json:"revision"`
 }
 
 func (s *commonsWebServer) handleList(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +208,7 @@ func commonsWebResponse(store *hivectl.ProfileStore, set *hivectl.ProfileSet) co
 	if set == nil {
 		return resp
 	}
+	resp.Revision = set.Revision()
 	resp.Strategy = set.EffectiveCommonsStrategy()
 	active := set.ActiveProfile()
 	for i, profile := range set.Ordered() {
@@ -247,6 +249,9 @@ func (s *commonsWebServer) handleSubscribe(w http.ResponseWriter, r *http.Reques
 	set, err := s.loadSet(true)
 	if err != nil {
 		writeCommonsError(w, err)
+		return
+	}
+	if !checkCommonsReviewed(w, r, set) {
 		return
 	}
 	if existing, _ := set.Find(name); existing != nil {
@@ -298,6 +303,9 @@ func (s *commonsWebServer) handleUnsubscribe(w http.ResponseWriter, r *http.Requ
 		writeCommonsError(w, err)
 		return
 	}
+	if !checkCommonsReviewed(w, r, set) {
+		return
+	}
 	if _, _, err := set.Remove(name); err != nil {
 		writeCommonsError(w, err)
 		return
@@ -336,6 +344,9 @@ func (s *commonsWebServer) handleMove(w http.ResponseWriter, r *http.Request) {
 		writeCommonsError(w, err)
 		return
 	}
+	if !checkCommonsReviewed(w, r, set) {
+		return
+	}
 	set.Profiles = set.Ordered()
 	if len(set.Profiles) > 0 {
 		set.Active = set.Profiles[0].Name
@@ -363,6 +374,9 @@ func (s *commonsWebServer) handleStrategy(w http.ResponseWriter, r *http.Request
 		writeCommonsError(w, err)
 		return
 	}
+	if !checkCommonsReviewed(w, r, set) {
+		return
+	}
 	if err := set.SetCommonsStrategy(req.Strategy); err != nil {
 		writeCommonsError(w, err)
 		return
@@ -370,8 +384,21 @@ func (s *commonsWebServer) handleStrategy(w http.ResponseWriter, r *http.Request
 	s.commitAndWrite(w, r, set)
 }
 
+// checkCommonsReviewed refuses an edit whose If-Match names a profiles.yml
+// revision other than the one just loaded: the operator reviewed a page the
+// CLI, the TUI or another tab has since changed. A request without If-Match
+// (scripts, older pages) is still guarded by CommitExpecting below.
+func checkCommonsReviewed(w http.ResponseWriter, r *http.Request, set *hivectl.ProfileSet) bool {
+	reviewed := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`)
+	if reviewed == "" || reviewed == set.Revision() {
+		return true
+	}
+	writeCommonsError(w, hivectl.ErrStaleRevision)
+	return false
+}
+
 func (s *commonsWebServer) commitAndWrite(w http.ResponseWriter, r *http.Request, set *hivectl.ProfileSet) {
-	if err := s.deps.store.Commit(set); err != nil {
+	if err := s.deps.store.CommitExpecting(set, set.Revision()); err != nil {
 		writeCommonsError(w, err)
 		return
 	}
@@ -412,8 +439,12 @@ func writeCommonsJSON(w http.ResponseWriter, v any) {
 
 func writeCommonsError(w http.ResponseWriter, err error) {
 	code := http.StatusBadRequest
-	if errors.Is(err, hivectl.ErrNoProfiles) || errors.Is(err, hivectl.ErrProfileNotFound) {
+	switch {
+	case errors.Is(err, hivectl.ErrNoProfiles) || errors.Is(err, hivectl.ErrProfileNotFound):
 		code = http.StatusNotFound
+	case errors.Is(err, hivectl.ErrStaleRevision):
+		code = http.StatusConflict
+		err = errors.New("the hive profiles were changed by hivectl, the TUI or another tab after this page loaded; nothing was saved — reload and review the current hives before retrying (requires renewed review)")
 	}
 	http.Error(w, err.Error(), code)
 }
@@ -456,11 +487,15 @@ const message = document.getElementById('message');
 const nameInput = document.getElementById('name');
 const hubInput = document.getElementById('hub');
 const strategySelect = document.getElementById('strategy');
+let revision = '';
 function say(text, cls='muted'){ message.textContent = text; message.className = cls; }
 async function api(path, opts={}){
-  const res = await fetch(path, {...opts, headers: {...headers, ...(opts.headers||{})}});
+  const extra = (opts.method && opts.method !== 'GET' && revision) ? {'If-Match': revision} : {};
+  const res = await fetch(path, {...opts, headers: {...headers, ...extra, ...(opts.headers||{})}});
   if(!res.ok) throw new Error(await res.text());
-  return res.json();
+  const data = await res.json();
+  if (data && typeof data.revision === 'string') revision = data.revision;
+  return data;
 }
 async function load(){
   const data = await api('/api/hives');

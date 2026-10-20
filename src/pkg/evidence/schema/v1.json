@@ -68,6 +68,7 @@
     "followup_of": {"$ref": "#/$defs/bundle_ids"},
     "reverted_by": {"$ref": "#/$defs/bundle_ids"},
     "followed_up_by": {"$ref": "#/$defs/bundle_ids"},
+    "issue_reopens": {"type": "array", "items": {"$ref": "#/$defs/issue_reopen"}},
     "shadow": {
       "type": "object",
       "additionalProperties": false,
@@ -90,6 +91,19 @@
         "flags": {"type": "array", "items": {"type": "string", "enum": ["placeholder_hive", "hive_on_hive", "under_min_merged"]}}
       }
     },
+    "outcome": {
+      "type": "object",
+      "required": ["source", "state", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "state": {"type": "string", "enum": ["open", "closed", "merged"]},
+        "at": {"type": "string", "format": "date-time"},
+        "merged_by": {"type": "string"},
+        "merged_at": {"type": "string", "format": "date-time"},
+        "closed_at": {"type": "string", "format": "date-time"}
+      }
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},
@@ -98,6 +112,17 @@
   },
   "$defs": {
     "bundle_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "issue_reopen": {
+      "type": "object",
+      "required": ["issue", "at", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "issue": {"type": "integer", "minimum": 1},
+        "repo": {"type": "string"},
+        "at": {"type": "string", "format": "date-time"},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
     "verdict": {
       "type": "object",
       "required": ["perspective", "model", "backend", "verdict", "confidence", "recorded_at"],

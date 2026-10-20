@@ -214,6 +214,7 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 	}
 	report := runtimeReport("fp-relay", fleetreport.ClassInferenceAuthFailed)
 	report.InstanceID, report.Repos, report.Owners = "inst-x", []string{"acme/widgets"}, []string{"alice", "bob"}
+	report.HiveName, report.SpokeURL = "kellya", "https://kellya.hive.example.dev"
 	res := &fleetreport.Result{Reports: []fleetreport.Report{report}}
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
 	if len(relayed) != 1 || relayed[0].HiveID != "hosted-x" || relayed[0].Fingerprint != "fp-relay" || relayed[0].Repo != "hivecommons/hive" || relayed[0].Class != fleetreport.ClassInferenceAuthFailed {
@@ -227,6 +228,10 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 	wire, _ := json.Marshal(relayed[0])
 	if !strings.Contains(string(wire), `"owners":["alice","bob"]`) {
 		t.Fatalf("wire payload lacks owners: %s", wire)
+	}
+	// #13211: display name and dashboard URL travel as explicit fields too.
+	if !strings.Contains(string(wire), `"hive_name":"kellya"`) || !strings.Contains(string(wire), `"spoke_url":"https://kellya.hive.example.dev"`) {
+		t.Fatalf("wire payload lacks hive identity: %s", wire)
 	}
 	o := srv.FleetReportState().Open["fp-relay"]
 	if o.Number != 77 || !o.OpenedByHive || o.PostedAt.IsZero() {

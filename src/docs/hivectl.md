@@ -955,7 +955,10 @@ hivectl hives repos acme --exclude org/repo
 hivectl hives repos acme --include other/project
 hivectl hives repos acme --toggle-exclude org/repo
 hivectl hives repos acme --clear org/repo      # clear both personal overrides
-hivectl hives repos acme --select none         # explicitly select nothing
+hivectl hives repos acme --deselect-current    # clear current consent, keep follow policy
+hivectl hives repos acme --select none         # select nothing and stop following
+hivectl hives repos acme --follow-new-repos     # allow additions on supported refresh
+hivectl hives repos acme --follow-new-repos=false # stop following, keep current consent
 hivectl hives repos acme --reset --yes         # restore legacy unrestricted consent
 ```
 
@@ -965,6 +968,18 @@ without this endpoint) leave the saved selection unchanged. Personal additions
 and exclusions survive a new snapshot; exclusions always win, even over an
 explicit inclusion. `none` clears membership and additions, turns following off,
 and retains exclusions so later snapshots cannot silently restore excluded work.
+`--deselect-current` also clears reviewed membership (including any all-current
+snapshot) and personal additions, but retains the independently accepted follow
+policy, exclusions, sources, and preset review history. It performs no discovery
+or registration. The saved scope becomes empty, never unrestricted; a later
+refresh within an approved follow scope may select repositories again. It refuses
+legacy unrestricted profiles rather than silently migrating them: review an
+`all-current` snapshot first, or explicitly use `--select none` to select nothing
+and stop following. `--follow-new-repos` changes only that refresh policy; `--follow-new-repos=false`
+stops following without removing any currently accepted repository. Neither flag
+fetches or adds membership, clears exclusions, or converts legacy unrestricted
+profiles. Following uses the applicable preset/discovery refresh source, not a
+background poller or wildcard. Use only one selection-edit operation per invocation.
 Only `--reset --yes` drops the entire selection. To exclude from a legacy
 unrestricted profile, first accept an `all-current` snapshot: an unreviewed
 "all except one" wildcard is not a supported selection.
@@ -1029,6 +1044,12 @@ Notes:
   rows or use ↑/↓ to rank them, and choose `ranked`, `spread` or `neediest`.
   The API and HTML never return registration tokens; the printed URL carries a
   short-lived local UI token and should not be shared.
+- **Concurrent edits are never silently lost.** The CLI, the TUI and the web
+  UI all commit `profiles.yml` under a shared owner-only lock file
+  (`profiles.yml.lock`) and only if the file is still the revision they loaded.
+  If another surface changed it in the meantime, nothing is written: the CLI
+  and TUI ask you to re-run or retry, and the web UI answers `409` asking you
+  to reload and review the current hives.
 - **`use`, `move` and `strategy` switch a running relay.** They regenerate the
   projection, then signal the relay advertised in `contributor-relay.pid` (or
   its recorded docker/podman container) to reload `contributor.env`. The task

@@ -85,7 +85,7 @@ title is `[selfreport] <class>: <short message>`.
 | `restart_storm` | the restart-storm breaker pauses an agent | high |
 | `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent *after* the busy-no-activity stall restart has been attempted (or that restart itself errored) — i.e. the recovery did not bring the session back; kicks that fail before the restart are a dashboard/log warning only | medium |
 | `panic_recovered` | a dashboard handler recovered from a panic | high |
-| `model_discovery_degraded` | model discovery has been failing for >1h (excluded, audit-log only: copilot serving the HTTP catalog because the SDK helper is absent (#11868), and copilot `Not authenticated` because the operator has not completed the dashboard Copilot Login (#12947)) | medium |
+| `model_discovery_degraded` | model discovery has been failing for >1h (excluded, audit-log only: copilot serving the HTTP catalog because the SDK helper is absent (#11868), and copilot `Not authenticated` because the operator has not completed the dashboard Copilot Login (#12947), and copilot `not licensed to use Copilot` 403s, a seat problem on the reporting hive (#13206)) | medium |
 | `inference_auth_failed` | 401/403 from an inference backend (LiteLLM, Copilot) | high |
 | `advisory_post_failed` | the advisory digest could not be posted (rate-limit skips excluded) | medium |
 
@@ -119,6 +119,8 @@ Each report carries:
 
 | Field | Value |
 |---|---|
+| hive | the hub-assigned hive id on a hub-managed spoke; the anonymous instance digest otherwise |
+| hive name, spoke | `runtime-error` only, hub-managed spokes only (hivecommons/hive#13211): the hive's display name and a markdown link (name → dashboard URL) — see [Which hive](#which-hive); `—` when unknown |
 | anonymous instance | first **16 hex characters of the SHA-256** of your hive ID |
 | owner(s) | the GitHub login(s) of the hive's owner(s) — `dashboard.authorized_users` entries with the owner role plus the device-flow operator — as `@login`; `(anonymous)` when `include_owners: false` (`runtime-error` only) |
 | hive version, commit | build stamp, short commit |
@@ -224,6 +226,48 @@ seen_count: 4
   opted out). Existing issues with the older inline
   `**Affected hives (1):** <hive>` list are upgraded to the per-hive form on
   the hive's next join, so an old issue gains the owner on the next sweep.
+
+### Which hive
+
+So a maintainer can tell **which** hive a report came from — and open it —
+without translating a hub id through the hives listing, a `runtime-error`
+report carries the hive's display name and dashboard URL
+(hivecommons/hive#13211), both in the evidence table:
+
+```
+| hive | hosted-available-oke-260812-0nzc-available-ok-ba44 |
+| hive name | kellya |
+| spoke | [kellya](https://kellya.hive.hivecommons.dev) |
+```
+
+and on the hive's affected-block line, as `<name> (<hive id>)` plus
+an `open` link cell:
+
+```
+- kellya (hosted-available-oke-260812-0nzc-available-ok-ba44) (instance 2e281aad9b0e1e15) — [open](https://kellya.hive.hivecommons.dev) — owner(s): @clubanderson — seen 1, last 2026-10-20T16:53:31Z
+```
+
+- **Where they come from.** The spoke sends its own view (`project.name`,
+  and `dashboard.public_url` else the hub-delivered `hub.dashboard_url`) as
+  explicit `hive_name` / `spoke_url` fields. When the report goes through
+  the hub relay, the hub overlays what its hives listing shows — the
+  operator-set `project_name` (renames land on the hub, not the spoke) and
+  the validated vanity URL — and fills both for a spoke that predates the
+  fields, falling back to the org or primary repo for the name and to the
+  heartbeat-reported dashboard URL, then the placeholder host, for the
+  link. A later join refreshes the line, so a renamed hive shows its new
+  name on the next report.
+- **Privacy.** Both fields leave the hive only when it is hub-managed — the
+  same condition under which the hive id (rather than the anonymous digest)
+  is named today. A hub-less hive stays anonymous: the rows render `—`, the
+  affected line is unchanged, and nothing beyond the name and URL is added.
+  Names are reduced to a single line without markdown structure before they
+  leave; URLs must be absolute `http(s)` URLs and lose any credentials,
+  query or fragment.
+- **Older issues and spokes.** A report without the fields renders exactly
+  as before (`| hive name | — |`, `| spoke | — |`, the pre-existing bullet
+  form); the hub completes the hive's line and rows when it files or joins
+  on the spoke's behalf.
 
 ### Repositories and repo owners
 

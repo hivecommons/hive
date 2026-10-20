@@ -167,6 +167,39 @@ agent's configured `model`), `skip` (omit the PR from that kick), or
 record the delegated sub-agent's model as `review_model` in the verdict artifact,
 which feeds the author/reviewer model-pair metrics.
 
+The same pool drives the **review swarm** ([#13243](https://github.com/hivecommons/hive/issues/13243)).
+Each `[review-perspective:…]` kick (and the combined kick on non-fan-out hives)
+is planned against the PR's author model — taken from `pr.HiveModel`, i.e. the
+`— hive:` trailer / `agent_pr_created` audit record — and the perspective prompt
+carries the same `## Independent review — run this review with <backend>/<model>`
+section the queue kick's PR lines do. Pool selection, `exclude_author_model`,
+`exclude_author_family` and `fallback` behave exactly as above; in the swarm
+`skip` withholds that perspective's kick (reported in the dispatch plan's
+`skipped_review_models`) and `requires_human` places a human hold on the PR
+instead of dispatching. Every perspective prompt also states the author model,
+and the planner stamps `author_model` and `review_model` (the pool choice, else
+the reviewer's launch model) into the pending record so collected verdicts carry
+both even when no pool is configured.
+
+`review.perspective_models` pins a model to one perspective, overriding the
+pool for that perspective only. The agent's exclusions and fallback still
+apply, so a pinned model that matches the author family under
+`exclude_author_family` falls back like any other:
+
+```yaml
+review:
+  fan_out: true
+  perspective_models:
+    security: {backend: copilot, model: gpt-6-astra}
+    correctness: {backend: copilot, model: gemini-4-argon}
+```
+
+The dashboard's Evidence → Accuracy card and `/api/evidence/summary` add a
+per-author-family breakdown (`outcomes_by_author_family`, `by_author_family`,
+`by_family_match`) and each stored verdict carries `author_model` and
+`same_family`, so same-family vs cross-family accuracy is visible as soon as a
+pool is enabled.
+
 ### BYO-agent specs
 
 `agent_spec` wires ADR-0012's bring-your-own-agent contract into the launcher.

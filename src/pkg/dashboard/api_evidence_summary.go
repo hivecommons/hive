@@ -43,13 +43,17 @@ type EvidenceSummary struct {
 	// AvailableWindows is the PR count the same repo/author_kind filter
 	// would yield for each preset window ("24", "168", "720" hours and
 	// "all"), so a client can tell "not enough data" from "window too short".
-	AvailableWindows map[string]int                  `json:"available_windows"`
-	Outcomes         map[string]EvidenceOutcomes     `json:"outcomes_by_author_kind"`
-	Calibration      []EvidencePerspectiveCalib      `json:"reviewer_calibration"`
-	ReviewerModels   []EvidenceModelAccuracy         `json:"reviewer_accuracy_by_model"`
-	SentinelPerWeek  EvidenceSentinelSeries          `json:"sentinel_hits_per_week"`
-	ShadowGate       EvidenceShadowGate              `json:"shadow_gate"`
-	ReviewerAccuracy *review.ReviewerAccuracySummary `json:"reviewer_accuracy,omitempty"`
+	AvailableWindows map[string]int              `json:"available_windows"`
+	Outcomes         map[string]EvidenceOutcomes `json:"outcomes_by_author_kind"`
+	// OutcomesByAuthorFamily is Outcomes keyed by the author's model family
+	// (claude / gpt / gemini / other, "human" for a person's PR, "unknown"
+	// for an agent whose model was not recorded) — hivecommons/hive#13243.
+	OutcomesByAuthorFamily map[string]EvidenceOutcomes     `json:"outcomes_by_author_family"`
+	Calibration            []EvidencePerspectiveCalib      `json:"reviewer_calibration"`
+	ReviewerModels         []EvidenceModelAccuracy         `json:"reviewer_accuracy_by_model"`
+	SentinelPerWeek        EvidenceSentinelSeries          `json:"sentinel_hits_per_week"`
+	ShadowGate             EvidenceShadowGate              `json:"shadow_gate"`
+	ReviewerAccuracy       *review.ReviewerAccuracySummary `json:"reviewer_accuracy,omitempty"`
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
@@ -88,6 +92,11 @@ type EvidenceSummary struct {
 	// where GitHub-truth issue coverage begins (#12517).
 	WorkBalanceSources EvidenceWorkBalanceSources `json:"work_balance_sources"`
 	Missing            EvidenceMissing            `json:"missing"`
+	// Cards carries, per dashboard panel key, the server-computed letter
+	// grade (A+ … C-, or — when there is not enough data) and the one-line
+	// plain-English summary shown above each chart (#13204). Derived from the
+	// fields above by evidenceCards; see pkg/evidence/grade.go for the rubrics.
+	Cards map[string]evidence.Card `json:"cards"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -250,22 +259,81 @@ func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
 }
 
 // EvidenceOutcomes counts PRs for one author kind. Merged is any record of
-// the PR with a merge event. Closed and Open come only from a backfilled
-// record (hivecommons/hive#12371): closed without merge, or still open when
-// the backfill ran. Unknown is a PR with live bundles only and no merge
-// event: a live bundle records a merge only when this hive merged, and never
-// a close, so the PR may be open, merged by someone else or closed by hand
-// and nothing on disk says which. Rates must use Merged+Closed+Open as their
-// denominator and report Unknown beside them, never fold it into "not
-// merged". RevertedWithin14d is nil because revert tracking is not recorded
-// in bundles.
+// the PR with a merge event: one this hive performed, or one the forge
+// reported (MergedElsewhere, a subset of Merged: merged by hand, by another
+// bot or by a different hive, learned from the review-outcome ledger or a
+// backfill). Closed and Open come from a backfilled record
+// (hivecommons/hive#12371) or from the review-outcome ledger: closed without
+// merge, or still open when last observed. Unknown is a PR with live bundles
+// only, no merge event and no ledger row: the PR may be open, merged by
+// someone else or closed by hand and nothing on this hive says which. Rates
+// must use Merged+Closed+Open as their denominator and report Unknown beside
+// them, never fold it into "not merged".
+//
+// Change failures (hivecommons/hive#13241): RevertedWithin14d counts merged
+// PRs with a reverted_by link (the linker only writes one for a revert
+// merged within 14 days of the original); IssueReopenedWithin14d counts
+// merged PRs with an issue_reopens entry dated within 14 days of the merge.
+// A PR counts once in each. ChangeFailures is their sum and
+// ChangeFailureRate is ChangeFailures ÷ Merged, nil with no merges.
 type EvidenceOutcomes struct {
-	N                 int  `json:"n"`
-	Merged            int  `json:"merged"`
-	Closed            int  `json:"closed"`
-	Open              int  `json:"open"`
-	Unknown           int  `json:"unknown"`
-	RevertedWithin14d *int `json:"reverted_14d"`
+	N                      int      `json:"n"`
+	Merged                 int      `json:"merged"`
+	MergedElsewhere        int      `json:"merged_elsewhere"`
+	Closed                 int      `json:"closed"`
+	Open                   int      `json:"open"`
+	Unknown                int      `json:"unknown"`
+	RevertedWithin14d      *int     `json:"reverted_14d"`
+	IssueReopenedWithin14d int      `json:"issue_reopened_14d"`
+	ChangeFailures         int      `json:"change_failures"`
+	ChangeFailureRate      *float64 `json:"change_failure_rate"`
+}
+
+// finishChangeFailures fills ChangeFailures and ChangeFailureRate from the
+// two counts once the window has been folded.
+func (o *EvidenceOutcomes) finishChangeFailures() {
+	reverted := 0
+	if o.RevertedWithin14d != nil {
+		reverted = *o.RevertedWithin14d
+	} else {
+		o.RevertedWithin14d = new(int)
+	}
+	o.ChangeFailures = reverted + o.IssueReopenedWithin14d
+	o.ChangeFailureRate = nil
+	if o.Merged > 0 {
+		r := float64(o.ChangeFailures) / float64(o.Merged)
+		o.ChangeFailureRate = &r
+	}
+}
+
+// add counts one PR under this bucket by its recorded outcome, including
+// the change-failure signals on merged PRs.
+func (o *EvidenceOutcomes) add(b *evidence.PR) {
+	o.N++
+	switch {
+	case b.Merge != nil:
+		o.Merged++
+		if b.MergedElsewhere {
+			o.MergedElsewhere++
+		}
+		if reverted, reopened := b.ChangeFailure(); reverted || reopened {
+			if o.RevertedWithin14d == nil {
+				o.RevertedWithin14d = new(int)
+			}
+			if reverted {
+				*o.RevertedWithin14d++
+			}
+			if reopened {
+				o.IssueReopenedWithin14d++
+			}
+		}
+	case b.Closed:
+		o.Closed++
+	case b.OutcomeKnown():
+		o.Open++
+	default:
+		o.Unknown++
+	}
 }
 
 type EvidencePerspectiveCalib struct {
@@ -291,6 +359,76 @@ type EvidenceModelAccuracy struct {
 	Model    string                       `json:"model"`
 	N        int                          `json:"n"`
 	ByAuthor map[string]EvidenceModelStat `json:"by_author_kind"`
+	// ByAuthorFamily is ByAuthor keyed by the author's model family bucket
+	// (see EvidenceSummary.OutcomesByAuthorFamily).
+	ByAuthorFamily map[string]EvidenceModelStat `json:"by_author_family"`
+	// ByFamilyMatch splits this reviewer model's verdicts by whether it
+	// shares a family with the PR's author model: "same", "cross", or
+	// "unknown" when either side is unrecorded. It is the comparison a
+	// cross-family review_models pool exists to make visible.
+	ByFamilyMatch map[string]EvidenceModelStat `json:"by_family_match"`
+}
+
+// add folds one verdict into the stat. known/merged describe the PR's
+// recorded outcome; enforced is whether a gate read the verdict.
+func (st *EvidenceModelStat) add(approve, block, known, merged, enforced bool) {
+	st.N++
+	if approve {
+		st.Approvals++
+		switch {
+		case !known:
+			st.ApprovedUnknown++
+		case !merged:
+			st.ApprovedNotMerged++
+		}
+	}
+	if block {
+		st.Blocks++
+		if enforced {
+			st.EnforcedBlocks++
+		} else {
+			st.AdvisoryBlocks++
+		}
+		switch {
+		case !known:
+			st.BlockedUnknown++
+			if enforced {
+				st.EnforcedBlockedUnknown++
+			} else {
+				st.AdvisoryBlockedUnknown++
+			}
+		case merged:
+			st.MergedAfterBlock++
+			if enforced {
+				st.MergedAfterEnforcedBlock++
+			} else {
+				st.DissentBeforeMerge++
+			}
+		}
+	}
+}
+
+// evidenceAuthorFamily is the family bucket for a bundle's author.
+func evidenceAuthorFamily(a evidence.Author) string {
+	hiveAuthored := a.Kind == evidence.AuthorAgent || a.Kind == evidence.AuthorBot
+	return review.AuthorFamilyBucket(a.Model, a.Kind != "", hiveAuthored)
+}
+
+// evidenceVerdictFamilyMatch prefers the verdict's stored same_family (set
+// when the bundle was written) and falls back to deriving it, so bundles
+// written before the field existed are still classified.
+func evidenceVerdictFamilyMatch(v evidence.Verdict, a evidence.Author) string {
+	if v.SameFamily != nil {
+		if *v.SameFamily {
+			return review.FamilyMatchSame
+		}
+		return review.FamilyMatchCross
+	}
+	authorModel := v.AuthorModel
+	if authorModel == "" {
+		authorModel = a.Model
+	}
+	return review.FamilyMatchBucket(v.Model, authorModel)
 }
 
 // EvidenceModelStat: Approvals/Blocks are verdict counts; MergedAfterBlock and
@@ -422,11 +560,16 @@ type EvidenceMissing struct {
 	// RecordsCIPending counts PRs whose captured checks had not all finished
 	// when the snapshot was taken; they are in neither CI column.
 	RecordsCIPending int `json:"records_ci_pending"`
-	// PRsOutcomeUnknown counts PRs in the window with live bundles only and
-	// no merge event (EvidenceOutcomes.Unknown summed over author kinds).
-	PRsOutcomeUnknown int  `json:"prs_outcome_unknown"`
-	RecordsUnreadable int  `json:"records_unreadable"`
-	ReviewerAccuracy  bool `json:"reviewer_accuracy_unavailable"`
+	// PRsOutcomeUnknown counts PRs in the window with live bundles only, no
+	// merge event and no review-outcome ledger row (EvidenceOutcomes.Unknown
+	// summed over author kinds): truly unresolved.
+	PRsOutcomeUnknown int `json:"prs_outcome_unknown"`
+	// PRsOutcomeFromLedger counts PRs in the window whose outcome (merged
+	// elsewhere, closed or open) is known only from the review-outcome
+	// ledger, stamped on the bundle or applied at read time.
+	PRsOutcomeFromLedger int  `json:"prs_outcome_from_ledger"`
+	RecordsUnreadable    int  `json:"records_unreadable"`
+	ReviewerAccuracy     bool `json:"reviewer_accuracy_unavailable"`
 	// IssuesHumanOpensUnobserved is true while some work_balance row relies on
 	// the audit log for issues: the audit log only records hive-mediated issue
 	// writes, so issues humans or third-party bots open directly on GitHub
@@ -550,7 +693,10 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	resp := buildEvidenceSummaryWindow(bundles, win, repo, kind)
+	artifact, aerr := review.LoadArtifact("")
+	ledger, lerr := review.LoadOutcomeLedger("")
+	hints := evidenceOutcomeHints(ledger)
+	resp := buildEvidenceSummaryWindowHints(bundles, hints, win, repo, kind)
 	resp.AvailableWindows = evidenceAvailableWindows(bundles, now, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
@@ -560,12 +706,12 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		Entries: evidenceWorkBalanceEntries(s.audit),
 		Rollup:  loadIssueActivityRollup(issueActivityPath),
 		Series:  evidence.LoadIssueSeries(ghpkg.ReviewEvidenceRoot),
-		PRs:     evidence.FoldPRs(bundles, repo, ""),
+		PRs:     evidenceFoldWithHints(bundles, hints, repo, ""),
 		Buckets: s.evidenceWorkBalanceBuckets(win),
 	}, win, repo)
 	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == "" && (resp.WorkBalanceSources.IssueSeriesWeeks == 0 || resp.WorkBalanceSources.AuditOnlyWeeks > 0)
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
-	allPRs := evidence.FoldPRs(bundles, "", "")
+	allPRs := evidenceFoldWithHints(bundles, hints, "", "")
 	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, allPRs), evidenceGateMerges(bundles, allPRs), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
 
 	days := (hours + 23) / 24
@@ -575,14 +721,13 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 			days = (hours + 23) / 24
 		}
 	}
-	artifact, aerr := review.LoadArtifact("")
-	ledger, lerr := review.LoadOutcomeLedger("")
 	if (aerr != nil && !errors.Is(aerr, os.ErrNotExist)) || lerr != nil {
 		resp.Missing.ReviewerAccuracy = true
 	} else {
-		acc := review.SummarizeReviewerAccuracy(now, time.Duration(days)*24*time.Hour, artifact, ledger, s.reviewerAccuracyEvidence())
+		acc := review.SummarizeReviewerAccuracyWith(now, time.Duration(days)*24*time.Hour, artifact, ledger, s.reviewerAccuracyEvidence(), s.reviewerAccuracyOptions())
 		resp.ReviewerAccuracy = &acc
 	}
+	resp.Cards = evidenceCards(&resp, win, now)
 	jsonResponse(w, resp)
 }
 
@@ -636,10 +781,11 @@ func evidenceWindowHas(win evidenceWindow, opened time.Time) bool {
 	return true
 }
 
-// evidenceLatestPerPR folds bundles per PR (evidence.FoldPRs) and keeps the
-// PRs opened in win.
-func evidenceLatestPerPR(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) map[string]*evidence.PR {
-	prs := evidence.FoldPRs(bundles, repo, kind)
+// evidenceLatestPerPR folds bundles per PR (evidence.FoldPRs), resolves the
+// outcome of PRs whose records state none from hints (the review-outcome
+// ledger; nil when unavailable) and keeps the PRs opened in win.
+func evidenceLatestPerPR(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, win evidenceWindow, repo, kind string) map[string]*evidence.PR {
+	prs := evidenceFoldWithHints(bundles, hints, repo, kind)
 	for k, p := range prs {
 		if !evidenceWindowHas(win, p.OpenedAt) {
 			delete(prs, k)
@@ -689,17 +835,61 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 // buildEvidenceSummaryWindow is buildEvidenceSummary over an explicit window;
 // a custom range keeps PRs opened in [From, To).
 func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) EvidenceSummary {
+	return buildEvidenceSummaryWindowHints(bundles, nil, win, repo, kind)
+}
+
+// evidenceOutcomeHints turns the review-outcome ledger into per-PR hints
+// keyed like evidence.PRKey, so a PR the ledger resolved (or still sees
+// open) but whose bundle carries no outcome is not reported as unknown. The
+// ledger does not record the merger, so a hinted merge has no actor.
+func evidenceOutcomeHints(ledger *review.OutcomeLedger) map[string]evidence.OutcomeHint {
+	if ledger == nil || len(ledger.Items) == 0 {
+		return nil
+	}
+	hints := make(map[string]evidence.OutcomeHint, len(ledger.Items))
+	for _, o := range ledger.Items {
+		if o == nil {
+			continue
+		}
+		h := evidence.OutcomeHint{At: o.OutcomeAt}
+		switch o.Outcome {
+		case review.OutcomeMerged:
+			h.State, h.MergedAt = evidence.BackfillStateMerged, o.OutcomeAt
+		case review.OutcomeClosed:
+			h.State, h.ClosedAt = evidence.BackfillStateClosed, o.OutcomeAt
+		case review.OutcomeOpen:
+			h.State, h.At = evidence.BackfillStateOpen, ledger.GeneratedAt
+		default:
+			continue
+		}
+		hints[evidence.PRKey(o.Repo, o.Number)] = h
+	}
+	return hints
+}
+
+// evidenceFoldWithHints is evidence.FoldPRs followed by ApplyOutcomeHints.
+func evidenceFoldWithHints(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, repo, kind string) map[string]*evidence.PR {
+	prs := evidence.FoldPRs(bundles, repo, kind)
+	evidence.ApplyOutcomeHints(prs, hints)
+	return prs
+}
+
+// buildEvidenceSummaryWindowHints is buildEvidenceSummaryWindow with
+// review-outcome ledger hints for PRs whose records state no outcome.
+func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[string]evidence.OutcomeHint, win evidenceWindow, repo, kind string) EvidenceSummary {
 	hours := win.Hours
 	resp := EvidenceSummary{
 		Hours: hours, AllTime: hours == 0 && !win.Custom, Repo: repo, AuthorKind: kind,
-		ACMMChanges:     evidenceACMMChanges(bundles, repo),
-		Outcomes:        map[string]EvidenceOutcomes{},
-		Calibration:     []EvidencePerspectiveCalib{},
-		ReviewerModels:  []EvidenceModelAccuracy{},
-		SentinelPerWeek: EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{}},
-		ClaimVsVerdict:  []EvidenceClaimWeek{},
-		WorkBalance:     []EvidenceWorkBalanceWeek{},
-		Missing:         EvidenceMissing{IssuesHumanOpensUnobserved: true, ThrottleWindows: true},
+		ACMMChanges: evidenceACMMChanges(bundles, repo),
+		Outcomes:    map[string]EvidenceOutcomes{},
+		Calibration: []EvidencePerspectiveCalib{},
+
+		OutcomesByAuthorFamily: map[string]EvidenceOutcomes{},
+		ReviewerModels:         []EvidenceModelAccuracy{},
+		SentinelPerWeek:        EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{}},
+		ClaimVsVerdict:         []EvidenceClaimWeek{},
+		WorkBalance:            []EvidenceWorkBalanceWeek{},
+		Missing:                EvidenceMissing{IssuesHumanOpensUnobserved: true, ThrottleWindows: true},
 	}
 	for _, k := range []string{evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot} {
 		resp.Outcomes[k] = EvidenceOutcomes{}
@@ -708,7 +898,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		resp.From = win.From.Format(time.RFC3339)
 		resp.To = win.To.Format(time.RFC3339)
 	}
-	latest := evidenceLatestPerPR(bundles, win, repo, kind)
+	latest := evidenceLatestPerPR(bundles, hints, win, repo, kind)
 	keys := make([]string, 0, len(latest))
 	for k := range latest {
 		keys = append(keys, k)
@@ -727,22 +917,21 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 	for _, key := range keys {
 		b := latest[key]
 		resp.N++
-		o := resp.Outcomes[b.Author.Kind]
-		o.N++
 		merged := b.Merge != nil
 		known := b.OutcomeKnown()
-		switch {
-		case merged:
-			o.Merged++
-		case b.Closed:
-			o.Closed++
-		case known:
-			o.Open++
-		default:
-			o.Unknown++
+		o := resp.Outcomes[b.Author.Kind]
+		o.add(b)
+		resp.Outcomes[b.Author.Kind] = o
+		family := evidenceAuthorFamily(b.Author)
+		fo := resp.OutcomesByAuthorFamily[family]
+		fo.add(b)
+		resp.OutcomesByAuthorFamily[family] = fo
+		if !merged && !b.Closed && !known {
 			resp.Missing.PRsOutcomeUnknown++
 		}
-		resp.Outcomes[b.Author.Kind] = o
+		if known && b.Outcome != nil && !b.Backfilled && (!merged || b.MergedElsewhere) {
+			resp.Missing.PRsOutcomeFromLedger++
+		}
 		ciState := evidenceCIState(b.Bundle)
 		switch ciState {
 		case evidenceCINone:
@@ -845,47 +1034,21 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 
 			m := models[model]
 			if m == nil {
-				m = &EvidenceModelAccuracy{Model: model, ByAuthor: map[string]EvidenceModelStat{}}
+				m = &EvidenceModelAccuracy{Model: model, ByAuthor: map[string]EvidenceModelStat{}, ByAuthorFamily: map[string]EvidenceModelStat{}, ByFamilyMatch: map[string]EvidenceModelStat{}}
 				models[model] = m
 			}
 			m.N++
+			enforced := b.Policy.RequireApproval
 			st := m.ByAuthor[b.Author.Kind]
-			st.N++
-			if approve {
-				st.Approvals++
-				switch {
-				case !known:
-					st.ApprovedUnknown++
-				case !merged:
-					st.ApprovedNotMerged++
-				}
-			}
-			if block {
-				st.Blocks++
-				enforced := b.Policy.RequireApproval
-				if enforced {
-					st.EnforcedBlocks++
-				} else {
-					st.AdvisoryBlocks++
-				}
-				switch {
-				case !known:
-					st.BlockedUnknown++
-					if enforced {
-						st.EnforcedBlockedUnknown++
-					} else {
-						st.AdvisoryBlockedUnknown++
-					}
-				case merged:
-					st.MergedAfterBlock++
-					if enforced {
-						st.MergedAfterEnforcedBlock++
-					} else {
-						st.DissentBeforeMerge++
-					}
-				}
-			}
+			st.add(approve, block, known, merged, enforced)
 			m.ByAuthor[b.Author.Kind] = st
+			fst := m.ByAuthorFamily[family]
+			fst.add(approve, block, known, merged, enforced)
+			m.ByAuthorFamily[family] = fst
+			match := evidenceVerdictFamilyMatch(v, b.Author)
+			mst := m.ByFamilyMatch[match]
+			mst.add(approve, block, known, merged, enforced)
+			m.ByFamilyMatch[match] = mst
 		}
 	}
 
@@ -923,5 +1086,13 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 	}
 	resp.ShadowGate.WouldHaveHeld = resp.ShadowGate.ReviewGate.Held.N
 	resp.ShadowGate.WouldHaveBlocked = resp.ShadowGate.Intent.Held.N
+	for k, o := range resp.Outcomes {
+		o.finishChangeFailures()
+		resp.Outcomes[k] = o
+	}
+	for k, o := range resp.OutcomesByAuthorFamily {
+		o.finishChangeFailures()
+		resp.OutcomesByAuthorFamily[k] = o
+	}
 	return resp
 }

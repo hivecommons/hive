@@ -900,8 +900,8 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.processStartedAt = b.startTime
 	b.configPath = deps.parseFlags(resolveDefaultConfigPath(deps.getenv(hiveConfigEnv)))
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
-	// compares against. The Dockerfile builds it with `--short=7`, but git can
-	// still return more chars when 7 isn't unique; trim so what we report to the
+	// compares against. The Dockerfile cuts it to 7 chars from the full hash; trim
+	// defensively in case an older build used `--short=7` (a minimum) so what we report to the
 	// hub is always the same length it stores (no short-vs-full mismatch).
 	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
@@ -3587,6 +3587,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
 	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
 	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
+	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -7269,6 +7270,11 @@ func runEvalCycle(
 		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
 		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
 	}
+	// A fix kick (a maintainer's changes_requested / `/hive decision`, or
+	// the swarm's) goes ahead of the governor kick for the same agent, or
+	// the governor kick owns the agent and the fix kick times out every
+	// cycle (hivecommons/hive#13100).
+	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
 	// #4294: drop EVERY assembled kick while the provider is refusing on a
 	// spending limit. Placed after all three sources have contributed —
 	// governor-due agents, the CEL union, and the review swarm — because gating
@@ -7340,6 +7346,41 @@ func runEvalCycle(
 		notifier.Send("Provider spending limit reached", providerBudgetCause, notify.PriorityHigh)
 	}
 
+	// buildStatusSnapshot assembles the full dashboard snapshot from this
+	// cycle's evaluation. It is called twice: once BEFORE the kick dispatch
+	// below and once at the end of the cycle. Kicks are delivered serially
+	// and each one can wait up to the input-prompt timeout for a busy pane,
+	// so with a dozen due agents the dispatch alone has taken 10-15 minutes
+	// on hosted hives — during which /api/status (and everything derived from
+	// it: stage tracker, agent states, governor.nextKickAt) kept showing the
+	// previous cycle's data, and a rolling upgrade landing mid-dispatch meant
+	// the evaluation never reached the dashboard at all.
+	buildStatusSnapshot := func() *dashboard.StatusPayload {
+		payload := dashboard.BuildFrontendStatus(
+			govState,
+			actionable,
+			agentMgr.AllStatuses(),
+			cfg,
+			tokenCollector,
+			gov,
+			beadStores,
+			ghClient,
+			ctx,
+			metricsCollector,
+		)
+		// Green on a PR pill means "the sweep would merge this now" — the
+		// verdict writeMergeEligible reached for this same actionable set,
+		// not a re-derivation from mergeable_state (#7478).
+		dashboard.AttachMergeVerdicts(payload, mergeVerdicts)
+		// A PR pill also carries the hive's OWN review on that PR, so the
+		// queue view shows where the hive has already spoken. Read from the
+		// durable ledger, so this costs no GitHub call per PR; a missing or
+		// unreadable ledger simply means no review pills this cycle.
+		attachReviewLinksForDashboard(payload, logger)
+		return payload
+	}
+	publishStatusBeforeKicks(dashSrv, len(messages), buildStatusSnapshot, logger)
+
 	// Kick dispatch lives behind a seam (#7232): the skip rules and the
 	// single-probe rule are the decisions worth testing, and they were
 	// previously unreachable without a tmux session and a live governor.
@@ -7388,6 +7429,9 @@ func runEvalCycle(
 			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
 				gov.RecordKickFailure(msg.Agent, err, time.Now())
+				if k, ok := reviewKickByMessage[reviewKickKey(msg)]; ok {
+					logUndeliveredReviewKick(logger, dashSrv, k, err)
+				}
 			},
 			onDelivered: func(msg scheduler.KickMessage) {
 				gov.RecordKickForRepo(msg.Agent, msg.Repo)
@@ -7458,29 +7502,7 @@ func runEvalCycle(
 	// lands mid-build (restart-count/budget reset) drops this snapshot instead
 	// of letting it revert the mutation on the dashboard (#4348).
 	buildEpoch := dashSrv.BeginStatusSnapshot()
-	agentStatuses := agentMgr.AllStatuses()
-
-	statusPayload := dashboard.BuildFrontendStatus(
-		govState,
-		actionable,
-		agentStatuses,
-		cfg,
-		tokenCollector,
-		gov,
-		beadStores,
-		ghClient,
-		ctx,
-		metricsCollector,
-	)
-	// Green on a PR pill means "the sweep would merge this now" — the
-	// verdict writeMergeEligible reached for this same actionable set a
-	// few lines up, not a re-derivation from mergeable_state (#7478).
-	dashboard.AttachMergeVerdicts(statusPayload, mergeVerdicts)
-	// A PR pill also carries the hive's OWN review on that PR, so the queue
-	// view shows where the hive has already spoken. Read from the durable
-	// ledger, so this costs no GitHub call per PR; a missing or unreadable
-	// ledger simply means no review pills this cycle.
-	attachReviewLinksForDashboard(statusPayload, logger)
+	statusPayload := buildStatusSnapshot()
 	statusPublished := false
 	// Ingest any JSONL findings agents wrote and persist them as beads.
 	if advisoryStore != nil {
@@ -7802,7 +7824,7 @@ func runEvalCycle(
 		if tokenCollector != nil {
 			tokenSummary = tokenCollector.Summary()
 		}
-		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentStatuses, tokenSummary); err != nil {
+		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentMgr.AllStatuses(), tokenSummary); err != nil {
 			logger.Warn("failed to record nous snapshot", "error", err)
 		}
 	}
@@ -9476,6 +9498,18 @@ func applyDuplicatePRGuard(
 	actionable *github.ActionableResult,
 	logger *slog.Logger,
 ) {
+	// The PR-claim guard runs FIRST: an open PR that fixes the issue is the
+	// stronger evidence, and the guards below only walk what is still in
+	// the actionable set. With the live-claim filter ahead of it, an issue
+	// whose agent claim was still live when its PR opened was withheld as
+	// "claimed" before the ledger could bucket it "claimed_by_pr", so every
+	// sweep re-derived 020 under the PR-opened 040 and the stage store
+	// recorded a spurious regression (hivecommons/hive#13174 et al.). The
+	// ledger's open-issue set (OpenIssuesOf) likewise needs the full list.
+	ledger := getClaimLedger(logger)
+	if ledger != nil {
+		github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	}
 	// #8380: a LIVE issue claim covers an issue the same way an open PR does,
 	// for every kick prompt (the scanner's included). The claim fields are
 	// only ever set while governor.claims.enabled is on, so with the feature
@@ -9485,11 +9519,9 @@ func applyDuplicatePRGuard(
 			logger.Info("issue-claim guard applied", "withheld", withheld)
 		}
 	}
-	ledger := getClaimLedger(logger)
 	if ledger == nil {
 		return
 	}
-	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
 	// The in-progress sweep runs after the PR-claim guard so an issue whose
 	// PR just opened sheds the start mark here, and a lapsed mark frees the
 	// issue before kicks are built. Independent of governor.claims: the
@@ -9696,6 +9728,10 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#13241: an issue a person reopens after its closing PR
+	// merged is a change failure on that PR's evidence record, from both the
+	// issues.reopened webhook and the enumeration reopen check.
+	github.SetIssueReopenRecorder(client.RecordReviewEvidenceIssueReopen)
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.
@@ -10024,6 +10060,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// Not a planner input: the fix gate decides on the login author
 			// alone (#8421, #13124).
 			HiveAttributed: pr.HiveAttributed,
+			// The authoring model from the same trailer: what review_models
+			// exclusions compare against, and stamped into the verdict as
+			// author_model (hivecommons/hive#13243).
+			AuthorModel: pr.HiveModel,
 			// Grounding anchor for the review prompt. Repo access is the
 			// measured active ingredient in review quality (17%→67% hit rate,
 			// 61% fewer false positives), so the reviewer is told which commit
@@ -10058,6 +10098,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			LaneKeywords:   ac.LaneKeywords,
 			DetectKeywords: ac.DetectKeywords,
 			Aliases:        ac.Aliases,
+			Backend:        ac.Backend,
+			Model:          ac.Model,
+			ReviewModels:   ac.ReviewModels,
 		})
 	}
 	reviewBotLogins := []string{}
@@ -10086,7 +10129,11 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
+		PerspectiveModels:     cfg.Review.PerspectiveModels,
 	})
+	for _, sk := range plan.SkippedReviewModels {
+		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
+	}
 	for _, e := range plan.Expired {
 		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
 	}
@@ -10110,6 +10157,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
+		ModelStamps:                reviewModelStamps(logger),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -10118,6 +10166,21 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+// reviewModelStamps reads the dispatch state so a verdict whose report
+// omitted author_model / review_model is stamped with what the planner knew
+// when it dispatched that review (hivecommons/hive#13243). No state is no
+// stamps, never an error: the artifact is still correct, just unstamped.
+func reviewModelStamps(logger *slog.Logger) review.ModelStamps {
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Warn("review dispatch state unavailable for model stamping", "error", err)
+		}
+		return nil
+	}
+	return review.ModelStampsFromState(state)
 }
 
 func shouldRefreshReviewVerdicts(cfg *config.Config) bool {
@@ -10149,6 +10212,13 @@ const reviewOutcomeResolveCap = 40
 // prStateGetter is the slice of the GitHub client the outcome ledger needs.
 type prStateGetter interface {
 	GetPRState(ctx context.Context, repo string, number int) (github.PRState, error)
+}
+
+// reviewEvidenceOutcomeRecorder is the optional slice of the GitHub client
+// that stamps a resolved outcome onto the PR's evidence bundle, so a PR this
+// hive reviewed but did not merge stops reading as "outcome unknown".
+type reviewEvidenceOutcomeRecorder interface {
+	RecordReviewEvidenceOutcome(repo string, number int, st github.PRState, now time.Time)
 }
 
 // recordReviewOutcomes folds this cycle's open-PR enumeration into the
@@ -10228,6 +10298,9 @@ func recordReviewOutcomesAt(ctx context.Context, cfg *config.Config, gh prStateG
 			}
 			ledger.Resolve(m.Repo, m.Number, st.State, st.MergedAt, st.ClosedAt)
 			resolved++
+			if rec, ok := gh.(reviewEvidenceOutcomeRecorder); ok {
+				rec.RecordReviewEvidenceOutcome(m.Repo, m.Number, st, now)
+			}
 		}
 	}
 	ledger.Snapshot(now)

@@ -127,7 +127,13 @@ func TestExpectedRules(t *testing.T) {
 		{"drawn regression", stagelabels.PRItem, stagelabels.MergeQueue, stagelabels.Fixing, true},
 		{"drawn regression (issue): claim lapsed", stagelabels.IssueItem, stagelabels.Claimed, stagelabels.Actionable, true},
 		{"drawn regression (issue): start mark lapsed", stagelabels.IssueItem, stagelabels.PRInProgress, stagelabels.Actionable, true},
-		{"undrawn regression", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Claimed, false},
+		{"covering PR closed, nothing live", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Actionable, true},
+		{"covering PR closed, start marker live", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.PRInProgress, true},
+		{"covering PR closed, claim held", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Claimed, true},
+		{"PR evidence lapsed, claim held", stagelabels.IssueItem, stagelabels.PRInProgress, stagelabels.Claimed, true},
+		// 045 never regresses (IsRegression) and every backward hop among
+		// 010–040 is now drawn, so a park release is a non-regression hop.
+		{"park released to a held claim, not drawn", stagelabels.IssueItem, stagelabels.IssueNeedsDecision, stagelabels.Claimed, true},
 		{"undrawn regression (pr)", stagelabels.PRItem, stagelabels.AwaitingMergeAdmission, stagelabels.ReviewPending, false},
 		{"pr stage on an issue", stagelabels.IssueItem, stagelabels.Actionable, stagelabels.ReviewPending, false},
 		{"issue stage on a pr", stagelabels.PRItem, stagelabels.Claimed, stagelabels.ReviewPending, false},

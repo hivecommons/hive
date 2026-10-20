@@ -263,6 +263,9 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		return nil
 	}
 	agent.forceRelaunch = false
+	// Past the surviving-pane return above, a fresh CLI replaces whatever ran
+	// before: tell consumers the old context (and anything it held) is gone.
+	m.notifyRelaunchObserver(agent.Name)
 
 	// Single-CLI guarantee: reap any pre-existing or leaked CLI for this agent
 	// before launching a new one. Without this a relaunch (model/backend switch,

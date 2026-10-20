@@ -80,6 +80,8 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
 		HiveSlug:   s.FleetReportHiveSlug(),
+		HiveName:   s.FleetReportHiveName(),
+		SpokeURL:   s.FleetReportSpokeURL(),
 		ProjectOrg: func() string {
 			if s.deps == nil || s.deps.Config == nil {
 				return ""
@@ -115,6 +117,32 @@ func (s *Server) FleetReportHiveSlug() string {
 		return ""
 	}
 	return strings.TrimSpace(s.deps.Config.HiveID)
+}
+
+// FleetReportHiveName is the display name a self-report carries next to the
+// hive id (#13211): project.name, which hub provisioning seeds from the
+// hive's project_name. "" on a hive that is not hub-managed, so an anonymous
+// report stays anonymous; the hub overlays its own (renamed) project_name on
+// relay.
+func (s *Server) FleetReportHiveName() string {
+	if s.FleetReportHiveSlug() == "" {
+		return ""
+	}
+	return fleetreport.NormalizeHiveName(s.deps.Config.Project.Name)
+}
+
+// FleetReportSpokeURL is the dashboard URL a self-report links to (#13211):
+// dashboard.public_url, else the hub-delivered hub.dashboard_url — the same
+// precedence as the advisory digest and OAuth origins. "" unless hub-managed.
+func (s *Server) FleetReportSpokeURL() string {
+	if s.FleetReportHiveSlug() == "" {
+		return ""
+	}
+	cfg := s.deps.Config
+	if v := fleetreport.NormalizeSpokeURL(cfg.Dashboard.PublicURL); v != "" {
+		return v
+	}
+	return fleetreport.NormalizeSpokeURL(cfg.Hub.DashboardURL)
 }
 
 // FleetReportRepos is the owner/repo list a self-report may name: the

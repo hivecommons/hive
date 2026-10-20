@@ -251,6 +251,11 @@ fi
 dockerfile_arg() { sed -n "s/^ARG $1=\(.*\)$/\1/p" "$DOCKERFILE" | head -1; }
 
 RUNTIME_BASE="$(sed -n 's/^FROM \(.*\) AS runtime$/\1/p' "$DOCKERFILE" | head -1)"
+# The FROM line names its registry through `${BASE_REGISTRY}` so CI can rebuild
+# from docker.io when the mirror throttles; resolve it the way `docker build`
+# would — the environment override first, then the Dockerfile's ARG default.
+BASE_REGISTRY="${BASE_REGISTRY:-$(dockerfile_arg BASE_REGISTRY)}"
+RUNTIME_BASE="${RUNTIME_BASE//\$\{BASE_REGISTRY\}/$BASE_REGISTRY}"
 SU_EXEC_COMMIT="$(dockerfile_arg SU_EXEC_COMMIT)"
 SU_EXEC_SHA256="$(dockerfile_arg SU_EXEC_SHA256)"
 HIVE_LAUNCH_GID="$(dockerfile_arg HIVE_LAUNCH_GID)"

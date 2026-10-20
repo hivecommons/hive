@@ -35,7 +35,10 @@ check() {
 
 contains() {
   local label="$1" haystack="$2" needle="$3"
-  if printf '%s' "$haystack" | grep -qF "$needle"; then
+  # Bash substring match: `printf | grep -q` races on large haystacks (grep
+  # exits on the first match, printf gets EPIPE, pipefail flips a real match
+  # into a spurious FAIL).
+  if [[ "$haystack" == *"$needle"* ]]; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else

@@ -137,6 +137,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidatePendingReviewTTL(); err != nil {
 		return err
 	}
+	if err := c.validateReviewPerspectiveModels(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -468,6 +471,33 @@ func validateAgentVariables(agentName string, vars map[string]VarDef) error {
 		case "", "template", "both":
 		default:
 			return fmt.Errorf("agent %s: variables.%s: scope %q is invalid for a per-agent variable (must be template or both)", agentName, name, def.Scope)
+		}
+	}
+	return nil
+}
+
+// validateReviewPerspectiveModels checks review.perspective_models the way
+// agents.<name>.review_models.pool entries are checked: both halves present,
+// and the backend one the governor can launch.
+func (c *Config) validateReviewPerspectiveModels() error {
+	names := make([]string, 0, len(c.Review.PerspectiveModels))
+	for name := range c.Review.PerspectiveModels {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry := c.Review.PerspectiveModels[name]
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("review.perspective_models: perspective name is required")
+		}
+		if strings.TrimSpace(entry.Backend) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: backend is required", name)
+		}
+		if err := c.Governor.ValidateBackend(strings.TrimSpace(entry.Backend)); err != nil {
+			return fmt.Errorf("review.perspective_models[%s]: %w", name, err)
+		}
+		if strings.TrimSpace(entry.Model) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: model is required", name)
 		}
 	}
 	return nil

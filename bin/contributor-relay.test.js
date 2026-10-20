@@ -14466,6 +14466,44 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
   } finally { teardown(relay); }
 });
 
+// ── hivecommons/hive#13146: the `wrong_base` verdict ─────────────────────────
+
+test('#13146 wrong_base carries a release branch without becoming already-done', () => {
+  const relay = loadRelay({});
+  try {
+    const line = 'HIVE_VERDICT: wrong_base — v6';
+    const v = relay.detectCompletionVerdict([line], null);
+    assert.deepStrictEqual(v, {
+      verdict: 'wrong_base',
+      reason: 'v6',
+      line,
+      targetBranch: 'v6',
+    });
+    assert.ok(relay.isNoWorkVerdict(v), 'wrong_base completes without a PR');
+    assert.strictEqual(relay.isAlreadyDoneNoWork(v), false,
+      'wrong_base must never apply the already-done workflow label');
+    assert.deepStrictEqual(relay.verdictWireFields(v), {
+      verdict: 'wrong_base',
+      verdict_reason: 'v6',
+      verdict_target_branch: 'v6',
+    });
+  } finally { teardown(relay); }
+});
+
+test('#13146 malformed wrong_base targets still reach the hub for parking', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectNoWorkVerdict(['HIVE_VERDICT: wrong_base — feature/not-a-release-line']);
+    assert.strictEqual(v.verdict, 'wrong_base');
+    assert.strictEqual(v.targetBranch, undefined);
+    assert.deepStrictEqual(relay.verdictWireFields(v), {
+      verdict: 'wrong_base',
+      verdict_reason: 'feature/not-a-release-line',
+      verdict_target_branch: undefined,
+    });
+  } finally { teardown(relay); }
+});
+
 // ── hivecommons/hive#7924: the `blocked` verdict ─────────────────────────────
 //
 // utah#100 ended in a correct no_work_needed whose reason was "nothing here can
@@ -14480,7 +14518,7 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
 
 const BLOCKED_REASON = "nautilus's dependency closure now has recipes on utah-packages main, but no factory build has published since they merged";
 
-test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the other two', () => {
+test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the other verdicts', () => {
   const relay = loadRelay({});
   try {
     const v = relay.detectCompletionVerdict([`HIVE_VERDICT: blocked — ${BLOCKED_REASON}`], null);
@@ -14494,7 +14532,7 @@ test('#7924 HIVE_VERDICT: blocked is a verdict of its own, echo-guarded like the
     // Token boundary: prose that starts with the word is not the sentinel.
     assert.strictEqual(relay.detectCompletionVerdict(['HIVE_VERDICT: blockedness is a state of mind'], null), null);
     assert.strictEqual(relay.detectCompletionVerdict(['blocked — waiting on the factory'], null), null, 'no marker, no verdict');
-    assert.deepStrictEqual(relay.HIVE_VERDICT_TOKENS, ['complete', 'no_work_needed', 'blocked']);
+    assert.deepStrictEqual(relay.HIVE_VERDICT_TOKENS, ['complete', 'no_work_needed', 'blocked', 'wrong_base']);
   } finally { teardown(relay); }
 });
 

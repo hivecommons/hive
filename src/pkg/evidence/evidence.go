@@ -42,7 +42,9 @@ const (
 // RevertOf and FollowupOf are the bundle ids of earlier merged PRs this PR
 // reverts or fixes up; RevertedBy and FollowedUpBy are the reverse links
 // written on those earlier bundles. They are a change-failure-rate proxy, not
-// a verdict on the change (hivecommons/hive#12067).
+// a verdict on the change (hivecommons/hive#12067). IssueReopens records
+// issues this PR closed that a person reopened after the merge, the other
+// change-failure signal (hivecommons/hive#13241).
 type Bundle struct {
 	SchemaVersion    string            `json:"schema_version"`
 	ID               string            `json:"id"`
@@ -63,9 +65,11 @@ type Bundle struct {
 	FollowupOf       []string          `json:"followup_of,omitempty"`
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
+	IssueReopens     []IssueReopen     `json:"issue_reopens,omitempty"`
 	Shadow           *Shadow           `json:"shadow,omitempty"`
 	Backfilled       bool              `json:"backfilled,omitempty"`
 	Backfill         *Backfill         `json:"backfill,omitempty"`
+	Outcome          *Outcome          `json:"outcome,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -103,6 +107,14 @@ type Verdict struct {
 	Confidence  float64   `json:"confidence"`
 	Findings    []Finding `json:"findings,omitempty"`
 	RecordedAt  time.Time `json:"recorded_at"`
+	// AuthorModel is the model the verdict's report named as the PR's
+	// author (the attribution trailer), when it did. The bundle's Author
+	// carries the audit-recorded model; this is the reviewer's view of it.
+	AuthorModel string `json:"author_model,omitempty"`
+	// SameFamily is whether the reviewing model and the author's model share
+	// a vendor family (modelfamily.SameFamily). Nil when either side is
+	// unknown, so cross-family is never confused with cannot-say.
+	SameFamily *bool `json:"same_family,omitempty"`
 }
 
 // Finding is a single review finding.
@@ -225,6 +237,40 @@ type Backfill struct {
 	AuthorKindRule string `json:"author_kind_rule,omitempty"`
 	// Flags are the pre-registration exclusion flags that apply to the repo.
 	Flags []string `json:"flags,omitempty"`
+}
+
+// OutcomeSourceLedger names the review-outcome ledger (pkg/review) as the
+// source of a recorded Outcome: the governor noticed the PR had left its
+// open list and asked the forge what became of it.
+const OutcomeSourceLedger = "review-outcome-ledger"
+
+// MergeUnrecorded is the Actor and Method of a merge event this hive did not
+// perform and only learned about from the forge after the fact.
+const MergeUnrecorded = "unrecorded"
+
+// Outcome records what the forge said happened to a PR this hive reviewed
+// but did not merge: closed without merge, or merged by someone else. A live
+// bundle otherwise only ever states a merge the hive itself performed, so
+// without this the PR would read as "outcome unknown" forever. It is written
+// by the review-outcome ledger once the PR leaves the governor's open list
+// (no extra forge call: the ledger already fetched the state) and is
+// record-only; nothing reads it back into a merge decision. A bundle that
+// carries a merged Outcome also carries a Merge event with Actor set to the
+// merger the forge reported and Method MergeUnrecorded.
+type Outcome struct {
+	// Source names where the outcome was observed, e.g. OutcomeSourceLedger.
+	Source string `json:"source"`
+	// State is the PR's state at At: BackfillStateClosed or
+	// BackfillStateMerged on disk; BackfillStateOpen only as a read-time hint.
+	State string `json:"state"`
+	// At is when the outcome was recorded.
+	At time.Time `json:"at"`
+	// MergedBy is the login the forge reported as the merger; empty when not
+	// merged or unknown.
+	MergedBy string `json:"merged_by,omitempty"`
+	// MergedAt and ClosedAt are the forge's timestamps for the outcome.
+	MergedAt time.Time `json:"merged_at,omitzero"`
+	ClosedAt time.Time `json:"closed_at,omitzero"`
 }
 
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
@@ -351,6 +397,22 @@ func (b *Bundle) Validate() error {
 			}
 		}
 	}
+	if o := b.Outcome; o != nil {
+		if o.Source == "" {
+			bad("outcome.source is required")
+		}
+		if o.At.IsZero() {
+			bad("outcome.at is required")
+		}
+		switch o.State {
+		case BackfillStateOpen, BackfillStateClosed, BackfillStateMerged:
+		default:
+			bad("outcome.state %q must be open, closed or merged", o.State)
+		}
+		if o.State == BackfillStateMerged && b.Merge == nil {
+			bad("outcome.state merged requires a merge event")
+		}
+	}
 	for _, l := range []struct {
 		name string
 		ids  []string
@@ -362,6 +424,17 @@ func (b *Bundle) Validate() error {
 			if id == "" {
 				bad("%s[%d]: bundle id is required", l.name, i)
 			}
+		}
+	}
+	for i, r := range b.IssueReopens {
+		if r.Issue <= 0 {
+			bad("issue_reopens[%d]: issue must be positive", i)
+		}
+		if r.At.IsZero() {
+			bad("issue_reopens[%d]: at is required", i)
+		}
+		if r.Source == "" {
+			bad("issue_reopens[%d]: source is required", i)
 		}
 	}
 	return errors.Join(errs...)

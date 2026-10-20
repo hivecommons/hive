@@ -2409,6 +2409,11 @@ type PRState struct {
 	BaseRef string
 	// MergedBy is the login that merged the PR ("" when not merged or unknown).
 	MergedBy string
+	// Title, Body and HeadSHA are carried so a merged PR's text can be
+	// scanned for a revert without another fetch (hivecommons/hive#13241).
+	Title   string
+	Body    string
+	HeadSHA string
 }
 
 // GetPRState fetches a single PR's state. The review-outcome ledger calls it
@@ -2430,7 +2435,8 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		}
 		c.storePRDetail(repo, number, pr)
 	}
-	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin()}
+	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin(),
+		Title: pr.GetTitle(), Body: pr.GetBody(), HeadSHA: pr.GetHead().GetSHA()}
 	if !pr.GetMergedAt().IsZero() {
 		st.MergedAt = pr.GetMergedAt().Time
 	}

@@ -43,7 +43,7 @@ const hivesProbeTimeout = 5 * time.Second
 // it; nothing else implements it in production.
 type hivesStore interface {
 	LoadOrMigrate() (*hivectl.ProfileSet, bool, error)
-	Commit(*hivectl.ProfileSet) error
+	CommitExpecting(set *hivectl.ProfileSet, expected string) error
 	Path() string
 	EnvPath() string
 }
@@ -425,7 +425,12 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 		if err != nil {
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
-		if err := env.store.Commit(set); err != nil {
+		// Commit against the revision just reloaded: the reload narrows the
+		// window, the expected-revision check under the store's lock closes it.
+		if err := env.store.CommitExpecting(set, set.Revision()); err != nil {
+			if errors.Is(err, hivectl.ErrStaleRevision) {
+				err = fmt.Errorf("%w — profiles.yml was changed by another hivectl, TUI or Commons web session; nothing was written, review the hives again and retry", err)
+			}
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
 		if hivesActionSignalsRelay(action.Kind) && env.signalRelay != nil {

@@ -67,8 +67,12 @@ swarm's outstanding findings; the swarm verdict for that head is superseded,
 and the new head the agent pushes gets the normal swarm re-review. One kick per
 (head, review/comment): a second sweep over the same head does not re-kick, a
 dismissed review or a later approval by the same reviewer clears it, and a
-changes-requested review left on an older head is outdated. The 085 entry
-comment names both actions. The commenter must hold `write` or better on the
+changes-requested review left on an older head is outdated. The fix kick is
+delivered ahead of the governor's own kick to the same agent in that eval
+cycle, so it does not time out behind routine queue work; a kick that still
+cannot be sent is logged as `review swarm kick not delivered` with the PR and
+audited as `review_kick_undelivered`, and the planner re-plans it next cycle.
+The 085 entry comment names both actions. The commenter must hold `write` or better on the
 repo *and* be in the hive's trusted-merger set (the bar a human approval
 already meets). `/hive decision` on a PR the hive did **not** open, or `/hive
 approve` / `/hive help` on any PR, gets one reply naming the review-side
@@ -218,9 +222,10 @@ including PRs without a parking label
 acknowledges the comment and names the lever that actually releases a
 `requires_human` hold on this release line — a trusted merger's GitHub
 **Approve** review on the current head — or explains why the lane cannot act
-on it: for example, the commenter is not a trusted merger on the contributor
-lane, the contributor-lane verdict is a rejection rather than
-`requires_human`, or the PR touches a manual-only path. An ordinary
+on it: for example, the commenter is not a trusted merger (on any merge lane —
+contributor, trusted-author or hive-authored — since only a trusted merger's
+Approve releases a hold), the contributor-lane verdict is a rejection rather
+than `requires_human`, or the PR touches a manual-only path. An ordinary
 contributor cannot release their own PR.
 
 The acknowledgement does not merge the PR, remove labels, or bypass any
