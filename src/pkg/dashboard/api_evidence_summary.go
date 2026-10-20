@@ -88,6 +88,11 @@ type EvidenceSummary struct {
 	// where GitHub-truth issue coverage begins (#12517).
 	WorkBalanceSources EvidenceWorkBalanceSources `json:"work_balance_sources"`
 	Missing            EvidenceMissing            `json:"missing"`
+	// Cards carries, per dashboard panel key, the server-computed letter
+	// grade (A+ … C-, or — when there is not enough data) and the one-line
+	// plain-English summary shown above each chart (#13204). Derived from the
+	// fields above by evidenceCards; see pkg/evidence/grade.go for the rubrics.
+	Cards map[string]evidence.Card `json:"cards"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -583,6 +588,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		acc := review.SummarizeReviewerAccuracy(now, time.Duration(days)*24*time.Hour, artifact, ledger, s.reviewerAccuracyEvidence())
 		resp.ReviewerAccuracy = &acc
 	}
+	resp.Cards = evidenceCards(&resp, win, now)
 	jsonResponse(w, resp)
 }
 

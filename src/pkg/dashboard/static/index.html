@@ -1671,9 +1671,18 @@
        column on phones. The card's head row always spans the full width. */
     .evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:var(--sp-3); }
     .evidence-card > .prt-head { grid-column:1 / -1; margin-bottom:0; }
-    .ev-panel { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); min-width:0; }
+    .ev-panel { position:relative; border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); min-width:0; }
+    /* One layout for every panel (#13204): header (title · ⓘ · n · grade)
+       → plain-English summary → chart → compact legend. Nothing inside a
+       panel may render larger than the summary row (--fs-xs). */
     .ev-panel > summary { cursor:pointer; font-size:var(--fs-xs); font-weight:600; color:var(--text); }
     .ev-n { display:inline-block; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:400; color:var(--muted); }
+    .ev-letter { float:right; min-width:2.4em; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--muted); border-radius:var(--r-pill); font-size:var(--fs-xs); font-weight:700; line-height:1.5; text-align:center; color:var(--muted); background:color-mix(in srgb, var(--muted) 10%, transparent); cursor:help; }
+    .ev-letter.ev-band-a { color:var(--green); border-color:var(--green); background:color-mix(in srgb, var(--green) 12%, transparent); }
+    .ev-letter.ev-band-b { color:var(--amber); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent); }
+    .ev-letter.ev-band-c { color:var(--red); border-color:var(--red); background:color-mix(in srgb, var(--red) 12%, transparent); }
+    .ev-letter.ev-band-none { color:var(--muted); border-style:dashed; }
+    .ev-plain { margin-top:var(--sp-2); font-size:var(--fs-xs); font-weight:400; line-height:1.4; color:var(--text); }
     /* Pinned to the viewBox width (EV_SVG_W) so one user unit is one CSS px
        and <text> renders at the token size instead of scaling with the card;
        it only shrinks below that on phones narrower than the chart. */
@@ -1758,14 +1767,14 @@
     .ev-legend i.cp-4 { background:var(--amber); opacity:.5; }
     .ev-legend i.cp-never { background:var(--red); }
     .ev-legend i.cp-line { background:var(--blue); height:2px; }
-    .ev-disclosed { margin:4px 0 6px; }
+    .ev-disclosed { margin:var(--sp-2) 0 var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-legend i.cr-rec { background:var(--green); }
     .ev-legend i.cr-green { background:var(--green); opacity:.45; }
     .ev-legend i.cr-aband { background:var(--red); }
     .ev-legend i.cr-pend { background:var(--amber); opacity:.6; }
     .ev-legend i.cr-unk { background:none; border:1px dashed var(--muted); }
-    .ev-headline { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--text); }
-    .ev-headline b { font-weight:600; }
+    .ev-headline { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-headline b { font-weight:600; color:var(--text); }
     .ev-headline .ev-sub { color:var(--muted); font-size:var(--fs-2xs); }
     .ev-flow { display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); }
     .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
@@ -1780,11 +1789,13 @@
     .ev-custom-range button { border:1px solid var(--amber); border-radius:var(--r-pill); background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--text); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); cursor:pointer; }
     .ev-custom-range .ev-range-err { color:var(--red); }
     .ev-custom-range[hidden] { display:none; }
-    /* Plain-language panel explainer: ⓘ toggle in the summary row, popover below. */
+    /* Plain-language panel explainer: ⓘ toggle in the summary row opens a
+       popover over the chart (never inline), so the panel itself stays short. */
     .ev-info { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:var(--sp-2); padding:0; border-radius:var(--r-pill); background:color-mix(in srgb, var(--blue) 18%, var(--panel)); border:1px solid color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); font-size:var(--fs-2xs); line-height:1; font-weight:700; cursor:pointer; vertical-align:middle; }
     .ev-info:hover, .ev-info:focus-visible, .ev-info[aria-expanded="true"] { background:var(--blue); border-color:var(--blue); color:var(--bg); outline:none; }
-    .ev-explainer { margin-top:var(--sp-2); padding:var(--sp-3); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--panel); font-size:var(--fs-2xs); font-weight:400; color:var(--text); line-height:1.45; }
+    .ev-explainer { position:absolute; left:var(--sp-3); right:var(--sp-3); top:calc(var(--sp-3) + 1.9em); z-index:5; max-height:60vh; overflow:auto; padding:var(--sp-3); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--panel); box-shadow:0 8px 24px color-mix(in srgb, var(--bg) 70%, transparent); font-size:var(--fs-2xs); font-weight:400; color:var(--text); line-height:1.45; }
     .ev-explainer[hidden] { display:none; }
+    .ev-explainer .ev-grade-rubric { margin-top:var(--sp-2); padding-top:var(--sp-2); border-top:1px dashed var(--border); color:var(--muted); }
     .ev-explainer h4 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
     .ev-explainer h4:first-child { margin-top:0; }
     .ev-explainer p { margin:2px 0 0; }
@@ -6710,7 +6721,7 @@
 
         <details class="faq-q" id="faq-evidence-card">
           <summary>What is the Evidence card, and what do its charts prove?</summary>
-          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcome by author kind, reviewer calibration, reviewer accuracy × model family, maintainability trend, boundary enforcement, claim vs verdict, work balance, and shadow gates) follow the 24h / 7d / 30d / custom window pills, and each panel's ⓘ button opens a plain-language explainer ending in a grade of Strong, Fair, Weak or Not enough data — except Maintainability trend, which is report-only and ends in a "Not graded" badge instead. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
+          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcome by author kind, reviewer calibration, reviewer accuracy × model family, maintainability trend, boundary enforcement, claim vs verdict, work balance, and shadow gates) follow the 24h / 7d / 30d / custom window pills, and each panel shows a letter grade (A+ … C-, or — when there is not enough data) next to its title, a one-sentence plain-English summary under it, and a ⓘ button that opens a popover with the full explainer, the details and "what this does not show", and the rubric behind the grade. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-behind">
@@ -23708,15 +23719,30 @@ function burnAreaChart() {
       },
     };
 
-    function evExplainerHtml(key, title, dto) {
+    // Detail text that used to sit inline under a chart (denominators, policy,
+    // coverage caveats). Each panel renderer stashes it here and the ⓘ popover
+    // shows it as a "Details" section (#13204).
+    const evDetails = {};
+    // Letter grade (A+ … C-, or — for not enough data) computed by the server
+    // in pkg/evidence/grade.go and shipped as /api/evidence/summary cards[key].
+    function evServerCard(dto, key) {
+      const c = dto && dto.cards && typeof dto.cards === 'object' ? dto.cards[key] : null;
+      return c && typeof c === 'object' ? c : null;
+    }
+    function evExplainerHtml(key, title, dto, note) {
       const fn = EV_EXPLAINERS[key];
       if (!fn) return { button: '', body: '' };
       const x = fn(dto || {});
       const id = `ev-explain-${key}`;
       const open = evExplainOpen.has(key);
-      const section = (h, body) => `<h4>${h}</h4><p>${escapeHtml(body)}</p>`;
+      const section = (h, body) => body ? `<h4>${h}</h4><p>${escapeHtml(body)}</p>` : '';
+      const sc = evServerCard(dto, key);
+      const g = sc && sc.grade && typeof sc.grade === 'object' ? sc.grade : null;
+      const gradeHtml = g
+        ? `<div class="ev-grade-rubric"><b>${g.enough_data ? `Grade ${escapeHtml(String(g.letter || '—'))}` : 'Not graded yet'}:</b> ${escapeHtml(String(g.reason || ''))}.${g.rubric ? ` Rubric: ${escapeHtml(String(g.rubric))}.` : ''}</div>`
+        : evGradeLine(x.grade, x.reason);
       const button = `<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`;
-      const body = `<div id="${id}" class="ev-explainer" role="region" aria-label="${escapeHtml(title)} explained"${open ? '' : ' hidden'}>${section('What is measured', x.measured)}${section('Why it matters', x.matters)}${section('How it is measured', x.how)}${section('What good looks like', x.good)}${section('What ours shows', x.ours)}${evGradeLine(x.grade, x.reason)}</div>`;
+      const body = `<div id="${id}" class="ev-explainer" role="region" aria-label="${escapeHtml(title)} explained"${open ? '' : ' hidden'}>${section('What is measured', x.measured)}${section('Why it matters', x.matters)}${section('How it is measured', x.how)}${section('What good looks like', x.good)}${section('What ours shows', x.ours)}${section('Details', evDetails[key])}${section('What this does not show', note)}${gradeHtml}</div>`;
       return { button, body };
     }
     function toggleEvidenceExplainer(key) {
@@ -23746,8 +23772,15 @@ function burnAreaChart() {
       const card = document.getElementById('evidence-card');
       const prev = card && card.querySelector(`details[data-ev-panel="${key}"]`);
       const open = prev ? prev.open : true;
-      const ex = evExplainerHtml(key, title, evLast);
-      return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}${ex.button}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span></summary>${ex.body}${bodyHtml}<div class="ev-note"><b>What this does not show:</b> ${escapeHtml(note)}</div></details>`;
+      const ex = evExplainerHtml(key, title, evLast, note);
+      const sc = evServerCard(evLast, key);
+      const g = sc && sc.grade && typeof sc.grade === 'object' ? sc.grade : null;
+      const band = g && ['a', 'b', 'c'].includes(g.band) ? g.band : 'none';
+      const letter = g && g.letter ? String(g.letter) : '—';
+      const why = g ? (g.enough_data ? String(g.reason || '') : `Not enough data yet: ${g.reason || ''}`) : 'Grade not reported by this hive';
+      const grade = `<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`;
+      const plain = sc && sc.plain_summary ? `<div class="ev-plain">${escapeHtml(String(sc.plain_summary))}</div>` : '';
+      return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}${ex.button}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span>${grade}</summary>${plain}${ex.body}${bodyHtml}</details>`;
     }
 
     // Panel 1 (#12364): PR outcome by author kind. One row per kind with a
@@ -23990,7 +24023,8 @@ function burnAreaChart() {
       const byTier = direct.by_tier || {};
       const total = Number(act.total_writes) || 0, blocked = Number(act.blocked) || 0;
       const rate = evRate(blocked, total);
-      const headline = `<div class="ev-headline"><b>${blocked} of ${formatNumber(total)} agent writes blocked</b> · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'} <span class="ev-sub">(${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct through the proxy${direct.recorded === false ? ' · direct-write counters not recorded yet' : direct.partial_coverage ? ` · direct-write counters recorded since ${escapeHtml(String(direct.since || ''))}` : ''})</span></div>`;
+      evDetails['boundary-enforcement'] = `${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct through the proxy${direct.recorded === false ? ' · direct-write counters not recorded yet' : direct.partial_coverage ? ` · direct-write counters recorded since ${String(direct.since || '')}` : ''}.`;
+      const headline = `<div class="ev-headline"><b>${blocked} of ${formatNumber(total)} agent writes blocked</b> · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'}</div>`;
       const tiers = EV_WRITE_TIERS.concat(Object.keys(byTier).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
       const rows = tiers.map((tier) => {
         const c = byTier[tier] || {};
@@ -24053,8 +24087,6 @@ function burnAreaChart() {
       const settled = Number(conv.settled) || 0, never = Number(passes.never) || 0;
       const abandon = evRate(never, settled);
       const firstPass = evRate(passes['1'], settled - never);
-      const gradeA = evGateGrade(breaches, withChecks);
-      const gradeB = evConvergenceGrade(conv.median_passes != null ? Number(conv.median_passes) : null, abandon, settled);
       const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'hands off to CI: agents do not wait for checks';
       const breachList = (Array.isArray(gate.breach_prs) ? gate.breach_prs : []).slice(0, 8).map((b) => {
         const label = `${b.repo}#${b.number}`;
@@ -24063,8 +24095,11 @@ function burnAreaChart() {
       }).join(' ');
       const cost = gate.median_green_to_merge_hours != null ? ` · gate latency median ${Math.round(Number(gate.median_green_to_merge_hours) * 10) / 10} h first green → merge (${Number(gate.green_to_merge_n) || 0})` : '';
       const suspected = Number(gate.suspected) || 0;
-      const a = `<div class="ev-headline"><span class="ev-grade ${gradeA}" title="Grade A">${EV_GRADES[gradeA]}</span> <b>Gate integrity ${evPct(integrity)}</b> · ${withChecks - breaches} of ${withChecks} merged PRs with a GitHub-confirmed or green state were green at merge · <b>${breaches} confirmed breach(es)</b>${breachList ? ` ${breachList}` : ''} <span class="ev-sub">(${Number(gate.merged_n) || 0} merged: ${Number(gate.pending) || 0} with checks still running, ${suspected} suspected — a review-time snapshot was red on the merged head and GitHub has not confirmed yet, ${Number(gate.unknown) || 0} with no state on the merged head; all outside the rate · breach = a required check red on the merged head per GitHub, as the merge gate judges; ${Number(gate.non_required_red) || 0} green merged with a red non-required check, disclosed${cost})</span></div>`;
-      const b = `<div class="ev-headline"><span class="ev-grade ${gradeB}" title="Grade B">${EV_GRADES[gradeB]}</span> <b>Convergence: median ${conv.median_passes != null ? conv.median_passes : '—'} CI pass(es) to green</b> · ${evPct(abandon)} abandoned (${never} of ${settled} settled) · first-pass share ${evPct(firstPass)} <span class="ev-sub">(${Number(conv.n) || 0} agent PRs: ${Number(conv.in_flight) || 0} in flight, ${Number(conv.unknown) || 0} unknown, outside the rates · ${Number(conv.from_github) || 0} read from GitHub, ${Number(conv.from_bundles) || 0} from bundles only · policy: ${escapeHtml(policy)})</span></div>`;
+      // The denominators and policy text live in the ⓘ popover; the card
+      // keeps two short lines at the body size (#13204).
+      evDetails['claim-vs-verdict'] = `Gate integrity: ${Number(gate.merged_n) || 0} merged: ${Number(gate.pending) || 0} with checks still running, ${suspected} suspected — a review-time snapshot was red on the merged head and GitHub has not confirmed yet, ${Number(gate.unknown) || 0} with no state on the merged head; all outside the rate · breach = a required check red on the merged head per GitHub, as the merge gate judges; ${Number(gate.non_required_red) || 0} green merged with a red non-required check, disclosed${cost}. Convergence: ${Number(conv.n) || 0} agent PRs: ${Number(conv.in_flight) || 0} in flight, ${Number(conv.unknown) || 0} unknown, outside the rates · ${Number(conv.from_github) || 0} read from GitHub, ${Number(conv.from_bundles) || 0} from bundles only · policy: ${policy}.`;
+      const a = `<div class="ev-headline"><b>Gate integrity ${evPct(integrity)}</b> · ${withChecks - breaches} of ${withChecks} merged PRs green at merge · <b>${breaches} confirmed breach(es)</b>${breachList ? ` ${breachList}` : ''}</div>`;
+      const b = `<div class="ev-headline"><b>Convergence: median ${conv.median_passes != null ? conv.median_passes : '—'} CI pass(es) to green</b> · ${evPct(abandon)} abandoned (${never} of ${settled} settled) · first-pass share ${evPct(firstPass)}</div>`;
       return a + b;
     }
     // Convergence chart: per ISO week a stacked bar of agent PRs by passes to
@@ -24121,7 +24156,8 @@ function burnAreaChart() {
       const rate = evRate(red.recovered_merged, settled);
       const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'hands off to CI: agents do not wait for checks';
       const med = red.median_pushes_to_green != null ? ` · median ${red.median_pushes_to_green} push(es), ${red.median_hours_to_green != null ? Math.round(Number(red.median_hours_to_green) * 10) / 10 : '—'} h to green` : '';
-      const headline = `<div class="ev-sub ev-disclosed">Disclosed, not graded: at claim ${Number(at.green) || 0} green · ${Number(at.red) || 0} red · ${Number(at.pending) || 0} pending · ${Number(at.none) || 0} no checks captured of ${Number(rec.n) || 0} agent claims (${escapeHtml(policy)}). Of ${n} red at claim: ${Number(red.recovered_merged) || 0} of ${settled} settled recovered and merged (${evPct(rate)})${med}${Number(red.not_enriched) > 0 ? ` · ${red.not_enriched} not yet enriched from GitHub` : ''}.</div>`;
+      evDetails['claim-vs-verdict'] = `${evDetails['claim-vs-verdict'] || ''} Red at claim (${policy}): of ${n} red at claim, ${Number(red.recovered_merged) || 0} of ${settled} settled recovered and merged (${evPct(rate)})${med}${Number(red.not_enriched) > 0 ? ` · ${red.not_enriched} not yet enriched from GitHub` : ''}.`.trim();
+      const headline = `<div class="ev-disclosed">Disclosed, not graded: at claim ${Number(at.green) || 0} green · ${Number(at.red) || 0} red · ${Number(at.pending) || 0} pending · ${Number(at.none) || 0} no checks captured of ${Number(rec.n) || 0} agent claims.</div>`;
       if (!n) return headline;
       const w = EV_SVG_W, h = 14;
       let x = 0;
@@ -24227,7 +24263,8 @@ function burnAreaChart() {
       const src = sources && typeof sources === 'object' ? sources : {};
       const sum = (key, sub) => rows.reduce((acc, r) => acc + (sub ? Object.values(r[key] || {}).reduce((a, v) => a + (Number(v) || 0), 0) : (Number(r[key]) || 0)), 0);
       const issuesOpened = sum('opened', true), issuesClosed = sum('closed'), prsOpened = sum('prs_opened', true), prsMerged = sum('prs_merged'), prsClosed = sum('prs_closed');
-      const headline = `<div class="ev-headline"><b>Queue at end of ${escapeHtml(String(last.week || ''))}: ${last.queue_issues != null ? last.queue_issues : '—'} open issues · ${last.queue_prs != null ? last.queue_prs : '—'} open PRs</b> <span class="ev-sub">· issues ${formatNumber(issuesOpened)} opened / ${formatNumber(issuesClosed)} closed (${evPct(evRate(issuesClosed, issuesOpened))}) · PRs ${formatNumber(prsOpened)} opened / ${formatNumber(prsMerged)} merged / ${formatNumber(prsClosed)} closed unmerged (${evPct(evRate(prsMerged, prsOpened))})${src.issue_series_weeks ? ` · ${src.issue_series_weeks} historical repository-week(s) from GitHub backfill, ${src.audit_only_weeks || 0} week(s) include audit fallback` : src.issues_github_since ? ` · issues from GitHub since ${escapeHtml(src.issues_github_since)}${src.audit_only_weeks ? `, ${src.audit_only_weeks} earlier week(s) audit-log only` : ''}` : ' · issues from the hive audit log only'}</span></div>`;
+      evDetails['work-balance'] = `Issues ${formatNumber(issuesOpened)} opened / ${formatNumber(issuesClosed)} closed (${evPct(evRate(issuesClosed, issuesOpened))}) · PRs ${formatNumber(prsOpened)} opened / ${formatNumber(prsMerged)} merged / ${formatNumber(prsClosed)} closed unmerged (${evPct(evRate(prsMerged, prsOpened))})${src.issue_series_weeks ? ` · ${src.issue_series_weeks} historical repository-week(s) from GitHub backfill, ${src.audit_only_weeks || 0} week(s) include audit fallback` : src.issues_github_since ? ` · issues from GitHub since ${src.issues_github_since}${src.audit_only_weeks ? `, ${src.audit_only_weeks} earlier week(s) audit-log only` : ''}` : ' · issues from the hive audit log only'}.`;
+      const headline = `<div class="ev-headline"><b>Queue at end of ${escapeHtml(String(last.week || ''))}: ${last.queue_issues != null ? last.queue_issues : '—'} open issues · ${last.queue_prs != null ? last.queue_prs : '—'} open PRs</b></div>`;
       const issues = evFlowSvg(rows, { noun: 'issues', opened: 'opened', done: 'closed', doneLabel: 'closed', queue: 'queue_issues', source: 'issue_source', aria: 'Work balance: issues opened per week by human, agent and bot, against issues closed and open issues at week end' });
       const prs = evFlowSvg(rows, { noun: 'PRs', opened: 'prs_opened', done: 'prs_merged', doneLabel: 'merged', closed: 'prs_closed', queue: 'queue_prs', aria: 'Work balance: PRs opened per week by human, agent and bot, against PRs merged and open PRs at week end' });
       return `${headline}<div class="ev-flow"><div><h5>Issues</h5>${issues}</div><div><h5>Pull requests</h5>${prs}</div></div>`;
@@ -24238,6 +24275,7 @@ function burnAreaChart() {
       if (!card) return;
       dto = dto || {};
       evLast = dto;
+      Object.keys(evDetails).forEach((k) => { delete evDetails[k]; });
       const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
       const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
       const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
