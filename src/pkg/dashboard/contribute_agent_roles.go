@@ -120,7 +120,10 @@ func buildRoleTaskPromptForContributor(ref worksource.Ref, title, role, agentPro
 }
 
 func buildRoleTaskPromptForContributorWithHints(ref worksource.Ref, title, role, agentPrompt string, canPush bool, guide string, hints taskPromptRepoHints) string {
-	base := buildTaskPromptForContributorWithHints(ref, title, canPush, guide, hints)
+	return wrapRoleTaskPrompt(buildTaskPromptForContributorWithHints(ref, title, canPush, guide, hints), role, agentPrompt)
+}
+
+func wrapRoleTaskPrompt(base, role, agentPrompt string) string {
 	role = normalizeAgentRole(role)
 	if role == "" {
 		return base

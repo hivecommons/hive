@@ -5401,7 +5401,7 @@ function resolveTaskPR(lines, opts) {
 //
 //   HIVE_VERDICT: <verdict> — <short reason>
 //
-// Three verdicts are defined:
+// Four verdicts are defined:
 //
 //   no_work_needed  (#3987) — the agent affirmatively determined there is
 //     NOTHING shippable (the remainder is gated on an unanswered maintainer
@@ -5424,6 +5424,12 @@ function resolveTaskPR(lines, opts) {
 //     label. `no_work_needed — blocked: <reason>` is accepted as the same
 //     verdict, for an agent that reaches for the older sentinel first.
 //
+//   wrong_base     (hivecommons/hive#13146) — the issue is actionable, but
+//     the referenced code is absent from the dispatched base and exists on a
+//     different release branch. The target branch travels on the wire for the
+//     hub to validate and retain as the next dispatch's base. It is never an
+//     already-done verdict.
+//
 //   complete        (#5376) — the agent is DONE with the task, whatever it
 //     shipped. This is the completion signal the interactive relay lacked:
 //     before it, "is this task done" was inferred from the vendor's terminal
@@ -5442,9 +5448,12 @@ function resolveTaskPR(lines, opts) {
 const HIVE_VERDICT_NO_WORK = 'no_work_needed';
 const HIVE_VERDICT_COMPLETE = 'complete';
 const HIVE_VERDICT_BLOCKED = 'blocked';
+const HIVE_VERDICT_WRONG_BASE = 'wrong_base';
 // Every sentinel the scanner recognises, for the callers that want "any
 // verdict at all" (completion, the #5650 delivery baseline, PR-URL ranking).
-const HIVE_VERDICT_TOKENS = [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED];
+const HIVE_VERDICT_TOKENS = [
+  HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED, HIVE_VERDICT_WRONG_BASE,
+];
 // The `no_work_needed — blocked: <reason>` spelling (#7924): the older
 // sentinel with the blocked marker as the reason's first word. Read as the
 // blocked verdict, with the marker stripped from the reason.
@@ -5489,24 +5498,33 @@ const ALREADY_DONE_TEXT_RE = /\b(?:already\s+(?:resolved|fixed|implemented|merge
 const COMMIT_SHA_RE = /\b[0-9a-f]{7,40}\b/i;
 const ALREADY_DONE_WORKFLOW_LABEL = process.env.HIVE_ALREADY_DONE_LABEL || 'hive/already-done';
 
-// isNoWorkVerdict says whether a verdict object is one of the "nothing to
-// ship" family — no_work_needed or blocked — which the hub books the same way
-// (task_complete verdict/verdict_reason) and a confirmed PR overrides the same
-// way (resolveTaskPR's suppressesVerdict).
+// isNoWorkVerdict says whether a verdict object is one of the "nothing this
+// dispatch can ship" family. A confirmed PR overrides all three in the same
+// way, while the hub gives each outcome different routing/cooldown semantics.
 function isNoWorkVerdict(v) {
-  return !!v && (v.verdict === HIVE_VERDICT_NO_WORK || v.verdict === HIVE_VERDICT_BLOCKED);
+  return !!v && (v.verdict === HIVE_VERDICT_NO_WORK ||
+    v.verdict === HIVE_VERDICT_BLOCKED ||
+    v.verdict === HIVE_VERDICT_WRONG_BASE);
 }
 
-// verdictWireFields renders a "nothing to ship" verdict (or null) as the
+// verdictWireFields renders a terminal no-PR verdict (or null) as the
 // task_complete fields the hub reads. A blocked verdict goes on the wire as
 // `verdict: no_work_needed` plus `verdict_blocked: true` — the marker, not a
 // new token — so a hub that predates #7924 sees exactly the no_work_needed it
-// already books (long offer-suppression), instead of an unknown verdict it
-// would normalize to a bare idle and re-offer on the short cooldown. A hub
-// that knows the marker books it as blocked (normalizeCompletionVerdict in
+// already books. `wrong_base` is deliberately a new token plus a separately
+// parsed target branch: an older hub safely treats it as idle and re-offers
+// instead of suppressing the issue as already done. A current hub validates
+// and persists that branch (normalizeCompletionVerdict in
 // src/pkg/dashboard/contribute_ledgers.go).
 function verdictWireFields(noWork) {
   if (!isNoWorkVerdict(noWork)) return {};
+  if (noWork.verdict === HIVE_VERDICT_WRONG_BASE) {
+    return {
+      verdict: HIVE_VERDICT_WRONG_BASE,
+      verdict_reason: noWork.reason,
+      verdict_target_branch: noWork.targetBranch,
+    };
+  }
   // A tooling-failure blocked verdict goes out with its reason but NO verdict
   // (hivecommons/hive#11775): the hub books it idle on the short cooldown, and
   // the reason still reaches its log and run record.
@@ -5536,8 +5554,13 @@ function alreadyDoneVerdictFields(reason) {
 }
 
 function isAlreadyDoneNoWork(noWork) {
-  if (!isNoWorkVerdict(noWork)) return false;
+  if (!noWork || noWork.verdict !== HIVE_VERDICT_NO_WORK) return false;
   return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
+}
+
+function wrongBaseTarget(reason) {
+  const match = /^(?:target(?: branch)?\s*[:=]\s*)?(v[0-9]+)$/i.exec(String(reason || '').trim());
+  return match ? match[1].toLowerCase() : undefined;
 }
 
 // hiveVerdictLineRe builds the one regex that recognises a sentinel line, for
@@ -5596,6 +5619,7 @@ function withoutPaneIndex(v) {
   const out = { verdict: v.verdict, reason: v.reason, line: v.line };
   if (v.needsDecision) out.needsDecision = true;
   if (v.toolingFailure) out.toolingFailure = true;
+  if (v.targetBranch) out.targetBranch = v.targetBranch;
   return out;
 }
 
@@ -5649,25 +5673,27 @@ function detectHiveVerdicts(lines, wanted) {
     // push/token/credential failure is demoted — the issue is not blocked on
     // anything outside the repo and must not be labelled as such.
     const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && isToolingFailureBlockedReason(reason);
-    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure });
+    const targetBranch = verdict === HIVE_VERDICT_WRONG_BASE ? wrongBaseTarget(reason) : undefined;
+    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure, targetBranch });
   }
   return found;
 }
 
-// Best-effort scan for the "nothing to ship" sentinels — no_work_needed, and
-// since #7924 its blocked sibling. Unchanged in behaviour from #3987/#4265
-// for the first; it shares the scanner above. Returns null when no marker is
+// Best-effort scan for sentinels that finish without shipping a PR:
+// no_work_needed, blocked, and wrong_base. Returns null when no marker is
 // found — the hub then treats the completion exactly as an idle one.
 function detectNoWorkVerdict(lines) {
-  return detectHiveVerdict(lines, [HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED]);
+  return detectHiveVerdict(lines, [
+    HIVE_VERDICT_NO_WORK, HIVE_VERDICT_BLOCKED, HIVE_VERDICT_WRONG_BASE,
+  ]);
 }
 
 // detectCompletionVerdict reports whether the agent SAID it finished (#5376).
 //
-// Either verdict counts as "the agent declared this task over": no_work_needed
-// is a completion too — it is the agent concluding the task with nothing to
-// ship — and requiring a second `complete` line after it would make a
-// compliant agent look non-compliant.
+// Every accepted verdict counts as "the agent declared this task over":
+// no_work_needed, blocked, and wrong_base are completions too, and requiring
+// a second `complete` line after one would make a compliant agent look
+// non-compliant.
 //
 // #7861: when the agent prints BOTH sentinels for the same task — a
 // no_work_needed with its real reason, then a narrated "complete" (the prompt
@@ -9174,6 +9200,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     HIVE_VERDICT_COMPLETE,
     HIVE_VERDICT_NO_WORK,
     HIVE_VERDICT_BLOCKED,
+    HIVE_VERDICT_WRONG_BASE,
     HIVE_VERDICT_TOKENS,
     BLOCKED_WORKFLOW_LABEL,
     DEFAULT_NEEDS_DECISION_LABEL,
