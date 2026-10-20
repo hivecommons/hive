@@ -330,6 +330,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 	}
 	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) ||
 		!strings.Contains(api.comments[0], "the reviewer swarm returned `requires_human` @sha") ||
+		!strings.Contains(api.comments[0], "trusted merger can submit a GitHub **Approve** review") ||
 		strings.Contains(api.comments[0], "the lane reported") {
 		t.Fatalf("085 entry comment = %q", api.comments)
 	}

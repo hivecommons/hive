@@ -9265,8 +9265,24 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if lastRun != nil {
 		*lastRun = now
 	}
+	// `/hive approve` on a PR is answered with what the merge lane will do
+	// with it (hivecommons/hive#13087); the engine here only reads policy.
+	approveOpts := automerge.Options{
+		MergerAuthorizer:       trustedMergerFunc(cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
+	}
+	if cfg != nil {
+		approveOpts.RepoAutoMergeEnabled = cfg.RepoAutoMergeEnabled
+		approveOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
+	}
+	approveEngine := automerge.New(ghClient, approveOpts)
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
-		MaxActions: github.DefaultIssueUnparkSweepMaxActions,
+		PRApproveReply: approveEngine.PRApproveReply,
+		MaxActions:     github.DefaultIssueUnparkSweepMaxActions,
 		// cfg is nil only in tests; nil leaves every repo on the default path.
 		LabelDriven:   func(repo string) bool { return cfg.RepoLabelDriven(repo) },
 		LabelApproval: labelApprovalPolicyResolver(cfg),

@@ -14,7 +14,7 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 | Command | What it does | Who may use it | Where it works | Pickup speed | Labels changed |
 | --- | --- | --- | --- | --- | --- |
-| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; `needs-human` lifts when **Hive** added it (an agent parked the issue on a person — your approval is that person's answer, and the stage engine derives 010; [#13075](https://github.com/hivecommons/hive/issues/13075)) and **stays** when a person added it or the timeline cannot say who did (the issue stays at 045 and out of the agent queue until a person removes it; [#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. |
+| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated). On an open pull request the command gets one acknowledgement or explanation reply and changes no labels (see [PR approval command feedback](#pr-approval-command-feedback)). | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; `needs-human` lifts when **Hive** added it (an agent parked the issue on a person — your approval is that person's answer, and the stage engine derives 010; [#13075](https://github.com/hivecommons/hive/issues/13075)) and **stays** when a person added it or the timeline cannot say who did (the issue stays at 045 and out of the agent queue until a person removes it; [#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. |
 | `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; `needs-human` lifts when **Hive** added it (your decision is the human input Hive asked for; left in place it would re-derive 045 two minutes later, [#13075](https://github.com/hivecommons/hive/issues/13075)) and **stays** when a person added it or the timeline cannot say who did — a decision never lifts a person's hold ([#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. An agent's later re-park on 085 is refused while `approved-direction` is present and the recorded decision text is unchanged. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
 | `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` and `needs-reporter-confirmation` when present. |
@@ -44,11 +44,14 @@ The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.
 
-PRs use GitHub's native review signal instead of `/hive approve`. When the
-swarm has not approved the current head because it returned `requires_human`,
-a human who is trusted to queue merges can submit a normal GitHub **Approve**
-review on that exact head SHA to clear `stage/085-needs-decision` for any
-author kind/lane. No special review body is required; the queued human-merge
+PRs use GitHub's native review signal instead of `/hive approve`; a
+`/hive approve` comment on a PR is acknowledged or explained but changes no
+labels and is not consumed by any merge lane (see [PR approval command
+feedback](#pr-approval-command-feedback)). When the swarm has not approved
+the current head because it returned `requires_human`, a human who is
+trusted to queue merges can submit a normal GitHub **Approve** review on
+that exact head SHA to clear `stage/085-needs-decision` for any author
+kind/lane. No special review body is required; the queued human-merge
 lane's `Approved by @... for Hive auto-merge on green CI.` body remains
 specific to that queue flow. A swarm `changes_requested` or `reject` verdict
 is not overridden by a human approval; the head must be fixed or merged
@@ -206,3 +209,23 @@ comments within a bounded seven-day window and a per-sweep action cap. Agents ma
 still read issue threads directly in their prompts, but the deterministic label
 transition to `approved-direction` happens only when the sweep accepts
 `/hive approve` or `/hive decision <text>`.
+
+## PR approval command feedback
+
+Hive answers recent `/hive approve` comments on open PRs once per comment,
+including PRs without a parking label
+([#13087](https://github.com/hivecommons/hive/issues/13087)). Its reply
+acknowledges the comment and names the lever that actually releases a
+`requires_human` hold on this release line — a trusted merger's GitHub
+**Approve** review on the current head — or explains why the lane cannot act
+on it: for example, the commenter is not a trusted merger on the contributor
+lane, the contributor-lane verdict is a rejection rather than
+`requires_human`, or the PR touches a manual-only path. An ordinary
+contributor cannot release their own PR.
+
+The acknowledgement does not merge the PR, remove labels, or bypass any
+merge gate; no merge lane consumes `/hive approve` on a PR.
+`stage/085-needs-decision` comments name the action for that lane under
+**How to release it**, including the GitHub **Approve** review when that is
+the lever, and explicitly identify manual-only merges such as workflow edits,
+removed tests or configured human-merge paths.
