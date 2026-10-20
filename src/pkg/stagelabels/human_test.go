@@ -279,3 +279,41 @@ func TestEntryCommentedResetsOnStageChange(t *testing.T) {
 	}
 	st.MarkEntryCommented("missing", "h1")
 }
+
+// TestDecisionCommentNamesActionsForSelfAuthoredRequiresHuman pins
+// hivecommons/hive#13041: the 085 comment on a hive-authored PR parked on
+// `requires_human` says what a maintainer can do — approve the head, or
+// request changes (review or `/hive decision`) and the hive pushes the fix.
+func TestDecisionCommentNamesActionsForSelfAuthoredRequiresHuman(t *testing.T) {
+	e := readyEvidence()
+	e.SelfAuthored = true
+	e.Verdict = VerdictRequiresHuman
+	r := RouteHuman(e)
+	if r.Stage != NeedsDecision || !r.SelfAuthored || r.Verdict != VerdictRequiresHuman || r.Head != e.Head {
+		t.Fatalf("route = %+v", r)
+	}
+	got := DecisionComment(r)
+	for _, want := range []string{
+		"**What to do:** approve this head (`abc1234`) to merge as-is",
+		"*changes requested* review",
+		"`/hive decision <what to change>`",
+		"the hive will push the fix",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("DecisionComment missing %q:\n%s", want, got)
+		}
+	}
+
+	// Not for a PR the hive did not open, and not for a hold-label park.
+	human := readyEvidence()
+	human.Verdict = VerdictRequiresHuman
+	if got := DecisionComment(RouteHuman(human)); strings.Contains(got, "What to do") {
+		t.Fatalf("actions offered on a non-hive PR:\n%s", got)
+	}
+	held := readyEvidence()
+	held.SelfAuthored = true
+	held.Holds = Holds([]string{"hold"})
+	if got := DecisionComment(RouteHuman(held)); strings.Contains(got, "What to do") {
+		t.Fatalf("actions offered on a hold-label park:\n%s", got)
+	}
+}

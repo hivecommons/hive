@@ -1,8 +1,7 @@
 package stagelabels
 
 import (
-	"github.com/hivecommons/hive/pkg/authorkind"
-	"github.com/hivecommons/hive/pkg/config"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/authorkind"
 )
 
 func TestTableIsOrderedSparseAndUnique(t *testing.T) {
@@ -121,8 +120,9 @@ func TestAllLabelDefsColours(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#12542: exactly one of `dco` / `no-dco`, Prow's legacy pair
-// stripped once the commit check has spoken, nothing touched while unknown.
+// hivecommons/hive#12542: exactly one of `dco` / `no-dco` once the commit
+// check has spoken, nothing touched while unknown. Prow's `dco-signoff: *`
+// pair is foreign (hivecommons/hive#13125) and is left alone in every case.
 func TestPlanDCO(t *testing.T) {
 	base := Desired{Stage: ReviewPending, Role: RoleContributor}
 	cur := []string{"stage/050-review-pending", "role/contributor", "dco-signoff: yes", "bug"}
@@ -130,13 +130,13 @@ func TestPlanDCO(t *testing.T) {
 	yes := base
 	yes.DCO = DCOYes
 	add, remove := Plan(cur, yes)
-	if !reflect.DeepEqual(add, []string{DCOLabel}) || !reflect.DeepEqual(remove, []string{LegacyDCOYes}) {
+	if !reflect.DeepEqual(add, []string{DCOLabel}) || len(remove) != 0 {
 		t.Fatalf("yes: add=%v remove=%v", add, remove)
 	}
 	no := base
 	no.DCO = DCONo
 	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCONo}, no)
-	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel, LegacyDCONo}) {
+	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel}) {
 		t.Fatalf("no: add=%v remove=%v", add, remove)
 	}
 	// Unknown keeps whatever is there, own or legacy.
@@ -144,10 +144,54 @@ func TestPlanDCO(t *testing.T) {
 	if len(add)+len(remove) != 0 {
 		t.Fatalf("unknown: add=%v remove=%v", add, remove)
 	}
-	// Idempotent.
-	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel}, yes)
-	if len(add)+len(remove) != 0 {
-		t.Fatalf("idempotent: add=%v remove=%v", add, remove)
+	// Idempotent — and still idempotent with Prow's pill alongside ours,
+	// which is the steady state on a repo where the Prow dco plugin runs.
+	for _, cur := range [][]string{
+		{"stage/050-review-pending", "role/contributor", DCOLabel},
+		{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCOYes},
+		{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCONo},
+	} {
+		add, remove = Plan(cur, yes)
+		if len(add)+len(remove) != 0 {
+			t.Fatalf("idempotent %v: add=%v remove=%v", cur, add, remove)
+		}
+	}
+}
+
+// hivecommons/hive#13125: the writer re-added nothing and removed
+// `dco-signoff: yes` every cycle while Prow / the DCO workflow put it back —
+// a label war on every open PR. Labels other tools own must never appear in
+// a plan, whatever the desired state, on PRs or issues.
+func TestPlanNeverTouchesThirdPartyLabels(t *testing.T) {
+	foreign := []string{
+		LegacyDCOYes, LegacyDCONo, "DCO-Signoff: Yes", "dco-signoff: pending",
+		"lgtm", "approved", "needs-rebase", "ok-to-test",
+		"tide/merge-method-squash",
+		"do-not-merge/hold", "do-not-merge/work-in-progress",
+		"size/XS", "size/XXL",
+		"kind/bug", "kind/feature",
+		"dco", // exact own name, wanted below — listed to prove exactness
+	}
+	wants := []Desired{
+		{},
+		{Stage: ReviewPending, Role: RoleContributor, DCO: DCOYes},
+		{Stage: ReviewPending, Role: RoleContributor, DCO: DCONo},
+		{Stage: ReturnedToContributor, Role: RoleContributor, Kind: authorkind.Human, Stalled: true, DCO: DCONo},
+		{Stage: MergeQueue, Role: RoleTrusted, DCO: DCOYes},
+	}
+	for _, want := range wants {
+		cur := append([]string{"stage/050-review-pending", "role/contributor", "author/human"}, foreign...)
+		add, remove := Plan(cur, want)
+		for _, l := range append(add, remove...) {
+			if l == DCOLabel || l == NoDCOLabel {
+				continue
+			}
+			for _, f := range foreign {
+				if l == f {
+					t.Errorf("want=%+v: plan touched third-party label %q (add=%v remove=%v)", want, l, add, remove)
+				}
+			}
+		}
 	}
 }
 
@@ -434,32 +478,6 @@ func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
 	first := Shared()
 	if first == nil || Shared() != first {
 		t.Fatal("Shared() must return one store")
-	}
-}
-
-// TestClaimLabelConstantsMatchStages pins pkg/claims' label strings (which
-// cannot import this package) to the stage table so the claim hooks and the
-// reconciler never disagree on the spelling.
-func TestClaimLabelConstantsMatchStages(t *testing.T) {
-	if got := Claimed.Label(); got != claims.LabelClaimed {
-		t.Fatalf("claims.LabelClaimed = %q, stage table says %q", claims.LabelClaimed, got)
-	}
-	if got := PRInProgress.Label(); got != claims.LabelPRInProgress {
-		t.Fatalf("claims.LabelPRInProgress = %q, stage table says %q", claims.LabelPRInProgress, got)
-	}
-	for _, l := range []string{claims.LegacyLabelClaimed, claims.LegacyLabelInProgress, LegacyCoveredByPR, LegacyCoveredByPRASCII, "CLAIMED"} {
-		if !IsLegacy(l) || !Owned(l) {
-			t.Errorf("%q should be a retired, owned label", l)
-		}
-	}
-	if IsLegacy(claims.LabelClaimed) || IsLegacy("hive/claimed-by-bob") {
-		t.Fatal("live stage label / who-modifier must not be legacy")
-	}
-	if !CarriesStageAtLeast([]string{"bug", MergeQueue.Label()}, CoveredByPR) {
-		t.Fatal("mirrored PR stage should count as covered")
-	}
-	if CarriesStageAtLeast([]string{Claimed.Label()}, CoveredByPR) || CarriesStageAtLeast(nil, Actionable) {
-		t.Fatal("claimed / no stage must not count as covered")
 	}
 }
 
@@ -1026,21 +1044,6 @@ func TestRenamesWithdrawnNeedsAuthorSpellingReads072(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#12683: config spells the decision park labels out because
-// it cannot import this package; the pairs must never drift. The issue park
-// signal is 045; 085 is the PR stage (and the retired issue spelling).
-func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
-	if IssueNeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
-		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", IssueNeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
-	}
-	if NeedsDecision.Label() != config.PRNeedsDecisionStageLabel {
-		t.Fatalf("stage label %q != config.PRNeedsDecisionStageLabel %q", NeedsDecision.Label(), config.PRNeedsDecisionStageLabel)
-	}
-	if StageBySlugFor("needs-decision", IssueItem) != IssueNeedsDecision || StageBySlugFor("needs-decision", PRItem) != NeedsDecision {
-		t.Fatal("StageBySlugFor must resolve the shared slug per kind")
-	}
-}
-
 // Adoption is an ownership state, not a CI state: a live adoption replaces
 // every review-side stage with 074 and gives way only at the merge gate
 // (hivecommons/hive#12736).
@@ -1096,5 +1099,209 @@ func TestRecordAdoptionLive(t *testing.T) {
 	st.MarkYielded(key, "ccc")
 	if rec, _ = st.Get(key); rec.AdoptionLive("ccc") || rec.YieldedHead != "ccc" {
 		t.Fatalf("yielded: %+v", rec)
+	}
+}
+
+// Stage-074 escape bookkeeping (hivecommons/hive#12858): the adopted-head
+// clock restarts on a hive push, a failed supersession reads as nobody
+// working the head, and an escalation is remembered once per head.
+func TestStoreAdoptionEscapeBookkeeping(t *testing.T) {
+	now := time.Date(2026, 10, 18, 14, 26, 0, 0, time.UTC)
+	clock := now
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("hivecommons/hive", 12858)
+	s.Observe(key, Fixing, LaneReasonChangesRequested)
+	s.MarkAdoptedInPlace(key, "5665cda", "grace-elapsed", now)
+	r, _ := s.Get(key)
+	if !r.AdoptedHeadSince().Equal(now) || !r.AdoptedHeadAt.Equal(now) || r.AdoptedHeadClockUnset() {
+		t.Fatalf("fresh in-place adoption clock: %+v", r)
+	}
+	if r.AdoptionEscalated("5665cda") || r.AdoptionAttemptedNothingOpened("5665cda") {
+		t.Fatalf("in-place record misread: %+v", r)
+	}
+
+	clock = now.Add(4 * time.Hour)
+	s.MarkAdoptedHead(key, "5665cda")
+	if r, _ = s.Get(key); !r.AdoptedHeadSince().Equal(now) {
+		t.Fatalf("same head restarted the clock: %+v", r)
+	}
+	s.MarkAdoptedHead(key, "f72fa44")
+	if r, _ = s.Get(key); !r.AdoptedHeadSince().Equal(clock) || r.AdoptedHead != "f72fa44" {
+		t.Fatalf("hive push did not restart the clock: %+v", r)
+	}
+
+	s.MarkAdoptionEscalated("missing", "f72fa44", "adoption-stalled:x")
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkAdoptionEscalated created a record")
+	}
+	s.MarkAdoptionEscalated(key, "", "adoption-stalled:x")
+	if r, _ = s.Get(key); r.AdoptionEscalated("") || r.AdoptEscalatedHead != "" {
+		t.Fatalf("empty head escalated: %+v", r)
+	}
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	r, _ = s.Get(key)
+	if !r.AdoptionEscalated("f72fa44") || r.AdoptionEscalated("5665cda") || r.AdoptEscalatedReason != "adoption-stalled:check-failing:unit" || !r.AdoptionEscalationNoted("f72fa44") {
+		t.Fatalf("escalation not recorded: %+v", r)
+	}
+	s.dirty = false
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	if s.dirty {
+		t.Fatal("re-marking the same escalation dirtied the store")
+	}
+	// hivecommons/hive#13040: the escalation releases when the reason
+	// clears, but the head stays noted so a flapping blocker is noted once.
+	s.ClearAdoptionEscalation(key)
+	r, _ = s.Get(key)
+	if r.AdoptionEscalated("f72fa44") || r.AdoptEscalatedReason != "" || !r.AdoptionEscalationNoted("f72fa44") || r.AdoptionEscalationNoted("5665cda") {
+		t.Fatalf("escalation not released: %+v", r)
+	}
+	s.dirty = false
+	s.ClearAdoptionEscalation(key)
+	s.ClearAdoptionEscalation("missing")
+	if s.dirty {
+		t.Fatal("clearing a released escalation dirtied the store")
+	}
+	s.MarkAdoptionEscalated(key, "f72fa44", "adoption-stalled:check-failing:unit")
+	if r, _ = s.Get(key); !r.AdoptionEscalated("f72fa44") {
+		t.Fatalf("re-escalation not recorded: %+v", r)
+	}
+
+	// A supersession that opened nothing is an adoption nobody works.
+	s.MarkAdopted(key, "f72fa44", 0, clock)
+	if r, _ = s.Get(key); !r.AdoptionAttemptedNothingOpened("f72fa44") || r.AdoptionAttemptedNothingOpened("5665cda") {
+		t.Fatalf("failed supersession misread: %+v", r)
+	}
+	s.MarkAdopted(key, "f72fa44", 90, clock)
+	if r, _ = s.Get(key); r.AdoptionAttemptedNothingOpened("f72fa44") {
+		t.Fatalf("live superseder misread: %+v", r)
+	}
+
+	// Yield and clear forget the escalation and the head clock.
+	s.MarkYielded(key, "abc")
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalatedReason != "" || r.AdoptEscalationNotedHead != "" || !r.AdoptedHeadAt.IsZero() {
+		t.Fatalf("yield kept escape state: %+v", r)
+	}
+	s.MarkAdoptedInPlace(key, "abc", "grace-elapsed", clock)
+	s.MarkAdoptedHead(key, "abd")
+	s.MarkAdoptionEscalated(key, "abd", "adoption-stalled:x")
+	s.ClearAdoption(key)
+	if r, _ = s.Get(key); r.AdoptEscalatedHead != "" || r.AdoptEscalationNotedHead != "" || !r.AdoptedHeadAt.IsZero() {
+		t.Fatalf("clear kept escape state: %+v", r)
+	}
+}
+
+// hivecommons/hive#13040: a record written before AdoptedHeadAt existed
+// carries a head the hive pushed but no clock for it. The reconciler stamps
+// the clock on first sight instead of reading the dwell from AdoptedAt.
+func TestStoreStampAdoptedHeadAtMigratesLegacyRecord(t *testing.T) {
+	adoptedAt := time.Date(2026, 10, 18, 14, 26, 0, 0, time.UTC)
+	clock := adoptedAt.Add(28 * time.Hour)
+	s := NewStore("", func() time.Time { return clock })
+	key := Key("hivecommons/hive", 12858)
+	s.Observe(key, AdoptedByHive, "optional-check-failing:overlap")
+	legacy, _ := s.Get(key)
+	legacy.AdoptedHead, legacy.AdoptMode, legacy.AdoptReason = "92fba9a", AdoptModeInPlace, "grace-elapsed"
+	legacy.AdoptedAt, legacy.AdoptCheckedAt = adoptedAt, adoptedAt
+	legacy.HivePushedHeads = []string{"92fba9a"}
+	data, err := json.Marshal(map[string]Record{key: legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var items map[string]Record
+	if err := json.Unmarshal(data, &items); err != nil {
+		t.Fatal(err)
+	}
+	s.items = items
+	r, _ := s.Get(key)
+	if !r.AdoptedHeadClockUnset() || !r.AdoptedHeadSince().Equal(adoptedAt) {
+		t.Fatalf("legacy record misread: %+v", r)
+	}
+	if s.StampAdoptedHeadAt(key, "other") || s.StampAdoptedHeadAt(key, "") || s.StampAdoptedHeadAt("missing", "92fba9a") {
+		t.Fatal("stamped the wrong record or head")
+	}
+	if !s.StampAdoptedHeadAt(key, "92fba9a") {
+		t.Fatal("legacy record not stamped")
+	}
+	r, _ = s.Get(key)
+	if r.AdoptedHeadClockUnset() || !r.AdoptedHeadSince().Equal(clock) || !r.AdoptedAt.Equal(adoptedAt) {
+		t.Fatalf("stamp: %+v", r)
+	}
+	s.dirty = false
+	if s.StampAdoptedHeadAt(key, "92fba9a") || s.dirty {
+		t.Fatal("re-stamped a live clock")
+	}
+	// A supersession has no head clock to stamp.
+	s.MarkAdopted(key, "92fba9a", 0, clock)
+	if r, _ = s.Get(key); r.AdoptedHeadClockUnset() || s.StampAdoptedHeadAt(key, "92fba9a") {
+		t.Fatalf("supersession stamped: %+v", r)
+	}
+}
+
+// 095 sits between 090 and 100, is PR-only with a stall note, and a 100 → 095
+// re-evaluation (the lane re-reports a still-soaking head) is a
+// reclassification, not a regression — while leaving 095 for a fix is.
+func TestPreMergeSoakStage(t *testing.T) {
+	if got := PreMergeSoak.Label(); got != "stage/095-pre-merge-soak" {
+		t.Fatalf("label = %q", got)
+	}
+	if !ReadyForHumanMerge.Before(PreMergeSoak) || !PreMergeSoak.Before(MergeQueue) || !AwaitingMergeAdmission.Before(PreMergeSoak) {
+		t.Fatal("095 must order between 080/090 and 100")
+	}
+	if !PreMergeSoak.StallNote() || !PreMergeSoak.Applies(PRItem) || PreMergeSoak.Applies(IssueItem) {
+		t.Fatalf("095 flags: stall=%v pr=%v issue=%v", PreMergeSoak.StallNote(), PreMergeSoak.Applies(PRItem), PreMergeSoak.Applies(IssueItem))
+	}
+	if PreMergeSoak.Dwell() != PreMergeSoakDwell || PreMergeSoakDwell != 45*time.Minute {
+		t.Fatalf("dwell = %s", PreMergeSoak.Dwell())
+	}
+	if IsRegression(MergeQueue, PreMergeSoak) {
+		t.Fatal("100 → 095 must not be a regression")
+	}
+	for _, to := range []Stage{Fixing, Reviewed, ReviewPending, AwaitingMergeAdmission} {
+		if !IsRegression(PreMergeSoak, to) {
+			t.Fatalf("095 → %s must be a regression", to)
+		}
+	}
+	if !IsRegression(MergeQueue, AwaitingMergeAdmission) {
+		t.Fatal("100 → 080 stays a regression")
+	}
+
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 13020)
+	st.Observe(key, AwaitingMergeAdmission, "contributor-lane:no-decision")
+	if tr := st.Observe(key, PreMergeSoak, "contributor-lane:soaking(remaining=30m0s)"); !tr.Changed || tr.Regressed {
+		t.Fatalf("080 → 095: %+v", tr)
+	}
+	if tr := st.Observe(key, MergeQueue, "contributor-lane:merge-eligible"); !tr.Changed || tr.Regressed {
+		t.Fatalf("095 → 100: %+v", tr)
+	}
+	if tr := st.Observe(key, PreMergeSoak, "contributor-lane:soaking(remaining=1m0s)"); !tr.Changed || tr.Regressed {
+		t.Fatalf("100 → 095 must be a plain move, got %+v", tr)
+	}
+	rec, _ := st.Get(key)
+	if rec.RegressedFrom != None {
+		t.Fatalf("100 → 095 must not record a regression: %+v", rec)
+	}
+
+	c := StallComment(PreMergeSoak, PreMergeSoakDwell, "contributor-lane:soaking(remaining=0s)")
+	if !strings.Contains(c, "stage 095-pre-merge-soak: no activity for 45m0s") || !strings.Contains(c, PreMergeSoakStallNote) {
+		t.Fatalf("stall comment = %q", c)
+	}
+	if c := StallComment(MergeQueue, time.Hour, "x"); strings.Contains(c, PreMergeSoakStallNote) {
+		t.Fatalf("100 stall must not carry the soak note: %q", c)
+	}
+
+	for _, tc := range []struct {
+		soak, elapsed time.Duration
+		want          string
+	}{
+		{30 * time.Minute, 12 * time.Minute, "soaking: admitted, 12m0s of 30m0s elapsed"},
+		{30 * time.Minute, 45 * time.Minute, "soaking: admitted, 30m0s of 30m0s elapsed"},
+		{30 * time.Minute, -time.Minute, "soaking: admitted, 0s of 30m0s elapsed"},
+		{0, time.Minute, "soaking: admitted, no soak window"},
+	} {
+		if got := PreMergeSoakSummary(tc.soak, tc.elapsed); got != tc.want {
+			t.Fatalf("PreMergeSoakSummary(%s,%s) = %q, want %q", tc.soak, tc.elapsed, got, tc.want)
+		}
 	}
 }

@@ -1,0 +1,1 @@
+- Getting Started checklist: plain-language "what Hive is" intro matching the docs, current method list (codex, goose, agy, omp, bob; openrouter, watsonx gateways), ACMM spelled out, Inception and Experiment Lab added to "More to explore", and docs links moved from the legacy docs.kubestellar.io domain and the v4 branch to docs.hivecommons.dev / v5.

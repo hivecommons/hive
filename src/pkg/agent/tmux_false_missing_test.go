@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,8 +22,24 @@ func writeFakeTmux(t *testing.T, script string) string {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	waitExecutable(t, path)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return path
+}
+
+// waitExecutable runs the freshly written script once, retrying while a
+// concurrent fork still holds its write descriptor (ETXTBSY, golang/go#22315).
+// The fake scripts are side-effect free, so the probe run is harmless.
+func waitExecutable(t *testing.T, path string) {
+	t.Helper()
+	for i := 0; i < 20; i++ {
+		err := exec.Command(path, "-V").Run()
+		if !errors.Is(err, syscall.ETXTBSY) {
+			return
+		}
+		<-time.After(5 * time.Millisecond)
+	}
+	t.Fatalf("%s still reports text file busy", path)
 }
 
 func TestTmuxSessionExistsLogsProbeFailureStderr(t *testing.T) {

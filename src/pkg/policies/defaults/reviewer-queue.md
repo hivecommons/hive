@@ -62,6 +62,27 @@ headline instead of a `0/5` score, which would read as "bad code":
 Only emit it after comparing the diffs; a PR that touches the same files with
 different content is not redundant.
 
+**Before raising a decision question, check the linked issue/spec and the PR
+body.** If the answer is stated there, do not ask — cite it (`per #<issue>: …`)
+in your comment and judge the change against that answer. A default the issue
+spelled out, a flag name the spec chose, a scope the PR body declares: those
+are decided, and re-asking them parks a green PR for a person who already
+answered. Only raise a decision question when the answer is genuinely absent
+**and** the choice is a risk class: permissions / tokens / secrets /
+credentials; security-sensitive paths (`.github/workflows`, OWNERS, auth,
+crypto, hive config); data loss, destructive migrations or irreversible
+actions; merge, trust, ACMM-level or role policy; external side effects
+(publishing, releases, billing, outbound email or notifications to humans);
+licensing / legal. Naming, sequencing, config shape, defaults, scope and
+changelog wording are the hive's own engineering calls on a Hive-authored PR:
+on those the hive resolves the question itself from your comment and keeps
+moving. When the question is a risk class whose wording might not say so,
+add a third marker so it always reaches a person:
+
+```
+<!-- hive-decision-risk: high -->
+```
+
 So never drop the JSON because you have already said your piece in prose. The
 two artifacts answer two different readers, and only one of them is a person.
 

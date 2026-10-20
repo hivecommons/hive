@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -53,7 +56,7 @@ var reviewVerdictAuditPath = "/data/audit.jsonl"
 //
 // It returns the reports actually recorded, which are what the review evidence
 // bundle may claim (review_evidence.go).
-func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.PerspectiveReport {
+func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir string) []review.PerspectiveReport {
 	raw := strings.TrimSpace(req.Report)
 	if raw == "" {
 		return nil
@@ -74,23 +77,97 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 		return nil
 	}
 	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
+	decisionRiskHigh := reviewDecisionRiskHighFromBody(req.Body)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
 		return nil
+	}
+	// The diff is fetched only when a human hold is actually in play: an
+	// approve with no decision question has nothing for the carve-out to lift.
+	tightening := false
+	if decisionRequested || reviewReportsHoldForHuman(reports) {
+		tightening = c.workflowPermissionsTighteningOnly(ctx, req)
 	}
 	var recorded []review.PerspectiveReport
 	for _, report := range reports {
 		if decisionRequested {
 			report.DecisionRequested = true
 			report.DecisionQuestion = decisionQuestion
+			report.DecisionRiskHigh = decisionRiskHigh
 			report.Verdict = review.VerdictRequiresHuman
 		}
+		report.PermissionsTighteningOnly = tightening
 		if written, ok := c.writeOneVerdict(req, report, dir); ok {
 			recorded = append(recorded, written)
 		}
 	}
 	return recorded
+}
+
+func reviewReportsHoldForHuman(reports []review.PerspectiveReport) bool {
+	for _, r := range reports {
+		if r.Verdict == review.VerdictRequiresHuman || r.DecisionRequested {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewVerdictFilesMaxPages bounds the files fetch: a permissions-only
+// tightening is a handful of files, so a PR that pages past this is not one
+// and the check fails closed without reading the rest.
+const reviewVerdictFilesMaxPages = 3
+
+// workflowPermissionsTighteningOnly fetches the reviewed PR's changed files
+// and asks review.WorkflowPermissionsTighteningOnly whether the diff is a
+// pure workflow permissions reduction (hivecommons/hive#13068). Every
+// failure path -- no client, API error, truncated file list -- answers
+// false, which leaves the verdict exactly as the reviewer recorded it.
+func (c *Client) workflowPermissionsTighteningOnly(ctx context.Context, req ReviewRequest) bool {
+	if c == nil || c.client == nil {
+		return false
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(req.Repo))
+	if owner == "" || name == "" || req.Number <= 0 {
+		return false
+	}
+	ctx = WithRESTCaller(ctx, "hive:review_verdict_relay")
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, req.Number)
+	if err != nil || pr == nil {
+		return false
+	}
+	var files []review.ChangedFile
+	opts := &gh.ListOptions{PerPage: listPerPage}
+	complete := false
+	for page := 0; page < reviewVerdictFilesMaxPages; page++ {
+		list, resp, err := c.client.PullRequests.ListFiles(ctx, owner, name, req.Number, opts)
+		if err != nil {
+			return false
+		}
+		for _, f := range list {
+			if f == nil {
+				continue
+			}
+			files = append(files, review.ChangedFile{Path: f.GetFilename(), Status: f.GetStatus(), Patch: f.GetPatch()})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			complete = true
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	// GitHub caps the files endpoint on very large PRs; a short list could
+	// hide the widening that disqualifies the carve-out.
+	if !complete || pr.GetChangedFiles() > len(files) {
+		return false
+	}
+	ok := review.WorkflowPermissionsTighteningOnly(files)
+	if ok {
+		c.logger.Info("review-request watcher: workflow diff is a pure permissions tightening",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number))
+	}
+	return ok
 }
 
 const (
@@ -135,6 +212,27 @@ func reviewDecisionRequestFromBody(body string) (bool, string) {
 		return true, fallback
 	}
 	return false, ""
+}
+
+// reviewDecisionRiskHighFromBody reports whether the reviewer marked its
+// decision question `<!-- hive-decision-risk: high -->`. The marker is the
+// reviewer's escape hatch from the self-authored decision denylist: a
+// Hive-authored PR carrying it parks at stage/085-needs-decision even when
+// the question's wording matches no review.DecisionRiskClass.
+func reviewDecisionRiskHighFromBody(body string) bool {
+	const prefix = "<!-- hive-decision-risk:"
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, prefix) || !strings.HasSuffix(lower, "-->") {
+			continue
+		}
+		level := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(lower, prefix), "-->"))
+		if level == "high" {
+			return true
+		}
+	}
+	return false
 }
 
 func maintainerCallQuestion(body string) string {

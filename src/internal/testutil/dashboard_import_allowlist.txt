@@ -21,12 +21,14 @@ github.com/hivecommons/hive/pkg/compliance
 github.com/hivecommons/hive/pkg/config
 github.com/hivecommons/hive/pkg/convergence
 github.com/hivecommons/hive/pkg/dashboard
+github.com/hivecommons/hive/pkg/decisionpolicy
 github.com/hivecommons/hive/pkg/defsrc
 # escalation: your-turn ownership rules read the escalation ledger (needs-human
 # applied-at) and reviewer-passed label; already a transitive dependency via
 # pkg/review and pkg/retro (hivecommons/hive#11565).
 github.com/hivecommons/hive/pkg/escalation
 github.com/hivecommons/hive/pkg/evidence
+github.com/hivecommons/hive/pkg/feedbackbundle
 github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/github
@@ -61,6 +63,7 @@ github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/scheduler
 github.com/hivecommons/hive/pkg/skillreg
 github.com/hivecommons/hive/pkg/spokebackup
+github.com/hivecommons/hive/pkg/stageengine
 github.com/hivecommons/hive/pkg/stagelabels
 github.com/hivecommons/hive/pkg/standby
 github.com/hivecommons/hive/pkg/taskmcp

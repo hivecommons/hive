@@ -12,7 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/scheduler"
-	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -108,12 +108,18 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					})
 				}
 				if label {
-					run("claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						_, err := gh.ApplyStageLabel(ctx, c.Repo, c.Issue, claimStageFor(c))
-						return err
+					// The stage is a fact for the engine (ADR-0025): a live
+					// claim derives to stage/020-claimed, or stage/030 when
+					// it carries PR evidence. The engine re-reads the issue
+					// and replaces whatever stage it carries, so a claim
+					// landing seconds after the reconciler staged it 010
+					// replaces that label rather than joining it (#12512).
+					run("claimed stage", c, func(ctx context.Context, gh *github.Client) error {
+						return gh.StageFacts().Claimed(ctx, gh.IssueStageRef(c.Repo, c.Issue), claimFactFor(c))
 					})
-					// The "who" modifier: login of the principal, agent name for
-					// a hive-agent claim, never a backend name (claims.ClaimedByPrefix).
+					// The "who" modifier: generic `human` for a human principal,
+					// agent name for a hive-agent claim, never a login or a
+					// backend name (claims.ClaimedByPrefix).
 					run("claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
 						_, _, err := gh.ApplyClaimedByLabel(ctx, c.Repo, c.Issue, c)
 						return err
@@ -129,10 +135,10 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					})
 				}
 				if label {
+					run("claimed stage", now, func(ctx context.Context, gh *github.Client) error {
+						return gh.StageFacts().Claimed(ctx, gh.IssueStageRef(now.Repo, now.Issue), claimFactFor(now))
+					})
 					run("preempted label", now, func(ctx context.Context, gh *github.Client) error {
-						if _, err := gh.ApplyStageLabel(ctx, now.Repo, now.Issue, claimStageFor(now)); err != nil {
-							return err
-						}
 						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.PreemptedLabel(previous.Holder)})
 					})
 					run("claimed-by label", now, func(ctx context.Context, gh *github.Client) error {
@@ -148,25 +154,28 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 		OnReleased: func(c claims.Claim, reason string) {
 			go func() {
 				if label {
-					// One fresh read, then only the labels still present come
-					// off, journaled against that read: the plain remove
+					// One fresh read, then only the "who" labels still present
+					// come off, journaled against that read: the plain remove
 					// replayed as "already applied" the second time a claim on
 					// the same issue lapsed (hivecommons/hive#12512). The
 					// preempted label names the holder this claim DISPLACED,
-					// not the holder being released. The claimed-by label is
-					// this claim's own; another holder's survives.
-					remove := []string{claims.LabelClaimed}
-					if l := claims.ClaimedByLabel(c); l != "" {
-						remove = append(remove, l)
-					}
-					if c.Kind == claims.KindAgent {
-						remove = append(remove, github.InProgressLabel)
-					}
+					// not the holder being released. The claimed-by labels are
+					// this claim's own (generic human label plus the retired
+					// per-login spelling); another holder's survives. The
+					// stage is the engine's: the release is a fact and the
+					// engine re-derives the issue (010 while it is open,
+					// nothing once it closed).
+					remove := claims.ClaimedByLabels(c)
 					if c.TakenFrom != "" {
 						remove = append(remove, claims.PreemptedLabel(c.TakenFrom))
 					}
-					run("remove claim labels", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.RemoveLabelsFresh(ctx, c.Repo, c.Issue, remove...)
+					if len(remove) > 0 {
+						run("remove claim labels", c, func(ctx context.Context, gh *github.Client) error {
+							return gh.RemoveLabelsFresh(ctx, c.Repo, c.Issue, remove...)
+						})
+					}
+					run("released stage", c, func(ctx context.Context, gh *github.Client) error {
+						return gh.StageFacts().ClaimReleased(ctx, gh.IssueStageRef(c.Repo, c.Issue), c.Holder)
 					})
 				}
 				// Releases are frequent (every relay task completion) and the
@@ -182,20 +191,15 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	}
 }
 
-// claimStageFor returns the stage mirrored onto an issue for a new claim
-// (hivecommons/hive#12436): stage/030-pr-in-progress for a hive agent's own
-// claim — recorded on its start signal (#10527), which is exactly the "an
-// agent began a PR for this" instant — and stage/020-claimed for every other
-// kind. The hooks write it through Client.ApplyStageLabel, which re-reads the
-// issue and removes any other `stage/*` label, so a claim landing seconds
-// after the reconciler staged the issue 010 replaces that label rather than
-// joining it (hivecommons/hive#12512). The ledger, not the label, is what
-// claim detection reads.
-func claimStageFor(c claims.Claim) stagelabels.Stage {
-	if c.Kind == claims.KindAgent {
-		return stagelabels.PRInProgress
-	}
-	return stagelabels.Claimed
+// claimFactFor renders a ledger claim as the fact the stage engine derives a
+// stage from (hivecommons/hive#12436): a live claim is stage/020-claimed
+// whatever its kind; it is stage/030-pr-in-progress only when the claim
+// carries PR evidence (Claim.PRStarted: a PR request naming the issue or a
+// start marker naming a branch / PR) — the label promises a PR, so a bare
+// agent claim must not wear it (hivecommons/hive#13069). The ledger, not
+// the label, is what claim detection reads.
+func claimFactFor(c claims.Claim) stageengine.ClaimFact {
+	return stageengine.ClaimFact{Holder: c.Holder, Kind: c.Kind, Until: c.ExpiresAt, PRStarted: c.PRStarted}
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an
@@ -279,8 +283,9 @@ func recordAgentKickListings(dashSrv *dashboard.Server, org, agentName string, i
 }
 
 // recordAgentStart is the start-signal seam (#10527): the agent's own request
-// shows it working the issue — a comment, label or claim request, or a
-// pull-request request naming it. The first such signal on an issue a kick
+// shows it STARTING the issue — a claim request, a comment with an explicit
+// start statement, or a pull-request request naming it (never a report-only
+// comment or a label request; see pkg/github/agent_start_hook.go). The first such signal on an issue a kick
 // listed to the agent records the agent claim (comment and label included)
 // that the escalation gate counts; a later one renews it. A signal on an
 // issue no kick listed to the agent records nothing.
@@ -288,7 +293,7 @@ func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue 
 	if ledger == nil || agentName == "" || issue <= 0 {
 		return
 	}
-	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName)
+	res, started, err := ledger.ClaimOnStart(qualifyClaimRepo(org, repo), issue, agentName, github.StartSignalIsPREvidence(signal))
 	if logger == nil || !started {
 		return
 	}
@@ -298,8 +303,11 @@ func recordAgentStart(ledger *claims.Ledger, org, agentName, repo string, issue 
 	}
 	switch res.Outcome {
 	case claims.OutcomeRefused, claims.OutcomeHeld:
-		logger.Warn("issue-claims: agent started an issue another holder claims",
-			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
+		// Refused by admission (res.Reason set: hold, needs-human, a park
+		// label, a never-claim label such as `epic`, or the number is a
+		// pull request) or by another holder's live claim.
+		logger.Warn("issue-claims: agent start signal did not record a claim",
+			"agent", agentName, "repo", repo, "issue", issue, "signal", signal, "reason", res.Reason, "holder", res.Claim.Holder, "kind", res.Claim.Kind)
 	case claims.OutcomeClaimed, claims.OutcomeTakenOver:
 		logger.Info("issue-claims: agent claim recorded on start signal", "agent", agentName, "issue", res.Claim.Key(), "signal", signal)
 	}

@@ -120,6 +120,12 @@
     .filter-chip-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
     .filter-chip-count { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
     .filter-chip-clear { color: var(--muted); }
+    /* Active-selection chips beside the "N filters active" summary. flex:1
+       keeps them hugging the summary with Clear still pinned to the right. */
+    .filter-chips-active { flex: 1; min-width: 0; }
+    .filter-chip-active { color: var(--text); border-color: var(--hub-dashboard-accent, var(--muted)); cursor: pointer; }
+    .filter-chip-active:hover { color: var(--red); border-color: var(--red); }
+    .filter-chip-x { font-size: var(--fs-sm); line-height: 1; opacity: 0.75; }
     .filter-summary { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
 
     /* ── Attention needed (fleet alerts) ── */
@@ -1317,16 +1323,21 @@
     }
 
     /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
-       averaged over the CURRENT filtered view.
+       as a median over the WHOLE fleet the server scored.
 
        This is the surface that turns the instrument from per-hive feedback into
        a platform signal. One hive with a collapsed efficiency spoke is that
        hive's problem; thirty of them collapsed the same way is not thirty
        nudges, it is one platform problem, and only the aggregate shows that.
 
-       It re-renders with the table, so narrowing the filter re-aggregates over
-       whatever is now in view — which is why the rows and this shape always
-       agree with each other.
+       It does NOT follow the table's filters. The median, its per-criterion
+       medians, summaries and nudges are all computed server-side over every
+       row (attachQuadrants), and the reference polygon behind each row's kite
+       is that same fleet — re-aggregating client-side over a filtered subset
+       would make the header disagree with the ghosts in the rows and would
+       have to drop the explainers. So the label says "all N hives" and, while
+       the table is narrowed, says so explicitly; it used to claim "in view",
+       which contradicted a "Showing 1 of 57" table in the same viewport.
 
        Renders nothing when nothing scored, rather than an empty chart: at that
        point there is no finding to show, and a collapsed aggregate would read
@@ -1339,8 +1350,9 @@
       if (!q || !q.scored_axes) return '';
       var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');
       /* n is the number of hives the median was taken over; it can be smaller
-         than the rows in view because unscored hives do not enter the median. */
+         than the fleet total because unscored hives do not enter the median. */
       var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');
+      var scope = fleetQuadrantScopeLabel((_allDashHives || []).length);
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
       return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
@@ -1348,12 +1360,22 @@
           quadrantSVG(q, null, 78, false) +
           '<div>' +
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
-              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
+              '<span>Fleet quadrant · ' + esc(scope) + ' <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
             '<div class="quadrant-axes">' + axes + '</div>' +
             quadrantSummaryHTML(q) +
             fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
+    }
+
+    /* fleetQuadrantScopeLabel names the set the fleet median is over. Plain
+       "all N hives" normally; when the table is narrowed it adds that the
+       filters do not apply here, so the two counts on screen cannot read as a
+       contradiction. */
+    function fleetQuadrantScopeLabel(total) {
+      var n = Number(total) || 0;
+      var base = 'all ' + n + (n === 1 ? ' hive' : ' hives');
+      return activeFilterCount() > 0 ? base + ' (table filters not applied)' : base;
     }
 
     /* fleetQuadrantEvidenceButtonHTML is the always-visible way into the
@@ -6767,12 +6789,130 @@
         '<div class="filter-chips mt-4">' + chips + clearBtn + '</div>';
     }
 
-    /* renderStatusFilterBar draws the "Showing X of Y" summary and the Clear
-       button. The health chips and the failing-check picker used to live here as
-       standalone chip rows; they now render inside the facet tray
-       (renderStatusFacetGroup / renderFailingCheckFacetGroup). What stays is the
-       one thing that must NOT be hidden behind a collapsed tray: the statement
-       that the list is currently narrowed, and the way back out.
+    /* ── Active-filter chips ──
+       Filter KINDS, one per narrowing control. Each active selection becomes a
+       chip {kind, value, label} next to the "N filters active" summary, so the
+       cause of a short table is visible — and removable — while the tray is
+       collapsed. Several of these are set from OUTSIDE the tray (an alert-type
+       chip in Attention needed, a usage-rollup row writing the search box, a
+       saved default view restored on load), which is how an operator ends up
+       at "Showing 1 of 57 · 1 filter active" without remembering choosing
+       anything. The kinds are strings rather than the state variables so the
+       delegated click handler can dispatch on a data attribute. */
+    var ACTIVE_FILTER_STATUS = 'status';
+    var ACTIVE_FILTER_FAILING_CHECK = 'failing-check';
+    var ACTIVE_FILTER_DRIFT = 'drift';
+    var ACTIVE_FILTER_UPGRADE = 'upgrade';
+    var ACTIVE_FILTER_ADVISORY_STALE = 'advisory-stale';
+    var ACTIVE_FILTER_ALERT = 'alert';
+    var ACTIVE_FILTER_SEARCH = 'search';
+    var ACTIVE_FILTER_FACET = 'facet';
+
+    /* Chip label prefixes. Short, because the chip row shares a line with the
+       summary; the group name tells the reader WHICH control to look for in
+       the tray if they want to change rather than remove it. */
+    var ACTIVE_FILTER_PREFIX = {};
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_STATUS] = 'Health';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_FAILING_CHECK] = 'Failing check';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_DRIFT] = 'Drift';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_UPGRADE] = 'Upgrade';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_ADVISORY_STALE] = 'Advisory digest';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_ALERT] = 'Alert';
+    ACTIVE_FILTER_PREFIX[ACTIVE_FILTER_SEARCH] = 'Search';
+
+    /* Human label for one upgrade-state filter value; mirrors the facet
+       group's value labels so the chip and the tray never disagree. */
+    function upgradeFilterLabel(state) {
+      if (state === UPGRADE_FILTER_UPGRADING) return 'Upgrading';
+      if (state === UPGRADE_FILTER_QUEUED) return 'Queued for auto-upgrade';
+      return state || '';
+    }
+
+    /* Human label for one facet group key; falls back to the key so an
+       unknown group still renders a chip rather than vanishing. */
+    function facetGroupLabel(key) {
+      for (var i = 0; i < (HIVE_FACET_GROUPS || []).length; i++) {
+        if (HIVE_FACET_GROUPS[i].key === key) return HIVE_FACET_GROUPS[i].label;
+      }
+      return key || '';
+    }
+
+    /* activeFilterChips lists every active selection in tray order. It MUST
+       enumerate exactly the state activeFilterCount() counts — the badge says
+       "3" and this row shows three chips, or the two surfaces disagree. */
+    function activeFilterChips() {
+      var chips = [];
+      Object.keys(_dashStatusFilters || {}).forEach(function(k) {
+        if (!_dashStatusFilters[k]) return;
+        var label = k;
+        for (var i = 0; i < (HIVE_FILTER_CHIPS || []).length; i++) {
+          if (HIVE_FILTER_CHIPS[i].key === k) { label = HIVE_FILTER_CHIPS[i].label; break; }
+        }
+        chips.push({kind: ACTIVE_FILTER_STATUS, value: k, label: label});
+      });
+      if (_dashFailingCheckFilter) chips.push({kind: ACTIVE_FILTER_FAILING_CHECK, value: _dashFailingCheckFilter, label: _dashFailingCheckFilter});
+      if (_dashDriftFilter) chips.push({kind: ACTIVE_FILTER_DRIFT, value: _dashDriftFilter, label: driftKindLabel(_dashDriftFilter)});
+      if (_dashUpgradeFilter) chips.push({kind: ACTIVE_FILTER_UPGRADE, value: _dashUpgradeFilter, label: upgradeFilterLabel(_dashUpgradeFilter)});
+      if (_dashAdvisoryStaleFilter) chips.push({kind: ACTIVE_FILTER_ADVISORY_STALE, value: '', label: 'Stale advisory'});
+      if (_alertTypeFilter) chips.push({kind: ACTIVE_FILTER_ALERT, value: _alertTypeFilter, label: alertTypeLabel(_alertTypeFilter)});
+      if (_dashSearchQuery) chips.push({kind: ACTIVE_FILTER_SEARCH, value: _dashSearchQuery, label: _dashSearchQuery});
+      Object.keys(_dashFacets || {}).forEach(function(g) {
+        Object.keys(_dashFacets[g] || {}).forEach(function(v) {
+          if (!_dashFacets[g][v]) return;
+          chips.push({kind: ACTIVE_FILTER_FACET, value: g + '\n' + v, label: v, prefix: facetGroupLabel(g)});
+        });
+      });
+      return chips;
+    }
+
+    /* activeFilterChipsHTML renders the chips. Removal goes through a
+       delegated listener on data attributes (like the tray toggle), not an
+       inline onclick, so a facet value or search term containing quotes needs
+       no handler-literal escaping. */
+    function activeFilterChipsHTML() {
+      return activeFilterChips().map(function(c) {
+        var prefix = c.prefix || ACTIVE_FILTER_PREFIX[c.kind] || '';
+        var text = prefix ? prefix + ': ' + c.label : c.label;
+        return '<button type="button" class="filter-chip filter-chip-active" data-filter-kind="' + escAttr(c.kind) +
+          '" data-filter-value="' + escAttr(c.value) + '" title="Remove this filter" aria-label="Remove filter ' + escAttr(text) + '">' +
+          esc(text) + '<span class="filter-chip-x" aria-hidden="true">&times;</span></button>';
+      }).join('');
+    }
+
+    /* removeHiveFilter turns off ONE selection, routing through the same
+       toggle each tray control uses so side effects (the drift pill's search
+       stash, the search box's text) stay consistent with removing it there. */
+    function removeHiveFilter(kind, value) {
+      if (kind === ACTIVE_FILTER_STATUS) { if (_dashStatusFilters[value]) toggleStatusFilter(value); return; }
+      if (kind === ACTIVE_FILTER_FAILING_CHECK) { setFailingCheckFilter(''); return; }
+      if (kind === ACTIVE_FILTER_DRIFT) { if (_dashDriftFilter) toggleDriftFilter(_dashDriftFilter); return; }
+      if (kind === ACTIVE_FILTER_UPGRADE) { toggleUpgradeFilter(''); return; }
+      if (kind === ACTIVE_FILTER_ADVISORY_STALE) { if (_dashAdvisoryStaleFilter) toggleAdvisoryStaleFilter(); return; }
+      if (kind === ACTIVE_FILTER_ALERT) { clearAlertFilter(); return; }
+      if (kind === ACTIVE_FILTER_SEARCH) { clearHiveSearch(); return; }
+      if (kind === ACTIVE_FILTER_FACET) {
+        var sep = String(value || '').indexOf('\n');
+        if (sep < 0) return;
+        var g = value.slice(0, sep), v = value.slice(sep + 1);
+        if (_dashFacets[g] && _dashFacets[g][v]) toggleFacetValue(g, v);
+      }
+    }
+
+    document.addEventListener('click', function(ev) {
+      var t = ev.target;
+      if (!t || !t.closest) return;
+      var chip = t.closest('.filter-chip-active[data-filter-kind]');
+      if (!chip) return;
+      removeHiveFilter(chip.getAttribute('data-filter-kind'), chip.getAttribute('data-filter-value') || '');
+    });
+
+    /* renderStatusFilterBar draws the "Showing X of Y" summary, the active
+       filter chips and the Clear button. The health chips and the failing-check
+       picker used to live here as standalone chip rows; they now render inside
+       the facet tray (renderStatusFacetGroup / renderFailingCheckFacetGroup).
+       What stays is what must NOT be hidden behind a collapsed tray: the
+       statement that the list is narrowed, WHICH selections narrow it, and the
+       way back out.
 
        Unassigned placeholders are excluded from the totals — they are
        inventory, never filtered by these controls. */
@@ -6794,7 +6934,10 @@
       var clearBtn = anyActive
         ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button>'
         : '';
-      bar.innerHTML = '<span class="filter-summary">' + summary + '</span>' + clearBtn;
+      /* The chips name each active selection so "1 filter active" is never a
+         riddle while the tray is shut. */
+      var chips = anyActive ? '<span class="filter-chips filter-chips-active">' + activeFilterChipsHTML() + '</span>' : '';
+      bar.innerHTML = '<span class="filter-summary">' + summary + '</span>' + chips + clearBtn;
       /* The bar no longer carries chip rows, so on a fleet with no assigned
          hives it would render as an empty flex box still claiming its
          margin-bottom. Collapse it outright in that case rather than leaving a

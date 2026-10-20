@@ -138,7 +138,7 @@ func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 		state.Fixes = append(state.Fixes, PendingFix{Repo: "acme/hive", Number: 7, HeadSHA: "old", Attempts: i})
 	}
 	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, state, DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1")}})
-	if len(plan.FixKicks) != 0 || len(plan.State.Human) != 1 || !strings.Contains(plan.State.Human[0].Reason, "cap reached") {
+	if len(plan.FixKicks) != 0 || len(plan.State.Human) != 1 || plan.State.Human[0].Reason != FixAttemptsExhaustedHumanDecisionReason {
 		t.Fatalf("cap exhaustion did not require human: kicks=%d human=%+v", len(plan.FixKicks), plan.State.Human)
 	}
 }
@@ -289,57 +289,95 @@ func humanPR(sha string) PullRequest {
 	return pr
 }
 
-// TestDispatchSkipsHumanPRsByDefault pins the default: the review swarm looks
-// only at the hive's own output, which is the work the hive is answerable for.
-func TestDispatchSkipsHumanPRsByDefault(t *testing.T) {
-	plan := PlanDispatch([]PullRequest{humanPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
-		RequireApproval: true,
-		FanOut:          true,
-		ProjectOrg:      "acme",
-		AIAuthor:        "hive-bot[bot]",
-		Agents:          []AgentCapability{reviewer("r1")},
-	})
-
-	if len(plan.ReviewKicks) != 0 {
-		t.Fatalf("human-authored PR was dispatched by default: %+v", plan.ReviewKicks)
+// TestDispatchReviewsEveryAuthorClass pins the owner's decision
+// (hivecommons/hive#12974): when review is on, every open PR is dispatched
+// regardless of who opened it — hive agent, human, clanker at either trust
+// tier, dependabot, any other bot. No author class is skipped and the
+// deprecated AllAuthors knob changes nothing either way.
+func TestDispatchReviewsEveryAuthorClass(t *testing.T) {
+	withLabels := func(pr PullRequest, labels ...string) PullRequest {
+		pr.Labels = append(pr.Labels, labels...)
+		return pr
+	}
+	clanker := func(sha, login string, labels ...string) PullRequest {
+		pr := dispatchPR(sha)
+		pr.Author = login
+		return withLabels(pr, labels...)
+	}
+	tests := []struct {
+		name string
+		pr   PullRequest
+	}{
+		{name: "hive agent", pr: dispatchPR("sha1")},
+		{name: "human", pr: withLabels(humanPR("sha1"), "author/human", "role/trusted")},
+		{name: "clanker trusted", pr: clanker("sha1", "relay-contrib", "author/clanker", "role/trusted")},
+		{name: "clanker contributor", pr: clanker("sha1", "relay-contrib", "author/clanker", "role/contributor")},
+		{name: "dependabot", pr: clanker("sha1", "dependabot[bot]", "author/bot")},
+		{name: "other bot", pr: clanker("sha1", "renovate[bot]", "author/bot")},
+		{name: "unlabelled unknown author", pr: clanker("sha1", "someone-new")},
+	}
+	for _, tt := range tests {
+		for _, allAuthors := range []bool{false, true} {
+			t.Run(tt.name+"/all_authors="+strconvBool(allAuthors), func(t *testing.T) {
+				plan := PlanDispatch([]PullRequest{tt.pr}, Artifact{}, DispatchState{}, DispatchOptions{
+					RequireApproval: true,
+					FanOut:          true,
+					AllAuthors:      allAuthors,
+					ProjectOrg:      "acme",
+					AIAuthor:        "hive-bot[bot]",
+					Agents:          []AgentCapability{reviewer("r1")},
+				})
+				if len(plan.ReviewKicks) != 1 {
+					t.Fatalf("got %d kicks for a %s PR, want 1: %+v", len(plan.ReviewKicks), tt.name, plan.ReviewKicks)
+				}
+				if plan.ReviewKicks[0].Number != 7 {
+					t.Fatalf("dispatched the wrong PR: %+v", plan.ReviewKicks[0])
+				}
+			})
+		}
 	}
 }
 
-// TestAllAuthorsReviewsHumanPRs is the opt-in: where the queue itself is the
-// problem, a contributor's PR waiting on a review is no less stuck than an
-// agent's.
-func TestAllAuthorsReviewsHumanPRs(t *testing.T) {
-	plan := PlanDispatch([]PullRequest{humanPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
-		RequireApproval: true,
-		FanOut:          true,
-		AllAuthors:      true,
-		ProjectOrg:      "acme",
-		AIAuthor:        "hive-bot[bot]",
-		Agents:          []AgentCapability{reviewer("r1")},
-	})
-
-	if len(plan.ReviewKicks) != 1 {
-		t.Fatalf("got %d kicks for a human-authored PR with AllAuthors, want 1", len(plan.ReviewKicks))
+func strconvBool(b bool) string {
+	if b {
+		return "true"
 	}
-	if plan.ReviewKicks[0].Number != 7 {
-		t.Fatalf("dispatched the wrong PR: %+v", plan.ReviewKicks[0])
+	return "false"
+}
+
+// TestDispatchOnlyGateIsReviewEnabled pins the one switch that remains: with
+// review itself off (require_approval or fan_out), nobody's PR is dispatched —
+// a human's no more than an agent's.
+func TestDispatchOnlyGateIsReviewEnabled(t *testing.T) {
+	for _, opts := range []DispatchOptions{
+		{RequireApproval: false, FanOut: true},
+		{RequireApproval: true, FanOut: false},
+	} {
+		opts.ProjectOrg = "acme"
+		opts.AIAuthor = "hive-bot[bot]"
+		opts.Agents = []AgentCapability{reviewer("r1")}
+		plan := PlanDispatch([]PullRequest{humanPR("sha1"), dispatchPR("sha2")}, Artifact{}, DispatchState{}, opts)
+		if len(plan.ReviewKicks) != 0 {
+			t.Fatalf("review off (%+v) still dispatched: %+v", opts, plan.ReviewKicks)
+		}
 	}
 }
 
-// TestAllAuthorsStillReviewsAgentPRs guards the obvious regression: lifting the
-// restriction must widen the set, not replace it.
-func TestAllAuthorsStillReviewsAgentPRs(t *testing.T) {
-	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, DispatchOptions{
-		RequireApproval: true,
-		FanOut:          true,
-		AllAuthors:      true,
-		ProjectOrg:      "acme",
-		AIAuthor:        "hive-bot[bot]",
-		Agents:          []AgentCapability{reviewer("r1")},
-	})
-
-	if len(plan.ReviewKicks) != 1 {
-		t.Fatalf("agent-authored PR stopped being reviewed under AllAuthors: %+v", plan.ReviewKicks)
+// TestHumanPRReviewedButNeverFixPushed guards the boundary the owner kept:
+// reviewing everyone's PR is not a licence to push to it. A changes_requested
+// verdict on a human PR withholds the fix kick exactly as before.
+func TestHumanPRReviewedButNeverFixPushed(t *testing.T) {
+	pr := humanPR("sha1")
+	opts := DispatchOptions{
+		RequireApproval: true, FanOut: true, PostComments: true, ProjectOrg: "acme", AIAuthor: "hive-bot[bot]",
+		Agents: []AgentCapability{reviewer("r1"), {Name: DefaultFixerAgent, Enabled: true, UsesKick: true}},
+	}
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, opts)
+	if len(plan.FixKicks) != 0 {
+		t.Fatalf("human PR got a fix push: %+v", plan.FixKicks)
+	}
+	if len(plan.State.Withheld) != 1 {
+		t.Fatalf("expected the withheld-fix audit entry, got %+v", plan.State.Withheld)
 	}
 }
 

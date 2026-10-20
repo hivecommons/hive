@@ -17,6 +17,8 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -60,6 +62,11 @@ type Options struct {
 	// ReviewGate is the swarm-review policy trySweepSelfAuthoredPR evaluates
 	// on the App's own PRs (#12592). nil installs no policy; see ReviewGate.
 	ReviewGate *ReviewGate
+	// HumanChangeRequests receives a trusted maintainer's CHANGES_REQUESTED
+	// review on a hive-authored PR head so the review planner can kick the
+	// author agent with it (hivecommons/hive#13041). nil still parks the PR
+	// at fixing; it just records nothing for the planner.
+	HumanChangeRequests review.HumanChangeRequestStore
 	// HumanMergePaths returns the live auto_merge.human_merge_paths patterns
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
@@ -132,6 +139,12 @@ type Options struct {
 	// StageStore persists stage timing (stalled/regressed); nil shares the
 	// package default at stagelabels.StatePath.
 	StageStore *stagelabels.Store
+	// StageEngine configures the ADR-0025 reconciler ApplyStageLabels
+	// routes every stage write through (hivecommons/hive#13008). Nil is the
+	// default: stageengine.DefaultMode (shadow) with this sweep's own
+	// derivation as the legacy comparator, so the labels written are
+	// exactly what the sweep derived. The mode flag arrives with plan PR-E.
+	StageEngine *stageengine.Options
 	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
 	// nil posts the GitHub comment only.
 	ContributorNudge ContributorNudgeSink
@@ -161,6 +174,8 @@ type Engine struct {
 	reviewGateMu sync.RWMutex
 	reviewGate   *ReviewGate
 
+	humanChangeRequests review.HumanChangeRequestStore
+
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
@@ -187,10 +202,15 @@ type Engine struct {
 	evaluatedHeads                    map[string]string
 	requiredChecksFallbackWarnedMu    sync.Mutex
 	requiredChecksFallbackWarned      map[string]bool
-	// heldRunApprovals remembers PR heads whose held workflow runs the sweep
-	// already tried to approve, so each head costs one approve pass.
+	// heldRunApprovals is the shared per-PR-head one-shot map for rebase
+	// nudges and bot takeovers (historic name; workflow approvals no longer use it).
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
+	// workflowApprovalCommands records the first time this process saw and
+	// commented /ok-to-test for a PR head. The mutation boundary dedupes the
+	// actual comment across restarts; this clock drives the missing-caller grace.
+	workflowApprovalCommandsMu sync.Mutex
+	workflowApprovalCommands   map[string]time.Time
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
@@ -198,6 +218,7 @@ type Engine struct {
 	stageLabelPolicy func() StageLabelPolicy
 	stageTracker     *StageTracker
 	stageStore       *stagelabels.Store
+	stageEngine      *stageengine.Options
 	contributorNudge ContributorNudgeSink
 	checkSummary     CheckSummarizer
 }
@@ -219,6 +240,7 @@ func New(transport Transport, opts Options) *Engine {
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
 		reviewGate:                        opts.ReviewGate,
+		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
 		reviewVerdictHold:                 opts.ReviewVerdictHold,
 		recordReviewHoldRelease:           opts.RecordReviewHoldRelease,
@@ -241,6 +263,7 @@ func New(transport Transport, opts Options) *Engine {
 		stageLabelPolicy:                  opts.StageLabelPolicy,
 		stageTracker:                      opts.StageTracker,
 		stageStore:                        opts.StageStore,
+		stageEngine:                       opts.StageEngine,
 		contributorNudge:                  opts.ContributorNudge,
 		checkSummary:                      opts.CheckSummary,
 		evaluatedHeads:                    make(map[string]string),
@@ -419,6 +442,7 @@ func nextSelfAuthoredSweepInterval(repos int, current time.Duration, result *Aut
 
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
+	autoMergeReasonHumanChangesRequested      = "human-changes-requested"
 	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
 	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
 	autoMergeReasonUntrustedMerger            = "untrusted-merger"
@@ -936,6 +960,18 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					continue
 				}
 			}
+			if reason := c.detectTrustedRegistryClankerWorkflowApprovalRequired(ctx, repo, owner, repoName, pr); reason != "" {
+				if isTerminalRequiredCheckHold(reason) {
+					c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+				} else {
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				}
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[reason]++
+				stage(reason, false, nil)
+				continue
+			}
 			if reason := c.prefilterSelfAuthoredPR(pr); reason != "" {
 				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
 				result.Skipped++
@@ -1390,6 +1426,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	c.noteStageVerdict(owner, repo, number, verdict)
 	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, evaluatedHeadSHA, verdict)
 	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
+	// A trusted maintainer's changes_requested on this head outranks every
+	// swarm verdict and the merge gates below (hivecommons/hive#13041): the
+	// PR goes to 070 and the planner kicks the author agent with the review
+	// text. Mirrors the trusted-author and contributor lanes, which also
+	// refuse to merge over an outstanding changes_requested.
+	if c.humanChangesRequestedForHead(ctx, owner, repo, number, evaluatedHeadSHA) {
+		return AutoMergeSweepEvent{}, autoMergeReasonHumanChangesRequested, nil
+	}
 	method := mergeMethodFor(pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
@@ -1424,6 +1468,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, err
 	}
 	if !green {
+		if approveReason := c.detectActionRequiredWorkflowRuns(ctx, displayRepo, owner, repo, lane, pr, number, evaluatedHeadSHA, reason); approveReason != "" {
+			return AutoMergeSweepEvent{}, approveReason, nil
+		}
+	}
+	if !green {
 		// A trusted bot's dependency-bump head never gets the contexts its
 		// workflow skips by design (#12004); re-evaluate treating those as
 		// satisfied. Every other required check must still be green.
@@ -1434,8 +1483,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 	if !green {
 		// A missing required check on a trusted-lane head may be a workflow
-		// run GitHub is holding for approval; release it rather than polling
-		// forever (automerge_held_runs.go).
+		// run GitHub is holding for approval; post /ok-to-test and surface it
+		// distinctly rather than polling forever (automerge_held_runs.go).
 		return reject(c.resolveMissingRequiredCheck(ctx, displayRepo, owner, repo, pr, number, evaluatedHeadSHA, reason, headPushedAt))
 	}
 	if held, reason, err := c.releaseHoldActive(ctx, owner, repo, baseBranch); err != nil {
@@ -1509,7 +1558,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
 	// Shadow (the default) records and merges; enforce holds.
-	if reviewReason := c.selfMergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
+	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
@@ -1734,6 +1783,18 @@ func (c *Engine) isTrustedBotLaneAuthor(author string) bool {
 	return ok && lane == "trusted-bot"
 }
 
+func trustedRegistryClanker(labels []string) bool {
+	return hasLabelFold(labels, "role/trusted") && hasLabelFold(labels, "author/clanker")
+}
+
+func (c *Engine) sentinelLabelPresent(labels []string) bool {
+	sentinel := c.sentinelLabelName()
+	if sentinel == "" {
+		sentinel = defaultSentinelLabel
+	}
+	return hasLabelFold(labels, sentinel)
+}
+
 // isHeld is the sweep's single hold predicate. It defers to the transport so
 // the configured hold set (generic substrings plus the exact hive-scoped
 // `hive-pause/<hive-id>` dashboard hold) gates merges exactly as it gates
@@ -1905,7 +1966,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 	verdict := c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA())
 	c.noteStageVerdict(owner, repo, number, verdict)
-	c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
+	priorApprover, _ := c.trustedHumanApprovalForRequiresHuman(ctx, owner, repo, number, pr.GetHead().GetSHA(), verdict)
+	priorChecked := verdictNeedsHuman(stageDetail{Verdict: verdict, VerdictKnown: true})
 	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
 	if policy.RequireGitHubPermission {
 		var err error
@@ -1995,6 +2057,13 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	if currentHeadSHA == "" || currentHeadSHA != headSHA {
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+	}
+	// The swarm reviews human PRs too (hivecommons/hive#12974), so the same
+	// review gate the self-authored lane runs sits in front of this merge:
+	// a trusted author's role vouches for who they are, not for an
+	// unreviewed head.
+	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, current, headSHA, priorApprover, priorChecked); reviewReason != "" {
+		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
 	var mergeResult *gh.PullRequestMergeResult

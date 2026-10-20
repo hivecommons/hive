@@ -179,6 +179,7 @@ func TestGovernorFeaturesParityBatch7RoundTrip(t *testing.T) {
 		"claimsComment":             false,
 		"claimsLabel":               false,
 		"claimsEscalateAfterClaims": 4,
+		"claimsNeverClaimLabels":    " Epic, tracking ,",
 		"rotationHeadroomSource":    " CCLeft ",
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("features PUT: %d — %s", rec.Code, rec.Body.String())
@@ -186,6 +187,9 @@ func TestGovernorFeaturesParityBatch7RoundTrip(t *testing.T) {
 	c := s.deps.Config.Governor.Claims
 	if c.CommentEnabled() || c.LabelEnabled() || c.EscalateAfterClaims != 4 || c.EscalationThreshold() != 4 {
 		t.Fatalf("claims settings not applied: %+v", c)
+	}
+	if got := strings.Join(c.NeverClaimLabels, ","); got != "Epic,tracking" {
+		t.Fatalf("never_claim_labels = %q, want Epic,tracking", got)
 	}
 	if got := s.deps.Config.Governor.Rotation.HeadroomSource; got != "ccleft" {
 		t.Fatalf("headroom source = %q, want ccleft", got)
@@ -202,6 +206,9 @@ func TestGovernorFeaturesParityBatch7RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := got.Features
+	if f["claimsNeverClaimLabels"] != "Epic, tracking" || f["claimsNeverClaimDefault"] != "epic" {
+		t.Fatalf("never-claim features response: %v / %v", f["claimsNeverClaimLabels"], f["claimsNeverClaimDefault"])
+	}
 	if f["claimsComment"] != false || f["claimsLabel"] != false || f["claimsEscalateAfterClaims"] != float64(4) ||
 		f["rotationHeadroomSource"] != "ccleft" {
 		t.Fatalf("features response: claimsComment=%v claimsLabel=%v escalate=%v headroom=%v",
@@ -209,10 +216,19 @@ func TestGovernorFeaturesParityBatch7RoundTrip(t *testing.T) {
 	}
 
 	// Negative turns the stall gate off; builtin is stored as the default.
-	if rec := doPut(s, opsFeaturesPath, map[string]any{"claimsEscalateAfterClaims": -5, "rotationHeadroomSource": "builtin"}); rec.Code != http.StatusOK {
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"claimsEscalateAfterClaims": -5, "rotationHeadroomSource": "builtin", "claimsNeverClaimLabels": "none"}); rec.Code != http.StatusOK {
 		t.Fatalf("reset PUT: %d — %s", rec.Code, rec.Body.String())
 	}
 	c = s.deps.Config.Governor.Claims
+	if c.NeverClaimLabels == nil || len(c.NeverClaimLabels) != 0 || len(c.EffectiveNeverClaimLabels()) != 0 {
+		t.Fatalf("\"none\" must store an explicit empty never_claim_labels, got %#v", c.NeverClaimLabels)
+	}
+	if rec := doPut(s, opsFeaturesPath, map[string]any{"claimsNeverClaimLabels": "  "}); rec.Code != http.StatusOK {
+		t.Fatalf("blank PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if c = s.deps.Config.Governor.Claims; c.NeverClaimLabels != nil || c.EffectiveNeverClaimLabels()[0] != "epic" {
+		t.Fatalf("blank must restore the default never_claim_labels, got %#v", c.NeverClaimLabels)
+	}
 	if c.EscalateAfterClaims != -1 || c.EscalationThreshold() != 0 || c.CommentEnabled() {
 		t.Fatalf("reset PUT did not reset only what it carried: %+v", c)
 	}
@@ -265,6 +281,7 @@ func TestParityBatch7SettingsRenderEveryKey(t *testing.T) {
 		{"governor.claims.comment", `data-section="features" data-key="claimsComment"`},
 		{"governor.claims.label", `data-section="features" data-key="claimsLabel"`},
 		{"governor.claims.escalate_after_claims", `data-arg1="claimsEscalateAfterClaims" data-arg-types="s,s,N"`},
+		{"governor.claims.never_claim_labels", `data-arg1="claimsNeverClaimLabels" data-arg-types="s,s,s"`},
 		{"governor.rotation.headroom_source", `data-arg1="rotationHeadroomSource" data-arg-types="s,s,v"`},
 	} {
 		if !strings.Contains(features, "yamlHint('"+c.yaml+"')") {

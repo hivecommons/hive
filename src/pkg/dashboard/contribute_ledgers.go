@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -63,10 +64,24 @@ const (
 // noWorkReasonMaxLen caps the client-supplied VerdictReason before it is stored
 // in the PVC-backed verdict ledger and echoed into logs: the field is scraped
 // from arbitrary agent output, so an unbounded value would let a confused (or
-// hostile) relay bloat the ledger file. 200 runes comfortably fits the
+// hostile) relay bloat the ledger file. 200 bytes comfortably fits the
 // machine-readable reasons ("maintainer_gated", "already_covered") plus a short
 // free-text explanation.
 const noWorkReasonMaxLen = 200
+
+// truncateReasonBytes caps a reason at noWorkReasonMaxLen bytes without splitting
+// a UTF-8 rune. It preserves the retained text verbatim for ledger auditing;
+// GitHub comments apply their additional sanitization in sanitizeReportedReason.
+func truncateReasonBytes(reason string) string {
+	if len(reason) <= noWorkReasonMaxLen {
+		return reason
+	}
+	cut := noWorkReasonMaxLen
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
 
 var completedTasksFile = "/data/contributors/completed-tasks.json"
 
@@ -737,9 +752,7 @@ func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, rep
 	if h == nil || repo == "" || number <= 0 {
 		return
 	}
-	if len(reason) > noWorkReasonMaxLen {
-		reason = reason[:noWorkReasonMaxLen]
-	}
+	reason = truncateReasonBytes(reason)
 	claim := ghpkg.IssueClaim{Repo: repo, Issue: number, Source: ghpkg.ClaimSourceVerdict, SourceReporter: reporter}
 	if evidence != nil {
 		claim.PRNumber = evidence.PR
@@ -857,9 +870,7 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// past this cooldown until a human clears it. The no-PR streak is
 		// left alone: it exists to escalate, and this is already the ceiling.
 		cooldown = withPRCooldown
-		if len(reason) > noWorkReasonMaxLen {
-			reason = reason[:noWorkReasonMaxLen]
-		}
+		reason = truncateReasonBytes(reason)
 		h.noWorkVerdicts[key] = noWorkVerdictRecord{
 			RecordedAt:    time.Now(),
 			SuppressHours: withPRCooldown.Hours(),
@@ -881,9 +892,7 @@ func (h *ContributeWSHub) markTaskCompletedVerdictKeySignal(key string, prURL, v
 		// issue activity. Only the OFFER surfaces read this ledger; the
 		// escalating cooldown above still stands as the backstop.
 		if verdict == completionVerdictNoWorkNeeded {
-			if len(reason) > noWorkReasonMaxLen {
-				reason = reason[:noWorkReasonMaxLen]
-			}
+			reason = truncateReasonBytes(reason)
 			h.noWorkVerdicts[key] = noWorkVerdictRecord{
 				RecordedAt:    time.Now(),
 				SuppressHours: withPRCooldown.Hours(),

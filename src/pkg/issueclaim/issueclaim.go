@@ -95,6 +95,11 @@ type Claim struct {
 	// proven the contributor owns the GitHub login (verified=true). Absent or
 	// any other value parses as false.
 	Verified bool
+	// PRStarted is the marker's pr_started= value: the claim carries PR
+	// evidence (a pull-request request or a start marker naming a branch /
+	// PR), which is what stages the issue stage/030-pr-in-progress. Absent
+	// or any other value parses as false (hivecommons/hive#13069).
+	PRStarted bool
 }
 
 // ContributorTierDefault is the tier a kind=contributor marker without tier=
@@ -177,7 +182,7 @@ func parseKeyValueMarker(body string) (Claim, bool) {
 			return Claim{}, false
 		}
 	}
-	claim := Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker, Kind: vals["kind"], Hive: vals["hive"]}
+	claim := Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker, Kind: vals["kind"], Hive: vals["hive"], PRStarted: vals["pr_started"] == "true"}
 	if strings.EqualFold(claim.Kind, "contributor") {
 		claim.Tier = strings.ToLower(vals["tier"])
 		if claim.Tier == "" {

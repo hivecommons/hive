@@ -234,3 +234,21 @@ func TestParseMarker_ContributorTierAndVerified(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#13069: pr_started= is the marker's PR evidence; absent
+// or anything but "true" is false.
+func TestParseMarker_ReadsPRStarted(t *testing.T) {
+	with := "<!-- hive:claim who=scanner kind=agent hive=h pr_started=true at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->"
+	claim, ok := ParseMarker(with)
+	if !ok || !claim.PRStarted || claim.Kind != "agent" {
+		t.Fatalf("pr_started=true lost: ok=%v %+v", ok, claim)
+	}
+	without := "<!-- hive:claim who=scanner kind=agent hive=h at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->"
+	if claim, ok := ParseMarker(without); !ok || claim.PRStarted {
+		t.Fatalf("absent pr_started parsed true: ok=%v %+v", ok, claim)
+	}
+	odd := "<!-- hive:claim who=scanner kind=agent pr_started=yes until=2026-09-23T05:30:00Z -->"
+	if claim, ok := ParseMarker(odd); !ok || claim.PRStarted {
+		t.Fatalf("pr_started=yes parsed true: ok=%v %+v", ok, claim)
+	}
+}

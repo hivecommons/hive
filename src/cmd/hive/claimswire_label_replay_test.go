@@ -24,7 +24,8 @@ import (
 func TestClaimHooksRemoveLabelAfterSecondClaimExpires(t *testing.T) {
 	var mu sync.Mutex
 	// A small label store: the hooks also write the hive/claimed-by-<who>
-	// modifier and swap stage labels through ApplyStageLabel, so only the
+	// modifier (the generic `human` for a human principal, never the login)
+	// and swap stage labels through the stage engine, so only the
 	// stage/020-claimed add/remove is counted here.
 	labels := map[string]bool{}
 	adds, removes := 0, 0
@@ -90,7 +91,7 @@ func TestClaimHooksRemoveLabelAfterSecondClaimExpires(t *testing.T) {
 		testutil.Eventually(t, 5*time.Second, func() bool {
 			mu.Lock()
 			a, r := adds, removes
-			claimedBy := labels[claims.ClaimedByPrefix+"alice"]
+			claimedBy := labels[claims.ClaimedByHumanLabel]
 			mu.Unlock()
 			if a != wantAdds || r != wantRemoves {
 				return false

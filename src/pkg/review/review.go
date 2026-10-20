@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
 const (
@@ -133,6 +135,10 @@ type PerspectiveReport struct {
 	// to the author, but explicitly deferred a maintainer/product decision.
 	DecisionRequested bool   `json:"decision_requested,omitempty"`
 	DecisionQuestion  string `json:"decision_question,omitempty"`
+	// DecisionRiskHigh is the reviewer's explicit escape hatch: the review
+	// body carried `<!-- hive-decision-risk: high -->`, so the question parks
+	// the PR for a person even when its wording matches no risk class.
+	DecisionRiskHigh bool `json:"decision_risk_high,omitempty"`
 	// NotApplicable marks a report whose perspective had nothing to judge on
 	// this PR -- today only plan_match on a PR with no Hive-Run / Hive-Plan
 	// trailer. It is neither an approval nor a withheld one: the aggregate
@@ -144,6 +150,13 @@ type PerspectiveReport struct {
 	// mislabeled requires_human engineering findings back to the fixer lane
 	// without storing the whole PR review body in the durable verdict file.
 	ConcreteRemediation bool `json:"concrete_remediation,omitempty"`
+	// PermissionsTighteningOnly is set by the relay when
+	// WorkflowPermissionsTighteningOnly proved the PR's diff only removes or
+	// narrows workflow `permissions:` scopes. It suppresses the direction-blind
+	// permissions-credentials and sensitive-paths risk classes (and the
+	// "permission"/"privilege" escalation terms) for this report; every other
+	// risk class still parks the PR (hivecommons/hive#13068).
+	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
 }
 
 type AggregateOptions struct {
@@ -152,7 +165,8 @@ type AggregateOptions struct {
 	MaxFixAttempts int
 	// SelfAuthoredDecisionPolicy is "resolve" (default) or "escalate".
 	// Resolve lets Hive-authored PRs keep moving when the only human hold is
-	// a non-risk design/sequence/config-shape decision question.
+	// a decision question that matches no DecisionRiskClass and carries no
+	// `hive-decision-risk: high` marker.
 	SelfAuthoredDecisionPolicy string
 	// MaxPerspectivesPerPR mirrors DispatchOptions.MaxPerspectivesPerPR. A
 	// perspective the dispatcher never hands out cannot approve, so unanimity
@@ -203,6 +217,9 @@ type Aggregate struct {
 	// on entries written before the field existed; FirstRecorded falls back
 	// to RecordedAt.
 	FirstRecordedAt time.Time `json:"first_recorded_at,omitzero"`
+	// PermissionsTighteningOnly mirrors the reports' flag so Normalize judges
+	// risk escalation with the same carve-out AggregateReports did.
+	PermissionsTighteningOnly bool `json:"permissions_tightening_only,omitempty"`
 }
 
 // FirstRecorded is when the verdict was first recorded: FirstRecordedAt, or
@@ -286,6 +303,16 @@ func ValidateReportFor(raw []byte, set PerspectiveSet) (*PerspectiveReport, erro
 }
 
 func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggregate {
+	agg := aggregateReports(reports, opts)
+	if agg.PermissionsTighteningOnly && agg.Verdict != VerdictRequiresHuman {
+		// The suppression removed a human hold; say so where the verdict is
+		// read (review-verdicts.json, stage comments) so it is auditable.
+		agg.Reasons = append(agg.Reasons, PermissionsTighteningReason)
+	}
+	return agg
+}
+
+func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggregate {
 	threshold := opts.HumanThreshold
 	if threshold == "" {
 		threshold = DefaultHumanThreshold
@@ -310,6 +337,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	agg.HiveAuthoredKnown = true
 	agg.HiveAuthored = reportsHiveAuthored(reports)
+	agg.PermissionsTighteningOnly = reportsPermissionsTighteningOnly(reports)
 	seenVerdicts := map[Verdict]bool{}
 	var decisionRequested bool
 	var decisionQuestion string
@@ -579,16 +607,29 @@ func aggregateHasConcreteRemediation(a Aggregate) bool {
 }
 
 func aggregateRequiresRiskEscalation(a Aggregate) bool {
-	if containsRiskEscalationTerm(a.DecisionQuestion) {
+	tightening := a.PermissionsTighteningOnly
+	if _, risk := DecisionQuestionRiskClassFor(a.DecisionQuestion, tightening); risk {
 		return true
 	}
 	for _, text := range append(append([]string{}, a.Reasons...), a.HumanSummaries...) {
-		if containsRiskEscalationTerm(text) {
+		if text == PermissionsTighteningReason {
+			continue
+		}
+		if containsRiskEscalationTermFor(text, tightening) {
 			return true
 		}
 	}
 	for _, f := range a.Findings {
-		if containsRiskEscalationTerm(f.Finding.Title) || containsRiskEscalationTerm(f.Finding.Summary) {
+		if containsRiskEscalationTermFor(f.Finding.Title, tightening) || containsRiskEscalationTermFor(f.Finding.Summary, tightening) {
+			return true
+		}
+	}
+	return false
+}
+
+func reportsPermissionsTighteningOnly(reports []PerspectiveReport) bool {
+	for _, r := range reports {
+		if r.PermissionsTighteningOnly {
 			return true
 		}
 	}
@@ -603,7 +644,7 @@ func selfAuthoredRequiresHumanReportIsResolvable(r PerspectiveReport, opts Aggre
 		return false
 	}
 	if r.DecisionRequested {
-		return nonRiskSelfAuthoredDecisionQuestion(r.DecisionQuestion)
+		return selfAuthoredDecisionResolvable(r)
 	}
 	return true
 }
@@ -638,11 +679,15 @@ func reportHasConcreteRemediation(r PerspectiveReport) bool {
 }
 
 func reportRequiresRiskEscalation(r PerspectiveReport) bool {
-	if containsRiskEscalationTerm(r.DecisionQuestion) || containsRiskEscalationTerm(r.Summary) {
+	tightening := r.PermissionsTighteningOnly
+	if _, risk := DecisionQuestionRiskClassFor(r.DecisionQuestion, tightening); risk || r.DecisionRiskHigh {
+		return true
+	}
+	if containsRiskEscalationTermFor(r.Summary, tightening) {
 		return true
 	}
 	for _, f := range r.Findings {
-		if containsRiskEscalationTerm(f.Title) || containsRiskEscalationTerm(f.Summary) {
+		if containsRiskEscalationTermFor(f.Title, tightening) || containsRiskEscalationTermFor(f.Summary, tightening) {
 			return true
 		}
 	}
@@ -676,11 +721,21 @@ func RiskEscalationText(text string) bool {
 }
 
 func containsRiskEscalationTerm(text string) bool {
+	return containsRiskEscalationTermFor(text, false)
+}
+
+// containsRiskEscalationTermFor is containsRiskEscalationTerm with the
+// permissions-tightening carve-out: on a PR whose diff only narrows workflow
+// permissions, prose that merely names permissions is not an escalation.
+func containsRiskEscalationTermFor(text string, permissionsTighteningOnly bool) bool {
 	q := strings.ToLower(strings.TrimSpace(text))
 	if q == "" {
 		return false
 	}
 	for _, term := range riskEscalationTerms() {
+		if permissionsTighteningOnly && permissionsTighteningSuppressedTerms[term] {
+			continue
+		}
 		if strings.Contains(q, term) {
 			return true
 		}
@@ -706,8 +761,11 @@ func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts Aggr
 	if len(questions) == 0 || !reportsHiveAuthored(reports) {
 		return false
 	}
-	for _, q := range questions {
-		if !nonRiskSelfAuthoredDecisionQuestion(q) {
+	for _, r := range reports {
+		if !r.DecisionRequested {
+			continue
+		}
+		if !selfAuthoredDecisionResolvable(r) {
 			return false
 		}
 	}
@@ -723,27 +781,185 @@ func reportsHiveAuthored(reports []PerspectiveReport) bool {
 	return false
 }
 
-func nonRiskSelfAuthoredDecisionQuestion(question string) bool {
+// selfAuthoredDecisionResolvable is the denylist test for one reviewer
+// decision question on a Hive-authored PR: the hive resolves the question
+// itself unless the reviewer marked it high-risk or its wording lands in a
+// DecisionRiskClass. Before hivecommons/hive#13020 this was an allowlist of
+// "non-risk" words (naming, scope, changelog, …) and every question outside
+// it parked a green, agent-authored PR for a person -- including one whose
+// answer the linked issue had already written down.
+func selfAuthoredDecisionResolvable(r PerspectiveReport) bool {
+	q := strings.TrimSpace(r.DecisionQuestion)
+	if q == "" || r.DecisionRiskHigh {
+		return false
+	}
+	_, risk := DecisionQuestionRiskClassFor(q, r.PermissionsTighteningOnly)
+	return !risk
+}
+
+// DecisionRiskClass names one category of reviewer decision question that
+// stays a human's call on a self-authored PR. Terms are matched as lower-case
+// substrings; Patterns are whole-word matches for terms too short to be safe
+// as substrings ("auth" inside "author", "role" inside "controller").
+type DecisionRiskClass struct {
+	Name     string
+	Terms    []string
+	Patterns []*regexp.Regexp
+}
+
+// DecisionRiskClasses is the denylist that parks a Hive-authored PR's
+// reviewer decision question at stage/085-needs-decision. Anything a
+// reviewer asks that matches none of these is the hive's own engineering
+// call and is resolved by policy; the question is kept as an audit reason.
+// The sensitive-path class is derived from sentinel.DefaultSensitivePaths so
+// the two lists cannot drift apart.
+var DecisionRiskClasses = []DecisionRiskClass{
+	{
+		Name: "permissions-credentials",
+		Terms: []string{
+			"permission", "privilege", "token", "secret", "credential", "password",
+			"api key", "apikey", "write access", "admin access", ": write", "contents: write",
+			"be granted", "grant ", "escalat", "sudo", "root access",
+		},
+	},
+	{
+		Name: "security",
+		Terms: []string{
+			"security", "vulnerab", "cve-", "exploit", "injection", "sanitiz", "xss", "csrf",
+			"crypto", "cipher", "signing key", "certificate", "tls ", "ssl ", "authentication", "authorization",
+		},
+		Patterns: []*regexp.Regexp{
+			regexp.MustCompile(`\bauth[nz]?\b`), regexp.MustCompile(`\boauth\b`), regexp.MustCompile(`\bsso\b`),
+		},
+	},
+	{
+		Name:  "sensitive-paths",
+		Terms: append([]string{"workflow", "codeowners", "branch protection", "ruleset"}, sentinelSensitivePathTerms()...),
+	},
+	{
+		Name: "data-loss-irreversible",
+		Terms: []string{
+			"data loss", "delete", "destructive", "irreversible", "migration", "truncate",
+			"wipe", "purge", "overwrite", "drop the", "drop a ", "drop column", "drop table",
+			"breaking", "public-facing", "cannot be undone", "can't be undone", "force-push", "force push",
+		},
+	},
+	{
+		Name: "merge-trust-policy",
+		Terms: []string{
+			"merge polic", "automerge", "auto-merge", "auto merge", "trust tier", "trusted tier", "trust level",
+			"acmm", "maintainer tier", "approver", "governance", "policy", "owners file", "who may merge", "who can merge",
+		},
+		Patterns: []*regexp.Regexp{regexp.MustCompile(`\brole\b`), regexp.MustCompile(`\broles\b`), regexp.MustCompile(`\blevel [0-9]\b`)},
+	},
+	{
+		Name: "external-side-effects",
+		Terms: []string{
+			"publish", "release", "tag a version", "deploy to", "billing", "spend", "cost", "paid ",
+			"email", "e-mail", "notify humans", "notification to", "notifications to", "outbound", "webhook",
+			"announce", "post to slack", "post to discord", "npm registry", "pypi", "docker hub", "ghcr",
+		},
+	},
+	{
+		Name: "licensing-legal",
+		Terms: []string{
+			"license", "licensing", "copyright", "legal", "privacy", "compliance", "gdpr", "trademark", "cla ",
+		},
+	},
+	{
+		// A question the reviewer admits it could not judge is not a question
+		// the hive can answer for it either.
+		Name: "unverifiable",
+		Terms: []string{
+			"unreadable", "could not read", "cannot read", "can't read", "could not judge", "cannot judge",
+			"missing context", "unfamiliar subsystem", "ambiguous", "cannot test", "can't test", "high-risk",
+		},
+	},
+}
+
+// DecisionQuestionRiskClass classifies a reviewer decision question against
+// DecisionRiskClasses and returns the first class it lands in.
+func DecisionQuestionRiskClass(question string) (string, bool) {
+	return DecisionQuestionRiskClassFor(question, false)
+}
+
+// DecisionQuestionRiskClassFor is DecisionQuestionRiskClass with the
+// permissions-tightening carve-out (hivecommons/hive#13068): when the PR's
+// workflow diff was proved to only narrow `permissions:`, the
+// direction-blind permissions-credentials and sensitive-paths classes are
+// skipped, so "confirm the permissions narrowing is acceptable" is the
+// hive's own call. Every other class still applies to the same question.
+func DecisionQuestionRiskClassFor(question string, permissionsTighteningOnly bool) (string, bool) {
 	q := strings.ToLower(strings.TrimSpace(question))
 	if q == "" {
-		return false
+		return "", false
 	}
-	if containsRiskEscalationTerm(q) {
-		return false
-	}
-	nonRiskTerms := []string{
-		"land before", "land now", "land later", "sequenc", "groundwork", "dead-code",
-		"dead code", "loader", "consumer", "naming", "namespace", "nesting", "top-level",
-		"config shape", "configuration shape", "config namespace", "fixed ledger path",
-		"scope", "placement", "organize", "organisation", "organization",
-		"changelog", "fragment", "duplicate", "trim", "reword",
-	}
-	for _, term := range nonRiskTerms {
-		if strings.Contains(q, term) {
-			return true
+	for _, class := range DecisionRiskClasses {
+		if permissionsTighteningOnly && permissionsTighteningSuppressedClasses[class.Name] {
+			continue
+		}
+		for _, term := range class.Terms {
+			if strings.Contains(q, term) {
+				return class.Name, true
+			}
+		}
+		for _, pat := range class.Patterns {
+			if pat.MatchString(q) {
+				return class.Name, true
+			}
 		}
 	}
-	return false
+	return "", false
+}
+
+// sentinelSensitivePathTerms flattens sentinel.DefaultSensitivePaths globs
+// into lower-case substrings a decision question could name: "**/OWNERS" ->
+// "owners", ".github/workflows/**" -> ".github/workflows". Fragments shorter
+// than four characters ("*.tf" -> ".tf") are dropped as too noisy.
+func sentinelSensitivePathTerms() []string {
+	const minLen = 4
+	seen := map[string]bool{}
+	var terms []string
+	for _, glob := range sentinel.DefaultSensitivePaths {
+		term := strings.ToLower(glob)
+		term = strings.ReplaceAll(term, "**/", "")
+		term = strings.ReplaceAll(term, "/**", "")
+		term = strings.ReplaceAll(term, "*", "")
+		term = strings.Trim(term, "/")
+		if len(term) < minLen || seen[term] {
+			continue
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	return terms
+}
+
+// decisionTopic gives the audit line a short name for what kind of
+// engineering choice the hive resolved. It is descriptive only: the
+// resolve/escalate decision is DecisionQuestionRiskClass's.
+func decisionTopic(question string) string {
+	q := strings.ToLower(question)
+	topics := []struct {
+		name  string
+		terms []string
+	}{
+		{"sequencing", []string{"land before", "land now", "land later", "sequenc", "groundwork", "consumer"}},
+		{"naming", []string{"naming", "rename", "namespace", "flag name", "label name", "called"}},
+		{"default-value", []string{"default"}},
+		{"config-shape", []string{"config shape", "configuration shape", "config namespace", "nesting", "top-level", "ledger path"}},
+		{"scope", []string{"scope", "placement", "organize", "organisation", "organization", "dead-code", "dead code", "loader"}},
+		{"changelog", []string{"changelog", "fragment", "duplicate", "trim", "reword"}},
+	}
+	for _, t := range topics {
+		for _, term := range t.terms {
+			if strings.Contains(q, term) {
+				return t.name
+			}
+		}
+	}
+	return "engineering-choice"
 }
 
 func selfAuthoredDecisionAdvisory(questions []string) string {
@@ -755,9 +971,18 @@ func selfAuthoredDecisionAdvisory(questions []string) string {
 	}
 	sort.Strings(cleaned)
 	if len(cleaned) == 0 {
-		return "self-authored non-risk decision question resolved by reviewer policy"
+		return "decision resolved by policy: engineering-choice — not a risk question"
 	}
-	return "self-authored non-risk decision question recorded as advisory: " + strings.Join(cleaned, " | ")
+	topics := map[string]bool{}
+	var names []string
+	for _, q := range cleaned {
+		if t := decisionTopic(q); !topics[t] {
+			topics[t] = true
+			names = append(names, t)
+		}
+	}
+	sort.Strings(names)
+	return "decision resolved by policy: " + strings.Join(names, ", ") + " — not a risk question; recorded as advisory: " + strings.Join(cleaned, " | ")
 }
 
 func decisionReason(question string) string {

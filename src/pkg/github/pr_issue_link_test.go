@@ -283,15 +283,188 @@ func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
 			t.Fatalf("issue #%d labels = %v, want covered-by-PR on every claimed issue", issue.Number, issue.Labels)
 		}
 	}
-	// Three lookups: one per linked pair, plus the reference claim's
-	// retraction check (hivecommons/hive#12144), which finds no link and
-	// is memoised like the rest. A second sweep is answered from the memo:
+	// Four lookups: one per linked pair, the reference claim's PR-body
+	// retrofit check, plus that claim's retraction check
+	// (hivecommons/hive#12144), which finds no link and is memoised like the
+	// rest. A second sweep is answered from the memo:
 	// no new lookups or mutations.
-	if f.lookups.Load() != 3 {
-		t.Fatalf("lookups = %d, want 3 (two ensure lookups, one retraction check)", f.lookups.Load())
+	if f.lookups.Load() != 4 {
+		t.Fatalf("lookups = %d, want 4 (two ensure lookups, one retrofit check, one retraction check)", f.lookups.Load())
 	}
 	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
-	if f.lookups.Load() != 3 || f.mutations.Load() != 2 {
-		t.Fatalf("after second sweep lookups=%d mutations=%d, want 3/2 (memoised)", f.lookups.Load(), f.mutations.Load())
+	if f.lookups.Load() != 5 || f.mutations.Load() != 2 {
+		t.Fatalf("after second sweep lookups=%d mutations=%d, want 5/2 (link/retraction memoised; retrofit rechecked)", f.lookups.Load(), f.mutations.Load())
+	}
+}
+
+func TestSyncIssuePRClaimLabels_RetrofitsHiveRefsClaim(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "Refs #7 — implemented by this PR.", base: "v5", defaultBranch: "v5", author: "app/hivecommons-hive"}
+	prLink := f.handler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/graphql") || r.Method == http.MethodPatch:
+			prLink(w, r)
+		case strings.Contains(r.URL.Path, "/labels"):
+			_, _ = w.Write([]byte(`{"name":"ok"}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
+	c.SetAppBotLogin("hivecommons-hive[bot]")
+	now := time.Now()
+	ledger := NewClaimLedger("", testLogger())
+	ledger.Reconcile([]IssueClaim{{Repo: "hivecommons/hive", Issue: 7, PRNumber: 1, PRRepo: "hivecommons/hive", PRURL: "https://github.com/hivecommons/hive/pull/1", PRState: "open", Reference: true, ObservedAt: now, FirstObservedAt: now}}, true)
+	result := &ActionableResult{}
+	result.Issues.Items = []Issue{{Repo: "hivecommons/hive", Number: 7}}
+
+	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
+	if f.patches.Load() != 1 {
+		t.Fatalf("patches = %d, want one PR body retrofit", f.patches.Load())
+	}
+	if !strings.Contains(f.patchedBody, "Fixes #7") || !strings.Contains(f.patchedBody, issueLinkFixedMarker) {
+		t.Fatalf("patched body %q must rewrite Refs to Fixes and stamp marker", f.patchedBody)
+	}
+	if !HasCoveredByPRLabel(result.Issues.Items[0].Labels) {
+		t.Fatalf("labels = %v, want covered-by-PR", result.Issues.Items[0].Labels)
+	}
+}
+
+type issueStagePRLinkFixture struct {
+	body          string
+	base          string
+	defaultBranch string
+	author        string
+	state         string
+	patches       atomic.Int32
+	patchedBody   string
+}
+
+func (f *issueStagePRLinkFixture) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/pulls/1" {
+			var req struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.patches.Add(1)
+			f.patchedBody = req.Body
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 1, "body": req.Body})
+			return
+		}
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/graphql") {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if f.state == "" {
+			f.state = "OPEN"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"repository": map[string]any{
+				"defaultBranchRef": map[string]any{"name": f.defaultBranch},
+				"pullRequest": map[string]any{
+					"state":       f.state,
+					"baseRefName": f.base,
+					"body":        f.body,
+					"url":         "https://github.com/hivecommons/hive/pull/1",
+					"author":      map[string]any{"login": f.author},
+				},
+			},
+		}})
+	}
+}
+
+func newIssueStagePRLinkClient(t *testing.T, f *issueStagePRLinkFixture) *Client {
+	t.Helper()
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
+	c.SetAppBotLogin("hive[bot]")
+	return c
+}
+
+func TestEnsureIssueStagePRLinkEditsHiveDefaultBranchPR(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nImplements the retry.", base: "v5", defaultBranch: "v5", author: "hive[bot]"}
+	c := newIssueStagePRLinkClient(t, f)
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1"})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if !got.EditedBody || got.StageComment != "" || f.patches.Load() != 1 {
+		t.Fatalf("result=%+v patches=%d, want one body edit and no issue comment", got, f.patches.Load())
+	}
+	if !strings.HasSuffix(f.patchedBody, "\n\nFixes #7") {
+		t.Fatalf("patched body %q must append Fixes trailer", f.patchedBody)
+	}
+}
+
+func TestEnsureIssueStagePRLinkLeavesPartialPRBodyAlone(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nPart of #7; leaves follow-up work open.", base: "v5", defaultBranch: "v5", author: "hive[bot]"}
+	c := newIssueStagePRLinkClient(t, f)
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "partial-reference" {
+		t.Fatalf("result=%+v patches=%d, want part-of no-op", got, f.patches.Load())
+	}
+	if !strings.Contains(got.StageComment, "PR #1 covers this issue") || !strings.Contains(got.StageComment, "GitHub will not show") {
+		t.Fatalf("stage comment = %q", got.StageComment)
+	}
+}
+
+func TestEnsureIssueStagePRLinkRetrofitsRefsOnlyHivePR(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs #7 — implemented by this Hive PR.", base: "v5", defaultBranch: "v5", author: "app/hive"}
+	c := newIssueStagePRLinkClient(t, f)
+	c.SetAppBotLogin("hive[bot]")
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if !got.EditedBody || f.patches.Load() != 1 {
+		t.Fatalf("result=%+v patches=%d, want refs retrofit edit", got, f.patches.Load())
+	}
+	if !strings.Contains(f.patchedBody, "Fixes #7 — implemented") || !strings.Contains(f.patchedBody, issueLinkFixedMarker) {
+		t.Fatalf("patched body = %q", f.patchedBody)
+	}
+
+	f2 := &issueStagePRLinkFixture{body: f.patchedBody, base: "v5", defaultBranch: "v5", author: "app/hive"}
+	c2 := newIssueStagePRLinkClient(t, f2)
+	c2.SetAppBotLogin("hive[bot]")
+	again, err := c2.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("second EnsureIssueStagePRLink: %v", err)
+	}
+	if again.EditedBody || f2.patches.Load() != 0 || again.Skipped != "already-closing" {
+		t.Fatalf("second result=%+v patches=%d, want marker to prevent a second rewrite", again, f2.patches.Load())
+	}
+}
+
+func TestEnsureIssueStagePRLinkExplainsNonDefaultBranch(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nImplements the retry.", base: "v6", defaultBranch: "v5", author: "hive[bot]"}
+	c := newIssueStagePRLinkClient(t, f)
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1"})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "non-default-base" {
+		t.Fatalf("result=%+v patches=%d, want non-default no-op", got, f.patches.Load())
+	}
+	if !strings.Contains(got.StageComment, "targets `v6`") || !strings.Contains(got.StageComment, "repository default branch") {
+		t.Fatalf("stage comment = %q", got.StageComment)
+	}
+}
+
+func TestEnsureIssueStagePRLinkNeverEditsHumanPR(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs #7 — implemented by this PR.", base: "v5", defaultBranch: "v5", author: "octocat"}
+	c := newIssueStagePRLinkClient(t, f)
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 1, PRURL: "https://github.com/hivecommons/hive/pull/1", Reference: true})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "partial-reference" {
+		t.Fatalf("result=%+v patches=%d, want human no-op", got, f.patches.Load())
 	}
 }

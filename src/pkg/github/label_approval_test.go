@@ -562,3 +562,29 @@ func TestHandleWebhookEventIssuesLabelMarksDirty(t *testing.T) {
 		})
 	}
 }
+
+// The label-driven path applies the same rule (hivecommons/hive#13075): a
+// `needs-human` the hive itself added is answered by `/hive approve` and
+// lifts with the hive's other park labels; `hold` is untouched.
+func TestSweepLabelDrivenHiveApproveLiftsHiveNeedsHuman(t *testing.T) {
+	issue := laIssue(42, "needs-decision", "needs-human", "hold")
+	issue.Comments = []unparkWireComment{humanComment(601, laWriter, "/hive approve")}
+	c, rec := laServer(t, []unparkWireIssue{issue})
+	rec.timelines[42] = []unparkWireTimelineEvent{
+		labeledAt(1, laHive, "needs-decision", laBase),
+		labeledAt(2, laHive, "needs-human", laBase.Add(time.Minute)),
+	}
+	result := laSweep(t, c, true, laPolicyFn(laPolicy(), true))
+	if len(result.Unparked) != 1 {
+		t.Fatalf("expected un-park, got %+v", result.Unparked)
+	}
+	if got := strings.Join(rec.removed[42], ","); got != "needs-decision,needs-human" {
+		t.Fatalf("removed = %q, want the hive's needs-human and needs-decision", got)
+	}
+	if len(rec.added[42]) != 1 || rec.added[42][0] != HumanAckLabel {
+		t.Fatalf("added = %v", rec.added[42])
+	}
+	if len(rec.posted[42]) != 1 || !strings.Contains(rec.posted[42][0], "`needs-decision`, `needs-human` removed") || strings.Contains(rec.posted[42][0], "Left in place") {
+		t.Fatalf("reply must list needs-human among the removed labels, got %v", rec.posted[42])
+	}
+}

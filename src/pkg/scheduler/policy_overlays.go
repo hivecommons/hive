@@ -325,6 +325,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
 		if pr.Adopted {
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
+			b.WriteString(adoptedPRStatusRule)
 		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
@@ -625,3 +626,9 @@ func (s *Scheduler) reviewPerspectivesSection() string {
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// adoptedPRStatusRule follows every adopted-PR line in a fix kick: the
+// stage label, not the check list, says what the hive still owes, and a
+// pending `tide` or a missing lgtm is never the hive's blocker below stage
+// 080 (hivecommons/hive#12858).
+const adoptedPRStatusRule = "    STATUS RULE: green CI is not done on a 074 PR. Read the stage comment/lane reason: an open review-swarm finding (reviewer-verdict:changes_requested) is YOUR blocker — fix it and let the swarm re-review. Never report \"only tide remains\" or \"needs maintainer lgtm/approve\" unless the stage label is already >= stage/080; below that, a pending tide check means the lane has not admitted the head yet, not that a person owes an approval.\n"

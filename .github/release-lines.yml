@@ -1,7 +1,7 @@
 # Release-line branch allow-lists — the single source of truth for which
 # version branches CI is expected to cover.
 #
-# Nine workflows pin their `push` / `pull_request` triggers to an explicit list
+# The workflows below pin their `push` / `pull_request` triggers to an explicit list
 # of version-branch names. That list is hand-maintained, and it has already
 # failed once: podman-contract.yml named `v2` alone, mainline moved to `v4`, and
 # the workflow stopped running entirely (#4339). A guard that never executes
@@ -89,6 +89,10 @@ pinned:
   # GitHub Actions Workflow triage compiles only on the active v5 line; older
   # release lines do not carry the gh-aw automation surface.
   gh-aw-compile.yml: [-v4]
+  # Self-test for the hive-action-smoke dispatch workflow (#12964). Its push
+  # trigger names v5 only: the smoke workflow is registered on v5 and does not
+  # exist on the feature-frozen v4 line, so there is nothing there to test.
+  hive-action-smoke-tests.yml: [-v4]
   go-security-analysis.yml: [v5, v6]
   # Unit gate for the reusable hive action's app-handle helper (#9707). The
   # action and its smoke wiring live only on the v6 development line, so the

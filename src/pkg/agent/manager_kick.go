@@ -219,8 +219,8 @@ func (m *Manager) SendKickWithSource(name string, message string, source string)
 	}
 
 	message, trigger, fromQueue := m.nextDeferredMentionKickLocked(agent, message, trigger)
-	if !m.deliverKickLocked(agent, message, trigger) {
-		return fmt.Errorf("agent %s kick delivery skipped", name)
+	if err := m.deliverKickLocked(agent, message, trigger); err != nil {
+		return err
 	}
 	if fromQueue {
 		removeDeferredMentionKickLocked(agent, trigger)
@@ -263,7 +263,7 @@ func (m *Manager) kickChunkPauseUnlocked(agent *AgentProcess, epoch int, d time.
 	return agent.kickEpoch == epoch
 }
 
-func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) bool {
+func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) error {
 	// Consume the one-shot resume flag first, before any early return, so a
 	// skipped delivery cannot leave it armed for an unrelated later kick.
 	skipClear := agent.resumeSkipClear
@@ -280,7 +280,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
 		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
 			"agent", agent.Name, "trigger", trigger)
-		return false
+		return fmt.Errorf("agent %s kick delivery already in progress", agent.Name)
 	}
 	defer agent.kickDelivering.Store(false)
 
@@ -291,7 +291,7 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
 			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible),
 			"question_form", paneShowsCopilotQuestionForm(visible))
-		return false
+		return fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name)
 	}
 
 	// Archive the PREVIOUS kick's scrollback and clear the history before any
@@ -308,17 +308,25 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	}
 	if backend != "goose" {
 		if backend != codexBackend {
-			m.tmuxSendKeysForAgent(agent, "C-c")
+			if err := m.tmuxSendKeysForAgent(agent, "C-c"); err != nil {
+				return m.kickDeliveryFailedLocked(agent, "clear input", err)
+			}
 			time.Sleep(staleCheckDelay)
 		}
-		m.tmuxSendKeysForAgent(agent, "C-u")
+		if err := m.tmuxSendKeysForAgent(agent, "C-u"); err != nil {
+			return m.kickDeliveryFailedLocked(agent, "clear input", err)
+		}
 		time.Sleep(staleCheckDelay)
 	}
 
 	if agent.Config.ClearOnKick && !skipClear {
-		m.tmuxSendLiteralForAgent(agent, "/clear")
+		if err := m.tmuxSendLiteralForAgent(agent, "/clear"); err != nil {
+			return m.kickDeliveryFailedLocked(agent, "send text", err)
+		}
 		time.Sleep(textToEnterDelay)
-		m.tmuxSendEntersForAgent(agent)
+		if err := m.tmuxSendEntersForAgent(agent); err != nil {
+			return m.kickDeliveryFailedLocked(agent, "submit prompt", err)
+		}
 		time.Sleep(clearBeforeKickDelay)
 	}
 
@@ -345,7 +353,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// (#7417). Pausing unlocked drops the hold to one chunk at a time.
 	runes := []rune(message)
 	if len(runes) <= chunkSize {
-		m.tmuxSendLiteralForAgent(agent, message)
+		if err := m.tmuxSendLiteralForAgent(agent, message); err != nil {
+			return m.kickDeliveryFailedLocked(agent, "send text", err)
+		}
 	} else {
 		epoch := agent.kickEpoch
 		for offset := 0; offset < len(runes); offset += chunkSize {
@@ -353,7 +363,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 			if end > len(runes) {
 				end = len(runes)
 			}
-			m.tmuxSendLiteralForAgent(agent, string(runes[offset:end]))
+			if err := m.tmuxSendLiteralForAgent(agent, string(runes[offset:end])); err != nil {
+				return m.kickDeliveryFailedLocked(agent, "send text", err)
+			}
 			if end >= len(runes) {
 				break // no pause after the final chunk
 			}
@@ -365,29 +377,35 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 				m.logger.Warn("kick delivery abandoned: agent restarted mid-send",
 					"agent", agent.Name, "trigger", trigger,
 					"sent_runes", end, "total_runes", len(runes))
-				return false
+				return fmt.Errorf("%w: agent %s restarted mid-send", errKickCancelledByRestart, agent.Name)
 			}
 		}
 	}
 
 	// Text and Enter must always be separate calls with a delay between
 	time.Sleep(textToEnterDelay)
-	m.tmuxSendEntersForAgent(agent)
+	if err := m.tmuxSendEntersForAgent(agent); err != nil {
+		return m.kickDeliveryFailedLocked(agent, "submit prompt", err)
+	}
 
-	return m.recordDeliveredKickLocked(agent, message, trigger)
+	m.recordDeliveredKickLocked(agent, message, trigger)
+	return nil
 }
 
-// deliverAgyHeadlessKickLocked reports false when the prompt file could not
-// be written and the kick was therefore never sent.
-func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, trigger string) bool {
-	m.tmuxSendKeysForAgent(agent, "C-u")
+// deliverAgyHeadlessKickLocked returns an error when the prompt file could
+// not be written or the pane write failed and the kick was therefore never
+// sent.
+func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, trigger string) error {
+	if err := m.tmuxSendKeysForAgent(agent, "C-u"); err != nil {
+		return m.kickDeliveryFailedLocked(agent, "clear input", err)
+	}
 	time.Sleep(staleCheckDelay)
 
 	message = kickMessageWithSuffixes(message, false, resolveExplainMode(agent.Config, m.explainModeDefault()))
 	promptFile := filepath.Join(agentStateDir, fmt.Sprintf(".hive-agy-prompt-%s.txt", agent.Name))
 	if err := writeAgentStateFile(promptFile, []byte(message)); err != nil {
 		m.logger.Warn("failed to write agy headless prompt", "name", agent.Name, "error", err)
-		return false
+		return m.kickDeliveryFailedLocked(agent, "write headless prompt", err)
 	}
 
 	model := agent.Config.Model
@@ -397,16 +415,27 @@ func (m *Manager) deliverAgyHeadlessKickLocked(agent *AgentProcess, message, tri
 	model = normalizeModelNameForBackend(model, "agy", false)
 	// ClearOnKick maps to a new agy conversation: there is no TUI to /clear.
 	cmd := agyHeadlessTurnShellCommand(agyTurnRunnerBinary(), "agy", model, agent.Config.ReasoningEffort, promptFile, agent.Config.ClearOnKick)
-	m.tmuxSendLiteralForAgent(agent, cmd)
+	if err := m.tmuxSendLiteralForAgent(agent, cmd); err != nil {
+		return m.kickDeliveryFailedLocked(agent, "send text", err)
+	}
 	time.Sleep(textToEnterDelay)
-	m.tmuxSendEntersForAgent(agent)
+	if err := m.tmuxSendEntersForAgent(agent); err != nil {
+		return m.kickDeliveryFailedLocked(agent, "submit prompt", err)
+	}
 
-	return m.recordDeliveredKickLocked(agent, message, trigger)
+	m.recordDeliveredKickLocked(agent, message, trigger)
+	return nil
 }
 
-// recordDeliveredKickLocked always returns true so the bool kick-delivery
-// contract (#5ded71e6c) can be satisfied with a single tail call.
-func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) bool {
+// kickDeliveryFailedLocked records a failed pane write without advancing the
+// successful-kick clock. Caller holds m.mu. Never include prompt text in errors.
+func (m *Manager) kickDeliveryFailedLocked(agent *AgentProcess, stage string, err error) error {
+	err = fmt.Errorf("agent %s kick delivery failed (%s): %w", agent.Name, stage, err)
+	m.markKickUndeliverableLocked(agent, time.Now(), err.Error())
+	return err
+}
+
+func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigger string) {
 	now := time.Now()
 	m.resetBusyVisibilityLocked(agent)
 	agent.LastKick = &now
@@ -466,7 +495,6 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	m.recordPrompt(agent.Name, trigger, message)
 
 	m.notifyKickObserver(agent.Name, KickObserverEventDelivered, trigger)
-	return true
 }
 
 // deliverStartupKick delivers a bootstrap prompt to a freshly launched agent
@@ -543,7 +571,11 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 	if prompt == "" {
 		return
 	}
-	if m.deliverKickLocked(agent, prompt, trigger) && fromQueue {
+	if err := m.deliverKickLocked(agent, prompt, trigger); err != nil {
+		m.logger.Warn("startup kick delivery failed", "name", agent.Name, "error", err)
+		return
+	}
+	if fromQueue {
 		removeDeferredMentionKickLocked(agent, trigger)
 	}
 }

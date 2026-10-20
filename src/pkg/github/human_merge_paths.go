@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -23,11 +24,17 @@ const (
 	HumanMergePathHoldLabel = "hold"
 )
 
+// ErrIncompletePRFileList is wrapped by ListPRChangedFiles when GitHub
+// reported more changed files than its files API returned (the API lists at
+// most 3000). Unlike a transport failure it does not clear up on retry, so
+// callers may treat it as a standing verdict rather than a transient fault.
+var ErrIncompletePRFileList = errors.New("incomplete PR file list")
+
 // ListPRChangedFiles returns the complete changed-file list of pr. It pages
 // through the files API and refuses an incomplete list (GitHub reported more
 // changed files than the API returned): a policy check on a partial list could
 // miss a guarded path, so callers must treat the error as "unknown" and fail
-// closed.
+// closed. The incomplete case wraps ErrIncompletePRFileList.
 func ListPRChangedFiles(ctx context.Context, client *gh.Client, owner, repo string, pr *gh.PullRequest) ([]intent.ChangedFile, error) {
 	if client == nil || pr == nil {
 		return nil, fmt.Errorf("listing PR files: no client or PR")
@@ -54,7 +61,7 @@ func ListPRChangedFiles(ctx context.Context, client *gh.Client, owner, repo stri
 		fileOpts.Page = resp.NextPage
 	}
 	if reported := pr.GetChangedFiles(); reported > len(files) {
-		return nil, fmt.Errorf("incomplete PR file list: GitHub reported %d changed files but API returned %d; intent alignment requires the complete changed-file list", reported, len(files))
+		return nil, fmt.Errorf("%w: GitHub reported %d changed files but API returned %d; intent alignment requires the complete changed-file list", ErrIncompletePRFileList, reported, len(files))
 	}
 	return files, nil
 }

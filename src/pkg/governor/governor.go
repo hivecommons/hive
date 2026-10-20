@@ -219,6 +219,10 @@ type ContinuousState struct {
 	Kicks          int64         `json:"kicks,omitempty"`
 	TokensConsumed int64         `json:"tokensConsumed,omitempty"`
 	TokenBaseline  int64         `json:"-"`
+	// PresumedTurnEnds counts kicks whose turn-end signal never arrived and
+	// were presumed over after the continuous turn ceiling. Non-zero means
+	// the manager's pane turn-end detection is missing for this agent.
+	PresumedTurnEnds int64 `json:"presumedTurnEnds,omitempty"`
 }
 
 const continuousBackoffCap = 30 * time.Minute
@@ -1087,6 +1091,9 @@ func (g *Governor) armContinuousIfIdleLocked(agentName string, at time.Time) (bo
 		st.Blocked = continuousBlockerStatus(blocker)
 		g.state.Continuous[agentName] = st
 		return false, false
+	}
+	if g.presumeStaleTurnEndedLocked(agentName, cadenceKey, at) {
+		st = g.state.Continuous[agentName]
 	}
 	idle, noPriorKick := g.continuousIdleForCadenceLocked(agentName, cadenceKey)
 	if !idle {

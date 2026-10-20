@@ -211,44 +211,61 @@ func (c *Client) openItemsWithLabel(ctx context.Context, label string) ([]HiveHo
 	var out []HiveHoldMigrationItem
 	for _, repo := range c.getRepos() {
 		owner, repoName := c.splitRepo(repo)
-		fullRepo := owner + "/" + repoName
-		opts := &gh.IssueListByRepoOptions{
-			State:       "open",
-			Labels:      []string{label},
-			ListOptions: gh.ListOptions{PerPage: 100},
+		items, err := c.openRepoItemsWithLabel(ctx, owner, repoName, label)
+		if err != nil {
+			return nil, err
 		}
-		for {
-			issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
-			if err != nil {
-				return nil, fmt.Errorf("listing %s items labeled %q: %w", repo, label, err)
-			}
-			for _, issue := range issues {
-				itemType := "issue"
-				if issue.IsPullRequest() {
-					itemType = "pr"
-				}
-				out = append(out, HiveHoldMigrationItem{
-					Repo:   fullRepo,
-					Number: issue.GetNumber(),
-					Type:   itemType,
-					Title:  issue.GetTitle(),
-					Labels: extractLabels(issue.Labels),
-					Body:   issue.GetBody(),
-				})
-			}
-			if resp == nil || resp.NextPage == 0 {
-				break
-			}
-			opts.ListOptions.Page = resp.NextPage
-		}
+		out = append(out, items...)
 	}
+	sortMigrationItems(out)
+	return out, nil
+}
+
+// openRepoItemsWithLabel lists the open issues and PRs of one repo carrying
+// label, oldest number first.
+func (c *Client) openRepoItemsWithLabel(ctx context.Context, owner, repoName, label string) ([]HiveHoldMigrationItem, error) {
+	var out []HiveHoldMigrationItem
+	fullRepo := owner + "/" + repoName
+	opts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		Labels:      []string{label},
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for {
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing %s items labeled %q: %w", fullRepo, label, err)
+		}
+		for _, issue := range issues {
+			itemType := "issue"
+			if issue.IsPullRequest() {
+				itemType = "pr"
+			}
+			out = append(out, HiveHoldMigrationItem{
+				Repo:   fullRepo,
+				Number: issue.GetNumber(),
+				Type:   itemType,
+				Title:  issue.GetTitle(),
+				Labels: extractLabels(issue.Labels),
+				Body:   issue.GetBody(),
+			})
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+	sortMigrationItems(out)
+	return out, nil
+}
+
+func sortMigrationItems(out []HiveHoldMigrationItem) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Repo != out[j].Repo {
 			return out[i].Repo < out[j].Repo
 		}
 		return out[i].Number < out[j].Number
 	})
-	return out, nil
 }
 
 func (c *Client) ensureMigrationHold(ctx context.Context, repo string, number int, label string, ensuredRepos map[string]bool) error {

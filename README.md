@@ -6,7 +6,6 @@
 
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14261/badge)](https://www.bestpractices.dev/projects/14261)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fhivecommons%2Fhive.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fhivecommons%2Fhive?ref=badge_large&issueType=license)
 
 Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a repo, set the limits, and let short-lived AI agents handle the maintenance chores while humans keep the decisions that matter.
 

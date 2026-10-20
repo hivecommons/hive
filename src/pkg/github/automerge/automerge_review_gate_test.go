@@ -252,7 +252,7 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 				Mode:    func() string { return ReviewGateModeEnforce },
 				Verdict: func(string, int, string) ReviewGateVerdict { return tt.verdict },
 			}, &rec)
-			reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "", false)
+			reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "", false)
 			if reason != tt.wantReason {
 				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
 			}
@@ -270,29 +270,62 @@ func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
 	}
 }
 
-// Only the App's own PRs are gated; a nil gate or a trusted-bot lane PR is
-// never evaluated.
-func TestSelfMergeReviewGateScope(t *testing.T) {
+// Every sweep lane is gated once review is on (hivecommons/hive#12974): the
+// trusted-author tier merged #12966 with zero swarm reviews because the gate
+// covered the self-authored lane only. A nil gate still means no evaluation.
+// The App's own PRs keep recording as "self-merge" so the existing
+// shadow-gate rollup stays continuous; other lanes record under their own
+// name.
+func TestMergeReviewGateCoversEveryLane(t *testing.T) {
 	tests := []struct {
-		name string
-		gate *ReviewGate
-		lane string
+		lane       string
+		wantRecord string
 	}{
-		{name: "nil gate", lane: "self-authored"},
-		{name: "trusted-bot lane", gate: &ReviewGate{Mode: func() string { return ReviewGateModeEnforce }}, lane: "trusted-bot"},
+		{lane: stageLaneSelf, wantRecord: intentLaneSelfMerge},
+		{lane: "trusted-bot", wantRecord: "trusted-bot"},
+		{lane: stageLaneTrusted, wantRecord: stageLaneTrusted},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newAutoMergeSweepClient("http://127.0.0.1:0")
+		t.Run(tt.lane, func(t *testing.T) {
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewEncoder(w).Encode([]any{})
+			}))
+			defer api.Close()
+			var rec reviewGateRecords
 			asked := 0
-			if tt.gate != nil {
-				tt.gate.Verdict = func(string, int, string) ReviewGateVerdict { asked++; return reviewGateNoBundle }
-				c.SetReviewGate(tt.gate)
+			c := newReviewGateSweepClient(api.URL, ReviewGate{
+				Mode:    func() string { return ReviewGateModeEnforce },
+				Verdict: func(string, int, string) ReviewGateVerdict { asked++; return reviewGateNoBundle },
+			}, &rec)
+			reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7", "", false)
+			if want := autoMergeReasonReviewGatePrefix + ReviewGateOutcomeNoBundle; reason != want || asked != 1 {
+				t.Fatalf("lane %s: reason = %q asked = %d; want %q held once", tt.lane, reason, asked, want)
 			}
-			if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7", "", false); reason != "" || asked != 0 {
-				t.Fatalf("reason = %q, asked = %d; want no evaluation", reason, asked)
+			if len(rec.evals) != 1 || rec.evals[0].Lane != tt.wantRecord {
+				t.Fatalf("lane %s: evaluations = %+v, want one recorded as %q", tt.lane, rec.evals, tt.wantRecord)
 			}
 		})
+	}
+	t.Run("approved head merges on every lane", func(t *testing.T) {
+		for _, tt := range tests {
+			c := newAutoMergeSweepClient("http://127.0.0.1:0")
+			c.SetReviewGate(&ReviewGate{
+				Mode:    func() string { return ReviewGateModeEnforce },
+				Verdict: func(string, int, string) ReviewGateVerdict { return reviewGateApproved },
+			})
+			if reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7", "", false); reason != "" {
+				t.Fatalf("lane %s: approved head held with %q", tt.lane, reason)
+			}
+		}
+	})
+}
+
+func TestMergeReviewGateNilGateSkipsEvaluation(t *testing.T) {
+	c := newAutoMergeSweepClient("http://127.0.0.1:0")
+	for _, lane := range []string{stageLaneSelf, "trusted-bot", stageLaneTrusted} {
+		if reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", lane, 7, nil, "sha7", "", false); reason != "" {
+			t.Fatalf("nil gate on lane %s returned %q, want no evaluation", lane, reason)
+		}
 	}
 	var nilEngine *Engine
 	nilEngine.SetReviewGate(&ReviewGate{})
@@ -316,7 +349,7 @@ func TestSelfMergeReviewGateReusesPriorApproval(t *testing.T) {
 		Mode:    func() string { return ReviewGateModeEnforce },
 		Verdict: func(string, int, string) ReviewGateVerdict { return reviewGateNoBundle },
 	}, &rec)
-	if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "alice", true); reason != "" {
+	if reason := c.mergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7", "alice", true); reason != "" {
 		t.Fatalf("reason = %q, want merge to proceed", reason)
 	}
 	if reviewCalls != 0 {

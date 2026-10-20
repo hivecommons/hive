@@ -107,6 +107,13 @@ type Claim struct {
 	// GitHub login (reissue-token flow) when the claim was taken; stamped as
 	// verified= in a contributor marker.
 	Verified bool `json:"verified,omitempty"`
+	// PRStarted records PR evidence behind an agent claim: the agent's
+	// `hive-open-pr --issues` request named the issue, or its start marker
+	// named a branch / pull request. It is what derives
+	// stage/030-pr-in-progress; a claim without it derives
+	// stage/020-claimed whatever its Kind (hivecommons/hive#13069). Once set
+	// it stays for the claim's life — a renewal never clears it.
+	PRStarted bool `json:"pr_started,omitempty"`
 	// ClaimedAt is when the current holder took the claim.
 	ClaimedAt time.Time `json:"claimed_at"`
 	// ExpiresAt is when the claim lapses unless renewed.
@@ -210,6 +217,9 @@ type Request struct {
 	// Tier and Verified describe a relay contributor holder; see Claim.
 	Tier     string
 	Verified bool
+	// PRStarted is the PR evidence behind an agent start signal; see
+	// Claim.PRStarted.
+	PRStarted bool
 	// TTL overrides the ledger's default for the Kind. Zero means default;
 	// values above MaxTTL are clamped.
 	TTL time.Duration
@@ -469,7 +479,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		Repo: req.Repo, Issue: req.Issue,
 		Holder: req.Holder, HolderID: req.HolderID, Kind: req.Kind,
 		Session: req.Session, Hive: l.hive,
-		Tier: req.Tier, Verified: req.Verified,
+		Tier: req.Tier, Verified: req.Verified, PRStarted: req.PRStarted,
 		ClaimedAt: now, ExpiresAt: now.Add(ttl),
 	}
 	prev, held := l.claims[key]
@@ -481,6 +491,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		l.recordAttemptLocked(next)
 	case sameHolder(prev, req):
 		prev.ExpiresAt = now.Add(ttl)
+		prev.PRStarted = prev.PRStarted || req.PRStarted
 		l.claims[key] = prev
 		res = Result{Outcome: OutcomeRenewed, Claim: prev}
 	case req.Kind.Outranks(prev.Kind), req.Kind.rank() == prev.Kind.rank() && req.Force:
@@ -914,7 +925,12 @@ func (l *Ledger) Listed(repo string, issue int) (Listing, bool) {
 // live claim. Any other start signal (a comment on an issue nobody kicked the
 // agent with, a request about its own pull request) reports false and
 // changes nothing.
-func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, bool, error) {
+//
+// prStarted says the signal is PR evidence (a pull-request request naming
+// the issue, or a start marker naming a branch / PR): the claim records it
+// (Claim.PRStarted) so the stage engine derives stage/030-pr-in-progress;
+// without it the claim derives stage/020-claimed (hivecommons/hive#13069).
+func (l *Ledger) ClaimOnStart(repo string, issue int, agent string, prStarted bool) (Result, bool, error) {
 	repo, agent = strings.TrimSpace(repo), strings.TrimSpace(agent)
 	if l == nil || repo == "" || issue <= 0 || agent == "" {
 		return Result{}, false, nil
@@ -930,7 +946,7 @@ func (l *Ledger) ClaimOnStart(repo string, issue int, agent string) (Result, boo
 	if !ok {
 		return Result{}, false, nil
 	}
-	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent})
+	res, err := l.Claim(Request{Repo: repo, Issue: issue, Holder: agent, HolderID: agent, Kind: KindAgent, PRStarted: prStarted})
 	return res, true, err
 }
 

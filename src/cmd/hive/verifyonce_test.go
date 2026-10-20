@@ -63,7 +63,7 @@ func newVerifyOnceFixture(t *testing.T) *verifyOnceFixture {
 func (f *verifyOnceFixture) verify(agent string) {
 	f.t.Helper()
 	f.ledger.MarkListed("myorg/repo", 10509, agent)
-	if _, started, err := f.ledger.ClaimOnStart("myorg/repo", 10509, agent); !started || err != nil {
+	if _, started, err := f.ledger.ClaimOnStart("myorg/repo", 10509, agent, false); !started || err != nil {
 		f.t.Fatalf("start signal by %s: started=%v err=%v", agent, started, err)
 	}
 	f.now = f.now.Add(claims.DefaultAgentTTL + time.Minute)

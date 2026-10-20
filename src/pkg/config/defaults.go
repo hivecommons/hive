@@ -137,6 +137,7 @@ func (c *Config) applyDefaults() {
 	// path (boot, reload, dashboard save) and Save() persists the explicit
 	// value, after which this is a no-op for the life of the hive.
 	c.MigrateReviewFixHumanPRs()
+	c.WarnDeprecatedReviewAllAuthors()
 	c.applyUpstreamWatchDefaults()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a

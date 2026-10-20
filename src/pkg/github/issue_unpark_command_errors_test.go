@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // unparkFailServer serves one parked issue and lets a test make any single
@@ -43,6 +45,12 @@ func newUnparkFailServer(t *testing.T, s *unparkFailServer) *httptest.Server {
 				return
 			}
 			_ = json.NewEncoder(w).Encode([]unparkWireIssue{s.issue})
+		case strings.HasPrefix(path, "issues/") && !strings.Contains(strings.TrimPrefix(path, "issues/"), "/") && r.Method == http.MethodGet:
+			// The stage engine re-reads the item before it acts on an
+			// Unparked fact (enrichStageFacts).
+			_ = json.NewEncoder(w).Encode(s.issue)
+		case strings.HasSuffix(path, "/timeline") && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(s.issue.Comments)
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodPost:
@@ -214,11 +222,20 @@ func TestClearIssueParkingLabelsSkipsAbsentLabels(t *testing.T) {
 	server := newUnparkFailServer(t, s)
 	c := newTestClient(t, server, "org", []string{"repo"})
 
-	removed, err := c.clearIssueParkingLabels(context.Background(), "org", "repo", 9, []string{HumanAckLabel})
+	removed, err := c.clearIssueParkingLabels(context.Background(), "org", "repo", 9, []string{HumanAckLabel}, "maintainer", false)
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if len(removed) != 0 || len(s.removed) != 0 || len(s.added) != 0 {
+	// The Unparked fact still reaches the stage engine, which stages the
+	// now-unparked issue 010 (hivecommons/hive#13075); no parking label
+	// moves and nothing else is added.
+	var extra []string
+	for _, l := range s.added {
+		if !stagelabels.IsStageLabel(strings.ToLower(l)) {
+			extra = append(extra, l)
+		}
+	}
+	if len(removed) != 0 || len(s.removed) != 0 || len(extra) != 0 {
 		t.Fatalf("nothing to change, got removed=%v added=%v", s.removed, s.added)
 	}
 }

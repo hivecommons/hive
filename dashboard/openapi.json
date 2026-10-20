@@ -2115,6 +2115,31 @@
                       ],
                       "description": "Present ONLY in the pre-first-build response, which is the bare object {\"status\": \"initializing\"} with no other field set."
                     },
+                    "stageEngine": {
+                      "type": "object",
+                      "description": "ADR-0025 central stage engine: governor.labels.stage.engine.mode and the process counters. Absent when the hive has no engine.",
+                      "properties": {
+                        "mode": { "type": "string", "enum": ["off", "shadow", "enforce"] },
+                        "derivations": { "type": "integer" },
+                        "mismatches": { "type": "integer" },
+                        "anomalies": { "type": "integer" },
+                        "healed": { "type": "integer" },
+                        "lastMismatchExamples": {
+                          "type": "array",
+                          "description": "Newest-first, at most 5 shadow-mode disagreements.",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "ref": { "type": "string" },
+                              "kind": { "type": "string" },
+                              "legacy": { "type": "string" },
+                              "engine": { "type": "string" },
+                              "at": { "type": "string", "format": "date-time" }
+                            }
+                          }
+                        }
+                      }
+                    },
                     "overview_bands": {
                       "type": "object",
                       "description": "Ordered Go band specs and counts shared with Overview exports, repo cards and legends. Also included in full status SSE events.",

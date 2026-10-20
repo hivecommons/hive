@@ -161,6 +161,12 @@ type Route struct {
 	// Summary is the one-line evidence digest for comments:
 	// "verdict approved @abc1234, 55/55 checks green, DCO yes, soak 2h elapsed".
 	Summary string
+	// Head, SelfAuthored and Verdict carry the evidence DecisionComment
+	// needs to name the concrete actions a maintainer has on a hive-authored
+	// PR parked on `requires_human` (hivecommons/hive#13041).
+	Head         string
+	SelfAuthored bool
+	Verdict      VerdictState
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -170,6 +176,11 @@ const (
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
 	laneReasonCheckFailing           = "check-failing:"
+	// LaneReasonAdoptionStalledPrefix opens the 085 reason for an adopted
+	// PR (074) whose head sat past the stage dwell with nothing the hive
+	// could push; the suffix is the lane reason it was stuck on
+	// ("adoption-stalled:reviewer-verdict:changes_requested").
+	LaneReasonAdoptionStalledPrefix = "adoption-stalled:"
 )
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
@@ -233,7 +244,7 @@ func RouteHuman(e Evidence) Route {
 		decide = append(decide, "the automerge lane will not merge this unattended")
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary}
+		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict}
 	}
 	var wait []string
 	switch {
@@ -243,6 +254,9 @@ func RouteHuman(e Evidence) Route {
 		wait = append(wait, fmt.Sprintf("%d check(s) still running", e.Checks.Pending))
 	}
 	if e.Soak > 0 && e.SoakElapsed < e.Soak {
+		// A head the lane has NOT admitted (trust blocks it) is still
+		// 060 while its soak runs; 095 pre-merge-soak is the lane's own
+		// soak after admission (see PreMergeSoakSummary).
 		wait = append(wait, fmt.Sprintf("soak %s remaining", (e.Soak-e.SoakElapsed).Round(time.Minute)))
 	}
 	if len(wait) > 0 {
@@ -309,6 +323,22 @@ func summarize(e Evidence) string {
 	return strings.Join(parts, ", ")
 }
 
+// PreMergeSoakSummary is the one-line 095 explanation — "soaking: admitted,
+// 12m of 30m elapsed" — for the stage comment, dashboard and logs. With no
+// soak window configured it reads "soaking: admitted, no soak window".
+func PreMergeSoakSummary(soak, elapsed time.Duration) string {
+	if soak <= 0 {
+		return "soaking: admitted, no soak window"
+	}
+	if elapsed > soak {
+		elapsed = soak
+	}
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return fmt.Sprintf("soaking: admitted, %s of %s elapsed", elapsed.Round(time.Minute), soak.Round(time.Minute))
+}
+
 // Entry-comment markers for the two human stages.
 const (
 	ReadyCommentMarker    = "<!-- hive:stage-ready-for-human-merge -->"
@@ -359,6 +389,23 @@ func DecisionComment(r Route) string {
 		b.WriteString(r.Summary)
 		b.WriteString(".")
 	}
-	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "` or the merge queue on its own.</sub>")
+	if actions := DecisionActions(r); actions != "" {
+		b.WriteString("\n\n")
+		b.WriteString(actions)
+	}
+	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own.</sub>")
 	return b.String()
+}
+
+// DecisionActions names the two things a maintainer can do with a
+// hive-authored PR the swarm parked on `requires_human`: approve the head
+// to merge it as-is, or request changes — by review or `/hive decision` —
+// and the hive pushes the fix (hivecommons/hive#13041). Empty for every
+// other 085 route: a hold label or sentinel alert has its own remedy, and
+// the hive does not push to a PR it did not open.
+func DecisionActions(r Route) string {
+	if r.Stage != NeedsDecision || !r.SelfAuthored || r.Verdict != VerdictRequiresHuman {
+		return ""
+	}
+	return "**What to do:** approve this head (`" + ShortSHA(r.Head) + "`) to merge as-is, or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix."
 }

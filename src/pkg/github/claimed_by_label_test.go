@@ -10,13 +10,15 @@ import (
 )
 
 // A claim by a human principal replaces a hand-applied backend-named label
-// with the login; an already-correct label is left alone (no write).
-func TestApplyClaimedByLabel_ReplacesBackendNameWithLogin(t *testing.T) {
+// and its own retired per-login label with the generic hive/claimed-by-human
+// (hivecommons/hive: no login in a label); an already-correct label is left
+// alone (no write).
+func TestApplyClaimedByLabel_GenericHumanReplacesBackendAndLogin(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
 	fake.mu.Lock()
-	fake.truth[12528] = []string{"enhancement", "hive/claimed-by-copilot"}
-	fake.truth[12532] = []string{"hive/claimed-by-clubanderson"}
+	fake.truth[12528] = []string{"enhancement", "hive/claimed-by-copilot", "hive/claimed-by-clubanderson"}
+	fake.truth[12532] = []string{claims.ClaimedByHumanLabel}
 	fake.mu.Unlock()
 
 	human := claims.Claim{Repo: "acme/widgets", Issue: 12528, Holder: "clubanderson", Kind: claims.KindHuman, Session: "copilot"}
@@ -24,12 +26,17 @@ func TestApplyClaimedByLabel_ReplacesBackendNameWithLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !added || strings.Join(removed, ",") != "hive/claimed-by-copilot" {
-		t.Fatalf("removed %v added %v, want copilot removed and login added", removed, added)
+	if !added || strings.Join(removed, ",") != "hive/claimed-by-copilot,hive/claimed-by-clubanderson" {
+		t.Fatalf("removed %v added %v, want copilot and per-login removed and the generic label added", removed, added)
 	}
 	fake.mu.Lock()
-	if got := strings.Join(fake.added[12528], ","); got != "hive/claimed-by-clubanderson" {
-		t.Fatalf("added %q, want hive/claimed-by-clubanderson", got)
+	if got := strings.Join(fake.added[12528], ","); got != "hive/claimed-by-human" {
+		t.Fatalf("added %q, want hive/claimed-by-human", got)
+	}
+	for _, l := range fake.added[12528] {
+		if strings.Contains(strings.ToLower(l), "clubanderson") {
+			t.Fatalf("login leaked into label %q", l)
+		}
 	}
 	fake.mu.Unlock()
 
@@ -85,8 +92,9 @@ func TestApplyClaimedByLabel_AgentAndBackendHolder(t *testing.T) {
 	}
 }
 
-// A contributor claim on an issue carrying a human's live label adds its own
-// and keeps the human's (one label per party).
+// A contributor claim on an issue carrying ANOTHER person's retired
+// per-login label adds the generic label and keeps the other party's (one
+// label per party; only the claim's own legacy spelling is swapped).
 func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
@@ -100,7 +108,7 @@ func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if got := strings.Join(fake.added[4], ","); got != "hive/claimed-by-Karibhou" {
+	if got := strings.Join(fake.added[4], ","); got != claims.ClaimedByHumanLabel {
 		t.Fatalf("added %q", got)
 	}
 	if len(fake.removed[4]) != 0 {
@@ -108,7 +116,9 @@ func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
 	}
 }
 
-// Release drops only the releasing holder's label.
+// Release drops only the releasing holder's labels: the generic one plus
+// the holder's retired per-login spelling; a backend-named "holder" has no
+// label to drop and an agent claim drops only its own.
 func TestRemoveClaimedByLabel(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
@@ -118,16 +128,23 @@ func TestRemoveClaimedByLabel(t *testing.T) {
 	if err := c.RemoveClaimedByLabel(context.Background(), "acme/widgets", 3, claims.Claim{Holder: "copilot", Kind: claims.KindHuman}); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.RemoveClaimedByLabel(context.Background(), "acme/widgets", 5, claims.Claim{Holder: "scanner", Kind: claims.KindAgent}); err != nil {
+		t.Fatal(err)
+	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if got := strings.Join(fake.removed[3], ","); got != "hive/claimed-by-Karibhou" {
-		t.Fatalf("removed %q, want only the holder's label", got)
+	if got := strings.Join(fake.removed[3], ","); got != "hive/claimed-by-human,hive/claimed-by-Karibhou" {
+		t.Fatalf("removed %q, want the generic label and the holder's legacy label", got)
+	}
+	if got := strings.Join(fake.removed[5], ","); got != "hive/claimed-by-scanner" {
+		t.Fatalf("agent removed %q, want only its own label", got)
 	}
 }
 
 // The issue reconciler heals a backend-named claimed-by label: swapped for
-// the live holder's login when the issue is claimed, dropped otherwise, and
-// a principal-named label is never touched.
+// the live holder's label (generic human) when the issue is claimed, dropped
+// otherwise. The live human holder's retired per-login label is swapped the
+// same way; another party's label is never touched.
 func TestSyncIssueStageLabels_HealsBackendClaimedBy(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
@@ -139,21 +156,31 @@ func TestSyncIssueStageLabels_HealsBackendClaimedBy(t *testing.T) {
 				Labels: []string{"hive/claimed-by-copilot", stagelabels.Claimed.Label()}},
 			{Repo: "acme/widgets", Number: 3, Bucket: workBucketClaimed, ClaimKind: "contributor", ClaimedBy: "Karibhou",
 				Labels: []string{"hive/claimed-by-clubanderson", stagelabels.Claimed.Label()}},
+			{Repo: "acme/widgets", Number: 4, Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "clubanderson",
+				Labels: []string{"hive/claimed-by-clubanderson", stagelabels.Claimed.Label()}},
+			{Repo: "acme/widgets", Number: 5, Bucket: workBucketClaimed, ClaimKind: "agent", ClaimedBy: "scanner", ClaimPRStarted: true,
+				Labels: []string{"hive/claimed-by-scanner", stagelabels.PRInProgress.Label()}},
 		}}},
 	}
 	res := syncSeeded(fake, c, result, store, stageNow())
-	if res.ClaimedByHealed != 2 {
-		t.Fatalf("ClaimedByHealed = %d, want 2", res.ClaimedByHealed)
+	if res.ClaimedByHealed != 3 {
+		t.Fatalf("ClaimedByHealed = %d, want 3", res.ClaimedByHealed)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if strings.Join(fake.removed[1], ",") != "hive/claimed-by-pi" || len(fake.added[1]) != 0 {
 		t.Fatalf("issue 1: -%v +%v, want only the backend label dropped", fake.removed[1], fake.added[1])
 	}
-	if strings.Join(fake.removed[2], ",") != "hive/claimed-by-copilot" || strings.Join(fake.added[2], ",") != "hive/claimed-by-clubanderson" {
-		t.Fatalf("issue 2: -%v +%v, want copilot → clubanderson", fake.removed[2], fake.added[2])
+	if strings.Join(fake.removed[2], ",") != "hive/claimed-by-copilot" || strings.Join(fake.added[2], ",") != "hive/claimed-by-human" {
+		t.Fatalf("issue 2: -%v +%v, want copilot → human", fake.removed[2], fake.added[2])
 	}
 	if len(fake.removed[3])+len(fake.added[3]) != 0 {
-		t.Fatalf("issue 3: a principal-named label must not be touched: -%v +%v", fake.removed[3], fake.added[3])
+		t.Fatalf("issue 3: another party's label must not be touched: -%v +%v", fake.removed[3], fake.added[3])
+	}
+	if strings.Join(fake.removed[4], ",") != "hive/claimed-by-clubanderson" || strings.Join(fake.added[4], ",") != "hive/claimed-by-human" {
+		t.Fatalf("issue 4: -%v +%v, want the live holder's per-login label → human", fake.removed[4], fake.added[4])
+	}
+	if len(fake.removed[5])+len(fake.added[5]) != 0 {
+		t.Fatalf("issue 5: an agent's own label must not be touched: -%v +%v", fake.removed[5], fake.added[5])
 	}
 }

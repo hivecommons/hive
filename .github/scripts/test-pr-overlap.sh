@@ -96,6 +96,7 @@ case "$*" in
   *'/pulls?base=v6'*)
     for n in 4 3 2 1; do printf '%s\tPR %s\t%s\t2026-01-01T00:00:00Z\n' "$n" "$n" "$REPO_SLUG"; done ;;
   *'.head.repo.full_name'*) printf '%s\n' "$REPO_SLUG" ;;
+  *'.head.sha'*) printf '%s\n' "${FALLBACK_SHA:-}" ;;
   *'.base.ref'*) printf 'v6\n' ;;
   *'/comments?'*) : ;;
   *) echo "unexpected gh api call: $*" >&2; exit 2 ;;
@@ -147,6 +148,35 @@ assert_exit0
 assert_contains "$OUT" 'No conflicting open PRs or same-file overlaps were found.' 'reports no overlap'
 # shellcheck disable=SC2059
 assert_contains "$WRITES" "$(printf -- "$LABEL_DEL" 4)" 'removes the sibling-conflict label'
+
+echo 'PR 3: missing pull ref falls back to the API head and replaces a stale local ref'
+export FALLBACK_SHA
+FALLBACK_SHA=$(git -C "$SEED" rev-parse pr3)
+git -C "$SEED" push -q "$ORIGIN" pr3
+git --git-dir="$ORIGIN" update-ref -d refs/pull/3/head
+git -C "$WORK" update-ref refs/heads/pr-3 "$(git -C "$SEED" rev-parse pr4)"
+run_pr 2
+assert_exit0
+assert_contains "$OUT" 'PR #3 pull ref unavailable; fetching head' 'reports the fallback'
+assert_contains "$OUT" '| #3 | PR 3 | CONFLICT | `b.txt` |' 'still detects the sibling conflict using the current head'
+
+echo 'PR 3: fallback also works when the target PR has no pull ref'
+run_pr 3
+assert_exit0
+assert_contains "$OUT" '| #2 | PR 2 | CONFLICT | `b.txt` |' 'checks the target fetched by SHA'
+
+echo 'PR 3: invalid API head fails without publishing a partial report'
+FALLBACK_SHA=null
+run_pr 2
+if [[ $RC -ne 0 ]]; then pass 'invalid head fails'; else bad 'invalid head was accepted'; fi
+assert_contains "$OUT" 'Invalid head SHA for PR #3: null' 'explains the invalid head'
+if [[ -z "$WRITES" ]]; then pass 'no report or labels written'; else bad "unexpected writes: $WRITES"; fi
+
+echo 'PR 3: unavailable API head fails instead of using the stale local ref'
+FALLBACK_SHA=0000000000000000000000000000000000000000
+run_pr 2
+if [[ $RC -ne 0 ]]; then pass 'failed fallback fetch fails the check'; else bad 'failed fallback fetch was ignored'; fi
+if [[ -z "$WRITES" ]]; then pass 'no report or labels written'; else bad "unexpected writes: $WRITES"; fi
 
 if ((failures)); then
   printf '%d assertion(s) failed\n' "$failures"

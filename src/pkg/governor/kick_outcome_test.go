@@ -363,7 +363,9 @@ func TestContinuousBoolShorthandAllNonQuietModes(t *testing.T) {
 
 func TestContinuousBusyTurnDoesNotUseCadence(t *testing.T) {
 	now := time.Date(2026, 10, 2, 14, 0, 0, 0, time.UTC)
-	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute}, "30m")
+	// The ceiling is disabled here so the test pins the cadence guard alone;
+	// continuous_turn_ceiling_test.go covers the presumed-end path.
+	g := continuousTestGovernor(&now, config.AgentConfig{Enabled: true, ContinuousCooldown: time.Minute, ContinuousTurnCeiling: -1}, "30m")
 	g.RecordKick("scanner")
 	now = now.Add(time.Hour)
 	if contains(g.Evaluate(0, 0, 0, 0), "scanner") {

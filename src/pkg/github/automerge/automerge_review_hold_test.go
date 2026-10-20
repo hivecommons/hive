@@ -153,8 +153,13 @@ func TestSelfAuthoredSweepReviewVerdictHolds(t *testing.T) {
 }
 
 // A person releases the hold with an approving review or a `/hive approve`
-// reply posted after the verdict; with no hold the gate costs no API call.
+// reply posted after the verdict; with no hold the verdict gate itself costs
+// no API call. Every self-lane sweep now reads the PR's reviews once before
+// the gate for a trusted maintainer's changes_requested on the head
+// (hivecommons/hive#13041, #13052), so the counts below carry that one
+// baseline hit on top of whatever the release check reads.
 func TestSelfAuthoredSweepReviewVerdictReleases(t *testing.T) {
+	const changesRequestedReadHits = 1
 	after := reviewHoldVerdictAt.Add(90 * time.Minute)
 	for _, tc := range []struct {
 		name     string
@@ -188,8 +193,8 @@ func TestSelfAuthoredSweepReviewVerdictReleases(t *testing.T) {
 			if event.MergeSHA != "merge7" || merges != 1 {
 				t.Fatalf("event = %+v, merges = %d; want one merge", event, merges)
 			}
-			if front.hits != tc.wantHits {
-				t.Fatalf("reviews/comments API hits = %d, want %d", front.hits, tc.wantHits)
+			if want := tc.wantHits + changesRequestedReadHits; front.hits != want {
+				t.Fatalf("reviews/comments API hits = %d, want %d", front.hits, want)
 			}
 		})
 	}

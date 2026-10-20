@@ -45,12 +45,20 @@ ensure_base() {
 }
 
 fetch_pr_ref() {
-  local number=$1
-  if ! git show-ref --verify --quiet "refs/heads/pr-${number}"; then
-    git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null
-  else
-    git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null
+  local number=$1 sha
+  if git fetch --no-tags origin "+pull/${number}/head:refs/heads/pr-${number}" >/dev/null; then
+    return 0
   fi
+  # GitHub can list an open PR before its synthetic pull ref is available.
+  # Fetch the API's exact head instead; never silently skip a PR or use a
+  # stale local ref when either lookup or fetch fails.
+  sha=$(pr_field "$number" 'head.sha') || return $?
+  if [[ ! "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    printf 'Invalid head SHA for PR #%s: %s\n' "$number" "$sha" >&2
+    return 1
+  fi
+  printf 'PR #%s pull ref unavailable; fetching head %s\n' "$number" "$sha" >&2
+  git fetch --no-tags origin "+${sha}:refs/heads/pr-${number}" >/dev/null
 }
 
 pr_field() {

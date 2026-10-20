@@ -60,25 +60,16 @@
 #      and reach a human — auto-committing a NOTICE that records an AGPL
 #      dependency would launder a license problem into a green check.
 #
-# WHY THE HELD RUNS ARE RELEASED AFTER THE PUSH (#11552)
+# WHY HELD RUNS SURFACE AFTER A GITHUB_TOKEN PUSH (#11552)
 #
 # When the push above is made with GITHUB_TOKEN, the new head's `pull_request`
-# `synchronize` runs carry `github-actions[bot]` as their actor. Under the
-# repository's "require approval for first-time contributors" policy GitHub
-# creates every one of those runs and immediately holds it
-# (`conclusion=action_required`) — observed on hivecommons/hive#11552, where
-# v2 CI, v2 Tests, Go Security Analysis and the rest sat held for two days
-# while the Dependabot PR showed none of its required contexts. The old
-# branch's green runs do not carry over: branch protection looks at the head
-# SHA, and the head is now the autofix commit. Nothing merges that PR until
-# somebody clicks "Approve and run" on every held run.
-#
-# So the same workflow that creates the held runs releases them, exactly as
-# the top-up workflows do for the sync PRs they push (#7930). This needs
-# `actions: write`; it approves only runs on the head this job just pushed,
-# which is by construction a same-repository Dependabot branch. If Dependabot
-# force-pushes a rebase the autofix commit is dropped and this workflow simply
-# runs again.
+# `synchronize` runs carry `github-actions[bot]` as their actor. Depending on
+# the repository/org Actions approval policy, GitHub may create those runs and
+# hold them (`conclusion=action_required`) instead of starting them. Hive does
+# not approve held workflow runs; it reports trusted same-repository bot/App
+# heads as `workflow-approval-required:<ctx>` / stage 085 so a maintainer can
+# click "Approve and run" or relax the GitHub setting. This workflow only
+# re-runs 0-job startup failures on the head it pushed.
 #
 # WHY THE PUSH PREFERS TOPUP_PUSH_TOKEN (#11923)
 #
@@ -99,9 +90,8 @@ on:
     workflows: ['Go Security Analysis']
     types: [completed]
 
-# contents:write to push the regenerated NOTICE; actions:write to approve the
-# `pull_request` runs GitHub holds on the head that push creates (#11552);
-# checks:write to record the skipped verifier context on a GITHUB_TOKEN push
+# contents:write to push the regenerated NOTICE; checks:write to record the
+# skipped verifier context on a GITHUB_TOKEN push
 # (#11923).
 permissions:
   contents: write
@@ -196,36 +186,34 @@ jobs:
             >/dev/null
           echo "recorded skipped 'verify PR contents' on ${HEAD}"
 
-      # See "WHY THE HELD RUNS ARE RELEASED AFTER THE PUSH" above. Approve the
-      # held runs on the head just pushed and re-run 0-job startup failures;
+      # See "WHY HELD RUNS SURFACE AFTER A GITHUB_TOKEN PUSH" above. Re-run
+      # 0-job startup failures on the head just pushed;
       # real failures keep their jobs and are left alone (#7930 pattern).
-      - name: Release the pushed head's held workflow runs
+      - name: Re-run pushed head startup failures
         if: steps.push.outputs.pushed != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD: ${{ steps.push.outputs.pushed }}
         run: |
           set -euo pipefail
-          released=0
+          rerun=0
           for attempt in 1 2 3 4 5 6; do
             sleep 20
             pending="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=${HEAD}&per_page=100" \
-              --jq '.workflow_runs[] | select(.head_repository.full_name == "'"$GITHUB_REPOSITORY"'") | select(.conclusion == "action_required" or (.conclusion == "failure" and .run_attempt == 1)) | "\(.id) \(.conclusion)"')"
+              --jq '.workflow_runs[] | select(.head_repository.full_name == "'"$GITHUB_REPOSITORY"'") | select(.conclusion == "failure" and .run_attempt == 1) | "\(.id) \(.conclusion)"')"
             if [ -z "$pending" ]; then
               [ "$attempt" -ge 3 ] && break
               continue
             fi
             while read -r id conclusion; do
               [ -n "$id" ] || continue
-              if [ "$conclusion" = "action_required" ]; then
-                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/approve" >/dev/null && { echo "approved held run ${id}"; released=$((released+1)); }
-              else
+              if [ "$conclusion" = "failure" ]; then
                 jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${id}/jobs" --jq '.total_count')"
                 if [ "$jobs" = "0" ]; then
-                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; released=$((released+1)); }
+                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; rerun=$((rerun+1)); }
                 fi
               fi
             done <<< "$pending"
           done
-          echo "released ${released} run(s) for ${HEAD}"
+          echo "re-ran ${rerun} startup-failure run(s) for ${HEAD}"
 

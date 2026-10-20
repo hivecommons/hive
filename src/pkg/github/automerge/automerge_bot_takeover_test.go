@@ -308,8 +308,8 @@ func TestBotTakeoverIdempotencyKeyIsPerHead(t *testing.T) {
 	if !c.botTakeoverAttempted("acme", "widget", 23, "ABC") {
 		t.Fatal("botTakeoverAttempted = false after an attempt")
 	}
-	if c.rebaseNudged("acme", "widget", 23, "abc") || !c.markHeldRunApprovalAttempted("acme", "widget", 23, "abc") {
-		t.Fatal("takeover key must not collide with the rebase-nudge or approval keys")
+	if c.rebaseNudged("acme", "widget", 23, "abc") || !c.markRebaseNudged("acme", "widget", 23, "abc") {
+		t.Fatal("takeover key must not collide with the rebase-nudge key")
 	}
 }
 

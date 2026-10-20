@@ -340,39 +340,35 @@ jobs:
               --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --label "$labels"
           fi
 
-      # #7930: a pull_request opened or refreshed by GITHUB_TOKEN carries
-      # github-actions[bot] as its actor, and GitHub either holds every
-      # pull_request run for approval (action_required) or lets it die at
-      # workflow resolution with 0 jobs. Release those runs so the PR shows
-      # test evidence. Same step as v5-topup.yml.
-      - name: Release the bump PR's held workflow runs (#7930)
+      # #7930: a pull_request opened or refreshed by GITHUB_TOKEN can die at
+      # workflow resolution with 0 jobs. Re-run those startup failures so the
+      # PR shows test evidence. Same step as v5-topup.yml.
+      - name: Re-run bump PR startup failures (#7930)
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           head="$(git rev-parse HEAD)"
-          released=0
+          rerun=0
           for attempt in 1 2 3 4 5 6; do
             sleep 20
             pending="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&head_sha=${head}&per_page=100" \
-              --jq '.workflow_runs[] | select(.conclusion == "action_required" or (.conclusion == "failure" and .run_attempt == 1)) | "\(.id) \(.conclusion)"')"
+              --jq '.workflow_runs[] | select(.conclusion == "failure" and .run_attempt == 1) | "\(.id) \(.conclusion)"')"
             if [ -z "$pending" ]; then
               if [ "$attempt" -ge 3 ]; then break; else continue; fi
             fi
             while read -r id conclusion; do
               [ -n "$id" ] || continue
-              if [ "$conclusion" = "action_required" ]; then
-                gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/approve" >/dev/null && { echo "approved held run ${id}"; released=$((released+1)); }
-              else
+              if [ "$conclusion" = "failure" ]; then
                 jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${id}/jobs" --jq '.total_count')"
                 if [ "$jobs" = "0" ]; then
-                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; released=$((released+1)); }
+                  gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/${id}/rerun" >/dev/null && { echo "re-ran 0-job startup failure ${id}"; rerun=$((rerun+1)); }
                 fi
               fi
             done <<< "$pending"
           done
-          echo "released ${released} run(s) for ${head}"
+          echo "re-ran ${rerun} startup-failure run(s) for ${head}"
 
       - name: Upload evidence
         if: always() && steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true'

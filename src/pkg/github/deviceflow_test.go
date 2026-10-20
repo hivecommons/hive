@@ -1,9 +1,13 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -171,4 +175,69 @@ func TestValidateTokenInvalid(t *testing.T) {
 			t.Error("expected error on 401")
 		}
 	})
+}
+
+// TestStartDeviceFlowRequestsNoScopeByDefault pins the #1927 contract: plain
+// dashboard login must not ask GitHub for any OAuth scope, otherwise every
+// viewer is pushed through a "read and write repository data" consent page.
+func TestStartDeviceFlowRequestsNoScopeByDefault(t *testing.T) {
+	var form string
+	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		form = string(b)
+		return jsonBodyResponse(200, DeviceFlowState{DeviceCode: "c", UserCode: "u", Interval: 5}), nil
+	}, func() {
+		if _, err := StartDeviceFlow("cid", "", ""); err != nil {
+			t.Fatalf("error: %v", err)
+		}
+	})
+	if strings.Contains(form, "scope") {
+		t.Fatalf("default device flow must not send a scope field, got form %q", form)
+	}
+	if !strings.Contains(form, "client_id=cid") {
+		t.Fatalf("client_id missing from form %q", form)
+	}
+}
+
+// TestDashboardLoginNeverRequestsRepoScope is the source-level guard for
+// #1927: no code on the dashboard login path may ask GitHub for a repository
+// scope. tokenscopes.go legitimately names "public_repo" because it CHECKS
+// the scopes of an operator PAT; it never requests them, so it is excluded.
+func TestDashboardLoginNeverRequestsRepoScope(t *testing.T) {
+	files := []string{
+		"deviceflow.go",
+		filepath.Join("..", "dashboard", "api_auth.go"),
+		filepath.Join("..", "dashboard", "session.go"),
+		filepath.Join("..", "dashboard", "server.go"),
+		filepath.Join("..", "hub", "oauth.go"),
+	}
+	forbidden := []*regexp.Regexp{
+		regexp.MustCompile(`"public_repo"`),
+		regexp.MustCompile(`"repo"`),
+		regexp.MustCompile(`scope=(public_)?repo\b`),
+		regexp.MustCompile(`"scope",\s*\{?"[^"]+"`),
+		regexp.MustCompile(`Set\("scope",\s*"[^"]+"\)`),
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatal(err)
+		}
+		for _, re := range forbidden {
+			if loc := re.FindIndex(b); loc != nil {
+				line := 1 + bytes.Count(b[:loc[0]], []byte("\n"))
+				t.Errorf("%s:%d requests a GitHub OAuth scope on the login path (%s); dashboard login must stay scope-free (#1927)", f, line, re)
+			}
+		}
+	}
+	src, err := os.ReadFile("deviceflow.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`deviceScope\s*=\s*""`).Match(src) {
+		t.Fatal(`deviceflow.go must keep deviceScope = "" (#1927)`)
+	}
 }

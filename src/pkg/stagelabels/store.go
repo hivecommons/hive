@@ -121,6 +121,24 @@ type Record struct {
 	// They are trusted local evidence for in-place adoption attribution when
 	// the later GitHub commit object cannot link the commit to the App.
 	HivePushedHeads []string `json:"hive_pushed_heads,omitempty"`
+	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
+	// adoption: the adoption itself, then each hive push. Zero only on
+	// records written before it existed (hivecommons/hive#13040); the
+	// reconciler stamps those on first sight (StampAdoptedHeadAt) rather
+	// than reading the dwell from AdoptedAt, which may be a head or more
+	// behind. AdoptedHeadSince resolves it.
+	AdoptedHeadAt time.Time `json:"adopted_head_at,omitempty"`
+	// AdoptEscalatedHead / AdoptEscalatedReason record that the adoption
+	// sits at this head past the 074 dwell with nothing the hive can push
+	// and is a person's (stage 085) for that lane reason. The escalation
+	// holds while the reason holds: ClearAdoptionEscalation releases it
+	// when the blocker clears or the head moves.
+	AdoptEscalatedHead   string `json:"adopt_escalated_head,omitempty"`
+	AdoptEscalatedReason string `json:"adopt_escalated_reason,omitempty"`
+	// AdoptEscalationNotedHead is the head the escalation note was posted
+	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
+	// one head is noted once.
+	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -553,6 +571,11 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
+	case MergeQueue:
+		// 100 → 095 is a reclassification, not a knock-back: the PR was
+		// soaking all along and records written before 095 existed called
+		// that merge-queue. Nothing moved backwards for the author.
+		return to != PreMergeSoak
 	}
 	return true
 }
@@ -718,6 +741,41 @@ func (r Record) AdoptionLive(head string) bool {
 	return r.AdoptedInPlace() || r.Adopted(head)
 }
 
+// AdoptedHeadSince is when the adopted head last moved: the hive's last
+// recorded push under an in-place adoption, else the adoption itself. Zero
+// when the record carries no adoption.
+func (r Record) AdoptedHeadSince() time.Time {
+	if !r.AdoptedHeadAt.IsZero() {
+		return r.AdoptedHeadAt
+	}
+	return r.AdoptedAt
+}
+
+// AdoptionEscalated reports whether the adoption at head is currently a
+// person's (stage 085) for sitting past the 074 dwell.
+func (r Record) AdoptionEscalated(head string) bool {
+	return head != "" && r.AdoptEscalatedHead == head
+}
+
+// AdoptionEscalationNoted reports whether the escalation note was already
+// posted for head, whether or not the escalation still holds.
+func (r Record) AdoptionEscalationNoted(head string) bool {
+	return head != "" && r.AdoptEscalationNotedHead == head
+}
+
+// AdoptedHeadClockUnset reports a live in-place adoption whose head clock
+// was never stamped: a record written before AdoptedHeadAt existed.
+func (r Record) AdoptedHeadClockUnset() bool {
+	return r.AdoptedInPlace() && r.AdoptedHeadAt.IsZero()
+}
+
+// AdoptionAttemptedNothingOpened reports a supersession that was recorded
+// for head but opened no App PR (the push or create failed): the hive owns
+// the PR on paper and nothing is working it.
+func (r Record) AdoptionAttemptedNothingOpened(head string) bool {
+	return r.Adopted(head) && r.AdoptMode == AdoptModeSupersede && r.AdoptedBy == 0
+}
+
 // MarkAdoptedInPlace records an in-place adoption of head for reason.
 func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	s.mu.Lock()
@@ -728,8 +786,26 @@ func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
 	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
+	r.AdoptedHeadAt = now
 	s.items[key] = r
 	s.dirty = true
+}
+
+// StampAdoptedHeadAt starts the adopted-head clock at now on a live in-place
+// adoption of head that has none (hivecommons/hive#13040: a record written
+// before AdoptedHeadAt existed, whose AdoptedAt may predate the head by
+// days). Reports whether it stamped.
+func (s *Store) StampAdoptedHeadAt(key, head string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AdoptedHead != head || !r.AdoptedHeadClockUnset() {
+		return false
+	}
+	r.AdoptedHeadAt = s.now()
+	s.items[key] = r
+	s.dirty = true
+	return true
 }
 
 // MarkAdoptedHead moves a live adoption to a new head the hive itself
@@ -740,6 +816,9 @@ func (s *Store) MarkAdoptedHead(key, head string) {
 	r, ok := s.items[key]
 	if !ok || r.AdoptedHead == "" || head == "" {
 		return
+	}
+	if r.AdoptedHead != head {
+		r.AdoptedHeadAt = s.now()
 	}
 	r.AdoptedHead = head
 	s.items[key] = r
@@ -781,6 +860,7 @@ func (s *Store) MarkYielded(key, head string) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason = "", ""
+	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.YieldedHead = head
 	s.items[key] = r
 	s.dirty = true
@@ -828,6 +908,36 @@ func (s *Store) MarkAdoptChecked(key string, now time.Time) {
 	s.dirty = true
 }
 
+// MarkAdoptionEscalated records that the adoption at head is a person's
+// for reason (stage 085) and that head has been noted; AdoptionEscalated
+// (head) then holds until ClearAdoptionEscalation or the head changes.
+func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || (r.AdoptEscalatedHead == head && r.AdoptEscalatedReason == reason && r.AdoptEscalationNotedHead == head) {
+		return
+	}
+	r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = head, reason, head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionEscalation releases a stage-085 escalation whose reason no
+// longer holds (the blocker cleared), returning the adoption to 074 flow.
+// The noted head is kept so the same head is not noted twice.
+func (s *Store) ClearAdoptionEscalation(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.AdoptEscalatedHead == "" && r.AdoptEscalatedReason == "") {
+		return
+	}
+	r.AdoptEscalatedHead, r.AdoptEscalatedReason = "", ""
+	s.items[key] = r
+	s.dirty = true
+}
+
 // ClearAdoption forgets the adoption (the superseding PR closed unmerged).
 func (s *Store) ClearAdoption(key string) {
 	s.mu.Lock()
@@ -838,6 +948,7 @@ func (s *Store) ClearAdoption(key string) {
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	r.AdoptMode, r.AdoptReason = "", ""
+	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	s.items[key] = r
 	s.dirty = true
 }
@@ -1030,8 +1141,18 @@ func StallComment(stage Stage, dwell time.Duration, reason string) string {
 	if reason == "" {
 		reason = "lane has not evaluated this head"
 	}
-	return StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
+	body := StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
+	if stage == PreMergeSoak {
+		body += ". " + PreMergeSoakStallNote
+	}
+	return body
 }
+
+// PreMergeSoakStallNote is appended to the stall comment at 095: the dwell
+// there is the soak window plus a grace, so overrunning it means the soak
+// has elapsed but the lane has not promoted the head to 100 / merged it —
+// a lane problem to look into, not something the author can act on.
+const PreMergeSoakStallNote = "The soak window should have elapsed but the automerge lane has not promoted this PR to the merge queue; this is likely a lane bug, not something the author can act on"
 
 // StallCommentMarker tags the stall note.
 const StallCommentMarker = "<!-- hive:stage-stalled -->"

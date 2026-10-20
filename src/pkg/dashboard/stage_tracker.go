@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -51,6 +52,9 @@ type StageTrackerResponse struct {
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
 	AuthorKindLabels bool `json:"author_kind_labels"`
+	// Engine is the ADR-0025 central stage engine's mode and counters for
+	// the tracker's status strip; absent when the hive has no engine.
+	Engine *stageengine.Status `json:"engine,omitempty"`
 }
 
 // StageTrackerStage is one row of stagelabels.Table as the strip needs it.
@@ -127,11 +131,16 @@ type StageTrackerItem struct {
 	// regressed, hold, needs-human, needs-decision (stage/045 on an issue or
 	// stage/085 on a PR carried as a park signal), needs-rebase, blocked,
 	// draft.
-	Modifiers     []string   `json:"modifiers"`
-	RegressedFrom int        `json:"regressed_from,omitempty"`
-	NudgeCount    int        `json:"nudge_count,omitempty"`
-	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy     int        `json:"adopted_by,omitempty"`
+	Modifiers     []string `json:"modifiers"`
+	RegressedFrom int      `json:"regressed_from,omitempty"`
+	// SoakRemainingSeconds is, at 095 pre-merge-soak, how much of the lane's
+	// soak window was left as of the last sweep (the lane's
+	// `soaking(remaining=…)` reason aged by the time since it was recorded);
+	// 0 when unknown or not soaking.
+	SoakRemainingSeconds int64      `json:"soak_remaining_seconds,omitempty"`
+	NudgeCount           int        `json:"nudge_count,omitempty"`
+	LastNudgeAt          *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy            int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -174,6 +183,7 @@ const (
 	// issue-side stop, not a detour off the merge gate.
 	trackerNumberIssueDecision  = 45
 	trackerNumberReadyForHuman  = 90
+	trackerNumberPreMergeSoak   = 95
 	trackerNumberCoveredByPR    = 40
 	trackerNumberClaimed        = 20
 	trackerNumberPRInProgress   = 30
@@ -257,6 +267,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Needs human decision"
 	case stagelabels.ReadyForHumanMerge:
 		return "Ready for human merge"
+	case stagelabels.PreMergeSoak:
+		return "Soaking"
 	case stagelabels.MergeQueue:
 		return "Merge queue"
 	}
@@ -462,6 +474,9 @@ func humanizeStageReason(reason string) string {
 		return rest
 	}
 	if strings.HasPrefix(lower, "contributor-lane:soaking") {
+		if left, ok := soakRemainingFromReason(r); ok {
+			return "soaking, " + left.Round(time.Minute).String() + " left at the last sweep"
+		}
 		return "soaking"
 	}
 	if strings.HasPrefix(lower, "release-hold") {
@@ -474,6 +489,42 @@ func humanizeStageReason(reason string) string {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")
 	}
 	return strings.NewReplacer("-", " ", "_", " ", ":", ": ").Replace(r)
+}
+
+// trackerSoakRemainingRE pulls the time left out of the lane's
+// `contributor-lane:soaking(remaining=12m0s)` reason.
+var trackerSoakRemainingRE = regexp.MustCompile(`remaining=([0-9hms.]+)`)
+
+// soakRemainingFromReason parses the soak time left from a soaking reason.
+func soakRemainingFromReason(reason string) (time.Duration, bool) {
+	m := trackerSoakRemainingRE.FindStringSubmatch(reason)
+	if m == nil {
+		return 0, false
+	}
+	d, err := time.ParseDuration(m[1])
+	if err != nil || d < 0 {
+		return 0, false
+	}
+	return d, true
+}
+
+// stageTrackerSoakRemaining is the soak time left now for a record at 095:
+// the lane's recorded remaining, aged by the time since the sweep wrote it.
+func stageTrackerSoakRemaining(rec stagelabels.Record, now time.Time) time.Duration {
+	if rec.Stage != stagelabels.PreMergeSoak {
+		return 0
+	}
+	left, ok := soakRemainingFromReason(rec.Reason)
+	if !ok {
+		return 0
+	}
+	if !rec.LastSeen.IsZero() {
+		left -= now.Sub(rec.LastSeen)
+	}
+	if left < 0 {
+		return 0
+	}
+	return left
 }
 
 func joinClause(head, clause string) string {
@@ -505,7 +556,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:
-		return joinClause("An agent kick is running; no PR yet", clause), "hive"
+		return joinClause("An agent has a PR under way; not yet opened", clause), "hive"
 	case stagelabels.CoveredByPR:
 		return joinClause("An open PR"+prRef+" covers this issue", clause), "its PR"
 	case stagelabels.ReviewPending:
@@ -534,8 +585,10 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		return joinClause("Ready for a maintainer's /lgtm /approve; the hive cannot merge it itself", clause), "maintainer"
+	case stagelabels.PreMergeSoak:
+		return joinClause("Admitted by the automerge lane; the pre-merge soak window is running", clause), "automerge lane"
 	case stagelabels.MergeQueue:
-		return joinClause("In the merge queue; waiting for soak, tide or the merge window", clause), "tide"
+		return joinClause("In the merge queue; soak complete, waiting for tide or the merge window", clause), "tide"
 	}
 	return joinClause("No stage recorded yet", clause), ""
 }
@@ -599,6 +652,10 @@ func (s *Server) stageDwellOverrides() map[string]time.Duration {
 func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse {
 	overrides := s.stageDwellOverrides()
 	resp := StageTrackerResponse{GeneratedAt: now, Stages: stageTrackerStages(overrides), Items: []StageTrackerItem{}}
+	if s.deps != nil && s.deps.StageEngineStatus != nil {
+		st := s.deps.StageEngineStatus()
+		resp.Engine = &st
+	}
 	if status == nil {
 		return resp
 	}
@@ -622,6 +679,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				it.LastNudgeAt = &t2
 			}
 			it.AdoptedBy = rec.AdoptedBy
+			it.SoakRemainingSeconds = int64(stageTrackerSoakRemaining(rec, now) / time.Second)
 		}
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
@@ -678,6 +736,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		stage := labelStage(issue.Labels)
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {
 			stage = bucketStage(bucket)
+		}
+		// A held issue is "Open · on hold" whatever stage label or store
+		// record the hold caught it with; the reconciler drops both on its
+		// next cycle (hivecommons/hive#13012).
+		if len(holdLabels(issue.Labels, status.HiveID)) > 0 {
+			stage, rec, ok = stagelabels.None, stagelabels.Record{}, false
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		if it.Stage == trackerNumberClaimed {

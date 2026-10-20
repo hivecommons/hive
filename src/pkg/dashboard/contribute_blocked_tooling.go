@@ -78,10 +78,7 @@ func reclassifyToolingBlockedVerdict(verdict, reason string) (string, bool) {
 // a tooling-failure `blocked` label. The marker makes the post idempotent.
 func toolingBlockedReleaseComment(reporter, reason string) string {
 	reporter = strings.TrimSpace(reporter)
-	if len(reason) > noWorkReasonMaxLen {
-		reason = reason[:noWorkReasonMaxLen]
-	}
-	reason = strings.TrimSpace(reason)
+	reason = sanitizeReportedReason(reason)
 	who := "a contributor's agent"
 	if reporter != "" {
 		who = "@" + reporter + "'s agent"

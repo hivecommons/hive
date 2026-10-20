@@ -255,3 +255,32 @@ func TestEnforceStage_MigratesLegacyRoleKeepsKind(t *testing.T) {
 		t.Fatal("RoleOf must read the legacy spelling only when no role/* is present")
 	}
 }
+
+// Defence in depth for hivecommons/hive#12994: a pull request that somehow
+// wears an issue-family stage (an out-of-cycle issue writer named the PR's
+// number) loses it on the next PR-side write — every stage/* label that is
+// not the decision comes off, whatever family it belongs to — and the
+// double pill counts as a heal. The mirror holds for an issue wearing a PR
+// stage.
+func TestEnforce_StripsForeignFamilyStage(t *testing.T) {
+	f := &fakeLabeler{truth: []string{"size/L", PRInProgress.Label(), "hive/claimed-by-scanner", ReviewPending.Label()}}
+	out, err := Enforce(context.Background(), f, PRItem, "acme", "widgets", 12994, f.truth, Desired{Stage: ReviewPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(out.Removed, []string{PRInProgress.Label()}) || len(out.Added) != 0 || !out.Healed {
+		t.Fatalf("PR wearing an issue stage: out=%+v", out)
+	}
+	if !reflect.DeepEqual(f.truth, []string{"size/L", "hive/claimed-by-scanner", ReviewPending.Label()}) {
+		t.Fatalf("labels after = %v", f.truth)
+	}
+
+	f = &fakeLabeler{truth: []string{"bug", ReviewPending.Label()}}
+	out, err = Enforce(context.Background(), f, IssueItem, "acme", "widgets", 7, f.truth, Desired{Stage: Actionable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(out.Removed, []string{ReviewPending.Label()}) || !reflect.DeepEqual(out.Added, []string{Actionable.Label()}) {
+		t.Fatalf("issue wearing a PR stage: out=%+v", out)
+	}
+}

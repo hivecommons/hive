@@ -35,6 +35,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Work sources](work-sources.md) — GitHub Issues, GitHub Projects, Linear, Jira Cloud, Jira Data Center / Server, run-stage, and Wavefront work enumeration.
 - [Work source providers](integrations/work-source-providers.md) — implement and contribute a provider that maps source-native work items onto `pkg/worksource.WorkSource`.
 - [Hive Labels and Control Signals](labels-and-control-signals.md) — authoritative operator reference for labels, holds, approvals, contributor skip labels, planning labels, and dashboard bands. The old [Hive issue labels](issue-labels.md) page redirects here.
+- [Central stage engine implementation plan](stage-engine-plan.md) — the ADR-0025 rollout plan for `pkg/stageengine`: the PR sequence, shadow→enforce gates, and the facts/deriver/writer seams the issue and PR sweeps share.
 - [Spoke dashboard](dashboard.md) — the static dashboard FAQ panel contract: not ACMM-gated, no JS/fetch, grouped L1-L6/runs/contributors/claims/cost help, and guarded config-key references.
 - [Dashboard sections explained](dashboard-sections.md) — plain-language operator help for every dashboard section: what it shows, how its numbers are worked out, what to do about them, when it appears, and which settings change it. The **?** mark on each section title opens its entry.
 - [Dashboard settings explained](settings.md) — one entry per Settings tab: what it controls and which guide explains it. The **?** mark next to each setting opens its guide or this page.

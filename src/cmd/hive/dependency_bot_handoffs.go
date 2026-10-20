@@ -39,6 +39,14 @@ const (
 	depBotHoldHeldPrefix         = "required-check-held:"
 	depBotHoldNeverStartedPrefix = "required-check-never-started:"
 	depBotHoldNeverRanPrefix     = "required-check-never-ran:"
+	// depBotHoldApprovalPrefix: runs held for approval; the sweep has posted
+	// `/ok-to-test` and the repository's hive-ok-to-test workflow should
+	// approve them, so this alone is not handed off (hivecommons/hive#13013).
+	depBotHoldApprovalPrefix = "workflow-approval-required:"
+	// depBotHoldApprovalMissingWorkflowPrefix: the runs are still held after
+	// the ok-to-test grace, so the workflow is likely missing and a person
+	// must approve them.
+	depBotHoldApprovalMissingWorkflowPrefix = "workflow-approval-required:missing-workflow:"
 )
 
 // depBotObservation is when a hand-off reason was first seen on a PR head.
@@ -188,6 +196,10 @@ func dependencyBotHeldCheckComment(author, holdReason string) string {
 		return "a required check"
 	}
 	switch {
+	case strings.HasPrefix(holdReason, depBotHoldApprovalMissingWorkflowPrefix):
+		return fmt.Sprintf("The required check %s on this %s PR is waiting for approval to run. Hive posted `/ok-to-test`, but the runs are still held, so the repository's `hive-ok-to-test` workflow is probably missing. "+
+			"To fix it, click 'Approve and run' on the held workflow runs (or run `gh run approve <run-id>`), add the workflow (`hivectl ok-to-test-template`), or merge the PR by hand.",
+			check(depBotHoldApprovalMissingWorkflowPrefix), name)
 	case strings.HasPrefix(holdReason, depBotHoldHeldPrefix):
 		return fmt.Sprintf("The required check %s on this %s PR is waiting for approval to run, and Hive could not approve it. "+
 			"To fix it, click 'Approve and run' on the held workflow runs (or run `gh run approve <run-id>`), or merge the PR by hand.",
@@ -206,7 +218,19 @@ func dependencyBotHeldCheckComment(author, holdReason string) string {
 // it records the hold for the next dependency-bot hand-off pass. The pass
 // itself decides whether the PR is a dependency-bot PR.
 func noteDependencyBotTerminalHold(repo string, number int, headSHA, reason string) {
+	if !dependencyBotHoldNeedsPerson(reason) {
+		return
+	}
 	getDepBotConflictStore().noteHold(escalation.Key(repo, number), headSHA, reason)
+}
+
+// dependencyBotHoldNeedsPerson reports whether a terminal hold reason is one
+// a person must act on. A plain `workflow-approval-required:<ctx>` is not:
+// `/ok-to-test` was just posted and the repository's hive-ok-to-test workflow
+// is expected to approve the runs; only a hold that outlives the grace
+// (`…:missing-workflow:<ctx>`) is handed off.
+func dependencyBotHoldNeedsPerson(reason string) bool {
+	return !strings.HasPrefix(reason, depBotHoldApprovalPrefix) || strings.HasPrefix(reason, depBotHoldApprovalMissingWorkflowPrefix)
 }
 
 func (s *depBotConflictStore) noteHold(key, headSHA, reason string) {

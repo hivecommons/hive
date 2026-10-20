@@ -17,7 +17,9 @@ package automerge
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -28,6 +30,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -138,10 +141,9 @@ func (c *Engine) stripStrayOwnershipLabels(ctx context.Context, obs stageObserva
 	if len(stray) == 0 {
 		return 0, nil
 	}
-	labeler := engineStageLabeler{c.gh}
 	removed := 0
 	for _, l := range stray {
-		if err := labeler.RemoveLabel(ctx, obs.Owner, obs.Repo, obs.Number, l); err != nil {
+		if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, l); err != nil {
 			c.warn("stage labels: stray ownership label removal failed", "repo", obs.Display, "pr", obs.Number, "label", l, "error", err)
 			return removed, err
 		}
@@ -235,9 +237,13 @@ type stageObservation struct {
 	HeadSHA string
 	Labels  []string
 	Reason  string
-	Merged  bool
-	Err     bool
-	Detail  stageDetail
+	// LaneReason is the lane's own skip reason before the reviewer verdict
+	// or the human route replaced Reason; it is what still says whether CI
+	// is red, pending or green on the head.
+	LaneReason string
+	Merged     bool
+	Err        bool
+	Detail     stageDetail
 	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
 	Author string
 	// AuthorKind is who wrote the PR (authorkind.Detect), set on the
@@ -389,6 +395,55 @@ func (c *Engine) stageStoreOrShared() *stagelabels.Store {
 		return c.stageStore
 	}
 	return stagelabels.Shared()
+}
+
+// stageReconcilerTransport is the transport that owns the process's
+// stageengine.StageWriter (hgithub.Client). The reconciler is built over
+// it so every stage write the engine makes goes through that one writer.
+type stageReconcilerTransport interface {
+	StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) (stageengine.Reconciler, *stageengine.LegacyTable)
+}
+
+// ErrNoStageWriter is returned when the transport cannot supply the stage
+// writer the reconciler needs; the sweep writes nothing rather than
+// guess.
+var ErrNoStageWriter = errors.New("automerge: transport provides no stage writer")
+
+// stageReconciler returns the reconciler for this pass and the table the
+// pass fills with its derivation (see Options.StageEngine).
+func (c *Engine) stageReconciler(store *stagelabels.Store) (stageengine.Reconciler, *stageengine.LegacyTable, error) {
+	t, ok := c.transport.(stageReconcilerTransport)
+	if !ok {
+		return nil, nil, ErrNoStageWriter
+	}
+	r, legacy := t.StageReconciler(store, c.stageEngine, c.logger)
+	if r == nil || legacy == nil {
+		return nil, nil, ErrNoStageWriter
+	}
+	return r, legacy, nil
+}
+
+// prStagePending is one PR the pass derived a stage for, waiting on the
+// reconciler's write before its post-write work (stall note, hand-off
+// entry, 07x nudge/adoption, regression note) runs.
+type prStagePending struct {
+	obs   stageObservation
+	key   string
+	role  stagelabels.Role
+	want  stagelabels.Desired
+	tr    stagelabels.Transition
+	facts stageengine.Facts
+}
+
+// removeNonStageLabel takes one non-hive label off a PR (the stray
+// agent/* and hive/<id> ownership labels). Stage labels never come
+// through here; those are the StageWriter's alone.
+func (c *Engine) removeNonStageLabel(ctx context.Context, owner, repo string, number int, label string) error {
+	_, err := c.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label))
+	if isGitHubStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
 }
 
 // recordStage is called by every lane for every PR it listed, with the
@@ -781,8 +836,9 @@ var stageNeedsHumanReasons = map[string]bool{
 	autoMergeReasonNoAppBotLogin: true, "self-authorization-hold-released": true,
 }
 
-// stageMergeQueueReasons are reasons reached only after every gate passed:
-// the merge is imminent or waiting on GitHub.
+// stageMergeQueueReasons are reasons reached only after every gate passed,
+// soak included: the merge is imminent or waiting on GitHub. The soaking
+// reason itself is 095 pre-merge-soak (classifyStage).
 var stageMergeQueueReasons = map[string]bool{
 	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
 	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
@@ -791,7 +847,7 @@ var stageMergeQueueReasons = map[string]bool{
 
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
 var stageFixingReasons = map[string]bool{
-	"changes-requested": true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
+	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
 	"label:needs-rebase": true,
 }
 
@@ -855,6 +911,9 @@ func classifyStage(o stageObservation) stageVerdict {
 		// candidate, refined by ApplyStageLabels against the head's evidence.
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
 	}
+	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if hasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
@@ -893,7 +952,12 @@ func classifyStage(o stageObservation) stageVerdict {
 		// repair stage, with the check named, never 080 or 100.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 	}
-	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
+	if strings.HasPrefix(reason, contributorLaneReasonSoaking) {
+		// The lane admitted the head and is sitting out the soak window:
+		// 095, not 100 — the merge has not been attempted yet.
+		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
+	}
+	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
 	}
 	if reason == contributorLaneReasonNoVerdict {
@@ -1098,9 +1162,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		return result, hgithub.ErrNoGitHubClient
 	}
 	store := c.stageStoreOrShared()
+	reconciler, legacy, err := c.stageReconciler(store)
+	if err != nil {
+		tracker.drain()
+		return result, err
+	}
 	ctx = hgithub.WithRESTCaller(ctx, stageRESTCaller)
 	now := c.now()
 	var firstErr error
+	var pending []prStagePending
 	for _, list := range tracker.drain() {
 		if len(list) == 0 {
 			continue
@@ -1125,17 +1195,26 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// the author-blocked outcome by kind now (human 071 / clanker 072).
 			verdict.Stage = fixingStage(obs)
 		}
+		obs.LaneReason = obs.Reason
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
 		prevRec, hadPrev := store.Get(key)
+		// pass is what this pass learns past resolveStage; it rides on the
+		// Facts so the engine's DerivePR reproduces the stage written here.
+		pass := &stageengine.PRPassFacts{AuthorIsApp: normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin())}
+		if hadPrev {
+			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead}
+		}
 		if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
 		var route stagelabels.Route
 		if verdict.Human && !verdict.Terminal {
-			route = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
+			var evidence stagelabels.Evidence
+			route, evidence = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
+			pass.Route = &evidence
 			verdict.Stage = route.Stage
 			if route.LaneReason != "" {
 				obs.Reason = route.LaneReason
@@ -1168,6 +1247,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Detail.DCOUnsignedOther = stats.unsignedOther
 			obs.Detail.DCOSquashUnsafeHive = stats.squashUnsafeHive
 			want.DCO = obs.Detail.DCO
+			pass.DCO, pass.DCOKnown = want.DCO, true
+			pass.DCORequired = dcoRequired(policy, obs)
+			pass.SquashUnsafeHive = stats.squashUnsafeHive
 			// The label is written everywhere; the 072 override only where
 			// the repo actually enforces DCO (config, else detected gate).
 			if want.DCO == stagelabels.DCONo && dcoRequired(policy, obs) {
@@ -1204,8 +1286,23 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// The hive owns this PR: whether the lane sees it red,
 				// pending or awaiting a verdict, the stage is 074 until the
 				// adoption is released or the merge gate takes it
-				// (hivecommons/hive#12736).
+				// (hivecommons/hive#12736) — unless nothing can finish it
+				// there: a dead-end in-place adoption re-homes, and an
+				// adoption nobody is working past the dwell is a person's
+				// (085) with the lane reason named (hivecommons/hive#12858).
 				verdict.Stage = stagelabels.AdoptedByHive
+				pass.AdoptionLive = true
+				esc, n, err := c.escapeStalledAdoption(ctx, store, key, obs, policy, now)
+				result.Comments += n
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				if esc.Escalated {
+					verdict.Stage = stagelabels.NeedsDecision
+					verdict.Rank = stageRankOwned
+					obs.Reason = esc.Reason
+					pass.EscalationReason = esc.Reason
+				}
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			// hivecommons/hive#12502: remember the author so the dashboard can
@@ -1247,7 +1344,6 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			normalizedVerdict := normalizeContributorLaneVerdict(rawVerdict)
 			c.info("stage labels: reviewer verdict route", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "lane", obs.Lane, "raw_verdict", rawVerdict.Verdict, "normalized_verdict", normalizedVerdict.Verdict, "decision_requested", normalizedVerdict.DecisionRequested, "stage", verdict.Stage.String(), "reason", obs.Reason)
 		}
-		commentsBefore := result.Comments
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
 			if err := c.ensureStageLabels(ctx, obs.Owner, obs.Repo, tracker, policy.AuthorKindLabels); err != nil {
@@ -1258,25 +1354,48 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				continue
 			}
 		}
+		facts := factsFrom(list)
+		facts.ObservedAt = now
+		pass.AuthorKind = obs.AuthorKind
+		facts.PR.Pass = pass
+		legacy.Set(facts.Ref, stageengine.Decision{
+			Stage: want.Stage, Role: want.Role, Kind: want.Kind, KindLabels: want.KindLabels,
+			Stalled: want.Stalled, DCO: want.DCO, Terminal: verdict.Terminal, Reason: obs.Reason,
+		})
+		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts})
+	}
+	// The write: one ReconcileBatch for the pass. The reconciler re-reads
+	// each PR before writing so a stage another writer placed since the
+	// lane's snapshot is replaced, never joined (hivecommons/hive#12512).
+	facts := make([]stageengine.Facts, 0, len(pending))
+	for _, p := range pending {
+		facts = append(facts, p.facts)
+	}
+	var transitions []stageengine.Transition
+	if len(facts) > 0 {
+		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
+	}
+	for i, p := range pending {
+		legacy.Delete(p.facts.Ref)
+		obs, key, role, want, tr := p.obs, p.key, p.role, p.want, p.tr
+		commentsBefore := result.Comments
 		var out stagelabels.Outcome
-		if len(add)+len(remove) > 0 {
-			// Enforce re-reads the PR so a stage another writer placed since
-			// the lane's snapshot is replaced, never joined (hivecommons/hive#12512).
-			var err error
-			out, err = stagelabels.Enforce(ctx, engineStageLabeler{c.gh}, stagelabels.PRItem, obs.Owner, obs.Repo, obs.Number, obs.Labels, want)
-			if err != nil {
-				c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
-				if firstErr == nil {
-					firstErr = err
-				}
+		err := ctx.Err()
+		if i < len(transitions) {
+			out, err = transitions[i].Outcome, transitions[i].Err
+		}
+		if err != nil {
+			c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
+			if firstErr == nil {
+				firstErr = err
 			}
-			result.Writes += len(out.Removed)
-			if len(out.Added) > 0 {
-				result.Writes++
-			}
-			if out.Healed {
-				result.Healed++
-			}
+		}
+		result.Writes += len(out.Removed)
+		if len(out.Added) > 0 {
+			result.Writes++
+		}
+		if out.Healed {
+			result.Healed++
 		}
 		if out.Changed() {
 			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", out.Stage.String(), "role", role.String(), "author_kind", obs.AuthorKind.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", obs.Reason, "lane", obs.Lane)
@@ -1442,35 +1561,4 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 // lanes' own one-shot engines earlier in the cycle are what it applies.
 func ApplyStageLabels(ctx context.Context, transport Transport, opts Options) (StageLabelResult, error) {
 	return New(transport, opts).ApplyStageLabels(ctx)
-}
-
-// engineStageLabeler adapts the engine's go-github client to
-// stagelabels.Labeler.
-type engineStageLabeler struct{ gh *gh.Client }
-
-func (l engineStageLabeler) Labels(ctx context.Context, owner, repo string, number int) ([]string, error) {
-	issue, _, err := l.gh.Issues.Get(ctx, owner, repo, number)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(issue.Labels))
-	for _, lab := range issue.Labels {
-		if lab != nil && lab.GetName() != "" {
-			out = append(out, lab.GetName())
-		}
-	}
-	return out, nil
-}
-
-func (l engineStageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	_, _, err := l.gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, labels)
-	return err
-}
-
-func (l engineStageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
-	_, err := l.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label))
-	if isGitHubStatus(err, http.StatusNotFound) {
-		return nil
-	}
-	return err
 }

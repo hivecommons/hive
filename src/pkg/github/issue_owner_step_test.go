@@ -248,7 +248,12 @@ func TestIssueOwnerStepNeverDowngradedByDecisionPolicy(t *testing.T) {
 	if d := c.issueDecisionDowngradeForComment(req, req.Body); d.Active {
 		t.Fatalf("comment with owner step must park under resolve: %+v", d)
 	}
+	// Without the owner step the same request is a plain engineering
+	// question, which the resolve policy still downgrades. The body names an
+	// engineering concern explicitly: since hivecommons/hive#12972 the
+	// classifier fails closed and an unclassified park stays a human decision.
 	req.OwnerStep = nil
+	req.Body = "Should the release notes live top-level or under docs/? Option A or option B."
 	if d := c.issueDecisionDowngradeForComment(req, req.Body); !d.Active {
 		t.Fatal("plain engineering question must still be downgraded under resolve")
 	}

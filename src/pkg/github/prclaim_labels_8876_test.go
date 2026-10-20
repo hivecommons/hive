@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
 )
 
 func TestIssuePRClaimLabels8876_LinkedPRPayloadAndPendingLabels(t *testing.T) {
@@ -60,8 +62,11 @@ func TestIssuePRClaimLabels8876_MergedClaimIsLikelyDone(t *testing.T) {
 	}
 }
 
+// A claim that became merged leaves a stale stage/040 on the issue; the sync
+// hands the stage engine an Uncovered fact (ADR-0025) instead of deleting the
+// label itself. Through the real reconciler the fact takes 040 off: a merged
+// claim's issue wears likely-done and leaves the stage pipeline.
 func TestIssuePRClaimLabels8876_RemovesStaleCoveredLabelWhenMerged(t *testing.T) {
-	var deletedCovered bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/labels/"):
@@ -74,16 +79,19 @@ func TestIssuePRClaimLabels8876_RemovesStaleCoveredLabelWhenMerged(t *testing.T)
 			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/issues/7/labels/"):
 			if strings.Contains(r.URL.Path, "covered") {
-				deletedCovered = true
+				t.Error("the sync must not delete stage/040 itself; the stage engine owns stage labels")
 			}
 			w.WriteHeader(http.StatusOK)
 		default:
-			t.Fatalf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
+			t.Errorf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer server.Close()
 
 	client := NewClientForTest(server.URL, "acme", []string{"widgets"}, testLogger())
+	rec := &stageenginetest.Recorder{}
+	client.SetStageFactSink(rec)
 	ledger := NewClaimLedger("", testLogger())
 	now := time.Now()
 	ledger.Reconcile([]IssueClaim{{
@@ -94,7 +102,24 @@ func TestIssuePRClaimLabels8876_RemovesStaleCoveredLabelWhenMerged(t *testing.T)
 
 	SyncIssuePRClaimLabels(context.Background(), client, result, ledger, testLogger())
 
-	if !deletedCovered {
-		t.Fatal("stale covered-by-pr label was not removed after claim became merged")
+	facts := rec.All()
+	if len(facts) != 1 || facts[0].Method != "Uncovered" || facts[0].Ref != client.IssueStageRef("acme/widgets", 7) ||
+		facts[0].PR == nil || *facts[0].PR != client.PRStageRef("acme/widgets", 45) {
+		t.Fatalf("facts = %+v, want one Uncovered(acme/widgets#7, by PR #45)", facts)
+	}
+	if issueHasLabel(result.Issues.Items[0].Labels, CoveredByPRLabel) {
+		t.Fatalf("payload labels = %v, want stage/040 gone", result.Issues.Items[0].Labels)
+	}
+
+	// The same fact through the real reconciler: 040 comes off a merged
+	// claim's issue (likely-done takes it out of the pipeline).
+	sink, writer := stageenginetest.NewSink(stageenginetest.Options{Issue: IssueDeriver()})
+	ref := client.IssueStageRef("acme/widgets", 7)
+	writer.Seed(ref, CoveredByPRLabel, LikelyDoneLabel)
+	if err := sink.Uncovered(context.Background(), ref, client.PRStageRef("acme/widgets", 45)); err != nil {
+		t.Fatal(err)
+	}
+	if got := writer.LabelsOf(ref); strings.Join(got, ",") != LikelyDoneLabel {
+		t.Fatalf("labels after Uncovered = %v, want likely-done only", got)
 	}
 }

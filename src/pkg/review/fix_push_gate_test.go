@@ -151,6 +151,77 @@ func TestHiveMediatedPRUnderPersonLoginIsWithheld(t *testing.T) {
 	}
 }
 
+func TestAdoptedContributorPRIsHiveOwnedForFixes(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 1 || len(plan.WithheldFixes) != 0 {
+		t.Fatalf("adopted contributor PR fixes=%d withheld=%d, want 1 / 0", len(plan.FixKicks), len(plan.WithheldFixes))
+	}
+}
+
+func TestAdoptedPendingFixIsRekickedEveryCycle(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+	state := DispatchState{
+		Fixes:       []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
+		FixAttempts: []FixAttempt{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 3, Dispatched: time.Now().Add(-4 * time.Hour)}},
+	}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 1 {
+		t.Fatalf("adopted PR got %d fix kicks, want 1", len(plan.FixKicks))
+	}
+	if len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 4 {
+		t.Fatalf("pending fixes = %+v, want a fourth attempt", plan.State.Fixes)
+	}
+}
+
+func TestNonAdoptedPendingFixIsNotRekicked(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.HiveAttributed = true
+	state := DispatchState{Fixes: []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 1, Dispatched: time.Now()}}}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 0 || len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 1 {
+		t.Fatalf("ordinary pending fix changed: fixes=%d state=%+v", len(plan.FixKicks), plan.State.Fixes)
+	}
+	// A hive-attributed PR under a person login never reaches the fix path
+	// (hivecommons/hive#13124): the push is withheld, so the exclusion is
+	// not-hive-authored rather than pending. Either way it is not re-kicked.
+	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedNotHiveAuthored {
+		t.Fatalf("fix exclusions = %+v, want not-hive-authored exclusion", plan.FixExclusions)
+	}
+	if len(plan.WithheldFixes) != 1 {
+		t.Fatalf("withheld fixes = %+v, want the hive-attributed person-login PR withheld", plan.WithheldFixes)
+	}
+}
+
+func TestAdoptedFixAttemptsExhaustedIsVisibleHumanHold(t *testing.T) {
+	pr := humanPR("sha1")
+	pr.Labels = []string{"stage/074-adopted-by-hive", "author/clanker"}
+	state := DispatchState{
+		Fixes:       []PendingFix{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 6, Dispatched: time.Now()}},
+		FixAttempts: []FixAttempt{{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Agent: DefaultFixerAgent, Attempts: 6, Dispatched: time.Now()}},
+	}
+
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, state, fixGateOpts(false))
+
+	if len(plan.FixKicks) != 0 {
+		t.Fatalf("exhausted adopted PR got %d fix kicks, want 0", len(plan.FixKicks))
+	}
+	if len(plan.State.Human) != 1 || plan.State.Human[0].Reason != FixAttemptsExhaustedHumanDecisionReason {
+		t.Fatalf("human hold = %+v, want %q", plan.State.Human, FixAttemptsExhaustedHumanDecisionReason)
+	}
+	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedAttemptsExhausted || plan.FixExclusions[0].Attempts != 6 {
+		t.Fatalf("fix exclusions = %+v, want exhausted attempts=6", plan.FixExclusions)
+	}
+}
+
 // TestWithheldFixPrunedWhenHeadMoves: a new push is a new decision. The
 // record for the old head goes with it, like pending reviews and holds.
 func TestWithheldFixPrunedWhenHeadMoves(t *testing.T) {

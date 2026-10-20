@@ -305,6 +305,36 @@ func containsDecisionParkLabel(labels []string, configured string) bool {
 	return false
 }
 
+// verifyIssueParkLanded re-reads an issue after its Parked fact and returns an
+// error when it still wears a stage other than stage/045-needs-decision, so
+// the relay reports ok:false and retries instead of telling the agent the
+// item is parked when the stage write never reached GitHub
+// (hivecommons/hive#13069: `labels_added` named the park while the issue
+// stayed on stage/010-actionable). No stage at all is accepted: a hold or
+// likely-done issue legitimately derives none. Pull requests and closed
+// items are left to their own derivation.
+func (c *Client) verifyIssueParkLanded(ctx context.Context, repo string, number int, parkLabel string) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return fmt.Errorf("verifying park on %s#%d: %w", repo, number, err)
+	}
+	if issue.IsPullRequest() || strings.EqualFold(issue.GetState(), "closed") {
+		return nil
+	}
+	park := stagelabels.IssueNeedsDecision.Label()
+	for _, label := range stagelabels.StageLabels(extractLabels(issue.Labels)) {
+		if !strings.EqualFold(label, park) {
+			return fmt.Errorf("park not applied: %s#%d still carries %s after the %s park was submitted to the stage engine; the request will be retried",
+				repo, number, label, parkLabel)
+		}
+	}
+	return nil
+}
+
 // unparkDecisionLinePrefix is how the hive's accepted un-park reply records
 // the decision text (renderUnparkAcceptedReply).
 const unparkDecisionLinePrefix = "Decision: "

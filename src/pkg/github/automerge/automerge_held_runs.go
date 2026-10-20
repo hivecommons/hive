@@ -26,14 +26,12 @@ package automerge
 //
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
-// first-time contributor's held run is never released by automation. Only
-// runs whose head repository is the base repository are approved — a fork head
-// is never released here even for a trusted login.
+// first-time contributor's held run is never nudged by automation. Hive posts
+// `/ok-to-test`; the repository-local self-contained workflow approves only same-repo
+// heads, never fork heads.
 
 import (
 	"context"
-	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -46,9 +44,9 @@ import (
 const (
 	// requiredCheckMissingPrefix is the commit-CI reason this file refines.
 	requiredCheckMissingPrefix = "required-check-missing:"
-	// requiredCheckHeldPrefix: the head's workflow runs exist but are held for
-	// approval and the sweep could not (or already did) release them.
-	requiredCheckHeldPrefix = "required-check-held:"
+	// workflowApprovalRequiredPrefix: the head's workflow runs exist but GitHub
+	// is waiting for maintainer approval before starting them.
+	workflowApprovalRequiredPrefix = "workflow-approval-required:"
 	// requiredCheckNeverStartedPrefix: no `pull_request` run exists for a head
 	// older than heldRunNeverStartedGrace; polling cannot make one appear.
 	requiredCheckNeverStartedPrefix = "required-check-never-started:"
@@ -66,12 +64,12 @@ const (
 	dependabotLogin = "dependabot[bot]"
 	// dependabotRebaseComment asks Dependabot to re-push the branch itself.
 	dependabotRebaseComment = "@dependabot rebase"
-	// approvedHeldWorkflowRunsReason is returned on the tick that released
-	// held runs; the next tick re-evaluates the (now running) checks.
-	approvedHeldWorkflowRunsReason = "approved-held-workflow-runs"
 	// workflowRunConclusionActionRequired is GitHub's conclusion for a run
 	// waiting on a person's approval.
-	workflowRunConclusionActionRequired = "action_required"
+	workflowRunConclusionActionRequired   = "action_required"
+	workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
+	workflowApprovalCommand               = "/ok-to-test"
+	workflowApprovalGrace                 = 10 * time.Minute
 	// heldRunNeverStartedGrace bounds how long a head with zero workflow runs
 	// is still treated as "GitHub has not scheduled them yet".
 	heldRunNeverStartedGrace = 30 * time.Minute
@@ -79,11 +77,10 @@ const (
 )
 
 // resolveMissingRequiredCheck refines a `required-check-missing:<ctx>` skip
-// for a trusted-lane PR. It returns the reason the caller should log: the
-// original reason when nothing is known, a held/never-started reason when
-// polling cannot progress, or approvedHeldWorkflowRunsReason after releasing
-// held runs. It never returns an error: inability to inspect or approve runs
-// degrades to the original reason so the sweep keeps its existing behavior.
+// for a trusted-lane PR. It returns the original reason when nothing is known,
+// a workflow-approval-required reason when GitHub is waiting for approval and
+// Hive has posted `/ok-to-test`, or a never-started/never-ran reason when
+// polling cannot progress. It never approves a run with the App token.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
@@ -118,29 +115,137 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 		}
 		return reason
 	}
-	if !c.markHeldRunApprovalAttempted(owner, repo, number, headSHA) {
-		// Already released (or refused) for this head; the runs are either
-		// starting or need a person. Do not spend another approve call.
-		return requiredCheckHeldPrefix + missing
+	if c.sentinelLabelPresent(labelNames(pr.Labels)) {
+		return "sentinel"
 	}
-	approved := 0
-	for _, run := range held {
-		if err := c.approveWorkflowRunEffect(ctx, owner, repo, number, headSHA, run); err != nil {
-			if isGitHubStatus(err, http.StatusForbidden) {
-				c.warn("automerge cannot approve held workflow runs; the App needs Actions: write — approve them in the Actions tab or `gh run approve`",
-					"repo", displayRepo, "pr", number, "sha", headSHA, "run", run.GetID(), "workflow", run.GetName(), "held", len(held))
-				return requiredCheckHeldPrefix + missing
-			}
-			c.warn("automerge failed to approve held workflow run", "repo", displayRepo, "pr", number, "run", run.GetID(), "workflow", run.GetName(), "error", err)
-			continue
+	return c.workflowApprovalAttention(ctx, displayRepo, owner, repo, number, headSHA, missing, len(held))
+}
+
+// detectActionRequiredWorkflowRuns names same-repo workflow runs GitHub is
+// holding for approval on trusted lanes even when the required context already
+// exists and commitGreen reported `required-check-pending:` rather than
+// `required-check-missing:`. It returns an empty string when this shape does not
+// apply.
+func (c *Engine) detectActionRequiredWorkflowRuns(ctx context.Context, displayRepo, owner, repo, lane string, pr *gh.PullRequest, number int, headSHA, reason string) string {
+	if c == nil || c.gh == nil || c.isForkPR(pr) {
+		return ""
+	}
+	labels := labelNames(pr.Labels)
+	if c.sentinelLabelPresent(labels) {
+		return ""
+	}
+	if lane != "self-authored" && lane != "trusted-bot" && !trustedRegistryClanker(labels) {
+		return ""
+	}
+	if !strings.HasPrefix(reason, requiredCheckPendingPrefix) && reason != "check-pending" && reason != "ci-unverified" {
+		return ""
+	}
+	return c.workflowApprovalRequiredReason(ctx, displayRepo, owner, repo, number, headSHA, strings.TrimPrefix(reason, requiredCheckPendingPrefix))
+}
+
+const requiredCheckPendingPrefix = "required-check-pending:"
+
+func (c *Engine) workflowApprovalRequiredReason(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, contextName string) string {
+	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, &gh.ListWorkflowRunsOptions{
+		HeadSHA:     headSHA,
+		Event:       "pull_request",
+		ListOptions: gh.ListOptions{PerPage: workflowRunsPageSize},
+	})
+	if err != nil || runs == nil {
+		c.warn("automerge could not list workflow runs for approval detection", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
+		return ""
+	}
+	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
+	if len(held) == 0 {
+		return ""
+	}
+	if contextName == "" {
+		contextName = held[0].GetName()
+	}
+	return c.workflowApprovalAttention(ctx, displayRepo, owner, repo, number, headSHA, contextName, len(held))
+}
+
+func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, contextName string, held int) string {
+	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
+	if first {
+		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
+	}
+	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
+		c.warn("automerge workflow approval still required after ok-to-test grace; install the self-contained hive ok-to-test workflow",
+			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
+		return workflowApprovalWorkflowMissingPrefix + contextName
+	}
+	c.info("automerge workflow approval required; posted ok-to-test command if needed", "repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "command", workflowApprovalCommand)
+	return workflowApprovalRequiredPrefix + contextName
+}
+
+func (c *Engine) workflowApprovalCommandKey(owner, repo string, number int, headSHA string) string {
+	return "workflow-ok-to-test:" + c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA)
+}
+
+func (c *Engine) markWorkflowApprovalCommandSeen(owner, repo string, number int, headSHA string) (time.Time, bool) {
+	key := c.workflowApprovalCommandKey(owner, repo, number, headSHA)
+	now := time.Now()
+	if c != nil && c.now != nil {
+		now = c.now()
+	}
+	c.workflowApprovalCommandsMu.Lock()
+	defer c.workflowApprovalCommandsMu.Unlock()
+	if c.workflowApprovalCommands == nil {
+		c.workflowApprovalCommands = make(map[string]time.Time)
+	}
+	if first, ok := c.workflowApprovalCommands[key]; ok {
+		return first, false
+	}
+	c.workflowApprovalCommands[key] = now
+	return now, true
+}
+
+func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string) {
+	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueComment,
+		Target: strconv.Itoa(number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(workflowApprovalCommand)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(workflowApprovalCommand)})
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
 		}
-		approved++
+		c.noteOwnStageComment(owner, repo, number)
+		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
+	})
+	if err != nil {
+		c.warn("automerge failed to post ok-to-test workflow approval command", "repo", displayRepo, "pr", number, "sha", headSHA, "command", workflowApprovalCommand, "error", err)
+		return
 	}
-	if approved == 0 {
-		return requiredCheckHeldPrefix + missing
+	c.info("automerge posted ok-to-test workflow approval command", "repo", displayRepo, "pr", number, "sha", headSHA, "command", workflowApprovalCommand)
+}
+
+// detectTrustedRegistryClankerWorkflowApprovalRequired surfaces held runs for
+// the contributor registry lane without admitting the PR to the self-authored
+// merge path. It is intentionally narrow: same-repo head, author/clanker +
+// role/trusted labels, no sentinel label.
+func (c *Engine) detectTrustedRegistryClankerWorkflowApprovalRequired(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest) string {
+	if c == nil || pr == nil || c.isForkPR(pr) {
+		return ""
 	}
-	c.info("automerge approved held workflow runs", "repo", displayRepo, "pr", number, "sha", headSHA, "approved", approved, "held", len(held), "missing", missing)
-	return approvedHeldWorkflowRunsReason
+	labels := labelNames(pr.Labels)
+	if !trustedRegistryClanker(labels) {
+		return ""
+	}
+	if c.sentinelLabelPresent(labels) {
+		return ""
+	}
+	sha := ""
+	if pr.GetHead() != nil {
+		sha = pr.GetHead().GetSHA()
+	}
+	if sha == "" {
+		return ""
+	}
+	return c.workflowApprovalRequiredReason(ctx, displayRepo, owner, repo, pr.GetNumber(), sha, "workflow-approval")
 }
 
 // recheckSkippedByDesign re-evaluates a `required-check-missing:` head for a
@@ -195,7 +300,7 @@ func skippedWorkflowRunNames(runs []*gh.WorkflowRun, fullName string) map[string
 }
 
 // heldSameRepoWorkflowRuns returns the runs waiting on approval whose head
-// repository is fullName. A run without a head repository is never released.
+// repository is fullName. A run without a head repository is not same-repo evidence.
 func heldSameRepoWorkflowRuns(runs []*gh.WorkflowRun, fullName string) []*gh.WorkflowRun {
 	var held []*gh.WorkflowRun
 	for _, run := range runs {
@@ -220,26 +325,10 @@ func headOlderThan(now func() time.Time, headPushedAt time.Time, grace time.Dura
 	return now().Sub(headPushedAt) > grace
 }
 
-// markHeldRunApprovalAttempted records that approval was attempted for this
-// PR head and reports whether this is the first attempt.
-func (c *Engine) markHeldRunApprovalAttempted(owner, repo string, number int, headSHA string) bool {
-	key := c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA)
-	c.heldRunApprovalsMu.Lock()
-	defer c.heldRunApprovalsMu.Unlock()
-	if c.heldRunApprovals == nil {
-		c.heldRunApprovals = make(map[string]bool)
-	}
-	if c.heldRunApprovals[key] {
-		return false
-	}
-	c.heldRunApprovals[key] = true
-	return true
-}
-
 // isTerminalRequiredCheckHold reports whether reason is a hold polling cannot
 // cure (held for approval, runs never created, or never-ran after a nudge).
 func isTerminalRequiredCheckHold(reason string) bool {
-	return strings.HasPrefix(reason, requiredCheckHeldPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix)
+	return strings.HasPrefix(reason, workflowApprovalRequiredPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix) || strings.HasPrefix(reason, requiredCheckNeverRanPrefix)
 }
 
 // isAutofixPushedDependabotHead reports whether pr is a trusted-lane
@@ -348,27 +437,4 @@ func (c *Engine) reportTerminalHold(repo, owner, repoName string, number int, he
 	if c.onTerminalHold != nil {
 		c.onTerminalHold(repo, number, headSHA, reason)
 	}
-}
-
-// approveWorkflowRunEffect routes POST /actions/runs/{id}/approve through the
-// mutation boundary. go-github v72 has no binding for this endpoint.
-func (c *Engine) approveWorkflowRunEffect(ctx context.Context, owner, repo string, number int, headSHA string, run *gh.WorkflowRun) error {
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
-		Repo:   owner + "/" + repo,
-		Kind:   effects.KindWorkflowRunApprove,
-		Target: strconv.FormatInt(run.GetID(), 10),
-		Actor:  "automerge",
-		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": headSHA, "workflow": run.GetName()},
-	}, func(ctx context.Context) (effects.Result, error) {
-		path := fmt.Sprintf("repos/%s/%s/actions/runs/%d/approve", owner, repo, run.GetID())
-		req, err := c.gh.NewRequest(http.MethodPost, path, nil)
-		if err != nil {
-			return effects.Result{}, effects.NotApplied(err)
-		}
-		if _, err := c.gh.Do(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), req, nil); err != nil {
-			return effects.Result{}, effects.NotApplied(err)
-		}
-		return effects.Result{Provenance: path}, nil
-	})
-	return err
 }

@@ -15,18 +15,17 @@ import (
 )
 
 const (
-	KindPullRequestCreate  = "pull_request_create"
-	KindIssueCreate        = "issue_create"
-	KindIssueComment       = "issue_comment"
-	KindPullRequestMerge   = "pull_request_merge"
-	KindLabelMutation      = "label_mutation"
-	KindReviewSubmit       = "review_submit"
-	KindReviewRequest      = "review_request"
-	KindBranchPush         = "branch_push"
-	KindBranchUpdate       = "branch_update"
-	KindSubIssueLink       = "sub_issue_link"
-	KindDependencyLink     = "dependency_link"
-	KindWorkflowRunApprove = "workflow_run_approve"
+	KindPullRequestCreate = "pull_request_create"
+	KindIssueCreate       = "issue_create"
+	KindIssueComment      = "issue_comment"
+	KindPullRequestMerge  = "pull_request_merge"
+	KindLabelMutation     = "label_mutation"
+	KindReviewSubmit      = "review_submit"
+	KindReviewRequest     = "review_request"
+	KindBranchPush        = "branch_push"
+	KindBranchUpdate      = "branch_update"
+	KindSubIssueLink      = "sub_issue_link"
+	KindDependencyLink    = "dependency_link"
 )
 
 var ErrDenied = errors.New("mutation boundary denied")

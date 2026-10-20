@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -19,7 +18,7 @@ import (
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
-func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
+func TestFeedbackRedactsAndBuildsPrefillURL(t *testing.T) {
 	req := feedbackReportRequest{
 		Title:              "Bug with token ghp_secret123",
 		Description:        "bearer abc.def user@example.com password=opensesame",
@@ -33,115 +32,27 @@ func TestFeedbackRedactsAndBuildsFallbackURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	sanitizeFeedbackRequest(&req)
-	body := buildFeedbackIssueBody(req)
+	body := buildFeedbackBundleReport(req)
 	if strings.Contains(body, "ghp_secret") || strings.Contains(body, "abc.def") || strings.Contains(body, "user@example.com") || strings.Contains(body, "opensesame") || strings.Contains(body, "private/repo") {
 		t.Fatalf("feedback body leaked sensitive data:\n%s", body)
 	}
 	if !strings.Contains(body, "## Diagnostics included") || !strings.Contains(body, "Recent failed /api calls") {
 		t.Fatalf("feedback body missing diagnostics disclosure:\n%s", body)
 	}
-	if !strings.Contains(feedbackFallbackURL(req), "github.com/hivecommons/hive/issues/new") {
-		t.Fatalf("fallback did not target hive repo")
+	prefill := feedbackPrefillURL(req, "https://github.com/hivecommons/hive/blob/hive-feedback/feedback-bundles/x/report.md")
+	if !strings.Contains(prefill, "github.com/hivecommons/hive/issues/new") {
+		t.Fatalf("prefill did not target hive repo: %s", prefill)
 	}
-}
-
-func TestFeedbackIssueBodyAttributionShapes(t *testing.T) {
-	tests := []struct {
-		name            string
-		credentialLogin string
-		hubName         string
-		hiveID          string
-		submitter       feedbackSubmitterIdentity
-		wantLine        string
-		notWant         []string
-	}{
-		{
-			name:            "hub-linked app bot",
-			credentialLogin: "hivecommons-hive[bot]",
-			hubName:         "https://hub.example",
-			hiveID:          "hive-linked",
-			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
-			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-linked (https://hub.example)",
-		},
-		{
-			name:            "hub-less app credential",
-			credentialLogin: "hivecommons-hive[bot]",
-			hubName:         "hub-less",
-			hiveID:          "hive-solo",
-			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
-			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-solo (hub-less)",
-		},
-		{
-			name:            "hosted app bot",
-			credentialLogin: "hivecommons-hive[bot]",
-			hubName:         "hosted-hub",
-			hiveID:          "hive-hosted",
-			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
-			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of @alice from hive hive-hosted (hosted-hub)",
-		},
-		{
-			name:            "same credential and submitter omits on behalf",
-			credentialLogin: "alice",
-			hubName:         "hub-less",
-			hiveID:          "hive-solo",
-			submitter:       feedbackSubmitterIdentity{Name: "alice", GitHubLogin: "alice", Source: "GitHub dashboard identity"},
-			wantLine:        "Opened by @alice from hive hive-solo (hub-less)",
-			notWant:         []string{"on behalf of @alice"},
-		},
-		{
-			name:            "missing identity",
-			credentialLogin: "hivecommons-hive[bot]",
-			hubName:         "hub-less",
-			hiveID:          "hive-solo",
-			submitter:       feedbackSubmitterIdentity{Name: "an unidentified dashboard user", Source: "unidentified dashboard user"},
-			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of an unidentified dashboard user from hive hive-solo (hub-less)",
-			notWant:         []string{"/cc @"},
-		},
-		{
-			name:            "self-reported login is not mentioned",
-			credentialLogin: "hivecommons-hive[bot]",
-			hubName:         "https://hub.example",
-			hiveID:          "hive-linked",
-			submitter:       feedbackSubmitterIdentity{Name: "mallory", GitHubLogin: "mallory", Source: feedbackSourceEntered},
-			wantLine:        "Opened by @hivecommons-hive[bot] on behalf of `mallory` (self-reported GitHub username, unverified) from hive hive-linked (https://hub.example)",
-			notWant:         []string{"/cc @", "@mallory"},
-		},
+	u, err := url.Parse(prefill)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			body := buildFeedbackIssueBody(feedbackReportRequest{
-				Title:           "Bug from dashboard",
-				Description:     "Something went wrong",
-				RequestType:     feedbackTypeBug,
-				TargetRepo:      feedbackTargetHive,
-				HiveID:          tt.hiveID,
-				HubName:         tt.hubName,
-				CredentialLogin: tt.credentialLogin,
-				Submitter:       tt.submitter,
-				OpenedByHive:    true,
-				Diagnostics:     &feedbackDiagnostics{HiveID: "hive-one", Channel: "edge"},
-			})
-			if !strings.HasPrefix(body, tt.wantLine+"\n\nSomething went wrong") {
-				t.Fatalf("feedback body prefix mismatch; want %q:\n%s", tt.wantLine, body)
-			}
-			if tt.submitter.GitHubLogin != "" {
-				wantRow := "| Submitted by | @" + tt.submitter.GitHubLogin + " (GitHub dashboard identity) |"
-				if tt.submitter.Source == feedbackSourceEntered {
-					wantRow = "| Submitted by | `" + tt.submitter.GitHubLogin + "` (self-reported GitHub username, unverified) (" + feedbackSourceEntered + ") |"
-				}
-				if !strings.Contains(body, wantRow) {
-					t.Fatalf("feedback body missing Submitted by row %q:\n%s", wantRow, body)
-				}
-			}
-			for _, notWant := range tt.notWant {
-				if strings.Contains(body, notWant) {
-					t.Fatalf("feedback body unexpectedly contained %q:\n%s", notWant, body)
-				}
-			}
-			if !strings.Contains(body, "| Hive ID | hive-one |") || !strings.Contains(body, "| Channel | edge |") {
-				t.Fatalf("feedback body missing hive diagnostics:\n%s", body)
-			}
-		})
+	pb := u.Query().Get("body")
+	if strings.Contains(pb, "ghp_secret") || strings.Contains(pb, "private/repo") {
+		t.Fatalf("prefill body leaked sensitive data:\n%s", pb)
+	}
+	if !strings.Contains(pb, "Diagnostic bundle: https://github.com/hivecommons/hive/blob/hive-feedback/") {
+		t.Fatalf("prefill body missing bundle link:\n%s", pb)
 	}
 }
 
@@ -179,20 +90,10 @@ func TestFeedbackSubmitterIdentitySources(t *testing.T) {
 
 func TestFeedbackStatusDoesNotUseOperatorPATCredential(t *testing.T) {
 	oldTokenPath := userTokenPath
-	oldLookup := lookupFeedbackTokenLogin
-	t.Cleanup(func() {
-		userTokenPath = oldTokenPath
-		lookupFeedbackTokenLogin = oldLookup
-	})
+	t.Cleanup(func() { userTokenPath = oldTokenPath })
 	userTokenPath = filepath.Join(t.TempDir(), "gh-user-token")
 	if err := os.WriteFile(userTokenPath, []byte("gho_operator"), 0o600); err != nil {
 		t.Fatal(err)
-	}
-	lookupFeedbackTokenLogin = func(token string) string {
-		if token != "gho_operator" {
-			t.Fatalf("lookup token = %q", token)
-		}
-		return "hivecommons-hive[bot]"
 	}
 	s := NewServer(0, dismissLogger())
 	s.deps = &Dependencies{Config: &config.Config{HiveID: "hive-solo"}}
@@ -217,10 +118,12 @@ func TestFeedbackStatusUsesResolvedCredentialByDeploymentShape(t *testing.T) {
 			want: feedbackAttributionContext{HiveID: "hive-linked", HubLinked: true, HubName: "https://hub.example", NeedsIdentity: true, SubmitterName: "an unidentified dashboard user"},
 		},
 		{
-			name: "app regardless hive type",
+			// Even with a working App installation the issue is never filed by
+			// the bot (#1927 zero-scope handoff) — the App only stores the bundle.
+			name: "app never becomes the issue credential",
 			cfg:  config.Config{HiveID: "hive-hosted", Hub: config.HubConfig{HiveType: ""}, GitHub: config.GitHubConfig{AppID: config.PublicGitHubAppID, InstallationID: 123}},
 			auth: true,
-			want: feedbackAttributionContext{CredentialLogin: "hivecommons-hive[bot]", HiveID: "hive-hosted", HubName: "hub-less", NeedsIdentity: true, SubmitterName: "an unidentified dashboard user"},
+			want: feedbackAttributionContext{CredentialLogin: "", HiveID: "hive-hosted", HubName: "hub-less", NeedsIdentity: true, SubmitterName: "an unidentified dashboard user"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,67 +140,9 @@ func TestFeedbackStatusUsesResolvedCredentialByDeploymentShape(t *testing.T) {
 	}
 }
 
-func TestFeedbackIssueTokenNeverFallsBackToOperatorPAT(t *testing.T) {
-	oldTokenPath := userTokenPath
-	oldLookup := lookupFeedbackTokenLogin
-	t.Cleanup(func() {
-		userTokenPath = oldTokenPath
-		lookupFeedbackTokenLogin = oldLookup
-	})
-	userTokenPath = filepath.Join(t.TempDir(), "gh-user-token")
-	if err := os.WriteFile(userTokenPath, []byte("gho_operator"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	lookupFeedbackTokenLogin = func(token string) string {
-		if token != "gho_operator" {
-			t.Fatalf("lookup token = %q", token)
-		}
-		return "hivecommons-hive[bot]"
-	}
-
-	s := NewServer(0, dismissLogger())
-	s.deps = &Dependencies{
-		Config:    &config.Config{HiveID: "hive-hosted", Hub: config.HubConfig{HiveType: config.HiveTypeHosted}, GitHub: config.GitHubConfig{AppID: config.PublicGitHubAppID, InstallationID: 123}},
-		GHAppAuth: newFailingAppAuth(t),
-	}
-	req := feedbackReportRequest{CredentialLogin: "hivecommons-hive[bot]"}
-	token := s.feedbackIssueToken(context.Background(), httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil), &req)
-	if token != "" || req.CredentialLogin != "hivecommons-hive[bot]" || req.OpenedByHive {
-		t.Fatalf("token=%q req=%+v", token, req)
-	}
-}
-
-func TestFeedbackIssueTokenUsesSubmitterOAuthToken(t *testing.T) {
-	s := NewServer(0, dismissLogger())
-	s.deps = &Dependencies{Config: &config.Config{HiveID: "hive-solo"}}
-	sid := s.createUserSessionWithToken("danathar", "owner", "gho_submitter", "public_repo")
-	r := httptest.NewRequest(http.MethodPost, "/api/feedback/report", nil)
-	r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sid})
-	req := feedbackReportRequest{Submitter: feedbackSubmitterIdentity{Name: "danathar", GitHubLogin: "danathar", Source: "GitHub dashboard identity"}}
-	token := s.feedbackIssueToken(context.Background(), r, &req)
-	if token != "gho_submitter" || req.CredentialLogin != "danathar" || !req.OpenedByHive {
-		t.Fatalf("token=%q req=%+v", token, req)
-	}
-	body := buildFeedbackIssueBody(req)
-	if !strings.HasPrefix(body, "Opened by @danathar from hive unknown") || strings.Contains(body, "on behalf of @danathar") {
-		t.Fatalf("body attribution = %q", strings.SplitN(body, "\n", 2)[0])
-	}
-}
-
-func TestFeedbackFallbackRequiresUsernameWithoutIssueCredential(t *testing.T) {
+func TestFeedbackReportWithoutAppTokenStillReturnsPrefill(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(`{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug"}`))
-	markOwnerRequest(req)
-	s.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "GitHub username is required") {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestFeedbackReportStandaloneReturnsFallback(t *testing.T) {
-	s, _ := apiServer(t)
-	body := `{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug","target_repo":"docs","submitter":{"github_login":"alice"}}`
+	body := `{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug","target_repo":"docs"}`
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(body))
 	markOwnerRequest(req)
@@ -309,15 +154,118 @@ func TestFeedbackReportStandaloneReturnsFallback(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !out.OK || !strings.Contains(out.FallbackURL, "github.com/hivecommons/docs/issues/new") {
+	if !out.OK || out.IssueNumber != 0 || out.IssueURL != "" || out.BundleURL != "" || out.Warning == "" {
 		t.Fatalf("unexpected response: %+v", out)
 	}
-	u, err := url.Parse(out.FallbackURL)
+	if !strings.Contains(out.PrefillURL, "github.com/hivecommons/docs/issues/new") {
+		t.Fatalf("prefill did not target docs repo: %s", out.PrefillURL)
+	}
+	u, err := url.Parse(out.PrefillURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body := u.Query().Get("body"); !strings.Contains(body, "Opened manually on GitHub") || strings.Contains(body, "Opened by the hive") {
-		t.Fatalf("fallback body attribution is wrong:\n%s", body)
+	q := u.Query()
+	if q.Get("title") != "A useful bug report" {
+		t.Fatalf("title = %q", q.Get("title"))
+	}
+	if pb := q.Get("body"); !strings.HasPrefix(pb, "Opened by ") || strings.Contains(pb, "Opened by the hive") || !strings.Contains(pb, "Diagnostic bundle: not stored") {
+		t.Fatalf("prefill body is wrong:\n%s", pb)
+	}
+	if len(q.Get("body")) > 6<<10 {
+		t.Fatalf("prefill body exceeds cap: %d", len(q.Get("body")))
+	}
+}
+
+// TestFeedbackReportStoresBundleWithAppTokenAndPrefills covers the hub-less
+// path: the bundle is committed with the App installation token and the
+// prefilled issue links to it; no issue is ever created by the hive.
+func TestFeedbackReportStoresBundleWithAppTokenAndPrefills(t *testing.T) {
+	oldBase := feedbackGitHubAPIBase
+	t.Cleanup(func() { feedbackGitHubAPIBase = oldBase })
+	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 24)...)
+	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	var puts []string
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer ghs_app_token" {
+			t.Fatalf("bundle store must use the App installation token, got %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues"):
+			t.Fatalf("the hive must never create the issue itself")
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/contents/"):
+			var payload map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			if payload["branch"] != "hive-feedback" {
+				t.Fatalf("branch = %q", payload["branch"])
+			}
+			rel := strings.TrimPrefix(r.URL.Path, "/repos/hivecommons/hive/contents/")
+			puts = append(puts, rel)
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]string{"html_url": "https://github.com/hivecommons/hive/blob/hive-feedback/" + rel, "download_url": "https://raw.example/" + rel}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive":
+			_ = json.NewEncoder(w).Encode(map[string]string{"default_branch": "main"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/git/ref/heads/main":
+			_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"sha": "abc123"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/git/refs":
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer gh.Close()
+	feedbackGitHubAPIBase = func() string { return gh.URL }
+
+	s := NewServer(0, dismissLogger())
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "hive-solo", GitHub: config.GitHubConfig{AppID: config.PublicGitHubAppID, InstallationID: 123}}, GHAppAuth: newSucceedingAppAuth(t, "ghs_app_token")}
+	body := `{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug","target_repo":"hive","screenshots":["` + uri + `"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(body))
+	markOwnerRequest(req)
+	req.Header.Set("X-Hive-User", "dashboard-user")
+	s.handleFeedbackReport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var out feedbackReportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.Warning != "" || out.IssueNumber != 0 || !strings.Contains(out.BundleURL, "/blob/hive-feedback/feedback-bundles/") || !strings.HasSuffix(out.BundleURL, "/report.md") {
+		t.Fatalf("unexpected response: %+v", out)
+	}
+	if len(puts) != 2 || !strings.HasSuffix(puts[0], "/screenshot-1.png") || !strings.HasSuffix(puts[1], "/report.md") {
+		t.Fatalf("stored paths = %v", puts)
+	}
+	u, err := url.Parse(out.PrefillURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pb := u.Query().Get("body")
+	if !strings.Contains(pb, "Diagnostic bundle: "+out.BundleURL) || !strings.Contains(pb, "Screenshots: 1, in the diagnostic bundle.") {
+		t.Fatalf("prefill body does not link the bundle:\n%s", pb)
+	}
+}
+
+func TestFeedbackReportUsesHubBundleURLWhenHubLinked(t *testing.T) {
+	t.Setenv(spoke.EnvHeartbeatKey, "test-heartbeat")
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, BundleURL: "https://github.com/hivecommons/hive/blob/hive-feedback/feedback-bundles/hub-1/report.md"})
+	}))
+	defer hub.Close()
+	s := NewServer(0, dismissLogger())
+	s.deps = &Dependencies{Config: &config.Config{HiveID: "hive-one", Hub: config.HubConfig{Enabled: true, URL: hub.URL, HiveType: "hosted"}}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(`{"title":"A useful bug report","description":"Something went wrong in the dashboard","request_type":"bug"}`))
+	markOwnerRequest(req)
+	s.handleFeedbackReport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out feedbackReportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.OK || out.BundleURL == "" || !strings.Contains(out.PrefillURL, url.QueryEscape(out.BundleURL)) {
+		t.Fatalf("unexpected response: %+v", out)
 	}
 }
 
@@ -334,7 +282,7 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatal(err)
 		}
-		_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, IssueNumber: 7, IssueURL: "https://github.com/hivecommons/hive/issues/7"})
+		_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, BundleURL: "https://github.com/hivecommons/hive/blob/hive-feedback/feedback-bundles/7/report.md"})
 	}))
 	defer hub.Close()
 	s := NewServer(0, dismissLogger())
@@ -356,8 +304,8 @@ func TestFeedbackHubRelayCarriesHiveIDEvenWithoutDiagnostics(t *testing.T) {
 	if got.Submitter.Name != "dashboard-user" || got.Submitter.Source != "authenticated dashboard user" {
 		t.Fatalf("submitter = %+v", got.Submitter)
 	}
-	if !got.OpenedByHive {
-		t.Fatal("hub-relayed feedback should be marked as opened by hive")
+	if got.CredentialLogin != "" {
+		t.Fatalf("relayed feedback must not name a filing credential, got %q", got.CredentialLogin)
 	}
 }
 
@@ -398,7 +346,7 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 		"class=\"feedback-diagnostics-fieldset\"",
 		"id=\"feedback-github-username\"",
 		"id=\"feedback-attribution-line\"",
-		"Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.",
+		"Optional. Used only to attribute you in the prefilled issue text; you submit the issue on GitHub as yourself.",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("feedback modal layout missing %q", want)
@@ -423,6 +371,23 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	}
 	if !strings.Contains(submit, "feedbackGitHubLogin(rawUsername)") {
 		t.Fatal("feedback submit does not validate the entered GitHub username")
+	}
+	if strings.Contains(submit, "credential_login") || strings.Contains(submit, "GitHub username is required") {
+		t.Fatal("feedback submit still requires a username / filing credential; the user files the issue themselves (#1927)")
+	}
+	if !strings.Contains(submit, "renderFeedbackPrefillResult(data)") {
+		t.Fatal("feedback submit does not hand off to the prefilled GitHub issue")
+	}
+	render := jsFunctionBody(t, html, "function renderFeedbackPrefillResult(data)")
+	for _, want := range []string{"window.open(prefill, '_blank')", "data-action=\"copyFeedbackPrefillURL\"", "id=\"feedback-prefill-url\"", "data.bundle_url"} {
+		if !strings.Contains(render, want) {
+			t.Errorf("prefill result handler missing %q (popup-blocked / copyable-link fallback)", want)
+		}
+	}
+	for _, removed := range []string{"Created issue:", "automatic filing", "data.issue_url", "data.fallback_url"} {
+		if strings.Contains(submit+render, removed) {
+			t.Errorf("feedback UI still promises hive-side issue filing: %q", removed)
+		}
 	}
 	buildPayload := jsFunctionBody(t, html, "async function buildFeedbackPayload()")
 	if !strings.Contains(buildPayload, "submitter: { github_login: enteredLogin }") {
@@ -458,29 +423,26 @@ function feedbackHubLabel(status) { return status && status.hub_linked ? ('hub-l
 ` + jsFunctionBody(t, html, "function updateFeedbackAttributionLine()") + `
 window._feedbackStatus = { credential_login: '', submitter_login: 'alice', hive_id: 'hive-linked', hub_linked: true, hub_name: 'https://hub.example' };
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as the hub on behalf of @alice · hive hive-linked (hub-linked: https://hub.example)');
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Opens a prefilled GitHub issue for you to submit as yourself (attributed to @alice) \u00b7 diagnostic bundle stored by the hive\u2019s GitHub App \u00b7 hive hive-linked (hub-linked: https://hub.example)');
 window._feedbackStatus = { credential_login: '', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 nodes['feedback-github-username'].value = 'bob';
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as your browser on GitHub on behalf of @bob (self-reported, unverified) · hive hive-solo (hub-less)');
+assert.equal(nodes['feedback-attribution-line'].textContent, 'Opens a prefilled GitHub issue for you to submit as yourself (attributed to @bob (self-reported, unverified)) \u00b7 diagnostic bundle stored by the hive\u2019s GitHub App \u00b7 hive hive-solo (hub-less)');
+// A credential_login from an older spoke/hub is ignored: the bot never files.
 window._feedbackStatus = { credential_login: 'hivecommons-hive[bot]', submitter_login: 'octocat', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as @hivecommons-hive[bot] on behalf of @octocat · hive hive-solo (hub-less)');
-nodes['feedback-github-username'].value = '';
-window._feedbackStatus = { credential_login: '', submitter_login: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
+assert.ok(!nodes['feedback-attribution-line'].textContent.includes('hivecommons-hive[bot]'));
+assert.ok(nodes['feedback-attribution-line'].textContent.includes('attributed to @octocat'));
 nodes['feedback-github-username'].value = '';
 window._feedbackStatus = { credential_login: '', submitter_login: '', submitter_name: 'basic-user', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as your browser on GitHub on behalf of basic-user · hive hive-solo (hub-less)');
+assert.ok(nodes['feedback-attribution-line'].textContent.includes('attributed to basic-user'));
 window._feedbackStatus = { credential_login: '', submitter_login: '', submitter_name: '', hive_id: 'hive-solo', hub_linked: false, hub_name: 'hub-less' };
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as your browser on GitHub on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
-nodes['feedback-github-username'].value = 'alice!';
-updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as your browser on GitHub on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
+assert.ok(nodes['feedback-attribution-line'].textContent.includes('attributed to an unidentified dashboard user'));
 nodes['feedback-github-username'].value = 'alice--bob';
 updateFeedbackAttributionLine();
-assert.equal(nodes['feedback-attribution-line'].textContent, 'Will be opened as your browser on GitHub on behalf of an unidentified dashboard user · hive hive-solo (hub-less)');
+assert.ok(nodes['feedback-attribution-line'].textContent.includes('attributed to an unidentified dashboard user'));
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("node feedback attribution template failed: %v\n%s", err, out)
@@ -533,7 +495,7 @@ func TestFeedbackDiagnosticDisclosureMatchesPayload(t *testing.T) {
 	}
 }
 
-func TestFeedbackMineRequiresAuthAndRefreshesUserToken(t *testing.T) {
+func TestFeedbackMineRequiresAuthAndRefreshesWithoutOperatorPAT(t *testing.T) {
 	oldStore := feedbackSubmissionsPath
 	oldToken := userTokenPath
 	oldBase := feedbackGitHubAPIBase
@@ -565,8 +527,8 @@ func TestFeedbackMineRequiresAuthAndRefreshesUserToken(t *testing.T) {
 		if r.URL.Path != "/repos/hivecommons/hive/issues/42" {
 			t.Fatalf("path = %s", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer ghu_test_token" {
-			t.Fatalf("missing user token auth")
+		if strings.Contains(r.Header.Get("Authorization"), "ghu_test_token") {
+			t.Fatalf("status refresh must never use the operator PAT")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"title":      "Updated feedback",
@@ -646,53 +608,6 @@ func TestFeedbackScreenshotsMustBeRealImages(t *testing.T) {
 		req := &feedbackReportRequest{Title: "A useful bug report", Description: "Something went wrong", RequestType: feedbackTypeBug, Screenshots: []string{uri}}
 		if err := validateFeedbackRequest(req); err == nil {
 			t.Fatalf("%s payload passed request validation", name)
-		}
-	}
-}
-
-func TestFeedbackScreenshotsCommitToDedicatedBranch(t *testing.T) {
-	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 24)...)
-	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
-	var branches, paths []string
-	refCreated := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/docs/contents/"):
-			var payload map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&payload)
-			branches = append(branches, payload["branch"])
-			paths = append(paths, strings.TrimPrefix(r.URL.Path, "/repos/hivecommons/docs/contents/"))
-			if !refCreated {
-				http.Error(w, `{"message":"Branch not found"}`, http.StatusNotFound)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"content": map[string]string{"download_url": "https://example.invalid/x.png"}})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/docs":
-			_ = json.NewEncoder(w).Encode(map[string]string{"default_branch": "main"})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/docs/git/ref/heads/main":
-			_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"sha": "abc123"}})
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/docs/git/refs":
-			refCreated = true
-			w.WriteHeader(http.StatusCreated)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
-			w.WriteHeader(http.StatusCreated)
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-
-	uploadFeedbackScreenshots(context.Background(), srv.Client(), srv.URL, "tok", "hivecommons", "docs", 3, []string{uri})
-
-	if !refCreated || len(branches) != 2 {
-		t.Fatalf("refCreated=%v branches=%v", refCreated, branches)
-	}
-	for i, b := range branches {
-		if b != feedbackScreenshotBranch {
-			t.Fatalf("put %d targeted branch %q", i, b)
-		}
-		if strings.HasPrefix(paths[i], ".github") || !strings.HasPrefix(paths[i], feedbackScreenshotDir+"/3/screenshot-1.png") {
-			t.Fatalf("unexpected content path %s", paths[i])
 		}
 	}
 }

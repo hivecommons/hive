@@ -523,7 +523,7 @@ func TestTrySweepContributorLaneTrustedHumanApprovalClearsRequiresHuman(t *testi
 		{
 			name:       "changes requested not cleared",
 			verdict:    ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"},
-			wantReason: contributorLaneReasonNoVerdict,
+			wantReason: contributorLaneReasonChangesRequested,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

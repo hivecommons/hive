@@ -47,6 +47,22 @@ type ClaimsConfig struct {
 	// (hivecommons/hive#10527). 0 uses DefaultClaimEscalateAfter; negative
 	// turns the gate off.
 	EscalateAfterClaims int `yaml:"escalate_after_claims,omitempty" json:"escalate_after_claims,omitempty"`
+	// NeverClaimLabels are labels (matched case-insensitively) that mark an
+	// issue as not a unit of agent work — umbrella/tracking issues — so every
+	// automated claim producer refuses it and the stage engine never stages
+	// a claim on it as stage/020 or stage/030. Absent → claims.DefaultNeverClaimLabels
+	// (`epic`); an explicit empty list turns the gate off.
+	NeverClaimLabels []string `yaml:"never_claim_labels,omitempty" json:"never_claim_labels,omitempty"`
+}
+
+// EffectiveNeverClaimLabels returns never_claim_labels with the default
+// applied: nil (key absent) → claims.DefaultNeverClaimLabels; an explicit
+// empty list stays empty.
+func (c ClaimsConfig) EffectiveNeverClaimLabels() []string {
+	if c.NeverClaimLabels == nil {
+		return append([]string(nil), claims.DefaultNeverClaimLabels...)
+	}
+	return append([]string{}, c.NeverClaimLabels...)
 }
 
 // DefaultClaimEscalateAfter is the escalate_after_claims default: an agent's

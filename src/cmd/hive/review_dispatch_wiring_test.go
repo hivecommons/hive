@@ -144,11 +144,20 @@ func TestPlanReviewDispatch_IncludesHeldPRsInReviewRankOrder(t *testing.T) {
 	}
 }
 
-func TestPlanReviewDispatch_SkipsHumanAuthoredPR(t *testing.T) {
+// TestPlanReviewDispatch_ReviewsHumanAuthoredPR pins hivecommons/hive#12974
+// end to end through the config wiring: with review on and all_authors left
+// unset, a human's PR is dispatched for review like an agent's. Nothing is
+// fix-kicked — a review verdict does not exist yet, and a human PR is never
+// pushed to anyway.
+func TestPlanReviewDispatch_ReviewsHumanAuthoredPR(t *testing.T) {
 	redirectReviewPaths(t)
-	plan := planReviewDispatch(reviewSwarmConfig(), actionableWithPR("some-human"), nil, nil, restoreTestLogger())
-	if len(plan.ReviewKicks) != 0 || len(plan.FixKicks) != 0 {
-		t.Fatalf("human-authored PR must not be dispatched, got %d review kicks and %d fix kicks",
+	cfg := reviewSwarmConfig()
+	if cfg.Review.AllAuthors {
+		t.Fatal("fixture must leave the deprecated all_authors knob unset")
+	}
+	plan := planReviewDispatch(cfg, actionableWithPR("some-human"), nil, nil, restoreTestLogger())
+	if len(plan.ReviewKicks) != 1 || len(plan.FixKicks) != 0 {
+		t.Fatalf("human-authored PR must be dispatched for review, got %d review kicks and %d fix kicks",
 			len(plan.ReviewKicks), len(plan.FixKicks))
 	}
 }

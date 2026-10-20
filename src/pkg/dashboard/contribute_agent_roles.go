@@ -116,7 +116,11 @@ func (h *ContributeWSHub) roleKickPrompt(role string) string {
 // guide in the same place an ordinary task does — next to the open-the-PR step,
 // not above the role preamble.
 func buildRoleTaskPromptForContributor(ref worksource.Ref, title, role, agentPrompt string, canPush bool, guide string) string {
-	base := buildTaskPromptForContributor(ref, title, canPush, guide)
+	return buildRoleTaskPromptForContributorWithHints(ref, title, role, agentPrompt, canPush, guide, taskPromptRepoHints{})
+}
+
+func buildRoleTaskPromptForContributorWithHints(ref worksource.Ref, title, role, agentPrompt string, canPush bool, guide string, hints taskPromptRepoHints) string {
+	base := buildTaskPromptForContributorWithHints(ref, title, canPush, guide, hints)
 	role = normalizeAgentRole(role)
 	if role == "" {
 		return base

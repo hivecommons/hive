@@ -175,8 +175,8 @@ review:
   reviewer_agents: [reviewer-a, reviewer-b] # optional; otherwise agents with review role/keywords are selected
   fixer_agent: scanner                      # optional; defaults to the PR lane, then scanner
   confidence_score: true                    # optional; append the 0–5 mergeability line to review comments
-  self_authored_decision_policy: resolve    # resolve (default) or escalate low-risk Hive-authored decision questions
-  all_authors: true                         # optional; review every open PR, not only agent-authored ones
+  self_authored_decision_policy: resolve    # resolve (default) non-risk-class Hive-authored decision questions, or escalate all of them
+  # all_authors: true                       # deprecated no-op; every open PR is reviewed regardless of author
   fix_human_prs: false                      # optional; also answer review-bot threads on PRs Hive did not open, by suggestion only (default off)
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
@@ -229,13 +229,36 @@ A `requires_human` or `reject` verdict blocks the App's self-merge sweep (App-au
 When the sweep finds a person's release it records it in `review-hold-releases.json` on the data dir (who, how, when). `/api/review/pipeline` and the dashboard's "your turn" decision read that record through the same rule the sweep applies (`github.ReleasesReviewHold`: an `APPROVED` review or a `/hive approve` reply, by a person, after the verdict), so a PR the sweep treats as released leaves `human_hold` and the owner's inbox too. A bot's approval or a reply posted before the verdict does not release, and a newer `requires_human` or `reject` verdict, for example on a later head, holds the PR again (hivecommons/hive#12962). The release is recorded when the sweep reaches its review verdict gate, so it reaches the board once the PR is otherwise mergeable (green, not conflicting) and only for PRs the sweep merges (App-authored and trusted authors). The contributor lane applies the same rule to a contributor-lane PR held by `requires_human`, except that only a trusted merger's review or `/hive approve` reply releases it there, and records the release in the same file; the merge-request relay refuses a held PR that no trusted merger has released (hivecommons/hive#13085).
 
 For Hive-authored PRs, `review.self_authored_decision_policy: resolve` (default)
-keeps low-risk reviewer decision questions advisory. Sequencing, naming,
-config-shape, scope, and "land now vs later" calls are resolved by the reviewer
-itself and recorded as audit reasons on an approving aggregate. Security, data
-loss, irreversible/public-facing behavior, policy/governance, licensing, spend,
-or unreadable-diff questions still aggregate to `requires_human`. Set the policy
-to `escalate` to preserve the older behavior where every decision marker parks
-the PR for a person.
+keeps reviewer decision questions advisory unless they are a **risk class**.
+The test is a denylist, not an allowlist: a question escalates to
+`stage/085-needs-decision` only when its wording lands in one of the named
+classes in `review.DecisionRiskClasses` (`src/pkg/review/review.go`) or the
+reviewer marked it `<!-- hive-decision-risk: high -->`; every other question —
+naming, sequencing, defaults, config shape, scope, changelog wording, or
+anything the list never anticipated — is resolved by the hive itself and
+recorded on the approving aggregate as
+`decision resolved by policy: <topic> — not a risk question; recorded as advisory: <question>`.
+(Before [#13020](https://github.com/hivecommons/hive/pull/13020) the policy
+only resolved questions matching a short allowlist of non-risk words, so a
+green agent PR whose linked issue had already specified the default still
+parked for a person.) The risk classes are:
+
+| Class | Escalates when the question names … |
+|---|---|
+| `permissions-credentials` | permissions, privileges, tokens, secrets, credentials, write/admin access, grants |
+| `security` | security, vulnerabilities, injection, crypto/TLS/certificates/signing keys, auth/authn/authz/OAuth/SSO |
+| `sensitive-paths` | `.github/workflows`, OWNERS/CODEOWNERS, branch protection/rulesets, and every path in the sentinel `sensitive_path` default list (`hive.yaml`, `policies/`, `Dockerfile`, `go.mod`, `deploy/`, `.env`, …) |
+| `data-loss-irreversible` | data loss, delete/drop/truncate/purge, destructive or irreversible actions, migrations, breaking or public-facing changes, force-push |
+| `merge-trust-policy` | merge or auto-merge policy, trust tiers, ACMM levels, roles, approvers, governance, policy |
+| `external-side-effects` | publishing, releases, deploys, billing/spend/cost, outbound email or notifications to humans, webhooks, registries |
+| `licensing-legal` | license, copyright, legal, privacy, compliance, trademark, CLA |
+| `unverifiable` | the reviewer says it could not read, judge or test the change, or the requirement is ambiguous |
+
+Set the policy to `escalate` to preserve the older behavior where every
+decision marker parks the PR for a person. The reviewer template
+(`policies/reviewer-queue.md`) also tells the swarm to check the linked
+issue/spec and PR body before asking, and to cite the answer
+(`per #<issue>: …`) instead of raising a question the issue already settled.
 
 `review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 
@@ -282,6 +305,8 @@ Source: `dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`.
 
 `pkg/review` provides prompt builders for one prompt per perspective plus a sequential fallback prompt. These prompts instruct review-capable agents to emit the extended AgentReport JSON shape above.
 
+**Who gets reviewed: every PR, regardless of author.** When review is on (`review.require_approval` and `review.fan_out`), the planner dispatches reviews for every open PR in the hive's repositories — hive-agent PRs, human PRs, clanker PRs at either trust tier, dependabot and any other bot. There is no author-class filter and no opt-out below the review feature switch itself; the only way to stop reviews is to turn review off ([#12974](https://github.com/hivecommons/hive/issues/12974): *"if pr review is selected in hive, then all prs should be reviewed"*). Before this, the swarm reviewed only agent and `[bot]` authors unless `review.all_authors` was set, and human PRs such as hivecommons/hive#12966 reached merge with zero swarm reviews. Author kind still decides what happens *after* the verdict — who may be pushed to (below), which auto-merge lane may act on it ([hive-merge.md](hive-merge.md#self-merge-review-gate)), and whether the hive may approve at all (a contributor-tier clanker's PR is reviewed like any other, then still parks at `090-ready-for-human-merge`; the hive never approves on their behalf).
+
 Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
 
 ### Pending-review expiry (`review.pending_ttl`, `review.max_redispatch`)
@@ -298,10 +323,10 @@ When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick 
 
 ### Who may be pushed to: `all_authors` and the retired `fix_human_prs` push
 
-A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. The two settings are therefore separate:
+A review-fix kick tells the fixer agent to check out the PR branch and push a commit to it. That is fine on a PR one of the hive's own agents opened; on a contributor's fork (reachable through GitHub's "allow edits by maintainers") or a maintainer's branch it is a bot rewriting someone else's work before any person has looked at it. Reviewing and pushing are therefore separate:
 
-- `review.all_authors` makes every open PR eligible for **review**, whoever opened it. It never implies pushing.
-- `review.fix_human_prs` is retained as an audited refusal setting only. It no longer lets the fix kick be dispatched for a PR whose login author is **not** a bot-shaped login (`[bot]` suffix); a plain-login `github.ai_author` is still reviewed but never pushed to: GitHub's squash attributes the landing commit to the PR author, so a hive follow-up commit can only pass "Sign-off survives the squash" by forging that author's `Signed-off-by`, which Hive must not do.
+- Every open PR is **reviewed**, whoever opened it ([#12974](https://github.com/hivecommons/hive/issues/12974)). `review.all_authors` used to be the switch for this; it is now a deprecated no-op that is still accepted (so existing `hive.yaml` files load) and logged once at boot. Remove it. Being reviewed never implies being pushed to.
+- `review.fix_human_prs` is retained as an audited refusal setting only. It no longer lets the fix kick be dispatched for a PR whose login author is **not** a bot-shaped login (`[bot]` suffix); a plain-login `github.ai_author` is still reviewed but never pushed to: GitHub's squash attributes the landing commit to the PR author, so a hive follow-up commit can only pass "Sign-off survives the squash" by forging that author's `Signed-off-by`, which Hive must not do. The one person-login exception is a contributor PR the stage reconciler adopted in place (`stage/074-adopted-by-hive`, [#12987](https://github.com/hivecommons/hive/pull/12987)): adoption is the explicit decision that the hive owns that branch.
 - `review.contributor_prs.base_sync` (default off) is narrower: it only lets PR follow-up call GitHub's update-branch API for a hive-authored lane PR whose head is in a contributor fork, whose base moved (`behind`/`dirty`), and whose author enabled "allow edits by maintainers". `behind` produces a GitHub-authored merge commit; `dirty` falls back to the base-moved repair note and kick. Fork pushes still do not pass through Hive, so stale-head prevention is a post-push note/kick rather than a true pre-push rejection.
 
 For PRs the hive did not author, the scanner never pushes new content or fixup commits: it comments with the proposed change (or a GitHub suggestion) and leaves the author to apply it. The only sanctioned writes are the base-sync above and hive-owned cleanup of a bad commit the hive itself already pushed, which must drop/amend that commit or re-home it through the adoption/DCO supersede path; governance and policy text is never changed without the author's or a maintainer's consent.
@@ -310,7 +335,7 @@ Before every fix kick the planner checks authorship. A PR may be pushed to only 
 
 When the check refuses, the `changes_requested` verdict still stands and the review is still published (`post_comments`). The reviewer's kick for such a PR carries an extra instruction: no agent will push to this branch, so every fix it wants goes into the review comment as a ```` ```suggestion ```` block or a ```` ```diff ```` patch the author can apply, and the reviewer must not check out or push to the branch itself. The refusal is recorded once per PR head in dispatch state (`withheld_fixes`) and on the audit log as `review_fix_withheld`, with the PR, its author, and the setting's value at the time (`setting=review.fix_human_prs=<value>`; a reason naming the squash sign-off gate when it was on), so a fix that did not happen can be traced rather than guessed at. A new push to the PR is a new decision.
 
-**Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. The value is left in config for audit/UI continuity, but branch-push fix kicks still require hive authorship.
+**Upgrading.** Older configs may still show `fix_human_prs: true` because a prior compatibility rule promoted `all_authors: true`. Both values are left in config for audit/UI continuity — `all_authors` no longer does anything, and branch-push fix kicks still require hive authorship.
 
 ## Revising a recorded verdict
 

@@ -94,6 +94,14 @@ func newSlowStartTransport(inner http.RoundTripper) *slowStartTransport {
 	return &slowStartTransport{inner: inner, state: newSlowStartState()}
 }
 
+// cautious reports whether the caution window is engaged at now. Optional
+// housekeeping callers use it to stand down instead of queueing for slots.
+func (st *slowStartState) cautious(now time.Time) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return now.Before(st.cautiousUntil)
+}
+
 // sharedSlowStartState is the process-wide pacing ledger every wrapped client
 // shares. The wrapper itself is cheap and constructed per client around the
 // CURRENT inner transport.

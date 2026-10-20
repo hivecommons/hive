@@ -99,6 +99,7 @@ rational response to having one road, not duplicated effort.
 | agent list | union of seed + overlay + agent-configs | see caveat below |
 | agent `model` / `backend` | dashboard-overlay | dashboard (ownership-guarded, #2340) |
 | governor thresholds | dashboard-overlay | dashboard |
+| `governor.labels.stage.engine.mode` (`off` / `shadow` / `enforce`, default `shadow`) | dashboard-overlay | Settings → Labels, or `hive.yaml`; the sweeps re-read it before each pass, no restart |
 | `hub.is_public` | **configmap-seed** | hub (the seed is not writable) |
 
 > **Caveat — agent deletion.** `MergeAgentOverrides` unions its three sources

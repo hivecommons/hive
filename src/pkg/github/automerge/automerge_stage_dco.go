@@ -17,8 +17,8 @@ import (
 // sign-off to send the PR straight back to its author — no waiting for CI or
 // a reviewer verdict. So the stage pass reads the PR's commits itself, once
 // per head (cached in the stage store), and:
-//   - sets Desired.DCO so Plan writes exactly one of `dco` / `no-dco` and
-//     strips the legacy Prow pair;
+//   - sets Desired.DCO so Plan writes exactly one of `dco` / `no-dco`
+//     (Prow's `dco-signoff: *` pair is foreign and left alone, #13125);
 //   - on DCONo overrides the lane's stage with the rework stage (072, or 070
 //     when self-authored) under LaneReasonDCOMissing, so the 072 nudge fires
 //     with the exact rebase command on the first evaluation of the head.

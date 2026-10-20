@@ -90,6 +90,10 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 	out.OverviewBands = &OverviewBands{Issues: IssueBandSpecs(cfg), PRs: PRBandSpecs(cfg)}
 	slices := OverviewSliceSpecs(cfg)
 	out.OverviewSlices = &slices
+	if s.deps != nil && s.deps.StageEngineStatus != nil {
+		st := s.deps.StageEngineStatus()
+		out.StageEngine = &st
+	}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
 	countSlice := func(specs []BandSpec, key string) {
 		for i := range specs {

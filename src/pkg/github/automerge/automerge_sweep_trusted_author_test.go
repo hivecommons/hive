@@ -449,3 +449,55 @@ func TestTrustedAuthorGitHubSignalErrorsAndEdges(t *testing.T) {
 		})
 	}
 }
+
+// TestTrustedAuthorSweepRunsReviewGate pins hivecommons/hive#12974: the swarm
+// reviews every PR, so an enforcing review gate holds a trusted human's PR
+// until the swarm approves its head, exactly as it holds the App's own.
+// #12966 merged through this tier with zero swarm reviews because the gate
+// covered the self-authored lane only. Shadow mode records and merges as
+// before; a swarm approve merges in every mode.
+func TestTrustedAuthorSweepRunsReviewGate(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		mode       string
+		verdict    ReviewGateVerdict
+		wantReason string
+		wantMerges int
+	}{
+		{name: "enforce holds unreviewed head", mode: ReviewGateModeEnforce, verdict: reviewGateNoBundle, wantReason: autoMergeReasonReviewGatePrefix + ReviewGateOutcomeNoBundle},
+		{name: "enforce holds changes requested", mode: ReviewGateModeEnforce, verdict: reviewGateChanges, wantReason: autoMergeReasonReviewGatePrefix + "changes-requested:correctness,security"},
+		{name: "enforce merges approved head", mode: ReviewGateModeEnforce, verdict: reviewGateApproved, wantMerges: 1},
+		{name: "shadow records and merges", mode: ReviewGateModeShadow, verdict: reviewGateNoBundle, wantMerges: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := trustedSweepFixture{}
+			api := newTrustedSweepAPI(t, &fx)
+			defer api.Close()
+			policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+			engine := newTrustedSweepEngine(api.URL, policy, Options{})
+			var rec reviewGateRecords
+			asked := 0
+			engine.SetReviewGate(&ReviewGate{
+				Mode:             func() string { return tc.mode },
+				Verdict:          func(repo string, number int, head string) ReviewGateVerdict { asked++; return tc.verdict },
+				RecordEvaluation: func(e ReviewGateEvaluation) { rec.evals = append(rec.evals, e) },
+			})
+			_, reason, err := engine.trySweepTrustedAuthorPR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if fx.merges != tc.wantMerges {
+				t.Fatalf("merges = %d, want %d", fx.merges, tc.wantMerges)
+			}
+			if asked != 1 {
+				t.Fatalf("swarm verdict asked %d times, want once on the re-verified head", asked)
+			}
+			if len(rec.evals) != 1 || rec.evals[0].Lane != stageLaneTrusted || rec.evals[0].HeadSHA != "sha7" {
+				t.Fatalf("evaluations = %+v, want one on lane %q head sha7", rec.evals, stageLaneTrusted)
+			}
+		})
+	}
+}

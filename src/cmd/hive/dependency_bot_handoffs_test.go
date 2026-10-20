@@ -375,6 +375,7 @@ func TestDependencyBotHeldCheckComment(t *testing.T) {
 		{"required-check-held:ci/build", []string{"`ci/build`", "waiting for approval", "gh run approve"}},
 		{"required-check-never-started:ci/build", []string{"`ci/build`", "never started", "close and reopen"}},
 		{"required-check-never-ran:ci/build", []string{"`ci/build`", "even after a rebase was requested", "merge the PR by hand"}},
+		{"workflow-approval-required:missing-workflow:ci/build", []string{"`ci/build`", "/ok-to-test", "hive-ok-to-test", "hivectl ok-to-test-template"}},
 	}
 	for _, tc := range cases {
 		got := dependencyBotHeldCheckComment("renovate[bot]", tc.reason)
@@ -385,6 +386,25 @@ func TestDependencyBotHeldCheckComment(t *testing.T) {
 		}
 		if !strings.Contains(got, "Renovate PR") {
 			t.Fatalf("comment for %q = %q, want the bot named", tc.reason, got)
+		}
+	}
+}
+
+// hivecommons/hive#13013: the sweep no longer approves held runs itself; it
+// posts `/ok-to-test` and reports workflow-approval-required:<ctx>. That hold
+// is not handed off while the repository workflow may still approve the
+// runs; only the missing-workflow variant (after the grace) is.
+func TestDependencyBotHoldNeedsPerson(t *testing.T) {
+	cases := map[string]bool{
+		"workflow-approval-required:ci/build":                  false,
+		"workflow-approval-required:missing-workflow:ci/build": true,
+		"required-check-held:ci/build":                         true,
+		"required-check-never-started:ci/build":                true,
+		"required-check-never-ran:ci/build":                    true,
+	}
+	for reason, want := range cases {
+		if got := dependencyBotHoldNeedsPerson(reason); got != want {
+			t.Errorf("dependencyBotHoldNeedsPerson(%q) = %v, want %v", reason, got, want)
 		}
 	}
 }

@@ -1,0 +1,1 @@
+- Continuous-mode agents no longer idle forever when the manager misses a turn-end signal: the governor presumes a kicked turn over after `continuous_turn_ceiling` (default 45m) and re-arms the next kick, so a stuck reviewer resumes instead of leaving PRs at `stage/050-review-pending` until a pod restart.

@@ -126,7 +126,7 @@
       padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
       margin: var(--sp-0); min-height: 100vh; min-height: 100dvh; max-width: 100vw; overflow-x: hidden;
     }
-    [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
+    [data-dashboard-section], #governor, #token-panel, #cost-panel, #lifecycle-section { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
     h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
     h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
@@ -1319,6 +1319,12 @@
     .ham-meta:empty { display: none; }
     .ham-meta .ham-count { color: var(--muted); }
     .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-engine { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--font-mono); }
+    .ham-engine > span { padding: 0 var(--sp-1); border: var(--line-width) solid var(--line-subtle); border-radius: var(--radius-sm); }
+    .ham-engine .ham-engine-mode { color: var(--muted); }
+    .ham-engine[data-mode="enforce"] .ham-engine-mode { color: var(--status-ok); }
+    .ham-engine[data-mode="off"] .ham-engine-mode { color: var(--text-faint); }
+    .ham-engine .ham-engine-warn { color: var(--status-error); border-color: var(--status-error); }
     .ham-pager { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
     .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
@@ -3009,6 +3015,7 @@
     .feedback-diagnostics-fieldset legend { padding:0 var(--sp-2); font-weight:700; }
     .feedback-check { display:flex; align-items:flex-start; gap:var(--sp-3); margin-bottom:var(--sp-3); color:var(--text); }
     .feedback-option-extra { color:var(--muted); }
+    .feedback-prefill-url { width:100%; margin-top:var(--sp-2); font-family:var(--font-mono); font-size:var(--fs-xs); }
     .feedback-disclosure-list { margin:var(--sp-4) 0 0; padding-left:var(--sp-7); color:var(--muted); line-height:1.45; }
     .feedback-disclosure-list li { margin:var(--sp-2) 0; }
     /* FAQ section (#faq-panel): token-only classes, no inline styles (faq_ui_test.go). */
@@ -6348,7 +6355,7 @@
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
-      <a class="oc-nav-item" href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
+      <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
       <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
       <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
     </div>
@@ -7446,15 +7453,14 @@
     function updateFeedbackAttributionLine() {
       const el = document.getElementById('feedback-attribution-line'); if (!el) return;
       const status = window._feedbackStatus || {};
-      const credential = feedbackMention(status.credential_login) || (status.hub_linked ? 'the hub' : 'your browser on GitHub');
       const entered = feedbackGitHubLogin(feedbackVal('feedback-github-username'));
       // A verified login wins over the typed one; a typed login is only ever self-reported.
       const user = feedbackMention(status.submitter_login) || (entered ? '@' + entered + ' (self-reported, unverified)' : '') || String(status.submitter_name || '').trim() || 'an unidentified dashboard user';
       const hive = status.hive_id || ((window._lastStatus || {}).hiveId) || 'unknown';
-      let line = 'Will be opened as ' + credential;
-      if (credential.toLowerCase() !== user.toLowerCase()) line += ' on behalf of ' + user;
-      line += ' · hive ' + hive + ' (' + feedbackHubLabel(status) + ')';
-      el.textContent = line;
+      // Zero-scope handoff (#1927): the hive never files the issue. It stores the
+      // diagnostic bundle with its GitHub App and opens a prefilled issue the
+      // user submits as themselves — no OAuth scope is ever requested.
+      el.textContent = 'Opens a prefilled GitHub issue for you to submit as yourself (attributed to ' + user + ') · diagnostic bundle stored by the hive\u2019s GitHub App · hive ' + hive + ' (' + feedbackHubLabel(status) + ')';
     }
     function feedbackPlaceholder(type) { return type === 'feature' ? 'What would you like Hive to do?\n\nWhy would it help your workflow?\n\nAny examples or constraints?' : 'What happened?\n\nWhat did you expect?\n\nSteps to reproduce:\n1.\n2.\n3.'; }
     function renderFeedbackDiagnosticsDisclosure() {
@@ -7498,7 +7504,7 @@
             </div>
             <label class="feedback-field"><span>Title</span><input id="feedback-title" type="text" maxlength="200"></label>
             <label class="feedback-field"><span>Description</span><textarea id="feedback-description" rows="8"></textarea></label>
-            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Used to attribute you; required if Hive must open a prefilled GitHub issue in your browser.</span></label>
+            <label class="feedback-field"><span>GitHub username</span><input id="feedback-github-username" type="text" maxlength="39" pattern="@?[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}" autocomplete="username"><span class="feedback-option-extra">Optional. Used only to attribute you in the prefilled issue text; you submit the issue on GitHub as yourself.</span></label>
             <label class="feedback-field"><span>Screenshots</span><div class="feedback-drop" id="feedback-drop"><span class="feedback-drop-icon" aria-hidden="true">🖼️</span><strong>Paste, drag, or choose up to 5 screenshots (2 MiB each)</strong><input id="feedback-files" type="file" accept="image/*" multiple></div></label>
             <div class="feedback-thumbs" id="feedback-thumbs"></div>
             <fieldset class="feedback-diagnostics-fieldset"><legend>Diagnostics disclosure</legend><label class="feedback-check"><input id="feedback-include-diagnostics" type="checkbox" checked> <span><strong>Include diagnostics</strong><br><span class="feedback-option-extra">Collected fields are listed below before anything is sent.</span></span></label><label class="feedback-check feedback-option-extra"><input id="feedback-include-projects" type="checkbox"> <span>Also include project org/repos in diagnostics</span></label><ul class="feedback-disclosure-list" id="feedback-disclosure-list"></ul></fieldset>
@@ -7754,12 +7760,6 @@
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
-        const status = window._feedbackStatus || {};
-        if (!status.credential_login && !status.hub_linked && !feedbackGitHubLogin(status.submitter_login) && !feedbackGitHubLogin(rawUsername)) {
-          if (usernameField) { usernameField.required = true; usernameField.focus(); usernameField.setCustomValidity('Enter your GitHub username to open the prefilled issue on GitHub.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
-          showToast('Enter your GitHub username to open the issue on GitHub', 'error');
-          return;
-        }
         if (rawUsername && !feedbackGitHubLogin(rawUsername)) {
           if (usernameField) { usernameField.focus(); usernameField.setCustomValidity('Enter a valid GitHub username, or leave this blank.'); usernameField.reportValidity(); usernameField.setCustomValidity(''); }
           showToast('Enter a valid GitHub username, or leave it blank', 'error');
@@ -7771,14 +7771,44 @@
         const r = await fetch('/api/feedback/report', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (!data.prefill_url) throw new Error('the hive did not return a prefilled issue link');
         try { localStorage.removeItem(FEEDBACK_DRAFT_KEY); } catch {}
-        const result = document.getElementById('feedback-result');
-        if (data.issue_url) result.innerHTML = '<div class="feedback-success">Created issue: <a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(data.issue_url) + '">#' + escapeHtml(String(data.issue_number || '')) + '</a></div>';
-        else if (data.fallback_url) result.innerHTML = '<div class="feedback-success">GitHub auth is unavailable for automatic filing. <a class="hv-btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(data.fallback_url) + '">Open prefilled issue</a><p>Paste screenshots manually on GitHub.</p></div>';
-        showToast('Feedback ready', 'success');
+        renderFeedbackPrefillResult(data);
         loadFeedbackReports(false);
       } catch (e) { showToast('Feedback failed: ' + e.message, 'error'); }
       finally { if (btn) btn.disabled = false; }
+    }
+    // Zero-scope handoff (#1927): open the prefilled GitHub issue in a new tab so
+    // the user submits it as themselves. Popup blockers (and users who are not
+    // signed in to GitHub) get the same URL as a copyable link, never a silent
+    // failure. The bundle link is shown too, so nothing depends on the popup.
+    function renderFeedbackPrefillResult(data) {
+      const result = document.getElementById('feedback-result'); if (!result) return;
+      const prefill = String(data.prefill_url || '');
+      let opened = null;
+      // No 'noopener' feature here: Chrome returns null for it even on success, which
+      // would misreport a blocked popup. Sever the opener manually instead.
+      try { opened = window.open(prefill, '_blank'); if (opened) opened.opener = null; } catch (e) { opened = null; }
+      const blocked = !opened;
+      let html = '<div class="feedback-success">';
+      html += blocked
+        ? '<strong>Your browser blocked the new tab.</strong> Open the prefilled issue yourself and submit it on GitHub as you:'
+        : 'A prefilled GitHub issue opened in a new tab — review it and press <strong>Submit new issue</strong> there. If the tab did not appear:';
+      html += ' <a class="hv-btn btn-primary btn-sm" target="_blank" rel="noopener noreferrer" href="' + escapeHtml(prefill) + '">Open prefilled issue</a>';
+      html += ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="copyFeedbackPrefillURL">Copy link</button>';
+      html += '<input id="feedback-prefill-url" class="feedback-prefill-url" type="text" readonly value="' + escapeHtml(prefill) + '">';
+      if (data.bundle_url) html += '<p>Diagnostic bundle (stored by the hive\u2019s GitHub App, linked from the issue): <a target="_blank" rel="noopener noreferrer" href="' + escapeHtml(String(data.bundle_url)) + '">' + escapeHtml(String(data.bundle_url)) + '</a></p>';
+      if (data.warning) html += '<p class="feedback-option-extra">' + escapeHtml(String(data.warning)) + '</p>';
+      html += '</div>';
+      result.innerHTML = html;
+      showToast(blocked ? 'Popup blocked — use the link to open the issue' : 'Prefilled issue opened on GitHub', blocked ? 'error' : 'success');
+    }
+    function copyFeedbackPrefillURL() {
+      const input = document.getElementById('feedback-prefill-url'); if (!input) return;
+      const v = input.value;
+      const done = function() { showToast('Link copied', 'success'); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(v).then(done, function() { input.select(); document.execCommand('copy'); done(); });
+      else { input.select(); document.execCommand('copy'); done(); }
     }
     async function loadFeedbackReports(markSeen) {
       try {
@@ -9902,7 +9932,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function ocScrollSectionIntoView(section) {
       const el = document.getElementById(section);
       if (!el) return;
-      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      // scrollIntoView honours the section's scroll-margin-top (sticky
+      // navbar offset); the settle loop only needs the raw Y to detect drift.
+      const targetY = () => el.getBoundingClientRect().top + window.scrollY;
+      ocSettleScroll(targetY, () => el.scrollIntoView({ block: 'start', behavior: 'smooth' }), OC_NAV_SETTLE_MS, el);
       el.classList.remove('anchor-highlight');
       void el.offsetWidth;
       el.classList.add('anchor-highlight');
@@ -10146,55 +10179,76 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
-    // ---- Agent-detail scroll anchoring ------------------------------------
-    // Clicking an agent scrolls to the detail panel, but content that renders
-    // AFTER the click shifts the layout out from under the in-flight scroll:
-    // the 3s status poll re-renders every section above the panel (agents,
-    // repos, gov strip), and ocFetchPane lands async pane content. The scroll
-    // then finishes at a stale Y and the view is anchored on the wrong thing.
-    // ocScrollToAgentDetail() re-anchors for a short settle window: on each
-    // animation frame it recomputes the panel's target Y and, if layout drift
-    // moved it beyond a small tolerance, retargets the scroll (scrollTo with
-    // the same behavior redirects the in-flight smooth scroll — no visible
-    // restart). The window is hard-capped, and ANY user scroll input (wheel,
-    // touch, scrollbar mousedown, keys) cancels correction immediately so
-    // manual scrolling right after a click is never hijacked.
-    const OC_SCROLL_SETTLE_MS = 700;   // correction window after a click; capped so late shifts never fight the user
+    // ---- Scroll anchoring for in-page navigation ---------------------------
+    // Clicking a sidebar item or an agent scrolls to the target, but content
+    // that renders AFTER the click shifts the layout out from under the
+    // in-flight scroll: the status poll / SSE push re-renders every section
+    // above the target, lazy panels and tables fill in, collapsed sections
+    // resize, and ocFetchPane lands async pane content. The scroll then
+    // finishes at a stale Y and the reader has to click the item again.
+    // ocSettleScroll() re-anchors for a short settle window: on each
+    // animation frame it recomputes the target's document Y and, if layout
+    // drift moved it beyond a small tolerance, retargets the scroll (a repeat
+    // smooth scroll redirects the in-flight one — no visible restart). The
+    // window is hard-capped, and ANY user scroll input (wheel, touch,
+    // scrollbar mousedown, keys) cancels correction immediately so manual
+    // scrolling right after a click is never hijacked. While a section hold
+    // is active, render()'s own scroll anchor pins that section too (see
+    // captureScrollAnchor), so a repaint corrects instantly instead of
+    // waiting for the next frame.
+    const OC_SCROLL_SETTLE_MS = 700;   // agent-detail correction window after a click; capped so late shifts never fight the user
+    const OC_NAV_SETTLE_MS = 2500;     // sidebar section window: covers the 3s status tick plus lazy panel loads
     const OC_SCROLL_TOLERANCE_PX = 4;  // re-anchor only when the target drifted beyond this
     const OC_SCROLL_CANCEL_EVENTS = ['wheel', 'touchstart', 'mousedown', 'keydown'];
     let _ocScrollSettleCancel = null;
+    let _ocNavAnchorEl = null;
 
-    function ocScrollToAgentDetail(behavior) {
-      const detail = document.getElementById('oc-agent-detail');
-      if (!detail) return;
+    function ocMaxScrollY() {
+      const doc = document.documentElement;
+      const full = Math.max(doc ? doc.scrollHeight : 0, document.body ? document.body.scrollHeight : 0);
+      return Math.max(0, full - window.innerHeight);
+    }
+    // targetY(): the document Y the scroll should rest at; apply(): issues the
+    // scroll. settleMs caps the correction window; anchorEl (optional) is
+    // exposed to captureScrollAnchor for the duration of the hold.
+    function ocSettleScroll(targetY, apply, settleMs, anchorEl) {
       if (_ocScrollSettleCancel) _ocScrollSettleCancel();
-      const mode = behavior || 'smooth';
-      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
-      let lastTarget = targetY();
-      window.scrollTo({ top: lastTarget, behavior: mode });
+      const clampY = () => Math.max(0, Math.min(targetY(), ocMaxScrollY()));
+      let lastTarget = clampY();
+      apply();
       let cancelled = false;
       const cancel = () => {
         if (cancelled) return;
         cancelled = true;
         OC_SCROLL_CANCEL_EVENTS.forEach(t => window.removeEventListener(t, cancel));
         if (_ocScrollSettleCancel === cancel) _ocScrollSettleCancel = null;
+        if (_ocNavAnchorEl === anchorEl) _ocNavAnchorEl = null;
       };
       // Passive listeners: cancellation must never delay the user's own
       // scrolling. Programmatic scrolls fire none of these events, so the
       // settle loop cannot cancel itself.
       OC_SCROLL_CANCEL_EVENTS.forEach(t => window.addEventListener(t, cancel, { passive: true }));
       _ocScrollSettleCancel = cancel;
-      const deadline = performance.now() + OC_SCROLL_SETTLE_MS;
+      _ocNavAnchorEl = anchorEl || null;
+      const deadline = performance.now() + settleMs;
       (function settle() {
         if (cancelled) return;
-        const want = targetY();
+        const want = clampY();
         if (Math.abs(want - lastTarget) > OC_SCROLL_TOLERANCE_PX) {
           lastTarget = want;
-          window.scrollTo({ top: want, behavior: mode });
+          apply();
         }
         if (performance.now() > deadline) { cancel(); return; }
         requestAnimationFrame(settle);
       })();
+    }
+
+    function ocScrollToAgentDetail(behavior) {
+      const detail = document.getElementById('oc-agent-detail');
+      if (!detail) return;
+      const mode = behavior || 'smooth';
+      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
+      ocSettleScroll(targetY, () => window.scrollTo({ top: targetY(), behavior: mode }), OC_SCROLL_SETTLE_MS, null);
     }
 
     function ocSelectAgent(name) {
@@ -12871,11 +12925,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        One Domino's-style tracker strip per open work item from
        GET /api/stage-tracker. Issues and PRs share ONE strip:
        Open → 010 Actionable → 020 Claimed → 030 PR in progress →
-       040 Covered by PR → 050 Review → 080 Merge admission → 100 Merge
-       queue → ✓ merged. An issue keeps advancing with its covering PR's
-       stage; a PR filed without an issue shows the issue steps as passed.
-       060 Reviewed lights Merge admission; 070/072/074 ride Review and
-       085/090 ride Merge admission as detour badges. An ISSUE parked on a
+       040 Covered by PR → 050 Review → 080 Merge admission → 095 Soaking →
+       100 Merge queue → ✓ merged. An issue keeps advancing with its
+       covering PR's stage; a PR filed without an issue shows the issue
+       steps as passed. 060 Reviewed, 095 Soaking and 100 Merge queue light
+       Merge admission (the chevron word and tooltip name the real stage);
+       070/072/074 ride Review and 085/090 ride Merge admission as detour
+       badges. An ISSUE parked on a
        person wears 045 (owner decision: 085 is PR-only) before any PR
        exists and so rides Actionable (the issue side), not the merge gate;
        a pre-045 issue still wearing 085 is drawn the same way until the
@@ -12891,10 +12947,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // Stages that share a column (or a detour word) and what the lit chevron says.
-    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
+    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12944,10 +13001,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a human decision' + viaPR;
         case 90: return 'Ready for a human merge' + viaPR;
+        case 95: return 'Pre-merge soak' + stageTrackerSoakLeft(item) + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
         default: return item.stage_label || 'Tracking';
       }
+    }
+
+    // " — Xm left" for a 095 row whose payload carries the soak remaining.
+    function stageTrackerSoakLeft(item) {
+      const sec = Number(item.soak_remaining_seconds) || 0;
+      if (sec <= 0) return '';
+      const min = Math.ceil(sec / 60);
+      return ' — ' + (min >= 60 ? Math.floor(min / 60) + 'h' + (min % 60 ? (min % 60) + 'm' : '') : min + 'm') + ' left';
     }
 
     function stageTrackerHoldLabels(item) {
@@ -12960,8 +13026,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Which strip segment a stage lights: main stages light themselves,
-    // 040 shares the PR in progress column with 030, 060 and 100 share the
-    // Merge gate column with 080, detours light the segment they branch from.
+    // 040 shares the PR in progress column with 030, 060, 095 and 100 share
+    // the Merge gate column with 080, detours light the segment they branch from.
     // kind is 'issue' or 'pr': an issue parked on a person (045, or a
     // pre-045 085) is parked before any PR exists, so it lights Actionable
     // rather than the merge gate.
@@ -12972,7 +13038,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
-      if (cur === 60 || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
+      if (cur === 60 || cur === STAGE_TRACKER_PRE_MERGE_SOAK || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
       const st = (stages || []).find(x => Number(x.number) === cur) || {};
       let from = Number(st.branch_from) || 0;
       if (from === 60) from = 50;
@@ -12988,7 +13054,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== 100)
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur) } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
@@ -13025,18 +13091,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
       pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
     };
-    function stageTrackerIcon(key, cls, title) {
+    // label is exposed to assistive tech only (aria-label, no <title>): hover
+    // text in a tracker row belongs to the links, titles and the lit chevron.
+    function stageTrackerIcon(key, cls, label) {
       const body = STAGE_TRACKER_ICONS[key];
       if (!body) return '';
-      const t = title ? `<title>${esc(title)}</title>` : '';
-      return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${title ? ' role="img"' : ' aria-hidden="true"'}>${t}${body}</svg>`;
+      return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>${body}</svg>`;
     }
 
     // "[author icon] #N title" for the PR in progress column of the title line.
-    function stageTrackerPRRef(number, url, authorKind, author, title) {
+    // tip, when given, replaces the default "title / Author" hover text.
+    function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
       const ak = authorKind || 'hive';
       const who = ak + (author ? ' · @' + author : '');
-      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + '\n' : '') + 'Author: ' + who)}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
+      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc(tip || ((title ? title + '\n' : '') + 'Author: ' + who))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
     }
 
     // Author kind of whoever must move on the item's current stage ('' = none).
@@ -13075,6 +13143,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Chevrons for one item. range bounds the columns the item owns (an
     // issue row stops at PR in progress, a nested PR row starts there);
     // columns outside it are invisible spacers that keep the grid aligned.
+    // Only the active chevron carries hover text (stage name, description,
+    // whose move it is); passed and upcoming chevrons have none.
     function stageTrackerStripItems(item, stages, range) {
       const segs = stageTrackerSegments(item, stages);
       const curStage = Number(item.stage) || 0;
@@ -13085,15 +13155,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : ''].filter(Boolean).join(' ');
-        let tip = sg.label + (sg.description ? ' — ' + sg.description : '');
-        // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
-        if (sg.state === 'active' && !sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
-        else if (sg.state === 'active' && curStage === 100) tip = sg.label + ' — admitted, merging';
+        const active = sg.state === 'active';
+        let tip = '';
+        if (active) {
+          tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+          // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
+          if (!sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
+          else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
+          else if (curStage === 100) tip = sg.label + ' — admitted, merging';
+          if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
+        }
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (sg.state === 'active') inner = (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
+        else if (active) inner = (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
+        return `<li class="${cls}"${active ? ` title="${esc(tip)}" aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }
 
@@ -13143,12 +13219,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // A covering PR nested under its issue: "[author icon] #N title" at the
-    // PR column, then the PR's own strip from PR in progress onwards.
+    // PR column, then the PR's own strip from PR in progress onwards. The
+    // PR's full tooltip rides its link; the sub-row container has none.
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
-      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title);
-      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" title="${esc(stageTrackerTooltip(pr, nowMs))}">
+      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
           </div>
@@ -13177,7 +13254,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
     // chevrons carry only a grey icon; the active one carries words.
-    // Everything else is in the tooltip.
+    // Everything else is in the tooltip on the item's #N link (the row
+    // container, kind/author icons, chips and the since cell carry none).
     // An issue with no PR yet, or exactly one covering PR, is a single entry
     // (the PR's stage drives the strip and its "[icon] #N title" sits in the
     // PR column). With two or more covering PRs the issue strip stops at
@@ -13209,11 +13287,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // title may run across it.
       const ak = !isIssue ? (item.author_kind || 'hive') : '';
       const who = ak ? ak + (item.author ? ' · @' + item.author : '') : '';
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(shown, nowMs))}">
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
             ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
           </div>`, stageTrackerChipsHtml(shown))}
         </div>
@@ -13436,6 +13514,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
       return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
     }
+    // The ADR-0025 central stage engine's status strip: mode, shadow
+    // mismatches, admission anomalies (governor.labels.stage.engine.mode).
+    // Hover text on the items only, per the tracker hover rules.
+    function stageTrackerEngineHtml(d) {
+      const e = d && d.engine;
+      if (!e || !e.mode) return '';
+      const mismatches = Number(e.mismatches) || 0;
+      const anomalies = Number(e.anomalies) || 0;
+      const examples = Array.isArray(e.lastMismatchExamples) ? e.lastMismatchExamples : [];
+      const exampleText = examples.length
+        ? ' Latest: ' + examples.map(x => `${x.ref} ${x.kind}: legacy ${x.legacy || '-'} vs engine ${x.engine || '-'}`).join('; ')
+        : '';
+      const modeHelp = { off: 'off: rollback — the sweeps write their own derivation, the engine is inert.', shadow: 'shadow: the engine derives alongside the sweeps, which still write; disagreements are counted.', enforce: 'enforce: the engine derives and writes; its admission table rejects out-of-order transitions.' }[e.mode] || '';
+      return `<span class="ham-engine" data-mode="${esc(e.mode)}">`
+        + `<span class="ham-engine-mode" title="${esc('Central stage engine (ADR-0025). ' + modeHelp + ' ' + (Number(e.derivations) || 0) + ' derivations since start. Settings → Labels → Central stage engine mode.')}">engine ${esc(e.mode)}</span>`
+        + `<span class="ham-engine-mismatch${mismatches ? ' ham-engine-warn' : ''}" title="${esc('Shadow mismatches: items where the engine and the sweep derived different stages (stage_shadow_mismatch_total).' + exampleText)}">${esc(mismatches)} mismatch${mismatches === 1 ? '' : 'es'}</span>`
+        + `<span class="ham-engine-anomaly${anomalies ? ' ham-engine-warn' : ''}" title="${esc('Transition anomalies: stage moves the admission table rejected (stage_transition_anomaly_total).')}">${esc(anomalies)} anomal${anomalies === 1 ? 'y' : 'ies'}</span>`
+        + '</span>';
+    }
     function stageTrackerTickClock() {
       const el = document.querySelector('#activity-monitor-meta .ham-updated');
       if (!el || !_stageTracker) return;
@@ -13482,7 +13579,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       const meta = document.getElementById('activity-monitor-meta');
-      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       if (!visible.length) {
@@ -31629,6 +31726,15 @@ function burnAreaChart() {
     // so a repaint that resizes content above doesn't move them elsewhere.
     function captureScrollAnchor() {
       const anchor = { el: null, top: 0, scrollY: window.scrollY, cardKey: '', cardTop: 0 };
+      // A sidebar navigation is settling: pin the section the reader asked
+      // for, not whichever section above it still peeks out under the
+      // sticky navbar — otherwise a repaint that resizes that neighbour
+      // drags the target away from the top of the viewport.
+      const navEl = typeof _ocNavAnchorEl !== 'undefined' ? _ocNavAnchorEl : null;
+      if (navEl && navEl.isConnected && navEl.getClientRects().length) {
+        anchor.el = navEl; anchor.top = navEl.getBoundingClientRect().top;
+        return anchor;
+      }
       if (window.scrollY <= 0) return anchor;
       const sections = document.querySelectorAll('[data-dashboard-section]');
       for (let i = 0; i < sections.length; i++) {
@@ -38205,6 +38311,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled role tier author kind human clanker hive governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Central stage engine', key: 'governor.labels.stage.engine.mode', text: 'stage engine mode off shadow enforce rollout rollback mismatch anomaly reconciler ADR-0025 governor.labels.stage.engine.mode' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution' },
@@ -38215,7 +38322,8 @@ function burnAreaChart() {
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
-      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s claim comments labels escalate stall needs-human governor.claims.comment governor.claims.label governor.claims.escalate_after_claims' },
+      { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s claim comments labels escalate stall needs-human governor.claims.comment governor.claims.label governor.claims.escalate_after_claims epic umbrella never claim governor.claims.never_claim_labels governor.claims.never_claim_labels[]' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s headroom source ccleft builtin governor.rotation.headroom_source' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
@@ -43993,11 +44101,21 @@ function burnAreaChart() {
               if (dangling) {
                 items += '<li style="margin:var(--sp-3) var(--sp-0) var(--sp-1);color:var(--yellow,#e6b800);font-size:var(--fs-sm)">⚠ template not found: <code>' + esc(tpl.kickTemplate) + '</code>'
                   + ' — kicks fall back to <strong>' + esc(tpl.fallback || 'the built-in kick') + '</strong>.'
-                  + ' Saving text here creates <code>' + esc((tpl.pathsTried || [])[0] || tpl.kickTemplate) + '</code> as a live override; clear <code>kick_template</code> in General to keep the fallback.'
+                  + ' Saving text here creates <code>' + esc((data.templateFile && data.templateFile.savePath) || (tpl.pathsTried || [])[0] || tpl.kickTemplate) + '</code> as a live override; clear <code>kick_template</code> in General to keep the fallback.'
                   + (tpl.pathsTried && tpl.pathsTried.length ? '<div class="text-muted fs-xs mt-1">looked in: ' + esc(tpl.pathsTried.join(', ')) + '</div>' : '')
                   + '</li>';
               } else if (tpl && tpl.kickTemplate && tpl.source) {
                 items += '<li style="margin:3px 0;color:var(--muted);font-size:0.7rem">resolved from: ' + esc(tpl.source) + '</li>';
+              }
+              // data.templateFile (#13005): a shipped template that cannot be
+              // written in place is flagged before editing, with the override
+              // path a Save will create instead.
+              const tf = data.templateFile || null;
+              if (tf && tf.override) {
+                items += '<li class="text-muted fs-xs">user override: <code>' + esc(tf.path) + '</code>'
+                  + (tf.readOnly ? ' (shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only)' : '') + '</li>';
+              } else if (tf && tf.readOnly) {
+                items += '<li class="text-warn fs-xs">shipped default <code>' + esc(tf.defaultPath) + '</code> is read-only — saving writes a user override to <code>' + esc(tf.savePath) + '</code>, which agent runs use instead.</li>';
               }
               srcEl.innerHTML = '<ul style="list-style:none;padding:var(--sp-0);margin:var(--sp-0)">' + items + '</ul>';
               srcEl.style.display = 'block';
@@ -45221,6 +45339,11 @@ function burnAreaChart() {
       const stageStalledQuietOn = (_configState.dirty.labels && _configState.dirty.labels.stage_stalled_require_quiet !== undefined)
         ? _configState.dirty.labels.stage_stalled_require_quiet
         : (_configState.data.stageStalledRequireQuiet !== false);
+      const stageEngineMode = (_configState.dirty.labels && _configState.dirty.labels.stage_engine_mode !== undefined)
+        ? _configState.dirty.labels.stage_engine_mode
+        : (_configState.data.stageEngineMode || 'shadow');
+      const stageEngineModeOptions = [['off', 'off — legacy pass-through (rollback)'], ['shadow', 'shadow — engine derives, legacy writes (default)'], ['enforce', 'enforce — engine writes']]
+        .map(([v, label]) => `<option value="${v}" ${stageEngineMode === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
       const stageGraceOnline = (_configState.dirty.labels && _configState.dirty.labels.stage_grace_online !== undefined)
         ? _configState.dirty.labels.stage_grace_online
         : (_configState.data.stageGraceOnline || '');
@@ -45257,8 +45380,13 @@ function burnAreaChart() {
           <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
         </div>
         <h4 class="mt-6 mb-3">Stage labels</h4>
-        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-decision, ready-for-human-merge, merge-queue), a role/* admission-tier label, an author/* label saying who wrote the PR (human, clanker = a contributor's hive, hive = this hive), and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-decision, ready-for-human-merge, pre-merge-soak, merge-queue), a role/* admission-tier label, an author/* label saying who wrote the PR (human, clanker = a contributor's hive, hive = this hive), and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-engine-mode">Central stage engine mode ${yamlHint('governor.labels.stage.engine.mode')} ${settingHelpMark('settings', 'labels', 'Central stage engine', `ADR-0025: one reconciler derives every stage/NN label through one writer. shadow (default): the engine derives alongside the sweeps' own logic, writes what the sweeps derived, and counts each disagreement (stage_shadow_mismatch_total, Activity tracker strip, /api/status.stageEngine). enforce: the engine's derivation is written and its admission table rejects out-of-order transitions. off: rollback — the sweeps' derivation is written verbatim and the engine is inert. Rollout gate: run shadow for 48h with zero unexplained mismatches before enforce. Takes effect on the next sweep, no restart.`)}</label>
+          <select id="cfg-stage-engine-mode" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_engine_mode" data-arg-types="s,s,v">${stageEngineModeOptions}</select>
+          <div class="config-help">Rollout: <code>shadow</code> for 48h with no unexplained mismatches, then <code>enforce</code>. Rollback: <code>off</code>. No restart needed.</div>
+        </div>
         <div class="config-field">
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
           <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, needs-author=24h, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
@@ -48437,7 +48565,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.all_authors ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="all_authors"></div>
-            <span class="config-toggle-label">Review every PR, not just agent-authored ${yamlHint('review.all_authors')} ${settingHelpMark('review-swarm', 'configuration', 'Review every PR, not just agent-authored', `By default the review swarm only looks at PRs the hive's own agents opened &mdash; the work the hive is answerable for. Turn this on to make EVERY open PR eligible regardless of who opened it, including contributors' and other bots'. Use it where the PR queue itself is the problem: a person's PR waiting on a review is no less stuck than an agent's, and it has someone waiting on the other end. Expect more reviews, and reviews on repositories where humans are the main authors. This only makes those PRs REVIEWED; whether Hive may also push fix commits to them is the next toggle.`)}</span>
+            <span class="config-toggle-label">Review every PR, not just agent-authored (deprecated &mdash; always on) ${yamlHint('review.all_authors')} ${settingHelpMark('review-swarm', 'configuration', 'Review every PR, not just agent-authored', `Deprecated and no longer does anything. The review swarm reviews EVERY open PR regardless of who opened it &mdash; hive agents, humans, clankers, dependabot and other bots &mdash; whenever PR review is on (require_approval and fan_out). The only switch is the review feature itself; there is no per-author opt-out. The toggle is kept so existing configs still load and show their stored value; turn it off and remove review.all_authors from hive.yaml. Whether Hive may also push fix commits to someone else's PR is the next toggle, and the answer there is still no.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fix_human_prs ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fix_human_prs"></div>
@@ -48472,7 +48600,7 @@ function burnAreaChart() {
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
           </div>
           <div class="config-field">
-            <label>Hive-authored decision questions ${yamlHint('review.self_authored_decision_policy')} ${settingHelpMark('review-swarm', 'configuration', 'Hive-authored decision questions', `resolve (default): sequencing, naming, config-shape, scope and land-now-vs-later questions on Hive-authored PRs are treated as advisory and the aggregate can approve. escalate: every decision marker parks the PR for a person. Risk questions (security, data loss, irreversible/public-facing behavior, policy/governance, licensing, spend, unreadable diff) always escalate.`)}</label>
+            <label>Hive-authored decision questions ${yamlHint('review.self_authored_decision_policy')} ${settingHelpMark('review-swarm', 'configuration', 'Hive-authored decision questions', `resolve (default): decision questions on Hive-authored PRs are treated as advisory and the aggregate can approve, unless they match a risk class (permissions/credentials, security, sensitive paths, data loss/irreversible, merge/trust policy, external side effects, licensing/legal, unverifiable) or carry the hive-decision-risk: high marker, which always escalate. escalate: every decision marker parks the PR for a person.`)}</label>
             <select data-change-action="markDirty" data-arg0="review" data-arg1="self_authored_decision_policy" data-arg-types="s,s,v">${['resolve', 'escalate'].map(v => `<option value="${v}"${((rv.self_authored_decision_policy || 'resolve') === v) ? ' selected' : ''}>${v}</option>`).join('')}</select>
           </div>
           <div class="config-field-row mt-4">
@@ -48624,6 +48752,11 @@ function burnAreaChart() {
             <label>Escalate after claims ${yamlHint('governor.claims.escalate_after_claims')} ${settingHelpMark('settings', 'features', 'Escalate after claims', `How many claims one agent may make on an issue with nothing moving in between (no linked PR, referencing commit, label or assignee change, or close/reopen) before the next is refused and the issue is labelled needs-human with one summary comment. 0 uses the default; a negative number turns the gate off.`)}</label>
             <input type="number" step="1" value="${f.claimsEscalateAfterClaims ? esc(String(f.claimsEscalateAfterClaims)) : ''}" placeholder="${esc(String(f.claimsEscalateAfterDefault || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="claimsEscalateAfterClaims" data-arg-types="s,s,N">
             <div class="config-help">0 uses the default (${esc(String(f.claimsEscalateAfterDefault || 2))}); -1 turns the gate off. Requires restart.</div>
+          </div>
+          <div class="config-field mt-3">
+            <label>Never-claim labels ${yamlHint('governor.claims.never_claim_labels')} ${settingHelpMark('settings', 'features', 'Never-claim labels', `Issues wearing any of these labels (case-insensitive, comma-separated) are never claimed by agents or people and never derive a claimed or in-progress stage: umbrella issues such as epics stay at their tracking stage while their children carry the work. Blank uses the default; "none" turns the gate off.`)}</label>
+            <input type="text" value="${esc(f.claimsNeverClaimLabels || '')}" placeholder="${esc(f.claimsNeverClaimDefault || 'epic')}" data-change-action="markDirty" data-arg0="features" data-arg1="claimsNeverClaimLabels" data-arg-types="s,s,s">
+            <div class="config-help">Blank uses the default (${esc(f.claimsNeverClaimDefault || 'epic')}); "none" turns the gate off. Applies immediately.</div>
           </div>
         </div>
         <div class="settings-subsection">
@@ -54599,7 +54732,7 @@ function burnAreaChart() {
         title: 'Welcome to your hive',
         // Reading this step is step one — opening the dialog completes it.
         auto: () => true,
-        body: 'Your hive is a fleet of AI <strong>agents</strong> that work your projects — triaging issues, writing fixes, opening PRs. The <strong>governor</strong> paces them automatically as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
+        body: 'Hive is a <strong>co-maintainer</strong> for your project that never sleeps. It watches the things that pile up — issues, pull requests, failing CI, security alerts — and sends <strong>agents</strong> (AI coding tools such as Claude, Copilot or Codex, each run for one task and then stopped) to deal with them: triage, fixes, reviews. You decide how much they are allowed to do; humans keep every decision that matters. The <strong>governor</strong> is the scheduler that paces the agents as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
       },
       {
         id: 'github-app',
@@ -54613,7 +54746,7 @@ function burnAreaChart() {
           if (ghAppIsOperatorSide(data.githubAppState)) return null;
           return data.githubAppRequired !== true;
         },
-        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v4/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
+        body: 'The <strong>Forge App</strong> is the app Hive installs on your forge (your source control system, e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — on GitHub.com and GitHub Enterprise it is a GitHub App. It unlocks issues, advisory reports, and PRs on your primary project; without it the hive can only observe. ⏰ <strong>Do this in your first session:</strong> hosted hives that never finish this step are reclaimed (reaped) on a timer — the hive disappears from the hub and its URL stops working. If that happens, request a new hive from the hub and complete this step right away. On GitHub Enterprise the install page lives on your enterprise host, not github.com. Full instructions: <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-app-setup.md" target="_blank" rel="noopener noreferrer">Forge App (GitHub App) setup</a>.',
         autoNote: 'Checks itself once the app is detected on your project.',
         actions: [
           { label: 'Install GitHub App', action: 'welcomeInstallGitHubApp' },
@@ -54628,7 +54761,7 @@ function burnAreaChart() {
           if (agents.length === 0) return false;
           return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
         },
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → Model Gateways). Mix and match per agent.',
+        body: 'Each agent card has a <strong>method dropdown</strong> — the method is the tool that actually runs the agent. <strong>claude / copilot / codex / goose / gemini / agy / omp / bob</strong> are command-line tools you log into (or give an API key), while <strong>vllm / llm-d / litellm / openrouter / watsonx</strong> talk to an inference endpoint — a server that answers model requests — set up under Settings → Model Gateways (endpoint + API key). Mix and match per agent.',
         autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', action: 'welcomeShowAgentCard' }]
       },
@@ -54639,7 +54772,7 @@ function burnAreaChart() {
           if (!data || !Array.isArray(data.agents) || data.agents.length === 0) return null;
           return data.agents.every(a => !_welcomeAgentNeedsLogin(a));
         },
-        body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm) never log in; they use the endpoint + key instead.',
+        body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm / openrouter / watsonx) never log in; they use the endpoint + key from Settings → Model Gateways instead.',
         autoNote: 'Checks itself once every agent’s method is authenticated.',
         actions: [{ label: 'Show me', action: 'welcomeShowLogin' }]
       },
@@ -54681,14 +54814,14 @@ function burnAreaChart() {
         id: 'add-agent',
         title: 'Add a custom agent',
         auto: null,
-        body: 'The built-in agents are a starting point, not a limit. Use <strong>＋ Add agent</strong> in the Agents sidebar, the Agents section header, or this guide to open the create dialog. Start from scanner/reviewer/quality/CI/guide templates, then pick the method, model, prompt template, and cadences — or <strong>Import</strong> one from the community registry.',
+        body: 'The built-in agents are a starting point, not a limit. Use <strong>＋ Add agent</strong> in the Agents sidebar, the Agents section header, or this guide to open the create dialog. Start from the scanner / reviewer / quality / CI maintainer / guide templates, then pick the method, model, prompt template, and cadences — or <strong>Import</strong> one from the community registry.',
         actions: [{ label: '＋ Add an agent', action: 'welcomeAddAgent' }]
       },
       {
         id: 'acmm',
         title: 'Set your ACMM level',
         auto: (data) => !!(data && data.acmmLevelConfigured === true),
-        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.',
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>. ACMM (AI Codebase Maturity Model) is the dial for how much the agents may do on their own: L1 (advise only — agents report, never change anything) → L6 (fully autonomous — agents may merge on green CI), each level adding to the last. A default is preset — confirm it matches how much autonomy you want.',
         autoNote: 'Checks itself once an ACMM level is explicitly saved on the hive.',
         actions: [{ label: 'Show me', action: 'welcomeShowACMM' }]
       }
@@ -54711,9 +54844,11 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', action: 'welcomeShowConfigTab', actionArg: 'Budget' },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', action: 'welcomeShowConfigTab', actionArg: 'Notifications' },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', action: 'welcomeShowSection', actionArg: 'knowledge-section' },
-      { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend contributor agents, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
+      { id: 'inception', label: 'Inception', desc: 'turn a raw idea (or an existing project) into knowledge-base facts and a starter project scaffold, step by step.', action: 'welcomeShowSection', actionArg: 'inception-section' },
+      { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend their own agents to your hive, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', action: 'welcomeShowConfigTab', actionArg: 'Hub' },
       { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', action: 'welcomeShowConfigTab', actionArg: 'Security' },
+      { id: 'experiment-lab', label: 'Experiment Lab <span class="welcome-more-tag">experimental</span>', desc: 'ask a research question about your hive (for example “does a stricter review prompt cut PR churn?”), let the lab collect a baseline, then test hypotheses against it. Off by default — switch it on under Settings → Dashboard.', action: 'welcomeShowConfigTab', actionArg: 'Dashboard' },
       { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Settings → Features).', action: 'welcomeShowConfigTab', actionArg: TRAJECTORY_CONFIG_TAB },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', action: 'toggleLayout' }
     ];
@@ -54737,7 +54872,7 @@ function burnAreaChart() {
         _welcomeOpenSteps.add(firstUndone ? firstUndone.id : WELCOME_STEPS[0].id);
       }
       let html = '';
-      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
+      html += '<div class="welcome-intro">New to Hive? Start here → <a href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" style="color:var(--accent);font-weight:600">Zero to Automation: Your Getting Started Guide</a> · <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a><br><span style="font-size:0.85em;color:var(--muted)">⏰ Heads up: hosted hives that stay unconfigured or inactive are reaped on a timer. Install the Forge App — the app for your source control system (e.g., GitHub, GitHub Enterprise, GitLab, or Gitea) — in your first session (step 2), and if your hive ever disappears or its URL times out, request a new one from the hub and set it up promptly.</span></div>';
       let n = 0;
       for (const step of WELCOME_STEPS) {
         n++;

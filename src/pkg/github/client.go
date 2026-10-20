@@ -22,6 +22,8 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
@@ -79,8 +81,12 @@ type Client struct {
 	exemptLabels  []string
 	holdLabelsMu  sync.RWMutex
 	holdLabels    []string
-	sentinelMu    sync.RWMutex
-	sentinelLabel string
+	// neverClaimLabels is governor.claims.never_claim_labels as resolved by
+	// the config (nil = package default; see SetNeverClaimLabels).
+	neverClaimMu     sync.RWMutex
+	neverClaimLabels []string
+	sentinelMu       sync.RWMutex
+	sentinelLabel    string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -125,6 +131,7 @@ type Client struct {
 	mergeAlertIDsByRepo       map[string]map[string]mergeAlertEntry
 	mergeAlertLastRevalidate  time.Time
 	logger                    *slog.Logger
+	stageFacts                stageFactsState // out-of-cycle stage writes; see StageFacts
 	apiBudget                 apiBudgetState
 	appAuth                   *AppAuth // nil for token-authenticated clients
 	authToken                 string   // token-authenticated clients only; never log
@@ -403,6 +410,13 @@ type Client struct {
 	// mergePolicyMu. Nil means every repo is direct.
 	laneStrategy func(repo string) string
 	laneGate     SerializedLaneGate
+	// stageWriter is the one stageengine.StageWriter for this client and
+	// stageEngines the reconcilers built over it, one per Store
+	// (stage_writer.go). Guarded by stageEngineMu.
+	stageEngineMu sync.Mutex
+	stageWriter   *stageWriter
+	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	stageLegacy   stageengine.LegacyTable
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
@@ -680,9 +694,13 @@ type Issue struct {
 	ReporterConfirmationGate bool `json:"reporter_confirmation_gate,omitempty"`
 	// ClaimKind is the marker's kind= (agent, human, contributor, external)
 	// when the live claim came from a `hive:claim` marker; empty otherwise.
-	// The issue stage reconciler reads it to tell stage/030-pr-in-progress
-	// (an agent kick is working) from stage/020-claimed.
 	ClaimKind string `json:"claim_kind,omitempty"`
+	// ClaimPRStarted is the marker's pr_started= — the claim carries PR
+	// evidence (the holder's PR request named the issue or its start marker
+	// named a branch / PR). The issue stage reconciler reads it to tell
+	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
+	// alone never does (hivecommons/hive#13069).
+	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -3923,10 +3941,12 @@ type RepoWorkIssue struct {
 	Reason            string    `json:"reason,omitempty"`
 	// ReporterConfirmationGate mirrors Issue.ReporterConfirmationGate.
 	ReporterConfirmationGate bool `json:"reporter_confirmation_gate,omitempty"`
-	// ClaimKind and ClaimedBy are Issue.ClaimKind / Issue.ClaimedBy, copied
-	// for the issue stage reconciler.
-	ClaimKind string `json:"claim_kind,omitempty"`
-	ClaimedBy string `json:"claimed_by,omitempty"`
+	// ClaimKind, ClaimedBy and ClaimPRStarted are Issue.ClaimKind /
+	// Issue.ClaimedBy / Issue.ClaimPRStarted, copied for the issue stage
+	// reconciler.
+	ClaimKind      string `json:"claim_kind,omitempty"`
+	ClaimedBy      string `json:"claimed_by,omitempty"`
+	ClaimPRStarted bool   `json:"claim_pr_started,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -3957,6 +3977,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ReporterConfirmationGate: issue.ReporterConfirmationGate,
 		ClaimKind:                issue.ClaimKind,
 		ClaimedBy:                issue.ClaimedBy,
+		ClaimPRStarted:           issue.ClaimPRStarted,
 		LinkedPRs:                append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext:             issue.ClaimContext,
 		Children:                 issue.Children,

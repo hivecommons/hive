@@ -9,15 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/feedbackbundle"
 	ghauth "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -35,15 +34,9 @@ const (
 	feedbackTypeBug                = "bug"
 	feedbackTypeFeature            = "feature"
 	feedbackMaxIssueRefs           = 50
-	// feedbackScreenshotBranch is the only branch screenshots are ever
-	// committed to. Uploads are unreviewed writes made with the hub's token,
-	// so they must never land on the repository's default branch.
-	feedbackScreenshotBranch = "feedback-screenshots"
-	feedbackScreenshotDir    = "feedback-screenshots"
 )
 
 var feedbackGitHubAPIBase = "https://api.github.com"
-var lookupHubFeedbackTokenLogin = agent.GitHubTokenLogin
 var mintHubFeedbackAppToken = func(ctx context.Context, s *HubServer, hiveID string) (string, string) {
 	return s.feedbackAppIssueToken(ctx, hiveID)
 }
@@ -108,10 +101,15 @@ type feedbackReportRequest struct {
 	FailedAPICalls     []feedbackFailedAPICall   `json:"failed_api_calls,omitempty"`
 }
 type feedbackReportResponse struct {
-	OK          bool   `json:"ok"`
+	OK bool `json:"ok"`
+	// IssueNumber/IssueURL are kept for wire compatibility with older spokes;
+	// the hub no longer files issues (#1927 zero-scope handoff).
 	IssueNumber int    `json:"issue_number,omitempty"`
 	IssueURL    string `json:"issue_url,omitempty"`
-	Warning     string `json:"warning,omitempty"`
+	// BundleURL is the stable https URL of the diagnostic bundle the hub
+	// committed with the spoke's GitHub App installation token.
+	BundleURL string `json:"bundle_url,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 type feedbackIssueResult struct {
 	Number int
@@ -232,28 +230,32 @@ func (s *HubServer) handleFeedbackIngest(w http.ResponseWriter, r *http.Request)
 		npsJSONError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	token, botLogin := mintHubFeedbackAppToken(r.Context(), s, hiveID)
+	token, _ := mintHubFeedbackAppToken(r.Context(), s, hiveID)
 	if token == "" {
 		release()
 		npsJSONError(w, "hub GitHub App token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	req.CredentialLogin = hubGitHubLoginForMention(botLogin)
-	result, warning, err := createHubFeedbackIssue(r.Context(), hubFeedbackAuthoringHTTPClient(), token, req, feedbackGitHubAPIBase)
+	// The hub only STORES the diagnostic bundle with the spoke's App
+	// installation token. The issue itself is opened by the user on GitHub
+	// from a prefilled URL the spoke builds (#1927): no bot, PAT, or
+	// user-scoped token ever authors feedback.
+	req.CredentialLogin = ""
+	stored, err := storeHubFeedbackBundle(r.Context(), hubFeedbackAuthoringHTTPClient(), token, req, feedbackGitHubAPIBase)
 	if err != nil {
 		release()
 		if s.logger != nil {
-			s.logger.Error("feedback: failed to create issue", "hive", hiveID, "error", err)
+			s.logger.Error("feedback: failed to store diagnostic bundle", "hive", hiveID, "error", err)
 		}
-		npsJSONError(w, "failed to create issue", http.StatusBadGateway)
+		npsJSONError(w, "failed to store diagnostic bundle", http.StatusBadGateway)
 		return
 	}
 	if s.logger != nil {
-		s.logger.Info("feedback: created issue", "hive", hiveID, "target", req.TargetRepo, "type", req.RequestType, "issue", result.Number)
+		s.logger.Info("feedback: stored diagnostic bundle", "hive", hiveID, "target", req.TargetRepo, "type", req.RequestType, "bundle", stored.ID)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, IssueNumber: result.Number, IssueURL: result.URL, Warning: warning})
+	_ = json.NewEncoder(w).Encode(feedbackReportResponse{OK: true, BundleURL: stored.ReportURL})
 }
 
 func (s *HubServer) feedbackAppIssueToken(ctx context.Context, hiveID string) (string, string) {
@@ -487,12 +489,6 @@ func hubFeedbackRepo(req feedbackReportRequest) (string, string) {
 	}
 	return "hivecommons", "hive"
 }
-func hubFeedbackLabels(req feedbackReportRequest) []string {
-	if req.RequestType == feedbackTypeBug {
-		return []string{"kind/bug", "user-feedback"}
-	}
-	return []string{"enhancement", "user-feedback"}
-}
 
 func parseHubFeedbackRefs(raw string) ([]feedbackIssueStatus, error) {
 	if strings.TrimSpace(raw) == "" {
@@ -567,36 +563,28 @@ func fetchHubFeedbackIssueStatus(ctx context.Context, client *http.Client, apiBa
 	return feedbackIssueStatus{Owner: owner, Repo: repo, Number: number, Title: got.Title, State: got.State, HTMLURL: got.HTMLURL, UpdatedAt: got.UpdatedAt, Comments: got.Comments}, nil
 }
 
-func createHubFeedbackIssue(ctx context.Context, client *http.Client, token string, req feedbackReportRequest, apiBase string) (feedbackIssueResult, string, error) {
+func storeHubFeedbackBundle(ctx context.Context, client *http.Client, token string, req feedbackReportRequest, apiBase string) (feedbackbundle.Stored, error) {
 	owner, repo := hubFeedbackRepo(req)
-	labels := hubFeedbackLabels(req)
-	res, status, err := postHubGitHubIssue(ctx, client, apiBase, token, owner, repo, req.Title, buildHubFeedbackIssueBody(req), labels)
-	warning := ""
-	if err != nil && status == http.StatusForbidden {
-		res, _, err = postHubGitHubIssue(ctx, client, apiBase, token, owner, repo, req.Title, buildHubFeedbackIssueBody(req), nil)
-		warning = "Created without labels because GitHub denied label access."
-	}
-	if err != nil {
-		return feedbackIssueResult{}, "", err
-	}
-	valid := []string{}
+	shots := make([]feedbackbundle.Screenshot, 0, len(req.Screenshots))
 	for _, ss := range req.Screenshots {
-		if _, _, err := decodeHubFeedbackDataURI(ss); err == nil {
-			valid = append(valid, ss)
+		if content, ext, err := decodeHubFeedbackDataURI(ss); err == nil {
+			shots = append(shots, feedbackbundle.Screenshot{Content: content, Ext: ext})
 		}
 	}
-	if len(valid) > 0 {
-		go uploadHubFeedbackScreenshots(context.Background(), client, apiBase, token, owner, repo, res.Number, valid)
-	}
-	return res, warning, nil
+	return feedbackbundle.Store(hubGitHubCallerContext(ctx, "feedback_bundle"), client, apiBase, token, owner, repo,
+		feedbackbundle.NewID(time.Now()), buildHubFeedbackBundleReport(req), shots)
 }
-func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
+
+// buildHubFeedbackBundleReport renders the full diagnostic report stored on
+// the hive-feedback branch and linked from the user's prefilled issue.
+func buildHubFeedbackBundleReport(req feedbackReportRequest) string {
 	sanitizeHubFeedbackSubmitter(&req.Submitter)
 	var b strings.Builder
+	b.WriteString("# " + strings.TrimSpace(req.Title) + "\n\n")
 	b.WriteString(hubFeedbackOpenedByLine(req))
 	b.WriteString("\n\n")
 	b.WriteString(req.Description)
-	b.WriteString("\n\n---\nSubmitted from the Hive spoke dashboard feedback form.\n")
+	b.WriteString("\n\n---\nDiagnostic bundle collected by the Hive spoke dashboard feedback form; stored by the hive's GitHub App installation, never by a user or operator token.\n")
 	if req.TargetRepo == feedbackTargetDocs {
 		b.WriteString("Target: Documentation\n")
 	} else {
@@ -622,15 +610,12 @@ func buildHubFeedbackIssueBody(req feedbackReportRequest) string {
 		}
 		b.WriteString("\n</details>\n")
 	}
-	if len(req.Screenshots) > 0 {
-		b.WriteString(fmt.Sprintf("\nScreenshots: %d attached; the dashboard will upload them as issue comments.\n", len(req.Screenshots)))
-	}
 	return truncateRunes(b.String(), 60000)
 }
 
+// hubFeedbackOpenedByLine names the USER who will open the issue (never a hive
+// credential): the hub stores the bundle, the user files the issue (#1927).
 func hubFeedbackOpenedByLine(req feedbackReportRequest) string {
-	credential := hubFeedbackCredentialBodyText(req.CredentialLogin)
-	submitter := hubFeedbackSubmitterBodyText(req.Submitter)
 	hiveID := strings.TrimSpace(req.HiveID)
 	if hiveID == "" && req.Diagnostics != nil {
 		hiveID = strings.TrimSpace(req.Diagnostics.HiveID)
@@ -642,26 +627,7 @@ func hubFeedbackOpenedByLine(req feedbackReportRequest) string {
 	if hub == "" {
 		hub = "hub"
 	}
-	line := "Opened by " + credential
-	if !hubFeedbackSameActor(req.CredentialLogin, req.Submitter.GitHubLogin) {
-		line += " on behalf of " + submitter
-	}
-	line += " from hive " + hiveID + " (" + hub + ")"
-	return line
-}
-
-func hubFeedbackCredentialBodyText(login string) string {
-	login = hubGitHubLoginForMention(login)
-	if login == "" {
-		return "the hive"
-	}
-	return "@" + login
-}
-
-func hubFeedbackSameActor(credentialLogin, submitterLogin string) bool {
-	credentialLogin = hubGitHubLoginForMention(credentialLogin)
-	submitterLogin = hubGitHubLoginForMention(submitterLogin)
-	return credentialLogin != "" && strings.EqualFold(credentialLogin, submitterLogin)
+	return "Opened by " + hubFeedbackSubmitterBodyText(req.Submitter) + " from hive " + hiveID + " (" + hub + ")"
 }
 
 // hubFeedbackSourceEntered mirrors dashboard.feedbackSourceEntered: a login
@@ -778,157 +744,4 @@ func decodeHubFeedbackDataURI(dataURI string) ([]byte, string, error) {
 		return nil, "", errors.New("screenshots must be PNG or JPEG images")
 	}
 	return b, ext, nil
-}
-func uploadHubFeedbackScreenshots(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, screenshots []string) {
-	_, _ = postHubGitHubComment(ctx, client, apiBase, token, owner, repo, issue, "Processing feedback screenshots…")
-	lines := []string{}
-	for i, ss := range screenshots {
-		content, ext, err := decodeHubFeedbackDataURI(ss)
-		if err != nil {
-			continue
-		}
-		path := fmt.Sprintf("%s/%d/screenshot-%d.%s", feedbackScreenshotDir, issue, i+1, ext)
-		dl, err := putHubGitHubContent(ctx, client, apiBase, token, owner, repo, path, content)
-		if err == nil && dl != "" {
-			lines = append(lines, fmt.Sprintf("![screenshot %d](%s)", i+1, dl))
-		}
-	}
-	if len(lines) > 0 {
-		_, _ = postHubGitHubComment(ctx, client, apiBase, token, owner, repo, issue, "Feedback screenshots:\n\n"+strings.Join(lines, "\n\n"))
-	}
-}
-
-// putHubGitHubContent commits one screenshot to the dedicated
-// feedbackScreenshotBranch, never to the repository's default branch. The
-// branch is created from the default branch head on first use.
-func putHubGitHubContent(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, error) {
-	dl, status, err := putHubGitHubContentOnBranch(ctx, client, apiBase, token, owner, repo, path, content)
-	if err == nil || (status != http.StatusNotFound && status != http.StatusUnprocessableEntity) {
-		return dl, err
-	}
-	if err := ensureHubGitHubBranch(ctx, client, apiBase, token, owner, repo, feedbackScreenshotBranch); err != nil {
-		return "", err
-	}
-	dl, _, err = putHubGitHubContentOnBranch(ctx, client, apiBase, token, owner, repo, path, content)
-	return dl, err
-}
-func putHubGitHubContentOnBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, path string, content []byte) (string, int, error) {
-	ctx = hubGitHubCallerContext(ctx, "feedback_upload")
-	payload := map[string]string{
-		"message": "Add feedback screenshot",
-		"content": base64.StdEncoding.EncodeToString(content),
-		"branch":  feedbackScreenshotBranch,
-	}
-	data, _ := json.Marshal(payload)
-	u := strings.TrimRight(apiBase, "/") + "/repos/" + owner + "/" + repo + "/contents/" + url.PathEscape(path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, u, bytes.NewReader(data))
-	if err != nil {
-		return "", 0, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", 0, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", resp.StatusCode, fmt.Errorf("github upload: %d", resp.StatusCode)
-	}
-	var out struct {
-		Content struct {
-			DownloadURL string `json:"download_url"`
-		} `json:"content"`
-	}
-	_ = json.Unmarshal(raw, &out)
-	return out.Content.DownloadURL, resp.StatusCode, nil
-}
-
-// ensureHubGitHubBranch creates `branch` from the repository's default branch
-// head when it does not exist yet. An already-existing branch is left alone.
-func ensureHubGitHubBranch(ctx context.Context, client *http.Client, apiBase, token, owner, repo, branch string) error {
-	base := strings.TrimRight(apiBase, "/") + "/repos/" + owner + "/" + repo
-	var repoInfo struct {
-		DefaultBranch string `json:"default_branch"`
-	}
-	if _, err := hubGitHubJSON(ctx, client, token, http.MethodGet, base, nil, &repoInfo); err != nil {
-		return err
-	}
-	if repoInfo.DefaultBranch == "" {
-		return errors.New("github: default branch unknown")
-	}
-	var ref struct {
-		Object struct {
-			SHA string `json:"sha"`
-		} `json:"object"`
-	}
-	if _, err := hubGitHubJSON(ctx, client, token, http.MethodGet, base+"/git/ref/"+url.PathEscape("heads/"+repoInfo.DefaultBranch), nil, &ref); err != nil {
-		return err
-	}
-	if ref.Object.SHA == "" {
-		return errors.New("github: default branch head unknown")
-	}
-	payload := map[string]string{"ref": "refs/heads/" + branch, "sha": ref.Object.SHA}
-	status, err := hubGitHubJSON(ctx, client, token, http.MethodPost, base+"/git/refs", payload, nil)
-	// 422 means the ref already exists (a concurrent upload created it).
-	if err != nil && status != http.StatusUnprocessableEntity {
-		return err
-	}
-	return nil
-}
-func hubGitHubJSON(ctx context.Context, client *http.Client, token, method, u string, payload any, out any) (int, error) {
-	ctx = hubGitHubCallerContext(ctx, "feedback_json")
-	var body io.Reader
-	if payload != nil {
-		data, _ := json.Marshal(payload)
-		body = bytes.NewReader(data)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u, body)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return resp.StatusCode, fmt.Errorf("github %s: %d", method, resp.StatusCode)
-	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return resp.StatusCode, err
-		}
-	}
-	return resp.StatusCode, nil
-}
-func postHubGitHubComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, issue int, body string) (string, error) {
-	ctx = hubGitHubCallerContext(ctx, "feedback_comment")
-	payload := map[string]string{"body": body}
-	data, _ := json.Marshal(payload)
-	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", strings.TrimRight(apiBase, "/"), owner, repo, issue)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("github comment: %d", resp.StatusCode)
-	}
-	return "", nil
 }

@@ -63,6 +63,7 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0022: Opt-in redemption of earned Codex resets](0022-opt-in-earned-codex-reset-redemption.md)
 - [ADR-0023: Hive may merge PRs whose author could merge them](0023-trusted-author-automerge.md)
 - [ADR-0024: Provider credential lifecycle](0024-provider-credential-lifecycle.md)
+- [ADR-0025: One stage engine derives and writes every `stage/*` label](0025-central-stage-engine.md)
 
 ### v6-only ADRs (`0100`+)
 

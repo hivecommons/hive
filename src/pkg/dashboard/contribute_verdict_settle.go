@@ -206,14 +206,20 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 		return ghpkg.ErrNoGitHubClient
 	}
 	if !claim.MergedPR {
-		// CoveredByPRLabel is the stage/040-covered-by-pr stage label
-		// (hivecommons/hive#12436); the issue stage reconciler keeps it in
-		// step from the next enumeration on (the PR's own stage is never
-		// mirrored onto the issue, hivecommons/hive#12451).
-		if err := h.server.deps.GHClient.EnsureCoveredByPRLabel(ctx, repo); err != nil {
+		// The open PR covering the issue is a fact for the stage engine
+		// (ADR-0025): it derives stage/040-covered-by-pr (hivecommons/hive#12436)
+		// and the issue stage reconciler keeps it in step from the next
+		// enumeration on (the PR's own stage is never mirrored onto the
+		// issue, hivecommons/hive#12451).
+		gh := h.server.deps.GHClient
+		if err := gh.EnsureCoveredByPRLabel(ctx, repo); err != nil {
 			return err
 		}
-		return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{ghpkg.CoveredByPRLabel})
+		prRepo := claim.PRRepo
+		if prRepo == "" {
+			prRepo = repo
+		}
+		return gh.StageFacts().CoveredBy(ctx, gh.IssueStageRef(repo, number), gh.PRStageRef(prRepo, claim.PRNumber))
 	}
 	label := ghpkg.LikelyDoneLabel
 	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, ghpkg.LikelyDoneLabelColor, ghpkg.LikelyDoneLabelDescription); err != nil {

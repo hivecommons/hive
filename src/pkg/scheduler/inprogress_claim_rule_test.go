@@ -19,6 +19,9 @@ func TestBuildKickMessages_IncludesInProgressClaimRule(t *testing.T) {
 		"hive-open-issue claim --repo <owner/repo> <issue-number>",
 		"labels the issue `hive/in-progress`",
 		"Claim one issue at a time",
+		"never claim an issue you are only triaging, verifying, gate-checking or reporting on",
+		"never claim an epic or tracking issue",
+		"<!-- hive:start -->",
 	} {
 		if !strings.Contains(msgs[0].Message, want) {
 			t.Errorf("kick missing in-progress rule %q:\n%s", want, msgs[0].Message)
