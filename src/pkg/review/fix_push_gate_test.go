@@ -198,3 +198,27 @@ func TestHumanPRReviewPromptProposesFixesInComment(t *testing.T) {
 		}
 	}
 }
+
+func TestFixPushAuthorOK(t *testing.T) {
+	cases := []struct {
+		name, author, aiAuthor string
+		want                   bool
+	}{
+		{"bot login", "hive-bot[bot]", "hive-bot[bot]", true},
+		{"bot ai_author equals author", "someone[bot]", "someone[bot]", true},
+		{"plain ai_author equals author", "someone", "someone", false},
+		{"plain human", "clubanderson", "hive-bot[bot]", false},
+		{"empty", "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pr := humanPR("sha1")
+			pr.Author = c.author
+			opts := fixGateOpts(false)
+			opts.AIAuthor = c.aiAuthor
+			if got := fixPushAllowed(pr, opts); got != c.want {
+				t.Fatalf("fixPushAllowed(%q, ai_author %q) = %v, want %v", c.author, c.aiAuthor, got, c.want)
+			}
+		})
+	}
+}
