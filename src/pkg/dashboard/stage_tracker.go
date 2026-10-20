@@ -814,6 +814,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		// are the open items the first tracker never showed.
 		for _, raw := range repo.NonActionableIssues {
 			if w, ok := repoWorkIssue(raw); ok {
+				if w.Bucket == repoWorkBucketHiveAdvisory || w.Bucket == repoWorkBucketDependencyDashboard {
+					continue
+				}
 				if prNumbers[w.Number] || strings.Contains(w.URL, "/pull/") {
 					continue
 				}
