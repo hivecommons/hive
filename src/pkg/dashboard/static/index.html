@@ -4474,8 +4474,11 @@
     .status-badge[data-status="info"], .pause-badge[data-status="info"], .off-badge[data-status="info"], .on-demand-badge[data-status="info"], .summary-age[data-status="info"] { --component-status: var(--status-info); }
     .status-badge[data-status="neutral"], .pause-badge[data-status="neutral"], .off-badge[data-status="neutral"], .on-demand-badge[data-status="neutral"], .summary-age[data-status="neutral"] { --component-status: var(--status-neutral); }
     .nous-config-pill { background: color-mix(in srgb, var(--brand) 8%, transparent); border-color: color-mix(in srgb, var(--brand) 35%, transparent); color: var(--brand); cursor: pointer; }
-    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero. */
-    .oc-nav-count { margin-left: auto; flex-shrink: 0; }
+    /* sidebar count badges use the shared .badge-count recipe; JS marks zero counts with data-zero.
+       order:1 keeps the pill the last flex child so every row's pill shares one right edge: the
+       hover-revealed hide toggle (⊘) is appended after the pill on hideable rows and would otherwise
+       hold a 20px slot that nudges those pills left of Overview's, which is not hideable. */
+    .oc-nav-count { margin-left: auto; flex: none; order: 1; }
     /* x/y pills (Overview, Governor) stay hidden until their feed has loaded. */
     .oc-nav-count[hidden] { display: none; }
     /* pill size steps */
