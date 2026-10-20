@@ -2,24 +2,9 @@ package dashboard
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/advisory"
 )
-
-// truncateReasonBytes caps a reason at noWorkReasonMaxLen bytes without splitting
-// a UTF-8 rune. It preserves the retained text verbatim for ledger auditing;
-// GitHub comments apply their additional sanitization in sanitizeReportedReason.
-func truncateReasonBytes(reason string) string {
-	if len(reason) <= noWorkReasonMaxLen {
-		return reason
-	}
-	cut := noWorkReasonMaxLen
-	for cut > 0 && !utf8.RuneStart(reason[cut]) {
-		cut--
-	}
-	return reason[:cut]
-}
 
 // sanitizeReportedReason prepares a relay-supplied VerdictReason for a comment
 // the hub posts on GitHub under the App identity. The field is scraped from
