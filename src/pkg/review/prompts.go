@@ -29,9 +29,10 @@ type PullRequest struct {
 	AuthorAgent string
 	// HiveAttributed is true when the PR body carries the hive attribution
 	// trailer: a PR an agent opened on a person's credentials, which GitHub
-	// shows under that person's login. The review treats such a PR as the
-	// hive's own, but the fix gate (fixPushAllowed) still withholds the push:
-	// the squash is attributed to the person login, so a hive-signed fix
+	// shows under that person's login. It is carried for consumers and the
+	// audit trail; it is deliberately not a planner input. The fix gate
+	// (fixPushAllowed) decides on the login author alone: under a person
+	// login the squash is attributed to that person, so a hive-signed fix
 	// would fail the sign-off gate (hivecommons/hive#13124).
 	HiveAttributed bool
 	// MergeBase is the commit the reviewer should ground its reading in. When
