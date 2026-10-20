@@ -238,6 +238,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if c.Governor.EvalIntervalWebhookS < 0 {
 		return fmt.Errorf("governor.eval_interval_webhook_s must be at least 0")
 	}
+	if c.Governor.WebhookWakeDebounceS < 0 {
+		return fmt.Errorf("governor.webhook_wake_debounce_s must be at least 0")
+	}
+	if c.Governor.WebhookWakeMinGapS < 0 {
+		return fmt.Errorf("governor.webhook_wake_min_gap_s must be at least 0")
+	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
 	}

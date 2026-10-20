@@ -221,6 +221,11 @@ type boot struct {
 	// carries its wakes to the governor loop (hivecommons/hive#11091).
 	reviewEvents *eventdispatch.Dispatcher
 	reviewWake   chan struct{}
+
+	// webhookWaker coalesces cache-invalidating GitHub webhooks into early
+	// eval cycles and evalLoop is the pacing block /api/status reports.
+	webhookWaker *webhookWaker
+	evalLoop     *evalLoopState
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

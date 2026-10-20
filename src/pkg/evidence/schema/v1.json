@@ -90,6 +90,19 @@
         "flags": {"type": "array", "items": {"type": "string", "enum": ["placeholder_hive", "hive_on_hive", "under_min_merged"]}}
       }
     },
+    "outcome": {
+      "type": "object",
+      "required": ["source", "state", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "state": {"type": "string", "enum": ["open", "closed", "merged"]},
+        "at": {"type": "string", "format": "date-time"},
+        "merged_by": {"type": "string"},
+        "merged_at": {"type": "string", "format": "date-time"},
+        "closed_at": {"type": "string", "format": "date-time"}
+      }
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},

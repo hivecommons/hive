@@ -183,3 +183,30 @@ func TestGovernorFleetReportIncludeOwnersToggleGatesOwnerLogins(t *testing.T) {
 		t.Fatalf("opted-out hive still names owners: %v", got)
 	}
 }
+
+// TestFleetReportHiveNameAndSpokeURLOnlyWhenHubManaged (#13211): the display
+// name (project.name) and dashboard URL (dashboard.public_url, else
+// hub.dashboard_url) travel with a self-report only on a hub-managed spoke;
+// an anonymous hive sends neither.
+func TestFleetReportHiveNameAndSpokeURLOnlyWhenHubManaged(t *testing.T) {
+	SetFleetReportStatePathForTest(t, filepath.Join(t.TempDir(), "fleet-report-state.json"))
+	s := covApiServer(t)
+	s.deps.Config.HiveID = "hosted-aslom"
+	s.deps.Config.Project.Name = " kellya "
+	s.deps.Config.Hub.DashboardURL = "https://kellya.hive.example.dev/"
+	if name, u := s.FleetReportHiveName(), s.FleetReportSpokeURL(); name != "" || u != "" {
+		t.Fatalf("anonymous hive leaked identity: %q %q", name, u)
+	}
+	t.Setenv("HIVE_HEARTBEAT_KEY", "hb-key")
+	if name, u := s.FleetReportHiveName(), s.FleetReportSpokeURL(); name != "kellya" || u != "https://kellya.hive.example.dev" {
+		t.Fatalf("hub-managed identity = %q %q", name, u)
+	}
+	s.deps.Config.Dashboard.PublicURL = "https://public.example.dev"
+	if u := s.FleetReportSpokeURL(); u != "https://public.example.dev" {
+		t.Fatalf("public_url should win: %q", u)
+	}
+	var nilServer *Server
+	if nilServer.FleetReportHiveName() != "" || nilServer.FleetReportSpokeURL() != "" {
+		t.Fatal("nil server must be safe")
+	}
+}

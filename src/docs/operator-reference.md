@@ -975,30 +975,79 @@ the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
 body exactly as the hub does. Deliveries for repositories the hive does not
 manage are ignored.
 
-- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
-  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
-  the GraphQL batch check-run/review entries for the affected PR and mark it
-  dirty. Check and status events are matched by PR number and head SHA (fork
-  PRs arrive without a PR list); `push` invalidates every open PR whose base or
-  head branch is the pushed branch.
+#### What the operator configures
+
+1. **Secret.** Set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a
+   Secret mount on Kubernetes; never in `hive.yaml`) to the App's webhook
+   secret. On a hosted spoke this is the same value as the hub's
+   `webhook-secret.key`. Without it the receiver answers 503 and the loop
+   stays on the polling cadence.
+2. **GitHub App webhook.** Point the App's webhook URL at the hub
+   (`POST /api/github/webhook`) for hosted spokes, or at the spoke's own
+   `/api/webhook/github` for a stand-alone hive (a repository or organization
+   webhook with the same secret works too). Subscribe the App to these events:
+   `pull_request`, `pull_request_review`, `pull_request_review_comment`,
+   `issue_comment`, `issues`, `check_suite`, `check_run`, `status`, `push`.
+3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
+   with the original signature and `X-GitHub-Delivery`, to the spoke whose
+   reported dashboard URL manages the repository. Nothing to configure on the
+   spoke beyond the shared secret.
+4. **Pacing (optional).** `governor.eval_interval_webhook_s` (default `900`)
+   is the base tick while webhooks are healthy; `governor.webhook_wake_debounce_s`
+   (default `10`) and `governor.webhook_wake_min_gap_s` (default `30`) pace the
+   early cycles described below. `review.event_driven` additionally lets
+   `pull_request` deliveries dispatch reviews early.
+
+Verify: `/api/status.webhooks.events_1h` climbs after a push or comment,
+`/api/status.evalMode` reads `webhook`, and the spoke log shows
+`github webhook wake: running an early eval cycle` with the delivery's reason.
+
+#### What a delivery does
+
+- `pull_request`, `pull_request_review`, `pull_request_review_comment`,
+  `check_suite`, `check_run`, `status`, `issue_comment` (on PRs only) and
+  `push` invalidate the cached PR detail and the GraphQL batch
+  check-run/review entries for the affected PR and mark it dirty. Check and
+  status events are matched by PR number and head SHA (fork PRs arrive
+  without a PR list); `push` invalidates every open PR whose base or head
+  branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
+  mark the issue for the next un-park sweep.
+- **Every invalidating delivery wakes the governor loop.** The wake is
+  debounced for `governor.webhook_wake_debounce_s` so a push and its check
+  fan-out coalesce into one cycle, and webhook-triggered cycles are at least
+  `governor.webhook_wake_min_gap_s` apart so a delivery storm stretches the
+  batch instead of spinning cycles. The wake cycle is a mini-cycle in cost:
+  repositories with no dirty PR reuse their previous GraphQL PR batch
+  (`graphql_pr_batch.webhook_skips`), clean PRs are served from the PR detail
+  cache past `github.pr_detail_ttl_s`, and only the dirty PRs are re-read.
+  The log line is `github webhook wake: running an early eval cycle`
+  (`reason`, `deliveries`, `coalesced`).
 - Webhooks are **healthy** while the last delivery for a managed repository is
-  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
-  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
-  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
-  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
-  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
-  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
-  the next cycle.
-- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
-  Hive logs one WARN per healthy → stale transition and falls back to the
-  configured interval and TTL-bound caching.
+  newer than `2 × governor.eval_interval_s`. While healthy the governor's base
+  eval interval rises to `governor.eval_interval_webhook_s` (default `900`,
+  capped by `governor.eval_interval_max_s`) — safe because the wakes above
+  carry the latency — and `/api/status.evalMode` reads `webhook`. The API
+  budget stretch still applies; the larger interval wins.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`.
+  The loop re-checks health as that window closes (not just at the next
+  stretched tick), resets its ticker to the configured interval, logs one
+  WARN per healthy → stale transition
+  (`github webhooks went stale; eval mode poll`) and one INFO per stale →
+  healthy transition (`github webhooks healthy; eval mode webhook`), and
+  `evalMode` reads `poll`.
 - `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
   [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+- Every status publish (cadence or wake) invalidates the `/api/stage-tracker`
+  cache and sends a `stage-tracker` event on `/api/events`, so the dashboard's
+  activity monitor refetches at once instead of waiting out
+  `dashboard.stage_tracker.cache_ttl_s` plus its poll.
 
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
+`lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
 changed.
 
@@ -1006,6 +1055,8 @@ changed.
 governor:
   eval_interval_s: 300
   eval_interval_webhook_s: 900
+  webhook_wake_debounce_s: 10
+  webhook_wake_min_gap_s: 30
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

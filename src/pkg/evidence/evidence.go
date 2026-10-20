@@ -66,6 +66,7 @@ type Bundle struct {
 	Shadow           *Shadow           `json:"shadow,omitempty"`
 	Backfilled       bool              `json:"backfilled,omitempty"`
 	Backfill         *Backfill         `json:"backfill,omitempty"`
+	Outcome          *Outcome          `json:"outcome,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -227,6 +228,40 @@ type Backfill struct {
 	Flags []string `json:"flags,omitempty"`
 }
 
+// OutcomeSourceLedger names the review-outcome ledger (pkg/review) as the
+// source of a recorded Outcome: the governor noticed the PR had left its
+// open list and asked the forge what became of it.
+const OutcomeSourceLedger = "review-outcome-ledger"
+
+// MergeUnrecorded is the Actor and Method of a merge event this hive did not
+// perform and only learned about from the forge after the fact.
+const MergeUnrecorded = "unrecorded"
+
+// Outcome records what the forge said happened to a PR this hive reviewed
+// but did not merge: closed without merge, or merged by someone else. A live
+// bundle otherwise only ever states a merge the hive itself performed, so
+// without this the PR would read as "outcome unknown" forever. It is written
+// by the review-outcome ledger once the PR leaves the governor's open list
+// (no extra forge call: the ledger already fetched the state) and is
+// record-only; nothing reads it back into a merge decision. A bundle that
+// carries a merged Outcome also carries a Merge event with Actor set to the
+// merger the forge reported and Method MergeUnrecorded.
+type Outcome struct {
+	// Source names where the outcome was observed, e.g. OutcomeSourceLedger.
+	Source string `json:"source"`
+	// State is the PR's state at At: BackfillStateClosed or
+	// BackfillStateMerged on disk; BackfillStateOpen only as a read-time hint.
+	State string `json:"state"`
+	// At is when the outcome was recorded.
+	At time.Time `json:"at"`
+	// MergedBy is the login the forge reported as the merger; empty when not
+	// merged or unknown.
+	MergedBy string `json:"merged_by,omitempty"`
+	// MergedAt and ClosedAt are the forge's timestamps for the outcome.
+	MergedAt time.Time `json:"merged_at,omitzero"`
+	ClosedAt time.Time `json:"closed_at,omitzero"`
+}
+
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
 func BundleID(repo string, number int, head string) string {
 	return fmt.Sprintf("%s#%d@%s", repo, number, head)
@@ -349,6 +384,22 @@ func (b *Bundle) Validate() error {
 			if !slices.Contains(BackfillFlags, f) {
 				bad("backfill.flags[%d]: unknown flag %q", i, f)
 			}
+		}
+	}
+	if o := b.Outcome; o != nil {
+		if o.Source == "" {
+			bad("outcome.source is required")
+		}
+		if o.At.IsZero() {
+			bad("outcome.at is required")
+		}
+		switch o.State {
+		case BackfillStateOpen, BackfillStateClosed, BackfillStateMerged:
+		default:
+			bad("outcome.state %q must be open, closed or merged", o.State)
+		}
+		if o.State == BackfillStateMerged && b.Merge == nil {
+			bad("outcome.state merged requires a merge event")
 		}
 	}
 	for _, l := range []struct {

@@ -692,6 +692,10 @@ type WSMessage struct {
 	// maintainer decision (#8470). A verified PR still wins; otherwise the hub
 	// books the full cooldown and the relay labels the issue when configured.
 	VerdictNeedsDecision bool `json:"verdict_needs_decision,omitempty"`
+	// VerdictTargetBranch carries the branch named by a wrong_base verdict
+	// (#13146). The hub validates it against GitHub before retaining it as the
+	// next dispatch's base; malformed or missing branches park for a maintainer.
+	VerdictTargetBranch string `json:"verdict_target_branch,omitempty"`
 	// VerdictReasonKind is an optional structured classifier for VerdictReason.
 	// "already_done" means the agent found the issue already resolved by landed
 	// evidence and the Evidence field should name the PR or commit to verify.
@@ -1080,6 +1084,11 @@ type ContributeWSHub struct {
 	// GHClient. gateParkRekicks records the one re-kick each issue gets.
 	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
 	gateParkRekicks  gateParkRekicks
+	// wrongBaseBranchChecker validates a wrong_base target against the target
+	// repository; nil means use GHClient.BranchExists. wrongBaseParker is the
+	// mutation seam for the invalid/unverifiable fallback.
+	wrongBaseBranchChecker func(context.Context, string, string) (bool, error)
+	wrongBaseParker        func(context.Context, string, int, string, string, string) error
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -3769,26 +3778,36 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					h.closeAdvisoryForMergedPR(prDetail.Title, prDetail.MergedAt)
 				}
 			}
-			// #3987: normalize the completion's verdict. A verified PR always
-			// wins (shipped); with none, only an explicit no_work_needed (or
-			// its blocked sibling, #7924) is honoured and everything else —
-			// including the absent field every pre-#3987 relay sends — is
-			// idle, i.e. today's exact semantics.
+			// #3987/#13146: normalize the completion's verdict. A verified PR
+			// always wins; with none, recognized no-work and routing outcomes
+			// are honoured while unknown values remain idle for compatibility.
 			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, msg.VerdictNeedsDecision, verifiedPR)
+			verdictReason := strings.TrimSpace(msg.VerdictReason)
+			wrongBaseTarget := ""
+			if verdict == completionVerdictWrongBase {
+				resolved, target, reason, park := h.resolveWrongBaseVerdict(
+					completedTask, verdict, msg.VerdictTargetBranch)
+				verdict, wrongBaseTarget, verdictReason = resolved, target, reason
+				if park && completedTask != nil {
+					taskCopy := *completedTask
+					go h.parkWrongBaseIssue(&taskCopy, s.contributor.profile.GitHubUsername,
+						wrongBaseTarget, verdictReason)
+				}
+			}
 			// A blocked verdict whose reason is the contributor's OWN tooling
 			// failing (push rejected, token scope, credentials) is not
 			// blocked on anything outside the repo: book it idle so the
 			// issue is re-offered, and lift the `blocked` label the relay
 			// applied so the fleet's workflow gate does not park it until a
 			// human notices (hivecommons/hive#11775, #11776).
-			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, msg.VerdictReason); ok {
+			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, verdictReason); ok {
 				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason describes contributor tooling, not an external dependency",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID,
-					"verdict_reason", strings.TrimSpace(msg.VerdictReason))
+					"verdict_reason", verdictReason)
 				verdict = downgraded
 				if completedTask != nil {
-					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
 				}
 			}
 			// A needs-decision verdict whose reason is the target repository's
@@ -3799,13 +3818,13 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// relay applied (hivecommons/hive#13059). The second such park on
 			// the same issue is left standing for a maintainer.
 			if completedTask != nil {
-				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, msg.VerdictReason); ok {
+				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, verdictReason); ok {
 					h.logger.Warn("[contribute-ws] needs-decision verdict reclassified: reason is the repository's own confirmation gate, not a maintainer decision",
 						"username", s.contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
-						"verdict_reason", strings.TrimSpace(msg.VerdictReason))
+						"verdict_reason", verdictReason)
 					verdict = downgraded
-					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, verdictReason)
 				}
 			}
 			if completedTask != nil {
@@ -3817,7 +3836,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// verdict additionally books the durable offer-suppression
 				// verdict (see markTaskCompletedVerdict).
 				h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
-					verdict, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason),
+					verdict, s.contributor.profile.GitHubUsername, verdictReason,
 					msg.CompletionSignal)
 				// #7871: a no_work_needed reason usually names WHAT settled
 				// the issue. Verify the citation against GitHub and, if it
@@ -3832,7 +3851,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// settlement would be the wrong fact in the claim ledger.
 				if verdict == completionVerdictNoWorkNeeded {
 					go h.settleIssueFromVerdictWithEvidence(completedTask.Repo, completedTask.Number,
-						strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence,
+						verdictReason, msg.VerdictReasonKind, msg.Evidence,
 						taskAssignedAt, s.contributor.profile.GitHubUsername)
 				}
 			}
@@ -3857,8 +3876,8 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				"result", msg.Result,
 				"pr_verified", verifiedPR != "",
 				"verdict", verdict,
-				"verdict_reason", strings.TrimSpace(msg.VerdictReason),
-				// #5376: which signal ended the task. Diagnostic only —
+				"verdict_reason", verdictReason,
+				"verdict_target_branch", wrongBaseTarget,
 				// normalized to a closed vocabulary so a client cannot
 				// inject arbitrary text into the hub's structured logs.
 				"completion_signal", normalizeCompletionSignal(msg.CompletionSignal),
@@ -3873,21 +3892,22 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// normalized fields the slog line above carries, plus the
 			// duration nothing recorded before. DECLARE only.
 			runRec := TaskRunRecord{
-				TaskID:            msg.TaskID,
-				TaskGen:           msg.TaskGen,
-				Username:          s.contributor.profile.GitHubUsername,
-				Backend:           s.contributor.cliBackend,
-				Provider:          provider,
-				Model:             s.contributor.model,
-				Effort:            s.contributor.reasoningEffort,
-				AdvisorModel:      s.contributor.advisorModel,
-				AdvisorEffort:     s.contributor.advisorEffort,
-				Role:              s.contributor.role,
-				Outcome:           "completed",
-				CompletionSignal:  normalizeCompletionSignal(msg.CompletionSignal),
-				Verdict:           verdict,
-				VerdictReason:     strings.TrimSpace(msg.VerdictReason),
-				VerdictReasonKind: strings.TrimSpace(msg.VerdictReasonKind),
+				TaskID:              msg.TaskID,
+				TaskGen:             msg.TaskGen,
+				Username:            s.contributor.profile.GitHubUsername,
+				Backend:             s.contributor.cliBackend,
+				Provider:            provider,
+				Model:               s.contributor.model,
+				Effort:              s.contributor.reasoningEffort,
+				AdvisorModel:        s.contributor.advisorModel,
+				AdvisorEffort:       s.contributor.advisorEffort,
+				Role:                s.contributor.role,
+				Outcome:             "completed",
+				CompletionSignal:    normalizeCompletionSignal(msg.CompletionSignal),
+				Verdict:             verdict,
+				VerdictReason:       verdictReason,
+				VerdictReasonKind:   strings.TrimSpace(msg.VerdictReasonKind),
+				VerdictTargetBranch: wrongBaseTarget,
 				NeedsDecisionLabel: func() string {
 					if verdict == completionVerdictNeedsDecision {
 						return h.configuredNeedsDecisionLabel()
@@ -3897,8 +3917,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				PRURL:      verifiedPR,
 				PRVerified: verifiedPR != "",
 			}
-			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone {
-				runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
+			if verdict == completionVerdictNoWorkNeeded {
+				if _, alreadyDone := alreadyDoneVerdictRefs("", 0, verdictReason, msg.VerdictReasonKind, msg.Evidence); alreadyDone {
+					runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
+				}
 			}
 			if completedTask != nil {
 				runRec.Repo = completedTask.Repo

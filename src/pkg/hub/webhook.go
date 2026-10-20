@@ -87,7 +87,7 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	switch event {
 	case "installation", "installation_repositories":
 		s.handleInstallationEvent(body)
-	case "pull_request", "pull_request_review", "check_suite", "check_run", "status", "issue_comment", "push":
+	case "pull_request", "pull_request_review", "pull_request_review_comment", "check_suite", "check_run", "status", "issue_comment", "issues", "push":
 		s.relayWebhookToSpoke(event, r.Header, body)
 	default:
 		s.logger.Debug("ignoring webhook event", "event", event)

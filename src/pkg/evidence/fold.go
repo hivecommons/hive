@@ -33,17 +33,86 @@ type PR struct {
 	// PR's outcome (merged, closed or still open at backfill time); a live
 	// bundle only ever states a merge the hive itself performed.
 	Backfilled bool
+	// Outcome is the newest forge-observed outcome recorded on any record of
+	// the PR, or applied from the review-outcome ledger by ApplyOutcomeHints.
+	Outcome *Outcome
+	// MergedElsewhere is true when Merge was learned from the forge (Outcome
+	// with state merged) rather than performed by this hive.
+	MergedElsewhere bool
 }
 
 // OutcomeKnown reports whether the folded records state what happened to
-// the PR. A merge or a backfilled record is a known outcome; a live-only
-// bundle with no merge event is not: the PR may be open, merged by someone
-// other than this hive, or closed by hand, and nothing on disk says which.
-// Readers that compute rates against an outcome must leave these PRs out of
-// the denominator and report them as unknown rather than count them as
-// "not merged" (hivecommons/hive#12514 follow-up).
+// the PR. A merge, a backfilled record or a forge-observed Outcome is a known
+// outcome; a live-only bundle with none of them is not: the PR may be open,
+// merged by someone other than this hive, or closed by hand, and nothing on
+// disk says which. Readers that compute rates against an outcome must leave
+// these PRs out of the denominator and report them as unknown rather than
+// count them as "not merged" (hivecommons/hive#12514 follow-up).
 func (p *PR) OutcomeKnown() bool {
-	return p != nil && (p.Merge != nil || p.Backfilled)
+	return p != nil && (p.Merge != nil || p.Backfilled || p.Outcome != nil)
+}
+
+// OutcomeHint is what the review-outcome ledger knows about a PR: its state
+// (open, closed or merged) and the forge's timestamps and merger for it.
+type OutcomeHint struct {
+	State    string
+	MergedBy string
+	MergedAt time.Time
+	ClosedAt time.Time
+	// At is when the ledger observed the state.
+	At time.Time
+}
+
+// ApplyOutcomeHints resolves the PRs in prs whose outcome is not known from
+// their records using hints keyed by PRKey. It is the read-time counterpart
+// of the ledger's on-disk Outcome stamp: a PR that merged or closed before
+// the ledger could write to its bundle (or that the governor never saw open)
+// still gets its outcome from the ledger's row. A hinted merge becomes a
+// Merge event with Actor MergedBy and Method MergeUnrecorded, flagged
+// MergedElsewhere; a hinted close sets Closed; an open hint only makes the
+// outcome known. PRs whose records already state an outcome are untouched.
+func ApplyOutcomeHints(prs map[string]*PR, hints map[string]OutcomeHint) {
+	for key, p := range prs {
+		if p == nil || p.OutcomeKnown() {
+			continue
+		}
+		h, ok := hints[key]
+		if !ok {
+			continue
+		}
+		o := &Outcome{Source: OutcomeSourceLedger, State: h.State, At: h.At, MergedBy: h.MergedBy, MergedAt: h.MergedAt, ClosedAt: h.ClosedAt}
+		switch h.State {
+		case BackfillStateMerged:
+			p.Merge = OutcomeMergeEvent(o, p.HeadSHA)
+			p.MergedElsewhere = true
+		case BackfillStateClosed:
+			p.Closed = true
+		case BackfillStateOpen:
+		default:
+			continue
+		}
+		p.Outcome = o
+	}
+}
+
+// OutcomeMergeEvent is the merge event a forge-observed merged Outcome
+// stands for: the merger the forge named (or MergeUnrecorded), method
+// MergeUnrecorded because this hive did not perform it, and the bundle's
+// head as the SHA since the merge commit is not known without another fetch
+// (a backfilled record does the same). The time falls back to the
+// observation so the event always validates.
+func OutcomeMergeEvent(o *Outcome, head string) *MergeEvent {
+	m := &MergeEvent{Actor: o.MergedBy, Method: MergeUnrecorded, At: o.MergedAt, SHA: strings.TrimSpace(head)}
+	if m.Actor == "" {
+		m.Actor = MergeUnrecorded
+	}
+	if m.At.IsZero() {
+		m.At = o.At
+	}
+	if m.SHA == "" {
+		m.SHA = MergeUnrecorded
+	}
+	return m
 }
 
 // PRKey is the case-insensitive owner/name#number key FoldPRs groups by.
@@ -93,11 +162,15 @@ func FoldPRs(bundles []*Bundle, repo, kind string) map[string]*PR {
 		if b.Backfilled || b.Backfill != nil {
 			p.Backfilled = true
 		}
+		if b.Outcome != nil && (p.Outcome == nil || b.Outcome.At.After(p.Outcome.At)) {
+			p.Outcome = b.Outcome
+		}
 	}
 	for _, p := range prs {
 		if p.Merge != nil {
 			p.Closed = false
 		}
+		p.MergedElsewhere = p.Merge != nil && p.Outcome != nil && p.Outcome.State == BackfillStateMerged
 	}
 	return prs
 }
@@ -110,9 +183,14 @@ func longerLinks(cur, next []string) []string {
 	return cur
 }
 
-// bundleClosed reports whether a bundle records a close without merge.
+// bundleClosed reports whether a bundle records a close without merge, from
+// a backfilled record or a forge-observed Outcome.
 func bundleClosed(b *Bundle) bool {
-	return b.Merge == nil && b.Backfill != nil && b.Backfill.State == BackfillStateClosed
+	if b.Merge != nil {
+		return false
+	}
+	return (b.Backfill != nil && b.Backfill.State == BackfillStateClosed) ||
+		(b.Outcome != nil && b.Outcome.State == BackfillStateClosed)
 }
 
 // bundleOpenedAt is the PR open time a bundle knows: merge.opened_at when

@@ -1,0 +1,1 @@
+- `TestCampaignDeleteRemovesArchiveOnly` is order-independent again: it now resets the process-wide lifecycle timeline store before listing campaigns, so completed-run journeys recorded by earlier tests in a shuffled run no longer appear as a third campaign ([#13167](https://github.com/hivecommons/hive/issues/13167)).

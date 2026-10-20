@@ -1228,6 +1228,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // collaborators exist; tests that drive a single phase call this directly.
 func (b *boot) wireBootClosures() {
 	b.installReviewEvents()
+	b.installWebhookWake()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1444,6 +1445,8 @@ func (b *boot) wireBootClosures() {
 			GHClient:             b.ghClient,
 			StageEngineStatus:    func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
 			ReviewEvents:         b.reviewEvents,
+			WebhookWake:          b.webhookWakeFunc(),
+			EvalLoop:             b.evalLoopStatusFunc(),
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
 			Tokens:               b.tokenCollector,
@@ -2448,6 +2451,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			issueOpen: b.agentMgr.AuthorizeIssueOpen,
 			review:    b.agentMgr.AuthorizeReviewRequest,
 			merge:     bindMergeAuthz(b.agentMgr.AuthorizeMerge),
+			// Lane policy on relayed merges: a contributor PR an agent asks
+			// the relay to land is held to the same contributor-lane gates
+			// (tier, soak, min_head_age, review verdict) the sweep applies;
+			// hive-authored PRs keep the relay's existing behaviour.
+			mergePolicy: relayLanePolicyGate(autoMergeOpts),
 			// Push relay (#9771): the same forge-resistance + CanPush ACMM
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
@@ -3579,6 +3587,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
 	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
 	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
+	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -5890,11 +5899,14 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
-	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
+	initialEvalInterval, initialMode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()), "eval_mode", initialMode)
 	lastEvalInterval := initialEvalInterval
 	ticker := deps.newTicker(initialEvalInterval)
 	defer ticker.Stop()
+	if b.evalLoop != nil {
+		b.evalLoop.setInterval(initialEvalInterval, initialMode)
+	}
 
 	var agentTickCh <-chan time.Time
 	if b.cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -6089,16 +6101,62 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		deps.persist(b)
-		effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+		effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 		if effectiveEvalInterval != lastEvalInterval {
 			b.logger.Info("eval interval changed, resetting ticker",
-				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
 			ticker.Reset(effectiveEvalInterval)
 			lastEvalInterval = effectiveEvalInterval
+		}
+		if b.evalLoop != nil {
+			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
 	}
 	b.startReviewEvents()
+
+	// Webhook health re-check: in webhook mode the base tick (900s) is longer
+	// than the health window (2 × eval_interval_s), so without this a lapse
+	// would only be noticed at the next stretched tick. The timer fires just
+	// after the window would close; if health lapsed, the ticker is reset to
+	// the configured interval right away. Nil newHealthTimer disables it.
+	var (
+		healthTimer loopTicker
+		healthCh    <-chan time.Time
+	)
+	healthNow := deps.now
+	if healthNow == nil {
+		healthNow = time.Now
+	}
+	armWebhookHealthRecheck := func() {
+		if deps.newHealthTimer == nil || b.cfg == nil {
+			return
+		}
+		base := b.cfg.Governor.EvalIntervalS
+		if base <= 0 {
+			base = 300
+		}
+		delay := webhookHealthRecheckDelay(github.WebhookHealthSnapshot(), 2*time.Duration(base)*time.Second, healthNow())
+		if delay <= 0 {
+			if healthTimer != nil {
+				healthTimer.Stop()
+			}
+			return
+		}
+		if healthTimer == nil {
+			healthTimer = deps.newHealthTimer(delay)
+			healthCh = healthTimer.Chan()
+		} else {
+			healthTimer.Stop()
+			healthTimer.Reset(delay)
+		}
+	}
+	armWebhookHealthRecheck()
+	defer func() {
+		if healthTimer != nil {
+			healthTimer.Stop()
+		}
+	}()
 
 	// Continuous re-kick wake: a continuous agent's NextKick (set when its
 	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
@@ -6155,10 +6213,37 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		case <-ticker.Chan():
 			tick()
 			armContinuousWake()
+			armWebhookHealthRecheck()
 		case <-b.reviewWake:
 			b.logger.Info("review webhook wake: running an early eval cycle")
 			tick()
 			armContinuousWake()
+			armWebhookHealthRecheck()
+		case batch := <-b.webhookWakeChan():
+			now := healthNow()
+			b.logger.Info("github webhook wake: running an early eval cycle",
+				"reason", batch.Reason, "last_reason", batch.LastRe, "deliveries", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+			if b.evalLoop != nil {
+				b.evalLoop.noteWake(batch, now)
+			}
+			tick()
+			armContinuousWake()
+			armWebhookHealthRecheck()
+		case <-healthCh:
+			b.cfgReloadMu.Lock()
+			effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+			if effectiveEvalInterval != lastEvalInterval {
+				b.logger.Info("eval interval changed, resetting ticker",
+					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
+				ticker.Reset(effectiveEvalInterval)
+				lastEvalInterval = effectiveEvalInterval
+			}
+			if b.evalLoop != nil {
+				b.evalLoop.setInterval(effectiveEvalInterval, mode)
+			}
+			b.cfgReloadMu.Unlock()
+			armWebhookHealthRecheck()
 		case <-wakeCh:
 			now := wakeNow()
 			next, who := b.gov.NextContinuousKickAt()
@@ -7185,6 +7270,11 @@ func runEvalCycle(
 		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
 		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
 	}
+	// A fix kick (a maintainer's changes_requested / `/hive decision`, or
+	// the swarm's) goes ahead of the governor kick for the same agent, or
+	// the governor kick owns the agent and the fix kick times out every
+	// cycle (hivecommons/hive#13100).
+	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
 	// #4294: drop EVERY assembled kick while the provider is refusing on a
 	// spending limit. Placed after all three sources have contributed —
 	// governor-due agents, the CEL union, and the review swarm — because gating
@@ -7304,6 +7394,9 @@ func runEvalCycle(
 			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
 				gov.RecordKickFailure(msg.Agent, err, time.Now())
+				if k, ok := reviewKickByMessage[reviewKickKey(msg)]; ok {
+					logUndeliveredReviewKick(logger, dashSrv, k, err)
+				}
 			},
 			onDelivered: func(msg scheduler.KickMessage) {
 				gov.RecordKickForRepo(msg.Agent, msg.Repo)
@@ -10067,6 +10160,13 @@ type prStateGetter interface {
 	GetPRState(ctx context.Context, repo string, number int) (github.PRState, error)
 }
 
+// reviewEvidenceOutcomeRecorder is the optional slice of the GitHub client
+// that stamps a resolved outcome onto the PR's evidence bundle, so a PR this
+// hive reviewed but did not merge stops reading as "outcome unknown".
+type reviewEvidenceOutcomeRecorder interface {
+	RecordReviewEvidenceOutcome(repo string, number int, st github.PRState, now time.Time)
+}
+
 // recordReviewOutcomes folds this cycle's open-PR enumeration into the
 // review-outcome ledger (pkg/review/outcomes.go): every open PR is upserted,
 // review evidence from the verdict artifact and the posted-review ledger is
@@ -10144,6 +10244,9 @@ func recordReviewOutcomesAt(ctx context.Context, cfg *config.Config, gh prStateG
 			}
 			ledger.Resolve(m.Repo, m.Number, st.State, st.MergedAt, st.ClosedAt)
 			resolved++
+			if rec, ok := gh.(reviewEvidenceOutcomeRecorder); ok {
+				rec.RecordReviewEvidenceOutcome(m.Repo, m.Number, st, now)
+			}
 		}
 	}
 	ledger.Snapshot(now)

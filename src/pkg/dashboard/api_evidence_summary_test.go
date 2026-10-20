@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/evidence/complexity"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 func evSummaryBundle(repo string, n int, kind string, created time.Time, merged bool, verdicts []evidence.Verdict, sentinel int, ci bool) *evidence.Bundle {
@@ -746,5 +747,82 @@ func TestBuildEvidenceSummaryShadowReviewGateByLane(t *testing.T) {
 	}
 	if got.WouldHaveHeld != 2 || got.N != 3 {
 		t.Fatalf("shadow gate = %+v", got)
+	}
+}
+
+// TestBuildEvidenceSummaryLedgerOutcomes pins how the review-outcome ledger
+// resolves PRs a live bundle cannot: an Outcome stamped on the bundle (merged
+// by someone else, or closed) counts as merged_elsewhere / closed, a ledger
+// hint does the same at read time for a PR whose bundle has no stamp, an
+// open hint is a known Open, a hive-performed merge is never merged
+// elsewhere, and a PR the ledger never saw stays unknown.
+func TestBuildEvidenceSummaryLedgerOutcomes(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-3 * time.Hour)
+	approve := []evidence.Verdict{{Perspective: "security", Model: "m", Verdict: "approve", Confidence: 0.95}}
+
+	// Stamped on disk by the ledger pass: merged by a human, and closed.
+	stampedMerged := evSummaryBundle("a/b", 1, evidence.AuthorHuman, recent, false, approve, 0, false)
+	stampedMerged.Outcome = &evidence.Outcome{Source: evidence.OutcomeSourceLedger, State: evidence.BackfillStateMerged, At: now, MergedBy: "alice", MergedAt: recent.Add(time.Hour)}
+	stampedMerged.Merge = evidence.OutcomeMergeEvent(stampedMerged.Outcome, stampedMerged.HeadSHA)
+	stampedClosed := evSummaryBundle("a/b", 2, evidence.AuthorHuman, recent, false, approve, 0, false)
+	stampedClosed.Outcome = &evidence.Outcome{Source: evidence.OutcomeSourceLedger, State: evidence.BackfillStateClosed, At: now, ClosedAt: recent.Add(time.Hour)}
+	// Merged by this hive: plain merged.
+	hiveMerged := evSummaryBundle("a/b", 3, evidence.AuthorAgent, recent, true, approve, 0, true)
+	// No stamp; resolved only by the ledger hints below.
+	hintMerged := evSummaryBundle("a/b", 4, evidence.AuthorAgent, recent, false, approve, 0, false)
+	hintClosed := evSummaryBundle("a/b", 5, evidence.AuthorAgent, recent, false, approve, 0, false)
+	hintOpen := evSummaryBundle("a/b", 6, evidence.AuthorHuman, recent, false, nil, 0, false)
+	// Never seen by the ledger: still unknown.
+	unknown := evSummaryBundle("a/b", 7, evidence.AuthorHuman, recent, false, approve, 0, false)
+
+	ledger := &review.OutcomeLedger{GeneratedAt: now, Items: map[string]*review.PROutcome{
+		"a/b#4": {Repo: "a/b", Number: 4, Outcome: review.OutcomeMerged, OutcomeAt: recent.Add(time.Hour)},
+		"a/b#5": {Repo: "a/b", Number: 5, Outcome: review.OutcomeClosed, OutcomeAt: recent.Add(time.Hour)},
+		"a/b#6": {Repo: "a/b", Number: 6, Outcome: review.OutcomeOpen},
+		// A ledger row never overrides what the bundle already states.
+		"a/b#3": {Repo: "a/b", Number: 3, Outcome: review.OutcomeClosed, OutcomeAt: now},
+		"a/b#9": {Repo: "a/b", Number: 9, Outcome: "weird"},
+	}}
+	hints := evidenceOutcomeHints(ledger)
+	if len(hints) != 4 {
+		t.Fatalf("hints = %+v, want 4 (the unknown state is dropped)", hints)
+	}
+
+	bundles := []*evidence.Bundle{stampedMerged, stampedClosed, hiveMerged, hintMerged, hintClosed, hintOpen, unknown}
+	win := evidenceWindow{Hours: 24, From: now.Add(-24 * time.Hour), To: now}
+	got := buildEvidenceSummaryWindowHints(bundles, hints, win, "", "")
+	if got.N != 7 {
+		t.Fatalf("n = %d, want 7", got.N)
+	}
+	if o := got.Outcomes["human"]; o != (EvidenceOutcomes{N: 4, Merged: 1, MergedElsewhere: 1, Closed: 1, Open: 1, Unknown: 1}) {
+		t.Errorf("human outcomes = %+v, want merged 1 (elsewhere 1) / closed 1 / open 1 / unknown 1", o)
+	}
+	if o := got.Outcomes["agent"]; o != (EvidenceOutcomes{N: 3, Merged: 2, MergedElsewhere: 1, Closed: 1}) {
+		t.Errorf("agent outcomes = %+v, want merged 2 (elsewhere 1) / closed 1", o)
+	}
+	if got.Missing.PRsOutcomeUnknown != 1 || got.Missing.PRsOutcomeFromLedger != 5 {
+		t.Errorf("missing = unknown %d / from_ledger %d, want 1 / 5", got.Missing.PRsOutcomeUnknown, got.Missing.PRsOutcomeFromLedger)
+	}
+	// The reviewer-accuracy denominators see the ledger outcomes too: the two
+	// closed approvals are false approves over five approvals with a known
+	// outcome; only the never-seen PR's approval is unknown.
+	if len(got.ReviewerModels) != 1 {
+		t.Fatalf("models = %+v", got.ReviewerModels)
+	}
+	var st EvidenceModelStat
+	for _, s := range got.ReviewerModels[0].ByAuthor {
+		st.Approvals += s.Approvals
+		st.ApprovedNotMerged += s.ApprovedNotMerged
+		st.ApprovedUnknown += s.ApprovedUnknown
+	}
+	if st.Approvals != 6 || st.ApprovedNotMerged != 2 || st.ApprovedUnknown != 1 {
+		t.Errorf("approvals = %+v, want 6 approvals / 2 not merged / 1 unknown", st)
+	}
+
+	// Without the ledger the same bundles leave the hinted PRs unknown.
+	plain := buildEvidenceSummaryWindow(bundles, win, "", "")
+	if plain.Missing.PRsOutcomeUnknown != 4 || plain.Missing.PRsOutcomeFromLedger != 2 {
+		t.Errorf("without hints: unknown %d / from_ledger %d, want 4 / 2", plain.Missing.PRsOutcomeUnknown, plain.Missing.PRsOutcomeFromLedger)
 	}
 }

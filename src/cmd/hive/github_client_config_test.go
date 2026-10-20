@@ -57,6 +57,10 @@ var clientSetterAllowlist = map[string]string{
 		"SetMergeRequestNoCIAllowedRepos, which syncAutoMergePolicyToGitHubClient calls individually",
 	"SetAttributionAudit": "legacy untyped audit sink, superseded by SetAttributionAuditRecord " +
 		"(#9587), which configureGitHubClient installs and which takes precedence",
+	"SetMergeRequestPolicyGate": "owned by the request-relay supervisor: startRequestRelays installs " +
+		"it on whichever client the relays run on, and every rebuilt client re-arms the relays " +
+		"(armRequestRelays in github_client_provider.go), so the gate is reinstalled alongside the " +
+		"merge authorizer it extends",
 	"SetStageFactSink": "test seam: production uses the client's own default stage FactSink " +
 		"(enforce-mode reconciler over stagelabels.Shared()), which every rebuilt client " +
 		"constructs lazily on first use (ADR-0025, #13009)",

@@ -108,8 +108,11 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
-	sidebar             interface{}
-	sidebarMu           sync.RWMutex
+	// stageTrackerServed flips once /api/stage-tracker has been built; it
+	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
+	stageTrackerServed bool
+	sidebar            interface{}
+	sidebarMu          sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -2484,6 +2487,11 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.lastFullBroadcast = time.Now()
 	s.statusMu.Unlock()
 
+	// A new status is new stage truth: drop the memoised /api/stage-tracker
+	// body so the next GET rebuilds from this payload instead of serving the
+	// previous one for the rest of its TTL.
+	nudgeTracker := s.invalidateStageTrackerCache()
+
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
 	// #4298: fold the budget window into per-window history so a closed window's
@@ -2497,6 +2505,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	if nudgeTracker {
+		s.broadcastFrame(stageTrackerSSEFrame(status.StatusSeq))
+	}
 	return true
 }
 
@@ -3377,14 +3388,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, time.Now().UTC()), Webhooks: github.WebhookHealthSnapshot()}
+	if s.deps != nil && s.deps.EvalLoop != nil {
+		loop := s.deps.EvalLoop()
+		payload.EvalLoopStatus = &loop
+	}
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
-// statusWithWebhooks adds the live webhook health block (#11177) to the cached
-// status payload at serve time, so it is never a whole eval cycle stale.
+// statusWithWebhooks adds the live webhook health block (#11177) and the
+// governor loop's pacing (evalMode, lastWakeReason) to the cached status
+// payload at serve time, so neither is a whole eval cycle stale.
 type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
+	*EvalLoopStatus
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

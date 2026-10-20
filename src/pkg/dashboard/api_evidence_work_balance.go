@@ -337,10 +337,14 @@ func buildEvidenceWorkBalance(in evidenceWorkBalanceInputs, win evidenceWindow, 
 }
 
 // evidencePRClosedAt is when a closed-without-merge PR was closed: the
-// backfill's closed_at when recorded, else the record's updated_at.
+// backfill's or the forge-observed outcome's closed_at when recorded, else
+// the record's updated_at.
 func evidencePRClosedAt(p *evidence.PR) time.Time {
 	if p.Backfill != nil && !p.Backfill.ClosedAt.IsZero() {
 		return p.Backfill.ClosedAt
+	}
+	if p.Outcome != nil && !p.Outcome.ClosedAt.IsZero() {
+		return p.Outcome.ClosedAt
 	}
 	return p.UpdatedAt
 }
