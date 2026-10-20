@@ -135,14 +135,14 @@ func renderPRDecisionNotHiveAuthoredReply(head string) string {
 }
 
 func renderPRApproveReply(head string) string {
-	return fmt.Sprintf("On a pull request the approval is the GitHub review: **Approve** %s and the hive merges it on its next pass (`/hive approve` is for parked issues). See <%s>.",
-		prHeadRef(head), maintainerCommandsDocURL)
+	return fmt.Sprintf("Noted. On a pull request a trusted merger's `/hive approve` reply posted after the swarm's `requires_human` verdict releases that hold on %s on the hive's next pass, exactly as a GitHub **Approve** review on that head does (the owner's own PR included, where GitHub refuses the self-review). It does not bypass CI, `hold`-class labels, a `changes_requested` / `reject` verdict or a lane that only merges by hand: if this PR is parked for one of those, the `%s` comment above names what clears it. See <%s>.",
+		prHeadRef(head), PRNeedsDecisionStageLabel, maintainerCommandsDocURL)
 }
 
 func renderPRHelpReply(selfAuthored bool, head string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "On a pull request parked at `%s`:\n\n", PRNeedsDecisionStageLabel)
-	fmt.Fprintf(&b, "- **Approve** %s (GitHub review) to merge it as-is.\n", prHeadRef(head))
+	fmt.Fprintf(&b, "- **Approve** %s (GitHub review), or reply `/hive approve` after the swarm's `requires_human` verdict, to merge it as-is; a trusted merger's release only, and never past CI, `hold`-class labels or a `changes_requested` verdict.\n", prHeadRef(head))
 	if selfAuthored {
 		b.WriteString("- Leave a **changes requested** review, or reply `/hive decision <what to change>`, and the hive pushes the fix to this PR.\n")
 	} else {

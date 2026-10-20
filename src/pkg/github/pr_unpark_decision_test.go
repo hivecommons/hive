@@ -225,14 +225,15 @@ func TestSweepIssueUnparkCommandsPRApproveAndHelpPointAtReviews(t *testing.T) {
 		notWant string
 	}{
 		{
-			name:  "approve on a PR points at the Approve review",
-			issue: hiveParkedPR(humanComment(1, "clubanderson", "/hive approve")),
-			want:  []string{"**Approve** head `e653b6d`", "`/hive approve` is for parked issues"},
+			name:    "approve on a PR explains the release it records",
+			issue:   hiveParkedPR(humanComment(1, "clubanderson", "/hive approve")),
+			want:    []string{"`/hive approve` reply posted after the swarm's `requires_human` verdict releases that hold on head `e653b6d`", "GitHub **Approve** review", "does not bypass CI, `hold`-class labels", PRNeedsDecisionStageLabel},
+			notWant: "is for parked issues",
 		},
 		{
 			name:  "help on a hive PR lists both levers",
 			issue: hiveParkedPR(humanComment(1, "clubanderson", "/hive help")),
-			want:  []string{PRNeedsDecisionStageLabel, "**Approve** head `e653b6d`", "`/hive decision <what to change>`", "the hive pushes the fix"},
+			want:  []string{PRNeedsDecisionStageLabel, "**Approve** head `e653b6d`", "reply `/hive approve` after the swarm's `requires_human` verdict", "`/hive decision <what to change>`", "the hive pushes the fix"},
 		},
 		{
 			name:    "help on a human PR does not promise a push",

@@ -304,16 +304,87 @@ func TestDecisionCommentNamesActionsForSelfAuthoredRequiresHuman(t *testing.T) {
 		}
 	}
 
-	// Not for a PR the hive did not open, and not for a hold-label park.
+	if !strings.Contains(got, "`/hive approve` reply posted after the verdict") {
+		t.Fatalf("DecisionComment does not name the `/hive approve` release:\n%s", got)
+	}
+}
+
+// TestDecisionCommentNamesActionsPerLane pins hivecommons/hive#13087: the
+// 085 comment names what clears the park on every lane, not only on a
+// hive-authored PR — a trusted merger's approval (review or `/hive approve`
+// reply) for `requires_human`, the label a person must clear for a hold or
+// sentinel park, and a manual merge where the lane rule allows nothing else.
+func TestDecisionCommentNamesActionsPerLane(t *testing.T) {
 	human := readyEvidence()
 	human.Verdict = VerdictRequiresHuman
-	if got := DecisionComment(RouteHuman(human)); strings.Contains(got, "What to do") {
-		t.Fatalf("actions offered on a non-hive PR:\n%s", got)
+	r := RouteHuman(human)
+	if r.Stage != NeedsDecision || r.SelfAuthored {
+		t.Fatalf("route = %+v", r)
 	}
+	got := DecisionComment(r)
+	for _, want := range []string{
+		"**What to do:** a trusted merger approves this head (`abc1234`)",
+		"GitHub **Approve** review",
+		"`/hive approve` reply posted after the verdict",
+		"does not push to a PR it did not open",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("contributor-lane DecisionComment missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "/hive decision") {
+		t.Fatalf("contributor-lane comment promises a hive push:\n%s", got)
+	}
+
 	held := readyEvidence()
 	held.SelfAuthored = true
-	held.Holds = Holds([]string{"hold"})
-	if got := DecisionComment(RouteHuman(held)); strings.Contains(got, "What to do") {
-		t.Fatalf("actions offered on a hold-label park:\n%s", got)
+	held.Holds = Holds([]string{"hold", "do-not-merge/wip"})
+	r = RouteHuman(held)
+	if got := DecisionComment(r); !strings.Contains(got, "resolve the reason for `do-not-merge/wip` and have a maintainer remove that label") || !strings.Contains(got, "resolve the reason for `hold`") || !strings.Contains(got, "`/hive approve` does not remove it") {
+		t.Fatalf("hold park does not name the labels to clear:\n%s", got)
+	} else if strings.Contains(got, "approve this head") {
+		t.Fatalf("hold park offers an approval as the way out:\n%s", got)
+	}
+
+	sentinel := readyEvidence()
+	sentinel.Sentinel = true
+	if got := DecisionComment(RouteHuman(sentinel)); !strings.Contains(got, "**What to do:** resolve the sentinel alert") {
+		t.Fatalf("sentinel park does not name the action:\n%s", got)
+	}
+
+	manual := readyEvidence()
+	manual.Verdict = VerdictRequiresHuman
+	manual.Holds = Holds([]string{"hold"})
+	manual.ManualMerge = true
+	r = RouteHuman(manual)
+	if !r.ManualMerge {
+		t.Fatalf("ManualMerge not carried onto the route: %+v", r)
+	}
+	got = DecisionComment(r)
+	if !strings.Contains(got, "**What to do:** a maintainer must review and merge this PR manually") {
+		t.Fatalf("manual-merge lane does not say so:\n%s", got)
+	}
+	if strings.Contains(got, "approves this head") || strings.Contains(got, "remove that label") {
+		t.Fatalf("manual-merge lane offers an override:\n%s", got)
+	}
+	if a := DecisionActions(r); strings.Contains(a, "\n- ") {
+		t.Fatalf("manual-merge action must stand alone: %q", a)
+	}
+
+	// Several applicable steps render as a list; none → no section.
+	multi := readyEvidence()
+	multi.Verdict = VerdictRequiresHuman
+	multi.Sentinel = true
+	if got := DecisionComment(RouteHuman(multi)); !strings.Contains(got, "**What to do:**\n\n- a trusted merger approves") || !strings.Contains(got, "\n- resolve the sentinel alert") {
+		t.Fatalf("multiple steps not listed:\n%s", got)
+	}
+	if got := DecisionActions(Route{Stage: ReadyForHumanMerge, Verdict: VerdictRequiresHuman}); got != "" {
+		t.Fatalf("actions on a non-085 route: %q", got)
+	}
+	cause := readyEvidence()
+	cause.Cause = CauseDecision
+	cause.CauseReason = "the approval desk withheld this merge"
+	if got := DecisionComment(RouteHuman(cause)); strings.Contains(got, "What to do") {
+		t.Fatalf("actions offered when nothing here applies:\n%s", got)
 	}
 }

@@ -278,6 +278,18 @@ func TestTrustAndDecisionCauseProse(t *testing.T) {
 	if got := decisionCause("something-new"); got != "the lane reported `something-new`" {
 		t.Fatalf("fallback = %q", got)
 	}
+	// hivecommons/hive#13087: only the lane rules that allow no unattended
+	// merge are manual-merge; a failed file read (fails closed) is not a rule.
+	for _, r := range []string{contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath} {
+		if !manualMergeReason(r) {
+			t.Fatalf("manualMergeReason(%q) = false", r)
+		}
+	}
+	for _, r := range []string{autoMergeReasonHumanMergePathEvidence, stageReasonVerdictRequiresHuman, "held", "", "something-new"} {
+		if manualMergeReason(r) {
+			t.Fatalf("manualMergeReason(%q) = true", r)
+		}
+	}
 	checks, asks, _ := nudgeDiagnosisRouted("check-failing:lint", stageDetail{}, &stagelabels.Route{Reasons: []string{"red checks: lint, unit", "DCO sign-off missing", "merge conflict with the base branch", "verdict changes_requested @sha"}})
 	if !reflect.DeepEqual(checks, []string{"lint", "unit"}) {
 		t.Fatalf("routed checks = %v", checks)
@@ -332,6 +344,13 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 		!strings.Contains(api.comments[0], "the reviewer swarm returned `requires_human` @sha") ||
 		strings.Contains(api.comments[0], "the lane reported") {
 		t.Fatalf("085 entry comment = %q", api.comments)
+	}
+	// hivecommons/hive#13087: the contributor-lane comment names the release
+	// that clears it — a trusted merger's approval, by review or reply.
+	if !strings.Contains(api.comments[0], "**What to do:** a trusted merger approves this head") ||
+		!strings.Contains(api.comments[0], "`/hive approve` reply posted after the verdict") ||
+		strings.Contains(api.comments[0], "/hive decision") {
+		t.Fatalf("085 entry comment does not name the contributor-lane action: %q", api.comments[0])
 	}
 	if rec, _ := store.Get(stageKey("acme", "widget", 13)); rec.Reason != stageReasonVerdictRequiresHuman {
 		t.Fatalf("recorded reason = %q", rec.Reason)

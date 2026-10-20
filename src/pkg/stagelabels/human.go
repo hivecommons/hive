@@ -123,6 +123,11 @@ type Evidence struct {
 	// otherwise AuthorKind picks 072 (clanker) or 071 (human / unknown).
 	SelfAuthored bool
 	AuthorKind   authorkind.Kind
+	// ManualMerge is true when the lane's rule leaves no unattended way to
+	// merge this head (workflow / action files edited, tests removed, a
+	// human-merge path touched): a review approval or `/hive approve` does
+	// not override it, only a person merging does (hivecommons/hive#13087).
+	ManualMerge bool
 }
 
 // HoldLabels are the modifier labels that turn a human hand-off into a
@@ -161,12 +166,15 @@ type Route struct {
 	// Summary is the one-line evidence digest for comments:
 	// "verdict approved @abc1234, 55/55 checks green, DCO yes, soak 2h elapsed".
 	Summary string
-	// Head, SelfAuthored and Verdict carry the evidence DecisionComment
-	// needs to name the concrete actions a maintainer has on a hive-authored
-	// PR parked on `requires_human` (hivecommons/hive#13041).
+	// Head, SelfAuthored, Verdict, Holds, Sentinel and ManualMerge carry the
+	// evidence DecisionComment needs to name the concrete action that clears
+	// an 085 park (hivecommons/hive#13041, hivecommons/hive#13087).
 	Head         string
 	SelfAuthored bool
 	Verdict      VerdictState
+	Holds        []string
+	Sentinel     bool
+	ManualMerge  bool
 }
 
 // Lane-vocabulary reasons RouteHuman emits for the fixing stages.
@@ -244,7 +252,8 @@ func RouteHuman(e Evidence) Route {
 		decide = append(decide, "the automerge lane will not merge this unattended")
 	}
 	if len(decide) > 0 {
-		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict}
+		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict,
+			Holds: append([]string(nil), e.Holds...), Sentinel: e.Sentinel, ManualMerge: e.ManualMerge}
 	}
 	var wait []string
 	switch {
@@ -393,19 +402,57 @@ func DecisionComment(r Route) string {
 		b.WriteString("\n\n")
 		b.WriteString(actions)
 	}
-	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own.</sub>")
+	b.WriteString("\n\n<sub>Clear the cause and the hive re-evaluates on its next pass; the stage moves to `" + ReadyForHumanMerge.Label() + "`, `" + PreMergeSoak.Label() + "` or the merge queue on its own. An approval does not bypass CI, hold labels or other merge gates.</sub>")
 	return b.String()
 }
 
-// DecisionActions names the two things a maintainer can do with a
-// hive-authored PR the swarm parked on `requires_human`: approve the head
-// to merge it as-is, or request changes — by review or `/hive decision` —
-// and the hive pushes the fix (hivecommons/hive#13041). Empty for every
-// other 085 route: a hold label or sentinel alert has its own remedy, and
-// the hive does not push to a PR it did not open.
+// DecisionActions names what clears an 085 park, per lane
+// (hivecommons/hive#13041, hivecommons/hive#13087). Empty when the route
+// is not 085 or nothing here applies, so the comment stays as it was.
+//
+//   - A lane whose rule allows no unattended merge (ManualMerge) is named
+//     first and alone: approvals and `/hive approve` do not override it.
+//   - `requires_human` on a hive-authored PR: approve the head (GitHub
+//     review, or a `/hive approve` reply posted after the verdict) to merge
+//     as-is, or request changes (review or `/hive decision`) and the hive
+//     pushes the fix.
+//   - `requires_human` on any other PR: a trusted merger's approving review
+//     on the head, or their `/hive approve` reply posted after the verdict,
+//     releases it; the hive does not push to a PR it did not open.
+//   - A `hold`-class label or sentinel alert names the label a person must
+//     clear; `/hive approve` does not remove labels.
 func DecisionActions(r Route) string {
-	if r.Stage != NeedsDecision || !r.SelfAuthored || r.Verdict != VerdictRequiresHuman {
+	if r.Stage != NeedsDecision {
 		return ""
 	}
-	return "**What to do:** approve this head (`" + ShortSHA(r.Head) + "`) to merge as-is, or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix."
+	if r.ManualMerge {
+		return "**What to do:** a maintainer must review and merge this PR manually; an approving review or `/hive approve` does not override this lane's manual-merge rule."
+	}
+	var steps []string
+	if r.Verdict == VerdictRequiresHuman {
+		head := "`" + ShortSHA(r.Head) + "`"
+		if r.SelfAuthored {
+			steps = append(steps, "approve this head ("+head+") to merge as-is — a GitHub **Approve** review, or a `/hive approve` reply posted after the verdict — or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix")
+		} else {
+			steps = append(steps, "a trusted merger approves this head ("+head+") — a GitHub **Approve** review, or a `/hive approve` reply posted after the verdict — and the hive re-evaluates on its next pass; the PR author cannot release their own PR, and the hive does not push to a PR it did not open")
+		}
+	}
+	if r.Sentinel {
+		steps = append(steps, "resolve the sentinel alert and have a maintainer clear its label")
+	}
+	for _, h := range r.Holds {
+		steps = append(steps, "resolve the reason for `"+h+"` and have a maintainer remove that label (`/hive approve` does not remove it)")
+	}
+	if len(steps) == 0 {
+		return ""
+	}
+	if len(steps) == 1 {
+		return "**What to do:** " + steps[0] + "."
+	}
+	var b strings.Builder
+	b.WriteString("**What to do:**\n")
+	for _, s := range steps {
+		b.WriteString("\n- " + s + ".")
+	}
+	return b.String()
 }

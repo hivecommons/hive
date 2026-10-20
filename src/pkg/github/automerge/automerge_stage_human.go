@@ -79,6 +79,18 @@ func humanVerdict(v ContributorLaneVerdict) stagelabels.VerdictState {
 	return stagelabels.VerdictPending
 }
 
+// manualMergeReason reports whether a lane reason leaves no unattended way
+// to merge: CI workflow / action files edited, tests removed, or a
+// human-merge path touched. An approval or `/hive approve` never overrides
+// these, so the 085 comment says a person must merge (hivecommons/hive#13087).
+func manualMergeReason(reason string) bool {
+	switch reason {
+	case contributorLaneReasonWorkflowPath, contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
+		return true
+	}
+	return false
+}
+
 // humanConflictReasons are lane reasons that mean the head does not merge
 // cleanly.
 var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable": true, "label:needs-rebase": true}
@@ -97,6 +109,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 		AuthorKind:       obs.AuthorKind,
+		ManualMerge:      manualMergeReason(obs.Reason),
 	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
