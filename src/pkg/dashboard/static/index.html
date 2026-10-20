@@ -1369,6 +1369,7 @@
     .ham-since { flex: 0 0 auto; width: 4em; text-align: right; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
     .ham-since.ham-stalled { color: var(--red); }
     .ham-kind-ico { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-faint); }
+    .ham-repo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-ref { color: var(--muted); text-decoration: none; white-space: nowrap; }
     .ham-ref:hover { text-decoration: underline; color: var(--text); }
     .ham-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -13101,10 +13102,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // "[author icon] #N title" for the PR in progress column of the title line.
     // tip, when given, replaces the default "title / Author" hover text.
-    function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
+    function stageTrackerPRRef(number, url, authorKind, author, title, tip, repo) {
       const ak = authorKind || 'hive';
       const who = ak + (author ? ' · @' + author : '');
-      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc(tip || ((title ? title + '\n' : '') + 'Author: ' + who))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
+      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc(tip || ((title ? title + '\n' : '') + 'Author: ' + who))}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}${repo ? `<span class="ham-repo">${esc(repo)}</span>` : ''}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
     }
 
     // Author kind of whoever must move on the item's current stage ('' = none).
@@ -13221,10 +13222,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // A covering PR nested under its issue: "[author icon] #N title" at the
     // PR column, then the PR's own strip from PR in progress onwards. The
     // PR's full tooltip rides its link; the sub-row container has none.
-    function stageTrackerSubRowHtml(lp, issue, stages, nowMs) {
-      const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+    function stageTrackerSubRowHtml(lp, issue, stages, nowMs, hideRepo) {
+      const pr = { repo: lp.repo || issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
-      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs), !hideRepo && pr.repo !== issue.repo ? pr.repo : '');
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
@@ -13266,20 +13267,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nowMs = Number(ctx.nowMs) || Date.now();
       const isIssue = item.kind === 'issue';
       const title = item.title || '';
+      const hideRepo = !!ctx.hideRepo || !item.repo;
       let prRefs = [], shown = item, range = null, subs = '';
       if (isIssue) {
         const linked = stageTrackerLinkedSorted(item, stages);
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
-          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title)];
+          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title, '', !hideRepo && lp.repo && lp.repo !== item.repo ? lp.repo : '')];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
           range = { to: 20 };
           if (stageTrackerAnchor(item.stage, stages, item.kind) <= 20) shown = Object.assign({}, item, { stage: 40 });
-          subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
+          subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs, hideRepo)).join('');
         }
       }
       // A PR is never its own parent: a standalone PR is named once, on the
@@ -13291,7 +13293,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
             ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
+            ${hideRepo ? '' : `<span class="ham-repo">${esc(item.repo)}</span>`}<a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
           </div>`, stageTrackerChipsHtml(shown))}
         </div>
@@ -13586,7 +13588,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`);
         return;
       }
-      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
+      // The repo label only helps when rows from several repos can be on screen.
+      const hideRepo = !!f.repo || new Set(d.items.map(it => it.repo)).size < 2;
+      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, { nowMs, hideRepo })).join('');
       setIfChanged(el, html);
     }
 
