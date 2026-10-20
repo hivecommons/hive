@@ -7503,6 +7503,7 @@
     async function updateFeedbackPreview() { const el = document.getElementById('feedback-preview'); if (!el) return; const payload = await buildFeedbackPayload(); const preview = Object.assign({}, payload); preview.screenshots = (payload.screenshots || []).map((_, i) => '[screenshot ' + (i+1) + ']'); if (!payload.include_diagnostics) { delete preview.diagnostics; delete preview.console_errors; delete preview.failed_api_calls; } el.textContent = JSON.stringify(preview, null, 2); }
     async function submitFeedbackReport() {
       const btn = document.getElementById('feedback-submit'); if (btn) btn.disabled = true;
+      let responded = false;
       try {
         const usernameField = document.getElementById('feedback-github-username');
         const rawUsername = usernameField ? usernameField.value.trim() : '';
@@ -7515,15 +7516,16 @@
         if (!payload.title.trim() || !payload.description.trim()) { showToast('Title and description are required', 'error'); return; }
         if (!payload.include_diagnostics) { payload.diagnostics = null; payload.console_errors = []; payload.failed_api_calls = []; }
         const r = await fetch('/api/feedback/report', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        responded = true;
         const raw = await r.text();
         let data = {};
         try { data = JSON.parse(raw) || {}; } catch {}
-        if (!r.ok) throw new Error('HTTP ' + r.status + (r.statusText ? ' ' + r.statusText : '') + ' from /api/feedback/report: ' + (data.error || feedbackStripQuery(raw).replace(/\s+/g, ' ').trim().slice(0, 200) || 'no error detail returned; check the hive server logs'));
+        if (!r.ok) throw new Error('HTTP ' + r.status + (r.statusText ? ' ' + r.statusText : '') + ' from /api/feedback/report: ' + (data.error || String(raw).replace(/\s+/g, ' ').trim().slice(0, 200) || 'no error detail returned; check the hive server logs'));
         if (!data.prefill_url) throw new Error('the hive did not return a prefilled issue link');
         try { localStorage.removeItem(FEEDBACK_DRAFT_KEY); } catch {}
         renderFeedbackPrefillResult(data);
         loadFeedbackReports(false);
-      } catch (e) { showToast('Feedback failed: ' + ((e && e.message) || String(e)) + (/^HTTP /.test((e && e.message) || '') ? '' : ' (before the request completed; see the browser console)'), 'error'); }
+      } catch (e) { console.error('feedback submission failed', e); showToast('Feedback failed: ' + ((e && e.message) || String(e)) + (responded ? '' : ' (before the request completed; see the browser console)'), 'error'); }
       finally { if (btn) btn.disabled = false; }
     }
     // Zero-scope handoff (#1927): open the prefilled GitHub issue in a new tab so

@@ -399,8 +399,14 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	if !strings.Contains(html, `data-arg0="submit">New report</button>`) {
 		t.Fatal("feedback form tab is not labelled New report")
 	}
-	if !strings.Contains(submit, "'HTTP ' + r.status") || !strings.Contains(submit, "data.error") {
-		t.Fatal("feedback failure toast must include the HTTP status and the server error message")
+	if !strings.Contains(submit, "' from /api/feedback/report: ' + (data.error || String(raw)") {
+		t.Fatal("feedback failure toast must include the HTTP status and the server error message (or the raw non-JSON body)")
+	}
+	if strings.Contains(submit, "feedbackStripQuery(raw)") {
+		t.Fatal("the raw error body must not go through the URL query stripper; it would truncate at ? or #")
+	}
+	if !strings.Contains(submit, "console.error('feedback submission failed', e)") {
+		t.Fatal("submission failures must be logged to the browser console")
 	}
 	unread := jsFunctionBody(t, html, "function feedbackUnreadCount(items)")
 	if !strings.Contains(unread, "updated_at > item.last_seen_updated_at") {
