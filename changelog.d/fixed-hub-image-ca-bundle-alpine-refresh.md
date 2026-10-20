@@ -1,0 +1,1 @@
+- Fixed the hub image build failing once Alpine's `ca-certificates-20261020-r0` dropped the withdrawn emSign ECC Root CA - G3 entry: the distrust step now runs only when the entry is still shipped and keeps asserting the root is absent from the regenerated bundle.
