@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -288,5 +289,202 @@ func TestHivesHubRefreshErrorsAndJSON(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "unavailable") {
 		t.Fatalf("output = %q", h.out.String())
+	}
+}
+
+func TestHivesHubAdoptHiveSelectionMergesReviewed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/hives" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"hives":[
+			{"project_name":"Alpha","hub_url":"wss://alpha.example/contribute"},
+			{"project_name":"Beta","hub_url":"wss://beta.example/contribute"}
+		]}`))
+	}))
+	defer server.Close()
+
+	h := newHivesHarness(t)
+	h.seed(t, &hivectl.ProfileSet{
+		Version: hivectl.ProfilesVersion,
+		Hubs:    []hivectl.HubEntry{{Name: "commons", URL: server.URL, Follow: hivectl.HubFollowCurrent}},
+	})
+	if err := h.run(t, "", "hives", "hub", "adopt", "commons", "--follow", hivectl.HubFollowOff, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "", "hives", "remove", "alpha", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "", "hives", "hub", "adopt", "commons", "--hive", "wss://beta.example/contribute", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	set := h.profiles(t)
+	if got, want := set.Hubs[0].Reviewed, []string{"https://alpha.example", "https://beta.example"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviewed = %v, want %v (narrowed adopt must merge, not replace)", got, want)
+	}
+
+	beforeCalls := len(h.reg.calls)
+	if err := h.run(t, "", "hives", "hub", "follow", "commons", "--mode", hivectl.HubFollowCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "", "hives", "hub", "refresh", "commons", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.reg.calls) != beforeCalls {
+		t.Fatalf("refresh re-enrolled a removed, already reviewed Hive: %v", h.reg.calls[beforeCalls:])
+	}
+	if !strings.Contains(h.out.String(), "not onboarded") {
+		t.Fatalf("refresh output = %q", h.out.String())
+	}
+	if m := mergeReviewedIDs([]string{"wss://b.example/x", "::bad"}, []string{"https://a.example", "https://b.example"}); !reflect.DeepEqual(m, []string{"::bad", "https://a.example", "https://b.example"}) {
+		t.Fatalf("mergeReviewedIDs = %v", m)
+	}
+}
+
+func TestHivesHubRefreshEnrollmentFailuresAndJSON(t *testing.T) {
+	var server *httptest.Server
+	repositoriesOK := false
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/hives":
+			_, _ = w.Write([]byte(`{"hives":[{"project_name":"Acme","hub_url":"` + server.URL + `/contribute"}]}`))
+		case "/api/contribute/repositories":
+			if !repositoriesOK {
+				http.Error(w, "nope", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"repositories":[{"id":"github/github.com/acme/repo"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	h := newHivesHarness(t)
+	h.seed(t, &hivectl.ProfileSet{
+		Version: hivectl.ProfilesVersion,
+		Hubs:    []hivectl.HubEntry{{Name: "commons", URL: server.URL, Follow: hivectl.HubFollowCurrent}},
+	})
+	assertNothingRecorded := func(step string) {
+		t.Helper()
+		set := h.profiles(t)
+		if len(set.Profiles) != 0 || len(set.Hubs[0].Reviewed) != 0 {
+			t.Fatalf("%s: failed enrollment was recorded: profiles=%+v reviewed=%v", step, set.Profiles, set.Hubs[0].Reviewed)
+		}
+	}
+
+	err := h.run(t, "", "-o", "json", "hives", "hub", "refresh", "commons")
+	if err == nil || !strings.Contains(err.Error(), "repository discovery failed") {
+		t.Fatalf("repository discovery err = %v", err)
+	}
+	if !strings.Contains(h.out.String(), `"status"`) || !strings.Contains(h.out.String(), "repository discovery failed") || len(h.reg.calls) != 0 {
+		t.Fatalf("json output = %q, calls = %v", h.out.String(), h.reg.calls)
+	}
+	assertNothingRecorded("repository discovery failure")
+
+	repositoriesOK = true
+	h.reg.errorsByBase = map[string]error{server.URL: errors.New("acme is offline")}
+	err = h.run(t, "", "-o", "json", "hives", "hub", "refresh", "commons")
+	if err == nil || !strings.Contains(err.Error(), "acme is offline") {
+		t.Fatalf("registration err = %v", err)
+	}
+	if !strings.Contains(h.out.String(), "registration failed") {
+		t.Fatalf("json output = %q", h.out.String())
+	}
+	assertNothingRecorded("registration failure")
+
+	h.reg.errorsByBase = nil
+	if err := h.run(t, "", "-o", "json", "hives", "hub", "refresh", "commons"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), `"ready"`) {
+		t.Fatalf("json output = %q", h.out.String())
+	}
+	set := h.profiles(t)
+	if len(set.Profiles) != 1 || len(set.Hubs[0].Reviewed) != 1 {
+		t.Fatalf("retry did not enroll: profiles=%+v reviewed=%v", set.Profiles, set.Hubs[0].Reviewed)
+	}
+	acme := set.Profiles[0]
+	if acme.Selection == nil || acme.Selection.Mode != hivectl.SelectionAllCurrent || acme.Selection.FollowNewRepositories {
+		t.Fatalf("follow=current selection = %+v", acme.Selection)
+	}
+
+	beforeCalls := len(h.reg.calls)
+	if err := h.run(t, "", "hives", "hub", "refresh", "commons"); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.reg.calls) != beforeCalls {
+		t.Fatalf("idempotent refresh re-registered: %v", h.reg.calls[beforeCalls:])
+	}
+}
+
+func TestHivesHubEnrollAmbiguousProfilesAndNoopFollow(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/hives":
+			_, _ = w.Write([]byte(`{"hives":[{"project_name":"Dup","hub_url":"wss://dup.example/contribute"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	h := newHivesHarness(t)
+	h.seed(t, &hivectl.ProfileSet{
+		Version: hivectl.ProfilesVersion,
+		Profiles: []hivectl.Profile{
+			{Name: "dup-a", Hub: "wss://dup.example/contribute", ContributorID: "a", RegistrationToken: "ta"},
+			{Name: "dup-b", Hub: "wss://dup.example/contribute", ContributorID: "b", RegistrationToken: "tb"},
+		},
+		Hubs: []hivectl.HubEntry{{Name: "commons", URL: server.URL, Follow: hivectl.HubFollowCurrent}},
+	})
+
+	err := h.run(t, "", "hives", "hub", "adopt", "commons", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "multiple contributor profiles") || len(h.reg.calls) != 0 {
+		t.Fatalf("ambiguous adopt err = %v, calls = %v", err, h.reg.calls)
+	}
+	err = h.run(t, "", "-o", "json", "hives", "hub", "refresh", "commons")
+	if err == nil || !strings.Contains(err.Error(), "multiple contributor profiles") {
+		t.Fatalf("ambiguous refresh err = %v", err)
+	}
+	if !strings.Contains(h.out.String(), "unavailable") {
+		t.Fatalf("refresh output = %q", h.out.String())
+	}
+	if got := h.profiles(t).Hubs[0].Reviewed; len(got) != 0 {
+		t.Fatalf("ambiguous Hive was recorded as reviewed: %v", got)
+	}
+
+	if err := h.run(t, "", "hives", "hub", "follow", "commons", "--mode", hivectl.HubFollowCurrent); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), "already follows") {
+		t.Fatalf("noop follow output = %q", h.out.String())
+	}
+}
+
+func TestHivesHubAdoptJSONFailureWithoutPolicyChange(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/hives" {
+			_, _ = w.Write([]byte(`{"hives":[{"project_name":"Acme","hub_url":"` + server.URL + `/contribute"}]}`))
+			return
+		}
+		http.Error(w, "nope", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	h := newHivesHarness(t)
+	h.seed(t, &hivectl.ProfileSet{
+		Version: hivectl.ProfilesVersion,
+		Hubs:    []hivectl.HubEntry{{Name: "commons", URL: server.URL, Follow: hivectl.HubFollowCurrent}},
+	})
+	err := h.run(t, "", "-o", "json", "hives", "hub", "adopt", "commons", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "hub adoption:") || strings.Contains(err.Error(), "completed with failures") {
+		t.Fatalf("err = %v (nothing changed, so this must not report a partial success)", err)
+	}
+	if !strings.Contains(h.out.String(), "repository discovery failed") || len(h.reg.calls) != 0 {
+		t.Fatalf("json output = %q, calls = %v", h.out.String(), h.reg.calls)
 	}
 }

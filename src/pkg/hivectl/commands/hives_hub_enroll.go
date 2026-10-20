@@ -221,6 +221,12 @@ func (e *commandEnv) runHivesHubAdopt(cmd *cobra.Command, name string, opts *hiv
 		row.Profile = profile.Name
 		changed = true
 	}
+	if len(opts.hives) > 0 {
+		// A narrowed --hive adoption reviews only the selected Hives; keep the
+		// IDs reviewed by earlier runs so a later refresh does not treat them
+		// (including ones deliberately removed with `hives remove`) as new.
+		reviewed = mergeReviewedIDs(hub.Reviewed, reviewed)
+	}
 	reviewed = filterReviewedIDs(reviewed, failedReview)
 	if !sameStrings(hub.Reviewed, reviewed) {
 		hub.Reviewed = reviewed
@@ -624,6 +630,26 @@ func sortedReviewedIDs(ids []string) []string {
 	out := append([]string(nil), ids...)
 	sort.Strings(out)
 	return out
+}
+
+// mergeReviewedIDs returns the sorted, de-duplicated union of two reviewed ID
+// lists. Entries that fail to normalise are kept verbatim so a hand-edited
+// profiles.yml never loses data here; load-time validation reports them.
+func mergeReviewedIDs(previous, current []string) []string {
+	seen := make(map[string]struct{}, len(previous)+len(current))
+	merged := make([]string, 0, len(previous)+len(current))
+	for _, id := range append(append([]string(nil), previous...), current...) {
+		if normalized, err := hivectl.NormalizeHiveID(id); err == nil {
+			id = normalized
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		merged = append(merged, id)
+	}
+	sort.Strings(merged)
+	return merged
 }
 
 func hubReviewedSet(ids []string) map[string]bool {

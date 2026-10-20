@@ -872,7 +872,10 @@ printed profile exports. Schema version remains 1.
 `hivectl hives hub show NAME` is read-only discovery from `GET HUB/api/hives`.
 `hub adopt NAME` reviews every advertised Hive, reuses matching profiles by
 normalized HTTP origin, and registers only new Hives after confirmation. Use
-`--hive URL` more than once to narrow the review. `--follow off` leaves a new
+`--hive URL` more than once to narrow the review; a narrowed adoption merges
+the selected Hives into `hubs[].reviewed` and keeps every Hive reviewed by an
+earlier run, so a later `hub refresh` never re-enrolls a Hive you reviewed and
+then removed with `hives remove`. `--follow off` leaves a new
 profile without a repository selection; `--follow current` snapshots
 `GET /api/contribute/repositories`; `--follow current-and-future-repos` also
 records permission to follow future repository additions. Without `--yes`,

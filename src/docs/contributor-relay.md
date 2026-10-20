@@ -523,6 +523,20 @@ From a fresh checkout, `just contribute-tui` and `just contribute-hives` share `
 
 See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
 
+### Onboarding a whole hub's Hives (`hivectl hives hub`)
+
+A hub that publishes a federation registry can be tracked as a discovery collection, so you do not run `hives add` once per Hive. Tracking stores only the hub's name and URL in `profiles.yml` — never a credential — and each Hive is still registered through the same per-Hive registration and identity flow as `hives add`:
+
+```bash
+hivectl hives hub add commons --url https://hub.example             # track it, store no credential
+hivectl hives hub show commons                                      # read-only: which Hives it advertises
+hivectl hives hub adopt commons                                     # review the list, confirm, enroll missing Hives
+hivectl hives hub follow commons --mode current-and-future-repos    # policy for Hives it advertises later
+hivectl hives hub refresh commons                                   # apply the policy: additions and removals, shown separately
+```
+
+`adopt` prompts before any registration (`--yes` skips the prompt for scripted setups). `follow` only records the hub's `follow` policy (`off`, `current`, `current-and-future-repos`); it is applied by `refresh`, not by a background poller. `refresh` enrolls newly advertised Hives within that policy, lists Hives the hub no longer advertises as `no longer advertised`, and never removes a profile for you. See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the `hubs:` schema and the exact confirmation rules.
+
 ## Moving the relay to another machine
 
 Nothing binds a contributor identity to a machine. Authentication is a plain token-hash lookup — no device binding, no IP pinning, no session affinity — so the same `contributor.env` authenticates from anywhere. Only one relay should run at a time per identity, but *which* machine it runs on is yours to choose: a desktop today, a VM or a sandbox tomorrow, and back again.
