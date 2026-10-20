@@ -98,6 +98,11 @@ type ProfileSet struct {
 	Profiles         []Profile          `yaml:"profiles"`
 	Presets          []PresetProvenance `yaml:"presets,omitempty" json:"-"`
 	RepoScopeVersion uint64             `yaml:"repo_scope_version,omitempty" json:"-"`
+
+	// revision is the content hash of the profiles.yml this set was read
+	// from or last written to; "" for a set that never touched the file.
+	// See Revision and ProfileStore.CommitExpecting.
+	revision string
 }
 
 // ProfileStore reads and writes profiles.yml and its contributor.env
@@ -475,6 +480,7 @@ func (s *ProfileStore) Load() (*ProfileSet, error) {
 	if err := set.Validate(); err != nil {
 		return nil, fmt.Errorf("hive profiles %s: %w", s.Path(), err)
 	}
+	set.revision = profilesRevision(data)
 	return &set, nil
 }
 
@@ -498,7 +504,12 @@ func (s *ProfileStore) Save(set *ProfileSet) error {
 	header := "# Named hive profiles for the Hive contributor relay (hivectl hives).\n" +
 		"# Holds live registration tokens — keep this file mode 0600.\n" +
 		"# contributor.env in this directory is GENERATED from this file.\n"
-	return s.writeFile(s.Path(), "profiles-*.yml.tmp", append([]byte(header), data...))
+	content := append([]byte(header), data...)
+	if err := s.writeFile(s.Path(), "profiles-*.yml.tmp", content); err != nil {
+		return err
+	}
+	set.revision = profilesRevision(content)
+	return nil
 }
 
 // LoadOrMigrate returns the profile set, migrating a legacy positional

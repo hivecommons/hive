@@ -58,7 +58,7 @@ func (s *stubHivesStore) LoadOrMigrate() (*hivectl.ProfileSet, bool, error) {
 	return s.set, false, s.loadErr
 }
 
-func (s *stubHivesStore) Commit(set *hivectl.ProfileSet) error {
+func (s *stubHivesStore) CommitExpecting(set *hivectl.ProfileSet, _ string) error {
 	s.set = set
 	return s.commitErr
 }

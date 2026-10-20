@@ -427,3 +427,64 @@ func TestNewHivesWebCommandDefaults(t *testing.T) {
 		t.Fatalf("addr flag = %#v", flag)
 	}
 }
+
+func TestCommonsWebRejectsAnEditReviewedAgainstAStaleRevision(t *testing.T) {
+	server, store, signals := newCommonsWebHarness(t, twoHives())
+	defer server.Close()
+
+	_, reviewed := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
+	if reviewed.Revision == "" {
+		t.Fatal("listing carries no revision")
+	}
+	// Another surface (CLI/TUI) commits while the page is open.
+	set, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set.SetCommonsStrategy(hivectl.CommonsStrategySpread); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitExpecting(set, set.Revision()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := commonsReq(t, server, http.MethodPost, "/api/strategy", commonsStrategyRequest{Strategy: hivectl.CommonsStrategyNeediest})
+	req.Header.Set("If-Match", reviewed.Revision)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body.String(), "renewed review") {
+		t.Fatalf("stale edit status/body = %d %q, want 409 requiring renewed review", resp.StatusCode, body.String())
+	}
+	after, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || signals.Load() != 0 {
+		t.Fatalf("stale edit wrote profiles.yml or signalled the relay (signals=%d)", signals.Load())
+	}
+
+	_, fresh := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
+	req = commonsReq(t, server, http.MethodPost, "/api/strategy", commonsStrategyRequest{Strategy: hivectl.CommonsStrategyNeediest})
+	req.Header.Set("If-Match", fresh.Revision)
+	resp, err = server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out commonsWebListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || out.Strategy != hivectl.CommonsStrategyNeediest || out.Revision == fresh.Revision {
+		t.Fatalf("fresh edit status/strategy/revision = %d %s %q", resp.StatusCode, out.Strategy, out.Revision)
+	}
+}

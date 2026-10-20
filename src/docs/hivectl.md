@@ -999,6 +999,12 @@ Notes:
   rows or use ↑/↓ to rank them, and choose `ranked`, `spread` or `neediest`.
   The API and HTML never return registration tokens; the printed URL carries a
   short-lived local UI token and should not be shared.
+- **Concurrent edits are never silently lost.** The CLI, the TUI and the web
+  UI all commit `profiles.yml` under a shared owner-only lock file
+  (`profiles.yml.lock`) and only if the file is still the revision they loaded.
+  If another surface changed it in the meantime, nothing is written: the CLI
+  and TUI ask you to re-run or retry, and the web UI answers `409` asking you
+  to reload and review the current hives.
 - **`use`, `move` and `strategy` switch a running relay.** They regenerate the
   projection, then signal the relay advertised in `contributor-relay.pid` (or
   its recorded docker/podman container) to reload `contributor.env`. The task
