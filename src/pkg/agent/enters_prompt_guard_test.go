@@ -38,9 +38,8 @@ func (b *syncBuffer) String() string {
 }
 
 // entersGuardManager builds a manager whose visible-pane seam serves the given
-// pane content and whose logger records into the returned buffer. The agent's
-// session does not exist, so the raw Enter sends are harmless no-ops — the
-// behaviour under test is the guard's early return, observable in the log.
+// pane content and whose logger records into the returned buffer. Terminal
+// writes are no-ops; the guard's early return is observable in the log.
 func entersGuardManager(t *testing.T, pane string) (*Manager, *AgentProcess, *syncBuffer) {
 	t.Helper()
 	logBuf := &syncBuffer{}

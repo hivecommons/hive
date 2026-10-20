@@ -41,6 +41,7 @@ agents.<key>.connections[].uri # TODO #11854
 agents.<key>.continuous # TODO #11854
 agents.<key>.continuous_budget_pct # TODO #11854
 agents.<key>.continuous_cooldown # TODO #11854
+agents.<key>.continuous_turn_ceiling # TODO #11854
 agents.<key>.converse # TODO #11854
 agents.<key>.definition_source.owner # TODO #11854
 agents.<key>.definition_source.path # TODO #11854
@@ -356,6 +357,7 @@ project.repo_policies[].acmm_last_automatic.to # TODO #11854
 project.repo_policies[].acmm_level # TODO #11854
 project.repo_policies[].acmm_pinned # TODO #11854
 project.repo_policies[].auto_merge # TODO #11854
+project.repo_policies[].companion_repos[] # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
 project.repo_policies[].release_on_approve # TODO #12635

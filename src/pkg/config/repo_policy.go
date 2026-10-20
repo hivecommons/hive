@@ -28,6 +28,12 @@ type RepoPolicy struct {
 	ACMMLevel         *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
 	ACMMPinned        bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
 	ACMMLastAutomatic *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	// CompanionRepos lists sibling repositories (bare or org-qualified) this
+	// repo's tooling expects checked out beside it under the agent workspace
+	// root, at <root>/<org>/<companion> (hivecommons/hive#13059). Agents are
+	// told to clone them alongside the primary checkout instead of parking
+	// when a repo-local tool reports the path missing.
+	CompanionRepos []string `yaml:"companion_repos,omitempty" json:"companion_repos,omitempty"`
 }
 
 // Per-repo merge strategies (hivecommons/hive#10886). The strategy decides how
@@ -364,7 +370,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && len(rp.LabelDrivenApprovalLabels) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.CompanionRepos) == 0
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
@@ -492,6 +498,34 @@ func (c *Config) SetRepoMergeStrategyForRepoAndSave(repo, strategy string) (bool
 		return false, nil
 	}
 	return true, c.saveLocked()
+}
+
+// CompanionReposFor returns the org-qualified companion repositories
+// configured for repo via project.repo_policies[].companion_repos, in config
+// order, deduplicated case-insensitively, with the repo itself and malformed
+// entries dropped. Nil when none are configured.
+func (c *Config) CompanionReposFor(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || len(rp.CompanionRepos) == 0 {
+		return nil
+	}
+	self := repoPauseKey(c.Project.Org, repo)
+	seen := map[string]bool{self: true}
+	var out []string
+	for _, raw := range rp.CompanionRepos {
+		full := QualifyRepo(c.Project.Org, raw)
+		owner, name, found := strings.Cut(full, "/")
+		if !found || strings.TrimSpace(owner) == "" || strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
+			continue
+		}
+		key := strings.ToLower(full)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, full)
+	}
+	return out
 }
 
 // ReporterTrustHoldEnabledForRepo resolves the #9665 reporter-trust hold for

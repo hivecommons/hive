@@ -147,6 +147,11 @@ jobs:
           QUEUE_STALL_MINUTES: ${{ env.QUEUE_STALL_MINUTES }}
           QUEUE_ZOMBIE_HOURS: ${{ env.QUEUE_ZOMBIE_HOURS }}
         with:
+          # A transient jobs API 502 must not immediately report a pool outage
+          # when the runner probes pass (#12973). Retry these read-only calls;
+          # exhausted retries still fail the watchdog within its job timeout.
+          retries: 3
+          retry-exempt-status-codes: 400,401,403,404,422
           script: |
             const {owner, repo} = context.repo;
             const pickupMs = Number(process.env.CANARY_PICKUP_MINUTES) * 60_000;

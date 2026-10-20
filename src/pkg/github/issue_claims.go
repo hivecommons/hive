@@ -82,6 +82,7 @@ func (c *Client) annotateIssueClaims(ctx context.Context, owner, repo string, is
 		issue.ClaimExpiresAt = &expires
 		issue.ClaimSource = claim.Source
 		issue.ClaimKind = claim.Kind
+		issue.ClaimPRStarted = claim.PRStarted
 	}
 }
 

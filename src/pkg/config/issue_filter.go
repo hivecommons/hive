@@ -44,8 +44,8 @@ const (
 	// itself, stage/045-needs-decision. It replaced the `needs-decision` and
 	// `needs-direction` labels, which said the same thing twice next to it,
 	// and (owner decision) the shared stage/085 spelling, which is PR-only
-	// now. Spelled out here because pkg/stagelabels imports this package;
-	// stagelabels tests pin the spellings together.
+	// now. Kept as constants for callers; stagelabels contract tests pin
+	// the spellings together.
 	DefaultNeedsDecisionLabel = "stage/045-needs-decision"
 	// PRNeedsDecisionStageLabel is the PR parking stage, stage/085-needs-
 	// decision. On an ISSUE it is the retired pre-045 spelling: every reader

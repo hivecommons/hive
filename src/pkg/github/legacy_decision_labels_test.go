@@ -1,8 +1,10 @@
 package github
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -94,5 +96,47 @@ func TestSyncIssueStageLabels_RetiresLegacyDefinitionsOnlyWhenUncarried(t *testi
 	res = syncSeeded(fake, c, clean, store, stageNow())
 	if res.LegacyDecisionDefinitionsDeleted != 0 {
 		t.Fatalf("definition retirement re-ran: %+v", res)
+	}
+}
+
+// hivecommons/hive#12983: definition retirement is housekeeping, so while the
+// shared rate-limit caution window is engaged it makes no request (and does
+// not mark the repo done); once the window lapses it runs as before.
+func TestRetireLegacyDecisionLabelDefinitions_DefersDuringCautionWindow(t *testing.T) {
+	t.Cleanup(ResetRateLimitPacingForTest)
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+
+	sharedSlowStartState.mu.Lock()
+	sharedSlowStartState.cautiousUntil = time.Now().Add(time.Hour)
+	sharedSlowStartState.mu.Unlock()
+	if got := c.retireLegacyDecisionLabelDefinitions(context.Background(), "acme/widgets", testLogger()); got != 0 {
+		t.Fatalf("deleted %d definitions during the caution window, want 0", got)
+	}
+	fake.mu.Lock()
+	deferred := len(fake.deletedDefs)
+	fake.mu.Unlock()
+	if deferred != 0 {
+		t.Fatalf("deleted %d definitions during the caution window", deferred)
+	}
+
+	ResetRateLimitPacingForTest()
+	if got := c.retireLegacyDecisionLabelDefinitions(context.Background(), "acme/widgets", testLogger()); got != 2 {
+		t.Fatalf("deleted %d definitions after the window lapsed, want 2", got)
+	}
+}
+
+func TestSlowStartState_Cautious(t *testing.T) {
+	st := newSlowStartState()
+	now := time.Now()
+	if st.cautious(now) {
+		t.Fatal("fresh state reports cautious")
+	}
+	st.cautiousUntil = now.Add(time.Minute)
+	if !st.cautious(now) {
+		t.Fatal("engaged window not reported")
+	}
+	if st.cautious(now.Add(2 * time.Minute)) {
+		t.Fatal("lapsed window still reported")
 	}
 }

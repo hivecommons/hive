@@ -32,6 +32,10 @@ const (
 	KickOutcomeStandDown = "stand-down"
 	KickOutcomeNoOp      = "no-op"
 	KickOutcomeEnded     = "ended"
+	// KickOutcomePresumedEnded is governor-internal: continuous mode waited
+	// past the agent's turn ceiling for a turn-end signal that never came and
+	// presumed the turn over so the next kick could be re-armed.
+	KickOutcomePresumedEnded = "presumed-ended"
 )
 
 // questionRekickDelay is how long after a question-ended turn the agent is
@@ -108,6 +112,55 @@ func (g *Governor) RecordKickOutcome(agentName, kind, reason string, kickAt, at 
 	default:
 		g.logger.Debug("kick turn ended", attrs...)
 	}
+}
+
+// presumeStaleTurnEndedLocked closes the continuous-mode liveness hole where
+// a missed turn-end signal left the agent idle forever: the kick zeroes
+// NextKick, the only re-arm path is RecordKickOutcome, and every other
+// recovery (kick-failure backoff, busy-no-activity restart) is keyed off kick
+// ATTEMPTS, which never happen while NextKick is unset. When the most recent
+// kick on cadenceKey has had no outcome for at least the agent's continuous
+// turn ceiling, a synthetic presumed-ended outcome is recorded so the normal
+// idle check passes. It returns true when it did so. Re-arming only schedules
+// a kick attempt; delivery still refuses to type into a Working pane, so a
+// genuinely long turn is never interrupted. Caller holds g.mu.
+func (g *Governor) presumeStaleTurnEndedLocked(agentName, cadenceKey string, now time.Time) bool {
+	ac, ok := g.agents[agentName]
+	if !ok {
+		return false
+	}
+	ceiling := ac.EffectiveContinuousTurnCeiling()
+	if ceiling <= 0 {
+		return false
+	}
+	lastKick := g.state.LastKick[cadenceKey]
+	if lastKick.IsZero() || now.Sub(lastKick) < ceiling {
+		return false
+	}
+	if rec, ok := g.kickOutcomes[agentName]; ok && !rec.At.Before(lastKick) {
+		return false
+	}
+	g.kickOutcomes[agentName] = KickOutcomeRecord{
+		Agent:  agentName,
+		Kind:   KickOutcomePresumedEnded,
+		Reason: "no turn-end signal within continuous_turn_ceiling " + ceiling.String(),
+		At:     now,
+		KickAt: lastKick,
+	}
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	st.PresumedTurnEnds++
+	g.state.Continuous[agentName] = st
+	if g.logger != nil {
+		g.logger.Warn("continuous turn never reported an end; presuming it over and re-arming",
+			"agent", agentName, "cadence_key", cadenceKey,
+			"kick_at", lastKick.UTC().Format(time.RFC3339),
+			"since_kick", now.Sub(lastKick).Round(time.Second).String(),
+			"ceiling", ceiling.String())
+	}
+	return true
 }
 
 func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time) {

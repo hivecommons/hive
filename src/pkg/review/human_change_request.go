@@ -1,0 +1,211 @@
+package review
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+)
+
+// HumanChangeRequestsFile is the durable record of maintainer change requests
+// on hive-authored PRs (hivecommons/hive#13041). It lives next to the dispatch
+// state on the durable data dir for the same reason: a pod restart between a
+// maintainer's review and the next planner cycle must not lose the request.
+const HumanChangeRequestsFile = "review-human-change-requests.json"
+
+// HumanChangeRequestsPath is where DefaultHumanChangeRequests persists. A
+// var so tests can point it elsewhere.
+var HumanChangeRequestsPath = filepath.Join(DefaultDispatchStateDir, HumanChangeRequestsFile)
+
+// Sources of a HumanChangeRequest.
+const (
+	// HumanChangeRequestSourceReview is a trusted human's CHANGES_REQUESTED
+	// review on the PR head.
+	HumanChangeRequestSourceReview = "review"
+	// HumanChangeRequestSourceDecision is a trusted human's `/hive decision
+	// <text>` comment on the PR while it sat at stage 085.
+	HumanChangeRequestSourceDecision = "decision"
+)
+
+// HumanChangeRequest is one maintainer instruction that sends a hive-authored
+// PR head back to its author agent: a CHANGES_REQUESTED review on the head,
+// or a `/hive decision <text>` comment while the PR waits at
+// stage/085-needs-decision. The planner turns it into a fix kick whose
+// prompt quotes Body verbatim; the self-authored automerge lane reads it as
+// "changes requested" for Head and never merges that head.
+type HumanChangeRequest struct {
+	Repo    string `json:"repo"`
+	Number  int    `json:"number"`
+	HeadSHA string `json:"head_sha"`
+	// Source is HumanChangeRequestSourceReview or ...Decision.
+	Source string `json:"source"`
+	// SourceID is the review ID or comment ID: with HeadSHA it is the
+	// dedupe key, so the same review is never recorded (or kicked) twice.
+	SourceID int64 `json:"source_id"`
+	// Actor is the maintainer's login.
+	Actor string `json:"actor"`
+	// Body is the review body or decision text, verbatim.
+	Body string `json:"body"`
+	// URL is the review's or comment's HTML URL, when known.
+	URL        string    `json:"url,omitempty"`
+	RecordedAt time.Time `json:"recorded_at"`
+}
+
+// HumanChangeRequestStore records maintainer change requests and answers
+// which one, if any, stands against a PR head. Implementations are safe for
+// concurrent use: the automerge sweep records while the planner reads.
+type HumanChangeRequestStore interface {
+	// Record stores req, replacing an earlier entry with the same
+	// (repo, number, head, source id) and dropping entries for the same PR
+	// at other heads: a new head supersedes every request on the old one.
+	Record(req HumanChangeRequest) error
+	// For returns the newest request recorded against repo#number at head.
+	For(repo string, number int, head string) (HumanChangeRequest, bool)
+}
+
+// HumanChangeRequests is the file-backed HumanChangeRequestStore. A zero
+// path keeps the store in memory only.
+type HumanChangeRequests struct {
+	path string
+
+	mu     sync.Mutex
+	loaded bool
+	items  []HumanChangeRequest
+}
+
+// NewHumanChangeRequests returns a store persisted at path ("" for memory
+// only).
+func NewHumanChangeRequests(path string) *HumanChangeRequests {
+	return &HumanChangeRequests{path: path}
+}
+
+var (
+	defaultHumanChangeRequestsOnce sync.Once
+	defaultHumanChangeRequests     *HumanChangeRequests
+)
+
+// DefaultHumanChangeRequests is the process-wide store at
+// HumanChangeRequestsPath, shared by the automerge sweep, the un-park sweep
+// and the review planner.
+func DefaultHumanChangeRequests() *HumanChangeRequests {
+	defaultHumanChangeRequestsOnce.Do(func() {
+		defaultHumanChangeRequests = NewHumanChangeRequests(HumanChangeRequestsPath)
+	})
+	return defaultHumanChangeRequests
+}
+
+func (s *HumanChangeRequests) load() {
+	if s.loaded {
+		return
+	}
+	s.loaded = true
+	if s.path == "" {
+		return
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	var items []HumanChangeRequest
+	if json.Unmarshal(data, &items) == nil {
+		s.items = items
+	}
+}
+
+func (s *HumanChangeRequests) persist() error {
+	if s.path == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(s.items, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := s.path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, s.path)
+}
+
+// Record implements HumanChangeRequestStore.
+func (s *HumanChangeRequests) Record(req HumanChangeRequest) error {
+	if s == nil {
+		return errors.New("human change request store is nil")
+	}
+	req.Repo = strings.TrimSpace(req.Repo)
+	req.HeadSHA = strings.TrimSpace(req.HeadSHA)
+	if req.Repo == "" || req.Number <= 0 || req.HeadSHA == "" {
+		return errors.New("human change request needs repo, number and head")
+	}
+	if req.RecordedAt.IsZero() {
+		req.RecordedAt = time.Now().UTC()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	kept := s.items[:0]
+	for _, item := range s.items {
+		if item.Number == req.Number && strings.EqualFold(item.Repo, req.Repo) {
+			if item.HeadSHA != req.HeadSHA || (item.Source == req.Source && item.SourceID == req.SourceID) {
+				continue
+			}
+		}
+		kept = append(kept, item)
+	}
+	s.items = append(kept, req)
+	return s.persist()
+}
+
+// For implements HumanChangeRequestStore.
+func (s *HumanChangeRequests) For(repo string, number int, head string) (HumanChangeRequest, bool) {
+	if s == nil {
+		return HumanChangeRequest{}, false
+	}
+	repo = strings.TrimSpace(repo)
+	head = strings.TrimSpace(head)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var newest HumanChangeRequest
+	found := false
+	for _, item := range s.items {
+		if item.Number != number || !strings.EqualFold(item.Repo, repo) || item.HeadSHA != head {
+			continue
+		}
+		if !found || item.RecordedAt.After(newest.RecordedAt) {
+			newest = item
+			found = true
+		}
+	}
+	return newest, found
+}
+
+// Len is the number of recorded requests across all PRs and heads.
+func (s *HumanChangeRequests) Len() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	return len(s.items)
+}
+
+// HumanChangeRequestFor resolves the request standing against pr's head
+// from store (nil-safe), for callers that build review.PullRequest values.
+func HumanChangeRequestFor(store HumanChangeRequestStore, repo string, number int, head string) *HumanChangeRequest {
+	if store == nil {
+		return nil
+	}
+	req, ok := store.For(repo, number, head)
+	if !ok {
+		return nil
+	}
+	return &req
+}

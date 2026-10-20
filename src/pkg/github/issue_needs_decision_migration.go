@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -121,9 +122,16 @@ func (c *Client) MigrateIssueNeedsDecisionStage(ctx context.Context, opts IssueN
 			report.Errors = append(report.Errors, fmt.Sprintf("%s#%d: provisioning stage labels: %v", item.Repo, item.Number, err))
 			continue
 		}
-		// EnforceStage re-reads the issue and keeps its role/health labels;
-		// Plan removes the stale 085 (any stage/* not wanted) and adds 045.
-		out, err := stagelabels.EnforceStage(ctx, c.StageLabeler(), stagelabels.IssueItem, owner, name, item.Number, stagelabels.IssueNeedsDecision)
+		// The one StageWriter re-reads the issue and plans against that
+		// read: the stale 085 (any stage/* not wanted) comes off and 045 goes
+		// on; the role and `stalled` the issue wears are kept.
+		want := stagelabels.Desired{
+			Stage:   stagelabels.IssueNeedsDecision,
+			Role:    stagelabels.RoleOf(item.Labels),
+			Stalled: issueHasLabel(item.Labels, stagelabels.StalledLabel),
+		}
+		ref := stageengine.Ref{Owner: owner, Repo: name, Number: item.Number, Kind: stagelabels.IssueItem}
+		out, err := c.StageWriter().Apply(ctx, ref, item.Labels, want)
 		if err != nil {
 			report.Errors = append(report.Errors, fmt.Sprintf("%s#%d: %v", item.Repo, item.Number, err))
 			continue

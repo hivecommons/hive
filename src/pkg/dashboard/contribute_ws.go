@@ -1142,6 +1142,12 @@ type ContributeWSHub struct {
 	// contribute_blocked_tooling.go); nil means use GHClient. Tests substitute
 	// a fake.
 	toolingBlockedReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
+	// gateParkReleaser is the seam for lifting the decision label a relay
+	// applied on a needs-decision verdict that cites only the target repo's
+	// own confirmation gate (contribute_gate_park.go); nil means use
+	// GHClient. gateParkRekicks records the one re-kick each issue gets.
+	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
+	gateParkRekicks  gateParkRekicks
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -4232,6 +4238,23 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				verdict = downgraded
 				if completedTask != nil {
 					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+				}
+			}
+			// A needs-decision verdict whose reason is the target repository's
+			// OWN confirmation gate — "AGENTS.md says offer a spec and wait",
+			// "registered sibling checkout missing" — is not a decision a
+			// person must make: the dispatch was the acceptance. Book it idle
+			// so the issue is re-offered once, and lift the decision label the
+			// relay applied (hivecommons/hive#13059). The second such park on
+			// the same issue is left standing for a maintainer.
+			if completedTask != nil {
+				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, msg.VerdictReason); ok {
+					h.logger.Warn("[contribute-ws] needs-decision verdict reclassified: reason is the repository's own confirmation gate, not a maintainer decision",
+						"username", s.contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"verdict_reason", strings.TrimSpace(msg.VerdictReason))
+					verdict = downgraded
+					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 				}
 			}
 			if completedTask != nil {

@@ -211,6 +211,15 @@ type AgentConfig struct {
 	Continuous          bool          `yaml:"continuous,omitempty" json:"continuous,omitempty"`
 	ContinuousCooldown  time.Duration `yaml:"continuous_cooldown,omitempty" json:"continuous_cooldown,omitempty"`
 	ContinuousBudgetPct int           `yaml:"continuous_budget_pct,omitempty" json:"continuous_budget_pct,omitempty"`
+	// ContinuousTurnCeiling bounds how long continuous mode waits for the
+	// manager's turn-end signal after a kick before it presumes the turn
+	// over and re-arms the next kick. The signal is a pane heuristic; when
+	// it is missed the agent otherwise sits idle at its prompt forever with
+	// no kick attempts, so none of the undeliverable-kick recovery paths
+	// ever engage. A re-arm only schedules an ATTEMPT — delivery still
+	// refuses to type into a working pane. Unset uses
+	// DefaultContinuousTurnCeiling; a negative value disables the ceiling.
+	ContinuousTurnCeiling time.Duration `yaml:"continuous_turn_ceiling,omitempty" json:"continuous_turn_ceiling,omitempty"`
 
 	// ModelOwner / BackendOwner record WHO last set Model / Backend. An ACMM
 	// pack owns these fields until an operator changes them in the Governor
@@ -535,6 +544,25 @@ func (a AgentConfig) UsesRepoScopedCadence() bool { return a.CadenceScopeMode() 
 
 const DefaultContinuousCooldown = time.Minute
 const DefaultContinuousBudgetPct = 80
+
+// DefaultContinuousTurnCeiling is how long continuous mode waits for a kicked
+// turn to report an outcome before presuming it ended. It is generous enough
+// that a long genuine turn is never cut short (re-arming never interrupts
+// the agent anyway), yet bounds the idle-forever failure to well under an
+// hour instead of "until the pod restarts".
+const DefaultContinuousTurnCeiling = 45 * time.Minute
+
+// EffectiveContinuousTurnCeiling returns the presumed-turn-end bound for
+// continuous mode, or 0 when the operator disabled it with a negative value.
+func (a AgentConfig) EffectiveContinuousTurnCeiling() time.Duration {
+	switch {
+	case a.ContinuousTurnCeiling < 0:
+		return 0
+	case a.ContinuousTurnCeiling > 0:
+		return a.ContinuousTurnCeiling
+	}
+	return DefaultContinuousTurnCeiling
+}
 
 // EffectiveContinuousCooldown returns the per-agent minimum delay between a
 // detected turn end and the next continuous-mode kick. A non-positive setting

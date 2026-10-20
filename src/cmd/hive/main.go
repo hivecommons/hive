@@ -79,6 +79,7 @@ import (
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/telegram"
@@ -1462,6 +1463,7 @@ func (b *boot) wireBootClosures() {
 			},
 			Governor:          b.gov,
 			GHClient:          b.ghClient,
+			StageEngineStatus: func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
 			ReviewEvents:      b.reviewEvents,
 			GHAppAuth:         b.appAuth,
 			GHTokenScopes:     b.ghAuth.TokenScopes,
@@ -2468,6 +2470,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	autoMergeOpts := automerge.Options{
 		Logger:                  b.logger,
 		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
 		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
 		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
@@ -2476,6 +2479,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ReviewVerdictHold:       reviewVerdictHoldFunc(b.logger),
 		RecordReviewHoldRelease: reviewHoldReleaseRecorder(b.logger),
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
+		StageEngine:             stageEngineOptions(b.cfg, b.logger),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
@@ -2705,6 +2709,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			applyConfigOverrides(b.cfg, b.saved.ConfigOverrides)
 			b.ghClient.SetRepos(b.cfg.Project.Repos)
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
+			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
 				b.ghClient.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -4093,6 +4098,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 		}
 		syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
+		syncStageEngineMode(b.cfg, b.ghClient, b.logger)
 		b.gov.UpdateConfig(b.cfg.Governor)
 		if coinCfg, ok := b.cfg.Governor.Budget.CoinConfig(tokens.BackendBob); ok {
 			b.gov.SetCoinBudget(coinCfg.Budget, coinCfg.LabelOrDefault())
@@ -6067,6 +6073,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
+				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)
 				syncAutoMergePolicyToGitHubClient(b.cfg, b.ghClient)
@@ -6394,6 +6401,22 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		// a failure leaves stale labels and retries next boot.
 		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
 			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
+		}
+		// The claim "who" modifier for a human principal is the generic
+		// hive/claimed-by-human; the per-login spelling is retired (owner
+		// decision 2026-10-19). Open items still wearing a login are moved
+		// once and the per-login definitions deleted. Display only: every
+		// reader matches the prefix, so a failure leaves stale names and
+		// retries next boot.
+		claimedByOpts := github.ClaimedByHumanMigrationOptions{Logger: b.logger}
+		for name := range b.cfg.Agents {
+			claimedByOpts.AgentNames = append(claimedByOpts.AgentNames, name)
+		}
+		if b.issueClaims != nil {
+			claimedByOpts.LookupClaim = b.issueClaims.Lookup
+		}
+		if _, err := b.ghClient.MigrateClaimedByHumanLabels(b.ctx, claimedByOpts); err != nil {
+			b.logger.Warn("claimed-by-human label migration incomplete; open issues may still carry a per-login hive/claimed-by-<login> label", "error", err)
 		}
 	}
 	b.evalCycles++
@@ -7524,14 +7547,6 @@ func runEvalCycle(
 		return ""
 	})
 
-	logger.Info("governor eval complete",
-		"mode", govState.Mode,
-		"issues", govState.QueueIssues,
-		"prs", govState.QueuePRs,
-		"agents_due", agentsDue,
-		"agents_skipped", agentsSkipped,
-	)
-
 	// PROVIDER SPEND REBUFF (#4294). When the inference gateway is refusing on a
 	// money limit, every kick launched this cycle is a run that cannot buy a
 	// single token — precisely the failure this addresses: a hive that kept
@@ -7623,7 +7638,11 @@ func runEvalCycle(
 	kickActionable := applyConvergenceKickAdmission(cfg, dashSrv, actionable, notifier, logger)
 
 	sched.SetLastActionable(kickActionable)
+	// The filter compacts agentsDue in place, so snapshot it first to report
+	// the targets it withholds alongside the other skips below.
+	dueBeforeDeferral := append([]string(nil), agentsDue...)
 	agentsDue = sched.FilterFirstScanDeferredAgents(agentsDue)
+	agentsSkipped = append(agentsSkipped, firstScanDeferredSkips(dueBeforeDeferral, agentsDue)...)
 	reviewPlan := planReviewDispatch(cfg, actionable, agentMgr, beadStores, logger)
 	emitReviewHumanEscalations(reviewPlan)
 	auditWithheldReviewFixes(reviewPlan, dashSrv, logger)
@@ -7631,7 +7650,24 @@ func runEvalCycle(
 	if ghClient != nil {
 		applyReviewPriorityLabels(ctx, cfg, ghClient, reviewQueue, logger)
 	}
-	messages := sched.BuildKickMessages(kickActionable, agentsDue)
+	messages, messageSkips := sched.BuildKickMessagesWithSkips(kickActionable, agentsDue)
+	agentsSkipped = append(agentsSkipped, messageSkips...)
+	// Message construction can withhold a due kick (notably an idle reviewer
+	// lane). Report only assembled targets as due. Skipped targets dispatch
+	// nothing, so (as before) no LastKick is recorded for them and new lane
+	// work stays eligible on the next evaluation.
+	assembledTargets := make([]string, 0, len(messages))
+	for _, msg := range messages {
+		assembledTargets = append(assembledTargets, config.CadenceTargetKey(msg.Agent, msg.Repo))
+	}
+	logger.Info("governor eval complete",
+		"mode", govState.Mode,
+		"issues", govState.QueueIssues,
+		"prs", govState.QueuePRs,
+		"agents_due", assembledTargets,
+		"agents_skipped", agentsSkipped,
+	)
+
 	reviewKickByMessage := map[string]review.DispatchKick{}
 	for _, k := range append(reviewPlan.ReviewKicks, reviewPlan.FixKicks...) {
 		if !gov.AgentEligibleForCELKick(k.Agent) || agentMgr.IsPaused(k.Agent) {
@@ -8126,17 +8162,25 @@ func runEvalCycle(
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).
 				recordKick(ctx, dashSrv, msg.Agent, msg.IssueRefs...)
-				// #8380/#10527: list these issues for the kicked agent so
-				// contributors and other agents back off while the kick is
-				// live; the claim itself is recorded on the agent's first
-				// start signal (recordAgentStart), not here.
-				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+				// A review-swarm kick (review or fix) names a pull request,
+				// not an issue: its IssueRefs is the PR ref. Listing it in
+				// the issue-claims ledger made the author's next comment on
+				// its own PR an issue "start signal", so the PR was claimed
+				// as an issue and staged stage/030-pr-in-progress — an
+				// issue-only stage — until the PR sweep healed it.
+				reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
+				if !isReview {
+					// #8380/#10527: list these issues for the kicked agent so
+					// contributors and other agents back off while the kick is
+					// live; the claim itself is recorded on the agent's first
+					// start signal (recordAgentStart), not here.
+					recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+				}
 
 				// #12128: record which issue/PR/head SHA this kick was launched
 				// for, so /api/launch-cost can place the turn's spend. Review
 				// kicks carry the PR head; governor kicks carry the issue refs.
 				if tokenCollector != nil {
-					reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
 					tokenCollector.RecordLaunch(launchRecordForKick(msg, reviewKick, isReview, time.Now()))
 				}
 
@@ -9359,6 +9403,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	opts := automerge.Options{
 		Logger:                  logger,
 		MergerAuthorizer:        trustedMergerFunc(cfg),
+		HumanChangeRequests:     review.DefaultHumanChangeRequests(),
 		TrustedAuthorizer:       trustedAuthorFunc(cfg),
 		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
@@ -9367,7 +9412,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ReviewVerdictHold:       reviewVerdictHoldFunc(logger),
 		RecordReviewHoldRelease: reviewHoldReleaseRecorder(logger),
 		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
+		StageEngine:             stageEngineOptions(cfg, logger),
 	}
+	syncStageEngineMode(cfg, ghClient, logger)
 	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
 	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
 	// interface.
@@ -9817,6 +9864,18 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 				event.Repo, event.Number, event.Actor, event.Decision)
 			dashSrv.AuditLogRecord("system", "issue-unparked-by-reply", detail, "", event.Repo, event.Number)
 		},
+		// `/hive decision` on a hive-authored PR at 085 (hivecommons/hive#13041)
+		// is routed to the fix lane under the automerge lane's merger trust.
+		HumanChangeRequests: review.DefaultHumanChangeRequests(),
+		TrustedMerger:       trustedMergerFunc(cfg),
+		PRAudit: func(event github.PullRequestDecisionEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, head=%s, actor=%s, decision=%s",
+				event.Repo, event.Number, event.HeadSHA, event.Actor, event.Decision)
+			dashSrv.AuditLogRecord("system", "pr-decision-routed-to-fix", detail, "", event.Repo, event.Number)
+		},
 	})
 	if err != nil {
 		logger.Warn("issue un-park sweep failed", "error", err)
@@ -9825,9 +9884,9 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if result == nil {
 		return
 	}
-	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 {
+	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 || len(result.PRDecisions) > 0 {
 		logger.Info("issue un-park sweep complete",
-			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "replies", result.Replies, "skipped", result.Skipped)
+			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "pr_decisions", len(result.PRDecisions), "replies", result.Replies, "skipped", result.Skipped)
 	}
 }
 
@@ -9881,6 +9940,10 @@ func hiveIdentity(cfg *config.Config) github.HiveIdentity {
 	return id
 }
 
+// issueStageSyncTimeout bounds one eval pass's issue stage-label sync so a
+// rate-limit pacing queue cannot stall the run loop (hivecommons/hive#12983).
+const issueStageSyncTimeout = 2 * time.Minute
+
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
@@ -9915,7 +9978,14 @@ func applyDuplicatePRGuard(
 	// hivecommons/hive#12436: with every bucket final, mirror the cycle's
 	// decision about each open issue onto its stage/NNN label (and strip the
 	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
-	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
+	// hivecommons/hive#12983: the run loop holds cfgReloadMu for the whole
+	// pass, so bound the sync; a paced request whose slot would miss the
+	// deadline fails fast and the best-effort sync retries next cycle.
+	stageCtx, stageCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	syncStageEngineMode(cfg, ghClient, logger)
+	res := github.SyncIssueStageLabelsWith(stageCtx, ghClient, actionable, nil, time.Now(), logger, stageEngineOptions(cfg, logger))
+	stageCancel()
+	if res.Writes+res.Comments > 0 {
 		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
@@ -10415,6 +10485,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			Number:     pr.Number,
 			Title:      pr.Title,
 			Author:     pr.Author,
+			Labels:     append([]string(nil), pr.Labels...),
 			HeadSHA:    pr.HeadSHA,
 			UpdatedAt:  pr.UpdatedAt,
 			BodyDigest: pr.BodyDigest,
@@ -10436,6 +10507,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			PlanRef:       pr.HivePlan,
 			PlanWave:      planWaveFor(cfg, beadStores, pr.HivePlan, pr.HiveRun),
 			ScopeContract: pr.ScopeContract,
+			// A maintainer's changes_requested review or `/hive decision`
+			// on this head (hivecommons/hive#13041): the planner kicks the
+			// fix lane with it instead of reviewing the head again.
+			HumanChangeRequest: review.HumanChangeRequestFor(review.DefaultHumanChangeRequests(), fullRepo, pr.Number, pr.HeadSHA),
 		})
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
@@ -10470,7 +10545,6 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		FixerAgent:            cfg.Review.FixerAgent,
 		PostComments:          cfg.Review.PostComments,
 		WritingGuideSection:   cfg.Project.WritingGuideSection(),
-		AllAuthors:            cfg.Review.AllAuthors,
 		FixHumanPRs:           cfg.Review.FixHumanPRsEnabled(),
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
 		ReviseRepos:           cfg.Review.ReviseRepos,
@@ -10650,6 +10724,10 @@ type reviewFixAuditor interface {
 // hivecommons/hive#12897). The planner reports each head once, so
 // this does not repeat on every eval cycle.
 func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor, logger *slog.Logger) {
+	for _, x := range plan.FixExclusions {
+		logger.Info("review fix dispatch excluded",
+			"repo", x.Repo, "pr", x.Number, "head_sha", x.HeadSHA, "author", x.Author, "reason", x.Reason, "attempts", x.Attempts)
+	}
 	for _, w := range plan.WithheldFixes {
 		logger.Info("review fix withheld: PR not hive-authored; review published, nothing pushed",
 			"repo", w.Repo, "pr", w.Number, "head_sha", w.HeadSHA, "author", w.Author, "setting", w.Setting, "setting_enabled", w.SettingEnabled)

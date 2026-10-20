@@ -496,19 +496,19 @@ func TestTranslateAnthropicToOpenAI_MixedTextAndToolResultInUser(t *testing.T) {
 	}
 
 	if len(req.Messages) != 2 {
-		t.Fatalf("messages count = %d, want 2 (text user + tool)", len(req.Messages))
+		t.Fatalf("messages count = %d, want 2 (tool + text user)", len(req.Messages))
 	}
-	if req.Messages[0].Role != "user" {
-		t.Errorf("msg[0] role = %q, want user", req.Messages[0].Role)
+	if req.Messages[0].Role != "tool" {
+		t.Errorf("msg[0] role = %q, want tool", req.Messages[0].Role)
 	}
-	if req.Messages[0].Content != "Here's the result:" {
-		t.Errorf("msg[0] content = %q", req.Messages[0].Content)
+	if req.Messages[0].Content != "42" {
+		t.Errorf("msg[0] content = %q, want '42'", req.Messages[0].Content)
 	}
-	if req.Messages[1].Role != "tool" {
-		t.Errorf("msg[1] role = %q, want tool", req.Messages[1].Role)
+	if req.Messages[1].Role != "user" {
+		t.Errorf("msg[1] role = %q, want user", req.Messages[1].Role)
 	}
-	if req.Messages[1].Content != "42" {
-		t.Errorf("msg[1] content = %q, want '42'", req.Messages[1].Content)
+	if req.Messages[1].Content != "Here's the result:" {
+		t.Errorf("msg[1] content = %q", req.Messages[1].Content)
 	}
 }
 
@@ -697,5 +697,50 @@ func TestTranslateAnthropicToOpenAI_CLIToolsPreserved(t *testing.T) {
 	}
 	if req.Tools[0].Function.Name != "MyCustomTool" {
 		t.Errorf("tool name = %q, want MyCustomTool", req.Tools[0].Function.Name)
+	}
+}
+
+// A user message that carries a tool_result alongside text (Claude Code
+// appends <system-reminder> blocks, and text typed into the pane while a tool
+// runs lands in the same message) must put the role:"tool" messages directly
+// after the assistant tool_calls. Emitting the user text first breaks the
+// pairing: an OpenAI-compatible gateway that re-encodes for Anthropic (LiteLLM)
+// then gets "tool_use ids were found without tool_result blocks immediately
+// after" (400) on every later turn of the session.
+func TestTranslateAnthropicToOpenAI_ToolResultFollowsToolCallsWhenUserAlsoHasText(t *testing.T) {
+	for name, userContent := range map[string]string{
+		"text after tool_result":  `[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"},{"type":"text","text":"<system-reminder>r</system-reminder>"}]`,
+		"text before tool_result": `[{"type":"text","text":"typed while the tool ran"},{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"model":"claude-opus-4-6","max_tokens":1024,"messages":[
+				{"role":"user","content":"list files"},
+				{"role":"assistant","content":[{"type":"text","text":"Listing."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]},
+				{"role":"user","content":` + userContent + `}
+			]}`
+			result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var req openaiRequest
+			if err := json.Unmarshal(result, &req); err != nil {
+				t.Fatal(err)
+			}
+			at := -1
+			for i, m := range req.Messages {
+				if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+					at = i
+				}
+			}
+			if at < 0 || at+2 >= len(req.Messages) {
+				t.Fatalf("want assistant tool_calls followed by tool + user, got %+v", req.Messages)
+			}
+			if got := req.Messages[at+1]; got.Role != "tool" || got.ToolCallID != "toolu_1" {
+				t.Errorf("message after tool_calls = %q/%q, want tool/toolu_1", got.Role, got.ToolCallID)
+			}
+			if got := req.Messages[at+2]; got.Role != "user" {
+				t.Errorf("message after tool result = %q, want user (the accompanying text)", got.Role)
+			}
+		})
 	}
 }

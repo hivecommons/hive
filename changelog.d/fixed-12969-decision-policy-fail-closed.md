@@ -1,0 +1,1 @@
+- With `agent_issue_decision_policy: resolve`, Hive-authored needs-decision requests are now downgraded only when they positively classify as engineering questions; requests the classifier cannot place stay parked for the owner (#12969, #12972)

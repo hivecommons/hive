@@ -1,0 +1,32 @@
+name: Hive action smoke tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/scripts/test-hive-action-smoke.sh'
+      - '.github/workflows/hive-action-smoke.yml'
+      - '.github/workflows/hive-action-smoke-tests.yml'
+  push:
+    branches: [v5]
+    paths:
+      - '.github/scripts/test-hive-action-smoke.sh'
+      - '.github/workflows/hive-action-smoke.yml'
+      - '.github/workflows/hive-action-smoke-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  relay-body:
+    name: Relay mention login
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Runs the pinned v6 action's run: block with a gh double: the relay
+      # comment must mention app_handle or the hive never sees it (#12964).
+      - name: Test hive-action-smoke relay body
+        run: bash .github/scripts/test-hive-action-smoke.sh

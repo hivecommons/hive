@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
@@ -278,6 +279,13 @@ type KickMessage struct {
 }
 
 func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agentsDue []string) []KickMessage {
+	messages, _ := s.BuildKickMessagesWithSkips(actionable, agentsDue)
+	return messages
+}
+
+// BuildKickMessagesWithSkips also explains due targets that produced no kick,
+// so the governor does not log an intentionally idle lane as a delivery attempt.
+func (s *Scheduler) BuildKickMessagesWithSkips(actionable *github.ActionableResult, agentsDue []string) ([]KickMessage, []string) {
 	s.resetClassifierBudget()
 	sweepCtx, cancelSweep := classify.SweepContext(context.Background())
 	classifiedIssues := classify.ClassifyAll(sweepCtx, actionable.Issues.Items)
@@ -287,6 +295,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	s.offerQuestions(classifiedIssues)
 
 	var messages []KickMessage
+	var skipped []string
 	for _, targetKey := range agentsDue {
 		agentName, repo := config.SplitCadenceTargetKey(targetKey)
 		targetActionable := actionableForRepo(actionable, repo)
@@ -297,6 +306,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		elideStuffed := s.dropStuffedContext(agentName)
 		msg, idleReason := s.buildAgentMessageFor(agentName, repo, s.kickIncludesRepos(agentName), targetIssues, targetActionable, elideStuffed)
 		if idleReason != "" {
+			skipped = append(skipped, targetKey+" ("+idleReason+")")
 			// The reviewer lane is dormant or has nothing to adjudicate
 			// (#11046): skip the kick rather than spend a model turn on a
 			// stand-down. Nothing is dispatched, so no LastKick is recorded
@@ -307,7 +317,9 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			}
 			continue
 		}
-		if msg != "" {
+		if msg == "" {
+			skipped = append(skipped, targetKey+" (kick message withheld)")
+		} else {
 			// The canary is the one thing that goes AHEAD of the static
 			// prefix: it is random by construction and prepended to the kick
 			// (ADR-0008, pkg/ioscan/canary.go), and both properties are what
@@ -327,7 +339,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			})
 		}
 	}
-	return messages
+	return messages, skipped
 }
 
 func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.PullRequest) (string, string, bool) {
@@ -624,7 +636,7 @@ func addGovernorWorkSourceRule(message string) string {
 // timestamped marker, so a maintainer, another hive scanning the same repo and
 // the SLA metrics all learn the instant work began rather than when the PR
 // appeared. Re-running it is a harmless no-op; a PR naming the issue clears it.
-const inProgressClaimRule = "Before you start implementing a fix for an issue from your list — before the worktree, before the first edit — run `hive-open-issue claim --repo <owner/repo> <issue-number>` for that issue. It labels the issue `hive/in-progress` so the hive, the maintainers and other hives can see work has started and when. Claim one issue at a time, only the one you are about to work; do not claim the whole list. Issues already labelled `hive/in-progress` or `claimed` are someone else's: leave them alone."
+const inProgressClaimRule = "Before you start implementing a fix for an issue from your list — before the worktree, before the first edit — run `hive-open-issue claim --repo <owner/repo> <issue-number>` for that issue. It labels the issue `hive/in-progress` so the hive, the maintainers and other hives can see work has started and when. Claim one issue at a time, only the one you are about to work; do not claim the whole list. Issues already labelled `hive/in-progress` or `claimed` are someone else's: leave them alone. The claim is the ONLY start signal besides opening a PR: never claim an issue you are only triaging, verifying, gate-checking or reporting on, and never claim an epic or tracking issue (label `epic`) — comment your finding and move on. A comment that only reports starts nothing; a comment that begins work says so (open with \"Starting …\" / \"Implementing …\" or include `<!-- hive:start -->`)."
 
 // addInProgressClaimRule appends inProgressClaimRule to a kick that lists at
 // least one issue and does not already carry it.
@@ -867,6 +879,19 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	// to say so, in the same section that produces the impression. Getting a
 	// checkout is an ordinary thing an agent does for itself, not a fault.
 	b.WriteString(fmt.Sprintf("ℹ️ This list is an AUTHORIZATION SCOPE, not a checkout: it does not put any repo on disk, and nothing provisions a per-agent git worktree from it. If you need files rather than the GitHub API and have no checkout, clone one yourself: git clone %s/<org>/<repo> /tmp/<repo>. An absent checkout is a normal state to handle, NOT an infrastructure fault — do not file a finding about a missing worktree or unprovisioned repo workspace.\n", strings.TrimRight(host, "/")))
+	// Repo-local gates and companion checkouts (hivecommons/hive#13059): a
+	// target repo's AGENTS.md may say "offer a spec and wait" or "stop when a
+	// registered sibling checkout is missing". Dispatched work is already
+	// accepted, and a registered sibling path under the workspace root is a
+	// repo this installation can clone — neither is a reason to park.
+	b.WriteString("ℹ️ " + decisionpolicy.DispatchSatisfiesRepoGates + " " + decisionpolicy.MissingCompanionCheckoutRule + "\n")
+	for _, repo := range active {
+		full := config.QualifyRepo(org, repo)
+		plan := config.PlanCompanionCheckouts("$HOME/workspace", full, s.cfg.CompanionReposFor(full))
+		if instr := config.CompanionCheckoutInstruction(full, host, plan); instr != "" {
+			b.WriteString("ℹ️ " + instr + " (clone the primary to $HOME/workspace/" + full + " so the registered paths resolve.)\n")
+		}
+	}
 	// Multi-repo projects: the agent workdir is never a checkout of anything
 	// but the PRIMARY repo, and the shipped templates' examples say --repo
 	// "$HIVE_REPO" (primary). Without an explicit rotation instruction agents lock onto

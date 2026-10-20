@@ -37,7 +37,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		// ai_author_effective is who agents actually author PRs/commits as: the
 		// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
 		// ai_author is empty and the hive authenticates as an App installation.
-		"ai_author_effective":   cfg.EffectiveAIAuthor(),
+		"ai_author_effective": cfg.EffectiveAIAuthor(),
+		// app_bot_login is the GitHub App bot login ("<slug>[bot]") or "" when the
+		// hive has no usable App; `hivectl ok-to-test-template` reads it so the
+		// rendered workflow trusts this hive's own identity.
+		"app_bot_login":         cfg.GitHub.BotLogin(),
 		"agents":                len(cfg.EnabledAgents()),
 		"eval_interval_s":       cfg.Governor.EvalIntervalS,
 		"primaryRepo":           primaryRepo,

@@ -40,10 +40,21 @@ Fine-grained PATs are supported — the token is sent as a plain bearer, same as
 | Issues | Read and write | Read and write | Read and write |
 | Pull requests | Read | Read | Read and write |
 | Checks | Read | Read | Read |
-| Actions | Read | Read | Read (Read and write to release held workflow runs on trusted-bot PRs, see below) |
+| Actions | Read | Read | Read |
 | Commit statuses | Read | Read | Read |
 
-**Actions: Read and write** is optional at L5–L6: it lets the self-merge sweep approve `pull_request` workflow runs GitHub holds for approval on the App's own and trusted-bot PR heads (same-repository branches only; see "Held and never-started required checks" in [operator-reference.md](operator-reference.md)). With Read only, those PRs are reported as `required-check-held:<ctx>` and a person approves the runs.
+Hive does not request **Actions: Read and write** for workflow-run approvals. It only needs **Actions: Read** to inspect runs. When GitHub leaves same-repository `pull_request` runs in `action_required` on trusted Dependabot/Renovate/App PRs or registry-trusted `author/clanker` PRs, Hive posts `/ok-to-test` once for that head and reports `workflow-approval-required:<ctx>` / `stage/085-needs-decision` until the repository's own self-contained `hive-ok-to-test` workflow approves the held runs. The approval is performed by that repository's `GITHUB_TOKEN` through `.github/workflows/hive-ok-to-test.yml`; no Prow and no Hive App Actions-write grant are required. Hive never approves fork heads or PRs carrying `sentinel-alert`.
+
+Install the workflow in each governed repository: run `hivectl ok-to-test-template > .github/workflows/hive-ok-to-test.yml` against your hive (it reads the App bot login from `/api/config`; pass `--app-login <your-app>[bot]` to override), or copy `src/docs/templates/hive-ok-to-test.yml` and replace `HIVE_APP_LOGIN[bot]` with the App bot login shown by Hive for that installation.
+
+The rendered workflow is **self-contained**: it triggers on `issue_comment`, runs with job-level `permissions: actions: write, contents: read, issues: write, pull-requests: read`, and performs the whole approval in one `bash` + `gh` step with the repository `GITHUB_TOKEN`. It carries no `uses: hivecommons/hive/...` reference, so it works in repositories whose Actions policy only allows selected actions/reusable workflows, on GitHub Enterprise Server, and in organizations that do not permit workflows from `hivecommons`. The step:
+
+1. exits quietly unless the comment is on a pull request and its body is exactly the command (`/ok-to-test` by default);
+2. requires the commenter to be a configured Hive App login or to hold write/maintain/admin (`GET /repos/{owner}/{repo}/collaborators/{login}/permission`);
+3. requires the PR head repository to equal the base repository (same-repo only) and the PR author to be in `TRUSTED_AUTHORS` (`dependabot[bot],renovate[bot]` plus the App login(s) by default);
+4. refuses when the `sentinel-alert` label is present;
+5. lists the head SHA's `status=action_required` runs and `POST /repos/{owner}/{repo}/actions/runs/{id}/approve`s each, then posts one summary comment carrying an idempotent marker (re-runs for the same head only add a 👍 reaction);
+6. fails the job with `::error::` if the token cannot approve runs, so a missing `actions: write` grant or a read-only workflow-permissions setting is visible instead of silent.
 
 Organization permission: **Members: Read** where contributor/owner identification is configured. Note that Issues read-and-write is needed even at advisory tiers because digests are posted as issue comments.
 
@@ -79,7 +90,7 @@ Repository permissions used by the dashboard setup UI are:
 | Issues | Read/write | Enumerate, comment on, create, and close issues. |
 | Pull requests | Read/write | Create, update, approve/merge, and inspect PRs. |
 | Checks | Read-only | Monitor CI status. |
-| Actions | Read-only | Inspect workflow runs. |
+| Actions | Read-only | Inspect workflow runs. If GitHub holds trusted Dependabot/App/clanker runs in `action_required`, Hive posts `/ok-to-test`; the repository-local `hive-ok-to-test` workflow uses its own `GITHUB_TOKEN` with Actions write to approve those runs. |
 | Administration | Read-only | Read branch-protection rules before the merge-request watcher lands a PR; Hive refuses closed if it cannot verify the base branch is protected. Optional for the `hive-serialized` lane: without it the lane uses the rulesets' required checks and GitHub enforces classic protection at merge time ([operator-reference.md](operator-reference.md#per-repo-merge-strategy-merge_strategy)). Without it classic-protection `require_code_owner_reviews` is likewise invisible (the 403 reads as "not required"), so only ruleset code-owner rules are detected. |
 
 | Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`. Without it GitHub rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |

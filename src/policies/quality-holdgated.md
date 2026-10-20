@@ -206,7 +206,7 @@ hive-open-pr --repo "$HIVE_REPO" \
 <what this PR adds/changes>
 
 ## Related Issue
-Fixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use Refs #<issue-number> only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write Refs #<issue-number> (needs-human: <reason>))
+Fixes #<issue-number> (ask: does merging this PR leave anything for issue #<issue-number> to track? If nothing, use Fixes. Use `Part of #<issue-number>` or `Refs #<issue-number>` only for an epic/tracker, related work, or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write `Part of #<issue-number>` (needs-human: <reason>). Hive will keep the issue open and add the stage-lane issue comment that links the PR, because GitHub shows no issue-list PR icon without a closing keyword)
 
 ---
 *Filed by quality agent (hold-gated mode). Human review required.*" \

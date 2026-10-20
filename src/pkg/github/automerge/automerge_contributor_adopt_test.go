@@ -31,6 +31,18 @@ type adoptAPI struct {
 	// failCompare makes it answer 500.
 	compareFiles []string
 	failCompare  bool
+	// prFiles are the files served by GET pulls/n/files (the adopted PR's
+	// diff); failPRFiles makes it answer 500.
+	prFiles     []map[string]any
+	failPRFiles bool
+	// heads is the head GET pulls/n reports for an observed PR (the
+	// harness keeps it in step with what the lane saw); liveHead, when set,
+	// overrides it: the author pushed after the lane recorded its head.
+	heads    map[int]string
+	liveHead string
+	// changedFiles is the changed_files count GET pulls/n reports for an
+	// observed PR; 0 omits it.
+	changedFiles int
 }
 
 type adoptCommit struct {
@@ -39,7 +51,7 @@ type adoptCommit struct {
 }
 
 func newAdoptAPI() *adoptAPI {
-	return &adoptAPI{refs: map[string]string{}, nextPR: 90, superseders: map[int]map[string]any{}, commits: map[string]adoptCommit{}}
+	return &adoptAPI{refs: map[string]string{}, nextPR: 90, superseders: map[int]map[string]any{}, commits: map[string]adoptCommit{}, heads: map[int]string{}}
 }
 
 func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
@@ -47,6 +59,18 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 	defer a.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/files"):
+		if a.failPRFiles {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
+		files := a.prFiles
+		if files == nil {
+			files = []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}
+		}
+		_ = json.NewEncoder(w).Encode(files)
+		return true
 	case r.Method == http.MethodPost && path == "/repos/acme/widget/git/refs":
 		var body struct {
 			Ref string `json:"ref"`
@@ -92,9 +116,24 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		var n int
 		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), &n)
 		payload, ok := a.superseders[n]
-		if !ok {
+		head, observed := a.heads[n]
+		if !ok && !observed {
 			w.WriteHeader(http.StatusNotFound)
 			return true
+		}
+		if observed {
+			served := map[string]any{"number": n, "state": "open"}
+			for k, v := range payload {
+				served[k] = v
+			}
+			if a.liveHead != "" {
+				head = a.liveHead
+			}
+			served["head"] = map[string]any{"sha": head}
+			if a.changedFiles > 0 {
+				served["changed_files"] = a.changedFiles
+			}
+			payload = served
 		}
 		_ = json.NewEncoder(w).Encode(payload)
 		return true
@@ -218,6 +257,9 @@ func newAdoptHarnessWith(t *testing.T, fake *fakeNudgeSink, sink ContributorNudg
 
 func (h *adoptHarness) observe(pr *gh.PullRequest, reason string) StageLabelResult {
 	h.t.Helper()
+	h.adopt.mu.Lock()
+	h.adopt.heads[pr.GetNumber()] = pr.GetHead().GetSHA()
+	h.adopt.mu.Unlock()
 	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
 	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleContributor)
 	res, err := h.e.ApplyStageLabels(context.Background())
@@ -1192,14 +1234,14 @@ func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
 		t.Fatalf("heal 050 → 074: added=%v removed=%v", h.api.added, h.api.removed)
 	}
 
-	// The merge gate takes it: approved and soaking is 100, the adoption
+	// The merge gate takes it: approved and soaking is 095, the adoption
 	// record stays (it is released by the yield / close paths, not here).
 	h.api.reset()
 	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"})
-	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(5m)")
-	stageIs(stagelabels.MergeQueue, "merge gate")
-	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/100-merge-queue" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
-		t.Fatalf("074 → 100: added=%v removed=%v", h.api.added, h.api.removed)
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonSoaking+"(remaining=5m)")
+	stageIs(stagelabels.PreMergeSoak, "merge gate")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/095-pre-merge-soak" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074 → 095: added=%v removed=%v", h.api.added, h.api.removed)
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() {
 		t.Fatalf("adoption dropped at the merge gate: %+v", rec)
@@ -1211,7 +1253,7 @@ func TestAdoptionPersistsWhileHiveOwnsThePR(t *testing.T) {
 	h.api.reset()
 	h.e.noteStageVerdict("acme", "widget", 7, ContributorLaneVerdict{})
 	h.clock.advance(time.Minute)
-	h.observe(adoptPR(7, "ccc", "stage/100-merge-queue", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
+	h.observe(adoptPR(7, "ccc", "stage/095-pre-merge-soak", "role/contributor", "author/clanker"), contributorLaneReasonNoVerdict)
 	stageIs(stagelabels.ReviewPending, "released")
 	var yields int
 	for _, c := range h.api.comments {
@@ -1291,6 +1333,147 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 	}
 	if got := adoptionBlocked([]string{"size/L", "do-not-merge/hold"}); got != "do-not-merge/hold" {
 		t.Fatalf("adoptionBlocked=%q", got)
+	}
+}
+
+// Adoption applies the contributor lane's diff fences first
+// (hivecommons/hive#12850): a body-marker clanker PR that touches CI
+// workflows, deletes tests or whose file list cannot be read is never
+// re-homed into an App PR; it stays at 072 and the attempt is not recorded,
+// so a later sweep (or a new head) is judged afresh. The fence reads the PR
+// itself: a head that moved since the lane recorded it is not judged by the
+// new head's diff, and a file list shorter than changed_files fails closed.
+func TestAdoptionRefusedByDiffFence(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		files        []map[string]any
+		failFiles    bool
+		liveHead     string
+		changedFiles int
+		wantAdopt    bool
+	}{
+		{name: "plain diff adopts", files: []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}, wantAdopt: true},
+		{name: "workflow path", files: []map[string]any{{"filename": "src/widget.go", "status": "modified"}, {"filename": ".github/workflows/ci.yml", "status": "modified"}}},
+		{name: "action definition", files: []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}},
+		{name: "test file removed", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}},
+		{name: "tests gutted", files: []map[string]any{{"filename": "src/widget_test.go", "status": "modified", "additions": 1, "deletions": 40}}},
+		{name: "file list unavailable", failFiles: true},
+		{name: "head moved since observed", liveHead: "bbb"},
+		{name: "file list incomplete", changedFiles: 3001},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptAfterUnregistered = 30 * time.Minute
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			// No profile here: author/clanker comes from the PR body alone.
+			h.sink.presence = &ContributorPresence{}
+			h.adopt.prFiles = tc.files
+			h.adopt.failPRFiles = tc.failFiles
+			h.adopt.liveHead = tc.liveHead
+			h.adopt.changedFiles = tc.changedFiles
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.api.reset()
+			h.clock.advance(time.Hour)
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			adopted := len(h.adopt.pulls) == 1 && len(adoptionComments(h.api)) == 1
+			if adopted != tc.wantAdopt {
+				t.Fatalf("adopted = %v, want %v: pulls=%d comments=%v", adopted, tc.wantAdopt, len(h.adopt.pulls), h.api.comments)
+			}
+			if tc.wantAdopt {
+				return
+			}
+			if len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+				t.Fatalf("refused adoption pushed a branch: %v", h.adopt.refs)
+			}
+			if added := strings.Join(h.addedLabels(), " "); strings.Contains(added, "stage/074") {
+				t.Fatalf("refused adoption moved to 074: %v", h.api.added)
+			}
+			if rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); ok && rec.Adopted("aaa") {
+				t.Fatal("refused adoption was recorded as an attempt")
+			}
+			// The refusal is not sticky: once the diff reads clean the
+			// same head is adopted on the next sweep.
+			h.adopt.prFiles, h.adopt.failPRFiles = nil, false
+			h.adopt.liveHead, h.adopt.changedFiles = "", 0
+			h.api.reset()
+			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+			if len(h.adopt.pulls) != 1 {
+				t.Fatalf("clean diff not adopted after refusal: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+			}
+		})
+	}
+}
+
+// The dco-rehome takeover of an in-place adoption goes through the same
+// fence (hivecommons/hive#12850). A fenced diff releases the adoption: no App
+// PR, no closed original, and the PR drops back to 072, where the fence keeps
+// holding it. A head that moved since the lane observed it, or a transient
+// files-API failure, is only deferred: the adoption stays and the next sweep
+// re-reads.
+func TestAlreadyAdoptedInPlaceDCORehomeRefusedByDiffFence(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		files        []map[string]any
+		changedFiles int
+		liveHead     string
+		failFiles    bool
+		wantReleased bool
+	}{
+		{name: "workflow path releases", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantReleased: true},
+		{name: "test file removed releases", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantReleased: true},
+		{name: "incomplete file list releases", changedFiles: 3001, wantReleased: true},
+		{name: "head moved defers", liveHead: "bbb"},
+		{name: "files API failure defers", failFiles: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			p.DCORequired = func(string) (bool, bool) { return true, true }
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			h.adopt.allowMaintainerEdits(7, true)
+			h.api.commits = map[int][]string{7: {"fix: unsigned agent commit"}}
+			h.observe(adoptPR(7, "aaa"), "check-failing:DCO")
+			key := stageKey("acme", "widget", 7)
+			h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+
+			h.adopt.prFiles = tc.files
+			h.adopt.changedFiles = tc.changedFiles
+			h.adopt.liveHead = tc.liveHead
+			h.adopt.failPRFiles = tc.failFiles
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
+				t.Fatalf("fenced re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+			}
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if !tc.wantReleased {
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome {
+					t.Fatalf("deferred re-home changed the adoption: %+v", rec)
+				}
+				return
+			}
+			if rec.AdoptedInPlace() || rec.Adopted("aaa") || rec.AdoptedBy != 0 {
+				t.Fatalf("refused re-home kept the adoption: %+v", rec)
+			}
+			// Released: the next pass puts the PR back at 072 and the
+			// adoption fence still holds it there.
+			h.api.reset()
+			h.clock.advance(time.Hour)
+			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
+			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
+				t.Fatalf("released PR not back at 072: %v", h.api.added)
+			}
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.prEdits) != 0 {
+				t.Fatalf("released PR adopted again past the fence: pulls=%v refs=%v edits=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits)
+			}
+			if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.Adopted("aaa") {
+				t.Fatalf("released PR re-adopted: %+v", rec)
+			}
+		})
 	}
 }
 

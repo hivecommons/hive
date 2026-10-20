@@ -214,7 +214,7 @@ func TestClearIssueParkingLabelsSkipsAbsentLabels(t *testing.T) {
 	server := newUnparkFailServer(t, s)
 	c := newTestClient(t, server, "org", []string{"repo"})
 
-	removed, err := c.clearIssueParkingLabels(context.Background(), "org", "repo", 9, []string{HumanAckLabel})
+	removed, err := c.clearIssueParkingLabels(context.Background(), "org", "repo", 9, []string{HumanAckLabel}, "maintainer", false)
 	if err != nil {
 		t.Fatalf("clear: %v", err)
 	}

@@ -1193,7 +1193,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	unlock()
 
 	if chosen.extEngine != "" {
-		prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, false, h.writingGuideSection())
+		prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, false, h.writingGuideSection(), h.taskPromptRepoHints(chosen.repoFull))
 		if chosen.stage != "" {
 			prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
 		}
@@ -1309,9 +1309,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// PRs in its repos read. A relay subscribed to two hives therefore gets each
 	// hive's guide on that hive's tasks. Unset renders nothing.
 	guide := h.writingGuideSection()
-	prompt := buildTaskPromptForContributor(chosen.ref, chosen.title, canPush, guide)
+	hints := h.taskPromptRepoHints(chosen.repoFull)
+	prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, canPush, guide, hints)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPromptForContributor(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide)
+		prompt = buildRoleTaskPromptForContributorWithHints(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide, hints)
 	}
 	if chosen.stage != "" {
 		prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)

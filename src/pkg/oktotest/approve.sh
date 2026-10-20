@@ -1,0 +1,98 @@
+set -euo pipefail
+
+repo="$GITHUB_REPOSITORY"
+event="$GITHUB_EVENT_PATH"
+issue_number="$(jq -r '.issue.number // empty' "$event")"
+is_pr="$(jq -r 'has("issue") and (.issue.pull_request != null)' "$event")"
+body="$(jq -r '.comment.body // ""' "$event" | tr -d '\r')"
+commenter="$(jq -r '.comment.user.login // ""' "$event")"
+comment_id="$(jq -r '.comment.id // empty' "$event")"
+
+if [ "$is_pr" != "true" ] || [ -z "$issue_number" ]; then
+  echo "ok-to-test: comment is not on a pull request; ignoring"
+  exit 0
+fi
+if ! printf '%s\n' "$body" | grep -Fxq -- "$COMMAND"; then
+  echo "ok-to-test: command not present; ignoring"
+  exit 0
+fi
+
+contains_login() {
+  local list="$1" login="$2" item
+  IFS=',' read -ra items <<< "$list"
+  for item in "${items[@]}"; do
+    item="$(echo "$item" | xargs)"
+    if [ -n "$item" ] && [ "${item,,}" = "${login,,}" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+react() {
+  if [ -n "$comment_id" ]; then
+    gh api -X POST "repos/${repo}/issues/comments/${comment_id}/reactions" -f content="$1" >/dev/null || true
+  fi
+}
+
+allowed_commenter=false
+if contains_login "$HIVE_APP_LOGINS" "$commenter"; then
+  allowed_commenter=true
+else
+  permission="$(gh api "repos/${repo}/collaborators/${commenter}/permission" --jq '.permission' 2>/dev/null || true)"
+  case "$permission" in
+    admin|maintain|write) allowed_commenter=true ;;
+  esac
+fi
+if [ "$allowed_commenter" != "true" ]; then
+  echo "::warning::ok-to-test: @${commenter} is not an allowed Hive App login and lacks write/maintain/admin"
+  exit 0
+fi
+
+pr_json="$(gh api "repos/${repo}/pulls/${issue_number}")"
+head_repo="$(jq -r '.head.repo.full_name // ""' <<< "$pr_json")"
+base_repo="$(jq -r '.base.repo.full_name // ""' <<< "$pr_json")"
+head_sha="$(jq -r '.head.sha // ""' <<< "$pr_json")"
+author="$(jq -r '.user.login // ""' <<< "$pr_json")"
+if [ -z "$head_sha" ] || [ "$head_repo" != "$base_repo" ] || [ "$head_repo" != "$repo" ]; then
+  echo "ok-to-test: PR is not a same-repository head; ignoring"
+  exit 0
+fi
+trusted="${TRUSTED_AUTHORS},${HIVE_APP_LOGINS}"
+if ! contains_login "$trusted" "$author"; then
+  echo "ok-to-test: PR author @${author} is not in trusted-authors; ignoring"
+  exit 0
+fi
+if gh api "repos/${repo}/issues/${issue_number}" --jq '.labels[].name' | grep -Fxiq 'sentinel-alert'; then
+  echo "ok-to-test: sentinel-alert is present; refusing to approve runs"
+  exit 0
+fi
+
+marker="<!-- hive-ok-to-test:${head_sha} -->"
+if gh api --paginate "repos/${repo}/issues/${issue_number}/comments?per_page=100" --jq '.[].body' | grep -Fq -- "$marker"; then
+  echo "ok-to-test: runs for ${head_sha} were already approved by this workflow; acknowledging only"
+  react '+1'
+  exit 0
+fi
+
+mapfile -t run_ids < <(gh api --paginate "repos/${repo}/actions/runs?head_sha=${head_sha}&status=action_required&per_page=100" \
+  --jq '.workflow_runs[] | select(.head_repository.full_name == "'"${repo}"'") | .id')
+if [ "${#run_ids[@]}" -eq 0 ]; then
+  echo "ok-to-test: no action_required workflow runs for ${head_sha}"
+  react '+1'
+  exit 0
+fi
+
+approved=0
+for run_id in "${run_ids[@]}"; do
+  echo "Approving workflow run ${run_id} for ${head_sha}"
+  if ! gh api -X POST "repos/${repo}/actions/runs/${run_id}/approve" >/dev/null; then
+    echo "::error::ok-to-test: could not approve workflow run ${run_id}. The job needs 'permissions: actions: write' and the repository must allow GITHUB_TOKEN write access (Settings > Actions > General > Workflow permissions)."
+    react 'confused'
+    exit 1
+  fi
+  approved=$((approved + 1))
+done
+gh api -X POST "repos/${repo}/issues/${issue_number}/comments" \
+  -f body="${marker}
+Hive ok-to-test approved ${approved} held workflow run(s) for trusted same-repo PR head ${head_sha}." >/dev/null

@@ -44,23 +44,54 @@ type issueStageServer struct {
 	closers   map[int]int
 	closed    map[int]string
 	bodies    map[int]string
+	prBodies  map[int]string
+	prBases   map[int]string
+	prAuthors map[int]string
+	prPatches map[int]string
 	// commentBodies keeps every comment body posted per issue.
 	commentBodies map[int][]string
+	// closeFails makes PATCH state=closed answer 502 for the issue so a
+	// close that fails after its comment landed can be replayed.
+	closeFails map[int]bool
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, commentBodies: map[int][]string{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}, prs: map[int]bool{}, subIssues: map[int][]subIssueRef{}, closers: map[int]int{}, closed: map[int]string{}, bodies: map[int]string{}, prBodies: map[int]string{}, prBases: map[int]string{}, prAuthors: map[int]string{}, prPatches: map[int]string{}, commentBodies: map[int][]string{}, closeFails: map[int]bool{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
 		if r.Method == http.MethodPost && path == "/graphql" {
 			var q struct {
+				Query     string `json:"query"`
 				Variables struct {
 					Issue int `json:"issue"`
+					PR    int `json:"pr"`
 				} `json:"variables"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&q)
+			if strings.Contains(q.Query, "pullRequest(number:$pr)") {
+				pr := q.Variables.PR
+				base := s.prBases[pr]
+				if base == "" {
+					base = "v5"
+				}
+				author := s.prAuthors[pr]
+				if author == "" {
+					author = "hive[bot]"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{
+					"defaultBranchRef": map[string]any{"name": "v5"},
+					"pullRequest": map[string]any{
+						"state":       "OPEN",
+						"baseRefName": base,
+						"body":        s.prBodies[pr],
+						"url":         "https://x/pr/" + strconv.Itoa(pr),
+						"author":      map[string]any{"login": author},
+					},
+				}}})
+				return
+			}
 			s.mu.Lock()
 			pr := s.closers[q.Variables.Issue]
 			s.mu.Unlock()
@@ -81,6 +112,14 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
+		case r.Method == http.MethodPatch && strings.HasPrefix(rest, "pulls/"):
+			pr, _ := strconv.Atoi(strings.TrimPrefix(rest, "pulls/"))
+			var body struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			s.prPatches[pr] = body.Body
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": pr, "body": body.Body})
 		case r.Method == http.MethodGet && rest == "issues":
 			// List-by-label used by the legacy decision-label retirement:
 			// answer from truth so carriers block definition deletion.
@@ -122,6 +161,14 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				state = "closed"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/comments"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			out := []map[string]string{}
+			for _, body := range s.commentBodies[n] {
+				out = append(out, map[string]string{"body": body})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/sub_issues"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -138,6 +185,10 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				StateReason string `json:"state_reason"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.State == "closed" && s.closeFails[n] {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			if body.State == "closed" {
 				s.closed[n] = body.StateReason
 			}
@@ -251,8 +302,12 @@ func TestIssueStageFor(t *testing.T) {
 		{"actionable", IssueStageInput{}, stagelabels.Actionable, false},
 		{"live human claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: "human"}, stagelabels.Claimed, false},
 		{"live contributor claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: "contributor"}, stagelabels.Claimed, false},
-		{"live agent claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.PRInProgress, false},
-		{"in-progress sweep", IssueStageInput{Bucket: inProgressWorkBucket}, stagelabels.PRInProgress, false},
+		// hivecommons/hive#13069: an agent claim is 020 until it carries PR
+		// evidence; 030 promises a PR.
+		{"live agent claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Claimed, false},
+		{"live agent claim with a PR under way", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), PRStarted: true}, stagelabels.PRInProgress, false},
+		{"in-progress sweep", IssueStageInput{Bucket: inProgressWorkBucket}, stagelabels.Claimed, false},
+		{"in-progress sweep with a PR under way", IssueStageInput{Bucket: inProgressWorkBucket, PRStarted: true}, stagelabels.PRInProgress, false},
 		{"covered, PR not yet staged", IssueStageInput{Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5}}, stagelabels.CoveredByPR, false},
 		// hivecommons/hive#12451: the PR's stage is narrated, never mirrored
 		// as the issue's label — 050+ are PR-only stages.
@@ -270,10 +325,25 @@ func TestIssueStageFor(t *testing.T) {
 		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.IssueNeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
+		// hivecommons/hive#13012: a held issue is paused, not parked — hold
+		// outranks needs-human / needs-decision / needs-spec and the issue
+		// shows as "Open · on hold", never 045. #9846's label set first.
+		{"held: hold + needs-human (#9846) is Open · on hold", IssueStageInput{Held: true, Labels: []string{"hold", "needs-human", stagelabels.IssueNeedsDecision.Label()}}, stagelabels.None, false},
+		{"held: hold alone", IssueStageInput{Held: true, Labels: []string{"hold"}}, stagelabels.None, false},
+		{"held: hold read from labels without the enumeration flag", IssueStageInput{Labels: []string{"hold", "needs-human"}}, stagelabels.None, false},
+		{"held: do-not-merge alone", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"do-not-merge"}}, stagelabels.None, false},
+		{"held: do-not-merge/* + needs-spec", IssueStageInput{Labels: []string{"do-not-merge/blocked-paths", "needs-spec"}}, stagelabels.None, false},
+		{"held: hive-pause/<id> alone", IssueStageInput{Held: true, Labels: []string{"hive-pause/hv-test"}}, stagelabels.None, false},
+		{"not held: provenance hive/<id> is not a hold", IssueStageInput{Labels: []string{"hive/placeholder-r05x", "needs-human"}}, stagelabels.IssueNeedsDecision, false},
+		{"not held: needs-human alone stays 045", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"needs-human"}}, stagelabels.IssueNeedsDecision, false},
+		{"not held: #12964 label set stays actionable", IssueStageInput{Labels: []string{"help wanted", stagelabels.Actionable.Label()}}, stagelabels.Actionable, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, covered, reason := IssueStageFor(tc.in, prStage)
+			if strings.HasPrefix(tc.name, "held:") && !strings.HasPrefix(reason, "held: ") {
+				t.Fatalf("reason %q must name the hold label", reason)
+			}
 			if got != tc.want || covered != tc.covered {
 				t.Fatalf("IssueStageFor = %s/%v, want %s/%v", got, covered, tc.want, tc.covered)
 			}
@@ -319,13 +389,66 @@ func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#13012: #9846 wore stage/045-needs-decision beside `hold`
+// + `needs-human`. The held issue is walked from the Hold list, the 045
+// label comes off, the store record is forgotten (so the dashboard reads
+// Open · on hold), and no stage label is added. A held issue with no stage
+// label costs no write; a hive-pause/<id> hold reaches the classifier
+// through the Hold list.
+func TestSyncIssueStageLabels_HeldIssueLeaves045(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	store.Observe(stagelabels.Key("acme/widgets", 9846), stagelabels.IssueNeedsDecision, "held for a person: needs-human")
+	result := &ActionableResult{}
+	result.Hold.Items = []HoldItem{
+		{Repo: "acme/widgets", Number: 9846, Type: "issue", Labels: []string{"hold", issueNeedsHumanLabel, stagelabels.IssueNeedsDecision.Label()}},
+		{Repo: "acme/widgets", Number: 9735, Type: "issue", Labels: []string{"hold", issueNeedsHumanLabel}},
+		{Repo: "acme/widgets", Number: 9700, Type: "issue", Labels: []string{"hive-pause/hv-test"}},
+		{Repo: "acme/widgets", Number: 77, Type: "pr", Labels: []string{"hold", stagelabels.NeedsDecision.Label()}},
+	}
+	inputs := IssueStageInputs(result)
+	if len(inputs) != 3 {
+		t.Fatalf("inputs = %d, want 3 held issues (the held PR is not an issue)", len(inputs))
+	}
+	for _, in := range inputs {
+		if !in.Held {
+			t.Fatalf("issue %d from the Hold list must be Held", in.Number)
+		}
+		if stage, _, reason := IssueStageFor(in, nil); stage != stagelabels.None || !strings.HasPrefix(reason, "held: ") {
+			t.Fatalf("issue %d: stage %s reason %q, want none/held", in.Number, stage, reason)
+		}
+	}
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Items != 3 {
+		t.Fatalf("items = %d, want 3", res.Items)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Join(fake.removed[9846], ","); got != stagelabels.IssueNeedsDecision.Label() {
+		t.Fatalf("held issue must shed 045: removed=%v", fake.removed[9846])
+	}
+	for _, n := range []int{9846, 9735, 9700} {
+		if len(fake.added[n]) != 0 {
+			t.Fatalf("held issue %d must carry no stage label: added=%v", n, fake.added[n])
+		}
+	}
+	if len(fake.removed[9735])+len(fake.removed[9700])+len(fake.removed[77])+len(fake.added[77]) != 0 {
+		t.Fatalf("unexpected writes: removed=%v added=%v", fake.removed, fake.added)
+	}
+	if _, ok := store.Get(stagelabels.Key("acme/widgets", 9846)); ok {
+		t.Fatal("store must forget a held issue so the tracker reads Open · on hold")
+	}
+}
+
 func issueStageResult() *ActionableResult {
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{
 		{Repo: "acme/widgets", Number: 1, Labels: []string{"bug"}},
 	})
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 2, Labels: []string{claims.LegacyLabelClaimed}, ClaimKind: "human"}, workBucketClaimed, "live claim")
-	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 3, Labels: []string{claims.LegacyLabelInProgress}, ClaimKind: string(claims.KindAgent)}, workBucketClaimed, "live claim")
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 3, Labels: []string{claims.LegacyLabelInProgress}, ClaimKind: string(claims.KindAgent), ClaimPRStarted: true}, workBucketClaimed, "live claim")
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.LegacyCoveredByPR}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 5, Labels: []string{stagelabels.Actionable.Label()}}, "filtered", "Exempt label")
 	return result
@@ -426,9 +549,9 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	store := stagelabels.NewStore("", func() time.Time { return clock })
 	key := stagelabels.Key("acme/widgets", 7)
 
-	// Cycle 1: an agent claim → 030.
+	// Cycle 1: an agent claim with a PR under way → 030.
 	result := &ActionableResult{}
-	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent)}, workBucketClaimed, "live claim")
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent), ClaimPRStarted: true}, workBucketClaimed, "live claim")
 	syncSeeded(fake, c, result, store, clock)
 	if rec, ok := store.Get(key); !ok || rec.Stage != stagelabels.PRInProgress {
 		t.Fatalf("record after cycle 1 = %+v", rec)
@@ -582,5 +705,134 @@ func TestIssueStageFor_LegacyNeedsDirectionStillParks(t *testing.T) {
 	}
 	if !hasHardSuppressIssueLabel(in.Labels) {
 		t.Fatal("needs-direction must still hard-suppress")
+	}
+}
+
+func TestSyncIssueStageLabels_EditsHivePRBodyForDefaultBranchLink(t *testing.T) {
+	fake := newIssueStageServer(t)
+	fake.prBodies[41] = "## Fix\n\nImplements the issue."
+	fake.prBases[41] = "v5"
+	fake.prAuthors[41] = "hive[bot]"
+	c := issueStageTestClient(t, fake.srv, true)
+	c.SetAppBotLogin("hive[bot]")
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 41, PRURL: "https://x/pr/41"}}, workBucketClaimedByPR, "open PR")
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.PRBodiesEdited != 1 {
+		t.Fatalf("PRBodiesEdited = %d, want 1", res.PRBodiesEdited)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if !strings.HasSuffix(fake.prPatches[41], "\n\nFixes #4") {
+		t.Fatalf("patched body = %q", fake.prPatches[41])
+	}
+	if fake.comments[4] != 0 {
+		t.Fatalf("comments = %d, want 0 when the PR body was fixed", fake.comments[4])
+	}
+}
+
+func TestSyncIssueStageLabels_CommentsForPartialPRLinkLimitation(t *testing.T) {
+	fake := newIssueStageServer(t)
+	fake.prBodies[42] = "## Fix\n\nPart of #4; leaves follow-up work open."
+	fake.prBases[42] = "v5"
+	fake.prAuthors[42] = "hive[bot]"
+	c := issueStageTestClient(t, fake.srv, true)
+	c.SetAppBotLogin("hive[bot]")
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 42, PRURL: "https://x/pr/42", Reference: true}}, workBucketClaimedByPR, "open PR")
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Comments != 1 || res.PRBodiesEdited != 0 {
+		t.Fatalf("result = %+v, want one issue comment and no PR edit", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.prPatches[42] != "" {
+		t.Fatalf("PR body was edited: %q", fake.prPatches[42])
+	}
+	body := strings.Join(fake.commentBodies[4], "\n")
+	if !strings.Contains(body, "PR #42 covers this issue") || !strings.Contains(body, "GitHub will not show") {
+		t.Fatalf("comment body = %q", body)
+	}
+}
+
+func TestSyncIssueStageLabels_MergedReferencePRMovesIssueBackToActionable(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.PRInProgress.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Reference: true, MergedPR: true}}})
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	if res.Comments != 1 || res.MergedPRIssuesClosed != 0 {
+		t.Fatalf("result = %+v, want one partial comment and no close", res)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.closed[64] != "" {
+		t.Fatalf("issue was closed: %q", fake.closed[64])
+	}
+	if got := strings.Join(fake.added[64], ","); got != stagelabels.Actionable.Label() {
+		t.Fatalf("added = %v, want actionable", fake.added[64])
+	}
+	if got := strings.Join(fake.removed[64], ","); got != stagelabels.PRInProgress.Label() {
+		t.Fatalf("removed = %v, want stale 030", fake.removed[64])
+	}
+	body := strings.Join(fake.commentBodies[64], "\n")
+	if !strings.Contains(body, "PR #67 has merged") || !strings.Contains(body, "landed partial work") {
+		t.Fatalf("comment body = %q", body)
+	}
+}
+
+func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
+	const marker = "<!-- hive:closed-by-merged-pr pr=67 -->"
+	tests := []struct {
+		name          string
+		priorComments []string
+		closeFails    bool
+		wantClosed    int
+		wantComments  int
+		wantBodies    int
+	}{
+		{name: "first pass comments once and closes", wantClosed: 1, wantComments: 1, wantBodies: 1},
+		{name: "close failure keeps the single comment", closeFails: true, wantClosed: 0, wantComments: 1, wantBodies: 1},
+		{name: "retry after a failed close does not comment again", priorComments: []string{marker + "\nFixed by #67 (merged)."}, wantClosed: 1, wantComments: 0, wantBodies: 1},
+		{name: "another PR's marker does not suppress the note", priorComments: []string{"<!-- hive:closed-by-merged-pr pr=12 -->\nFixed by #12 (merged)."}, wantClosed: 1, wantComments: 1, wantBodies: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			fake.commentBodies[64] = append([]string(nil), tt.priorComments...)
+			fake.closeFails[64] = tt.closeFails
+			c := issueStageTestClient(t, fake.srv, true)
+			store := stagelabels.NewStore("", stageNow)
+			result := &ActionableResult{}
+			result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true}}})
+
+			res := syncSeeded(fake, c, result, store, stageNow())
+			if res.MergedPRIssuesClosed != tt.wantClosed || res.Comments != tt.wantComments {
+				t.Fatalf("result = %+v, want closed=%d comments=%d", res, tt.wantClosed, tt.wantComments)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if tt.wantClosed == 1 && fake.closed[64] != IssueStateReasonCompleted {
+				t.Fatalf("closed reason = %q, want completed", fake.closed[64])
+			}
+			if tt.wantClosed == 0 && fake.closed[64] != "" {
+				t.Fatalf("issue closed = %q, want it left open after the failed close", fake.closed[64])
+			}
+			if len(fake.commentBodies[64]) != tt.wantBodies {
+				t.Fatalf("comment bodies = %q, want %d", fake.commentBodies[64], tt.wantBodies)
+			}
+			if tt.wantComments == 1 {
+				body := fake.commentBodies[64][len(fake.commentBodies[64])-1]
+				if !strings.HasPrefix(body, marker) || !strings.Contains(body, "Fixed by #67") || !strings.Contains(body, "full fix") {
+					t.Fatalf("comment body = %q", body)
+				}
+			}
+		})
 	}
 }

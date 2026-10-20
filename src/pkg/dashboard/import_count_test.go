@@ -42,8 +42,17 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// plus pkg/stagelabels so the Operations fleet payload can derive
 	// new-vs-rework from the persisted stage-label store (hivecommons/hive#12502),
 	// plus pkg/nous for the per-campaign experiment store that scopes the
-	// Experiment Lab baseline to the active research question (hivecommons/hive#12501).
-	const maxDashboardInternalImports = 60
+	// Experiment Lab baseline to the active research question (hivecommons/hive#12501),
+	// plus pkg/stageengine so the contribute hub submits stage facts to the
+	// central engine instead of writing stage/* labels directly (ADR-0025,
+	// hivecommons/hive#13009), plus pkg/decisionpolicy so the contribute hub
+	// shares the one needs-decision classifier with the issue watcher when a
+	// contributor parks on the target repo's own confirmation gate
+	// (hivecommons/hive#13059), plus pkg/feedbackbundle, the single
+	// implementation of diagnostic-bundle storage and prefilled-issue URL
+	// building shared by the spoke and the hub so dashboard login can stay
+	// scope-free (hivecommons/hive#1927).
+	const maxDashboardInternalImports = 63
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

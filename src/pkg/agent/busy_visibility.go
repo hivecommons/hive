@@ -319,9 +319,10 @@ func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 	return "", ""
 }
 
-// busyNoActivityStall reports why a pane that still shows Working, refuses
-// every kick, and has produced no transcript activity for far longer than the
-// busy-no-activity threshold should be restarted, or "" when it should not.
+// busyNoActivityStall reports why a pane that still shows Working or, for a
+// live CLI, no input prompt, refuses every kick, and has produced no transcript
+// activity for far longer than the busy-no-activity threshold should be
+// restarted, or "" when it should not.
 // Without this the condition was visibility-only: a wedged CLI refused kicks
 // indefinitely and nothing broke the loop (#12505). Restarts share the
 // session-liveness cooldown so a pane that wedges again is not churned.

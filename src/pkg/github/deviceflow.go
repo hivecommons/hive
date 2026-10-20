@@ -22,10 +22,17 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	// deviceScope is the narrowest GitHub OAuth grant the dashboard needs to let
-	// a signed-in public-GitHub user author feedback issues as themselves. The
-	// dashboard does not request private-repository "repo" access for this path.
-	deviceScope = "public_repo"
+	// deviceScope is empty — permanently (issue #1927, regressed once by
+	// #11051). Dashboard login only proves the user's identity (ValidateToken →
+	// GET /user, which works with a no-scope token). It never needs repository
+	// access: every GitHub write the hive performs — issues, PRs, comments,
+	// merges, the advisory digest, feedback diagnostic bundles — goes through
+	// the hive's App installation token, and dashboard feedback is filed by
+	// the USER on GitHub via a prefilled issues/new URL. Requesting any repo
+	// scope here (even public_repo) forces every viewer through GitHub's
+	// "read and write repository data" consent page just to look at a
+	// dashboard. TestDashboardLoginNeverRequestsRepoScope guards this file.
+	deviceScope = ""
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.
@@ -53,7 +60,9 @@ type DeviceFlowState struct {
 	Interval        int    `json:"interval"`
 }
 
-// StartDeviceFlow initiates GitHub device flow authentication.
+// StartDeviceFlow initiates GitHub device flow authentication requesting no
+// OAuth scope (identity-only login, issue #1927). The scope field is omitted
+// from the request entirely rather than sent empty.
 // baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
 // for default github.com behavior.
 func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error) {
@@ -61,9 +70,6 @@ func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error)
 	data := url.Values{
 		"client_id": {clientID},
 	}
-	// Only request a scope when one is configured. deviceScope is empty by
-	// default (identity-only login, issue #1927); omitting the field entirely
-	// yields a no-scope token rather than sending scope="".
 	if deviceScope != "" {
 		data.Set("scope", deviceScope)
 	}

@@ -1787,10 +1787,6 @@ type selfAuthoredPR struct {
 	updatedAt string
 	// workflowRuns are returned by GET /actions/runs?head_sha=<head>.
 	workflowRuns []map[string]any
-	// approveStatus, when non-zero, is the status POST /actions/runs/{id}/approve
-	// answers with; approveCount counts those POSTs.
-	approveStatus int
-	approveCount  *int
 	// headCommitAuthor is the login GET /commits/{head} reports as author;
 	// commentBodies collects POST /issues/{n}/comments bodies.
 	headCommitAuthor string
@@ -1822,6 +1818,10 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				})
 			}
 			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews"):
+			// The self lane reads reviews on every pass for a trusted
+			// human's changes_requested (hivecommons/hive#13041).
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "")
 			pr := byNumber[number]
@@ -1853,18 +1853,6 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				runs = []map[string]any{}
 			}
 			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(r.URL.Path, "/approve"):
-			for _, pr := range byNumber {
-				if pr.approveCount != nil {
-					(*pr.approveCount)++
-				}
-				if pr.approveStatus != 0 {
-					w.WriteHeader(pr.approveStatus)
-					json.NewEncoder(w).Encode(map[string]string{"message": "Resource not accessible by integration"})
-					return
-				}
-			}
-			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
 			json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"sha": "basesha"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":

@@ -166,6 +166,8 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"var _allDashHives = [{}, {}];",
 		"var _fleetQuadrant = {scored_axes: 4};",
 		"var _isAdmin = false;",
+		"function activeFilterCount() { return 0; }",
+		jsFunc(t, "fleetQuadrantScopeLabel"),
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
 		jsFunc(t, "fleetQuadrantEvidenceButtonHTML"),
 		jsFunc(t, "fleetQuadrantHintHTML"),
@@ -203,7 +205,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}
 	}
-	if !strings.Contains(got.Member, "Fleet quadrant · 2 hives in view") {
+	if !strings.Contains(got.Member, "Fleet quadrant · all 2 hives") {
 		t.Errorf("member fleet card lost its content:\n%s", got.Member)
 	}
 }

@@ -164,8 +164,9 @@ auto_merge:
 
 ### Self-merge review gate
 
-Immediately before the self-authored sweep merges one of the App's own PRs
-(after the head SHA is re-verified), it reads the swarm review verdict for that
+Immediately before an automerge lane merges a PR — the self-authored sweep for
+the App's own and trusted-bot PRs, and the trusted-author tier for a human's
+(after the head SHA is re-verified) — it reads the swarm review verdict for that
 head from the same `review-verdicts.json` the merge-eligible lane uses and
 classifies it as `no-review-bundle`, `awaiting-review-approval`,
 `changes-requested:<perspectives>` or `approved`
@@ -177,18 +178,23 @@ takes effect without a restart.
 
 - **shadow** (default): the merge proceeds as before; the evidence bundle for
   the head (started on the spot when none exists) records
-  `shadow.review_gate` with `lane: self-merge`, `would_have_held` and the
-  reason, so the Evidence card's Shadow gates panel can show what the gate
+  `shadow.review_gate` with `lane: self-merge` (the App's own PRs),
+  `trusted-bot` or `trusted-author`, `would_have_held` and the reason, so the Evidence card's Shadow gates panel can show what the gate
   would have held.
 - **enforce**: anything but `approved` holds the merge with reason
   `review-gate:<outcome>`; the PR is retried on a later sweep.
 - **off**: no evaluation.
 
 Each evaluation writes one audit line, action `review_evaluated`, detail
-`lane=self-merge would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
-The gate applies to the `self-authored` lane only; trusted-bot PRs are
-unchanged. The merge and the CI snapshot are recorded in the evidence bundle
-in every mode, including when the bundle is created at merge time.
+`lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
+The gate covers every sweep lane because the swarm reviews every PR
+regardless of author ([#12974](https://github.com/hivecommons/hive/issues/12974));
+until then it covered the `self-authored` lane only, and a trusted human's PR
+(hivecommons/hive#12966) could merge through the trusted-author tier with no
+swarm verdict at all. The contributor lane has its own
+`auto_merge.contributor_lane.require_reviewer_verdict` (default on). The merge
+and the CI snapshot are recorded in the evidence bundle in every mode,
+including when the bundle is created at merge time.
 
 ### Trusted bot authors
 
@@ -457,12 +463,16 @@ it evaluated, derived from the same per-lane reason it logs
 swarm's known verdict is `requires_human`, which the lane also reports as
 no-verdict → `stage/085-needs-decision` with reason
 `reviewer-verdict:requires_human`,
-`contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
+`contributor-lane:soaking(...)` → `stage/095-pre-merge-soak` (admitted, soak window
+running; promoted to `stage/100-merge-queue` once the soak is complete), approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
 human-authored PR → `stage/071-needs-author`, on a clanker PR →
-`stage/072-returned-to-contributor`, hold / sentinel alert →
-`stage/085-needs-decision`, untrusted author with an approve verdict at the
+`stage/072-returned-to-contributor`, a trusted human's changes-requested
+review or `/hive decision <text>` on a hive-authored PR's current head →
+`stage/070-fixing` with reason `human-changes-requested` and one fix kick
+carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
+hold / sentinel alert → `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
 missing), merged → no stage), plus one `role/*` label saying
@@ -495,7 +505,20 @@ pushes and release adoption once repo evidence exists
 App-authored agents commit with the App bot noreply email (keyed by the bot's
 GitHub user id, not the App id) so their fixer pushes
 normally provide the GitHub linkage, while their commit name/sign-off still
-shows the lane. The issues a PR covers
+shows the lane. An in-place adoption does not sit at 074 forever: the sweep
+re-evaluates every adopted record each pass, and when the hive cannot finish
+on the contributor branch — a hive commit the squash sign-off gate strips
+(`hive-signoff-attribution`), or a blocking review-swarm finding left on a
+head that sat idle for the 074 dwell — it converts to a supersession
+(`reason=signoff-rehome` / `in-place-stalled`) and the superseding PR takes
+the same red-PR / review-fix route. An adoption with nothing the hive can
+push past the dwell goes to `stage/085-needs-decision` as
+`adoption-stalled:<lane reason>` with one comment naming the blocker, so the
+dashboard shows a person's item, not a silent 074; "waiting on maintainer
+lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs
+from the head's last hive push, a red optional check alone is not a blocker,
+and the escalation releases back to 074 when its reason clears
+(hivecommons/hive#13040). The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same

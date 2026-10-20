@@ -16,6 +16,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -124,13 +125,16 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 }
 
 // routeHuman refines a lane's human hand-off into the stage the evidence
-// supports. It returns the route and the lane-vocabulary reason to record.
-func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, stage stagelabels.Stage, now time.Time) stagelabels.Route {
+// supports. It returns the route (with the lane-vocabulary reason to
+// record) and the evidence it was decided on, which the stage pass hands
+// the engine as PRPassFacts.Route so DerivePR routes identically.
+func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, stage stagelabels.Stage, now time.Time) (stagelabels.Route, stagelabels.Evidence) {
 	cause := stagelabels.CauseTrust
 	if stage == stagelabels.NeedsDecision {
 		cause = stagelabels.CauseDecision
 	}
-	return stagelabels.RouteHuman(c.humanEvidence(ctx, tracker, key, obs, cause, now))
+	e := c.humanEvidence(ctx, tracker, key, obs, cause, now)
+	return stagelabels.RouteHuman(e), e
 }
 
 // trustCause renders the trust reason for the 090 comment.
@@ -171,6 +175,10 @@ func decisionCause(reason string) string {
 		return "the PR touches a human-merge path (auto_merge.human_merge_paths)"
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
 		return "the merge intent could not be authorized"
+	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
+		return "GitHub Actions is still waiting after Hive posted `" + workflowApprovalCommand + "`. Install the self-contained `" + oktotest.WorkflowPath + "` below (or render it with `hivectl ok-to-test-template`) so the repository GITHUB_TOKEN can approve trusted same-repo bot runs, or manually approve the runs from the PR checks banner."
+	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
+		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
 	case reason == "approval-desk-withheld":
 		return "the approval desk withheld this merge"
 	case reason == "":
@@ -196,7 +204,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	case stagelabels.ReadyForHumanMerge:
 		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
-		body = stagelabels.DecisionComment(route)
+		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
 	}
@@ -207,4 +215,27 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	store.MarkEntryCommented(key, obs.HeadSHA)
 	c.info("stage labels: entry comment posted", "repo", obs.Display, "pr", obs.Number, "stage", route.Stage.String(), "reasons", route.Reasons)
 	return 1, nil
+}
+
+// workflowApprovalSnippet appends the self-contained ok-to-test workflow,
+// rendered for this hive's own App login, to the 085 entry when held runs
+// stayed `action_required` past the grace period (the repository most likely
+// lacks the workflow). It contains no `uses:` reference so it installs under
+// restrictive Actions policies and on GHES.
+func (c *Engine) workflowApprovalSnippet(reason string) string {
+	if !strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix) {
+		return ""
+	}
+	login := ""
+	if c != nil && c.transport != nil {
+		login = strings.TrimSpace(c.transport.AppBotLogin())
+	}
+	workflow := oktotest.Workflow(oktotest.Options{AppLogins: login})
+	var b strings.Builder
+	b.WriteString("\n\n<details><summary>Install <code>")
+	b.WriteString(oktotest.WorkflowPath)
+	b.WriteString("</code> (self-contained; commit it to the default branch)</summary>\n\n```yaml\n")
+	b.WriteString(strings.TrimRight(workflow, "\n"))
+	b.WriteString("\n```\n\n</details>")
+	return b.String()
 }

@@ -125,7 +125,7 @@ func (c *Client) executeApprovedIssueRelease(ctx context.Context, displayRepo, o
 	c.recordWriteAudit(AuditActionReleaseCreated, InvocationMeta{Agent: AttributionAgentGovernor},
 		WriteTarget{Repo: displayRepo, Number: issue.GetNumber()},
 		"actor", actor, "tag", step.Tag, "target", step.Target, "url", releaseURL)
-	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, issue.GetNumber(), issueLabelNames(issue.Labels))
+	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, issue.GetNumber(), issueLabelNames(issue.Labels), actor, false)
 	if err != nil {
 		return IssueUnparkEvent{}, nil, "", err
 	}

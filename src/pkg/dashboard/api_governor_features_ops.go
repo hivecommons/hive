@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -70,6 +71,9 @@ type featuresOpsBody struct {
 	ClaimsComment             *bool `json:"claimsComment"`
 	ClaimsLabel               *bool `json:"claimsLabel"`
 	ClaimsEscalateAfterClaims *int  `json:"claimsEscalateAfterClaims"`
+	// governor.claims.never_claim_labels as a comma-separated list. Blank
+	// restores the default (epic); "none" turns the gate off. Applied live.
+	ClaimsNeverClaimLabels *string `json:"claimsNeverClaimLabels"`
 	// governor.rotation.headroom_source: builtin (default) or ccleft. The
 	// rotation manager builds its probers at boot, so this needs a restart.
 	RotationHeadroomSource *string `json:"rotationHeadroomSource"`
@@ -342,6 +346,10 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		}
 		steps = append(steps, func(c *config.Config) { c.Governor.Claims.EscalateAfterClaims = v })
 	}
+	if b.ClaimsNeverClaimLabels != nil {
+		v := parseNeverClaimLabelsInput(*b.ClaimsNeverClaimLabels)
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.NeverClaimLabels = v })
+	}
 	if b.RotationHeadroomSource != nil {
 		v := strings.ToLower(strings.TrimSpace(*b.RotationHeadroomSource))
 		switch v {
@@ -382,6 +390,8 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"claimsLabel":                  cfg.Governor.Claims.LabelEnabled(),
 		"claimsEscalateAfterClaims":    cfg.Governor.Claims.EscalateAfterClaims,
 		"claimsEscalateAfterDefault":   config.DefaultClaimEscalateAfter,
+		"claimsNeverClaimLabels":       strings.Join(cfg.Governor.Claims.NeverClaimLabels, ", "),
+		"claimsNeverClaimDefault":      strings.Join(claims.DefaultNeverClaimLabels, ", "),
 		"rotationHeadroomSource":       cfg.Governor.Rotation.EffectiveHeadroomSource(),
 		"rotationHeadroomSourceValues": []string{config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft},
 
@@ -463,4 +473,25 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 			"goodFirstIssueDocsUrl":          config.DefaultGoodFirstIssueDocsBase,
 		},
 	}
+}
+
+// neverClaimLabelsOff is the Settings-dialog spelling of an explicit empty
+// governor.claims.never_claim_labels list (blank means "use the default").
+const neverClaimLabelsOff = "none"
+
+func parseNeverClaimLabelsInput(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.EqualFold(raw, neverClaimLabelsOff) {
+		return []string{}
+	}
+	out := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

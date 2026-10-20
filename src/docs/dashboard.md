@@ -393,8 +393,10 @@ in exactly one band, while non-winning states remain as badges on the pill:
 2. **Claimed** (`claimed`) — a claim is a comment; the `stage/020-claimed` /
    `stage/030-pr-in-progress` label is a mirror Hive keeps in sync (the retired
    `claimed` and `hive/in-progress` spellings are still recognised for the
-   migration cycle). The display band also recognises assignees and
-   `hive/claimed-by-*`.
+   migration cycle). The display band also recognises assignees and any
+   `hive/claimed-by-*` label — the generic `hive/claimed-by-human`, an
+   agent's `hive/claimed-by-<agent>` and the retired per-login spelling
+   alike; the claimant's login is shown from the claim record, not the label.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
    human assignee (the snapshot's `human_acknowledged`; a human *comment* only

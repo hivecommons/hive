@@ -12,9 +12,12 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// The pr-in-progress stage label (`stage/030-pr-in-progress`, formerly
-// `hive/in-progress`): a GitHub-visible, timestamped "an agent has started a
-// PR for this issue" signal.
+// The agent start mark (formerly the `hive/in-progress` label): a
+// GitHub-visible, timestamped "an agent has started on this issue" signal.
+// It derives `stage/020-claimed`; `stage/030-pr-in-progress` needs PR
+// evidence on the claim (the agent's `hive-open-pr --issues` request or a
+// start marker naming a branch / PR, `pr_started=true` on the marker) —
+// the label promises a PR (hivecommons/hive#13069).
 //
 // Before this label the only forge-visible evidence that the scanner had
 // picked an issue was the pull request itself. A kick lists up to
@@ -39,15 +42,16 @@ import (
 //     on every hive that enumerates the repo, whether or not that hive has
 //     governor.claims on.
 
+// InProgressLabel is the `stage/030-pr-in-progress` stage label
+// (hivecommons/hive#12436), worn once the claim carries PR evidence;
+// the `hive/in-progress` label it replaced is claims.LegacyLabelInProgress
+// and is only recognised, never written, during the migration cycle.
+var InProgressLabel = claims.LabelPRInProgress
+
 const (
-	// InProgressLabel marks an issue a hive agent has started a PR for. It is
-	// the `stage/030-pr-in-progress` stage label (hivecommons/hive#12436);
-	// the `hive/in-progress` label it replaced is claims.LegacyLabelInProgress
-	// and is only recognised, never written, during the migration cycle.
-	InProgressLabel = claims.LabelPRInProgress
 	// inProgressLabelDescription seeds the label when a repo does not define
 	// it yet; the colour is the shared stage-family amber.
-	inProgressLabelDescription = "An agent kick is running; no PR yet"
+	inProgressLabelDescription = "An agent has a PR under way for this issue"
 	// inProgressWorkBucket is the RepoWork detail bucket for a withheld issue.
 	inProgressWorkBucket = "in_progress"
 )
@@ -120,23 +124,26 @@ func InProgressCommentBody(agent, hiveID string, started, expires time.Time) str
 	return b.String()
 }
 
-// inProgressLabelsForClaim returns the labels a `claim` request applies: the
-// per-agent ownership label and, when enabled, stage/030-pr-in-progress.
-func (c *Client) inProgressLabelsForClaim(agent string) []string {
-	labels := []string{claims.ClaimedByLabel(claims.Claim{Holder: agent, Kind: claims.KindAgent})}
-	if c.inProgressSetting().Enabled {
-		labels = append(labels, InProgressLabel)
-	}
-	return labels
+// claimOwnershipLabel is the per-agent ownership label a `claim` request
+// applies (App bots can't be assignees). The stage the claim implies is not
+// a label the request writes: it is an InProgress fact for the stage engine
+// (see Client.StageFacts).
+func claimOwnershipLabel(agent string) string {
+	return claims.ClaimedByLabel(claims.Claim{Holder: agent, Kind: claims.KindAgent})
 }
 
-// claimStage is the stage a `claim` request enforces: pr-in-progress when
-// the in-progress mark is on, else no opinion.
-func (c *Client) claimStage() stagelabels.Stage {
-	if c.inProgressSetting().Enabled {
-		return stagelabels.PRInProgress
+// submitInProgressFact tells the stage engine an agent kick started on the
+// issue — the timestamped start signal (#10527), which derives to
+// stage/020-claimed until PR evidence arrives (hivecommons/hive#13069) —
+// when the in-progress mark is enabled. The engine re-reads the issue and replaces whatever stage it
+// carries, so a second claim on an issue whose earlier labels lapsed is
+// written, not replayed (hivecommons/hive#12512).
+func (c *Client) submitInProgressFact(ctx context.Context, repo string, number int, agent string, now time.Time) error {
+	set := c.inProgressSetting()
+	if !set.Enabled {
+		return nil
 	}
-	return stagelabels.None
+	return c.StageFacts().InProgress(ctx, c.IssueStageRef(repo, number), agent, now.Add(set.TTL))
 }
 
 // markInProgressStarted is the post-label half of a `claim` request: it seeds
@@ -162,13 +169,17 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 }
 
 // clearInProgressForPR moves every issue a freshly opened PR names from the
-// claimed / pr-in-progress stage to covered-by-pr. Best-effort and off the
-// request path: the PR is the stronger signal and the stage reconciler
-// converges the labels on the next cycle anyway.
-func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues []int) {
+// claimed / pr-in-progress stage to covered-by-pr: each is a CoveredBy fact
+// for the stage engine, which re-reads the issue, takes the claimed /
+// pr-in-progress (and retired) labels off and puts 040 on, journaled
+// against that read so a later PR on the same issue can do it again.
+// Best-effort and off the request path: the PR is the stronger signal and
+// the stage reconciler converges the labels on the next cycle anyway.
+func (c *Client) clearInProgressForPR(ctx context.Context, repo string, prNumber int, issues []int) {
 	if !c.inProgressSetting().Enabled || len(issues) == 0 {
 		return
 	}
+	pr := c.PRStageRef(repo, prNumber)
 	for _, n := range issues {
 		if n <= 0 {
 			continue
@@ -179,10 +190,7 @@ func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues [
 			}
 			continue
 		}
-		// One enforced write: re-reads the issue, takes the claimed /
-		// pr-in-progress (and retired) labels off and puts 040 on, journaled
-		// against that read so a later PR on the same issue can do it again.
-		if _, err := c.ApplyStageLabel(ctx, repo, n, stagelabels.CoveredByPR); err != nil && c.logger != nil {
+		if err := c.StageFacts().CoveredBy(ctx, c.IssueStageRef(repo, n), pr); err != nil && c.logger != nil {
 			c.logger.Warn("in-progress: moving issue to covered-by-pr after PR open failed", "repo", repo, "issue", n, "error", err)
 		}
 	}
@@ -234,6 +242,9 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 			appendRepoWorkIssueDetail(result, issue, inProgressWorkBucket, "in progress; marker unreadable")
 		case live:
 			withheld++
+			// The marker's pr_started= is what stages the withheld issue
+			// 030 rather than 020 (hivecommons/hive#13069).
+			issue.ClaimPRStarted = issue.ClaimPRStarted || claim.PRStarted
 			appendRepoWorkIssueDetail(result, issue, inProgressWorkBucket, "In progress by "+claim.Identity+" since "+startedLabel(claim))
 			if logger != nil {
 				logger.Info("withholding issue: in-progress stage with a live start mark",

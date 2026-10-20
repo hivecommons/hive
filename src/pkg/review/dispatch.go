@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -115,8 +116,11 @@ type DispatchOptions struct {
 	// threads (hivecommons/hive#9360).
 	ReviewBotLogins      []string
 	ReviewBotMinPriority string
-	// AllAuthors lifts the agent-authored restriction so every open PR is
-	// eligible for review, whoever opened it.
+	// AllAuthors is a no-op kept for configs that still set
+	// review.all_authors. Every open PR is reviewed regardless of author
+	// (hivecommons/hive#12974); the planner never reads this field.
+	//
+	// Deprecated: review dispatch no longer filters by author.
 	AllAuthors bool
 	// FixHumanPRs mirrors review.fix_human_prs. It no longer lets a fix kick
 	// push onto a PR this hive's agents did not open: that commit would be
@@ -289,6 +293,10 @@ type DispatchPlan struct {
 	// should log and audit. Refusals already recorded in State.Withheld for
 	// the same head are not repeated here.
 	WithheldFixes []WithheldFix
+	// FixExclusions are changes-requested PRs whose fix kick was deliberately
+	// not added to FixKicks this cycle. Callers log them so a stuck PR never
+	// disappears behind a silent planner branch.
+	FixExclusions []FixDispatchExclusion
 	// Expired are the pending reviews dropped THIS cycle for outliving
 	// PendingTTL without a verdict; their perspectives are re-dispatched in
 	// the same plan unless the head's retry budget is exhausted.
@@ -298,6 +306,24 @@ type DispatchPlan struct {
 	Exhausted []HumanReviewHold
 	State     DispatchState
 }
+
+type FixDispatchExclusion struct {
+	Repo     string
+	Number   int
+	HeadSHA  string
+	Author   string
+	Reason   string
+	Attempts int
+}
+
+const (
+	FixDispatchExcludedPending              = "pending-fix-already-dispatched"
+	FixDispatchExcludedAttemptsExhausted    = "fix-attempts-exhausted"
+	FixDispatchExcludedNoEnabledFixer       = "no-enabled-fixer"
+	FixDispatchExcludedNotHiveAuthored      = "not-hive-authored"
+	FixDispatchExcludedNotHiveAuthoredDCO   = "not-hive-authored-squash-signoff"
+	FixAttemptsExhaustedHumanDecisionReason = "fix-attempts-exhausted"
+)
 
 func LoadDispatchState(path string) (DispatchState, error) {
 	explicit := path != ""
@@ -369,15 +395,29 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if pr.Number <= 0 || pr.Repo == "" {
 			continue
 		}
-		// Review is normally limited to the hive's own output, because that is
-		// the work the hive is answerable for. AllAuthors lifts that: on a repo
-		// where the queue is the problem, a human's PR waiting on a reviewer is
-		// no less stuck than an agent's.
-		if !opts.AllAuthors && !isAgentAuthored(pr.Author, opts.AIAuthor) {
-			continue
-		}
+		// Every open PR is reviewed, whoever opened it — hive agent, human,
+		// clanker, dependabot or any other bot (hivecommons/hive#12974). The
+		// only switch is whether review itself is on (RequireApproval and
+		// FanOut, checked above). Author kind still decides what happens AFTER
+		// the verdict: fixPushAllowed and the merge lanes, not this loop.
 		revisiting := false
 		var delivered map[Perspective]Verdict
+		if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.HeadSHA) == strings.TrimSpace(pr.HeadSHA) {
+			// A trusted maintainer answered this head — a changes_requested
+			// review or `/hive decision <text>` — so whatever the swarm said
+			// about it is superseded (hivecommons/hive#13041). Hand the
+			// instruction to the author agent; the swarm re-reviews the head
+			// the fix pushes. One kick per head: dispatchFix's pending check.
+			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+			plan.State.Human = removeHumanForHead(plan.State.Human, pr)
+			agg, _ := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest)
+			if fixPushAllowed(pr, opts) {
+				plan.dispatchFix(pr, agg, opts, now)
+			} else {
+				plan.withholdFix(pr, opts, now)
+			}
+			continue
+		}
 		if agg, ok := artifact.AggregateForBody(pr.Repo, pr.Number, pr.HeadSHA, pr.BodyDigest); ok {
 			// A verdict normally settles a PR until its head moves. That is
 			// right while the reviewer is sound, and a trap once a
@@ -697,23 +737,25 @@ func (s DispatchState) PendingSince(repo string, number int, headSHA string) tim
 
 // hiveAuthored reports whether this hive is answerable for the PR: its login
 // is an agent's (isAgentAuthored), the audit trail attributes it to one of
-// this hive's agents (AuthorAgent), or its body carries the hive attribution
-// trailer (HiveAttributed — a PR an agent opened on a person's credentials).
+// this hive's agents (AuthorAgent), its body carries the hive attribution
+// trailer (HiveAttributed — a PR an agent opened on a person's credentials),
+// or the stage reconciler says the hive adopted the contributor PR in place.
 // Anything else was opened by someone the hive does not speak for.
 func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
-	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed
+	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed || hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label())
 }
 
-// fixPushAllowed is the authorship check in front of every fix kick. A fix
-// kick tells an agent to push a commit onto the PR branch, so it is only ever
-// dispatched for a PR the hive itself opened. AllAuthors is deliberately not
-// consulted: it widens what is REVIEWED, and reviewing a contributor's PR is
-// not a reason to rewrite it (hivecommons/hive#8421). review.fix_human_prs is
-// not consulted either: the fixer's commit is signed off by the hive, the
-// squash merge is attributed to the PR author, and the squash sign-off gate
-// rejects that pair as bot-signoff — a red the hive cannot repair, since it
-// cannot sign off for the author. Everyone else's PRs get the fix as a
-// suggestion in the review instead (hivecommons/hive#12897).
+// fixPushAllowed is the ownership check in front of every fix kick. A fix kick
+// tells an agent to push a commit onto the PR branch, so it is dispatched only
+// for a PR the hive opened or explicitly adopted in place. AllAuthors is
+// deliberately not consulted: it widens what is REVIEWED, and reviewing a
+// contributor's ordinary PR is not a reason to rewrite it (hivecommons/hive#8421).
+// review.fix_human_prs is not consulted either: for non-adopted human PRs the
+// fixer's commit is signed off by the hive, the squash merge is attributed to
+// the PR author, and the squash sign-off gate rejects that pair as bot-signoff
+// — a red the hive cannot repair, since it cannot sign off for the author.
+// Everyone else's PRs get the fix as a suggestion in the review instead
+// (hivecommons/hive#12897).
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 	return hiveAuthored(pr, opts)
 }
@@ -725,6 +767,11 @@ func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
 func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now time.Time) {
 	for _, w := range p.State.Withheld {
 		if samePRHead(w.Repo, w.Number, w.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			reason := FixDispatchExcludedNotHiveAuthored
+			if opts.FixHumanPRs {
+				reason = FixDispatchExcludedNotHiveAuthoredDCO
+			}
+			p.recordFixExclusion(pr, reason, 0)
 			return
 		}
 	}
@@ -744,23 +791,39 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 	}
 	p.State.Withheld = append(p.State.Withheld, w)
 	p.WithheldFixes = append(p.WithheldFixes, w)
+	reason = FixDispatchExcludedNotHiveAuthored
+	if opts.FixHumanPRs {
+		reason = FixDispatchExcludedNotHiveAuthoredDCO
+	}
+	p.recordFixExclusion(pr, reason, 0)
 }
 
 func (p *DispatchPlan) dispatchFix(pr PullRequest, agg Aggregate, opts DispatchOptions, now time.Time) {
 	idx := fixIndex(p.State.Fixes, pr.Repo, pr.Number, pr.HeadSHA)
+	pendingAttempts := 0
 	if idx >= 0 {
-		return
+		if !adoptedHiveOwnedFix(pr, opts) {
+			p.recordFixExclusion(pr, FixDispatchExcludedPending, p.State.Fixes[idx].Attempts)
+			return
+		}
+		pendingAttempts = p.State.Fixes[idx].Attempts
+		p.State.Fixes = append(p.State.Fixes[:idx], p.State.Fixes[idx+1:]...)
 	}
 	attempts := maxFixAttemptsForPR(p.State.Fixes, pr.Repo, pr.Number)
+	if pendingAttempts > attempts {
+		attempts = pendingAttempts
+	}
 	if historical := maxHistoricalFixAttemptsForPR(p.State.FixAttempts, pr.Repo, pr.Number); historical > attempts {
 		attempts = historical
 	}
 	if attempts >= escalation.MaxReEngagements {
-		p.addHuman(pr, fmt.Sprintf("review fix cap reached (%d/%d)", attempts, escalation.MaxReEngagements), now)
+		p.recordFixExclusion(pr, FixDispatchExcludedAttemptsExhausted, attempts)
+		p.addHuman(pr, FixAttemptsExhaustedHumanDecisionReason, now)
 		return
 	}
 	agent := selectFixerAgent(pr, opts)
 	if agent == "" {
+		p.recordFixExclusion(pr, FixDispatchExcludedNoEnabledFixer, attempts)
 		p.addHuman(pr, "no enabled kick-capable fixer agent is available", now)
 		return
 	}
@@ -792,6 +855,30 @@ func humanReason(agg Aggregate) string {
 		return "review verdict reject"
 	}
 	return "review verdict requires_human"
+}
+
+func adoptedHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {
+	return hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) && hiveAuthored(pr, opts)
+}
+
+func (p *DispatchPlan) recordFixExclusion(pr PullRequest, reason string, attempts int) {
+	p.FixExclusions = append(p.FixExclusions, FixDispatchExclusion{
+		Repo:     pr.Repo,
+		Number:   pr.Number,
+		HeadSHA:  pr.HeadSHA,
+		Author:   strings.TrimSpace(pr.Author),
+		Reason:   reason,
+		Attempts: attempts,
+	})
+}
+
+func hasLabelFold(labels []string, want string) bool {
+	for _, label := range labels {
+		if strings.EqualFold(strings.TrimSpace(label), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func selectFixerAgent(pr PullRequest, opts DispatchOptions) string {
@@ -926,9 +1013,16 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 	}
 	fmt.Fprintf(&b, "Auto-fix attempt %d of %d. Stay narrowly scoped to the review findings below; push a new commit to the PR branch.\n\n", attempt, maxAttempts)
 	fmt.Fprintf(&b, "When committing the fix, include this exact git trailer so rework metrics can count the attempt: Hive-Fix-Attempt: %d/%d\n\n", attempt, maxAttempts)
+	if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.Body) != "" {
+		b.WriteString(humanChangeRequestPromptSection(*req))
+	}
 	b.WriteString("Aggregated review findings:\n")
 	if len(agg.Findings) == 0 && len(agg.Reasons) == 0 {
-		b.WriteString("- Review requested changes but did not include structured findings; inspect the PR conversation and latest diff.\n")
+		if pr.HumanChangeRequest != nil {
+			b.WriteString("- No structured swarm findings for this head; the maintainer instruction above is the whole scope.\n")
+		} else {
+			b.WriteString("- Review requested changes but did not include structured findings; inspect the PR conversation and latest diff.\n")
+		}
 	}
 	for _, reason := range agg.Reasons {
 		fmt.Fprintf(&b, "- %s\n", reason)
@@ -938,6 +1032,42 @@ func BuildFixPrompt(pr PullRequest, agg Aggregate, attempt, maxAttempts int) str
 	}
 	b.WriteString("\nReturn the standard fix AgentReport when done. If the findings are unsafe or ambiguous, request human review instead of guessing.\n")
 	return b.String()
+}
+
+// humanChangeRequestPromptSection renders a maintainer's instruction into
+// the fix prompt. The body goes in verbatim: it is the maintainer's words,
+// and paraphrasing a conditional answer is how the condition gets lost.
+func humanChangeRequestPromptSection(req HumanChangeRequest) string {
+	var b strings.Builder
+	actor := strings.TrimSpace(req.Actor)
+	if actor == "" {
+		actor = "maintainer"
+	}
+	what := "changes-requested review"
+	if req.Source == HumanChangeRequestSourceDecision {
+		what = "/hive decision"
+	}
+	fmt.Fprintf(&b, "Maintainer instruction (@%s via %s", actor, what)
+	if url := strings.TrimSpace(req.URL); url != "" {
+		fmt.Fprintf(&b, ", %s", url)
+	}
+	b.WriteString("). This is the primary instruction; implement it as written and treat the swarm findings below as secondary:\n")
+	for _, line := range strings.Split(strings.TrimRight(req.Body, "\n"), "\n") {
+		fmt.Fprintf(&b, "> %s\n", line)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func removeHumanForHead(items []HumanReviewHold, pr PullRequest) []HumanReviewHold {
+	kept := items[:0]
+	for _, h := range items {
+		if samePRHead(h.Repo, h.Number, h.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			continue
+		}
+		kept = append(kept, h)
+	}
+	return kept
 }
 
 func (a Artifact) AggregateFor(repo string, number int, headSHA string) (Aggregate, bool) {

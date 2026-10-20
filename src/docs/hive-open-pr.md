@@ -229,6 +229,16 @@ issue body or as a label (or enable `issues.reporter_confirmation`) only when
 the reporter genuinely must verify before closure. `hive: reporter-confirmed`
 and `hive: close-on-merge` remain accepted legacy bypass markers.
 
+A Hive-authored PR that implements an issue must make an explicit close/open
+decision in its body. Use `Fixes #N`, `Closes #N`, or `Resolves #N` when the
+merge leaves nothing for the issue to track; GitHub only shows its linked-PR
+sidebar/list icon for those closing keywords on PRs targeting the repository
+default branch. If the PR is deliberately partial or the issue must stay open,
+write `Part of #N` (or `Refs #N`) and the same line must say what remains. The
+issue-stage lane will not convert that partial statement into a closer; it
+adds an issue stage-entry comment with the PR link instead. Hive never edits a
+human-authored PR body to add a closing keyword.
+
 A downgraded tracker reference says so in the PR body it lands in:
 
 ```text

@@ -2041,6 +2041,21 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			// link now arms exactly the auto-close the author declined.
 			// Links made by anyone else are left alone and logged.
 			if claim.Reference {
+				if res, err := client.EnsureIssueStagePRLink(ctx, issue.Repo, issue.Number, &IssueClaimContext{
+					PRNumber:       claim.PRNumber,
+					PRRepo:         claim.PRRepo,
+					PRURL:          claim.PRURL,
+					PRAuthor:       claim.PRAuthor,
+					ExternalAuthor: claim.ExternalAuthor,
+					Reference:      true,
+				}); err != nil && logger != nil {
+					logger.Warn("retrofitting reference-only Hive PR body for issue-list link failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+				} else if res.EditedBody {
+					if logger != nil {
+						logger.Info("retrofitted reference-only Hive PR body with closing keyword so GitHub shows the issue-list link", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
+					}
+					continue
+				}
 				if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
 					logger.Warn("retracting hive closing link on reference-only PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
 				} else if res.Retracted && logger != nil {
@@ -2084,14 +2099,6 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, name)
 		}
-		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
-			// The claim lapsed (PR closed or merged) but the stage label is
-			// still on the issue: take it off now rather than a cycle later.
-			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, CoveredByPRLabel, observedState(issue.UpdatedAt)); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
-			}
-			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
-		}
 		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
 				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
@@ -2112,6 +2119,21 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				logger.Warn("removing likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+		}
+		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
+			// The claim lapsed (PR closed or merged) but the stage label is
+			// still on the issue: tell the stage engine now rather than a
+			// cycle later. It re-reads the issue — after the likely-done /
+			// partially-addressed writes above — so a merged PR's issue
+			// leaves the pipeline and a closed-unmerged one goes back to 010.
+			prRepo := claim.PRRepo
+			if prRepo == "" {
+				prRepo = issue.Repo
+			}
+			if err := client.StageFacts().Uncovered(ctx, client.IssueStageRef(issue.Repo, issue.Number), client.PRStageRef(prRepo, claim.PRNumber)); err != nil && logger != nil {
+				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 	}
 }

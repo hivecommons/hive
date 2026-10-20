@@ -102,6 +102,9 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 	case r == "changes-requested":
 		asks = append(asks, "a reviewer requested changes")
 		human = true
+	case r == autoMergeReasonHumanChangesRequested:
+		asks = append(asks, "a maintainer requested changes; the hive is pushing the fix")
+		human = true
 	case r == contributorLaneReasonChangesRequested, r == stagelabels.LaneReasonChangesRequested:
 		asks = append(asks, "the review swarm requested changes")
 	case r == "conflicting" || r == "not-mergeable" || r == "label:needs-rebase":

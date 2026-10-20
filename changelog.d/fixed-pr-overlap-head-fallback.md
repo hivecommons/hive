@@ -1,0 +1,1 @@
+- The open PR overlap check now fetches the exact API-reported head when GitHub has not exposed a PR's pull ref, so an available sibling commit no longer blocks unrelated PR checks.

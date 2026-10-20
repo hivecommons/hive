@@ -2158,6 +2158,12 @@ type gooseACPModels struct {
 // tests can substitute canned inventories without a goose binary.
 var runGooseACPProbe = execGooseACPProbe
 
+// runGooseACPProbeMu guards the seam the same way runCopilotSDKHelperMu does:
+// a background refresh goroutine started by an earlier test (via
+// /api/config/backends → refreshCLIModelsAsync) can still be probing when
+// the next test swaps the runner, which the race detector reports (#13047).
+var runGooseACPProbeMu sync.RWMutex
+
 // discoverGooseModels lists the models goose's CONFIGURED provider serves, by
 // driving `goose acp` (goose >= 1.37): initialize + session/new returns
 // result.models {currentModelId, availableModels}, backed by goose's
@@ -2184,7 +2190,10 @@ var runGooseACPProbe = execGooseACPProbe
 func (s *Server) discoverGooseModels() cliModelResult {
 	ctx, cancel := context.WithTimeout(context.Background(), gooseACPProbeTimeout)
 	defer cancel()
-	inv, err := runGooseACPProbe(ctx)
+	runGooseACPProbeMu.RLock()
+	probe := runGooseACPProbe
+	runGooseACPProbeMu.RUnlock()
+	inv, err := probe(ctx)
 	if err == nil && inv != nil && len(inv.AvailableModels) > 0 {
 		// Pinned model first: an explicit GOOSE_MODEL env pin wins, else
 		// goose's own current model (which goose already orders first).

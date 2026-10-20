@@ -43,6 +43,8 @@ type selfSweepFixture struct {
 	changedFiles  int      // PR "changed_files" count; 0 defaults to len(files)
 	filesHTTPCode int      // non-zero: files endpoint returns this HTTP status
 	mergeCalls    *int     // incremented on every PUT .../merge
+	// reviews is the PR review list; nil serves an empty list.
+	reviews []map[string]any
 }
 
 func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
@@ -114,7 +116,11 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 			}
 			json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
-			json.NewEncoder(w).Encode([]map[string]any{})
+			reviews := fx.reviews
+			if reviews == nil {
+				reviews = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(reviews)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			if fx.statusHTTPCode != 0 {
 				w.WriteHeader(fx.statusHTTPCode)
