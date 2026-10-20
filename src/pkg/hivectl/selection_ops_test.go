@@ -152,7 +152,7 @@ func TestSetFollowNewRepositoriesPreservesMembership(t *testing.T) {
 		}}}}
 		want := *set.Profiles[0].Selection
 		for _, follow := range []bool{true, false, false} {
-			if err := set.SetFollowNewRepositories("a", follow); err != nil {
+			if _, err := set.SetFollowNewRepositories("a", follow); err != nil {
 				t.Fatal(err)
 			}
 			want.FollowNewRepositories = follow
@@ -164,7 +164,7 @@ func TestSetFollowNewRepositoriesPreservesMembership(t *testing.T) {
 	set := &ProfileSet{Profiles: []Profile{{Name: "legacy", Hub: "https://a.example"}}}
 	for _, name := range []string{"legacy", "missing"} {
 		for _, follow := range []bool{false, true} {
-			if err := set.SetFollowNewRepositories(name, follow); err == nil || set.Profiles[0].Selection != nil {
+			if _, err := set.SetFollowNewRepositories(name, follow); err == nil || set.Profiles[0].Selection != nil {
 				t.Fatal("follow accepted unknown or migrated legacy profile")
 			}
 		}

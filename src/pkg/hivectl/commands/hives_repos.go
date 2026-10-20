@@ -95,7 +95,7 @@ func newHivesReposCommand(env *commandEnv) *cobra.Command {
 					err = set.ClearRepoOverride(p.Name, id)
 				}
 			case cmd.Flags().Changed("follow-new-repos"):
-				err = set.SetFollowNewRepositories(p.Name, follow)
+				_, err = set.SetFollowNewRepositories(p.Name, follow)
 			case deselectCurrent:
 				err = set.DeselectCurrent(p.Name)
 			case reset:
