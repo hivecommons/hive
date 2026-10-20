@@ -5484,6 +5484,16 @@ function isToolingFailureBlockedReason(reason) {
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
 const ALREADY_DONE_REASON_KIND = 'already_done';
+// The `no_work_needed — wrong_base: <branch> — <reason>` spelling
+// (hivecommons/hive#13146): the agent found the issue's code is not on the
+// branch it was dispatched against but on <branch>. It goes on the wire as
+// `verdict_reason_kind: 'wrong_base'` with `evidence.branch`, and NEVER as
+// already_done — the hub re-offers the issue against that branch when it
+// exists and parks it otherwise; no already-done label, no close. Keep in
+// sync with wrongBaseReasonPattern in
+// src/pkg/dashboard/contribute_wrong_base.go.
+const WRONG_BASE_REASON_KIND = 'wrong_base';
+const NO_WORK_WRONG_BASE_REASON_RE = /^wrong[_ -]?base\s*[:—–-]\s*`?([A-Za-z0-9][A-Za-z0-9._/-]*)`?\s*(?:[:—–-]\s*)?/i;
 const ALREADY_DONE_MERGED_PR_RE = /\bmerged\s+(?:pull\s+request|PR)\s*#(\d+)\b/i;
 const ALREADY_DONE_TEXT_RE = /\b(?:already\s+(?:resolved|fixed|implemented|merged|done)|no[-\s]?op)\b/i;
 const COMMIT_SHA_RE = /\b[0-9a-f]{7,40}\b/i;
@@ -5511,6 +5521,17 @@ function verdictWireFields(noWork) {
   // (hivecommons/hive#11775): the hub books it idle on the short cooldown, and
   // the reason still reaches its log and run record.
   if (noWork.toolingFailure) return { verdict_reason: noWork.reason };
+  // A wrong_base verdict (hivecommons/hive#13146) carries its kind and the
+  // branch, and none of the already-done / needs-decision markers: the hub
+  // must never settle it as done.
+  if (noWork.wrongBase) {
+    return {
+      verdict: HIVE_VERDICT_NO_WORK,
+      verdict_reason: noWork.reason,
+      verdict_reason_kind: WRONG_BASE_REASON_KIND,
+      evidence: { branch: noWork.wrongBase },
+    };
+  }
   const alreadyDone = alreadyDoneVerdictFields(noWork.reason);
   return {
     verdict: HIVE_VERDICT_NO_WORK,
@@ -5536,7 +5557,7 @@ function alreadyDoneVerdictFields(reason) {
 }
 
 function isAlreadyDoneNoWork(noWork) {
-  if (!isNoWorkVerdict(noWork)) return false;
+  if (!isNoWorkVerdict(noWork) || noWork.wrongBase) return false;
   return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
 }
 
@@ -5634,7 +5655,15 @@ function detectHiveVerdicts(lines, wanted) {
     // have accepted a no_work_needed at all: the two are booked as one
     // family (isNoWorkVerdict), so no caller that wants one rejects the other.
     let needsDecision = false;
-    if (verdict === HIVE_VERDICT_NO_WORK && (NO_WORK_NEEDS_DECISION_REASON_RE.test(reason) || NATURAL_NEEDS_DECISION_REASON_RE.test(reason))) {
+    let wrongBase = '';
+    const wb = verdict === HIVE_VERDICT_NO_WORK ? NO_WORK_WRONG_BASE_REASON_RE.exec(reason) : null;
+    if (wb) {
+      // hivecommons/hive#13146: the branch the agent says the code is on.
+      // Read before the decision/blocked forms so the free-text reason that
+      // follows cannot promote it to either; the reason keeps the branch so
+      // a hub predating the kind still sees "wrong_base: <branch>" text.
+      wrongBase = wb[1];
+    } else if (verdict === HIVE_VERDICT_NO_WORK && (NO_WORK_NEEDS_DECISION_REASON_RE.test(reason) || NATURAL_NEEDS_DECISION_REASON_RE.test(reason))) {
       needsDecision = true;
       reason = reason.replace(NO_WORK_NEEDS_DECISION_REASON_RE, '').trim();
     } else if (verdict === HIVE_VERDICT_NO_WORK && NO_WORK_BLOCKED_REASON_RE.test(reason)) {
@@ -5649,7 +5678,7 @@ function detectHiveVerdicts(lines, wanted) {
     // push/token/credential failure is demoted — the issue is not blocked on
     // anything outside the repo and must not be labelled as such.
     const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && isToolingFailureBlockedReason(reason);
-    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure });
+    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure, wrongBase });
   }
   return found;
 }
@@ -9178,6 +9207,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     BLOCKED_WORKFLOW_LABEL,
     DEFAULT_NEEDS_DECISION_LABEL,
     ALREADY_DONE_WORKFLOW_LABEL,
+    WRONG_BASE_REASON_KIND,
+    NO_WORK_WRONG_BASE_REASON_RE,
     isNoWorkVerdict,
     isAlreadyDoneNoWork,
     isToolingFailureBlockedReason,

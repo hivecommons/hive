@@ -707,6 +707,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// shared "repo#0".
 		ref    worksource.Ref
 		title  string
+		body   string
 		url    string
 		stage  string
 		labels []string
@@ -988,11 +989,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// eligible set before we pick and assign one. The sibling filters
 			// (#2357 skip-assigned, contribute allow/deny) have already run above,
 			// so every appended candidate is genuinely assignable.
+			body, _ := issue["body"].(string)
 			candidates = append(candidates, candidate{
 				repoFull: repo.Full,
 				number:   number,
 				ref:      ref,
 				title:    title,
+				body:     body,
 				url:      url,
 				stage:    stage,
 				// The issue's own labels travel with the candidate so the chosen
@@ -1197,8 +1200,16 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// BEFORE the GitHub round-trips (#7775).
 	unlock()
 
+	// #13146: the base this dispatch names — the issue's declared target
+	// branch when the repository has it, else the default — resolved once
+	// (one cached branch-list round trip at most) and carried on the
+	// assignment so a wrong_base verdict can be judged against it.
+	hints := h.taskPromptRepoHints(chosen.repoFull)
+	target := h.resolveTaskTargetBranch(context.Background(), chosen.repoFull, chosen.ref.Key(), chosen.title, chosen.body)
+	hints.Target = &target
+
 	if chosen.extEngine != "" {
-		prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, false, h.writingGuideSection(), h.taskPromptRepoHints(chosen.repoFull))
+		prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, false, h.writingGuideSection(), hints)
 		if chosen.stage != "" {
 			prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
 		}
@@ -1231,6 +1242,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			return nil
 		}
 		c.currentPrompt = prompt
+		c.currentTask.BaseBranch = target.Branch
 		c.pendingToken = ""
 		c.credentialDelivered = false
 		c.tokenMintedAt = time.Time{}
@@ -1254,6 +1266,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			ExternalID:     chosen.ref.ExternalID,
 			ExternalEngine: chosen.extEngine,
 			Prompt:         prompt,
+			BaseBranch:     target.Branch,
 			Labels:         chosen.labels,
 			ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
 		}
@@ -1314,7 +1327,6 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// PRs in its repos read. A relay subscribed to two hives therefore gets each
 	// hive's guide on that hive's tasks. Unset renders nothing.
 	guide := h.writingGuideSection()
-	hints := h.taskPromptRepoHints(chosen.repoFull)
 	prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, canPush, guide, hints)
 	if requestedRole != "" {
 		prompt = buildRoleTaskPromptForContributorWithHints(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide, hints)
@@ -1342,6 +1354,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 
 	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539).
 	c.currentPrompt = prompt
+	// #13146: the base the prompt named, so a wrong_base verdict on this
+	// task is judged against what was actually dispatched.
+	c.currentTask.BaseBranch = target.Branch
 	// #2537: hold the minted scoped token as PENDING rather than shipping it in the
 	// task_assign below. It is delivered only AFTER the acceptance decision — see
 	// the ready-handler (auto-accept default) and the task_accepted handler
@@ -1400,6 +1415,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// on is authenticated until the task's source has been accepted under the
 		// operator/contributor policy.
 		Prompt: prompt,
+		// #13146: the base the prompt names, so the relay can show it and a
+		// wrong_base verdict can be read against it.
+		BaseBranch: target.Branch,
 		// The chosen issue's own labels — the Labels envelope field was declared
 		// but never populated, so a client reading it got nothing (kubestellar/
 		// hive#2393 item 8). Carried on the candidate from the scan above.

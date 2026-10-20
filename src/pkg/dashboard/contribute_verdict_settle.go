@@ -178,6 +178,11 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 
 func alreadyDoneVerdictRefs(repo string, number int, reason, reasonKind string, evidence *VerdictEvidence) ([]ghpkg.SettlingRef, bool) {
 	kind := strings.ToLower(strings.TrimSpace(reasonKind))
+	// A wrong_base verdict (hivecommons/hive#13146) is never already-done:
+	// the code is on another branch, not shipped.
+	if _, wrongBase := wrongBaseVerdict("", reason, kind, evidence); wrongBase {
+		return nil, false
+	}
 	structured := kind == verdictReasonKindAlreadyDone
 	alreadyDone := structured || mergedPRAlreadyDonePattern.MatchString(reason) || alreadyDoneReasonPattern.MatchString(reason)
 	if !alreadyDone {

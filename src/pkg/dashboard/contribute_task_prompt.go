@@ -369,6 +369,11 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 type taskPromptRepoHints struct {
 	Companions []string
 	Host       string
+	// Target is the dispatch's resolved base (hivecommons/hive#13146). When
+	// set, its Branch replaces the baseBranch argument and the prompt says
+	// why the base is (or, when the declared branch is missing, is not) the
+	// one the issue declared. Nil keeps the pre-#13146 wording.
+	Target *taskTargetBranch
 }
 
 func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBranch string, canPush bool, guide string, hints taskPromptRepoHints) string {
@@ -414,6 +419,11 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 			"the same branch, and confirm before you report done that its base is the branch "+
 			"the repository asks for. ",
 		repoFull, repoFull)
+	targetNote := ""
+	if hints.Target != nil {
+		baseBranch = hints.Target.Branch
+		targetNote = hints.Target.promptNote(repoFull)
+	}
 	if b := strings.TrimSpace(baseBranch); b != "" {
 		baseHint = fmt.Sprintf(
 			"Base this work on the '%s' branch of %s. The checkout may be left on a "+
@@ -424,6 +434,7 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 				"is '%s' before you report done. ",
 			b, repoFull, b, b, b)
 	}
+	baseHint += targetNote
 	repoOwner, _, _ := strings.Cut(repoFull, "/")
 	if repoOwner == "" {
 		repoOwner = repoFull
@@ -593,6 +604,24 @@ func buildTaskPromptBodyWithHints(repoFull, issueRef, title, sourceHint, baseBra
 			"of the queue until a human removes that label. A repository's own "+
 			"spec/confirmation gate or a missing companion checkout is never such a "+
 			"decision (see above); hive re-dispatches a decision verdict that cites one. "+
+			// hivecommons/hive#13146: the wrong_base form. #13090 declared
+			// `Target: v6`, was dispatched as v5 work, and the agent — finding
+			// none of the described code on v5 — had only already_done to say
+			// so; the issue was labelled hive/already-done for code that was
+			// simply on another branch. Code that lives elsewhere is a
+			// dispatch error, never evidence the work is done. Keep the
+			// spelling in sync with NO_WORK_WRONG_BASE_REASON_RE in
+			// bin/contributor-relay.js.
+			"If the code, file, or behaviour the issue describes does NOT exist on the "+
+			"base branch named above but you can see it lives on a different branch "+
+			"(the issue's own 'Target:' line or title prefix, or 'git branch -r' and "+
+			"'git log --all -- <path>' point there), that is a wrong-base dispatch, NOT "+
+			"an already-done issue: never print the already-done form for it. Print "+
+			"'HIVE_VERDICT: no_work_needed — wrong_base: <branch> — <short reason>' "+
+			"naming the branch you believe the code is on, and stop; hive never marks "+
+			"a wrong_base issue already-done or closes it — it re-offers the issue "+
+			"against that branch when the branch exists, and parks it for a maintainer "+
+			"when it does not. "+
 			// hivecommons/hive#7924: the blocked sentinel. utah#100 reached a
 			// correct "nothing here can change until utah-packages' factory
 			// publishes" and printed no_work_needed for it; the hub booked an

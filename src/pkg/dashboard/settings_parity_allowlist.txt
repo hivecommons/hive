@@ -254,6 +254,7 @@ hub.contribute_delegatable_roles[] # TODO #11854
 hub.contribute_deny_authors[] # TODO #11854
 hub.contribute_deny_labels[] # TODO #11854
 hub.contribute_deny_titles[] # TODO #11854
+hub.contribute_honour_target_branch # TODO #11854
 hub.contribute_queue_hold[] # TODO #11854
 hub.contribute_queue_hold_reasons.<key> # TODO #11854
 hub.contribute_queue_order[] # TODO #11854

@@ -5732,6 +5732,13 @@ type HubConfig struct {
 	// Deprecated: use contribute_already_done_hold_days. Kept so existing
 	// experimental configs from the partial #8477 branch continue to load.
 	ContributeAlreadyDoneUnverifiedHoldDays int `yaml:"contribute_already_done_unverified_hold_days,omitempty"`
+	// ContributeHonourTargetBranch makes contributor dispatch base a task on
+	// the branch its issue declares — a `[v6]` title prefix or a
+	// `Target: v6` body line — after checking that branch exists in the
+	// repository (hivecommons/hive#13146). Unset or true honours the declared
+	// target; false keeps the pre-#13146 behaviour (title `[vN]` prefix only,
+	// unvalidated). Resolve with ContributeHonourTargetBranchEnabled().
+	ContributeHonourTargetBranch *bool `yaml:"contribute_honour_target_branch,omitempty"`
 	// ContributeQueueOrder is the OPERATOR PRIORITY OVERRIDE for the ready-work
 	// queue: an ordered list of "owner/repo#number" keys the operator dragged to
 	// the front on the Operations tab. When set, these issues are OFFERED FIRST —
@@ -5838,6 +5845,12 @@ const (
 // ENABLED for backward compatibility; an explicit false disables it.
 func (h HubConfig) IsContributeCooldownEnabled() bool {
 	return h.ContributeCooldownEnabled == nil || *h.ContributeCooldownEnabled
+}
+
+// ContributeHonourTargetBranchEnabled reports whether contributor dispatch
+// honours an issue's declared target branch (default true).
+func (h HubConfig) ContributeHonourTargetBranchEnabled() bool {
+	return h.ContributeHonourTargetBranch == nil || *h.ContributeHonourTargetBranch
 }
 
 // IsContributeCloseAlreadyDone resolves the deprecated verified already-done

@@ -14740,6 +14740,47 @@ test('#8477 already-done no_work_needed carries structured reason kind and evide
   } finally { teardown(relay); }
 });
 
+test('#13146 a wrong_base no_work_needed carries the branch as its kind and never the already-done label', () => {
+  const PANE = `HIVE_VERDICT: no_work_needed — wrong_base: v6 — the loader already fixed by commit e6d3de3 lives only on v6\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-13146', 106);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].verdict, 'no_work_needed');
+    assert.strictEqual(completed[0].verdict_reason_kind, 'wrong_base');
+    assert.deepStrictEqual(completed[0].evidence, { branch: 'v6' });
+    assert.ok(!('verdict_blocked' in completed[0]) && !('verdict_needs_decision' in completed[0]), JSON.stringify(completed[0]));
+    assert.ok(/^wrong_base: v6/.test(completed[0].verdict_reason), `reason keeps the branch for older hubs: ${completed[0].verdict_reason}`);
+    assert.strictEqual(relay.__commands.filter(c => /gh issue edit/.test(c)).length, 0, 'no already-done, blocked or decision label');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#13146 wrong_base parsing and wire fields', () => {
+  const relay = loadRelay({});
+  try {
+    const [v] = relay.detectHiveVerdicts(['HIVE_VERDICT: no_work_needed — wrong_base: `release-1.2` — files only there'], [relay.HIVE_VERDICT_NO_WORK]);
+    assert.strictEqual(v.wrongBase, 'release-1.2');
+    assert.strictEqual(v.needsDecision, false);
+    assert.strictEqual(v.verdict, 'no_work_needed');
+    // A wrong_base reason that goes on to mention a maintainer decision is
+    // still wrong_base, not needs-decision.
+    const [d] = relay.detectHiveVerdicts(['HIVE_VERDICT: no_work_needed - wrong base: v7 - maintainer decision on v5 pending'], [relay.HIVE_VERDICT_NO_WORK]);
+    assert.strictEqual(d.wrongBase, 'v7');
+    assert.strictEqual(d.needsDecision, false);
+    // A blocked verdict is never wrong_base.
+    const [b] = relay.detectHiveVerdicts(['HIVE_VERDICT: blocked — wrong_base: v7'], [relay.HIVE_VERDICT_BLOCKED]);
+    assert.strictEqual(b.wrongBase, '');
+    const fields = relay.verdictWireFields({ verdict: 'no_work_needed', reason: 'wrong_base: v6 — merged PR #12 already resolves this on v6', wrongBase: 'v6' });
+    assert.deepStrictEqual(fields, { verdict: 'no_work_needed', verdict_reason: 'wrong_base: v6 — merged PR #12 already resolves this on v6', verdict_reason_kind: relay.WRONG_BASE_REASON_KIND, evidence: { branch: 'v6' } });
+    assert.strictEqual(relay.isAlreadyDoneNoWork({ verdict: 'no_work_needed', reason: 'merged PR #12 already resolves this', wrongBase: 'v6' }), false);
+    assert.strictEqual(relay.isAlreadyDoneNoWork({ verdict: 'no_work_needed', reason: 'merged PR #12 already resolves this' }), true);
+  } finally { teardown(relay); }
+});
+
 test('#7924 the label is for GitHub issue tasks only', () => {
   const relay = loadRelay({});
   try {

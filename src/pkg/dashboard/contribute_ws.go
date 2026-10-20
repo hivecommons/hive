@@ -551,6 +551,10 @@ type WSMessage struct {
 	Host   string   `json:"host,omitempty"`
 	Labels []string `json:"labels,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
+	// BaseBranch is the branch the prompt tells the agent to base on and open
+	// the PR against (hivecommons/hive#13146). Additive and advisory; empty
+	// when the hive left the base to the repository.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// Requirements carries the hub-derived task-side capability requirements
 	// used by #2547 routing. Additive and advisory: older relays ignore it, and
 	// enforcement already happened server-side before assignment.
@@ -746,6 +750,9 @@ type WSMessage struct {
 type VerdictEvidence struct {
 	PR     int    `json:"pr,omitempty"`
 	Commit string `json:"commit,omitempty"`
+	// Branch is the branch a wrong_base verdict says the issue's code
+	// actually lives on (hivecommons/hive#13146).
+	Branch string `json:"branch,omitempty"`
 }
 
 type WSTaskAssign struct {
@@ -769,6 +776,10 @@ type WSTaskAssign struct {
 	SourceType string `json:"source_type,omitempty"`
 	ExternalID string `json:"external_id,omitempty"`
 	URL        string `json:"url,omitempty"`
+	// BaseBranch is the branch the prompt told the agent to base on and open
+	// the PR against (hivecommons/hive#13146); empty when the hive left the
+	// base to the repository. A wrong_base verdict is judged against it.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// Requirements is the task-side capability requirement set used for
 	// contributor routing. Nil means this task carried no explicit requirements.
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
@@ -1080,6 +1091,26 @@ type ContributeWSHub struct {
 	// GHClient. gateParkRekicks records the one re-kick each issue gets.
 	gateParkReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
 	gateParkRekicks  gateParkRekicks
+	// branchLister is the #13146 seam for listing a repository's branches
+	// when validating a declared target branch; nil means GHClient.
+	// branchCache memoizes the result per repo per sweep.
+	branchLister func(ctx context.Context, repo string) ([]string, error)
+	branchCache  branchListCache
+	// targetBranchOverrides records, per "repo#number", the branch a
+	// contributor's wrong_base verdict named (and the hub confirmed exists),
+	// so the next offer bases on it. Guarded by completedMu; persisted to
+	// targetBranchOverridesFile with the other task ledgers.
+	targetBranchOverrides     map[string]targetBranchOverride
+	targetBranchOverridesFile string
+	// wrongBaseParker is the #13146 seam for parking an issue whose
+	// wrong_base verdict named a branch the repository does not have; nil
+	// means the stage engine's Parked fact via GHClient.
+	wrongBaseParker func(ctx context.Context, repo string, number int, reason string) error
+	// wrongBaseCommenter is the seam for the one-line comment both wrong_base
+	// outcomes leave on the issue; nil means GHClient.CreateIssueComment.
+	wrongBaseCommenter func(ctx context.Context, repo string, number int, body string) error
+	// wrongBaseSettlements lets tests wait for the async settlement.
+	wrongBaseSettlements sync.WaitGroup
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -1168,6 +1199,8 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		taskRunLogFile:            contributorStatePath(contributorsDir, taskRunLogPath, taskRunLogFileName),
 		startedAt:                 time.Now(),
 		noWorkVerdictsFile:        filepath.Join(contributorsDir, noWorkVerdictsFileName),
+		targetBranchOverrides:     make(map[string]targetBranchOverride),
+		targetBranchOverridesFile: filepath.Join(contributorsDir, targetBranchOverridesFileName),
 		asyncActivitySave:         asyncActivitySave,
 		persistActivity:           activityPersistenceEnabled,
 		persistTaskLedgers:        taskLedgerPersistenceEnabled,
@@ -1186,6 +1219,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadFailedTasks()
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
+	hub.loadTargetBranchOverrides()
 	hub.loadActivity()
 	// #5681: restore the leases the PREVIOUS process issued before any relay can
 	// reconnect, so an in-flight task survives the restart instead of being revoked
@@ -3808,6 +3842,27 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 					go h.releaseGateParkedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
 				}
 			}
+			// A wrong_base verdict (hivecommons/hive#13146) says the issue's
+			// code is not on the dispatched base but on another branch. It
+			// is a dispatch error, not a settlement: book it idle (never the
+			// no_work suppression, never the #8477 already-done path) and
+			// let contribute_wrong_base.go re-queue the issue against the
+			// named branch, or park it when that branch does not exist.
+			wrongBase := false
+			if completedTask != nil {
+				if branch, ok := wrongBaseVerdict(verdict, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); ok {
+					wrongBase = true
+					h.logger.Warn("[contribute-ws] wrong_base verdict: code reported absent from the dispatched base",
+						"username", s.contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"dispatched_base", completedTask.BaseBranch,
+						"branch", branch,
+						"verdict_reason", strings.TrimSpace(msg.VerdictReason))
+					verdict = completionVerdictIdle
+					taskCopy := *completedTask
+					go h.settleWrongBaseVerdict(&taskCopy, branch, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+				}
+			}
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied
 				// only for a VERIFIED PR; an unverified or no-PR completion gets
@@ -3830,7 +3885,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// issue is WAITING ON — typically a PR or build in another
 				// repo — not what settled it, and recording that as a
 				// settlement would be the wrong fact in the claim ledger.
-				if verdict == completionVerdictNoWorkNeeded {
+				if verdict == completionVerdictNoWorkNeeded && !wrongBase {
 					go h.settleIssueFromVerdictWithEvidence(completedTask.Repo, completedTask.Number,
 						strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence,
 						taskAssignedAt, s.contributor.profile.GitHubUsername)
@@ -3897,7 +3952,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				PRURL:      verifiedPR,
 				PRVerified: verifiedPR != "",
 			}
-			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone {
+			if _, alreadyDone := alreadyDoneVerdictRefs("", 0, strings.TrimSpace(msg.VerdictReason), msg.VerdictReasonKind, msg.Evidence); alreadyDone && !wrongBase {
 				runRec.VerdictDisposition = verdictDispositionAlreadyDoneUnverified
 			}
 			if completedTask != nil {
