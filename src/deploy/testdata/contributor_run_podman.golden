@@ -26,4 +26,4 @@ HIVE_CONTAINER_NAME=hive-contributor-codex-<id>
 HIVE_CONTAINER_RUNTIME=podman
 -e
 HIVE_CONTRIBUTOR_ENV=/home/dev/.config/hive/contributor.env
-ghcr.io/hivecommons/hive-contributor:latest
+ghcr.io/hivecommons/hive-contributor:edge
