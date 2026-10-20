@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -62,6 +62,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
+| `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -148,6 +149,32 @@ hive. The flag only applies to a create; on any other kind the script exits
 
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
+
+#### Blocked on an unmerged PR
+
+When the code an issue names exists only in an open PR — a review-backlog
+finding whose evidence file is absent on the base branch, or a triage that
+concludes "blocked on #N (not starting)" — there is nothing to ship until that
+PR lands ([#13093](https://github.com/hivecommons/hive/issues/13093)). Post
+one neutral note with `--blocked-on-pr <n>`:
+
+```sh
+hive-open-issue comment --repo o/r 13093 --blocked-on-pr 13092 \
+  --body "Blocked on #13092: the flagged file exists only on that PR; nothing to ship until it lands."
+```
+
+The watcher prefixes the body with the marker `<!-- hive:blocked-on
+pr=o/r#13092 -->`, strips any `@login` mention from it (the PR's author is not
+asked to do the hive's work; address them only in a review comment on their
+own PR), adds the `blocked` label and removes `help wanted`. A `blocked` issue
+is filed under the enumeration's filtered bucket, derives no stage label,
+and every automated claim producer — governor kicks, the contributor relay,
+`hive-open-issue claim` — is refused on it (`blocked: o/r#13092`). The
+blocked sweep that follows each stage-label sync lifts the label and posts
+one `<!-- hive:unblocked -->` note once the tracked PR is merged or closed,
+and strips `help wanted` again should the org workflow re-add it while the
+PR is open. The review backlog applies the same parking itself when it files
+a finding whose file does not exist on the reviewed PR's base branch.
 
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the

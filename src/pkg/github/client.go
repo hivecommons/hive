@@ -1437,6 +1437,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", "Exempt label"))
 			continue
 		}
+		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
+		// actionable set until ReconcileBlockedIssues lifts the label. The
+		// reason names the PR when the body carries the blocked-on marker.
+		if hasBlockedLabel(labels) {
+			breakdown.Filtered++
+			breakdown.Blocked++
+			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody())))
+			continue
+		}
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
@@ -3919,6 +3928,10 @@ type RepoIssueBreakdown struct {
 	NeedsSpec            int `json:"needs_spec,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
 	Exempt               int `json:"exempt,omitempty"`
+	// Blocked counts open issues parked on an unmerged PR or other outside
+	// blocker (`blocked` label, hivecommons/hive#13093). Counted inside
+	// Filtered; named so the repo card can say why.
+	Blocked int `json:"blocked,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter

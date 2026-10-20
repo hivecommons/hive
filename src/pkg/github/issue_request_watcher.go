@@ -120,6 +120,13 @@ type IssueRequest struct {
 	// maintainer to choose gets the "What to reply" notice and stays out of
 	// the actionable queue whatever labels the agent named.
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
+	// BlockedOnPR parks the issue on an open PR in the same repo
+	// (hivecommons/hive#13093). On a "comment" request the watcher prefixes
+	// the note with the blocked-on marker, strips @-mentions so the note
+	// never pings the PR's author to do the hive's work, adds the `blocked`
+	// label and removes `help wanted`. The blocked sweep lifts the label when
+	// the PR merges or closes.
+	BlockedOnPR int `json:"blocked_on_pr,omitempty"` // comment only
 }
 
 // IssueResponse is written next to a consumed request as <name>.result.json.
@@ -522,10 +529,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
+		if req.BlockedOnPR > 0 {
+			body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+		}
 		err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
 		if errors.Is(err, ErrIssueCommentBudget) {
 			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 			return
+		}
+		if err == nil && req.BlockedOnPR > 0 {
+			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
+			if err == nil {
+				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)
+			}
 		}
 		if err == nil {
 			resp.OK = true

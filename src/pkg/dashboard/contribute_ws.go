@@ -952,6 +952,16 @@ type ContributeWSHub struct {
 	// A permanent failure (msg.Permanent) counts as permanentFailureWeight toward
 	// the threshold. Guarded by completedMu.
 	consecutiveFailures map[string]int
+	// reclaimCooldowns records, per contributor identity (identityOf) and
+	// item key, when that contributor last released the item without
+	// shipping (hivecommons/hive#13093). selectTask refuses to hand the
+	// same item back to the same contributor for
+	// ClaimsConfig.EffectiveReclaimCooldown, whatever the global per-issue
+	// failure cooldown says: the latter is deliberately short so OTHER
+	// contributors can retry at once. In-memory only — a hub restart
+	// forgives it, which is the right default for an environment fault.
+	// Guarded by completedMu.
+	reclaimCooldowns map[string]time.Time
 	// noPRStreaks counts CONSECUTIVE no-PR completions per "repo#number"
 	// (kubestellar/hive#3980). Each one doubles the next no-PR cooldown
 	// (advanceNoPRStreakLocked), so an issue that keeps "completing" with
@@ -1146,6 +1156,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		completedTaskPRURL:        make(map[string]string),
 		failedTasks:               make(map[string]time.Time),
 		consecutiveFailures:       make(map[string]int),
+		reclaimCooldowns:          make(map[string]time.Time),
 		noPRStreaks:               make(map[string]noPRStreakRecord),
 		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
 		activityFilePath:          contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
@@ -3099,6 +3110,7 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		// Number == 0 and must not poison an issue key.
 		if abandoned.Number > 0 {
 			h.recordTaskFailureForTask(abandoned, false)
+			h.bookReclaimCooldown(identityOf(s.contributor), abandoned.identityKey())
 		}
 		// #7317: and leave a durable trace. Everything above this line is
 		// about ROUTING the abandoned issue (lease, cooldown, activity rail);
@@ -4044,6 +4056,11 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 				// back out ahead of the rest of the queue. A permanent failure
 				// counts more toward the quarantine threshold.
 				h.recordTaskFailureForTask(failedTask, msg.Permanent)
+				// hivecommons/hive#13093: and keep THIS contributor off it
+				// for far longer than the global ten minutes, so a relay
+				// whose environment cannot run the task stops re-taking
+				// it (and flapping its claim) while others may still try.
+				h.bookReclaimCooldown(identityOf(s.contributor), failedTask.identityKey())
 			}
 			// #2547: keep the failure reason instead of only logging it, so an
 			// operator can tell a work item that failed on its merits from one

@@ -9410,6 +9410,13 @@ func applyDuplicatePRGuard(
 	if res.Writes+res.Comments > 0 {
 		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
+	// hivecommons/hive#13093: issues parked on an unmerged PR come back once
+	// that PR settles, and never advertise `help wanted` while parked.
+	blockedCtx, blockedCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.Errors > 0 {
+		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "errors", br.Errors)
+	}
+	blockedCancel()
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
 

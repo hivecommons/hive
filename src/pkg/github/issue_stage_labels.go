@@ -172,6 +172,13 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	if label := issueHoldLabel(in); label != "" {
 		return stagelabels.None, false, "held: " + label
 	}
+	// A blocked issue waits on an unmerged PR (or another outside blocker):
+	// nothing to decide, nothing to claim, so it is parked out of the
+	// pipeline like a hold until the sweep lifts the label
+	// (hivecommons/hive#13093).
+	if hasBlockedLabel(in.Labels) {
+		return stagelabels.None, false, blockedStageReason(in)
+	}
 	if issueHeldByNeedsHuman(in) {
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + issueNeedsHumanLabel
 	}

@@ -793,6 +793,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			if h.isTaskInFailureCooldownKey(itemKey) {
 				return
 			}
+			// hivecommons/hive#13093: this contributor released the item
+			// without shipping recently; others may take it, not them.
+			if h.inReclaimCooldown(identityOf(c), itemKey) {
+				return
+			}
 			if activeIssues[itemKey] {
 				return
 			}
