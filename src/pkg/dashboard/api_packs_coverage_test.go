@@ -322,16 +322,17 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 	}
 }
 
-// TestApplyPackPreservesUnownedDeniedBackend verifies a hand-set backend with
-// no owner stamp is kept and stamped operator even when the backends policy
-// denies it, so it is never silently replaced (#13221).
-func TestApplyPackPreservesUnownedDeniedBackend(t *testing.T) {
+// TestApplyPackMovesUnownedDeniedBackend verifies a hand-set backend with no
+// owner stamp that the backends policy denies is moved to the pack backend,
+// stamped pack-owned and counted as updated, keeping the #11310 deny intact.
+func TestApplyPackMovesUnownedDeniedBackend(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
 
 	scanner := srv.deps.Config.Agents["scanner"]
 	scanner.Backend = "claude"
-	if scannerPackBackend(t) == "claude" {
+	if packBackend == "claude" {
 		scanner.Backend = "copilot"
 	}
 	handSet := scanner.Backend
@@ -344,15 +345,76 @@ func TestApplyPackPreservesUnownedDeniedBackend(t *testing.T) {
 		t.Fatalf("ApplyPack(2): %v", err)
 	}
 	got := srv.deps.Config.Agents["scanner"]
-	if got.Backend != handSet || got.BackendOwner != config.FieldOwnerOperator {
-		t.Errorf("got backend %q owner %q, want %q owner %q", got.Backend, got.BackendOwner, handSet, config.FieldOwnerOperator)
+	if strings.EqualFold(got.Backend, handSet) || got.BackendOwner != config.FieldOwnerPack {
+		t.Errorf("got backend %q owner %q, want a non-%q backend owned by %q", got.Backend, got.BackendOwner, handSet, config.FieldOwnerPack)
 	}
-	found := false
+	updated := false
+	for _, n := range res.Updated {
+		updated = updated || n == "scanner"
+	}
+	if !updated {
+		t.Errorf("scanner missing from Updated: %v", res.Updated)
+	}
 	for _, n := range res.Preserved {
-		found = found || n == "scanner"
+		if n == "scanner" {
+			t.Error("scanner reported preserved for a denied backend")
+		}
 	}
-	if !found {
-		t.Errorf("scanner missing from Preserved: %v", res.Preserved)
+}
+
+// TestApplyPackMovesUnownedDeniedPackBackend verifies an unowned backend equal
+// to the pack's own raw backend is pack-written, so when the policy denies it
+// it is moved to the fallback rather than kept as an operator choice.
+func TestApplyPackMovesUnownedDeniedPackBackend(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = packBackend
+	scanner.BackendOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+	srv.deps.Config.Backends.Deny = []string{packBackend}
+
+	res, err := srv.ApplyPack(2)
+	if err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if strings.EqualFold(got.Backend, packBackend) || got.BackendOwner != config.FieldOwnerPack {
+		t.Errorf("got backend %q owner %q, want a non-%q backend owned by %q", got.Backend, got.BackendOwner, packBackend, config.FieldOwnerPack)
+	}
+	for _, n := range res.Preserved {
+		if n == "scanner" {
+			t.Error("scanner reported preserved for the pack's own denied backend")
+		}
+	}
+}
+
+// TestApplyPackAdoptsUnownedBackendCaseInsensitive verifies a hand-typed
+// backend differing from the pack only by case is adopted as pack-owned and
+// not reported as preserved.
+func TestApplyPackAdoptsUnownedBackendCaseInsensitive(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = strings.ToUpper(packBackend[:1]) + packBackend[1:]
+	scanner.BackendOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	res, err := srv.ApplyPack(2)
+	if err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	if got := srv.deps.Config.Agents["scanner"]; got.BackendOwner != config.FieldOwnerPack {
+		t.Errorf("backend owner = %q, want %q", got.BackendOwner, config.FieldOwnerPack)
+	}
+	for _, n := range res.Preserved {
+		if n == "scanner" {
+			t.Error("scanner reported preserved for a case-variant of the pack backend")
+		}
 	}
 }
 

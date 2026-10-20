@@ -55,6 +55,7 @@ type ApplyPackResult struct {
 	Skipped         []string         `json:"skipped"`
 	// Preserved lists agents whose hand-set backend (no owner stamp, differing
 	// from the pack default) was kept and stamped operator-owned (#13221).
+	// Preserved agents are also counted in Skipped.
 	Preserved       []string         `json:"preserved,omitempty"`
 	Paused          []string         `json:"paused"`
 	Resumed         []string         `json:"resumed"`
@@ -305,20 +306,27 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				changed = true
 			} else if existing.Backend != "" && existing.BackendOwner == "" {
 				// A backend with no owner stamp predates ownership tracking or
-				// was written by hand in hive.yaml. One matching the pack
-				// default is adopted as pack-owned; a differing one is an
-				// operator choice and is stamped so it stays put (#13221).
-				if existing.Backend == packBackend {
+				// was written by hand in hive.yaml. A denied one is moved to the
+				// pack backend like a pack-owned one, so the spoke-wide deny
+				// (#11310) holds. An allowed one matching the pack default (or
+				// the pack's own raw value) is adopted as pack-owned; an allowed
+				// differing one is an operator choice and is stamped so it stays
+				// put (#13221).
+				switch {
+				case !s.deps.Config.BackendAllowed(existing.Backend):
+					s.logger.Warn("moving hand-set agent backend off backend denied by spoke backends config",
+						"agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
+					existing.Backend = packBackend
 					existing.BackendOwner = config.FieldOwnerPack
-				} else {
+					if !existing.ModelIsOperatorOwned() {
+						existing.Model = ""
+					}
+					changed = true
+				case strings.EqualFold(existing.Backend, packBackend) || strings.EqualFold(existing.Backend, pa.Backend):
+					existing.BackendOwner = config.FieldOwnerPack
+				default:
 					existing.BackendOwner = config.FieldOwnerOperator
 					preserved = append(preserved, pa.Name)
-					if !s.deps.Config.BackendAllowed(existing.Backend) {
-						// Never swap it silently: the agent should fail loudly
-						// on the denied backend rather than run on another one.
-						s.logger.Warn("hand-set agent backend is denied by the spoke backends config; keeping it so the agent fails loudly instead of silently switching",
-							"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
-					}
 					s.logger.Info("keeping hand-set agent backend that differs from the ACMM pack default",
 						"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
 				}

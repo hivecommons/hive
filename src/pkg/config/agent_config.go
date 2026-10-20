@@ -224,7 +224,8 @@ type AgentConfig struct {
 	// ModelOwner / BackendOwner record WHO last set Model / Backend. An ACMM
 	// pack owns these fields until an operator changes them in the Governor
 	// grid; from that point the operator owns them and ApplyPack must not
-	// reconcile them back to the pack value.
+	// reconcile them back to the pack value. Pack apply also stamps operator
+	// on an allowed hand-set backend: that differs from the pack (#13221).
 	//
 	// Without this, a pack re-apply — which happens on EVERY hive restart
 	// (cmd/hive/main.go "merging pack updates") — rewrote Model back to the
@@ -799,7 +800,9 @@ const (
 	// are reconciled to the current pack on every apply.
 	FieldOwnerPack = "pack"
 	// FieldOwnerOperator marks a value an operator chose in the Governor grid.
-	// Operator-owned values are never overwritten by a pack apply.
+	// Operator-owned values are never overwritten by a pack apply. Pack apply
+	// also stamps this on an allowed hand-set backend: that differs from the
+	// pack (#13221).
 	FieldOwnerOperator = "operator"
 	// FieldOwnerSpec marks a value sourced from a BYO agent spec. Spec-owned
 	// values are refreshed from the spec on config load/reload unless the
