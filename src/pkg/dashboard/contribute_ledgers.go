@@ -63,7 +63,7 @@ const (
 // noWorkReasonMaxLen caps the client-supplied VerdictReason before it is stored
 // in the PVC-backed verdict ledger and echoed into logs: the field is scraped
 // from arbitrary agent output, so an unbounded value would let a confused (or
-// hostile) relay bloat the ledger file. 200 runes comfortably fits the
+// hostile) relay bloat the ledger file. 200 bytes comfortably fits the
 // machine-readable reasons ("maintainer_gated", "already_covered") plus a short
 // free-text explanation.
 const noWorkReasonMaxLen = 200
