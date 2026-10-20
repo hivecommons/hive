@@ -1,0 +1,1 @@
+- Dashboard header: the feedback and theme buttons no longer overlap the ACMM level badge on narrower viewports (#13135)

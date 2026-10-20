@@ -552,6 +552,11 @@
       .oc-topbar-right .widget-dl { margin-left: var(--sp-0); margin-right: var(--sp-0); }
     }
 
+    /* Right chip cluster keeps its full width so it cannot shrink and spill over the left ACMM badge (#13135); the left/center tracks absorb the squeeze. */
+    @media (min-width: 901px) and (max-width: 1400px) {
+      .oc-topbar-right { min-width: max-content; }
+    }
+
     @media (min-width: 769px) and (max-width: 900px) {
       #acmm-badge { display: none; }
     }
