@@ -191,6 +191,13 @@ assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Open · hold
 assert.ok(row.includes('ham-mod-hold">hold</span>'), row);
 assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage recorded yet · acme/console'), tooltip(row));
 
+// Open and awaiting triage: the action chip reads "triage needed" and the
+// tooltip headline says so; the Open segment itself stays plain.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', title: 'New report', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }, stages, ctx);
+assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
+assert.ok(row.includes('ham-mod-needs-triage">triage needed</span>'), row);
+assert.ok(tooltip(row).startsWith('Open · triage needed'), tooltip(row));
+
 // Issue with exactly one covering PR (only its number known, legacy linked_pr):
 // a single entry whose strip is driven by the PR; with no PR stage it lights
 // PR in progress.

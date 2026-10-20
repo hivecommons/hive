@@ -198,6 +198,7 @@ const (
 	modHold          = "hold"
 	modNeedsHuman    = "needs-human"
 	modNeedsDecision = "needs-decision"
+	modNeedsTriage   = "needs-triage"
 	modNeedsRebase   = "needs-rebase"
 	modBlocked       = "blocked"
 	modDraft         = "draft"
@@ -384,6 +385,10 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			// 045 on an issue, 085 on a PR); the retired spelling is read
 			// until migrated.
 			set[modNeedsDecision] = true
+		case "needs-triage":
+			// Still waiting on triage (reporter trust / maintainer look):
+			// the Open row's action chip reads "triage needed".
+			set[modNeedsTriage] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
 		case "blocked":
@@ -405,7 +410,7 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}

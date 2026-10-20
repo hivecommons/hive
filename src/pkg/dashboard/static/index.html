@@ -1379,6 +1379,7 @@
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+    .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -12669,6 +12670,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('stalled') >= 0) return 'Stalled';
       if (mods.indexOf('regressed') >= 0) return 'Sent back';
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
+      if (n === 0 && mods.indexOf('needs-triage') >= 0) return 'Open · triage needed';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
       const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
@@ -12759,8 +12761,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision' };
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
