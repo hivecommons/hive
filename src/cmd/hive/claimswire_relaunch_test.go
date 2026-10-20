@@ -104,25 +104,22 @@ func TestClaimHooks_RelaunchReleasePostsReleaseMarker(t *testing.T) {
 	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
 	claim := claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent}
 
+	// The expiry release is fired first; if it commented, its body would
+	// land before (or beside) the relaunch marker asserted below.
 	hooks.OnReleased(claim, "expired")
-	time.Sleep(100 * time.Millisecond)
-	mu.Lock()
-	n := len(comments)
-	mu.Unlock()
-	if n != 0 {
-		t.Fatalf("expiry must not comment, got %v", comments)
-	}
-
 	hooks.OnReleased(claim, claims.ReasonHolderRelaunched)
 	testutil.Eventually(t, 5*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(comments) == 1
+		return len(comments) >= 1
 	}, "relaunch release never posted the release marker")
 	mu.Lock()
-	body := comments[0]
+	got := append([]string(nil), comments...)
 	mu.Unlock()
-	if !strings.Contains(body, "hive:release who=scanner kind=agent reason=holding_agent_relaunched at=") {
-		t.Fatalf("release comment:\n%s", body)
+	if len(got) != 1 {
+		t.Fatalf("expiry must not comment; got %d comments: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "hive:release who=scanner kind=agent reason=holding_agent_relaunched at=") {
+		t.Fatalf("release comment:\n%s", got[0])
 	}
 }
