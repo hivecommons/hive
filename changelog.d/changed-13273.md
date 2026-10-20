@@ -1,0 +1,1 @@
+- docs(examples): pin the contributor-isolated compose image to the release channel (#13273)
