@@ -122,6 +122,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
+# --- Layer 1b: CA trust bundle refresh ---
+# Distrust two Mozilla roots that the browser/OS root programs withdrew trust
+# from on 2026-10-17..20 but that the Debian ca-certificates package in this
+# base image still ships (no fixed package yet; drop this block once the
+# package carries the change). Static-bundle clients — curl, git, Python
+# (Debian's certifi points at the system bundle), Go via the system store and
+# the entrypoint's SSL_CERT_FILE combined bundle (built FROM this file), and
+# codex (OpenSSL system store) — all read /etc/ssl/certs/ca-certificates.crt,
+# so one regeneration here covers them. The `!` prefix is Debian's documented
+# way to keep a cert out of the bundle; the greps prove the edit actually hit
+# so a renamed entry upstream fails the build instead of silently re-trusting.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
+      /etc/ca-certificates.conf \
+ && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
+ && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+ && update-ca-certificates --fresh \
+ && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
+ && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+# Node ships its own copy of the Mozilla store and ignores the system bundle
+# (NODE_EXTRA_CA_CERTS can only ADD roots). --use-openssl-ca makes Node — and
+# the Copilot CLI, a Node SEA that honours NODE_OPTIONS — verify against the
+# OpenSSL store regenerated above instead; NODE_EXTRA_CA_CERTS (the proxy CA
+# set by the entrypoint / agent manager) still layers on top of it. Agents
+# inherit this through os.Environ(). Claude Code is a Bun binary and does not
+# read NODE_OPTIONS, but it already rejects these chains with its own store.
+ENV NODE_OPTIONS=--use-openssl-ca
+
 COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
