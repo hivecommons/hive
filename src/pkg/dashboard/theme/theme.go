@@ -48,7 +48,7 @@ body #oc-topbar.oc-topbar>.oc-topbar-center{justify-self:stretch!important;justi
 body #oc-topbar.oc-topbar>.oc-topbar-right{justify-self:end!important;justify-content:flex-end!important;text-align:left!important;display:flex!important;max-width:100%!important;min-width:0!important;flex-wrap:nowrap!important;z-index:2!important;}
 body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;justify-self:start!important;}
 body #repos.repo-grid .repo-card .repo-name{display:flex!important;align-items:center!important;gap:var(--sp-2) var(--sp-3)!important;flex-wrap:wrap!important;min-width:0!important;max-width:100%!important;justify-content:flex-start!important;justify-items:stretch!important;text-align:left!important;}
-body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 6rem!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;}
+body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 12rem!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;white-space:normal!important;overflow-wrap:anywhere!important;}
 body #repos.repo-grid .repo-card .repo-name .repo-header-badges{flex:0 0 auto!important;justify-self:start!important;text-align:left!important;}
 body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin:0 0 0 auto!important;flex:0 0 auto!important;}
 body .oc-version-hive{--oc-version-hive-size:28px!important;--oc-version-bee-size:16px!important;--oc-version-bee-radius:9px!important;}
