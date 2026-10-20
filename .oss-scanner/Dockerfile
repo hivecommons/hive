@@ -26,15 +26,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # CA trust bundle refresh: distrust two Mozilla roots the root programs
-# withdrew on 2026-10-17..20 that trixie's ca-certificates still ships (no
-# fixed package yet — drop once it carries the change). Go, curl, git and
-# python3 all read the regenerated system bundle. Same recipe as src/Dockerfile.
-RUN sed -i \
-      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
-      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
-      /etc/ca-certificates.conf \
-    && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
-    && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+# withdrew on 2026-10-17..20. Trixie's ca-certificates 20250419+deb13u1 already
+# drops the entries while older package builds still ship them; each entry is
+# rewritten only when present so a package refresh cannot break the build
+# either way, and the final tests prove the roots are absent from the
+# regenerated bundle. Go, curl, git and python3 all read the regenerated system
+# bundle. Same recipe as src/Dockerfile; the block can go once every base image
+# in use ships a package that no longer carries the entries.
+RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
+      if grep -q "^${cert}" /etc/ca-certificates.conf; then \
+        sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf \
+        && grep -q "^!${cert}" /etc/ca-certificates.conf || exit 1; \
+      fi; \
+    done \
     && update-ca-certificates --fresh \
     && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
     && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
