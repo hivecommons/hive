@@ -816,7 +816,7 @@ func TestDiffAgents_WorkingToIdleWithLongSummary(t *testing.T) {
 }
 
 func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
-	b := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example"}, discardLogger())
+	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example"}, discardLogger())
 
 	prev := &statusSnapshot{
 		Agents: []agentSnapshot{{Name: "scanner", Busy: "working"}},
@@ -912,7 +912,7 @@ func TestAgentCompletionHelpers(t *testing.T) {
 		}
 	}
 
-	svc := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example/"}, discardLogger())
+	svc := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example/"}, discardLogger())
 	if got := svc.agentDetailsSuffix("agent/name"); got != " — details: https://hive.example/#agent%2Fname" {
 		t.Fatalf("details suffix = %q", got)
 	}
