@@ -746,6 +746,7 @@ type FrontendAgent struct {
 	Sandboxed              bool   `json:"sandboxed,omitempty"`
 	LastError              string `json:"lastError,omitempty"`
 	StallNudges            int    `json:"stallNudges,omitempty"`
+	StallRecoveries        int    `json:"stallRecoveries,omitempty"`
 	ActionNudges           int    `json:"actionNudges,omitempty"`
 	TransientNudges        int    `json:"transientNudges,omitempty"`
 	// LastAction is the last issue or PR the agent acted on through the hive

@@ -134,6 +134,8 @@ func TestFleetReportEvidenceAgentStallRequiresRecurrence(t *testing.T) {
 		{"single nudge", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 1}, 0},
 		{"two nudges", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 2}, 0},
 		{"three nudges", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 3}, 3},
+		{"all nudges recovered", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 5, StallRecoveries: 5}, 0},
+		{"some nudges unrecovered", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 5, StallRecoveries: 2}, 3},
 		{"live stalled status", FrontendAgent{Name: "a", Role: "r", State: "running", StructuredStatus: "Stalled: waiting", StallNudges: 0}, 1},
 	}
 	for _, tc := range cases {

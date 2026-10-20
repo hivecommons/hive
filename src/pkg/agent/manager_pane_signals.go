@@ -508,6 +508,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		LastPaneChange:            lastPaneChange,
 		WatchdogConditions:        conds,
 		StallNudges:               a.StallNudges,
+		StallRecoveries:           a.StallRecoveries,
 		ActionNudges:              a.ActionNudges,
 		TransientNudges:           a.TransientNudges,
 		ProviderErrorClass:        a.ProviderErrorClass,

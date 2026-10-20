@@ -1323,6 +1323,27 @@ func TestNudgeIfKickStalled(t *testing.T) {
 	if agent.lastInferKickPane != "" {
 		t.Fatal("changed pane with tool activity should disarm the watchdog")
 	}
+	if agent.StallRecoveries != 0 {
+		t.Fatalf("no recovery without a prior stall nudge, got %d", agent.StallRecoveries)
+	}
+
+	// A stall nudge followed by a changed idle pane credits one recovery.
+	agent.lastInferKickAt = time.Now().Add(-inferenceKickStallTimeout - time.Minute)
+	agent.lastInferKickPane = paneContentHash("what the pane looked like at kick time")
+	agent.lastInferKickMarks = -1
+	agent.stallNudgeSent = true
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallRecoveries != 1 || agent.stallNudgeSent {
+		t.Fatalf("expected one recovery, got %d (sent=%v)", agent.StallRecoveries, agent.stallNudgeSent)
+	}
+
+	// Same pane again with no nudge outstanding must not double-count.
+	agent.lastInferKickPane = paneContentHash("what the pane looked like at kick time")
+	agent.lastInferKickMarks = -1
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallRecoveries != 1 {
+		t.Fatalf("recovery must not be credited without a nudge, got %d", agent.StallRecoveries)
+	}
 }
 
 func TestNudgeIfKickStalled_ActionNudge(t *testing.T) {

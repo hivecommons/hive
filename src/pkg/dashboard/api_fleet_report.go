@@ -230,10 +230,13 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		}
 		// a.StallNudges is a cumulative since-boot counter of harness "continue"
 		// nudges, so a single nudge is the designed self-recovery working, not a
-		// hive defect, and the count has no window. Report a stall only while
-		// the agent currently reads as stalled or once nudges recur.
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges >= fleetStallNudgeMinEvents {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, a.StallNudges), Severity: "medium", Attributable: true})
+		// hive defect, and the count has no window. Nudges after which the pane
+		// moved again (a.StallRecoveries) are self-recovery and are excluded.
+		// Report a stall only while the agent currently reads as stalled or once
+		// unrecovered nudges recur.
+		unrecovered := maxInt(0, a.StallNudges-a.StallRecoveries)
+		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || unrecovered >= fleetStallNudgeMinEvents {
+			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, unrecovered), Severity: "medium", Attributable: true})
 		}
 		// #9673: the harness backstop nudges an agent that keeps polling CI
 		// on its own PR, but a nonzero count here means the nudge fired at
