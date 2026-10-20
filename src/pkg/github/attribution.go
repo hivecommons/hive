@@ -106,6 +106,10 @@ const (
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"
+	// AuditActionMergeRequestRefused records a merge-request relay request
+	// the lane policy refused (MergeRequestPolicyGate): the agent that
+	// asked, the PR and the gate it failed.
+	AuditActionMergeRequestRefused = "merge_request_refused"
 )
 
 // PR audit path values: the "path=" detail field on pr_merged and pr_closed

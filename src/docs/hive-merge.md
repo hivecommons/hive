@@ -147,6 +147,20 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
+**Contributor PRs are held to the contributor-lane policy.** A merge request
+for a PR whose author is not the hive App, a configured trusted bot, or a
+trusted-author role is evaluated against the same `auto_merge.contributor_lane`
+gates the sweep applies — verified claim tier within `require_tiers`, the
+contributor `soak`, `min_head_age`, reviewer verdict, control labels (`hold`,
+sentinel alert, parked-on-decision), human-merge paths and head-SHA pinning —
+before `hive-merge` merges it. A refusal is terminal for that request (`.denied`),
+names the failing gate in the result the agent sees (for example
+`contributor-lane:claim-tier-untrusted (author tier "untrusted", require_tiers
+merger, trusted)` or `contributor-lane:soaking(remaining=27m)`), and is audited
+as `merge_request_refused`. An agent cannot use the relay to land a contributor
+PR the lane would not merge; the lane still merges it on its own tick once the
+gates clear. Hive-authored PRs keep the relay's existing checks.
+
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
 not one per PR or retry tick. The alert text names the fix: install/grant the

@@ -68,6 +68,10 @@ type contributorLaneFixture struct {
 	// checkCompletedAt, when set, is the completed_at the check-runs
 	// endpoint reports for sha7 (RFC 3339); empty omits the field.
 	checkCompletedAt string
+	// headCommittedAt, when set, is the committer date the git/commits
+	// endpoint reports for sha7 (RFC 3339) and the PR's updated_at; empty
+	// leaves the route unserved and the timestamp omitted.
+	headCommittedAt string
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -109,6 +113,9 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			}
 			if !fx.omitAssociation {
 				p["author_association"] = association
+			}
+			if fx.headCommittedAt != "" {
+				p["updated_at"] = fx.headCommittedAt
 			}
 			return p
 		}
@@ -169,6 +176,8 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"total_count": 1,
 				"check_runs":  []map[string]string{run},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/git/commits/sha7" && fx.headCommittedAt != "":
+			json.NewEncoder(w).Encode(map[string]any{"sha": "sha7", "committer": map[string]string{"name": "c", "date": fx.headCommittedAt}})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			fx.merges++
 			if fx.mergeStatus != 0 {

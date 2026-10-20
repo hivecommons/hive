@@ -346,6 +346,10 @@ type Client struct {
 	// falls back to the original quarantine behavior. Set by
 	// SetMergeReEngageHook.
 	mergeReEngage MergeReEngageFunc
+	// mergePolicyGate is the merge-request relay's lane-policy gate (see
+	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
+	// only its own authz, label and CI checks, as before the gate existed.
+	mergePolicyGate MergeRequestPolicyGate
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.

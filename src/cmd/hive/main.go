@@ -2448,6 +2448,11 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			issueOpen: b.agentMgr.AuthorizeIssueOpen,
 			review:    b.agentMgr.AuthorizeReviewRequest,
 			merge:     bindMergeAuthz(b.agentMgr.AuthorizeMerge),
+			// Lane policy on relayed merges: a contributor PR an agent asks
+			// the relay to land is held to the same contributor-lane gates
+			// (tier, soak, min_head_age, review verdict) the sweep applies;
+			// hive-authored PRs keep the relay's existing behaviour.
+			mergePolicy: relayLanePolicyGate(autoMergeOpts),
 			// Push relay (#9771): the same forge-resistance + CanPush ACMM
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
