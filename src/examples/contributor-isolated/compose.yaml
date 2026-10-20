@@ -1,7 +1,9 @@
 # Published-image companion to src/compose-contributor.yaml.
+# :edge is the channel this v6 branch publishes; :latest is v5's channel.
+# Pin another tag with HIVE_CONTRIBUTOR_IMAGE.
 services:
   contributor:
-    image: ${HIVE_CONTRIBUTOR_IMAGE:-ghcr.io/hivecommons/hive-contributor:latest}
+    image: ${HIVE_CONTRIBUTOR_IMAGE:-ghcr.io/hivecommons/hive-contributor:edge}
     restart: unless-stopped
     init: true
     user: "1000:1000"
