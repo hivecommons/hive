@@ -384,7 +384,7 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		return event, "commented", nil
 	default:
 		event.Action = "commented-contributor"
-		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review: "+decision.Reason+".")
+		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(event, closer, decision.Reason))
 		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
 			return event, "", err
 		}

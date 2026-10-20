@@ -420,7 +420,7 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 	}
 
 	meta := c.attributionMeta(req.Agent)
-	body := c.relayBody(req.Agent, req.Body)
+	body := leadWithDecisionQuestion(c.relayBody(req.Agent, req.Body))
 	if c.confidenceScoreOn() {
 		body = appendConfidenceLine(body, req.Report, c.perspectives)
 	}
@@ -716,12 +716,51 @@ func appendConfidenceLine(body, rawReport string, set review.PerspectiveSet) str
 	if err != nil || len(reports) == 0 {
 		return body
 	}
-	line := review.ScoreConfidence(review.ScopeEffectiveReports(reports), set.Len()).Render()
+	conf := review.ScoreConfidence(review.ScopeEffectiveReports(reports), set.Len())
+	line := conf.Render()
+	// A redundant PR is not bad code: name the reason instead of a 0/5.
+	if of := redundantOfFromBody(body); of != "" && conf.Score < review.ConfidenceSafeFloor {
+		line = "**no-op merge: duplicate of " + of + "**"
+	}
 	body = strings.TrimRight(body, "\n")
 	if body == "" {
 		return line
 	}
 	return body + "\n\n" + line
+}
+
+const redundantOfMarker = "<!-- hive-redundant-of:"
+
+// redundantOfFromBody reads the PR a review marked as already containing this
+// change (`<!-- hive-redundant-of: #334 -->`), or "" when it did not.
+func redundantOfFromBody(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), redundantOfMarker) && strings.HasSuffix(trimmed, "-->") {
+			return strings.TrimSpace(strings.TrimSuffix(trimmed[len(redundantOfMarker):], "-->"))
+		}
+	}
+	return ""
+}
+
+// leadWithDecisionQuestion renders the question carried by the
+// `<!-- hive-decision-question: ... -->` marker as visible text at the top of
+// the comment (hivecommons/hive#13116). GitHub hides the marker, which stays
+// untouched for machine parsing.
+func leadWithDecisionQuestion(body string) string {
+	const questionPrefix = "<!-- hive-decision-question:"
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(trimmed), questionPrefix) || !strings.HasSuffix(trimmed, "-->") {
+			continue
+		}
+		question := strings.TrimSpace(strings.TrimSuffix(trimmed[len(questionPrefix):], "-->"))
+		if question == "" || strings.Contains(body, "**Decision needed:** "+question) {
+			return body
+		}
+		return "**Decision needed:** " + question + "\n\n" + body
+	}
+	return body
 }
 
 // malformedVerdictRefusal is the result an agent reads when its --verdict-file

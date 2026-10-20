@@ -194,7 +194,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 			return c.trySupersessionAutoCloseContributorPR(ctx, prOwner, prRepoName, pr, event, closer, identity, now, opts.GracePeriod)
 		}
 		event.Action = "commented-contributor"
-		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review.")
+		body := renderSupersessionComment(event, closer, supersessionDecisionNotice(event, closer, reason))
 		changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
 		if err != nil {
 			return event, "", err
@@ -383,6 +383,28 @@ func (c *Client) prFileSet(ctx context.Context, owner, repo string, number int) 
 		opts.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// supersessionDecisionNotice leads a contributor PR's notice with the one call
+// the operator has to make, not a request for code review (hivecommons/hive#13116).
+// note is why the sweep did not close the PR itself, when it can say.
+func supersessionDecisionNotice(event SupersessionSweepEvent, closer supersessionCloser, note string) string {
+	owner := strings.TrimSpace(event.Author)
+	if owner == "" {
+		owner = "maintainer"
+	}
+	var b strings.Builder
+	if note != "" && !strings.HasPrefix(note, "this PR touches") {
+		fmt.Fprintf(&b, "**Decision needed (@%s):** this PR duplicates #%d, which already merged; merging it changes nothing on the base branch. Recommended: **close as superseded**. Other options: keep open, or merge anyway (no-op). The sweep did not close it automatically: %s.", owner, closer.Number, note)
+		return b.String()
+	}
+	if note != "" {
+		fmt.Fprintf(&b, "**Decision needed (@%s):** #%d already merged and closed the claimed issue, but %s. ", owner, closer.Number, note)
+		b.WriteString("Recommended: **keep open** until the extra changes are reviewed, or close as superseded if they are not wanted. Another option: merge anyway.")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "**Decision needed (@%s):** this PR duplicates #%d, which already merged; merging it changes nothing on the base branch. Recommended: **close as superseded**. Other options: keep open, or merge anyway (no-op).", owner, closer.Number)
+	return b.String()
 }
 
 func renderSupersessionComment(event SupersessionSweepEvent, closer supersessionCloser, reason string) string {

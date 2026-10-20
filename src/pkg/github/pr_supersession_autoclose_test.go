@@ -295,8 +295,8 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			if len(res.Commented) != 1 || res.Commented[0].Action != "commented-contributor" {
 				t.Fatalf("guard %q result = %+v", tc.name, res)
 			}
-			if got := obs.edits[900]; !strings.Contains(got, "Leaving this contributor PR open") {
-				t.Fatalf("guard %q did not rewrite the notice to the keep-open text: %q", tc.name, got)
+			if got := obs.edits[900]; !strings.Contains(got, "**Decision needed (@") {
+				t.Fatalf("guard %q did not rewrite the notice to the decision text: %q", tc.name, got)
 			}
 		})
 	}
