@@ -234,7 +234,7 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		// moved again (a.StallRecoveries) are self-recovery and are excluded.
 		// Report a stall only while the agent currently reads as stalled or once
 		// unrecovered nudges recur.
-		unrecovered := max(0, a.StallNudges-a.StallRecoveries)
+		unrecovered := maxInt(0, a.StallNudges-a.StallRecoveries)
 		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || unrecovered >= fleetStallNudgeMinEvents {
 			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, unrecovered), Severity: "medium", Attributable: true})
 		}
