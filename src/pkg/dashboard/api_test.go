@@ -218,6 +218,24 @@ func TestHandleVersion(t *testing.T) {
 	}
 }
 
+func TestHandleVersionReportsRelease(t *testing.T) {
+	prevVer, prevCommit := fleetReportBuildInfo()
+	t.Cleanup(func() { SetFleetReportBuildInfo(prevVer, prevCommit) })
+
+	SetFleetReportBuildInfo("5.2.1", "e03e3fc")
+	s, _ := apiServer(t)
+	result := decodeJSON(t, doGet(s, "/api/version"))
+	if result["release"] != "5.2.1" {
+		t.Errorf("release = %v, want 5.2.1", result["release"])
+	}
+
+	SetFleetReportBuildInfo("unknown", "e03e3fc")
+	result = decodeJSON(t, doGet(s, "/api/version"))
+	if _, ok := result["release"]; ok {
+		t.Errorf("release = %v, want omitted when unknown", result["release"])
+	}
+}
+
 func TestHandleConfig(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doGet(s, "/api/config")
