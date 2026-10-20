@@ -112,6 +112,12 @@ derive() { # derive <description> <sed/grep pipeline output>
 
 RUNTIME_BASE="$(derive "the runtime base image" \
   "$(grep -m1 -E '^FROM .*AS runtime' "$DOCKERFILE" | sed -E 's/^FROM[[:space:]]+([^[:space:]]+).*/\1/')")"
+# The FROM line names its registry through `${BASE_REGISTRY}` so CI can rebuild
+# from docker.io when the mirror throttles; resolve it the way `docker build`
+# would — the environment override first, then the Dockerfile's ARG default.
+BASE_REGISTRY="${BASE_REGISTRY:-$(derive "BASE_REGISTRY" \
+  "$(grep -m1 -E '^ARG BASE_REGISTRY=' "$DOCKERFILE" | cut -d= -f2)")}"
+RUNTIME_BASE="${RUNTIME_BASE//\$\{BASE_REGISTRY\}/$BASE_REGISTRY}"
 
 SU_EXEC_COMMIT="$(derive "SU_EXEC_COMMIT" \
   "$(grep -m1 -E '^ARG SU_EXEC_COMMIT=' "$DOCKERFILE" | cut -d= -f2)")"
