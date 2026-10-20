@@ -49,10 +49,10 @@ func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
 
 // ApplyPackResult holds the outcome of applying an ACMM pack.
 type ApplyPackResult struct {
-	Name            string           `json:"name"`
-	Created         []string         `json:"created"`
-	Updated         []string         `json:"updated"`
-	Skipped         []string         `json:"skipped"`
+	Name    string   `json:"name"`
+	Created []string `json:"created"`
+	Updated []string `json:"updated"`
+	Skipped []string `json:"skipped"`
 	// Preserved lists agents whose hand-set backend (no owner stamp, differing
 	// from the pack default) was kept and stamped operator-owned (#13221).
 	// Preserved agents are also counted in Skipped.
