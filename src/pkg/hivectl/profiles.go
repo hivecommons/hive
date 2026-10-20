@@ -69,6 +69,9 @@ var ErrNoProfiles = errors.New("no hive profiles configured")
 // ErrProfileNotFound reports that no profile carries the requested name.
 var ErrProfileNotFound = errors.New("no such hive profile")
 
+// ErrHubNotFound reports that no tracked hub carries the requested name.
+var ErrHubNotFound = errors.New("no such tracked hub")
+
 // Profile is one named hive a contributor lends a CLI to.
 //
 // RegistrationToken is a secret. It is present in the struct because it is
@@ -97,7 +100,106 @@ type ProfileSet struct {
 	CommonsStrategy  string             `yaml:"commons_strategy,omitempty"`
 	Profiles         []Profile          `yaml:"profiles"`
 	Presets          []PresetProvenance `yaml:"presets,omitempty" json:"-"`
+	Hubs             []HubEntry         `yaml:"hubs,omitempty" json:"-"`
 	RepoScopeVersion uint64             `yaml:"repo_scope_version,omitempty" json:"-"`
+}
+
+// Hub follow policies. Only HubFollowOff has behavior today: tracking a hub is
+// discovery only and never enrolls, registers or changes membership.
+const (
+	HubFollowOff                   = "off"
+	HubFollowCurrent               = "current"
+	HubFollowCurrentAndFutureRepos = "current-and-future-repos"
+)
+
+// HubEntry is a tracked hub: a federation endpoint whose advertised Hives can
+// be discovered. It stores no credentials; each Hive still needs its own
+// profile to contribute.
+type HubEntry struct {
+	Name   string `yaml:"name" json:"name"`
+	URL    string `yaml:"url" json:"url"`
+	Follow string `yaml:"follow,omitempty" json:"follow"`
+}
+
+// EffectiveFollow reports the follow policy, treating an unset value as off.
+func (h HubEntry) EffectiveFollow() string {
+	if h.Follow == "" {
+		return HubFollowOff
+	}
+	return h.Follow
+}
+
+// ValidateHubFollow accepts the documented hub follow policies; empty means off.
+func ValidateHubFollow(follow string) error {
+	switch follow {
+	case "", HubFollowOff, HubFollowCurrent, HubFollowCurrentAndFutureRepos:
+		return nil
+	default:
+		return fmt.Errorf("hub follow policy %q must be one of %s, %s or %s", follow, HubFollowOff, HubFollowCurrent, HubFollowCurrentAndFutureRepos)
+	}
+}
+
+// FindHub returns the tracked hub with the given name (case-insensitive) and
+// its index.
+func (set *ProfileSet) FindHub(name string) (*HubEntry, int) {
+	for i := range set.Hubs {
+		if strings.EqualFold(set.Hubs[i].Name, name) {
+			return &set.Hubs[i], i
+		}
+	}
+	return nil, -1
+}
+
+// AddHub tracks a hub for discovery. Names are unique case-insensitively and
+// URLs are unique by NormalizeHiveID origin.
+func (set *ProfileSet) AddHub(entry HubEntry) error {
+	if entry.Follow == "" {
+		entry.Follow = HubFollowOff
+	}
+	if err := validateHubEntry(entry); err != nil {
+		return err
+	}
+	if existing, _ := set.FindHub(entry.Name); existing != nil {
+		return fmt.Errorf("hub %q is already tracked", existing.Name)
+	}
+	id, _ := NormalizeHiveID(entry.URL)
+	for _, h := range set.Hubs {
+		if other, err := NormalizeHiveID(h.URL); err == nil && other == id {
+			return fmt.Errorf("hub URL %s is already tracked as %q", id, h.Name)
+		}
+	}
+	set.Hubs = append(set.Hubs, entry)
+	return nil
+}
+
+// RemoveHub stops tracking a hub. Profiles of its Hives are untouched.
+func (set *ProfileSet) RemoveHub(name string) (HubEntry, error) {
+	entry, i := set.FindHub(name)
+	if entry == nil {
+		return HubEntry{}, fmt.Errorf("%w: %q", ErrHubNotFound, name)
+	}
+	removed := *entry
+	set.Hubs = append(set.Hubs[:i], set.Hubs[i+1:]...)
+	if len(set.Hubs) == 0 {
+		set.Hubs = nil
+	}
+	return removed, nil
+}
+
+func validateHubEntry(entry HubEntry) error {
+	if err := ValidateProfileName(entry.Name); err != nil {
+		return fmt.Errorf("hub: %w", err)
+	}
+	if err := ValidateHubURL(entry.URL); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	if _, err := NormalizeHiveID(entry.URL); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	if err := ValidateHubFollow(entry.Follow); err != nil {
+		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	return nil
 }
 
 // ProfileStore reads and writes profiles.yml and its contributor.env
@@ -309,6 +411,23 @@ func (set *ProfileSet) Validate() error {
 		if strings.TrimSpace(preset.Source) == "" || strings.TrimSpace(preset.ReviewedRevision) == "" {
 			return fmt.Errorf("preset %q requires source and reviewed_revision", preset.ID)
 		}
+	}
+	hubNames := map[string]bool{}
+	hubIDs := map[string]string{}
+	for _, hub := range set.Hubs {
+		if err := validateHubEntry(hub); err != nil {
+			return err
+		}
+		key := strings.ToLower(hub.Name)
+		if hubNames[key] {
+			return fmt.Errorf("duplicate hub name %q", hub.Name)
+		}
+		hubNames[key] = true
+		id, _ := NormalizeHiveID(hub.URL)
+		if prev, dup := hubIDs[id]; dup {
+			return fmt.Errorf("hub %q duplicates the URL of hub %q (%s)", hub.Name, prev, id)
+		}
+		hubIDs[id] = hub.Name
 	}
 	if set.Active != "" {
 		if p, _ := set.Find(set.Active); p == nil {

@@ -815,6 +815,8 @@ hivectl hives enable acme                                     # resume without r
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
+hivectl hives hub add commons --url https://hub.example.org   # track a hub (discovery only)
+hivectl hives hub show commons                                # its Hives, onboarded or not
 ```
 
 `hives` is the one command group that does **not** talk to a dashboard API:
@@ -846,6 +848,10 @@ presets:                       # optional local review history, not an export
       source: https://ecosystem.example/hive-preset.yaml
       reviewed_revision: "2026-10-17"
       accepted_at: 2026-10-17T10:00:00Z
+hubs:                          # optional: tracked hubs, no credentials
+    - name: commons
+      url: https://hub.example.org
+      follow: "off"            # off | current | current-and-future-repos
 ```
 
 Repository identities are lower-case `<forge>/<host>/<owner>/<name>` (forge:
@@ -1147,6 +1153,38 @@ and nothing is left pending.
 each adopted Hive's selection. It lets `refresh` include that Hive's new
 recommendations without a prompt. Personal exclusions still take precedence,
 and removals still need confirmation.
+
+#### Tracking hubs
+
+A hub runs a federation registry (`GET /api/hives`) that lists the Hives
+associated with it. `hivectl hives hub` records hubs in the `hubs:` key of
+`profiles.yml` and reads that registry, so you can see which Hives a hub
+advertises without editing YAML:
+
+```bash
+hivectl hives hub add commons --url https://hub.example.org
+hivectl hives hub list                 # -o json|yaml for scripts
+hivectl hives hub show commons         # each advertised Hive, onboarded or not
+hivectl hives hub remove commons       # stop tracking; Hive profiles are kept
+```
+
+Tracking a hub is **discovery only**. It stores no credentials, never calls
+`/api/contribute/register`, and never changes a profile's membership. Onboard
+an advertised Hive with `hivectl hives add`.
+
+- `add` rejects a name already in use (case-insensitively) and a URL whose
+  normalized origin is already tracked under another name. New hubs start with
+  `follow: off`; the other follow policies are reserved for bulk enrollment and
+  have no effect yet.
+- `show` keys each advertised Hive by the normalized origin of its `hub_url`
+  (the same identity rule as above) and marks it `onboarded as <profile>` when a
+  saved profile has that origin, otherwise `not onboarded`. Entries without a
+  usable `hub_url` are skipped, and a repeated origin is listed once.
+- Discovery sends no token, does not follow redirects, and caps the response
+  size. A redirect, a non-200 status, an unreachable hub, or a malformed body
+  reports the hub as **unavailable** and exits non-zero. It is never shown as
+  a hub with no Hives.
+- A `profiles.yml` without `hubs:` loads and saves exactly as before.
 
 ## Input and safety
 
