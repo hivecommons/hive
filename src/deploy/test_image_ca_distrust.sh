@@ -10,12 +10,11 @@
 # error is the pass condition; an HTTP response is the failure. A control
 # fetch against a normally-trusted host proves the bundle was not emptied.
 #
-# Usage: test_image_ca_distrust.sh --image <ref> [--platform <os/arch>]
+# Usage: test_image_ca_distrust.sh --image <ref>
 #
-# --platform is passed to `docker run` so a cross-built image (e.g. arm64 on
-# an amd64 runner under QEMU) runs without docker's "requested image's
-# platform does not match" warning; that warning goes to stderr, which the
-# node probes below ignore, but naming the platform is the honest fix.
+# A cross-built image (arm64 under QEMU on an amd64 runner) makes docker print
+# a platform-mismatch warning on stderr; probes therefore parse stdout only,
+# and docker's stderr is shown only when a run fails unexpectedly.
 #
 # Network is required (the endpoints are public). If the test host itself is
 # unreachable (DNS/connect failure rather than a TLS verify failure) the check
@@ -24,11 +23,9 @@
 set -euo pipefail
 
 IMAGE=""
-PLATFORM="${CA_DISTRUST_PLATFORM:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --image) IMAGE="$2"; shift 2 ;;
-    --platform) PLATFORM="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -50,11 +47,18 @@ skip() { echo "  SKIP  $*"; SKIP=$((SKIP+1)); }
 
 # in_image <cmd...>: run a command in the image as root with no entrypoint.
 in_image() {
-  if [ -n "$PLATFORM" ]; then
-    docker run --rm --platform "$PLATFORM" --entrypoint sh "$IMAGE" -c "$1"
-  else
-    docker run --rm --entrypoint sh "$IMAGE" -c "$1"
-  fi
+  docker run --rm --entrypoint sh "$IMAGE" -c "$1"
+}
+
+# curl_rc <url>: curl's exit code from inside the image; docker's own stderr
+# is kept and printed when the code is not one the caller understands.
+CURL_ERR=""
+curl_rc() {
+  local rc=0 err
+  err="$(mktemp)"
+  in_image "curl -sS -o /dev/null --max-time 30 '$1'" >/dev/null 2>"$err" || rc=$?
+  CURL_ERR="$(cat "$err")"; rm -f "$err"
+  return "$rc"
 }
 
 # node_out <url>: the probe prints exactly one stdout line (TRUSTED/REJECTED/
@@ -70,20 +74,20 @@ echo "=== CA distrust check: $IMAGE ==="
 # resolve/connect/timeout, i.e. the network, not the trust store.
 for url in "${ENDPOINTS[@]}"; do
   rc=0
-  in_image "curl -sS -o /dev/null --max-time 30 '$url'" >/dev/null 2>&1 || rc=$?
+  curl_rc "$url" || rc=$?
   case "$rc" in
     60) ok "curl rejects $url" ;;
     0)  bad "curl TRUSTED $url (HTTP response received; distrusted root still in bundle)" ;;
     6|7|28) skip "curl could not reach $url (rc=$rc)" ;;
-    *)  bad "curl unexpected rc=$rc for $url" ;;
+    *)  bad "curl unexpected rc=$rc for $url: $CURL_ERR" ;;
   esac
 done
 rc=0
-in_image "curl -sS -o /dev/null --max-time 30 '$CONTROL'" >/dev/null 2>&1 || rc=$?
+curl_rc "$CONTROL" || rc=$?
 case "$rc" in
   0) ok "curl control still trusts $CONTROL" ;;
   6|7|28) skip "curl could not reach control $CONTROL (rc=$rc)" ;;
-  *) bad "curl control rc=$rc for $CONTROL — bundle may have been emptied" ;;
+  *) bad "curl control rc=$rc for $CONTROL — bundle may have been emptied: $CURL_ERR" ;;
 esac
 
 # node: the image sets NODE_OPTIONS=--use-openssl-ca, so this exercises the
