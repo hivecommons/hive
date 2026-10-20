@@ -1269,9 +1269,13 @@ jobs:
         with:
           driver-opts: network=host
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        if: env.skip != 'true'
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build Docker image
         if: env.skip != 'true'
-        run: docker buildx build --load --network host -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
+        run: docker buildx build --load --network host --build-arg BASE_REGISTRY="$BASE_REGISTRY" -f "${{ matrix.file }}" -t "hive-ci-${{ matrix.name }}:test" .
 
       - name: Smoke test
         if: env.skip != 'true' && matrix.smoke == 'true'
@@ -1345,6 +1349,9 @@ jobs:
           : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
           echo "value=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build image via buildx (OCI archive, no attestations)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1356,6 +1363,7 @@ jobs:
           outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
           cache-from: type=gha,scope=tmux-linux-amd64
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ steps.ref_name.outputs.value }}
 
@@ -1454,6 +1462,9 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -1471,6 +1482,7 @@ jobs:
             ghcr.io/${{ github.repository }}:nightly
             ghcr.io/${{ github.repository }}:nightly-${{ github.sha }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}
             GIT_SHORT=${{ github.sha }}
           cache-from: type=gha

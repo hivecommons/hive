@@ -900,8 +900,8 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.processStartedAt = b.startTime
 	b.configPath = deps.parseFlags(resolveDefaultConfigPath(deps.getenv(hiveConfigEnv)))
 	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
-	// compares against. The Dockerfile builds it with `--short=7`, but git can
-	// still return more chars when 7 isn't unique; trim so what we report to the
+	// compares against. The Dockerfile cuts it to 7 chars from the full hash; trim
+	// defensively in case an older build used `--short=7` (a minimum) so what we report to the
 	// hub is always the same length it stores (no short-vs-full mismatch).
 	gitShort = canonicalGitShort(gitShort)
 	dashboard.SetGitVersion(gitHash, gitShort)
