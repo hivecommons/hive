@@ -138,6 +138,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # so one regeneration here covers them. The `!` prefix is Debian's documented
 # way to keep a cert out of the bundle; the final tests prove the roots are
 # absent from the regenerated bundle whichever package build is installed.
+# Drop the block once every base image in use ships a package without them.
 RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
       if grep -q "^${cert}" /etc/ca-certificates.conf; then \
         sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf \
