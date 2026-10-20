@@ -39,7 +39,7 @@ func TestPresetOnboardRequiresConfirmationBeforeWrites(t *testing.T) {
 
 func TestPresetOnboardRejectsYesAndPreservesLegacyOnCancel(t *testing.T) {
 	h := newHivesHarness(t)
-	h.writeEnv(t, "HIVE_HUB='wss://legacy.example/contribute'\nHIVE_REGISTRATION_TOKEN='old-secret'\nCONTRIBUTOR_ID='old-id'\n")
+	h.writeEnv(t, "HIVE_HUB=wss://legacy.example/contribute\nHIVE_REGISTRATION_TOKEN=old-secret\nCONTRIBUTOR_ID=old-id\n")
 	before := h.env(t)
 	path := writePreset(t, "version: 1\nname: legacy\nhives:\n  - url: https://legacy.example\n    repositories: []\n")
 	if err := h.run(t, "", "hives", "preset", "adopt", path, "--onboard", "--yes"); err == nil {
