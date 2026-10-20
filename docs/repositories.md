@@ -21,10 +21,13 @@ infrastructure reasons only).
 | [dibs](https://github.com/hivecommons/dibs) | Contributor attribution layer for AI-agent-era contributions: your idea, your credit, their code. | Active | No, standalone service |
 | [spektacular](https://github.com/hivecommons/spektacular) | Spec-driven development for AI coding agents: a markdown spec becomes a reviewed plan and an agent-driven implementation (Claude Code, Bob, Codex). | Early development | No, standalone binary |
 | [homebrew-hive](https://github.com/hivecommons/homebrew-hive) | Homebrew tap for one-command install of the Hive contribute app. | Supporting | No, packaging only |
-| [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, hotshot, pluk, rationguard and promptargs docs are single-sourced from their repositories at build time. | Supporting | No |
+| [homebrew-repo](https://github.com/hivecommons/homebrew-repo) | Homebrew tap for Spektacular (`brew install hivecommons/homebrew-repo/spektacular`); the formula is updated by Spektacular's release automation. | Supporting | No, packaging only |
+| [docs](https://github.com/hivecommons/docs) | Source for [docs.hivecommons.dev](https://docs.hivecommons.dev). Hive, hotshot, pluk, rationguard, promptargs, dibs and Spektacular docs are single-sourced from their repositories at build time. | Supporting | No |
 | [spektacular-website](https://github.com/hivecommons/spektacular-website) | Source for [spektacular.dev](https://spektacular.dev). | Early development | No |
 | [infra](https://github.com/hivecommons/infra) | Shared CI workflows, Prow configuration and org automation. | Supporting | No |
 | [.github](https://github.com/hivecommons/.github) | Organization profile and community health files (code of conduct, security policy, issue templates). | Supporting | No |
+| [.project](https://github.com/hivecommons/.project) | CNCF `.project` metadata for Hive Commons, read by CNCF services automation (including maintainer access provisioning). | Supporting | No |
+| [cncf-sandbox-onboarding](https://github.com/hivecommons/cncf-sandbox-onboarding) | Tracker for completing CNCF Sandbox onboarding. | Supporting | No |
 | [hive-redirect](https://github.com/hivecommons/hive-redirect) | GitHub Pages redirect from `hive.hivecommons.dev` to the hosted hub. | Placeholder | No |
 | [hivecommons.github.io](https://github.com/hivecommons/hivecommons.github.io) | Placeholder site for `hivecommons.dev`. | Placeholder | No |
 
