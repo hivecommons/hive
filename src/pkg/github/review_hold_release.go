@@ -117,12 +117,12 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 		return ReviewHoldRelease{}, false, errors.New("no GitHub client to list the PR's reviews and comments")
 	}
 	since := ReviewHoldSince(ctx, client, owner, repo, number, hold)
-	accept := func(r *ReviewHoldRelease) bool {
-		if !ReleasesReviewHold(since, *r) || (releaser != nil && !releaser(r.By)) {
-			return false
-		}
+	accept := func(r ReviewHoldRelease) bool {
+		return ReleasesReviewHold(since, r) && (releaser == nil || releaser(r.By))
+	}
+	found := func(r ReviewHoldRelease) ReviewHoldRelease {
 		r.HoldHeadSHA, r.HeldSince = hold.HeadSHA, since
-		return true
+		return r
 	}
 	reviewOpts := &gh.ListOptions{PerPage: 100}
 	for {
@@ -138,8 +138,8 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 				Person: isPerson != nil && isPerson(r.GetUser()),
 				At:     r.GetSubmittedAt().Time,
 			}
-			if accept(&release) {
-				return release, true, nil
+			if accept(release) {
+				return found(release), true, nil
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -164,8 +164,8 @@ func FindReviewHoldRelease(ctx context.Context, client *gh.Client, owner, repo s
 				Person: isPerson != nil && isPerson(comment.GetUser()),
 				At:     comment.GetCreatedAt().Time,
 			}
-			if accept(&release) {
-				return release, true, nil
+			if accept(release) {
+				return found(release), true, nil
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -204,22 +204,23 @@ func ReviewHoldSince(ctx context.Context, client *gh.Client, owner, repo string,
 		}
 		opts.Page = resp.NextPage
 	}
-	patches := map[string]string{}
+	type patch struct {
+		id string
+		ok bool
+	}
+	patches := map[string]patch{}
 	patchID := func(base, head string) (string, bool) {
 		key := base + "..." + head
-		if id, ok := patches[key]; ok {
-			return id, id != ""
+		if p, ok := patches[key]; ok {
+			return p.id, p.ok
 		}
+		var p patch
 		cmp, _, err := client.Repositories.CompareCommits(ctx, owner, repo, base, head, nil)
-		id, ok := "", false
 		if err == nil && cmp != nil {
-			id, ok = comparePatchID(cmp.Files)
+			p.id, p.ok = comparePatchID(cmp.Files)
 		}
-		if !ok {
-			id = ""
-		}
-		patches[key] = id
-		return id, ok
+		patches[key] = p
+		return p.id, p.ok
 	}
 	clean := func(merge, prParent, baseParent string) bool {
 		before, ok := patchID(baseParent, prParent)
