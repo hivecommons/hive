@@ -695,15 +695,6 @@ func (s DispatchState) PendingSince(repo string, number int, headSHA string) tim
 	return since
 }
 
-// hiveAuthored reports whether this hive is answerable for the PR: its login
-// is an agent's (isAgentAuthored), the audit trail attributes it to one of
-// this hive's agents (AuthorAgent), or its body carries the hive attribution
-// trailer (HiveAttributed — a PR an agent opened on a person's credentials).
-// Anything else was opened by someone the hive does not speak for.
-func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
-	return isAgentAuthored(pr.Author, opts.AIAuthor) || strings.TrimSpace(pr.AuthorAgent) != "" || pr.HiveAttributed
-}
-
 // fixPushAllowed is the authorship check in front of every fix kick. A fix
 // kick tells an agent to push a commit onto the PR branch, so it is only ever
 // dispatched when the PR's LOGIN author is an agent or App login. AllAuthors
@@ -715,8 +706,8 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 // every sign-off must name the author, so a hive-signed commit fails as
 // bot-signoff and the hive cannot repair it (it cannot sign off for a person).
 // That holds for a HiveAttributed or AuthorAgent PR under a person login too
-// (a contributor-relay PR): hiveAuthored is true for it, but a hive-signed fix
-// would still fail, so the push is withheld and the fix is proposed in the
+// (a contributor-relay PR): the hive is answerable for it, but a hive-signed
+// fix would still fail, so the push is withheld and the fix is proposed in the
 // review. The contributor relay's fix-pr task is the path that can land a
 // correctly signed commit (hivecommons/hive#12897, hivecommons/hive#13124).
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
