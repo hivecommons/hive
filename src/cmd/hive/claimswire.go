@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -181,8 +182,12 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				// Releases are frequent (every relay task completion) and the
 				// closing PR already tells the story; only narrate a release
-				// that a person asked for.
-				if comment && strings.HasPrefix(reason, "released by ") {
+				// that a person asked for — and one that ends the claim
+				// before its until=: the 🔒 marker is never edited, so the
+				// forge keeps reading the hold as live until a release marker
+				// names it (issueclaim.Latest). The relaunch release is that
+				// case; expiry is not (the marker lapses by itself).
+				if comment && (strings.HasPrefix(reason, "released by ") || reason == claims.ReasonHolderRelaunched) {
 					run("release comment", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueComment(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
 					})
@@ -353,5 +358,39 @@ func ledgerClaimLookup(ledger func() *claims.Ledger) func(repo string, number in
 			Tier:      c.Tier,
 			Verified:  c.Verified,
 		}, true
+	}
+}
+
+// releaseClaimsOnAgentRelaunch wires the agent manager's relaunch notice to
+// the ledger: a fresh CLI process means the context that claimed an issue is
+// gone, so its KindAgent claims are released at once instead of parking the
+// issue at stage/020-claimed until the agent TTL lapses. Live case
+// (hivecommons/hive, 2026-10-20): the scanner claimed #13083 at 14:21Z, two
+// image rollouts relaunched every agent by 15:35Z, and the issue sat
+// claimed-by-scanner with nothing working it until the 16:21Z until=.
+func releaseClaimsOnAgentRelaunch(mgr *agent.Manager, ledger func() *claims.Ledger, logger *slog.Logger) {
+	if mgr == nil || ledger == nil {
+		return
+	}
+	mgr.SetRelaunchObserver(agentRelaunchReleaser(ledger, logger))
+}
+
+// agentRelaunchReleaser is the relaunch observer body: release the agent's
+// KindAgent claims (nothing else) and log which issues went back.
+func agentRelaunchReleaser(ledger func() *claims.Ledger, logger *slog.Logger) func(agentName string) {
+	return func(agentName string) {
+		l := ledger()
+		if l == nil {
+			return
+		}
+		released := l.ReleaseAgentClaims(agentName, claims.ReasonHolderRelaunched)
+		if len(released) == 0 || logger == nil {
+			return
+		}
+		keys := make([]string, 0, len(released))
+		for _, c := range released {
+			keys = append(keys, c.Key())
+		}
+		logger.Info("issue-claims: released agent claims on relaunch", "agent", agentName, "issues", keys)
 	}
 }
