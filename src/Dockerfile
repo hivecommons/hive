@@ -4,6 +4,9 @@
 # anonymous pull quota (429s, #11327), and ECR Public likewise meters anonymous
 # pulls per shared-runner IP (429 "Data limit exceeded", #11757).
 # The manifest-list digest is identical on the mirror, so the pins are unchanged.
+# If the mirror itself throttles (429), CI probes it and rebuilds with
+# `--build-arg BASE_REGISTRY=docker.io/library` (.github/actions/docker-base-registry);
+# the digests are identical on both registries, so the pins are unchanged.
 #
 # Pinned to the golang:1.27-alpine multi-arch index digest to prevent
 # floating-tag supply-chain risk. Refresh deliberately:
@@ -17,9 +20,10 @@
 # declared BEFORE builder: every instruction after a FROM belongs to that
 # stage, so placing it after builder's FROM hijacked the builder steps and
 # left /hive, /bd, /hivectl unbuilt (v5 docker build broke on 470c2002).
-FROM mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS agent-go
+ARG BASE_REGISTRY=mirror.gcr.io/library
+FROM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS agent-go
 
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -65,7 +69,7 @@ ARG TARGETARCH
 RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
-    GIT_SHORT=$(git -C /repo rev-parse --short=7 HEAD 2>/dev/null || echo "unknown") && \
+    GIT_SHORT=$(if [ "$GIT_HASH" = "unknown" ]; then echo unknown; else printf '%s' "$GIT_HASH" | cut -c1-7; fi) && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     VERSION_LDFLAG="" && \
     RESOLVED_VERSION="$VERSION" && \
@@ -82,7 +86,7 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
 # supply-chain risk. Refresh deliberately (same technique as golang above,
 # repo library/node, tag 26-slim) and update both the tag and the @sha256
 # digest together in BOTH FROM node:26-slim lines in this file.
-FROM mirror.gcr.io/library/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS tmux-builder
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS tmux-builder
 ARG TARGETARCH
 ARG TMUX_VERSION=3.5a
 ARG TMUX_SHA256_AMD64=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
@@ -110,7 +114,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (and the rewrite RUN below) from the branch-scoped GHA cache — so a fresh
 # binary was rebuilt and then discarded, and the OLD binary shipped. See the
 # stale-binary note in .github/workflows/docker.yml.
-FROM mirror.gcr.io/library/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS runtime
 
 # --- Layer 1: system packages (rarely changes) ---
 # util-linux provides `setpriv`, used by the entrypoint to drop to `dev` with an
@@ -121,6 +125,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git ca-certificates bash curl bzip2 gosu util-linux iptables inotify-tools libevent-core-2.1-7 \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# --- Layer 1b: CA trust bundle refresh ---
+# Distrust two Mozilla roots that the browser/OS root programs withdrew trust
+# from on 2026-10-17..20 but that the Debian ca-certificates package in this
+# base image still ships (no fixed package yet; drop this block once the
+# package carries the change). Static-bundle clients — curl, git, Python
+# (Debian's certifi points at the system bundle), Go via the system store and
+# the entrypoint's SSL_CERT_FILE combined bundle (built FROM this file), and
+# codex (OpenSSL system store) — all read /etc/ssl/certs/ca-certificates.crt,
+# so one regeneration here covers them. The `!` prefix is Debian's documented
+# way to keep a cert out of the bundle; the greps prove the edit actually hit
+# so a renamed entry upstream fails the build instead of silently re-trusting.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
+      /etc/ca-certificates.conf \
+ && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
+ && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+ && update-ca-certificates --fresh \
+ && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
+ && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+# Node ships its own copy of the Mozilla store and ignores the system bundle
+# (NODE_EXTRA_CA_CERTS can only ADD roots). --use-openssl-ca makes Node — and
+# the Copilot CLI, a Node SEA that honours NODE_OPTIONS — verify against the
+# OpenSSL store regenerated above instead; NODE_EXTRA_CA_CERTS (the proxy CA
+# set by the entrypoint / agent manager) still layers on top of it. Agents
+# inherit this through os.Environ(). Claude Code is a Bun binary and does not
+# read NODE_OPTIONS, but it already rejects these chains with its own store.
+ENV NODE_OPTIONS=--use-openssl-ca
 
 COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 

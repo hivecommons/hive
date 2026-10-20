@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 const ReviewerAccuracyDefaultWindow = 30 * 24 * time.Hour
@@ -28,6 +30,57 @@ type ReviewerAccuracySummary struct {
 	MissingOutcomes  int                     `json:"missing_outcomes"`
 	Perspectives     []ReviewerAccuracyGroup `json:"perspectives"`
 	ReviewerModels   []ReviewerAccuracyGroup `json:"reviewer_models"`
+	// AuthorFamilies groups the same verdicts by the PR author's model
+	// family (modelfamily.Bucket: claude / gpt / gemini / other, "unknown"
+	// for an agent whose model was not recorded). A person's PR has no
+	// author model and lands under "human".
+	AuthorFamilies []ReviewerAccuracyGroup `json:"author_families"`
+	// FamilyMatch splits verdicts into "same" (reviewer and author model
+	// share a family), "cross" and "unknown" (either side unrecorded), so a
+	// cross-family review_models pool has a visible effect to compare.
+	FamilyMatch []ReviewerAccuracyGroup `json:"family_match"`
+}
+
+// ReviewerAccuracyOptions tunes SummarizeReviewerAccuracyWith.
+type ReviewerAccuracyOptions struct {
+	// FallbackReviewModel is attributed to a verdict that recorded no
+	// review_model: the reviewer agent's launch model, the same fallback
+	// pkg/github applies when it writes evidence bundles. Empty keeps such
+	// verdicts under "unknown".
+	FallbackReviewModel string
+}
+
+// Family-match group names.
+const (
+	FamilyMatchSame    = "same"
+	FamilyMatchCross   = "cross"
+	FamilyMatchUnknown = "unknown"
+)
+
+// AuthorFamilyBucket is the author-family group a verdict belongs to: the
+// model's family bucket when one was recorded, "human" when the PR is known
+// to be a person's (no model, not hive-authored), "unknown" otherwise.
+func AuthorFamilyBucket(authorModel string, hiveAuthoredKnown, hiveAuthored bool) string {
+	if strings.TrimSpace(authorModel) != "" {
+		return modelfamily.Bucket(authorModel)
+	}
+	if hiveAuthoredKnown && !hiveAuthored {
+		return modelfamily.BucketHuman
+	}
+	return modelfamily.Unknown
+}
+
+// FamilyMatchBucket classifies a reviewer/author model pair.
+func FamilyMatchBucket(reviewModel, authorModel string) string {
+	same, known := modelfamily.SameFamily(reviewModel, authorModel)
+	switch {
+	case !known:
+		return FamilyMatchUnknown
+	case same:
+		return FamilyMatchSame
+	default:
+		return FamilyMatchCross
+	}
 }
 
 type ReviewerAccuracyGroup struct {
@@ -55,6 +108,11 @@ type ReviewerConfidenceCalibrationBucket struct {
 // outcome ledger and cached GitHub history. It deliberately accepts the data as
 // parameters so the dashboard endpoint and tests use the same pure aggregation.
 func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Artifact, ledger *OutcomeLedger, evidence map[string]ReviewerAccuracyEvidence) ReviewerAccuracySummary {
+	return SummarizeReviewerAccuracyWith(now, window, artifact, ledger, evidence, ReviewerAccuracyOptions{})
+}
+
+// SummarizeReviewerAccuracyWith is SummarizeReviewerAccuracy with options.
+func SummarizeReviewerAccuracyWith(now time.Time, window time.Duration, artifact Artifact, ledger *OutcomeLedger, evidence map[string]ReviewerAccuracyEvidence, ropts ReviewerAccuracyOptions) ReviewerAccuracySummary {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -69,6 +127,9 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 	}
 	perspectives := map[string]*accuracyAccumulator{}
 	models := map[string]*accuracyAccumulator{}
+	families := map[string]*accuracyAccumulator{}
+	matches := map[string]*accuracyAccumulator{}
+	fallbackModel := strings.TrimSpace(ropts.FallbackReviewModel)
 	seen := map[string]bool{}
 	seenRecorded := map[string]bool{}
 	missingOutcomes := map[string]bool{}
@@ -101,13 +162,20 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 		}
 		model := strings.TrimSpace(item.ReviewModel)
 		if model == "" {
-			model = "unknown"
+			model = fallbackModel
+		}
+		if model == "" {
+			model = modelfamily.Unknown
 		}
 		accuracyAcc(models, model).add(item.Verdict, item.Confidence.Score, outcome, ev)
+		accuracyAcc(families, AuthorFamilyBucket(item.AuthorModel, item.HiveAuthoredKnown, item.HiveAuthored)).add(item.Verdict, item.Confidence.Score, outcome, ev)
+		accuracyAcc(matches, FamilyMatchBucket(model, item.AuthorModel)).add(item.Verdict, item.Confidence.Score, outcome, ev)
 	}
 	sum.MissingOutcomes = len(missingOutcomes)
 	sum.Perspectives = finishAccuracyGroups(perspectives)
 	sum.ReviewerModels = finishAccuracyGroups(models)
+	sum.AuthorFamilies = finishAccuracyGroups(families)
+	sum.FamilyMatch = finishAccuracyGroups(matches)
 	return sum
 }
 

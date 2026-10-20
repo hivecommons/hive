@@ -42,7 +42,9 @@ const (
 // RevertOf and FollowupOf are the bundle ids of earlier merged PRs this PR
 // reverts or fixes up; RevertedBy and FollowedUpBy are the reverse links
 // written on those earlier bundles. They are a change-failure-rate proxy, not
-// a verdict on the change (hivecommons/hive#12067).
+// a verdict on the change (hivecommons/hive#12067). IssueReopens records
+// issues this PR closed that a person reopened after the merge, the other
+// change-failure signal (hivecommons/hive#13241).
 type Bundle struct {
 	SchemaVersion    string            `json:"schema_version"`
 	ID               string            `json:"id"`
@@ -63,6 +65,7 @@ type Bundle struct {
 	FollowupOf       []string          `json:"followup_of,omitempty"`
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
+	IssueReopens     []IssueReopen     `json:"issue_reopens,omitempty"`
 	Shadow           *Shadow           `json:"shadow,omitempty"`
 	Backfilled       bool              `json:"backfilled,omitempty"`
 	Backfill         *Backfill         `json:"backfill,omitempty"`
@@ -104,6 +107,14 @@ type Verdict struct {
 	Confidence  float64   `json:"confidence"`
 	Findings    []Finding `json:"findings,omitempty"`
 	RecordedAt  time.Time `json:"recorded_at"`
+	// AuthorModel is the model the verdict's report named as the PR's
+	// author (the attribution trailer), when it did. The bundle's Author
+	// carries the audit-recorded model; this is the reviewer's view of it.
+	AuthorModel string `json:"author_model,omitempty"`
+	// SameFamily is whether the reviewing model and the author's model share
+	// a vendor family (modelfamily.SameFamily). Nil when either side is
+	// unknown, so cross-family is never confused with cannot-say.
+	SameFamily *bool `json:"same_family,omitempty"`
 }
 
 // Finding is a single review finding.
@@ -413,6 +424,17 @@ func (b *Bundle) Validate() error {
 			if id == "" {
 				bad("%s[%d]: bundle id is required", l.name, i)
 			}
+		}
+	}
+	for i, r := range b.IssueReopens {
+		if r.Issue <= 0 {
+			bad("issue_reopens[%d]: issue must be positive", i)
+		}
+		if r.At.IsZero() {
+			bad("issue_reopens[%d]: at is required", i)
+		}
+		if r.Source == "" {
+			bad("issue_reopens[%d]: source is required", i)
 		}
 	}
 	return errors.Join(errs...)

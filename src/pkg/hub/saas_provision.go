@@ -3728,6 +3728,12 @@ spec:
 # (#7405). Here an expired session answers a real 401, and the error backend
 # turns it into a JSON body for /api/ callers. Longest-prefix matching keeps
 # /api/v1 and /api/contribute on their own (ungated) Ingresses below.
+#
+# Machine callers that can never hold a hub session but still land on a gated
+# Ingress are waved through by the auth-check itself, not by a separate
+# Ingress: see publicExactPaths in saas_auth.go (/api/knowledge/export,
+# /api/widget/summary, /mcp/knowledge, /sso, and the hub's own webhook relay
+# target /api/webhook/github — the spoke verifies each of those on its own).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

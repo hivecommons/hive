@@ -27,6 +27,9 @@ type PR struct {
 	FollowupOf   []string
 	RevertedBy   []string
 	FollowedUpBy []string
+	// IssueReopens unions the issue_reopens of every record of the PR
+	// (hivecommons/hive#13241).
+	IssueReopens []IssueReopen
 	Closed       bool
 	// Backfilled is true when at least one record of the PR was reconstructed
 	// from forge history (hivecommons/hive#12371). Such a record states the
@@ -156,6 +159,7 @@ func FoldPRs(bundles []*Bundle, repo, kind string) map[string]*PR {
 		p.FollowupOf = longerLinks(p.FollowupOf, b.FollowupOf)
 		p.RevertedBy = longerLinks(p.RevertedBy, b.RevertedBy)
 		p.FollowedUpBy = longerLinks(p.FollowedUpBy, b.FollowedUpBy)
+		p.IssueReopens = mergeIssueReopens(p.IssueReopens, b.IssueReopens)
 		if bundleClosed(b) {
 			p.Closed = true
 		}

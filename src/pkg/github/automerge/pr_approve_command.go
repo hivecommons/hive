@@ -54,7 +54,10 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 	if !c.isPersonLogin(comment.GetUser()) {
 		return "`/hive approve` was not applied: a bot cannot release a person's review hold.", nil
 	}
-	if contributor {
+	// Every lane releases a requires_human hold only on a trusted merger's
+	// Approve review (mergeReviewGate), so an acknowledgement to anyone else
+	// would be ineffective on any of them.
+	if contributor || self || trustedAuthor {
 		if trusted, configured := c.isTrustedMerger(actor); !configured || !trusted {
 			if strings.EqualFold(actor, author) {
 				return "`/hive approve` was not applied: a contributor cannot release their own PR unless they are a trusted merger. Ask the owner or another trusted merger to submit a GitHub **Approve** review for the current head.", nil

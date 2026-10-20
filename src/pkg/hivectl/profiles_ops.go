@@ -24,6 +24,11 @@ import (
 // ErrProfileExists reports that the requested name is already taken.
 var ErrProfileExists = errors.New("hive profile already exists")
 
+// ErrStaleRevision reports that profiles.yml changed after the set being
+// committed was loaded, so the edit was reviewed against a state that no longer
+// exists. Nothing is written; the caller reloads and asks again.
+var ErrStaleRevision = errors.New("hive profiles changed since they were loaded; the change requires renewed review")
+
 // Use marks name as the active profile.
 //
 // It does NOT write: callers pair it with Commit, so a validation failure
@@ -173,20 +178,56 @@ func (set *ProfileSet) SetCommonsStrategy(strategy string) error {
 // projection first and failing to save would leave a contributor.env describing
 // hives no file records — a relay soliciting from a hub the operator can no
 // longer see, rename or remove.
+//
+// Commit holds the store's cross-process lock for the whole read → validate →
+// write, but it does NOT check that set is still based on what is on disk: it
+// is last-writer-wins. Callers that loaded the set they are committing should
+// use CommitExpecting so a concurrent CLI, TUI or Web edit is never lost.
 func (s *ProfileStore) Commit(set *ProfileSet) error {
+	return s.commit(set, nil)
+}
+
+// CommitExpecting is Commit guarded by an expected revision: under the lock it
+// re-reads profiles.yml and refuses with ErrStaleRevision, writing nothing,
+// unless the file is still exactly the one expected was taken from. Pass the
+// Revision of the set as it was loaded ("" expects no profiles.yml at all).
+//
+// A reload before mutating narrows the window but cannot close it — another
+// process can commit between the reload and the write — and an in-process
+// mutex only serialises one process. The lock plus this check is what makes
+// the CLI, the TUI and the Web UI safe to run side by side.
+func (s *ProfileStore) CommitExpecting(set *ProfileSet, expected string) error {
+	return s.commit(set, &expected)
+}
+
+func (s *ProfileStore) commit(set *ProfileSet, expected *string) error {
 	if set == nil {
 		return errors.New("refusing to commit a nil hive profile set")
 	}
 	if err := set.Validate(); err != nil {
 		return err
 	}
-	// Persist the generation before the env projection, so retries and process
-	// restarts never reuse an older scope version. Save alone is not a mutation.
-	previous := set.RepoScopeVersion
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	saved, err := s.Load()
 	if err != nil {
 		return err
 	}
+	if expected != nil {
+		current := ""
+		if saved != nil {
+			current = saved.revision
+		}
+		if current != *expected {
+			return fmt.Errorf("%w: %s", ErrStaleRevision, s.Path())
+		}
+	}
+	// Persist the generation before the env projection, so retries and process
+	// restarts never reuse an older scope version. Save alone is not a mutation.
+	previous := set.RepoScopeVersion
 	version := previous
 	if saved != nil && saved.RepoScopeVersion > version {
 		version = saved.RepoScopeVersion

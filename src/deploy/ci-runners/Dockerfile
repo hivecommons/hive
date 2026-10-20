@@ -126,6 +126,27 @@ RUN set -eux; \
     command -v tmux; \
     command -v gh
 
+# CA trust bundle refresh: distrust two Mozilla roots the root programs
+# withdrew on 2026-10-17..20 where Ubuntu 24.04's ca-certificates still ships them
+# (no fixed package yet — drop once it carries the change). curl, git, gh and
+# any Go built in a job read the regenerated system bundle. Ubuntu 24.04 no
+# longer ships Comodo_AAA_Services_root at all, so that entry is asserted
+# absent-or-disabled; the emSign check makes a renamed upstream entry fail
+# the build instead of silently re-trusting.
+RUN set -eux; \
+    sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
+      /etc/ca-certificates.conf; \
+    grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf; \
+    ! grep -q '^mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf; \
+    update-ca-certificates --fresh; \
+    ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem; \
+    ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+# Node (actions/setup-node, JS actions) keeps its own Mozilla store; point it
+# at the system store fixed above. NODE_EXTRA_CA_CERTS still layers on top.
+ENV NODE_OPTIONS=--use-openssl-ca
+
 # Back to the unprivileged runner user the base image expects. ARC's entrypoint
 # and the runner binary both assume uid 1001; leaving this as root would change
 # the security posture of every job.

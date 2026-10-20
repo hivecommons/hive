@@ -216,6 +216,12 @@ shadow but is for the default flip).
   anomaly. Landed in the same PR for legacy and engine so the shadow
   mismatch gate stays at 0.
 
+- **Covering-PR close and claim reshuffles** ([#12999](https://github.com/hivecommons/hive/issues/12999)):
+  the first `enforce` window surfaced legitimate undrawn issue edges. The
+  diagram and `transition_table.go` gained `040 → 010`, `040 → 030`,
+  `040 → 020` (covering PR closed with nothing / a start marker / the claim
+  still live) and `030 → 020` (PR evidence lapsed, claim held).
+
 ## Tracking
 
 Tracking issue: [#12999](https://github.com/hivecommons/hive/issues/12999) *Central stage engine (ADR-0025)* — one checkbox per PR

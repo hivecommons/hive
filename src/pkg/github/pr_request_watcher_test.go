@@ -470,3 +470,53 @@ func TestPRRequestWatcher_QuarantinesAfterMaxAge(t *testing.T) {
 		t.Errorf("quarantined request must not be retried")
 	}
 }
+
+// The hive-open-pr choke point corrects a title emoji that contradicts the
+// Conventional Commits type (hivecommons/hive#13131: "📝 docs: …" failed the
+// repo's PR Type gate; 📝 is the proposal emoji, docs is 📖).
+func TestPRRequestWatcher_CorrectsTitleEmojiToConvention(t *testing.T) {
+	var createdTitle string
+	inner := newPRMockServer(t, "", nil)
+	defer inner.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/pulls") {
+			body, _ := io.ReadAll(r.Body)
+			var np map[string]any
+			_ = json.Unmarshal(body, &np)
+			createdTitle = asString(np["title"])
+			_, _ = io.WriteString(w, `{"number":13131,"html_url":"https://github.com/o/r/pull/13131"}`)
+			return
+		}
+		req, err := http.NewRequest(r.Method, inner.URL+r.URL.RequestURI(), r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	if _, err := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/docs-1", Title: "📝 docs: describe Prow dco-signoff labels", Body: "Fixes #1", Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessPRRequestsOnce(context.Background())
+	if createdTitle != "📖 docs: describe Prow dco-signoff labels" {
+		t.Fatalf("PR opened with title %q", createdTitle)
+	}
+}

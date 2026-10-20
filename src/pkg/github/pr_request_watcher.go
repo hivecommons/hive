@@ -480,7 +480,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Moving a Conventional Commits-safe lane prefix here keeps issue-title
 	// routing untouched while making every hive-open-pr request pass through the
 	// same deterministic server-side choke point before GitHub sees it.
-	title = NormalizePRTitle(title)
+	title = NormalizePRTitleEmoji(NormalizePRTitle(title))
 
 	// Invocation-attribution trail (attribution.go): resolve what the hive
 	// invoked for this agent, append the visible trailer to the PR body when

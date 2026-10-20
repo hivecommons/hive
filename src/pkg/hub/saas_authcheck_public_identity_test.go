@@ -333,3 +333,60 @@ func TestSaaSAuthCheckKnowledgeExportPassesToTheSpoke(t *testing.T) {
 		}
 	}
 }
+
+// The hub relays GitHub App webhooks to the spoke at /api/webhook/github with
+// no hub session (#13231). The auth-check must wave exactly that path through
+// - with or without a query string - or nginx turns every delivery into an
+// auth-signin 302 and the spoke never sees an event. Only that exact path:
+// its siblings stay hub-private.
+func TestSaaSAuthCheckWebhookRelayIsExactPublicPath(t *testing.T) {
+	if spokeWebhookPath != spokeWebhookRelayPath {
+		t.Fatalf("relay target %q != auth-check public path %q - the hub would POST to a login redirect", spokeWebhookPath, spokeWebhookRelayPath)
+	}
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{spokeWebhookRelayPath, true},
+		{spokeWebhookRelayPath + "?delivery=abc", true},
+		{"/api/webhook", false},
+		{"/api/webhook/githubx", false},
+		{"/api/webhook/github/extra", false},
+		{"/api/webhook/linear", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
+// Through the real handler: an anonymous POST to the relay path gets a bare
+// 200 (no identity, no proxy-auth proof) so the spoke runs its own HMAC
+// check; a signed-in hub user is still identified on the way through; and a
+// sibling path is still gated.
+func TestSaaSAuthCheckWebhookRelayPassesToTheSpoke(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHandlerHub()
+	demotedOwnerFixture(t, s, "spoke-owner", "owned-hive")
+
+	rec := publicPathAuthCheck(t, s, "owned-hive", spokeWebhookRelayPath, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s anonymous: status = %d, want 200 - a 401 here becomes an auth-signin redirect and the relayed webhook never reaches the spoke (#13231)", spokeWebhookRelayPath, rec.Code)
+	}
+	for _, h := range []string{"X-Hive-User", "X-Hive-Role", proxyAuthHeader} {
+		if got := rec.Header().Get(h); got != "" {
+			t.Errorf("%s anonymous: %s = %q, want unset", spokeWebhookRelayPath, h, got)
+		}
+	}
+
+	rec = publicPathAuthCheck(t, s, "owned-hive", spokeWebhookRelayPath, "spoke-owner")
+	if rec.Code != http.StatusOK || rec.Header().Get("X-Hive-User") != "spoke-owner" || rec.Header().Get("X-Hive-Role") != "owner" {
+		t.Errorf("owner on %s: status=%d user=%q role=%q, want 200/spoke-owner/owner", spokeWebhookRelayPath, rec.Code, rec.Header().Get("X-Hive-User"), rec.Header().Get("X-Hive-Role"))
+	}
+
+	rec = publicPathAuthCheck(t, s, "owned-hive", "/api/webhook/linear", "")
+	if rec.Code == http.StatusOK {
+		t.Errorf("/api/webhook/linear anonymous: status = 200, want gated")
+	}
+}

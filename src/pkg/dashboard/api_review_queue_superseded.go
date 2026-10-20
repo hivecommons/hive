@@ -216,14 +216,16 @@ func (s *Server) handleReviewQueueSupersededClose(w http.ResponseWriter, r *http
 	}
 	user := requestUser(r)
 	commentUser := strings.TrimSpace(r.Header.Get("X-Hive-User"))
-	closerRef := "a different merged PR"
 	org := ""
 	if s.deps.Config != nil {
 		org = s.deps.Config.Project.Org
 	}
-	if info, found := supersededGraceStates(s.supersessionAuditEntries(time.Now()), org, s.supersessionGracePeriod())[ghpkg.ReviewQueueKey(repo, number)]; found {
-		closerRef = fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
+	info, found := supersededGraceStates(s.supersessionAuditEntries(time.Now()), org, s.supersessionGracePeriod())[ghpkg.ReviewQueueKey(repo, number)]
+	if !found {
+		jsonError(w, "no supersession state recorded for this pull request", http.StatusNotFound)
+		return
 	}
+	closerRef := fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
 	gh := s.deps.GHClient
 	posted, err := gh.IssueCommentsContain(r.Context(), repo, number, ghpkg.SupersessionAutoCloseMarker)
 	if err != nil {

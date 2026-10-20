@@ -102,6 +102,75 @@ func TestSelectionToggleRetainsPersonalInclusion(t *testing.T) {
 	}
 }
 
+func TestDeselectCurrentPreservesFollowAndOverrides(t *testing.T) {
+	const repo = "github/github.com/org/repo"
+	for _, mode := range []string{SelectionSelected, SelectionAllCurrent} {
+		for _, follow := range []bool{false, true} {
+			set := &ProfileSet{Profiles: []Profile{{Name: "a", Hub: "https://a.example", RegistrationToken: "secret", Selection: &RepositorySelection{
+				Mode: mode, Repositories: []string{repo}, MembershipSnapshot: []string{repo},
+				Include: []string{"github/github.com/org/personal"}, Exclude: []string{repo},
+				FollowNewRepositories: follow, Sources: []string{"invitation"},
+			}}}}
+			if err := set.DeselectCurrent("a"); err != nil {
+				t.Fatal(err)
+			}
+			want := &RepositorySelection{Mode: SelectionSelected, Exclude: []string{repo}, FollowNewRepositories: follow, Sources: []string{"invitation"}}
+			if !reflect.DeepEqual(set.Profiles[0].Selection, want) || set.SelectionSummary("a") != "none" || set.Profiles[0].RegistrationToken != "secret" {
+				t.Fatalf("deselect changed retained state: %+v", set.Profiles[0])
+			}
+			if err := set.DeselectCurrent("a"); err != nil || !reflect.DeepEqual(set.Profiles[0].Selection, want) {
+				t.Fatal("deselect is not idempotent")
+			}
+			if err := set.SetSelectionMode("a", "none", nil); err != nil {
+				t.Fatal(err)
+			}
+			if set.Profiles[0].Selection.FollowNewRepositories || len(set.Profiles[0].Selection.Exclude) != 1 {
+				t.Fatal("select none must stop following without clearing exclusions")
+			}
+		}
+	}
+}
+
+func TestDeselectCurrentRejectsLegacyAndUnknown(t *testing.T) {
+	set := &ProfileSet{Profiles: []Profile{{Name: "legacy", Hub: "https://a.example"}}}
+	for _, name := range []string{"legacy", "missing"} {
+		if err := set.DeselectCurrent(name); err == nil {
+			t.Fatalf("accepted %q", name)
+		}
+		if set.Profiles[0].Selection != nil || set.SelectionSummary("legacy") != "all" {
+			t.Fatal("failed deselect migrated legacy scope")
+		}
+	}
+}
+
+func TestSetFollowNewRepositoriesPreservesMembership(t *testing.T) {
+	const repo = "github/github.com/org/repo"
+	for _, mode := range []string{SelectionSelected, SelectionAllCurrent} {
+		set := &ProfileSet{Profiles: []Profile{{Name: "a", Hub: "https://a.example", Selection: &RepositorySelection{
+			Mode: mode, Repositories: []string{repo}, MembershipSnapshot: []string{repo},
+			Include: []string{repo}, Exclude: []string{repo}, Sources: []string{"invitation"},
+		}}}}
+		want := *set.Profiles[0].Selection
+		for _, follow := range []bool{true, false, false} {
+			if _, err := set.SetFollowNewRepositories("a", follow); err != nil {
+				t.Fatal(err)
+			}
+			want.FollowNewRepositories = follow
+			if !reflect.DeepEqual(*set.Profiles[0].Selection, want) {
+				t.Fatal("follow changed membership, overrides or provenance")
+			}
+		}
+	}
+	set := &ProfileSet{Profiles: []Profile{{Name: "legacy", Hub: "https://a.example"}}}
+	for _, name := range []string{"legacy", "missing"} {
+		for _, follow := range []bool{false, true} {
+			if _, err := set.SetFollowNewRepositories(name, follow); err == nil || set.Profiles[0].Selection != nil {
+				t.Fatal("follow accepted unknown or migrated legacy profile")
+			}
+		}
+	}
+}
+
 func TestRepositoryInput(t *testing.T) {
 	for _, tc := range []struct{ input, forge, host, want string }{
 		{"Org/Repo", "github", "GitHub.com", "github/github.com/org/repo"},

@@ -793,6 +793,7 @@ var publicExactPaths = map[string]struct{}{
 	ssoHandoffPath:             {},
 	"/tokens.css":              {},
 	spokeWidgetSummaryPath:     {},
+	spokeWebhookRelayPath:      {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}
@@ -864,6 +865,24 @@ const knowledgeExportPath = "/api/knowledge/export"
 // Authorization, so the hub never forwards it to GitHub); anything else is a
 // 401.
 const spokeWidgetSummaryPath = "/api/widget/summary"
+
+// spokeWebhookRelayPath is the spoke's GitHub App webhook receiver, the path
+// the hub POSTs every relayed delivery to (relayWebhookToSpoke in webhook.go,
+// #11177 / #13165). The relay carries no hub session, so without this entry
+// the hosted Ingress's auth_request gate answered every delivery with an
+// auth-signin 302 to the hub login page and the spoke process never saw a
+// single event (#13231): webhooks.healthy=false, events_1h=0 on every hosted
+// hive while the hub relayed hundreds of events an hour. Same failure mode
+// as knowledgeExportPath, same fix.
+//
+// This does NOT open the spoke to unsigned callers. The spoke's
+// handleGitHubWebhook (pkg/dashboard/api_github_webhook.go:51-58) fails
+// closed with a 503 when GITHUB_WEBHOOK_SECRET is unset and verifies the
+// X-Hub-Signature-256 HMAC over the raw body before touching anything;
+// anything unsigned or mis-signed is a 401. Waving the path through here
+// merely lets that check run at all. webhook.go's relay target is this same
+// constant so the two cannot drift.
+const spokeWebhookRelayPath = "/api/webhook/github"
 
 // publicKnowledgeMCPPath is the spoke's owner-switched, read-only MCP
 // knowledge endpoint (#10615). External agents (Goose, Claude, Copilot) reach

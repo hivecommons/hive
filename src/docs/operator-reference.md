@@ -1002,6 +1002,10 @@ Verify: `/api/status.webhooks.events_1h` climbs after a push or comment,
 `/api/status.evalMode` reads `webhook`, and the spoke log shows
 `github webhook wake: running an early eval cycle` with the delivery's reason.
 
+Through the hub, every enrolled hive that tracks the delivery's repository
+and has a dashboard URL receives the relay, so multiple hives (for example
+v5 and v6 spokes) tracking one repo all stay on webhook mode.
+
 #### What a delivery does
 
 - `pull_request`, `pull_request_review`, `pull_request_review_comment`,

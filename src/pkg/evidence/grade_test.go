@@ -65,12 +65,63 @@ func TestSummarizeOutcome(t *testing.T) {
 		{Kind: AuthorAgent, N: 20, Merged: 17, Unknown: 3},
 		{Kind: AuthorBot, N: 1, Merged: 1},
 	})
-	want := "Agents: 17 merged, 0 reverted. Humans: 2 merged, 0 reverted. Bots: 1 merged, 0 reverted. 3 outcomes not recorded yet."
+	want := "Agents: 17 merged, 0 undone. Humans: 2 merged, 0 undone. Bots: 1 merged, 0 undone. 3 outcomes not recorded yet."
 	if got != want {
 		t.Errorf("got %q\nwant %q", got, want)
 	}
 	if words(got) > PlainSummaryMaxWords {
 		t.Errorf("summary has %d words: %q", words(got), got)
+	}
+}
+
+// TestSummarizeOutcomeChangeFailures pins the full form from #13241, the
+// one-decimal rate for small shares, and the compaction that keeps three
+// kinds with failures plus an unknown tail under PlainSummaryMaxWords.
+func TestSummarizeOutcomeChangeFailures(t *testing.T) {
+	got := SummarizeOutcome([]OutcomeStats{
+		{Kind: AuthorAgent, N: 420, Merged: 418, Reverted: 1},
+		{Kind: AuthorHuman, N: 350, Merged: 346, Reopened: 2},
+	})
+	want := "Agents: 418 merged, 1 reverted, 0 re-opened (0.2%). Humans: 346 merged, 0 reverted, 2 re-opened (0.6%)."
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	if words(got) > PlainSummaryMaxWords {
+		t.Errorf("summary has %d words: %q", words(got), got)
+	}
+
+	got = SummarizeOutcome([]OutcomeStats{
+		{Kind: AuthorAgent, N: 30, Merged: 20, Reverted: 1, Reopened: 1, Unknown: 4},
+		{Kind: AuthorHuman, N: 10, Merged: 8, Reopened: 2},
+		{Kind: AuthorBot, N: 5, Merged: 4, Reverted: 1},
+	})
+	want = "Agents: 20 merged, 2 undone (10%). Humans: 8 merged, 2 undone (25%). Bots: 4 merged, 1 undone (25%). 4 unrecorded."
+	if got != want {
+		t.Errorf("compact: got %q\nwant %q", got, want)
+	}
+	if words(got) > PlainSummaryMaxWords {
+		t.Errorf("compact summary has %d words: %q", words(got), got)
+	}
+}
+
+func TestGradeOutcomeReopensDiscount(t *testing.T) {
+	plain := GradeOutcome([]OutcomeStats{{Kind: AuthorAgent, N: 20, Merged: 20}})
+	reopened := GradeOutcome([]OutcomeStats{{Kind: AuthorAgent, N: 20, Merged: 20, Reopened: 2}})
+	both := GradeOutcome([]OutcomeStats{{Kind: AuthorAgent, N: 20, Merged: 20, Reverted: 1, Reopened: 1}})
+	if plain.Letter != "A+" || reopened.Letter != "A-" || both.Letter != "A-" {
+		t.Errorf("re-opens must discount like reverts: plain %q reopened %q both %q", plain.Letter, reopened.Letter, both.Letter)
+	}
+	if !strings.Contains(both.Reason, "2 of 20 merged failed within 14 d (1 reverted, 1 re-opened)") {
+		t.Errorf("reason must name both signals: %q", both.Reason)
+	}
+	if !strings.Contains(both.Rubric, "issue re-opened") {
+		t.Errorf("rubric must mention re-opens: %q", both.Rubric)
+	}
+	if s := (OutcomeStats{Merged: 0, Reverted: 1}); s.ChangeFailureRate() != nil {
+		t.Error("rate with no merges must be nil")
+	}
+	if r := (OutcomeStats{Merged: 500, Reverted: 1}).ChangeFailureRate(); r == nil || pctFloat(*r) != "0.2%" {
+		t.Errorf("small rates keep one decimal: %v", r)
 	}
 }
 
@@ -141,6 +192,9 @@ func TestSummarizeAccuracy(t *testing.T) {
 		{AccuracyStats{}, "No reviewer verdicts in this window yet."},
 		{AccuracyStats{BundleVerdicts: 1}, "1 reviewer verdict recorded; accuracy is graded once the outcome ledger covers them."},
 		{AccuracyStats{Available: true, Samples: 120, FalseApproveRate: 0.03, FalseBlockRate: 0.011}, "Reviewers wrongly approved 3% and wrongly blocked 1% of 120 PRs with a known result."},
+		// Only one family side has samples: no comparison sentence.
+		{AccuracyStats{Available: true, Samples: 20, SameFamily: FamilyAccuracy{Samples: 20, FalseApproveRate: 0.1}}, "Reviewers wrongly approved 0% and wrongly blocked 0% of 20 PRs with a known result."},
+		{AccuracyStats{Available: true, Samples: 40, FalseApproveRate: 0.05, SameFamily: FamilyAccuracy{Samples: 25, FalseApproveRate: 0.08}, CrossFamily: FamilyAccuracy{Samples: 15}}, "Reviewers wrongly approved 5% (same-family 8%, cross-family 0%) and wrongly blocked 0% of 40 PRs with a known result."},
 	} {
 		if got := SummarizeAccuracy(tc.in); got != tc.want || words(got) > PlainSummaryMaxWords {
 			t.Errorf("got %q (%d words), want %q", got, words(got), tc.want)

@@ -222,9 +222,10 @@ including PRs without a parking label
 acknowledges the comment and names the lever that actually releases a
 `requires_human` hold on this release line — a trusted merger's GitHub
 **Approve** review on the current head — or explains why the lane cannot act
-on it: for example, the commenter is not a trusted merger on the contributor
-lane, the contributor-lane verdict is a rejection rather than
-`requires_human`, or the PR touches a manual-only path. An ordinary
+on it: for example, the commenter is not a trusted merger (on any merge lane —
+contributor, trusted-author or hive-authored — since only a trusted merger's
+Approve releases a hold), the contributor-lane verdict is a rejection rather
+than `requires_human`, or the PR touches a manual-only path. An ordinary
 contributor cannot release their own PR.
 
 The acknowledgement does not merge the PR, remove labels, or bypass any

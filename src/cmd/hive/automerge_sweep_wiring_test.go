@@ -306,6 +306,51 @@ func TestApplyDuplicatePRGuard_SuppressesIssueClaimedByHivePR(t *testing.T) {
 	}
 }
 
+// An issue carrying BOTH a live agent claim and an open hive PR that fixes
+// it is covered by the PR (040), not merely claimed (020). Before the PR
+// guard ran after the live-claim filter, the claim filter withheld the issue
+// first and the ledger never saw it, so every sweep after the PR opened
+// re-bucketed it "claimed" and the stage store recorded a spurious
+// 040 → 020 regression that the dashboard rendered as a red `regressed`
+// chip on almost every claimed issue (hivecommons/hive#13174 and friends).
+func TestApplyDuplicatePRGuard_OpenPROutranksLiveAgentClaim(t *testing.T) {
+	resetClaimLedgerForTest(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/testorg/widget/pulls", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":9,"state":"open","title":"Fixes #12","body":"","user":{"login":"hive-ai"},"head":{"ref":"scanner/fix-12"},"html_url":"pr-9-url"}]`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
+
+	cfg := guardConfig()
+	cfg.Governor.Claims.Enabled = true
+	expires := time.Now().Add(time.Hour)
+	actionable := &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{
+			{Repo: "widget", Number: 12, Title: "claimed and covered", ClaimedBy: "scanner", ClaimExpiresAt: &expires, ClaimSource: github.IssueClaimSourceMarker, ClaimKind: "agent"},
+			{Repo: "widget", Number: 13, Title: "only claimed", ClaimedBy: "scanner", ClaimExpiresAt: &expires, ClaimSource: github.IssueClaimSourceMarker, ClaimKind: "agent"},
+		}},
+	}
+	applyDuplicatePRGuard(context.Background(), cfg, ghClient, actionable, sweepTestLogger(nil))
+
+	if len(actionable.Issues.Items) != 0 {
+		t.Fatalf("both issues must leave the actionable set, got %+v", actionable.Issues.Items)
+	}
+	buckets := map[int]string{}
+	for _, row := range actionable.WorkDetailsByRepo["widget"].Issues {
+		buckets[row.Number] = row.Bucket
+	}
+	if got := buckets[12]; got != "claimed_by_pr" {
+		t.Fatalf("issue 12 has an open hive PR: bucket must be claimed_by_pr (stage 040), got %q; rows %+v", got, actionable.WorkDetailsByRepo["widget"].Issues)
+	}
+	if got := buckets[13]; got != "claimed" {
+		t.Fatalf("issue 13 has only a live claim: bucket must be claimed (stage 020), got %q", got)
+	}
+}
+
 func TestApplyDuplicatePRGuard_FetchFailureFailsClosedWithoutSuppressing(t *testing.T) {
 	resetClaimLedgerForTest(t)
 

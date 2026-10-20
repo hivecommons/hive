@@ -39,7 +39,7 @@ func (s *Server) handleReviewerAccuracy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	window := time.Duration(days) * 24 * time.Hour
-	resp := review.SummarizeReviewerAccuracy(time.Now(), window, artifact, ledger, s.reviewerAccuracyEvidence())
+	resp := review.SummarizeReviewerAccuracyWith(time.Now(), window, artifact, ledger, s.reviewerAccuracyEvidence(), s.reviewerAccuracyOptions())
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -62,6 +62,35 @@ type errReviewerAccuracyWindow struct{}
 
 func (errReviewerAccuracyWindow) Error() string {
 	return "days must be an integer between 1 and " + strconv.Itoa(reviewerAccuracyMaxWindowDays)
+}
+
+// reviewerAccuracyOptions attributes verdicts that recorded no review_model
+// to the reviewer agents' launch model, the way pkg/github's evidence writer
+// does — but only when every enabled review-capable agent runs the same
+// model, since otherwise there is no single honest answer and "unknown" is
+// the truthful bucket (hivecommons/hive#13243).
+func (s *Server) reviewerAccuracyOptions() review.ReviewerAccuracyOptions {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return review.ReviewerAccuracyOptions{}
+	}
+	cfg := s.deps.Config
+	allowed := review.ReviewerAgentSet(cfg.Review.ReviewerAgents)
+	model := ""
+	for name, ac := range cfg.EnabledAgents() {
+		cap := review.AgentCapability{Name: name, Role: ac.Role, LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases}
+		if !review.ReviewCapable(cap, allowed) {
+			continue
+		}
+		m := strings.TrimSpace(ac.Model)
+		if m == "" {
+			continue
+		}
+		if model != "" && !strings.EqualFold(model, m) {
+			return review.ReviewerAccuracyOptions{}
+		}
+		model = m
+	}
+	return review.ReviewerAccuracyOptions{FallbackReviewModel: model}
 }
 
 func (s *Server) reviewerAccuracyEvidence() map[string]review.ReviewerAccuracyEvidence {

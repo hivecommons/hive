@@ -219,6 +219,10 @@ type Server struct {
 	// already been told succeeded. Both guarded by statusMu.
 	statusSeq           uint64
 	statusMutationEpoch uint64
+	// statusStaleDrops counts snapshots UpdateStatusIfFresh refused because
+	// a mutation landed mid-build. Published on the payload so a dashboard
+	// whose snapshot stops advancing shows whether the guard is the reason.
+	statusStaleDrops uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -449,7 +453,12 @@ type StatusPayload struct {
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
 	StatusInstance string `json:"statusInstance"`
-	HiveID         string `json:"hiveId"`
+	// StatusStaleDrops is how many full snapshots this process refused to
+	// publish because a state mutation raced their build. A rising count
+	// alongside a static StatusSeq means the guard — not the publisher — is
+	// starving the dashboard.
+	StatusStaleDrops uint64 `json:"statusStaleDrops,omitempty"`
+	HiveID           string `json:"hiveId"`
 	// HiveIDEditable reports whether the Hive ID may be changed from this
 	// dashboard, and HiveIDLockReason explains why not when it may not
 	// (#7247). Computed server-side for the same reason the release-channel
@@ -2459,9 +2468,11 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		// predate the mutation. Drop it — the mutation's own refresh rebuild
 		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
+		s.statusStaleDrops++
+		drops := s.statusStaleDrops
 		s.statusMu.Unlock()
-		s.logger.Debug("dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
+		s.logger.Warn("dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops)
 		return false
 	}
 
@@ -2478,6 +2489,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.AttachFleetReport(status, version, commit, !s.FleetReportFilesUpstream())
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
+	status.StatusStaleDrops = s.statusStaleDrops
 	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	if status.TimeZone == "" {
