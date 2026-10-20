@@ -53,6 +53,9 @@ type ApplyPackResult struct {
 	Created         []string         `json:"created"`
 	Updated         []string         `json:"updated"`
 	Skipped         []string         `json:"skipped"`
+	// Preserved lists agents whose hand-set backend (no owner stamp, differing
+	// from the pack default) was kept and stamped operator-owned (#13221).
+	Preserved       []string         `json:"preserved,omitempty"`
 	Paused          []string         `json:"paused"`
 	Resumed         []string         `json:"resumed"`
 	GovernorChanges *GovernorChanges `json:"governor_changes,omitempty"`
@@ -132,6 +135,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	var skipped []string
 
 	var updated []string
+	var preserved []string
 	// Collect per-agent create failures instead of aborting the whole apply on
 	// the first one. Aborting mid-loop leaves a partially reconciled roster
 	// (some of the level's agents added, the rest missing) that no longer
@@ -158,6 +162,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		}
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
+			// stamped records an ownership-only change that must be persisted
+			// but is not a value update (so it never feeds `updated`).
+			stamped := false
 
 			// Pack-behavior fields define what an agent DOES at a given ACMM
 			// level (which kick template it runs, its issue/PR mode, which model,
@@ -295,10 +302,24 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 					existing.Model = ""
 				}
 				changed = true
+			} else if existing.Backend != "" && existing.BackendOwner == "" {
+				// A backend with no owner stamp predates ownership tracking or
+				// was written by hand in hive.yaml. One matching the pack
+				// default is adopted as pack-owned; a differing one is an
+				// operator choice and is stamped so it stays put (#13221).
+				if existing.Backend == packBackend {
+					existing.BackendOwner = config.FieldOwnerPack
+				} else {
+					existing.BackendOwner = config.FieldOwnerOperator
+					preserved = append(preserved, pa.Name)
+					s.logger.Info("keeping hand-set agent backend that differs from the ACMM pack default",
+						"agent", pa.Name, "backend", existing.Backend, "pack_backend", packBackend)
+				}
+				stamped = true
 			}
 
 			// Respect user's enabled: false — don't override it.
-			if changed {
+			if changed || stamped {
 				s.deps.Config.Agents[pa.Name] = existing
 				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
 				if agentsDir != "" {
@@ -312,7 +333,9 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 						s.ClearSystemAlert(alertID)
 					}
 				}
-				updated = append(updated, pa.Name)
+				if changed {
+					updated = append(updated, pa.Name)
+				}
 				// A flag flip is a statement about whether a process should
 				// EXIST (#7446): leaving on-demand starts the agent — nothing
 				// else will, it was skipped at launch for being on-demand —
@@ -330,7 +353,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 						s.logger.Warn("could not stop agent after pack made it on-demand", "agent", pa.Name, "error", err)
 					}
 				}
-			} else {
+			}
+			if !changed {
 				skipped = append(skipped, pa.Name)
 			}
 			// The manager's process table tracks ENABLED agents only — it is
@@ -561,7 +585,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 	// grep by agent name against this one line answers it. Since #5632 the
 	// list holds genuinely NEW roster members only — manager-table repairs are
 	// logged separately as readded_agents below.
-	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "gate_removed", len(removedByGate), "created_agents", created, "tombstoned_agents", tombstoned, "skipped_agents", skipped)
+	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "preserved", len(preserved), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "gate_removed", len(removedByGate), "created_agents", created, "tombstoned_agents", tombstoned, "skipped_agents", skipped, "preserved_agents", preserved)
 	if len(readded) > 0 {
 		// A repair worth naming, at INFO not buried in `created`: an ENABLED
 		// agent missing from the manager's process table is unusual (the table
@@ -582,6 +606,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		Created:    created,
 		Updated:    updated,
 		Skipped:    skipped,
+		Preserved:  preserved,
 		Paused:     paused,
 		Resumed:    resumed,
 		Tombstoned: tombstoned,

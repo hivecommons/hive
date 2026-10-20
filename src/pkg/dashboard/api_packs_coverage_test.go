@@ -241,6 +241,107 @@ func TestApplyPackDoesNotOverwriteExistingBackend(t *testing.T) {
 	}
 }
 
+// scannerPackBackend returns the level-2 pack's backend for the scanner agent.
+func scannerPackBackend(t *testing.T) string {
+	t.Helper()
+	pack, err := config.ACMMPackByLevel(2)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(2): %v", err)
+	}
+	for _, a := range pack.Agents {
+		if a.Name == "scanner" {
+			return a.Backend
+		}
+	}
+	t.Fatal("scanner not in level-2 pack")
+	return ""
+}
+
+// TestApplyPackAdoptsUnownedBackendMatchingPack verifies an unowned backend
+// equal to the pack default is adopted as pack-owned and is not reported as
+// preserved (#13221).
+func TestApplyPackAdoptsUnownedBackendMatchingPack(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = packBackend
+	scanner.BackendOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	res, err := srv.ApplyPack(2)
+	if err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != packBackend || got.BackendOwner != config.FieldOwnerPack {
+		t.Errorf("got backend %q owner %q, want %q owner %q", got.Backend, got.BackendOwner, packBackend, config.FieldOwnerPack)
+	}
+	for _, n := range res.Preserved {
+		if n == "scanner" {
+			t.Error("scanner reported preserved for a pack-matching backend")
+		}
+	}
+}
+
+// TestApplyPackPreservesUnownedBackendDifferingFromPack verifies a hand-set
+// backend with no owner stamp is kept, stamped operator-owned and reported as
+// preserved rather than updated (#13221).
+func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "claude"
+	if packBackend == "claude" {
+		scanner.Backend = "copilot"
+	}
+	handSet := scanner.Backend
+	scanner.BackendOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	res, err := srv.ApplyPack(2)
+	if err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != handSet {
+		t.Errorf("hand-set backend replaced: got %q, want %q", got.Backend, handSet)
+	}
+	if got.BackendOwner != config.FieldOwnerOperator {
+		t.Errorf("backend owner = %q, want %q", got.BackendOwner, config.FieldOwnerOperator)
+	}
+	found := false
+	for _, n := range res.Preserved {
+		found = found || n == "scanner"
+	}
+	if !found {
+		t.Errorf("scanner missing from Preserved: %v", res.Preserved)
+	}
+}
+
+// TestApplyPackReconcilesPackOwnedBackendOffDeniedBackend verifies a
+// pack-owned backend is still reconciled when the backends policy denies it.
+func TestApplyPackReconcilesPackOwnedBackendOffDeniedBackend(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "claude"
+	scanner.BackendOwner = config.FieldOwnerPack
+	srv.deps.Config.Agents["scanner"] = scanner
+	srv.deps.Config.Backends.Deny = []string{"claude"}
+
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	if got := srv.deps.Config.Agents["scanner"]; got.Backend == "claude" {
+		t.Errorf("pack-owned denied backend not reconciled: %q", got.Backend)
+	}
+}
+
 // TestHandlePackSetLevelZero verifies that level 0 is rejected.
 func TestHandlePackSetLevelZero(t *testing.T) {
 	srv := newFullServer(t)
