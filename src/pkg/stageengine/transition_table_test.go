@@ -131,7 +131,9 @@ func TestExpectedRules(t *testing.T) {
 		{"covering PR closed, start marker live", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.PRInProgress, true},
 		{"covering PR closed, claim held", stagelabels.IssueItem, stagelabels.CoveredByPR, stagelabels.Claimed, true},
 		{"PR evidence lapsed, claim held", stagelabels.IssueItem, stagelabels.PRInProgress, stagelabels.Claimed, true},
-		{"undrawn regression", stagelabels.IssueItem, stagelabels.IssueNeedsDecision, stagelabels.Claimed, false},
+		// 045 never regresses (IsRegression) and every backward hop among
+		// 010–040 is now drawn, so a park release is a non-regression hop.
+		{"park released to a held claim, not drawn", stagelabels.IssueItem, stagelabels.IssueNeedsDecision, stagelabels.Claimed, true},
 		{"undrawn regression (pr)", stagelabels.PRItem, stagelabels.AwaitingMergeAdmission, stagelabels.ReviewPending, false},
 		{"pr stage on an issue", stagelabels.IssueItem, stagelabels.Actionable, stagelabels.ReviewPending, false},
 		{"issue stage on a pr", stagelabels.PRItem, stagelabels.Claimed, stagelabels.ReviewPending, false},
