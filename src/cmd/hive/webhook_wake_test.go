@@ -77,8 +77,9 @@ func TestWebhookWakerDebouncesBurstIntoOneWake(t *testing.T) {
 		if b.Count != 3 || b.Reason != "push org/repo #1" || b.LastRe != "check_suite org/repo #1" {
 			t.Fatalf("batch = %+v", b)
 		}
-		if b.Coalesced != 10*time.Second {
-			t.Fatalf("coalesced = %v, want 10s", b.Coalesced)
+		// 2s elapsed inside the burst plus the 10s debounce after the last arm.
+		if b.Coalesced != 12*time.Second {
+			t.Fatalf("coalesced = %v, want 12s since the first delivery", b.Coalesced)
 		}
 	default:
 		t.Fatal("debounce elapsed without a wake")
