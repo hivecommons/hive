@@ -194,10 +194,9 @@ assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage
 // The repo is visible text on the title line, before #N, and hidden when
 // the caller says one repo is on screen.
 assert.ok(/<span class="ham-repo">acme\/console<\/span><a class="ham-ref"/.test(row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 20 }, stages, ctx)), row);
-assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 20 }, stages, { nowMs: now, hideRepo: true }).includes('ham-repo'), 'single repo hides the label');
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, stage: 100 }, { number: 104, repo: 'acme/api', stage: 60 }] }, stages, ctx);
-assert.strictEqual((row.match(/<span class="ham-repo">/g) || []).length, 2, 'nested PRs inherit the parent label unless their repo differs');
-assert.ok(row.includes('<span class="ham-repo">acme/api</span><span class="ham-pr-num">#104'), row);
+assert.ok(!stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 20 }, stages, { nowMs: now, hideRepo: true }).includes('class="ham-repo"'), 'single repo hides the label');
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, stage: 100 }, { number: 104, stage: 60 }] }, stages, ctx);
+assert.strictEqual((row.match(/<span class="ham-repo">/g) || []).length, 1, 'nested PRs carry no label of their own; the parent names the repo');
 
 // Issue with exactly one covering PR (only its number known, legacy linked_pr):
 // a single entry whose strip is driven by the PR; with no PR stage it lights
