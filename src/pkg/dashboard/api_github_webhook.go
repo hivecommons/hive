@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 const (
@@ -70,7 +73,39 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if outcome := s.enqueueReviewEvent(event, body); outcome != "" {
 		resp["review_dispatch"] = outcome
 	}
+	if reason, ok := webhookWakeReason(event, res); ok && s.deps.WebhookWake != nil {
+		s.deps.WebhookWake(reason)
+		resp["wake"] = reason
+	}
 	jsonResponse(w, resp)
+}
+
+// webhookWakeReason reports whether a verified delivery changed cached state
+// the next eval cycle should see now (an invalidated PR, a dirty or reopened
+// issue) and names it for the wake log line and /api/status.
+func webhookWakeReason(event string, res github.WebhookEventResult) (string, bool) {
+	if !res.KnownRepo {
+		return "", false
+	}
+	var items []string
+	for _, n := range res.Invalidated {
+		items = append(items, "#"+strconv.Itoa(n))
+	}
+	for _, n := range res.DirtyIssues {
+		items = append(items, "issue #"+strconv.Itoa(n))
+	}
+	if res.ReopenedIssue > 0 {
+		items = append(items, "reopened issue #"+strconv.Itoa(res.ReopenedIssue))
+	}
+	if len(items) == 0 {
+		return "", false
+	}
+	const maxNamed = 3
+	named := items
+	if len(named) > maxNamed {
+		named = append(append([]string{}, items[:maxNamed]...), "+"+strconv.Itoa(len(items)-maxNamed))
+	}
+	return event + " " + res.Repo + " " + strings.Join(named, ","), true
 }
 
 func (s *Server) webhookLogger() *slog.Logger {

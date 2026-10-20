@@ -198,3 +198,30 @@ func dcoAsk(d stageDetail) string {
 	}
 	return fmt.Sprintf("%d commit%s missing the `Signed-off-by` trailer (DCO) — run `%s`", n, plural, dcoRebaseCommand(d.DCOTotal))
 }
+
+// signoffResetCommand is the exact fix handed to the author whose commits
+// carry a Signed-off-by naming the App: re-author and re-sign them in place
+// under the author's own git identity and force-push the same branch.
+func signoffResetCommand(total int) string {
+	if total <= 1 {
+		return "git commit --amend --reset-author -s && git push --force-with-lease"
+	}
+	return fmt.Sprintf("git rebase --exec 'git commit --amend --no-edit --reset-author -s' HEAD~%d && git push --force-with-lease", total)
+}
+
+// signoffAttributionAsk is the review ask rendered for
+// LaneReasonHiveSignoffAttribution: the commits are signed, but as the hive
+// App, so a squash merge would misattribute them and the attribution gate
+// stays red. Only the branch owner can rewrite them.
+func signoffAttributionAsk(d stageDetail) string {
+	n := d.DCOSquashUnsafeHive
+	if n <= 0 {
+		n = 1
+	}
+	plural, pronoun := "s are", "them"
+	if n == 1 {
+		plural, pronoun = " is", "it"
+	}
+	return fmt.Sprintf("%d commit%s signed off as the hive App instead of you, so a squash merge would misattribute %s — set `git config user.email` to your own address, then run `%s`",
+		n, plural, pronoun, signoffResetCommand(max(d.DCOTotal, n)))
+}

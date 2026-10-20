@@ -247,22 +247,28 @@ func (s *Server) handleFeedbackStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFeedbackReport(w http.ResponseWriter, r *http.Request) {
+	reject := func(msg string, status int, err error) {
+		if s.logger != nil {
+			s.logger.Warn("feedback: report rejected", "status", status, "reason", msg, "error", err)
+		}
+		jsonError(w, msg, status)
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, feedbackMaxRequestBytes+1))
 	if err != nil {
-		jsonError(w, "could not read request", http.StatusBadRequest)
+		reject("could not read request", http.StatusBadRequest, err)
 		return
 	}
 	if len(body) > feedbackMaxRequestBytes {
-		jsonError(w, "request too large", http.StatusRequestEntityTooLarge)
+		reject("request too large", http.StatusRequestEntityTooLarge, nil)
 		return
 	}
 	var req feedbackReportRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		jsonError(w, "invalid JSON", http.StatusBadRequest)
+		reject("invalid JSON", http.StatusBadRequest, err)
 		return
 	}
 	if err := validateFeedbackRequest(&req); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		reject(err.Error(), http.StatusBadRequest, err)
 		return
 	}
 	sanitizeFeedbackRequest(&req)

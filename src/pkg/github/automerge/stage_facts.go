@@ -263,7 +263,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonDCOMissing
 		} else if pass.SquashUnsafeHive > 0 && !pass.AuthorIsApp {
-			verdict.Stage = stagelabels.Fixing
+			verdict.Stage = fixingStage(obs)
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
 		}

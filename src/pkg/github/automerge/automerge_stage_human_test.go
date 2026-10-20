@@ -495,3 +495,61 @@ func TestWorkflowApprovalSnippetRendersSelfContainedWorkflowForOwnAppLogin(t *te
 		t.Fatalf("missing-workflow cause = %q", got)
 	}
 }
+
+// TestDecisionEntryRepostsWhenCauseChanges: a PR parked at 085 for a
+// sentinel alert whose maintainer clears the alert, only for the lane's
+// workflow-path fence to hold it, gets the new cause explained on the same
+// head — once — instead of sitting under a stale "sentinel alert" comment.
+func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(reason string, labels ...string) {
+		t.Helper()
+		api.reset()
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(9, labels...), "untrusted-author-role", false, nil)
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(9, labels...), reason, false, nil)
+		e.noteStageRole("acme", "widget", 9, stagelabels.RoleTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/050-review-pending", "sentinel-alert")
+	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
+		t.Fatalf("sentinel: stage=%v", got)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "a sentinel alert is open on this PR") {
+		t.Fatalf("sentinel comment = %q", api.comments)
+	}
+	// Same cause again: no repost.
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/085-needs-decision", "sentinel-alert")
+	if len(api.comments) != 0 {
+		t.Fatalf("same cause reposted: %q", api.comments)
+	}
+	// Alert cleared, workflow-path fence now the blocker: still 085, new cause explained.
+	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/clanker", "stage/085-needs-decision")
+	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
+		t.Fatalf("workflow path: stage=%v", got)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) ||
+		!strings.Contains(api.comments[0], "edits CI workflow / action files") || strings.Contains(api.comments[0], "sentinel alert") {
+		t.Fatalf("workflow-path comment = %q", api.comments)
+	}
+	rec, _ := store.Get(stageKey("acme", "widget", 9))
+	if len(rec.EntryCommentedCauses) != 2 || !rec.EntryCommented || rec.EntryCommentedHead != "sha" {
+		t.Fatalf("causes not recorded: %+v", rec)
+	}
+	// Flapping back to an already-explained cause stays quiet.
+	sweep(contributorLaneReasonSentinelBlocked, "role/trusted", "author/clanker", "stage/085-needs-decision", "sentinel-alert")
+	sweep(contributorLaneReasonWorkflowPath, "role/trusted", "author/clanker", "stage/085-needs-decision")
+	if len(api.comments) != 0 {
+		t.Fatalf("explained cause reposted: %q", api.comments)
+	}
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); len(rec.EntryCommentedCauses) != 2 {
+		t.Fatalf("cause list grew: %+v", rec)
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -73,6 +74,14 @@ type AgentCapability struct {
 	LaneKeywords   []string
 	DetectKeywords []string
 	Aliases        []string
+	// Backend/Model are the agent's own launch backend and model: what the
+	// "pinned" review_models fallback returns, and what a verdict with no
+	// review_model of its own is attributed to.
+	Backend string
+	Model   string
+	// ReviewModels is agents.<name>.review_models. The swarm applies it per
+	// perspective kick exactly as the cadence kick applies it per PR line.
+	ReviewModels config.ReviewModelsConfig
 }
 
 type DispatchOptions struct {
@@ -116,6 +125,10 @@ type DispatchOptions struct {
 	// threads (hivecommons/hive#9360).
 	ReviewBotLogins      []string
 	ReviewBotMinPriority string
+	// PerspectiveModels is review.perspective_models: a backend/model that
+	// replaces the reviewer's review_models pool for the named perspective.
+	// The reviewer's exclusions and fallback still apply to it.
+	PerspectiveModels map[string]config.ReviewModelPoolEntry
 	// AllAuthors is a no-op kept for configs that still set
 	// review.all_authors. Every open PR is reviewed regardless of author
 	// (hivecommons/hive#12974); the planner never reads this field.
@@ -226,7 +239,13 @@ type PendingReview struct {
 	Perspective Perspective `json:"perspective"`
 	Agent       string      `json:"agent"`
 	AuthorAgent string      `json:"author_agent,omitempty"`
-	Dispatched  time.Time   `json:"dispatched_at"`
+	// AuthorModel/ReviewModel are what the planner knew when it dispatched:
+	// the PR's attribution-trailer model, and the model the kick told the
+	// reviewer to run with (empty when no pool applied). Collect uses them
+	// to stamp a verdict whose report omitted either (ModelStamps).
+	AuthorModel string    `json:"author_model,omitempty"`
+	ReviewModel string    `json:"review_model,omitempty"`
+	Dispatched  time.Time `json:"dispatched_at"`
 }
 
 type RecentReview struct {
@@ -237,6 +256,8 @@ type RecentReview struct {
 	Perspective Perspective `json:"perspective"`
 	Agent       string      `json:"agent"`
 	AuthorAgent string      `json:"author_agent,omitempty"`
+	AuthorModel string      `json:"author_model,omitempty"`
+	ReviewModel string      `json:"review_model,omitempty"`
 	Dispatched  time.Time   `json:"dispatched_at,omitempty"`
 	Confirmed   time.Time   `json:"confirmed_at"`
 }
@@ -283,12 +304,36 @@ type DispatchKick struct {
 	// existing consumers (logging, metrics, kick dedup) keep working unchanged
 	// rather than silently seeing an empty perspective.
 	Perspectives []Perspective
+	// AuthorModel is the PR's attribution-trailer model; ReviewBackend and
+	// ReviewModel are what the kick told the reviewer to run with, empty when
+	// no review_models pool applied. ReviewModelFallback is true when the
+	// agent's fallback (not its pool) chose the model.
+	AuthorModel         string
+	ReviewBackend       string
+	ReviewModel         string
+	ReviewModelFallback bool
+}
+
+// SkippedReviewModel is a perspective kick the planner withheld because the
+// reviewer's review_models fallback is "skip" and no pool entry was eligible
+// against the PR's author model. The caller logs and audits each one; it is
+// the swarm analogue of the cadence kick dropping the PR from ${PR_LIST}.
+type SkippedReviewModel struct {
+	Repo        string
+	Number      int
+	HeadSHA     string
+	Perspective Perspective
+	Agent       string
+	AuthorModel string
 }
 
 type DispatchPlan struct {
 	ReviewKicks []DispatchKick
 	FixKicks    []DispatchKick
 	NewHuman    []HumanReviewHold
+	// SkippedReviewModels are perspective kicks withheld under a "skip"
+	// review_models fallback this cycle.
+	SkippedReviewModels []SkippedReviewModel
 	// WithheldFixes are the refusals NEW this cycle — the ones the caller
 	// should log and audit. Refusals already recorded in State.Withheld for
 	// the same head are not repeated here.
@@ -495,7 +540,25 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// however many perspectives it covers. Applying it anyway would drop
 		// perspectives to buy quiet that has already been bought.
 		if opts.CombinedPerspectives {
-			agent := prReviewers[0].Name
+			reviewer := prReviewers[0]
+			agent := reviewer.Name
+			// One kick covers several perspectives, so a per-perspective
+			// override can only apply when it is the only perspective.
+			var overridePerspective Perspective
+			if len(missing) == 1 {
+				overridePerspective = missing[0]
+			}
+			choice := chooseReviewModel(reviewer, overridePerspective, pr.AuthorModel, opts.PerspectiveModels)
+			if choice.Skip {
+				for _, p := range missing {
+					plan.SkippedReviewModels = append(plan.SkippedReviewModels, SkippedReviewModel{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: p, Agent: agent, AuthorModel: pr.AuthorModel})
+				}
+				continue
+			}
+			if choice.RequiresHuman {
+				plan.State.Human = upsertHuman(plan.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: noIndependentModelReason(pr.AuthorModel), UpdatedAt: now})
+				continue
+			}
 			msg := BuildCombinedPrompt(pr, missing, PromptOptions{
 				PostComments:          opts.PostComments,
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
@@ -505,10 +568,12 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
+				ReviewBackend:         choice.Backend,
+				ReviewModel:           choice.Model,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: missing[0], Perspectives: missing, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback})
 			for _, p := range missing {
-				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
+				plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: p, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
 			}
 			availableSlots--
 			continue
@@ -544,8 +609,18 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			limit = availableSlots
 		}
 		for i := 0; i < limit; i++ {
-			agent := prReviewers[i%len(prReviewers)].Name
+			reviewer := prReviewers[i%len(prReviewers)]
+			agent := reviewer.Name
 			perspective := missing[i]
+			choice := chooseReviewModel(reviewer, perspective, pr.AuthorModel, opts.PerspectiveModels)
+			if choice.Skip {
+				plan.SkippedReviewModels = append(plan.SkippedReviewModels, SkippedReviewModel{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Perspective: perspective, Agent: agent, AuthorModel: pr.AuthorModel})
+				continue
+			}
+			if choice.RequiresHuman {
+				plan.State.Human = upsertHuman(plan.State.Human, HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, Reason: noIndependentModelReason(pr.AuthorModel), UpdatedAt: now})
+				continue
+			}
 			msg := BuildPerspectivePromptWith(perspective, pr, PromptOptions{
 				PostComments:          opts.PostComments,
 				AcknowledgeNoFindings: opts.AcknowledgeNoFindings,
@@ -555,13 +630,33 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 				WritingGuideSection:   opts.WritingGuideSection,
 				ReviewBotLogins:       opts.ReviewBotLogins,
 				ReviewBotMinPriority:  opts.ReviewBotMinPriority,
+				ReviewBackend:         choice.Backend,
+				ReviewModel:           choice.Model,
 			})
-			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent})
-			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, Dispatched: now})
+			plan.ReviewKicks = append(plan.ReviewKicks, DispatchKick{Agent: agent, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: choice.Backend, ReviewModel: choice.Model, ReviewModelFallback: choice.Fallback})
+			plan.State.Pending = append(plan.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: perspective, Agent: agent, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: stampedReviewModel(reviewer, choice), Dispatched: now})
 			availableSlots--
 		}
 	}
 	return plan
+}
+
+// stampedReviewModel is the model a pending review is attributed to when its
+// report arrives without one: the chosen pool model, else the reviewer's own
+// launch model — the same fallback pkg/github's evidence writer applies.
+func stampedReviewModel(reviewer AgentCapability, choice ReviewModelChoice) string {
+	if m := strings.TrimSpace(choice.Model); m != "" {
+		return m
+	}
+	return strings.TrimSpace(reviewer.Model)
+}
+
+func noIndependentModelReason(authorModel string) string {
+	reason := "no independent review model available (review_models fallback requires_human)"
+	if m := strings.TrimSpace(authorModel); m != "" {
+		reason += " for author model " + m
+	}
+	return reason
 }
 
 func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapability {
@@ -922,7 +1017,7 @@ func ConfirmDelivered(state DispatchState, planned, delivered []DispatchKick) Di
 			// first perspective alone would leave every other verdict in the
 			// array with nothing to bind to once its pending entry is gone.
 			for _, p := range kickPerspectives(k) {
-				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, AuthorAgent: k.AuthorAgent, Confirmed: now})
+				state.Recent = upsertRecentReview(state.Recent, RecentReview{Repo: k.Repo, Number: k.Number, HeadSHA: k.HeadSHA, BodyDigest: k.BodyDigest, Perspective: p, Agent: k.Agent, AuthorAgent: k.AuthorAgent, AuthorModel: k.AuthorModel, ReviewModel: k.ReviewModel, Confirmed: now})
 			}
 		}
 	}

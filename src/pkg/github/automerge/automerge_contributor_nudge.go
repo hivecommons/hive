@@ -111,6 +111,8 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, "the branch conflicts with the base and needs a rebase")
 	case r == stagelabels.LaneReasonDCOMissing:
 		asks = append(asks, dcoAsk(d))
+	case r == stagelabels.LaneReasonHiveSignoffAttribution:
+		asks = append(asks, signoffAttributionAsk(d))
 	case r != "":
 		asks = append(asks, r)
 	}
@@ -277,4 +279,48 @@ func (c *Engine) resolveNudge(ctx context.Context, rec stagelabels.Record, had b
 		return
 	}
 	c.contributorNudge.Resolve(ctx, obs.Owner, obs.Repo, obs.Number)
+}
+
+// SignoffAttributionMarkerPrefix opens the one comment a human author gets
+// when their head is held for hive-signoff-attribution; the head keeps it
+// idempotent per push.
+const SignoffAttributionMarkerPrefix = "<!-- hive:signoff-attribution"
+
+// SignoffAttributionComment renders the author-facing comment for a human
+// PR parked at 071 on LaneReasonHiveSignoffAttribution: who owes the fix,
+// why no agent can do it, and the exact commands.
+func SignoffAttributionComment(n ContributorNudge, stage stagelabels.Stage) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s head=%s -->\n", SignoffAttributionMarkerPrefix, n.HeadSHA)
+	fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stage.Label())
+	b.WriteString("Its commits are signed off as the hive App rather than as you, so a squash merge would misattribute them and the sign-off attribution check stays red. No hive agent can rewrite a contributor's commits — the fix is yours:\n\n")
+	for _, a := range n.ReviewAsks {
+		fmt.Fprintf(&b, "- %s\n", a)
+	}
+	b.WriteString("\nOnce the new head lands, CI and the review swarm re-run automatically and the PR returns to the normal path.\n")
+	return b.String()
+}
+
+// nudgeSignoffAttribution posts SignoffAttributionComment once per head for
+// a non-clanker author (a clanker gets the regular 072 nudge, which carries
+// the same ask). It returns the number of comments posted.
+func (c *Engine) nudgeSignoffAttribution(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (int, error) {
+	rec, ok := store.Get(key)
+	if !ok || obs.Author == "" || obs.HeadSHA == "" || rec.NudgeHead == obs.HeadSHA {
+		return 0, nil
+	}
+	_, asks, _ := nudgeDiagnosis(obs.Reason, obs.Detail)
+	n := ContributorNudge{
+		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
+		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
+		Reason: obs.Reason, ReviewAsks: asks, Nudge: 1,
+	}
+	body := SignoffAttributionComment(n, fixingStage(obs))
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		c.warn("stage labels: sign-off attribution comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 0, err
+	}
+	store.MarkNudged(key, obs.HeadSHA, 1, false, now)
+	c.info("stage labels: author told to re-sign the head", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "squash_unsafe_hive", obs.Detail.DCOSquashUnsafeHive)
+	return 1, nil
 }

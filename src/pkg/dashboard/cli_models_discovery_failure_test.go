@@ -344,3 +344,22 @@ func TestAuditDiscoveryTransition_CredentialMissingIsNotSelfReported(t *testing.
 		t.Fatalf("non-credential failures must not carry state/recovery fields, got %+v", failed)
 	}
 }
+
+// #13206: a not-licensed Copilot 403 is a seat condition on the reporting
+// hive, so it is audited locally but never self-reported.
+func TestAuditDiscoveryTransition_NotLicensedIsNotSelfReported(t *testing.T) {
+	clock := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger(), audit: &AuditLog{lastAction: map[string]time.Time{}}}
+	since := clock.Add(-24 * time.Hour)
+
+	s.auditDiscoveryTransition("copilot", cliModelResult{fallback: true, discoveryErr: "http probe: 403: unauthorized: not licensed to use Copilot"})
+	clock = clock.Add(2 * time.Hour)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("not-licensed 403 must not self-report, got %#v", ev)
+	}
+	if failed := s.audit.RecentWithPrefixSince(since, auditActionModelDiscoveryFailed); len(failed) != 1 {
+		t.Fatalf("not-licensed 403 must still be audited locally, got %+v", failed)
+	}
+}

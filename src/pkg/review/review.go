@@ -178,6 +178,10 @@ type AggregateOptions struct {
 	// actually configured rather than a hardcoded five -- a hive that reviews
 	// with three could otherwise never reach unanimity at all.
 	Perspectives PerspectiveSet
+	// ModelStamps fills author_model / review_model on reports that omitted
+	// them, from what the planner recorded when it dispatched the review
+	// (ModelStampsFromState). Nil leaves reports as written.
+	ModelStamps ModelStamps
 }
 
 type Aggregate struct {
@@ -1080,6 +1084,7 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}
+		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
 	}

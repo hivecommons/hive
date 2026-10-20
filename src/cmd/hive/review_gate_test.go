@@ -28,6 +28,12 @@ func TestSelfMergeReviewGateVerdictFromArtifact(t *testing.T) {
 			Perspectives: map[review.Perspective]review.Verdict{"security": review.VerdictChangesRequested}},
 		{Repo: "acme/widget", Number: 7, HeadSHA: "rereviewed", Verdict: review.VerdictApprove, MergeEligible: true, RecordedAt: old.Add(time.Hour),
 			Perspectives: map[review.Perspective]review.Verdict{"security": review.VerdictApprove}},
+		// rationguard#296: a hive-authored permissions change parked as
+		// requires_human (decision risk class) while style asked for changes.
+		{Repo: "acme/widget", Number: 7, HeadSHA: "decision", Verdict: review.VerdictRequiresHuman, RequiresHuman: true, DecisionRequested: true,
+			HiveAuthoredKnown: true, HiveAuthored: true,
+			DecisionQuestion: "@maintainer: confirm this CI permissions change may land.",
+			Perspectives:     map[review.Perspective]review.Verdict{"security": review.VerdictRequiresHuman, "style": review.VerdictChangesRequested}},
 	}}
 	tests := []struct {
 		name string
@@ -35,11 +41,15 @@ func TestSelfMergeReviewGateVerdictFromArtifact(t *testing.T) {
 		want automerge.ReviewGateVerdict
 	}{
 		{name: "no aggregate for head", head: "other", want: automerge.ReviewGateVerdict{Loaded: true}},
-		{name: "approved", head: "approved", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true}},
-		{name: "changes requested", head: "changes", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, ChangesRequested: []string{"security", "style"}}},
-		{name: "awaiting", head: "incomplete", want: automerge.ReviewGateVerdict{Loaded: true, Found: true}},
-		{name: "legacy normalized", head: "legacy-human", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, ChangesRequested: []string{"correctness"}}},
-		{name: "newest aggregate wins", head: "rereviewed", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true}},
+		{name: "approved", head: "approved", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true, Verdict: "approve"}},
+		{name: "changes requested", head: "changes", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Verdict: "reject", ChangesRequested: []string{"security", "style"}}},
+		{name: "awaiting", head: "incomplete", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Verdict: "incomplete"}},
+		{name: "legacy normalized", head: "legacy-human", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Verdict: "changes_requested", ChangesRequested: []string{"correctness"}}},
+		{name: "newest aggregate wins", head: "rereviewed", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Approved: true, Verdict: "approve"}},
+		// The aggregate is the one source of truth the contributor lane and
+		// the 085 stage already read; the gate must not reclassify it from
+		// the perspective map.
+		{name: "requires human aggregate keeps its verdict", head: "decision", want: automerge.ReviewGateVerdict{Loaded: true, Found: true, Verdict: "requires_human", ChangesRequested: []string{"style"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -88,6 +98,10 @@ func TestSelfMergeReviewGateReadsConfigLive(t *testing.T) {
 		t.Fatalf("audited = %+v", audited)
 	}
 	if got, want := reviewEvaluatedAuditDetail(e), "lane=self-merge would_hold=true reason=no-review-bundle enforce=false head=sha7"; got != want {
+		t.Fatalf("audit detail = %q, want %q", got, want)
+	}
+	overridden := automerge.ReviewGateEvaluation{Lane: "self-merge", Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Outcome: automerge.ReviewGateOutcomeHumanApproved, Enforced: true, HumanApprover: "bob", Overrode: "changes-requested:style"}
+	if got, want := reviewEvaluatedAuditDetail(overridden), "lane=self-merge would_hold=false reason=human-approved enforce=true head=sha7 human_approver=bob overrode=changes-requested:style"; got != want {
 		t.Fatalf("audit detail = %q, want %q", got, want)
 	}
 	nilGate := selfMergeReviewGate(nil, nil, nil)

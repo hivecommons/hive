@@ -11,12 +11,20 @@ import (
 )
 
 type GovernorConfig struct {
-	Modes                      map[string]ModeConfig `yaml:"modes"`
-	EvalIntervalS              int                   `yaml:"eval_interval_s"`
-	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
-	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
-	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	Modes                map[string]ModeConfig `yaml:"modes"`
+	EvalIntervalS        int                   `yaml:"eval_interval_s"`
+	EvalIntervalMaxS     int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS int                   `yaml:"eval_interval_webhook_s,omitempty"`
+	// WebhookWakeDebounceS is how long the governor loop waits after a
+	// cache-invalidating GitHub webhook before running an early eval cycle,
+	// so a burst of deliveries (push + check fan-out) coalesces into one
+	// cycle. WebhookWakeMinGapS is the minimum gap between two
+	// webhook-triggered cycles. Both default at Load; see
+	// docs/operator-reference.md "Webhook-driven PR cache invalidation".
+	WebhookWakeDebounceS       int `yaml:"webhook_wake_debounce_s,omitempty"`
+	WebhookWakeMinGapS         int `yaml:"webhook_wake_min_gap_s,omitempty"`
+	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see

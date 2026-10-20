@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"log/slog"
 	"os/exec"
 	"regexp"
@@ -109,6 +110,10 @@ const (
 	// AuditActionReviewModelFallback is recorded when an adversarial reviewer
 	// pool has no independent candidate and the configured fallback is used.
 	AuditActionReviewModelFallback = "review_model_fallback"
+	// AuditActionMergeRequestRefused records a merge-request relay request
+	// the lane policy refused (MergeRequestPolicyGate): the agent that
+	// asked, the PR and the gate it failed.
+	AuditActionMergeRequestRefused = "merge_request_refused"
 )
 
 // PR audit path values: the "path=" detail field on pr_merged and pr_closed
@@ -409,32 +414,16 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 // cache fields: lowercase, strip quotes/backticks, and drop bracketed suffixes
 // such as "model[preview]".
 func NormalizeAttributionValue(value string) string {
-	v := strings.TrimSpace(strings.ToLower(value))
-	v = strings.Trim(v, "`'\"“”‘’")
-	if i := strings.Index(v, "["); i >= 0 {
-		v = strings.TrimSpace(v[:i])
-	}
-	v = strings.Trim(v, "`'\"“”‘’")
-	switch v {
-	case "", "auto", "<agent>", "<backend>", "<model>", "...", "…", "placeholder":
-		return "unknown"
-	}
-	return v
+	return modelfamily.Normalize(value)
 }
 
 func NormalizeAttributionModel(model string) string {
-	return NormalizeAttributionValue(model)
+	return modelfamily.Normalize(model)
 }
 
+// ModelFamily is modelfamily.Family: the normalized vendor prefix.
 func ModelFamily(model string) string {
-	m := NormalizeAttributionModel(model)
-	if m == "unknown" {
-		return "unknown"
-	}
-	if i := strings.Index(m, "-"); i >= 0 {
-		return m[:i]
-	}
-	return m
+	return modelfamily.Family(model)
 }
 
 // RequestedModel normalizes the model recorded in the trail: bob has no model

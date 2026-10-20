@@ -1677,6 +1677,7 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 		h.revokeLease(identityOf(tgt.conn), tgt.task.TaskID)
 		if tgt.task.Number > 0 {
 			h.recordTaskFailureForTask(&tgt.task, false)
+			h.bookReclaimCooldown(identityOf(tgt.conn), tgt.task.identityKey())
 		}
 		username := ""
 		if tgt.conn.profile != nil {

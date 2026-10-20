@@ -38,6 +38,25 @@ func (set *ProfileSet) SetSelectionMode(name, mode string, repositories []string
 	return nil
 }
 
+// DeselectCurrent clears reviewed membership and personal inclusions, but keeps
+// exclusions, provenance and follow policy. A later approved refresh may select
+// repositories again. Legacy unrestricted profiles require an explicit scope
+// conversion instead of being silently migrated by a tree checkbox.
+func (set *ProfileSet) DeselectCurrent(name string) error {
+	p, _ := set.Find(name)
+	if p == nil {
+		return fmt.Errorf("unknown hive %q", name)
+	}
+	if p.Selection == nil {
+		return fmt.Errorf("hive %q is unrestricted; review --select all-current first, or use --select none to select nothing and stop following", name)
+	}
+	next := *p.Selection
+	next.Mode = SelectionSelected
+	next.Repositories, next.Include, next.MembershipSnapshot = nil, nil, nil
+	p.Selection = &next
+	return nil
+}
+
 func canonicalRepositorySet(repositories []string) ([]string, error) {
 	members := map[string]bool{}
 	for _, id := range repositories {

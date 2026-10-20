@@ -104,6 +104,11 @@ func (c *Client) MergedPRsSince(ctx context.Context, since time.Time) ([]PRTermi
 					continue
 				}
 				out = append(out, obs)
+				// The listing already carries each merged PR's text, so a
+				// revert merged while the hive was down is linked here without
+				// another fetch (hivecommons/hive#13241).
+				c.RecordReviewEvidenceRevert(MergedPRText{Repo: owner + "/" + repoName, Number: pr.GetNumber(),
+					HeadSHA: pr.GetHead().GetSHA(), Title: pr.GetTitle(), Body: pr.GetBody(), MergedAt: obs.ObservedAt})
 			}
 			if pastWindow || resp == nil || resp.NextPage == 0 {
 				break

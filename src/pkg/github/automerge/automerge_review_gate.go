@@ -26,6 +26,13 @@ const (
 	ReviewGateOutcomeChangesRequested = "changes-requested"
 	ReviewGateOutcomeApproved         = "approved"
 	ReviewGateOutcomeHumanApproved    = "human-approved"
+	// ReviewGateOutcomeRequiresHuman is an aggregate requires_human /
+	// decision-requested verdict: the same head the contributor lane and the
+	// 085 stage report as needing a decision. Before it existed the gate
+	// reclassified such a head from its perspective map, so one lane said
+	// requires_human while the merge gate said changes-requested:<p>
+	// (rationguard#296).
+	ReviewGateOutcomeRequiresHuman = "requires-human"
 )
 
 // autoMergeReasonReviewGatePrefix prefixes the sweep skip reason when an
@@ -41,6 +48,11 @@ type ReviewGateVerdict struct {
 	Found bool
 	// Approved is review.Artifact.HasAggregateApproval for the head.
 	Approved bool
+	// Verdict is the normalized aggregate verdict for the head (approve,
+	// changes_requested, requires_human, reject, incomplete). It is the
+	// source of truth for the outcome; "" (a verdict built without it) falls
+	// back to the perspective map.
+	Verdict string
 	// ChangesRequested names the perspectives whose verdict on the head is
 	// changes_requested or reject.
 	ChangesRequested []string
@@ -61,6 +73,11 @@ type ReviewGateEvaluation struct {
 	WouldHold     bool
 	Enforced      bool
 	HumanApprover string
+	// Overrode is the swarm outcome a trusted human's approval on the exact
+	// head replaced (changes-requested:<p>, requires-human, …), so the audit
+	// line records who overrode what. Empty unless Outcome is human-approved
+	// and the swarm had not approved.
+	Overrode string
 }
 
 // ReviewGate is the swarm-review policy the self-authored sweep evaluates on
@@ -137,14 +154,37 @@ func (g *ReviewGate) effectiveMode() string {
 // reviewGateOutcome classifies a verdict into one of the swarm outcomes.
 // An unreadable artifact counts as no bundle: the gate cannot show the
 // swarm reviewed the head, so it fails closed when enforcing.
+//
+// The aggregate verdict decides the class when it is known: the contributor
+// lane (contributorLaneVerdictFor) and the 085 stage read the same aggregate,
+// and a head must not be requires_human to one lane and changes-requested to
+// the merge gate. The perspective list only names who asked for changes.
 func reviewGateOutcome(v ReviewGateVerdict) string {
-	switch {
-	case !v.Loaded || !v.Found:
+	if !v.Loaded || !v.Found {
 		return ReviewGateOutcomeNoBundle
-	case len(v.ChangesRequested) > 0:
+	}
+	changes := func() string {
+		if len(v.ChangesRequested) == 0 {
+			return ReviewGateOutcomeChangesRequested
+		}
 		persp := append([]string(nil), v.ChangesRequested...)
 		sort.Strings(persp)
 		return ReviewGateOutcomeChangesRequested + ":" + strings.Join(persp, ",")
+	}
+	switch strings.ToLower(strings.TrimSpace(v.Verdict)) {
+	case "requires_human":
+		return ReviewGateOutcomeRequiresHuman
+	case "changes_requested", "reject", "rejected", "request_changes":
+		return changes()
+	case "approve", "approved":
+		if v.Approved {
+			return ReviewGateOutcomeApproved
+		}
+		return ReviewGateOutcomeAwaiting
+	}
+	switch {
+	case len(v.ChangesRequested) > 0:
+		return changes()
 	case v.Approved:
 		return ReviewGateOutcomeApproved
 	default:
@@ -207,14 +247,19 @@ func (c *Engine) mergeReviewGate(ctx context.Context, displayRepo, owner, repo, 
 	}
 	outcome := reviewGateOutcome(verdict)
 	enforce := mode == ReviewGateModeEnforce
-	humanApprover := ""
-	if enforce && outcome != ReviewGateOutcomeApproved && !strings.HasPrefix(outcome, ReviewGateOutcomeChangesRequested) {
+	humanApprover, overrode := "", ""
+	if enforce && outcome != ReviewGateOutcomeApproved {
+		// A trusted human's APPROVED review on exactly this head outranks
+		// every swarm outcome, changes-requested included: the person has
+		// read the reviewer's objection and decided the head lands as-is.
+		// Who overrode what is recorded on the evaluation.
 		approver, ok := priorApprover, priorApprover != ""
 		if !priorChecked {
 			approver, ok = c.latestTrustedHumanApproval(ctx, owner, repo, number, head)
 		}
 		if ok {
 			humanApprover = approver
+			overrode = outcome
 			outcome = ReviewGateOutcomeHumanApproved
 		}
 	}
@@ -229,7 +274,7 @@ func (c *Engine) mergeReviewGate(ctx context.Context, displayRepo, owner, repo, 
 	if gate.RecordEvaluation != nil {
 		gate.RecordEvaluation(ReviewGateEvaluation{
 			Lane: recordLane, Repo: fullRepo, Number: number, HeadSHA: head,
-			Outcome: outcome, WouldHold: wouldHold, Enforced: enforce, HumanApprover: humanApprover,
+			Outcome: outcome, WouldHold: wouldHold, Enforced: enforce, HumanApprover: humanApprover, Overrode: overrode,
 		})
 	}
 	if enforce {
@@ -238,7 +283,7 @@ func (c *Engine) mergeReviewGate(ctx context.Context, displayRepo, owner, repo, 
 			return autoMergeReasonReviewGatePrefix + outcome
 		}
 		if humanApprover != "" {
-			c.info("automerge sweep review gate cleared by trusted human approval", "lane", lane, "repo", displayRepo, "pr", number, "head", head, "approver", humanApprover)
+			c.info("automerge sweep review gate cleared by trusted human approval", "lane", lane, "repo", displayRepo, "pr", number, "head", head, "approver", humanApprover, "overrode", overrode)
 		}
 		return ""
 	}

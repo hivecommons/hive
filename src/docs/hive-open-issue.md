@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision]
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision] [--blocked-on-pr <n>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -65,6 +65,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--release-tag` | — | issue, comment | release tag from the repository's version source |
 | `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
 | `--needs-decision` | — | issue, comment | park the new issue, or the existing issue being commented on, on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)). On both subcommands a Hive-authored non-risk question is downgraded instead of parked under `project.agent_issue_decision_policy: resolve` (the default); a typed `--step-kind` owner step always parks |
+| `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -231,6 +232,32 @@ Every lane that can comment or file issues carries this rule in its policy (ci-m
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
+#### Blocked on an unmerged PR
+
+When the code an issue names exists only in an open PR — a review-backlog
+finding whose evidence file is absent on the base branch, or a triage that
+concludes "blocked on #N (not starting)" — there is nothing to ship until that
+PR lands ([#13093](https://github.com/hivecommons/hive/issues/13093)). Post
+one neutral note with `--blocked-on-pr <n>`:
+
+```sh
+hive-open-issue comment --repo o/r 13093 --blocked-on-pr 13092 \
+  --body "Blocked on #13092: the flagged file exists only on that PR; nothing to ship until it lands."
+```
+
+The watcher prefixes the body with the marker `<!-- hive:blocked-on
+pr=o/r#13092 -->`, strips any `@login` mention from it (the PR's author is not
+asked to do the hive's work; address them only in a review comment on their
+own PR), adds the `blocked` label and removes `help wanted`. A `blocked` issue
+is filed under the enumeration's filtered bucket, derives no stage label,
+and every automated claim producer — governor kicks, the contributor relay,
+`hive-open-issue claim` — is refused on it (`blocked: o/r#13092`). The
+blocked sweep that follows each stage-label sync lifts the label and posts
+one `<!-- hive:unblocked -->` note once the tracked PR is merged or closed,
+and strips `help wanted` again should the org workflow re-add it while the
+PR is open. The review backlog applies the same parking itself when it files
+a finding whose file does not exist on the reviewed PR's base branch.
+
 A posted comment is the agent's **start signal** on that issue only when it
 says work is starting. The hub records a 2h agent claim the first time the
 agent's own `claim` request, a `hive-open-pr --issues` request, or a comment
@@ -273,7 +300,12 @@ watcher posts one bot comment carrying a timestamped start marker
 until=<at+agent TTL> -->`) so maintainers can see exactly when an agent
 began a PR for the issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Every kick
 instructs the agent to claim before touching an issue; while the marker is
-live every hive that scans the repo withholds the issue from kicks. The claim
+live every hive that scans the repo withholds the issue from kicks. The hold
+ends early when the hive relaunches the agent's CLI (hive boot, a restart):
+the context that claimed is gone, so the ledger releases the agent's claims
+and posts a `<!-- hive:release who=<agent> kind=agent reason=… at=<RFC3339> -->`
+comment that readers of the 🔒 marker honour, instead of parking the issue at
+`stage/020-claimed` until `until=`. The claim
 is refused (exit non-zero, reason in the result) on a pull request, on an
 issue labelled `needs-human` or held, on an issue parked on a person's
 decision (`stage/045-needs-decision`, `needs-spec`, the retired decision

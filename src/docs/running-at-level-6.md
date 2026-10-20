@@ -119,7 +119,7 @@ Config keys to cross-check: `project.issue_filter.require_labels`, `project.issu
 | `release-blocker` | Human/release workflow | Stable promotion script gate on open issues. | Clear after release blocker resolution, not to unblock ordinary L6 work. |
 | `ci-flake` | CI/Hive scripts | Flake tracking, not an L6 hold itself. | Fix/quarantine the flake while keeping required checks meaningful. |
 | `user-feedback` | Dashboard/hub | Feedback provenance. | Triage reporter input; apply trust/hold policy as needed. |
-| `dco` / `no-dco` (legacy Prow `dco-signoff: yes|no` accepted during migration) | Hive stage pass (commit check) | Merge-eligibility display; `no-dco` sends the PR to `stage/072` with the rebase command; branch rules enforce the gate. | Fix commit sign-offs (`git rebase --signoff`) rather than hand-editing labels. |
+| `dco` / `no-dco` (Prow's `dco-signoff: yes|no` coexist on Prow-gated repos; the hive never adds or removes them) | Hive stage pass (commit check) | Merge-eligibility display; `no-dco` sends the PR to `stage/072` with the rebase command; branch rules enforce the gate. | Fix commit sign-offs (`git rebase --signoff`) rather than hand-editing labels. |
 | `conflicts-with-open-pr` | PR-overlap workflow | Overlap signal. | Resolve or close conflicting work before merging; same-file overlap alone may be harmless. |
 | `no-changelog` | Dependabot/maintainer | Repo changelog exception, not a Hive safety gate. | Apply only under repo policy. |
 | `human-only` remainder text (not a default label) | Agent/reviewer | Task-list sweep can park remaining issue work as `needs-human`. | Treat as a handoff; add PR `hold` if merging must stop. |

@@ -162,6 +162,9 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 	sink, labels := c.reviewBacklogTarget(routing)
 	destination := sink.Destination()
 	headSHA := reqHeadSHAFromReports(reports)
+	// hivecommons/hive#13093: a finding whose evidence file the PR introduces
+	// is parked on the PR, not offered as work.
+	baseProbe := c.newReviewBacklogBaseProbe(req.Repo, req.Number)
 	var filedIssues []reviewBacklogFiled
 	var updated, capped int
 	for _, report := range reports {
@@ -231,11 +234,18 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				continue
 			}
 			title := reviewBacklogIssueTitle(report.Perspective, finding)
+			itemLabels := labels
+			body := c.reviewBacklogIssueBody(req, report.Perspective, finding, headSHA, routing.Severity.BlockAt, fp)
+			blocked := baseProbe.FileMissingOnBase(ctx, finding.File)
+			if blocked {
+				itemLabels = blockedBacklogLabels(labels)
+				body = blockedBacklogNote(req.Repo, req.Number, finding.File, baseProbe.BaseRef(ctx)) + body
+			}
 			ref, err := sink.CreateItem(ctx, ReviewBacklogItem{
 				Repo:   req.Repo,
 				Title:  title,
-				Body:   c.reviewBacklogIssueBody(req, report.Perspective, finding, headSHA, routing.Severity.BlockAt, fp),
-				Labels: labels,
+				Body:   body,
+				Labels: itemLabels,
 			})
 			if err != nil && ref.ID == "" {
 				return err
@@ -255,6 +265,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 					"pr", strconv.Itoa(req.Number),
 					"perspective", string(report.Perspective),
 					"reused", strconv.FormatBool(ref.Reused),
+					"blocked", strconv.FormatBool(blocked),
 					"destination", destination,
 					"review_agent", req.Agent)
 			}

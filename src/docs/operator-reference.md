@@ -143,7 +143,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `contribute.min_focus_window` | `30m`. | Preempt mode only: after a preempted primary task resumes, the hub does not preempt that contributor again until it has run uninterrupted for this long. Settings → Hub → Fix budget. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
-| `claims` | The worker-claim ledger ([#8380](https://github.com/hivecommons/hive/issues/8380)): who is on an issue right now, ranked human > agent > contributor > external, so a person can take an issue over from a hive agent or a relay contributor and the displaced holder is told to stop. | Default ON. `enabled: false` turns recording, enforcement and `/api/claims` off. `human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m, `max_ttl_s` 24h; the owner can also set these four from **Governor Config → Features → Work intake & issue lifecycle → Issue claims** (a value of 0 or *Reset to default* uses the default; human, agent and contributor may not exceed the max), and a saved change applies without a restart to claims made or renewed afterwards while existing claims keep their expiry ([#10981](https://github.com/hivecommons/hive/issues/10981)); `comment: false` / `label: false` suppress the GitHub issue comment / `stage/020-claimed` label mirror (`label: false` also suppresses the `stage/030-pr-in-progress` start label an agent claim mirrors — formerly `claimed` / `hive/in-progress`, [#11841](https://github.com/hivecommons/hive/issues/11841)). A governor kick only *lists* the issues it names (30-minute hold, no comment, not a claim); the agent claim, with its comment, is recorded on the agent's first start signal on an issue — its own `hive-open-issue claim` request, a `hive-open-pr` request naming it, or a comment with an explicit start statement (`<!-- hive:start -->`, "starting now", an opening "Starting …" / "Implementing …"; see the [recognized forms](hive-open-issue.md#comment)); a report-only comment (triage, verification, gate check, status), an explicit deferral ([#12387](https://github.com/hivecommons/hive/issues/12387)) or escalation, and any `label` request record no claim. `never_claim_labels` (default `[epic]`, case-insensitive; `[]` turns it off) names umbrella/tracking labels no automated producer may claim and no claim ever stages `stage/020`/`stage/030`; the same admission gate also refuses issues parked on a person (`stage/045-needs-decision`, `needs-spec`, …), `needs-human` and held issues. `escalate_after_claims` (default `2`, negative turns it off) counts those claims only: once one agent's last that-many claims on a free issue were followed by no linked PR, referencing commit, label or assignee change and no close/reopen, the issue is withheld from every kick, labelled `needs-human` and given one comment listing the claims, instead of being claimed again. A `hive/likely-done` issue an agent already started on after the merged PR (its verification) is withheld from kicks until a person comments, labels, assigns, closes or reopens it, so it is verified once rather than every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527)). Driven from `hivectl claim` — see [hivectl.md](hivectl.md#claim--unclaim--claims--issue-claims). |
+| `claims` | The worker-claim ledger ([#8380](https://github.com/hivecommons/hive/issues/8380)): who is on an issue right now, ranked human > agent > contributor > external, so a person can take an issue over from a hive agent or a relay contributor and the displaced holder is told to stop. | Default ON. `enabled: false` turns recording, enforcement and `/api/claims` off. `human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m, `max_ttl_s` 24h; the owner can also set these four from **Governor Config → Features → Work intake & issue lifecycle → Issue claims** (a value of 0 or *Reset to default* uses the default; human, agent and contributor may not exceed the max), and a saved change applies without a restart to claims made or renewed afterwards while existing claims keep their expiry ([#10981](https://github.com/hivecommons/hive/issues/10981)); `comment: false` / `label: false` suppress the GitHub issue comment / `stage/020-claimed` label mirror (`label: false` also suppresses the `stage/030-pr-in-progress` start label an agent claim mirrors — formerly `claimed` / `hive/in-progress`, [#11841](https://github.com/hivecommons/hive/issues/11841)). A governor kick only *lists* the issues it names (30-minute hold, no comment, not a claim); the agent claim, with its comment, is recorded on the agent's first start signal on an issue — its own `hive-open-issue claim` request, a `hive-open-pr` request naming it, or a comment with an explicit start statement (`<!-- hive:start -->`, "starting now", an opening "Starting …" / "Implementing …"; see the [recognized forms](hive-open-issue.md#comment)); a report-only comment (triage, verification, gate check, status), an explicit deferral ([#12387](https://github.com/hivecommons/hive/issues/12387)) or escalation, and any `label` request record no claim. `never_claim_labels` (default `[epic]`, case-insensitive; `[]` turns it off) names umbrella/tracking labels no automated producer may claim and no claim ever stages `stage/020`/`stage/030`; the same admission gate also refuses issues parked on a person (`stage/045-needs-decision`, `needs-spec`, …), `needs-human` and held issues. `escalate_after_claims` (default `2`, negative turns it off) counts those claims only: once one agent's last that-many claims on a free issue were followed by no linked PR, referencing commit, label or assignee change and no close/reopen, the issue is withheld from every kick, labelled `needs-human` and given one comment listing the claims, instead of being claimed again. A `hive/likely-done` issue an agent already started on after the merged PR (its verification) is withheld from kicks until a person comments, labels, assigns, closes or reopens it, so it is verified once rather than every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527)). `reclaim_cooldown_s` (default `21600` = 6h; negative turns it off) keeps a relay contributor session off an issue it released without shipping — task failed, abandoned, or its lease revoked — while other contributors may retry at once after the short global failure cooldown; before it, a relay whose environment could not run a task took the same issue back every ten minutes, flapping its claim ([#13093](https://github.com/hivecommons/hive/issues/13093)). An issue labelled `blocked` (the review backlog's parking for a finding whose file exists only on an unmerged PR, or `hive-open-issue comment --blocked-on-pr`) is refused by the same admission gate until the tracked PR merges or closes. Driven from `hivectl claim` — see [hivectl.md](hivectl.md#claim--unclaim--claims--issue-claims). |
 | `removed_agents` | Persistent tombstones for deleted agents. | Dashboard/overlay-owned; do not seed casually. |
 | `good_first_issue` | Hive-curated `good first issue` advertising: a 15-minute sweep scores open, unclaimed issues and gives the few that qualify GitHub's `good first issue` + `help wanted` labels and one welcome comment pointing at this hive's contributor relay. Not a hold — a hive agent starting the issue removes the label. | Default ON; `enabled: false` opts out. Silent until `dashboard.public_url` (or a hub-assigned dashboard URL) exists. See [Hive-curated good first issues](good-first-issue.md). |
 | `governor.first_timer_welcome` | First-time contributor welcome: when a human whose GitHub `author_association` is `FIRST_TIME_CONTRIBUTOR`/`FIRST_TIMER` opens a PR, post one comment (per author per repo, marker `<!-- hive:first-timer-welcome -->`) that thanks them and invites them to run their own hive — profile, leaderboard, trust-tier progression, offline review-fix/rebase handling. Bots, `author/clanker`/`author/hive` PRs, drafts and known relay contributors are skipped. | Default ON; `enabled: false` opts out; `template_path` overrides the text. Silent without a public dashboard URL. See [Welcoming first-time contributors](good-first-issue.md#welcoming-first-time-contributors). |
@@ -1209,30 +1209,83 @@ the App's webhook secret, and it verifies `X-Hub-Signature-256` over the raw
 body exactly as the hub does. Deliveries for repositories the hive does not
 manage are ignored.
 
-- `pull_request`, `pull_request_review`, `check_suite`, `check_run`, `status`,
-  `issue_comment` (on PRs only) and `push` invalidate the cached PR detail and
-  the GraphQL batch check-run/review entries for the affected PR and mark it
-  dirty. Check and status events are matched by PR number and head SHA (fork
-  PRs arrive without a PR list); `push` invalidates every open PR whose base or
-  head branch is the pushed branch.
+#### What the operator configures
+
+1. **Secret.** Set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a
+   Secret mount on Kubernetes; never in `hive.yaml`) to the App's webhook
+   secret. On a hosted spoke this is the same value as the hub's
+   `webhook-secret.key`. Without it the receiver answers 503 and the loop
+   stays on the polling cadence.
+2. **GitHub App webhook.** Point the App's webhook URL at the hub
+   (`POST /api/github/webhook`) for hosted spokes, or at the spoke's own
+   `/api/webhook/github` for a stand-alone hive (a repository or organization
+   webhook with the same secret works too). Subscribe the App to these events:
+   `pull_request`, `pull_request_review`, `pull_request_review_comment`,
+   `issue_comment`, `issues`, `check_suite`, `check_run`, `status`, `push`.
+3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
+   with the original signature and `X-GitHub-Delivery`, to the spoke whose
+   reported dashboard URL manages the repository. Nothing to configure on the
+   spoke beyond the shared secret.
+4. **Pacing (optional).** `governor.eval_interval_webhook_s` (default `900`)
+   is the base tick while webhooks are healthy; `governor.webhook_wake_debounce_s`
+   (default `10`) and `governor.webhook_wake_min_gap_s` (default `30`) pace the
+   early cycles described below. `review.event_driven` additionally lets
+   `pull_request` deliveries dispatch reviews early.
+
+Verify: `/api/status.webhooks.events_1h` climbs after a push or comment,
+`/api/status.evalMode` reads `webhook`, and the spoke log shows
+`github webhook wake: running an early eval cycle` with the delivery's reason.
+
+Through the hub, every enrolled hive that tracks the delivery's repository
+and has a dashboard URL receives the relay, so multiple hives (for example
+v5 and v6 spokes) tracking one repo all stay on webhook mode.
+
+#### What a delivery does
+
+- `pull_request`, `pull_request_review`, `pull_request_review_comment`,
+  `check_suite`, `check_run`, `status`, `issue_comment` (on PRs only) and
+  `push` invalidate the cached PR detail and the GraphQL batch
+  check-run/review entries for the affected PR and mark it dirty. Check and
+  status events are matched by PR number and head SHA (fork PRs arrive
+  without a PR list); `push` invalidates every open PR whose base or head
+  branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
+  mark the issue for the next un-park sweep.
+- **Every invalidating delivery wakes the governor loop.** The wake is
+  debounced for `governor.webhook_wake_debounce_s` so a push and its check
+  fan-out coalesce into one cycle, and webhook-triggered cycles are at least
+  `governor.webhook_wake_min_gap_s` apart so a delivery storm stretches the
+  batch instead of spinning cycles. The wake cycle is a mini-cycle in cost:
+  repositories with no dirty PR reuse their previous GraphQL PR batch
+  (`graphql_pr_batch.webhook_skips`), clean PRs are served from the PR detail
+  cache past `github.pr_detail_ttl_s`, and only the dirty PRs are re-read.
+  The log line is `github webhook wake: running an early eval cycle`
+  (`reason`, `deliveries`, `coalesced`).
 - Webhooks are **healthy** while the last delivery for a managed repository is
-  newer than `2 × governor.eval_interval_s`. While healthy, a repository with no
-  dirty PR reuses its previous GraphQL PR batch instead of re-querying, clean
-  PRs are served from the PR detail cache past `github.pr_detail_ttl_s`, and
-  the governor's base eval interval rises to `governor.eval_interval_webhook_s`
-  (default `900`, capped by `governor.eval_interval_max_s`). The API budget
-  stretch still applies; the larger interval wins. A dirty PR is re-enriched on
-  the next cycle.
-- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`:
-  Hive logs one WARN per healthy → stale transition and falls back to the
-  configured interval and TTL-bound caching.
+  newer than `2 × governor.eval_interval_s`. While healthy the governor's base
+  eval interval rises to `governor.eval_interval_webhook_s` (default `900`,
+  capped by `governor.eval_interval_max_s`) — safe because the wakes above
+  carry the latency — and `/api/status.evalMode` reads `webhook`. The API
+  budget stretch still applies; the larger interval wins.
+- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`.
+  The loop re-checks health as that window closes (not just at the next
+  stretched tick), resets its ticker to the configured interval, logs one
+  WARN per healthy → stale transition
+  (`github webhooks went stale; eval mode poll`) and one INFO per stale →
+  healthy transition (`github webhooks healthy; eval mode webhook`), and
+  `evalMode` reads `poll`.
 - `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
   [Event-driven dispatch](review-swarm.md#event-driven-dispatch).
+- Every status publish (cadence or wake) invalidates the `/api/stage-tracker`
+  cache and sends a `stage-tracker` event on `/api/events`, so the dashboard's
+  activity monitor refetches at once instead of waiting out
+  `dashboard.stage_tracker.cache_ttl_s` plus its poll.
 
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
+`lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
 changed.
 
@@ -1240,6 +1293,8 @@ changed.
 governor:
   eval_interval_s: 300
   eval_interval_webhook_s: 900
+  webhook_wake_debounce_s: 10
+  webhook_wake_min_gap_s: 30
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

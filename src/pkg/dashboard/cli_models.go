@@ -1121,9 +1121,11 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 	// credential_missing (#12947) is operator-side: the recovery is the
 	// dashboard Copilot Login, so the local warn/audit entry names it and
 	// no fleet self-report is filed (an upstream issue would not be actionable).
+	// A not-licensed 403 (#13206) is likewise a seat/entitlement condition on
+	// the reporting hive and is excluded the same way.
 	// Excluded states Clear instead, so a real failure observed earlier
 	// cannot linger in the tracker and file under the excluded state.
-	if r.discoveryErr != copilotHTTPCatalogOnlyErr && !credentialMissing {
+	if r.discoveryErr != copilotHTTPCatalogOnlyErr && !credentialMissing && !isCopilotNotLicensed(backend, r.discoveryErr) {
 		fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
 			discoveryDegradedMessage(backend, served), r.discoveryErr)
 	} else {
@@ -1157,6 +1159,12 @@ const (
 // helper refusing because the operator has not completed the Copilot Login.
 func isCopilotCredentialMissing(backend, discoveryErr string) bool {
 	return backend == "copilot" && strings.Contains(strings.ToLower(discoveryErr), "not authenticated")
+}
+
+// isCopilotNotLicensed reports whether a discovery failure is GitHub's
+// "not licensed to use Copilot" 403: a seat problem on the reporting hive.
+func isCopilotNotLicensed(backend, discoveryErr string) bool {
+	return backend == "copilot" && strings.Contains(strings.ToLower(discoveryErr), copilotNotLicensedMarker)
 }
 
 // discoveryDegradedMessage is the self-report headline for a discovery failure

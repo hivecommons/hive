@@ -1,0 +1,1 @@
+- Contributor dispatch now honors `[vN]` title prefixes and `Target: vN` issue-body declarations, while a validated `wrong_base` verdict re-routes the next offer instead of applying `hive/already-done` or closing the issue ([#13146](https://github.com/hivecommons/hive/issues/13146)).

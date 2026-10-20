@@ -115,17 +115,18 @@ type TaskRunRecord struct {
 	// AbandonCause is set only when Outcome is "abandoned": "handback" or
 	// "disconnect". Hub-observed; it is what deriveScenario keys on, so the
 	// scenario never has to be parsed back out of Reason's free text.
-	AbandonCause       string  `json:"abandon_cause,omitempty"`
-	CompletionSignal   string  `json:"completion_signal,omitempty"`
-	Verdict            string  `json:"verdict,omitempty"`
-	VerdictReason      string  `json:"verdict_reason,omitempty"`
-	NeedsDecisionLabel string  `json:"needs_decision_label,omitempty"`
-	VerdictReasonKind  string  `json:"verdict_reason_kind,omitempty"`
-	VerdictDisposition string  `json:"verdict_disposition,omitempty"`
-	FailureKind        string  `json:"failure_kind,omitempty"`
-	Reason             string  `json:"reason,omitempty"`
-	Permanent          bool    `json:"permanent,omitempty"`
-	DurationS          float64 `json:"duration_s,omitempty"`
+	AbandonCause        string  `json:"abandon_cause,omitempty"`
+	CompletionSignal    string  `json:"completion_signal,omitempty"`
+	Verdict             string  `json:"verdict,omitempty"`
+	VerdictReason       string  `json:"verdict_reason,omitempty"`
+	NeedsDecisionLabel  string  `json:"needs_decision_label,omitempty"`
+	VerdictReasonKind   string  `json:"verdict_reason_kind,omitempty"`
+	VerdictTargetBranch string  `json:"verdict_target_branch,omitempty"`
+	VerdictDisposition  string  `json:"verdict_disposition,omitempty"`
+	FailureKind         string  `json:"failure_kind,omitempty"`
+	Reason              string  `json:"reason,omitempty"`
+	Permanent           bool    `json:"permanent,omitempty"`
+	DurationS           float64 `json:"duration_s,omitempty"`
 	// ReportedPRURL is the relay-reported PR before server-side verification.
 	// PRURL remains the verified URL used by older consumers.
 	ReportedPRURL string `json:"reported_pr_url,omitempty"`

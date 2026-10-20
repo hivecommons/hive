@@ -191,6 +191,10 @@ jobs:
             echo "uptodate=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
+        uses: ./.github/actions/docker-base-registry
+
       - name: Smoke the bumped pin in a real image build
         if: steps.scope.outputs.run == 'true' && steps.bump.outputs.CHANGED == 'true' && steps.existing.outputs.uptodate != 'true'
         id: smoke
@@ -200,7 +204,7 @@ jobs:
           # The hub image carries every pinned CLI (the contributor image
           # mirrors the same pins, which the PR's docker workflow builds for
           # both architectures). One amd64 build here is the pre-PR gate.
-          docker build -f src/Dockerfile -t hive-pin-smoke:"$CLI" .
+          docker build --build-arg BASE_REGISTRY="$BASE_REGISTRY" -f src/Dockerfile -t hive-pin-smoke:"$CLI" .
           case "$CLI" in
             gh)  bin=/opt/hive/bin/gh-real ;;   # off-PATH by design (Layer 2b)
             *)   bin="$CLI" ;;

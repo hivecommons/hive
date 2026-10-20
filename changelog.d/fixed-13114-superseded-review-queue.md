@@ -1,1 +1,1 @@
-- Show superseded contributor PRs with close / keep-open actions in the Review Queue and a CLOSE recommendation in the inbox even when automatic closure is disabled ([#13114](https://github.com/hivecommons/hive/issues/13114)).
+- Show superseded contributor PRs with close / keep-open actions in the Review Queue even when automatic closure is disabled; the sweep audits every detection and the queue shows no countdown while `supersession_sweep.close_contributor_prs` is off ([#13114](https://github.com/hivecommons/hive/issues/13114)).

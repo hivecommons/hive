@@ -441,8 +441,40 @@ type EvidenceCIPolicy struct {
 	// SelfAuthoredAutoMerge: the App merges its own PRs once CI is green and
 	// nothing else holds them (auto_merge.self_authored), i.e. CI arbitrates.
 	SelfAuthoredAutoMerge bool `json:"self_authored_automerge"`
-	// RequiredChecks is auto_merge.required_checks when declared.
+	// RequiredChecks is auto_merge.required_checks when declared: the global
+	// default, which applies only to repos without a per-repo override.
 	RequiredChecks []string `json:"required_checks,omitempty"`
+	// RepoRequiredChecks is auto_merge.repos.<repo>.required_checks for every
+	// repo that declares one (an explicit empty list is "none required").
+	RepoRequiredChecks map[string][]string `json:"repo_required_checks,omitempty"`
+	// requiredFor resolves the config-declared required set for a repo the
+	// way the merge gate does (AutoMergeConfig.RequiredCheckSetForRepo:
+	// per-repo override, else global, else not declared). nil falls back to
+	// RequiredChecks for every repo.
+	requiredFor func(repo string) (map[string]bool, bool)
+}
+
+// requiredChecksFor is the config-declared required check names the merge
+// gate would fall back to for repo when branch protection cannot be read:
+// the per-repo override when one exists, else the global default. nil means
+// config declares nothing for the repo, so a bundle snapshot cannot be
+// judged missing_required against config; only GitHub's set (the trail) can.
+func (p EvidenceCIPolicy) requiredChecksFor(repo string) []string {
+	if p.requiredFor == nil {
+		return p.RequiredChecks
+	}
+	set, known := p.requiredFor(repo)
+	if !known {
+		return nil
+	}
+	names := make([]string, 0, len(set))
+	for n, on := range set {
+		if on {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // EvidenceCIRedRecovery is the denominator-explicit recovery read.
@@ -538,7 +570,10 @@ func buildEvidenceCIRecovery(claims map[string]*ciClaim, merges map[string]*gate
 		var mergedBy string
 		var nonRequiredRed, requiredKnown bool
 		if state != evidenceCINone {
-			missing = evidenceGateMissingRequired(policy.RequiredChecks, m.checks)
+			// Judged on the required set the merge gate would use for THIS
+			// repo, never the global default alone: on a multi-repo hive the
+			// primary repo's gate check is not required elsewhere (#13225).
+			missing = evidenceGateMissingRequired(policy.requiredChecksFor(m.repo), m.checks)
 		}
 		if tr, ok := rollup.PRs[k]; ok && tr.Trail.State == "merged" && len(tr.Trail.Heads) > 0 {
 			if last := tr.Trail.Heads[len(tr.Trail.Heads)-1]; last.State != ghpkg.PRCIHeadNone {
@@ -721,7 +756,35 @@ func evidenceCIPolicy(s *Server) EvidenceCIPolicy {
 	am := s.deps.Config.AutoMerge
 	p.SelfAuthoredAutoMerge = am.SelfAuthoredEnabled()
 	p.RequiredChecks = append([]string(nil), am.RequiredChecks...)
+	for repo, rc := range am.Repos {
+		if rc.RequiredChecks == nil {
+			continue
+		}
+		if p.RepoRequiredChecks == nil {
+			p.RepoRequiredChecks = map[string][]string{}
+		}
+		p.RepoRequiredChecks[repo] = append([]string{}, rc.RequiredChecks...)
+	}
+	p.requiredFor = am.RequiredCheckSetForRepo
 	return p
+}
+
+// ciRecoveryGateDue says whether a merged PR's bundle read needs GitHub's
+// confirmation: no snapshot on the merged head, a red snapshot (a re-run can
+// go green on the same head), or a green snapshot missing a check config
+// requires for its repo (branch protection, which the trail reads, is
+// authoritative over config and may not require it at all).
+func ciRecoveryGateDue(m *gateMerge, policy EvidenceCIPolicy) bool {
+	if m == nil {
+		return false
+	}
+	switch m.state {
+	case evidenceCINone, evidenceCIRed:
+		return true
+	case evidenceCIPending:
+		return false
+	}
+	return len(evidenceGateMissingRequired(policy.requiredChecksFor(m.repo), m.checks)) > 0
 }
 
 // collectCIRecovery enriches red-at-claim agent PRs with their GitHub CI
@@ -744,6 +807,8 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 	}
 	prs := evidence.FoldPRs(bundles, "", "")
 	claims := evidenceCIClaims(bundles, prs)
+	// The same per-repo resolver the merge gate and the trail consult.
+	policy := EvidenceCIPolicy{requiredFor: gh.ConfigRequiredChecksForRepo}
 	var due []*ciClaim
 	var dueConv []*ciClaim
 	for _, c := range claims {
@@ -767,9 +832,11 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 	}
 	// Gate integrity needs GitHub's check state on every merged head: a
 	// review-time snapshot that was red is only a suspicion (a re-run can go
-	// green on the same head) and a merged head nobody reviewed has none.
+	// green on the same head), a merged head nobody reviewed has none, and a
+	// green snapshot missing a config-required check needs the branch's real
+	// required set before it can be called a breach.
 	for k, m := range evidenceGateMerges(bundles, prs) {
-		if (m.state != evidenceCINone && m.state != evidenceCIRed) || m.openedAt.Before(now.Add(-ciRecoveryLookback)) {
+		if !ciRecoveryGateDue(m, policy) || m.openedAt.Before(now.Add(-ciRecoveryLookback)) {
 			continue
 		}
 		if _, ok := rollup.PRs[k]; ok {

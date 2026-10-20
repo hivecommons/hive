@@ -828,6 +828,8 @@ hivectl hives enable acme                                     # resume without r
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
+hivectl hives hub add commons --url https://hub.example.org   # track a hub (discovery only)
+hivectl hives hub show commons                                # its Hives, onboarded or not
 ```
 
 `hives` is the one command group that does **not** talk to a dashboard API:
@@ -859,6 +861,10 @@ presets:                       # optional local review history, not an export
       source: https://ecosystem.example/hive-preset.yaml
       reviewed_revision: "2026-10-17"
       accepted_at: 2026-10-17T10:00:00Z
+hubs:                          # optional: tracked hubs, no credentials
+    - name: commons
+      url: https://hub.example.org
+      follow: "off"            # off | current | current-and-future-repos
 ```
 
 Repository identities are lower-case `<forge>/<host>/<owner>/<name>` (forge:
@@ -938,7 +944,10 @@ hivectl hives repos acme --exclude org/repo
 hivectl hives repos acme --include other/project
 hivectl hives repos acme --toggle-exclude org/repo
 hivectl hives repos acme --clear org/repo      # clear both personal overrides
-hivectl hives repos acme --select none         # explicitly select nothing
+hivectl hives repos acme --deselect-current    # clear current consent, keep follow policy
+hivectl hives repos acme --select none         # select nothing and stop following
+hivectl hives repos acme --follow-new-repos     # allow additions on supported refresh
+hivectl hives repos acme --follow-new-repos=false # stop following, keep current consent
 hivectl hives repos acme --reset --yes         # restore legacy unrestricted consent
 ```
 
@@ -948,6 +957,18 @@ without this endpoint) leave the saved selection unchanged. Personal additions
 and exclusions survive a new snapshot; exclusions always win, even over an
 explicit inclusion. `none` clears membership and additions, turns following off,
 and retains exclusions so later snapshots cannot silently restore excluded work.
+`--deselect-current` also clears reviewed membership (including any all-current
+snapshot) and personal additions, but retains the independently accepted follow
+policy, exclusions, sources, and preset review history. It performs no discovery
+or registration. The saved scope becomes empty, never unrestricted; a later
+refresh within an approved follow scope may select repositories again. It refuses
+legacy unrestricted profiles rather than silently migrating them: review an
+`all-current` snapshot first, or explicitly use `--select none` to select nothing
+and stop following. `--follow-new-repos` changes only that refresh policy; `--follow-new-repos=false`
+stops following without removing any currently accepted repository. Neither flag
+fetches or adds membership, clears exclusions, or converts legacy unrestricted
+profiles. Following uses the applicable preset/discovery refresh source, not a
+background poller or wildcard. Use only one selection-edit operation per invocation.
 Only `--reset --yes` drops the entire selection. To exclude from a legacy
 unrestricted profile, first accept an `all-current` snapshot: an unreviewed
 "all except one" wildcard is not a supported selection.
@@ -1012,6 +1033,12 @@ Notes:
   rows or use ↑/↓ to rank them, and choose `ranked`, `spread` or `neediest`.
   The API and HTML never return registration tokens; the printed URL carries a
   short-lived local UI token and should not be shared.
+- **Concurrent edits are never silently lost.** The CLI, the TUI and the web
+  UI all commit `profiles.yml` under a shared owner-only lock file
+  (`profiles.yml.lock`) and only if the file is still the revision they loaded.
+  If another surface changed it in the meantime, nothing is written: the CLI
+  and TUI ask you to re-run or retry, and the web UI answers `409` asking you
+  to reload and review the current hives.
 - **`use`, `move` and `strategy` switch a running relay.** They regenerate the
   projection, then signal the relay advertised in `contributor-relay.pid` (or
   its recorded docker/podman container) to reload `contributor.env`. The task
@@ -1160,6 +1187,38 @@ and nothing is left pending.
 each adopted Hive's selection. It lets `refresh` include that Hive's new
 recommendations without a prompt. Personal exclusions still take precedence,
 and removals still need confirmation.
+
+#### Tracking hubs
+
+A hub runs a federation registry (`GET /api/hives`) that lists the Hives
+associated with it. `hivectl hives hub` records hubs in the `hubs:` key of
+`profiles.yml` and reads that registry, so you can see which Hives a hub
+advertises without editing YAML:
+
+```bash
+hivectl hives hub add commons --url https://hub.example.org
+hivectl hives hub list                 # -o json|yaml for scripts
+hivectl hives hub show commons         # each advertised Hive, onboarded or not
+hivectl hives hub remove commons       # stop tracking; Hive profiles are kept
+```
+
+Tracking a hub is **discovery only**. It stores no credentials, never calls
+`/api/contribute/register`, and never changes a profile's membership. Onboard
+an advertised Hive with `hivectl hives add`.
+
+- `add` rejects a name already in use (case-insensitively) and a URL whose
+  normalized origin is already tracked under another name. New hubs start with
+  `follow: off`; the other follow policies are reserved for bulk enrollment and
+  have no effect yet.
+- `show` keys each advertised Hive by the normalized origin of its `hub_url`
+  (the same identity rule as above) and marks it `onboarded as <profile>` when a
+  saved profile has that origin, otherwise `not onboarded`. Entries without a
+  usable `hub_url` are skipped, and a repeated origin is listed once.
+- Discovery sends no token, does not follow redirects, and caps the response
+  size. A redirect, a non-200 status, an unreachable hub, or a malformed body
+  reports the hub as **unavailable** and exits non-zero. It is never shown as
+  a hub with no Hives.
+- A `profiles.yml` without `hubs:` loads and saves exactly as before.
 
 ## Input and safety
 

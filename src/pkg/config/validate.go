@@ -179,6 +179,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidatePendingReviewTTL(); err != nil {
 		return err
 	}
+	if err := c.validateReviewPerspectiveModels(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -279,6 +282,12 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if c.Governor.EvalIntervalWebhookS < 0 {
 		return fmt.Errorf("governor.eval_interval_webhook_s must be at least 0")
+	}
+	if c.Governor.WebhookWakeDebounceS < 0 {
+		return fmt.Errorf("governor.webhook_wake_debounce_s must be at least 0")
+	}
+	if c.Governor.WebhookWakeMinGapS < 0 {
+		return fmt.Errorf("governor.webhook_wake_min_gap_s must be at least 0")
 	}
 	if c.Governor.ConserveIntervalMultiplier < 0 {
 		return fmt.Errorf("governor.conserve_interval_multiplier must be at least 1")
@@ -720,6 +729,33 @@ func validateConnections(agentName string, conns []ConnectionConfig) error {
 			if conn.Auth.Type == "file" && conn.Auth.File == "" {
 				return fmt.Errorf("agent %s: connections[%d]: auth.file is required when auth.type is file", agentName, i)
 			}
+		}
+	}
+	return nil
+}
+
+// validateReviewPerspectiveModels checks review.perspective_models the way
+// agents.<name>.review_models.pool entries are checked: both halves present,
+// and the backend one the governor can launch.
+func (c *Config) validateReviewPerspectiveModels() error {
+	names := make([]string, 0, len(c.Review.PerspectiveModels))
+	for name := range c.Review.PerspectiveModels {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry := c.Review.PerspectiveModels[name]
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("review.perspective_models: perspective name is required")
+		}
+		if strings.TrimSpace(entry.Backend) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: backend is required", name)
+		}
+		if err := c.Governor.ValidateBackend(strings.TrimSpace(entry.Backend)); err != nil {
+			return fmt.Errorf("review.perspective_models[%s]: %w", name, err)
+		}
+		if strings.TrimSpace(entry.Model) == "" {
+			return fmt.Errorf("review.perspective_models[%s]: model is required", name)
 		}
 	}
 	return nil

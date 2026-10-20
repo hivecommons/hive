@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -172,6 +173,11 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// issueClaimLedger resolves the hub's own live ledger claim for an issue
+	// (issue_claims.go, SetIssueClaimLedger). Consulted only when the forge
+	// carries no live marker: the 🔒 comment is budgeted and can be
+	// suppressed, and a claim the ledger holds must still read as a claim.
+	issueClaimLedger func(repo string, number int) (issueclaim.Claim, bool)
 	// inProgress resolves the hive/in-progress start-signal setting (see
 	// issue_inprogress.go). Nil → the label is not applied or swept.
 	inProgress func() InProgressSetting
@@ -351,6 +357,10 @@ type Client struct {
 	// it. nil hold disables the gate. Set by SetMergeReviewVerdictGate.
 	mergeReviewVerdictHold  ReviewVerdictHoldFunc
 	mergeReviewHoldReleaser func(login string) bool
+	// mergePolicyGate is the merge-request relay's lane-policy gate (see
+	// MergeRequestPolicyGate). nil installs no gate: the relay then applies
+	// only its own authz, label and CI checks, as before the gate existed.
+	mergePolicyGate MergeRequestPolicyGate
 	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
 	// (merge_request_state.go). mergeStatePath is where it is persisted;
 	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.
@@ -1497,6 +1507,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			details = append(details, c.workIssue(repo, issue, labels, "filtered", "Exempt label"))
 			continue
 		}
+		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
+		// actionable set until ReconcileBlockedIssues lifts the label. The
+		// reason names the PR when the body carries the blocked-on marker.
+		if hasBlockedLabel(labels) {
+			breakdown.Filtered++
+			breakdown.Blocked++
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody())))
+			continue
+		}
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
@@ -2473,6 +2492,11 @@ type PRState struct {
 	BaseRef string
 	// MergedBy is the login that merged the PR ("" when not merged or unknown).
 	MergedBy string
+	// Title, Body and HeadSHA are carried so a merged PR's text can be
+	// scanned for a revert without another fetch (hivecommons/hive#13241).
+	Title   string
+	Body    string
+	HeadSHA string
 }
 
 // GetPRState fetches a single PR's state. The review-outcome ledger calls it
@@ -2494,7 +2518,8 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		}
 		c.storePRDetail(repo, number, pr)
 	}
-	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin()}
+	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin(),
+		Title: pr.GetTitle(), Body: pr.GetBody(), HeadSHA: pr.GetHead().GetSHA()}
 	if !pr.GetMergedAt().IsZero() {
 		st.MergedAt = pr.GetMergedAt().Time
 	}
@@ -4056,6 +4081,10 @@ type RepoIssueBreakdown struct {
 	NeedsSpec            int `json:"needs_spec,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
 	Exempt               int `json:"exempt,omitempty"`
+	// Blocked counts open issues parked on an unmerged PR or other outside
+	// blocker (`blocked` label, hivecommons/hive#13093). Counted inside
+	// Filtered; named so the repo card can say why.
+	Blocked int `json:"blocked,omitempty"`
 	// ReporterTriage counts open issues from reporters the hive does not
 	// trust that are waiting for a maintainer's triage label (#9665). Kept
 	// apart from Filtered so the repo card can say "N awaiting reporter

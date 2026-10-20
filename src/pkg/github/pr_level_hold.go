@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 )
@@ -313,7 +314,16 @@ func (c *Client) latestLabelEventByApp(ctx context.Context, owner, repo string, 
 }
 
 func (c *Client) listIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {
+	return c.listIssueCommentsSince(ctx, owner, repo, number, time.Time{})
+}
+
+// listIssueCommentsSince lists comments updated at or after since; a zero
+// since lists every comment.
+func (c *Client) listIssueCommentsSince(ctx context.Context, owner, repo string, number int, since time.Time) ([]*gh.IssueComment, error) {
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	if !since.IsZero() {
+		opts.Since = gh.Ptr(since)
+	}
 	var all []*gh.IssueComment
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, number, opts)

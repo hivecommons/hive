@@ -963,6 +963,9 @@ func classifyStage(o stageObservation) stageVerdict {
 	if reason == contributorLaneReasonNoVerdict {
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
+	if v, ok := reviewGateStage(reason, fixing); ok {
+		return v
+	}
 	if classifyCIReason(reason) == ciReasonPending {
 		if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
 			return stageVerdict{Stage: stagelabels.Reviewed, Rank: stageRankOwned}
@@ -975,6 +978,26 @@ func classifyStage(o stageObservation) stageVerdict {
 		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}, humanApprovalReason)
 	}
 	return stageVerdict{}
+}
+
+// reviewGateStage is the opinion for a trusted-author head the enforcing
+// review gate holds ("review-gate:<outcome>"): no bundle yet or awaiting
+// the swarm's approval is 060 review-pending; a swarm changes_requested is
+// the author's rework stage. Without it the PR carried no stage at all
+// until the verdict was noted — the OWNERS PRs of 2026-10-20 sat unlabelled
+// through the whole review wait.
+func reviewGateStage(reason string, fixing stagelabels.Stage) (stageVerdict, bool) {
+	if !strings.HasPrefix(reason, autoMergeReasonReviewGatePrefix) {
+		return stageVerdict{}, false
+	}
+	outcome := strings.TrimPrefix(reason, autoMergeReasonReviewGatePrefix)
+	switch {
+	case outcome == ReviewGateOutcomeNoBundle, outcome == ReviewGateOutcomeAwaiting:
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}, true
+	case strings.HasPrefix(outcome, ReviewGateOutcomeChangesRequested):
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
+	}
+	return stageVerdict{}, false
 }
 
 // requiresHumanStage is the 085 opinion for a head whose reviewer verdict
@@ -1257,7 +1280,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Rank = stageRankOwned
 				obs.Reason = stagelabels.LaneReasonDCOMissing
 			} else if stats.squashUnsafeHive > 0 && normalizeBotLogin(obs.Author) != normalizeBotLogin(c.transport.AppBotLogin()) {
-				verdict.Stage = stagelabels.Fixing
+				// A sign-off naming the App on a commit the squash would
+				// land as the contributor: only the branch owner can rewrite
+				// it (no hive push lands on a non-App branch), so the PR
+				// goes back to its author by kind (071/072), not to 070
+				// where nothing can act (hivecommons/hive OWNERS PRs of
+				// 2026-10-20).
+				verdict.Stage = fixingStage(obs)
 				verdict.Rank = stageRankOwned
 				obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
 			} else if want.DCO == stagelabels.DCONo {
@@ -1447,6 +1476,14 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					if err != nil && firstErr == nil {
 						firstErr = err
 					}
+				}
+			} else if obs.Reason == stagelabels.LaneReasonHiveSignoffAttribution {
+				// A person owns the fix and nothing else will tell them:
+				// one comment per head with the exact commands.
+				n, err := c.nudgeSignoffAttribution(ctx, store, key, obs, now)
+				result.Comments += n
+				if err != nil && firstErr == nil {
+					firstErr = err
 				}
 			} else if rec, ok := store.Get(key); ok && rec.NudgeHead != obs.HeadSHA {
 				c.info("stage labels: 07x without interrupt (author kind)", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))

@@ -76,6 +76,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives reissue acme
   hivectl hives preset adopt https://example.org/preset.yml
   hivectl hives preset refresh
+  hivectl hives hub add commons --url https://hub.example.org
   hivectl hives use acme
   hivectl hives export acme --out acme.hive-profile
   hivectl hives import acme.hive-profile --name acme-laptop
@@ -86,6 +87,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
 	cmd.AddCommand(newHivesPresetCommand(env))
+	cmd.AddCommand(newHivesHubCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))
 	cmd.AddCommand(newHivesUseCommand(env))
@@ -157,8 +159,16 @@ func loadProfiles(cmd *cobra.Command, deps *hivesDeps, allowEmpty bool) (*hivect
 // commit saves the profiles and regenerates contributor.env from them. The
 // ordering rule it depends on lives with the store (ProfileStore.Commit), so
 // the TUI's pane cannot get it wrong differently.
+//
+// It commits against the revision the set was loaded at: if the TUI, the Web
+// UI or another hivectl changed profiles.yml in the meantime, nothing is
+// written and the operator is told to re-run against the current hives.
 func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
-	return deps.store.Commit(set)
+	err := deps.store.CommitExpecting(set, set.Revision())
+	if errors.Is(err, hivectl.ErrStaleRevision) {
+		return fmt.Errorf("%w — another hivectl, TUI or Commons web session changed %s while this command ran; nothing was written, re-run it to apply the change to the current hives", err, deps.store.Path())
+	}
+	return err
 }
 
 // ── list ────────────────────────────────────────────────────────────────────

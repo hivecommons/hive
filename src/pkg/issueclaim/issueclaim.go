@@ -47,6 +47,12 @@ const (
 	// so existing issue comments continue to release on expiry instead of being
 	// forgotten by new binaries.
 	LegacyMarkerPrefix = "<!-- hive-claim:"
+	// ReleaseMarkerPrefix opens the marker the hub posts when it releases a
+	// claim before its until= (the holding agent was relaunched, a person
+	// released it). A release whose who= names the latest claim's identity
+	// ends that claim: the 🔒 comment is never edited, so without this the
+	// forge keeps reading a hold the ledger already dropped.
+	ReleaseMarkerPrefix = "<!-- hive:release"
 	// MarkerSuffix closes the marker.
 	MarkerSuffix = "-->"
 	// DefaultTTL is how long a claim stands when the claimant set no explicit
@@ -100,6 +106,10 @@ type Claim struct {
 	// PR), which is what stages the issue stage/030-pr-in-progress. Absent
 	// or any other value parses as false (hivecommons/hive#13069).
 	PRStarted bool
+	// Released is set when a later release marker named this claim's
+	// identity: the holder let go before until=, so the claim is not live
+	// however far off its expiry is.
+	Released bool
 }
 
 // ContributorTierDefault is the tier a kind=contributor marker without tier=
@@ -110,7 +120,49 @@ const ContributorTierDefault = "newcomer"
 // an expiry strictly after now. A zero expiry is never live — an unbounded
 // claim is exactly the abandoned-claim shape the TTL exists to prevent.
 func (c Claim) Live(now time.Time) bool {
-	return c.Identity != "" && !c.ExpiresAt.IsZero() && now.Before(c.ExpiresAt)
+	return c.Identity != "" && !c.Released && !c.ExpiresAt.IsZero() && now.Before(c.ExpiresAt)
+}
+
+// Release is one parsed release marker: who let go and, when the marker
+// carries at=, when.
+type Release struct {
+	Identity string
+	At       time.Time
+}
+
+// ParseReleaseMarker reads a `<!-- hive:release who=<identity> ... -->`
+// marker. at= is optional (older markers carry none); who= is required.
+func ParseReleaseMarker(body string) (Release, bool) {
+	start := strings.Index(body, ReleaseMarkerPrefix)
+	if start < 0 {
+		return Release{}, false
+	}
+	rest := body[start+len(ReleaseMarkerPrefix):]
+	end := strings.Index(rest, MarkerSuffix)
+	if end < 0 {
+		return Release{}, false
+	}
+	var rel Release
+	for _, field := range strings.Fields(rest[:end]) {
+		key, val, ok := strings.Cut(field, "=")
+		if !ok || val == "" {
+			continue
+		}
+		switch key {
+		case "who":
+			rel.Identity = val
+		case "at":
+			at, err := time.Parse(time.RFC3339, val)
+			if err != nil {
+				return Release{}, false
+			}
+			rel.At = at
+		}
+	}
+	if rel.Identity == "" {
+		return Release{}, false
+	}
+	return rel, true
 }
 
 // Marker renders the machine-readable comment marker for a claim.
@@ -235,21 +287,52 @@ func ClampToTTL(claim Claim, ttl time.Duration) Claim {
 // claim means for them (usually: nothing) with Claim.Live. The newest claim
 // wins so a renewal comment supersedes the one it renews and an expired
 // earlier claim cannot shadow a fresh one.
+//
+// A release marker naming that claim's identity marks it Released: one that
+// carries at= must not predate the claim's start; one without at= (older
+// hubs) must follow the claim in bodies, which the forge lists oldest first.
+// A release of an EARLIER holder never touches a later claim.
 func Latest(bodies []string, ttl time.Duration) (Claim, bool) {
 	var best Claim
-	found := false
-	for _, body := range bodies {
+	bestIdx := -1
+	type release struct {
+		Release
+		idx int
+	}
+	var releases []release
+	for i, body := range bodies {
+		if rel, ok := ParseReleaseMarker(body); ok {
+			releases = append(releases, release{Release: rel, idx: i})
+			continue
+		}
 		claim, ok := ParseMarker(body)
 		if !ok {
 			continue
 		}
 		claim = ClampToTTL(claim, ttl)
-		if !found || claimOrderTime(claim).After(claimOrderTime(best)) {
+		if bestIdx < 0 || claimOrderTime(claim).After(claimOrderTime(best)) {
 			best = claim
-			found = true
+			bestIdx = i
 		}
 	}
-	return best, found
+	if bestIdx < 0 {
+		return Claim{}, false
+	}
+	for _, rel := range releases {
+		if rel.Identity != best.Identity {
+			continue
+		}
+		if !rel.At.IsZero() {
+			if !rel.At.Before(claimOrderTime(best)) {
+				best.Released = true
+			}
+			continue
+		}
+		if rel.idx > bestIdx {
+			best.Released = true
+		}
+	}
+	return best, true
 }
 
 func claimOrderTime(claim Claim) time.Time {

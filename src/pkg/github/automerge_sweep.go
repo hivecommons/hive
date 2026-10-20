@@ -30,6 +30,14 @@ func (c *Client) SetRequiredChecksForRepo(fn func(repo string) (map[string]bool,
 	c.requiredChecksForRepo = fn
 }
 
+// ConfigRequiredChecksForRepo is the config-declared required-check set the
+// merge gate falls back to for repo (per-repo override, else global), and
+// whether config declares one at all. Dashboard reads judge bundle snapshots
+// against it so they agree with the gate on multi-repo hives.
+func (c *Client) ConfigRequiredChecksForRepo(repo string) (map[string]bool, bool) {
+	return c.configRequiredChecksForRepo(repo)
+}
+
 func (c *Client) configRequiredChecksForRepo(repo string) (map[string]bool, bool) {
 	if c == nil {
 		return nil, false

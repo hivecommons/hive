@@ -25,6 +25,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates build-essential curl git jq procps tmux sqlite3 python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# CA trust bundle refresh: distrust two Mozilla roots the root programs
+# withdrew on 2026-10-17..20 that trixie's ca-certificates still ships (no
+# fixed package yet — drop once it carries the change). Go, curl, git and
+# python3 all read the regenerated system bundle. Same recipe as src/Dockerfile.
+RUN sed -i \
+      -e 's|^mozilla/emSign_ECC_Root_CA_-_G3.crt|!&|' \
+      -e 's|^mozilla/Comodo_AAA_Services_root.crt|!&|' \
+      /etc/ca-certificates.conf \
+    && grep -q '^!mozilla/emSign_ECC_Root_CA_-_G3.crt' /etc/ca-certificates.conf \
+    && grep -q '^!mozilla/Comodo_AAA_Services_root.crt' /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
+    && ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem \
+    && ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+
 # scanner contract: the checkout lives inside the image, at /src.
 # The Go module is rooted at src/ (module github.com/hivecommons/hive).
 COPY . /src

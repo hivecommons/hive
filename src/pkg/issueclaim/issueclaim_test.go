@@ -252,3 +252,57 @@ func TestParseMarker_ReadsPRStarted(t *testing.T) {
 		t.Fatalf("pr_started=yes parsed true: ok=%v %+v", ok, claim)
 	}
 }
+
+func TestLatest_ReleaseMarkerEndsTheClaimItNames(t *testing.T) {
+	started := time.Date(2026, 10, 20, 14, 21, 15, 0, time.UTC)
+	claim := Marker("scanner", started, started.Add(2*time.Hour))
+	release := "<!-- hive:release who=scanner kind=agent reason=holding_agent_relaunched at=2026-10-20T15:35:00Z -->\n🔓 released"
+	now := started.Add(30 * time.Minute)
+
+	got, ok := Latest([]string{claim, release}, 4*time.Hour)
+	if !ok || !got.Released || got.Live(now) {
+		t.Fatalf("release after claim: ok=%v released=%v live=%v", ok, got.Released, got.Live(now))
+	}
+	if c, live := Resolve([]string{claim, release}, []string{"alice"}, started, 4*time.Hour, now); live {
+		t.Fatalf("Resolve fell back to a claim after release: %+v", c)
+	}
+
+	// A release that predates the claim (an earlier hold by the same agent
+	// that was let go) does not end the newer claim.
+	stale := "<!-- hive:release who=scanner kind=agent reason=x at=2026-10-20T13:00:00Z -->"
+	if got, _ := Latest([]string{stale, claim}, 4*time.Hour); got.Released || !got.Live(now) {
+		t.Fatalf("release before claim must not end it: %+v", got)
+	}
+	// Nor does a release of another holder.
+	other := "<!-- hive:release who=quality kind=agent reason=x at=2026-10-20T15:35:00Z -->"
+	if got, _ := Latest([]string{claim, other}, 4*time.Hour); got.Released {
+		t.Fatalf("release of another holder ended the claim: %+v", got)
+	}
+	// A legacy release marker without at= is ordered by position.
+	legacy := "<!-- hive:release who=scanner kind=agent reason=x -->"
+	if got, _ := Latest([]string{legacy, claim}, 4*time.Hour); got.Released {
+		t.Fatal("positional release before the claim must not end it")
+	}
+	if got, _ := Latest([]string{claim, legacy}, 4*time.Hour); !got.Released {
+		t.Fatal("positional release after the claim must end it")
+	}
+}
+
+func TestParseReleaseMarker(t *testing.T) {
+	rel, ok := ParseReleaseMarker("text <!-- hive:release who=scanner kind=agent at=2026-10-20T15:35:00Z --> more")
+	if !ok || rel.Identity != "scanner" || !rel.At.Equal(time.Date(2026, 10, 20, 15, 35, 0, 0, time.UTC)) {
+		t.Fatalf("ParseReleaseMarker: %+v %v", rel, ok)
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release kind=agent -->"); ok {
+		t.Fatal("marker without who= must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release who=x at=yesterday -->"); ok {
+		t.Fatal("unparseable at= must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:release who=x"); ok {
+		t.Fatal("unterminated marker must not parse")
+	}
+	if _, ok := ParseReleaseMarker("<!-- hive:claim who=x until=2026-10-20T15:35:00Z -->"); ok {
+		t.Fatal("claim marker is not a release")
+	}
+}

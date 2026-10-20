@@ -131,6 +131,8 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		"epic":             {"Epic", "help wanted"},
 		"epic+stage030":    {"epic", stagelabels.PRInProgress.Label()},
 		"epic+needs-human": {"Epic", issueNeedsHumanLabel},
+		"blocked":          {BlockedLabel, "help wanted"},
+		"blocked+stage030": {"Blocked", stagelabels.PRInProgress.Label()},
 	}
 	claimKinds := []string{"", string(claims.KindAgent), string(claims.KindHuman), string(claims.KindContributor), "AGENT"}
 	reasons := []string{"", issueNeedsHumanLabel, issueNeedsSpecLabel, NeedsDecisionStageLabel, issueNeedsDirectionLabel, "wontfix", " needs-human "}

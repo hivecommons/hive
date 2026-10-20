@@ -360,3 +360,43 @@ func TestBuildTaskPrompt_StatesRepositoryPrecedence(t *testing.T) {
 		})
 	}
 }
+
+// #13146: scanner issues declare their release line either in the structured
+// title prefix or as "**Target: v6.**" in the body. Both must reach the prompt;
+// title wins a conflict, and a server-validated wrong_base correction wins both.
+func TestTaskBaseBranch_DeclaredIssueTarget(t *testing.T) {
+	body := "**Target: v6.** Running build `abc123`.\n\nDetails."
+	if got := releaseLineFromBody(body); got != "v6" {
+		t.Fatalf("releaseLineFromBody() = %q, want v6", got)
+	}
+	if got := taskBaseBranchForIssue("plain title", body, "", "hivecommons/hive", "v5"); got != "v6" {
+		t.Fatalf("body target = %q, want v6", got)
+	}
+	if got := taskBaseBranchForIssue("[v5] explicit title", body, "", "hivecommons/hive", "v4"); got != "v5" {
+		t.Fatalf("title target = %q, want v5", got)
+	}
+	if got := taskBaseBranchForIssue("[v5] stale title", body, "v7", "hivecommons/hive", "v4"); got != "v7" {
+		t.Fatalf("validated override = %q, want v7", got)
+	}
+	for _, body := range []string{"Target: main", "the target: v6 is discussed", "**Target: vNext.**"} {
+		if got := releaseLineFromBody(body); got != "" {
+			t.Errorf("releaseLineFromBody(%q) = %q, want empty", body, got)
+		}
+	}
+}
+
+func TestBuildTaskPrompt_DeclaredBodyTargetAndWrongBaseContract(t *testing.T) {
+	base := taskBaseBranchForIssue("scanner finding", "**Target: v6.**", "", "hivecommons/hive", "v5")
+	prompt := buildTaskPromptBody("hivecommons/hive", "hivecommons/hive#13146", "scanner finding", "", base)
+	for _, want := range []string{
+		"Base this work on the 'v6' branch",
+		"git show-ref --verify --quiet refs/remotes/upstream/v6",
+		"gh pr create --base v6",
+		"HIVE_VERDICT: wrong_base — <correct-branch>",
+		"do not call the issue already done",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("declared-target prompt missing %q", want)
+		}
+	}
+}

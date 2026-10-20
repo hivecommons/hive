@@ -198,6 +198,7 @@ const (
 	modHold          = "hold"
 	modNeedsHuman    = "needs-human"
 	modNeedsDecision = "needs-decision"
+	modNeedsTriage   = "needs-triage"
 	modNeedsRebase   = "needs-rebase"
 	modBlocked       = "blocked"
 	modDraft         = "draft"
@@ -384,6 +385,10 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			// 045 on an issue, 085 on a PR); the retired spelling is read
 			// until migrated.
 			set[modNeedsDecision] = true
+		case "needs-triage":
+			// Still waiting on triage (reporter trust / maintainer look):
+			// the Open row's action chip reads "triage needed".
+			set[modNeedsTriage] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
 		case "blocked":
@@ -405,7 +410,7 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}
@@ -927,6 +932,7 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	ttl := s.stageTrackerCacheTTL()
 	s.stageTrackerCacheMu.Lock()
 	defer s.stageTrackerCacheMu.Unlock()
+	s.stageTrackerServed = true
 	c := &s.stageTrackerCache
 	if len(c.body) > 0 && now.Sub(c.generatedAt) < ttl {
 		return c.body, c.etag, c.generatedAt, false
@@ -944,6 +950,27 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	}
 	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(buf.Bytes()), now
 	return c.body, c.etag, c.generatedAt, true
+}
+
+// invalidateStageTrackerCache forgets the memoised payload. UpdateStatusIfFresh
+// calls it on every status publish so tracker freshness follows the eval
+// cycle rather than the cache TTL alone. It reports whether the tracker has
+// ever been served: only then is an SSE nudge worth sending, which also keeps
+// the /api/events stream free of extra frames for clients that never asked
+// for the tracker.
+func (s *Server) invalidateStageTrackerCache() (served bool) {
+	s.stageTrackerCacheMu.Lock()
+	s.stageTrackerCache = stageTrackerCache{}
+	served = s.stageTrackerServed
+	s.stageTrackerCacheMu.Unlock()
+	return served
+}
+
+// stageTrackerSSEFrame is the `stage-tracker` event /api/events sends after
+// each status publish; the SPA refetches /api/stage-tracker on it instead of
+// waiting for its poll. seq is the status sequence the tracker now reflects.
+func stageTrackerSSEFrame(seq uint64) string {
+	return "event: stage-tracker\ndata: {\"seq\":" + strconv.FormatUint(seq, 10) + "}\n\n"
 }
 
 var stageTrackerSourceCache = []byte(`"source":"cache"`)
