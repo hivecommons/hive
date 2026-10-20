@@ -209,7 +209,9 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg.Ioscan.Enabled = &on
 		cfg.Ioscan.Classifier.Enabled = true
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
+		// logs through b.logger, so the sink must be goroutine-safe (#13168).
+		var log syncLogBuffer
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
@@ -230,7 +232,9 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg.Ioscan.Classifier.Model = "judge-small"
 		cfg.Governor.Trajectory.Endpoint = "http://127.0.0.1:1/v1"
 		b := newBootDashboardBoot(t, cfg)
-		var log strings.Builder
+		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
+		// logs through b.logger, so the sink must be goroutine-safe (#13168).
+		var log syncLogBuffer
 		b.logger = slog.New(slog.NewTextHandler(&log, nil))
 		b.sched = scheduler.New(cfg, b.logger)
 
