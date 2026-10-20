@@ -257,6 +257,12 @@ jobs:
       - name: Entrypoint stable agent UID allocation (#9592)
         run: bash deploy/test_entrypoint_uid_stable.sh
 
+      # #13166: replicas: copies exist only in memory, so the entrypoint must
+      # derive <agent>-2 .. <agent>-N from the config to give each one a user,
+      # private token group and readable token cache.
+      - name: Entrypoint replica agent names (#13166)
+        run: bash deploy/test_entrypoint_replica_names.sh
+
       # #6287: the token-access audit log (GET /api/token-access) was
       # dev:node 0664 while every agent UID is in group node, so the audited
       # agents could truncate or forge their own trail. Fixed on v5 by #6303
