@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -320,4 +321,37 @@ func qualifyClaimRepo(org, repo string) string {
 		return org + "/" + repo
 	}
 	return repo
+}
+
+// ledgerClaimLookup adapts the ledger to the GitHub client's fallback claim
+// source (github.Client.SetIssueClaimLedger): the enumeration-time claim
+// read and the in-progress sweep see a ledger claim whose 🔒 marker comment
+// was never posted (per-issue comment budget, forge write failure) instead
+// of reading "no claim" and flipping stage/020-claimed back to actionable.
+// The ledger is resolved per call because it is built after the client can
+// first be configured.
+func ledgerClaimLookup(ledger func() *claims.Ledger) func(repo string, number int) (issueclaim.Claim, bool) {
+	if ledger == nil {
+		return nil
+	}
+	return func(repo string, number int) (issueclaim.Claim, bool) {
+		l := ledger()
+		if l == nil || number <= 0 {
+			return issueclaim.Claim{}, false
+		}
+		c, ok := l.Lookup(repo, number)
+		if !ok {
+			return issueclaim.Claim{}, false
+		}
+		return issueclaim.Claim{
+			Identity:  c.Holder,
+			StartedAt: c.ClaimedAt,
+			ExpiresAt: c.ExpiresAt,
+			Source:    issueclaim.SourceLease,
+			Kind:      string(c.Kind),
+			Hive:      c.Hive,
+			Tier:      c.Tier,
+			Verified:  c.Verified,
+		}, true
+	}
 }

@@ -55,6 +55,36 @@ func (c *Client) issueClaimsSetting() (bool, time.Duration) {
 	return enabled, ttl
 }
 
+// SetIssueClaimLedger installs the hub's own claim ledger as the fallback
+// claim source. The ledger is authoritative for the hub's decisions (the
+// scheduler already withholds a ledger-claimed issue from kicks); the forge
+// marker it mirrors is a budgeted comment that can be suppressed, so without
+// this fallback the in-progress sweep and the stage engine read "no claim",
+// strip stage/020-claimed and flip the issue back to 010-actionable while
+// the ledger still holds it. fn returns the live claim only. Nil disables.
+func (c *Client) SetIssueClaimLedger(fn func(repo string, number int) (issueclaim.Claim, bool)) {
+	if c == nil {
+		return
+	}
+	c.issueClaimLedger = fn
+}
+
+// ledgerClaimFor reads the ledger fallback for one issue; false when no
+// ledger is installed or it holds no live claim at now.
+func (c *Client) ledgerClaimFor(owner, repo string, number int, now time.Time) (issueclaim.Claim, bool) {
+	if c == nil || c.issueClaimLedger == nil {
+		return issueclaim.Claim{}, false
+	}
+	claim, ok := c.issueClaimLedger(owner+"/"+repo, number)
+	if !ok || !claim.Live(now) {
+		return issueclaim.Claim{}, false
+	}
+	if claim.Source == "" {
+		claim.Source = issueclaim.SourceLease
+	}
+	return claim, true
+}
+
 // annotateIssueClaims sets ClaimedBy / ClaimExpiresAt / ClaimSource on every
 // issue in the slice that carries a LIVE claim at now. A fetch failure for one
 // issue leaves that issue unannotated (fail open: an unreadable claim must
@@ -92,6 +122,21 @@ func (c *Client) annotateIssueClaims(ctx context.Context, owner, repo string, is
 // call, so an expiring claim releases the issue on the next enumeration
 // without a fetch.
 func (c *Client) issueClaimFor(ctx context.Context, owner, repo string, issue *Issue, ttl time.Duration, now time.Time) (issueclaim.Claim, bool, error) {
+	claim, found, err := c.forgeClaimFor(ctx, owner, repo, issue, ttl, now)
+	if err != nil || found {
+		return claim, found, err
+	}
+	// No live marker or assignee on the forge: the hub's ledger may still
+	// hold the claim (its 🔒 comment is budgeted and can be suppressed).
+	if claim, ok := c.ledgerClaimFor(owner, repo, issue.Number, now); ok {
+		return claim, true, nil
+	}
+	return issueclaim.Claim{}, false, nil
+}
+
+// forgeClaimFor is the forge half of issueClaimFor: the marker comment read
+// through the updated_at-keyed cache, then the assignee inference.
+func (c *Client) forgeClaimFor(ctx context.Context, owner, repo string, issue *Issue, ttl time.Duration, now time.Time) (issueclaim.Claim, bool, error) {
 	key := issue.Repo + "#" + strconv.Itoa(issue.Number)
 
 	c.issueClaimMu.Lock()

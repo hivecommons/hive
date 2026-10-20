@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -167,6 +168,11 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// issueClaimLedger resolves the hub's own live ledger claim for an issue
+	// (issue_claims.go, SetIssueClaimLedger). Consulted only when the forge
+	// carries no live marker: the 🔒 comment is budgeted and can be
+	// suppressed, and a claim the ledger holds must still read as a claim.
+	issueClaimLedger func(repo string, number int) (issueclaim.Claim, bool)
 	// inProgress resolves the hive/in-progress start-signal setting (see
 	// issue_inprogress.go). Nil → the label is not applied or swept.
 	inProgress func() InProgressSetting
