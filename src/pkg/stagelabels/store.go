@@ -568,6 +568,14 @@ func IsRegression(from, to Stage) bool {
 		}
 		return to != ReviewPending && to != Reviewed
 	case Fixing, NeedsAuthor, ReturnedToContributor:
+		// 070/071/072 are one "someone must fix this head" state split by
+		// who owes the fix. Moving between them re-attributes the work
+		// (072 → 070 when the hive's own follow-up commit is what broke
+		// the squash sign-off gate, 072 → 071 when the author kind is
+		// learned late); nothing moved backwards for the author.
+		if to == Fixing || to == NeedsAuthor || to == ReturnedToContributor {
+			return false
+		}
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
