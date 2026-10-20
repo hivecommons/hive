@@ -582,10 +582,12 @@ var dcoDefs = map[DCOState]LabelDef{
 	DCONo:  {Name: NoDCOLabel, Color: NoDCOColor, Description: "A commit is missing Signed-off-by — run `git rebase --signoff`"},
 }
 
-// LegacyDCOLabels are the Prow dco plugin's labels. They are retired on
-// hive-managed repos: once the hive has read a head's commits it removes
-// them so a PR shows exactly one DCO pill. Readers still ACCEPT them during
-// the migration (DCOFromLabels).
+// LegacyDCOLabels are the Prow dco plugin's labels. They belong to Prow (and
+// the repo's DCO workflow), which re-add them on every sync, so the hive
+// NEVER adds or removes them: #12544 tried to retire them and produced a
+// label war on every open PR (hivecommons/hive#13125 — one remove by the
+// stage writer, one re-add by Prow, every few minutes). Readers still
+// ACCEPT them as a fallback verdict (DCOFromLabels).
 var LegacyDCOLabels = []string{LegacyDCOYes, LegacyDCONo}
 
 const (
@@ -607,20 +609,19 @@ func (d DCOState) String() string {
 	return "unknown"
 }
 
-// IsLegacyDCO reports whether label is one of Prow's dco-signoff labels.
+// LegacyDCOPrefix is the stem every Prow dco plugin label shares.
+const LegacyDCOPrefix = "dco-signoff:"
+
+// IsLegacyDCO reports whether label is a Prow dco-signoff label (any
+// `dco-signoff:*` spelling). The hive reads these and never writes them.
 func IsLegacyDCO(label string) bool {
-	for _, l := range LegacyDCOLabels {
-		if strings.EqualFold(strings.TrimSpace(label), l) {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(label)), LegacyDCOPrefix)
 }
 
-// dcoOwned reports whether label belongs to the DCO family the hive
-// reconciles (its own pair plus the retired Prow pair).
+// dcoOwned reports whether label is one of the hive's own DCO pair. Exact
+// names only: Prow's `dco-signoff: *` share the "dco" stem but are foreign.
 func dcoOwned(label string) bool {
-	return label == DCOLabel || label == NoDCOLabel || IsLegacyDCO(label)
+	return label == DCOLabel || label == NoDCOLabel
 }
 
 // DCOFromLabels reads the DCO verdict a label set carries. The hive's own
@@ -672,8 +673,8 @@ type Desired struct {
 // Any `stage/*`, `role/*` or `author/*` label not wanted — including a
 // label from a previous table and the retired `author/<tier>` role
 // spellings — is removed. With Kind unset, `author/<kind>` labels are kept
-// as found. The `dco` / `no-dco` pair (and Prow's retired `dco-signoff: *`)
-// is reconciled only when want.DCO is known. Non-hive labels are never
+// as found. The `dco` / `no-dco` pair is reconciled only when want.DCO is
+// known. Non-hive labels — including Prow's `dco-signoff: *` — are never
 // touched.
 func Plan(current []string, want Desired) (add, remove []string) {
 	wanted := map[string]bool{}
@@ -702,15 +703,15 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		if wanted[l] {
 			continue
 		}
-		// The DCO family (own pair + Prow's legacy pair) is reconciled only
-		// once the commit check has spoken; an unread head keeps its pills.
+		// The hive's own DCO pair is reconciled only once the commit check
+		// has spoken; an unread head keeps its pill.
 		if dcoOwned(l) {
 			if want.DCO != DCOUnknown {
 				remove = append(remove, l)
 			}
 			continue
 		}
-		if !Owned(l) {
+		if IsLegacyDCO(l) || !Owned(l) {
 			continue
 		}
 		if want.Kind == authorkind.Unknown && strings.HasPrefix(l, AuthorPrefix) && !IsLegacyRole(l) {

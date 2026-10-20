@@ -1795,7 +1795,8 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor"}) {
 		t.Fatalf("added %v", api.added)
 	}
-	if !reflect.DeepEqual(api.removed, []string{"dco-signoff: yes"}) {
+	// Prow's `dco-signoff: yes` is foreign and stays (hivecommons/hive#13125).
+	if len(api.removed) != 0 {
 		t.Fatalf("removed %v", api.removed)
 	}
 	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "@alice") || !strings.Contains(api.comments[0], "2 commits are missing the `Signed-off-by` trailer (DCO) — run `git rebase --signoff HEAD~3 && git push --force-with-lease`") {

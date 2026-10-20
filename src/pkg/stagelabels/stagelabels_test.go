@@ -120,8 +120,9 @@ func TestAllLabelDefsColours(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#12542: exactly one of `dco` / `no-dco`, Prow's legacy pair
-// stripped once the commit check has spoken, nothing touched while unknown.
+// hivecommons/hive#12542: exactly one of `dco` / `no-dco` once the commit
+// check has spoken, nothing touched while unknown. Prow's `dco-signoff: *`
+// pair is foreign (hivecommons/hive#13125) and is left alone in every case.
 func TestPlanDCO(t *testing.T) {
 	base := Desired{Stage: ReviewPending, Role: RoleContributor}
 	cur := []string{"stage/050-review-pending", "role/contributor", "dco-signoff: yes", "bug"}
@@ -129,13 +130,13 @@ func TestPlanDCO(t *testing.T) {
 	yes := base
 	yes.DCO = DCOYes
 	add, remove := Plan(cur, yes)
-	if !reflect.DeepEqual(add, []string{DCOLabel}) || !reflect.DeepEqual(remove, []string{LegacyDCOYes}) {
+	if !reflect.DeepEqual(add, []string{DCOLabel}) || len(remove) != 0 {
 		t.Fatalf("yes: add=%v remove=%v", add, remove)
 	}
 	no := base
 	no.DCO = DCONo
 	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCONo}, no)
-	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel, LegacyDCONo}) {
+	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel}) {
 		t.Fatalf("no: add=%v remove=%v", add, remove)
 	}
 	// Unknown keeps whatever is there, own or legacy.
@@ -143,10 +144,54 @@ func TestPlanDCO(t *testing.T) {
 	if len(add)+len(remove) != 0 {
 		t.Fatalf("unknown: add=%v remove=%v", add, remove)
 	}
-	// Idempotent.
-	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel}, yes)
-	if len(add)+len(remove) != 0 {
-		t.Fatalf("idempotent: add=%v remove=%v", add, remove)
+	// Idempotent — and still idempotent with Prow's pill alongside ours,
+	// which is the steady state on a repo where the Prow dco plugin runs.
+	for _, cur := range [][]string{
+		{"stage/050-review-pending", "role/contributor", DCOLabel},
+		{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCOYes},
+		{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCONo},
+	} {
+		add, remove = Plan(cur, yes)
+		if len(add)+len(remove) != 0 {
+			t.Fatalf("idempotent %v: add=%v remove=%v", cur, add, remove)
+		}
+	}
+}
+
+// hivecommons/hive#13125: the writer re-added nothing and removed
+// `dco-signoff: yes` every cycle while Prow / the DCO workflow put it back —
+// a label war on every open PR. Labels other tools own must never appear in
+// a plan, whatever the desired state, on PRs or issues.
+func TestPlanNeverTouchesThirdPartyLabels(t *testing.T) {
+	foreign := []string{
+		LegacyDCOYes, LegacyDCONo, "DCO-Signoff: Yes", "dco-signoff: pending",
+		"lgtm", "approved", "needs-rebase", "ok-to-test",
+		"tide/merge-method-squash",
+		"do-not-merge/hold", "do-not-merge/work-in-progress",
+		"size/XS", "size/XXL",
+		"kind/bug", "kind/feature",
+		"dco", // exact own name, wanted below — listed to prove exactness
+	}
+	wants := []Desired{
+		{},
+		{Stage: ReviewPending, Role: RoleContributor, DCO: DCOYes},
+		{Stage: ReviewPending, Role: RoleContributor, DCO: DCONo},
+		{Stage: ReturnedToContributor, Role: RoleContributor, Kind: authorkind.Human, Stalled: true, DCO: DCONo},
+		{Stage: MergeQueue, Role: RoleTrusted, DCO: DCOYes},
+	}
+	for _, want := range wants {
+		cur := append([]string{"stage/050-review-pending", "role/contributor", "author/human"}, foreign...)
+		add, remove := Plan(cur, want)
+		for _, l := range append(add, remove...) {
+			if l == DCOLabel || l == NoDCOLabel {
+				continue
+			}
+			for _, f := range foreign {
+				if l == f {
+					t.Errorf("want=%+v: plan touched third-party label %q (add=%v remove=%v)", want, l, add, remove)
+				}
+			}
+		}
 	}
 }
 

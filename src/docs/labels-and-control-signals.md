@@ -517,13 +517,15 @@ On an ungated repo an unsigned head keeps the lane's stage, carries `no-dco`
 as information only, and the nudge does not ask for a rebase.
 
 Prow's `dco-signoff: yes` / `dco-signoff: no` (the Prow `dco` plugin's
-hard-coded names) are **retired** on hive-managed repos: once the hive has
-read a head's commits it removes them, so a PR shows exactly one DCO pill.
-Readers (`stagelabels.DCOFromLabels`, used by the merge-eligible export)
-still honour the legacy pair when neither hive label is present, so nothing
-breaks while Prow's plugin is being switched off. GitHub cannot colour one
-label name two ways, which is why the red case is `no-dco` rather than a red
-`dco`.
+hard-coded names, also written by the repo's DCO workflow) are **foreign**:
+the hive never adds or removes them. #12544 tried to retire them from the
+stage pass and produced a label war (#13125: the writer removed
+`dco-signoff: yes`, Prow re-added it, every few minutes on every open PR),
+so a PR on a Prow-gated repo shows both pills until the Prow plugin is
+disabled in `plugins.yaml`. Readers (`stagelabels.DCOFromLabels`, used by
+the merge-eligible export) honour the Prow pair when neither hive label is
+present. GitHub cannot colour one label name two ways, which is why the red
+case is `no-dco` rather than a red `dco`.
 
 
 ### `author/*` — who wrote this PR?
@@ -1072,11 +1074,11 @@ and the in-progress sweep still recognises `hive/in-progress` as a trigger for
 one migration cycle so a lapsed mark from an older spoke is cleared rather
 than orphaned. `hive/claimed-by-<who>` is kept as the grey "who" modifier.
 
-Prow's `dco-signoff: yes` / `dco-signoff: no` are retired the same way
-(#12542): the stage pass removes them from an open PR as soon as it has read
-that head's commits and written `dco` / `no-dco`; readers accept the legacy
-pair until then. The Prow `dco` plugin itself must be disabled for the org in
-the Prow `plugins.yaml` (kubestellar/infra) or it will keep re-adding them.
+Prow's `dco-signoff: yes` / `dco-signoff: no` are **not** retired by the
+hive (#13125): Prow and the DCO workflow own them and re-add them on every
+sync, so the stage pass leaves them alone and only writes its own `dco` /
+`no-dco`. Readers accept the Prow pair as a fallback verdict. Retiring them
+is a Prow `plugins.yaml` (kubestellar/infra) change, not a hive write.
 
 ## Matching rules
 
