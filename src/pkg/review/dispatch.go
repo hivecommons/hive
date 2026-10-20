@@ -706,16 +706,21 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 
 // fixPushAllowed is the authorship check in front of every fix kick. A fix
 // kick tells an agent to push a commit onto the PR branch, so it is only ever
-// dispatched for a PR the hive itself opened. AllAuthors is deliberately not
-// consulted: it widens what is REVIEWED, and reviewing a contributor's PR is
-// not a reason to rewrite it (hivecommons/hive#8421). review.fix_human_prs is
-// not consulted either: the fixer's commit is signed off by the hive, the
-// squash merge is attributed to the PR author, and the squash sign-off gate
-// rejects that pair as bot-signoff — a red the hive cannot repair, since it
-// cannot sign off for the author. Everyone else's PRs get the fix as a
-// suggestion in the review instead (hivecommons/hive#12897).
+// dispatched when the PR's LOGIN author is an agent or App login. AllAuthors
+// is deliberately not consulted: it widens what is REVIEWED, and reviewing a
+// contributor's PR is not a reason to rewrite it (hivecommons/hive#8421).
+// review.fix_human_prs is not consulted either. The fixer's commit is signed
+// off by the hive, the squash merge is attributed to the PR's login author,
+// and the squash sign-off gate skips only when that login is a bot; otherwise
+// every sign-off must name the author, so a hive-signed commit fails as
+// bot-signoff and the hive cannot repair it (it cannot sign off for a person).
+// That holds for a HiveAttributed or AuthorAgent PR under a person login too
+// (a contributor-relay PR): hiveAuthored is true for it, but a hive-signed fix
+// would still fail, so the push is withheld and the fix is proposed in the
+// review. The contributor relay's fix-pr task is the path that can land a
+// correctly signed commit (hivecommons/hive#12897, hivecommons/hive#13124).
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
-	return hiveAuthored(pr, opts)
+	return isAgentAuthored(pr.Author, opts.AIAuthor)
 }
 
 // withholdFix records that a changes_requested PR got no fix kick because
@@ -728,9 +733,9 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, opts DispatchOptions, now tim
 			return
 		}
 	}
-	reason := "PR was not opened by a hive agent; review published, fix not pushed"
+	reason := "PR's login author is not a hive agent; review published, fix not pushed"
 	if opts.FixHumanPRs {
-		reason = "PR was not opened by a hive agent; a hive-signed fix commit would fail the squash sign-off gate, so the fix was proposed in the review, not pushed"
+		reason = "PR's login author is not a hive agent; a hive-signed fix commit would fail the squash sign-off gate, so the fix was proposed in the review, not pushed"
 	}
 	w := WithheldFix{
 		Repo:           pr.Repo,
