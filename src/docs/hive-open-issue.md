@@ -216,7 +216,12 @@ watcher posts one bot comment carrying a timestamped start marker
 until=<at+agent TTL> -->`) so maintainers can see exactly when an agent
 began a PR for the issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Every kick
 instructs the agent to claim before touching an issue; while the marker is
-live every hive that scans the repo withholds the issue from kicks. The claim
+live every hive that scans the repo withholds the issue from kicks. The hold
+ends early when the hive relaunches the agent's CLI (hive boot, a restart):
+the context that claimed is gone, so the ledger releases the agent's claims
+and posts a `<!-- hive:release who=<agent> kind=agent reason=… at=<RFC3339> -->`
+comment that readers of the 🔒 marker honour, instead of parking the issue at
+`stage/020-claimed` until `until=`. The claim
 is refused (exit non-zero, reason in the result) on a pull request, on an
 issue labelled `needs-human` or held, on an issue parked on a person's
 decision (`stage/045-needs-decision`, `needs-spec`, the retired decision
