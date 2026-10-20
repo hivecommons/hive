@@ -249,6 +249,16 @@ run_krun() {
     HIVE_KRUN_KVM_DEVICE="$FAKE_KVM" STUB_HOST_KERNEL=6.11.0-host "$@"
 }
 
+# The same launch selected by the `krun` mode argument (#13249) instead of
+# HIVE_CONTAINER_OCI_RUNTIME; the args must carry the mode.
+run_krun_mode() {
+  local runtime="$1" args="$2"
+  shift 2
+  run_recipe "$runtime" "$args" \
+    CONTRIBUTOR_MODE=headless \
+    HIVE_KRUN_KVM_DEVICE="$FAKE_KVM" STUB_HOST_KERNEL=6.11.0-host "$@"
+}
+
 # The captured argv with the per-run parts (work dir, container suffix)
 # replaced by stable placeholders.
 normalized_capture() {
@@ -410,6 +420,62 @@ contains "bad CPU value is named" "$OUT" "got 'abc'"
 started_nothing "krun with HIVE_CONTAINER_CPUS=abc"
 
 echo ""
+echo "-- unknown backend or mode is refused before anything starts (#13249) --"
+OUT="$(run_recipe docker krun-typo)"; RC=$?
+check "unknown backend exits non-zero" "1" "$RC"
+contains "unknown backend is named" "$OUT" "Unknown backend 'krun-typo'"
+contains "unknown backend refusal shows the usage" "$OUT" "Usage: just contribute-hive [backend] [docker|local|krun]"
+lacks "unknown backend never reaches the container's CLI check" "$OUT" "CLI not found"
+started_nothing "unknown backend"
+
+OUT="$(run_recipe docker "codex kurn")"; RC=$?
+check "unknown mode exits non-zero" "1" "$RC"
+contains "unknown mode is named" "$OUT" "Unknown mode 'kurn'"
+contains "unknown mode refusal lists the accepted modes" "$OUT" "Accepted: docker (default), local, krun"
+started_nothing "unknown mode"
+
+OUT="$(run_recipe docker "codex docker")"; RC=$?
+check "explicit docker mode still launches" "0" "$RC"
+
+OUT="$(run_krun_mode "" "codex krun" HIVE_CONTAINER_OCI_RUNTIME=kata)"; RC=$?
+check "krun mode with HIVE_CONTAINER_OCI_RUNTIME=kata exits non-zero" "1" "$RC"
+contains "krun-vs-kata conflict is named" "$OUT" "mode 'krun' conflicts with HIVE_CONTAINER_OCI_RUNTIME=kata"
+started_nothing "krun mode with HIVE_CONTAINER_OCI_RUNTIME=kata"
+
+OUT="$(run_krun_mode "" "codex krun" HIVE_CONTAINER_OCI_RUNTIME=krun)"; RC=$?
+check "krun mode agreeing with HIVE_CONTAINER_OCI_RUNTIME=krun launches" "0" "$RC"
+check "agreeing krun mode sets the krun runtime" "krun" "$(arg_after --runtime)"
+
+# The pre-fix error told operators to run exactly this; it must refuse, not
+# drop `local` and launch a krun container.
+OUT="$(run_krun_mode "" "krun local")"; RC=$?
+check "krun local exits non-zero" "1" "$RC"
+contains "krun local is refused as two modes" "$OUT" "'krun' and 'local' are both modes"
+started_nothing "krun local"
+
+OUT="$(run_krun_mode "" "local krun")"; RC=$?
+check "local krun exits non-zero" "1" "$RC"
+contains "local krun is refused as two modes" "$OUT" "'local' and 'krun' are both modes"
+started_nothing "local krun"
+
+OUT="$(run_krun_mode "" "codex krun" STUB_UNAME_S=Darwin)"; RC=$?
+check "krun mode goes through the krun preflight" "1" "$RC"
+contains "krun mode on macOS gets the krun refusal" "$OUT" "already run inside a Linux VM"
+started_nothing "krun mode on macOS"
+
+# Defence in depth for an image launched by hand with an unknown backend: the
+# entrypoint must not suggest `just contribute-hive krun local`, since there
+# is no host CLI for it to fall back to (#13249). The stub PATH has no
+# `krun` binary, so detect_cli reports NOT_INSTALLED.
+OUT="$(cd "$ROOT" && env "${ENV_UNSET[@]}" HOME="$FAKE_HOME" PATH="$STUB_BIN:/usr/bin:/bin" \
+  AGENT_BACKEND=krun HIVE_HUB=wss://hive.example.test/contribute \
+  HIVE_REGISTRATION_TOKEN=placeholder-registration-token \
+  timeout 60 bash bin/contributor-agent.sh 2>&1)"; RC=$?
+check "entrypoint with an unknown backend exits non-zero" "1" "$RC"
+contains "entrypoint names the unknown backend" "$OUT" "'krun' is not a supported backend. Supported:"
+lacks "entrypoint suggests no local fallback for it" "$OUT" "just contribute-hive krun local"
+
+echo ""
 echo "-- krun picks podman without changing docker-first detection (#12199) --"
 OUT="$(run_krun "" codex)"; RC=$?
 check "krun launch with auto-detection succeeds" "0" "$RC"
@@ -509,6 +575,24 @@ contains "banner says vCPUs follow the host" "$OUT" "vCPUs follow the host's CPU
 OUT="$(run_krun "" codex HIVE_CONTAINER_MEMORY=6g)"; RC=$?
 check "krun with 6g succeeds" "0" "$RC"
 contains "6g gives a 4608 MiB guest" "$(cat "$CAPTURE")" "krun.ram_mib=4608"
+
+echo ""
+echo "-- the krun mode argument is the env-var launch (#13249) --"
+OUT="$(run_krun "" codex)"; RC=$?
+check "env-var krun reference launch succeeds" "0" "$RC"
+KRUN_REFERENCE="$(normalized_capture)"
+for args in "codex krun" krun; do
+  OUT="$(run_krun_mode "" "$args")"; RC=$?
+  check "'$args' launch succeeds" "0" "$RC"
+  check "'$args' launch sets the krun runtime" "krun" "$(arg_after --runtime)"
+  if [ "$(normalized_capture)" = "$KRUN_REFERENCE" ]; then
+    pass "'$args' run argv equals the HIVE_CONTAINER_OCI_RUNTIME=krun launch"
+  else
+    fail "'$args' run argv equals the HIVE_CONTAINER_OCI_RUNTIME=krun launch" \
+      "$(diff <(printf '%s\n' "$KRUN_REFERENCE") <(normalized_capture) | head -20)"
+  fi
+  contains "'$args' banner has the Isolation line" "$OUT" "Isolation: microVM (krun)"
+done
 
 OUT="$(run_krun "" codex STUB_VIRT=kvm)"; RC=$?
 check "krun on a nested host succeeds" "0" "$RC"

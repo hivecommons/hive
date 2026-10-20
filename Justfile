@@ -923,6 +923,13 @@ contribute-hive backend="" mode="docker": check-version
     _BACKEND="{{backend}}"
     _MODE="{{mode}}"
     if [[ "$_BACKEND" == "local" || "$_BACKEND" == "docker" || "$_BACKEND" == "krun" ]]; then
+      # The shortcut only stands in for an omitted backend; a second word is
+      # then a second mode (`krun local`, #13249), not something to discard.
+      if [[ "$_MODE" != "docker" ]]; then
+        echo "ERROR: '${_BACKEND}' and '${_MODE}' are both modes; give at most one."
+        echo "  Usage: just contribute-hive [backend] [docker|local|krun]"
+        exit 1
+      fi
       _MODE="$_BACKEND"
       _BACKEND=""
     fi

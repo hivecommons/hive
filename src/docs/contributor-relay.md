@@ -1915,10 +1915,14 @@ loaded, and **before** backend detection and the tmux/CLI launch. Hooks are
   `backend_perm_flag()` and the override survives, because nothing reloads the
   defaults after the seam runs.
 
-A minimal derived image:
+A minimal derived image. The base tag must match the launcher's channel:
+`:edge` for a v6 checkout, `:latest` for v5 (see `HIVE_CONTRIBUTOR_IMAGE` in
+[env-vars.md](env-vars.md)). Deriving from the other channel reproduces
+[#13248](https://github.com/hivecommons/hive/issues/13248), since the
+launcher's entrypoint features are missing from the image.
 
 ```dockerfile
-FROM ghcr.io/hivecommons/hive-contributor:latest
+FROM ghcr.io/hivecommons/hive-contributor:edge
 COPY 10-my-setup.sh /etc/hive/entrypoint.d/10-my-setup.sh
 ```
 
