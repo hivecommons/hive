@@ -125,19 +125,28 @@ func TestAgentPRFixUnaffectedByFixHumanPRs(t *testing.T) {
 	}
 }
 
-// TestHiveMediatedPRUnderPersonLoginIsStillFixed: a PR an agent opened on a
-// person's credentials shows the person as author. The attribution trailer
-// and the audit-trail agent are the two ways the hive recognises it as its
-// own, and either one keeps the fix path open without the toggle.
-func TestHiveMediatedPRUnderPersonLoginIsStillFixed(t *testing.T) {
+// TestHiveMediatedPRUnderPersonLoginIsWithheld: a PR an agent opened on a
+// person's credentials shows the person as author, and the squash is
+// attributed to that login. The attribution trailer and the audit-trail agent
+// still make it the hive's own for review, but a hive-signed fix would fail
+// the squash sign-off gate as bot-signoff, so the push is withheld and the
+// fix is proposed in the review (hivecommons/hive#13124).
+func TestHiveMediatedPRUnderPersonLoginIsWithheld(t *testing.T) {
 	attributed := humanPR("sha1")
 	attributed.HiveAttributed = true
 	audited := humanPR("sha1")
 	audited.AuthorAgent = "scanner"
 	for name, pr := range map[string]PullRequest{"hive_attributed": attributed, "author_agent": audited} {
 		plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{changesRequestedFor(pr)}}, DispatchState{}, fixGateOpts(false))
-		if len(plan.FixKicks) != 1 || len(plan.WithheldFixes) != 0 {
-			t.Fatalf("%s: fixes=%d withheld=%d, want 1 / 0", name, len(plan.FixKicks), len(plan.WithheldFixes))
+		if len(plan.FixKicks) != 0 || len(plan.WithheldFixes) != 1 || len(plan.State.Human) != 0 {
+			t.Fatalf("%s: fixes=%d withheld=%d human=%d, want 0 / 1 / 0", name, len(plan.FixKicks), len(plan.WithheldFixes), len(plan.State.Human))
+		}
+		if got := plan.WithheldFixes[0].Author; got != pr.Author {
+			t.Fatalf("%s: withheld entry author = %q, want %q", name, got, pr.Author)
+		}
+		review := PlanDispatch([]PullRequest{pr}, Artifact{}, DispatchState{}, fixGateOpts(false))
+		if len(review.ReviewKicks) != 1 || !strings.Contains(review.ReviewKicks[0].Message, "PROPOSE FIXES, DO NOT PUSH THEM.") {
+			t.Fatalf("%s: review prompt lacks the propose-only instruction", name)
 		}
 	}
 }
@@ -181,8 +190,14 @@ func TestNonAdoptedPendingFixIsNotRekicked(t *testing.T) {
 	if len(plan.FixKicks) != 0 || len(plan.State.Fixes) != 1 || plan.State.Fixes[0].Attempts != 1 {
 		t.Fatalf("ordinary pending fix changed: fixes=%d state=%+v", len(plan.FixKicks), plan.State.Fixes)
 	}
-	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedPending {
-		t.Fatalf("fix exclusions = %+v, want pending exclusion", plan.FixExclusions)
+	// A hive-attributed PR under a person login never reaches the fix path
+	// (hivecommons/hive#13124): the push is withheld, so the exclusion is
+	// not-hive-authored rather than pending. Either way it is not re-kicked.
+	if len(plan.FixExclusions) != 1 || plan.FixExclusions[0].Reason != FixDispatchExcludedNotHiveAuthored {
+		t.Fatalf("fix exclusions = %+v, want not-hive-authored exclusion", plan.FixExclusions)
+	}
+	if len(plan.WithheldFixes) != 1 {
+		t.Fatalf("withheld fixes = %+v, want the hive-attributed person-login PR withheld", plan.WithheldFixes)
 	}
 }
 

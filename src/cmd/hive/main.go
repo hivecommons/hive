@@ -9913,8 +9913,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			BodyDigest: pr.BodyDigest,
 			URL:        pr.URL,
 			Lane:       string(lane),
-			// Authorship signal for the fix gate (#8421): a PR an agent opened
-			// on a person's credentials is still the hive's own work.
+			// Attribution trailer, carried for consumers and the audit trail.
+			// Not a planner input: the fix gate decides on the login author
+			// alone (#8421, #13124).
 			HiveAttributed: pr.HiveAttributed,
 			// Grounding anchor for the review prompt. Repo access is the
 			// measured active ingredient in review quality (17%→67% hit rate,
