@@ -10,7 +10,12 @@
 # error is the pass condition; an HTTP response is the failure. A control
 # fetch against a normally-trusted host proves the bundle was not emptied.
 #
-# Usage: test_image_ca_distrust.sh --image <ref>
+# Usage: test_image_ca_distrust.sh --image <ref> [--platform <os/arch>]
+#
+# --platform is passed to `docker run` so a cross-built image (e.g. arm64 on
+# an amd64 runner under QEMU) runs without docker's "requested image's
+# platform does not match" warning; that warning goes to stderr, which the
+# node probes below ignore, but naming the platform is the honest fix.
 #
 # Network is required (the endpoints are public). If the test host itself is
 # unreachable (DNS/connect failure rather than a TLS verify failure) the check
@@ -19,9 +24,11 @@
 set -euo pipefail
 
 IMAGE=""
+PLATFORM="${CA_DISTRUST_PLATFORM:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --image) IMAGE="$2"; shift 2 ;;
+    --platform) PLATFORM="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -43,7 +50,18 @@ skip() { echo "  SKIP  $*"; SKIP=$((SKIP+1)); }
 
 # in_image <cmd...>: run a command in the image as root with no entrypoint.
 in_image() {
-  docker run --rm --entrypoint sh "$IMAGE" -c "$1"
+  if [ -n "$PLATFORM" ]; then
+    docker run --rm --platform "$PLATFORM" --entrypoint sh "$IMAGE" -c "$1"
+  else
+    docker run --rm --entrypoint sh "$IMAGE" -c "$1"
+  fi
+}
+
+# node_out <url>: the probe prints exactly one stdout line (TRUSTED/REJECTED/
+# NETWORK ...). Only stdout is parsed; docker's own stderr chatter (platform
+# warnings, pull progress) must never be mistaken for probe output.
+node_out() {
+  in_image "$node_probe '$1'" 2>/dev/null | tail -n 1 || true
 }
 
 echo "=== CA distrust check: $IMAGE ==="
@@ -74,7 +92,7 @@ esac
 node_probe='node -e "fetch(process.argv[1]).then(r=>console.log(\"TRUSTED\",r.status)).catch(e=>{const c=e.cause?.code||e.message;console.log(/CERT|SSL|certificate/i.test(c)?\"REJECTED\":\"NETWORK\",c)})" '
 if in_image "command -v node" >/dev/null 2>&1; then
   for url in "${ENDPOINTS[@]}"; do
-    out="$(in_image "$node_probe '$url'" 2>&1 || true)"
+    out="$(node_out "$url")"
     case "$out" in
       REJECTED*) ok "node rejects $url ($out)" ;;
       TRUSTED*)  bad "node TRUSTED $url ($out)" ;;
@@ -82,7 +100,7 @@ if in_image "command -v node" >/dev/null 2>&1; then
       *)         bad "node unexpected output for $url: $out" ;;
     esac
   done
-  out="$(in_image "$node_probe '$CONTROL'" 2>&1 || true)"
+  out="$(node_out "$CONTROL")"
   case "$out" in
     TRUSTED*) ok "node control still trusts $CONTROL" ;;
     NETWORK*) skip "node could not reach control $CONTROL ($out)" ;;

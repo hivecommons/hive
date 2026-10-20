@@ -495,7 +495,7 @@ jobs:
           else
             IMG=hive-freshness-probe:local
           fi
-          bash src/deploy/test_image_ca_distrust.sh --image "$IMG"
+          bash src/deploy/test_image_ca_distrust.sh --image "$IMG" --platform "${{ matrix.platform }}"
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
