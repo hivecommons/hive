@@ -258,9 +258,9 @@ stateDiagram-v2
     s030 --> s040: PR opened
     s030 --> s010: PR request failed / start mark lapsed with no PR
     s030 --> s020: PR evidence lapsed while the claim is still held (backward hop, commented)
-    s040 --> s010: covering PR closed unmerged with no live claim or start marker (backward hop, commented)
-    s040 --> s030: covering PR closed while a PR request / start marker is still live (backward hop, commented)
-    s040 --> s020: covering PR closed while the claim is still held (backward hop, commented)
+    s040 --> s010: covering PR closed unmerged with no live claim or start marker (backward hop, narrated on the PR)
+    s040 --> s030: covering PR closed while a PR request / start marker is still live (backward hop, narrated on the PR)
+    s040 --> s020: covering PR closed while the claim is still held (backward hop, narrated on the PR)
     s040 --> s050: the PR takes over (issue stays 040)
     s050 --> s060: swarm approve
     s060 --> s080: CI green, author side done
@@ -329,9 +329,11 @@ payload carries no comment count or activity timestamp the hive did not
 bump itself (`updated_at` moves on every hive write, #12491) — the PR
 engine's no-activity clock and `stalled.require_quiet` below do not apply
 to issues. When the issue falls back between its own stages (a claim or
-kick lapsed with no PR: 020 → 010 or 030 → 010, both drawn in the
-diagram so the transition monitor does not count them as anomalies) it gets
-one explanatory comment and a history hop in the store. The claim
+kick lapsed with no PR: 020 → 010, 030 → 010 or 030 → 020, all drawn in
+the diagram so the transition monitor does not count them as anomalies) it
+gets one explanatory comment and a history hop in the store. Falls out of
+040 (covering PR closed: 040 → 010/030/020, also drawn) record the hop but
+are not commented on the issue — the covering PR narrates its own close. The claim
 relay (`hive-open-issue claim`) writes `hive/claimed-by-<who>` itself and
 submits a *fact* to the stage engine (`stageengine.FactSink`, ADR-0025) —
 `Claimed` / `InProgress` — which re-reads the issue and writes
