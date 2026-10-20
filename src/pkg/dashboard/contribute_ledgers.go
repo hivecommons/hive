@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/worksource"
@@ -67,6 +68,20 @@ const (
 // machine-readable reasons ("maintainer_gated", "already_covered") plus a short
 // free-text explanation.
 const noWorkReasonMaxLen = 200
+
+// truncateReasonBytes caps a reason at noWorkReasonMaxLen bytes without splitting
+// a UTF-8 rune. It preserves the retained text verbatim for ledger auditing;
+// GitHub comments apply their additional sanitization in sanitizeReportedReason.
+func truncateReasonBytes(reason string) string {
+	if len(reason) <= noWorkReasonMaxLen {
+		return reason
+	}
+	cut := noWorkReasonMaxLen
+	for cut > 0 && !utf8.RuneStart(reason[cut]) {
+		cut--
+	}
+	return reason[:cut]
+}
 
 var completedTasksFile = "/data/contributors/completed-tasks.json"
 
