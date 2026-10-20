@@ -2,10 +2,13 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -74,6 +77,7 @@ func TestHandleWebhookEventInvalidatesPerEventType(t *testing.T) {
 		{"pull_request", "pull_request", `{"action":"synchronize","number":2,"pull_request":{"number":2},"repository":{"full_name":"org/repo"}}`, []int{2}},
 		{"pull_request number only", "pull_request", `{"action":"labeled","number":1,"repository":{"full_name":"org/repo"}}`, []int{1}},
 		{"pull_request_review", "pull_request_review", `{"action":"submitted","pull_request":{"number":3},"repository":{"full_name":"org/repo"}}`, []int{3}},
+		{"pull_request_review_comment", "pull_request_review_comment", `{"action":"created","pull_request":{"number":3},"repository":{"full_name":"org/repo"}}`, []int{3}},
 		{"issue_comment on PR", "issue_comment", `{"action":"created","issue":{"number":2,"pull_request":{"url":"x"}},"repository":{"full_name":"org/repo"}}`, []int{2}},
 		{"issue_comment on issue", "issue_comment", `{"action":"created","issue":{"number":2},"repository":{"full_name":"org/repo"}}`, []int{}},
 		{"check_suite with PRs", "check_suite", `{"action":"completed","check_suite":{"head_sha":"unknown","pull_requests":[{"number":1}]},"repository":{"full_name":"org/repo"}}`, []int{1}},
@@ -173,24 +177,24 @@ func TestWebhookHealthyStaleTransitions(t *testing.T) {
 	c, clock := setupWebhookCacheTest(t)
 	SetWebhookHealthWindow(10 * time.Minute)
 
-	if healthy, becameStale := ObserveWebhookHealth(); healthy || becameStale {
-		t.Fatalf("no events: healthy=%v becameStale=%v, want false/false", healthy, becameStale)
+	if healthy, becameHealthy, becameStale := ObserveWebhookHealth(); healthy || becameHealthy || becameStale {
+		t.Fatalf("no events: healthy=%v becameHealthy=%v becameStale=%v, want all false", healthy, becameHealthy, becameStale)
 	}
 	if _, err := c.HandleWebhookEvent("ping", []byte(`{"repository":{"full_name":"org/repo"}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if healthy, becameStale := ObserveWebhookHealth(); !healthy || becameStale {
-		t.Fatalf("fresh event: healthy=%v becameStale=%v, want true/false", healthy, becameStale)
+	if healthy, becameHealthy, becameStale := ObserveWebhookHealth(); !healthy || !becameHealthy || becameStale {
+		t.Fatalf("fresh event: healthy=%v becameHealthy=%v becameStale=%v, want true/true/false", healthy, becameHealthy, becameStale)
 	}
 	clock.now = clock.now.Add(9 * time.Minute)
-	if healthy, _ := ObserveWebhookHealth(); !healthy {
-		t.Fatal("event inside the window should stay healthy")
+	if healthy, becameHealthy, _ := ObserveWebhookHealth(); !healthy || becameHealthy {
+		t.Fatal("event inside the window should stay healthy and report the transition once")
 	}
 	clock.now = clock.now.Add(2 * time.Minute)
-	if healthy, becameStale := ObserveWebhookHealth(); healthy || !becameStale {
+	if healthy, _, becameStale := ObserveWebhookHealth(); healthy || !becameStale {
 		t.Fatalf("past the window: healthy=%v becameStale=%v, want false/true", healthy, becameStale)
 	}
-	if _, becameStale := ObserveWebhookHealth(); becameStale {
+	if _, _, becameStale := ObserveWebhookHealth(); becameStale {
 		t.Fatal("healthy → stale must be reported once, not every observation")
 	}
 	snap := WebhookHealthSnapshot()
@@ -204,8 +208,77 @@ func TestWebhookHealthyStaleTransitions(t *testing.T) {
 	if _, err := c.HandleWebhookEvent("ping", []byte(`{"repository":{"full_name":"org/repo"}}`)); err != nil {
 		t.Fatal(err)
 	}
-	if healthy, becameStale := ObserveWebhookHealth(); !healthy || becameStale {
-		t.Fatalf("recovered: healthy=%v becameStale=%v, want true/false", healthy, becameStale)
+	if healthy, becameHealthy, becameStale := ObserveWebhookHealth(); !healthy || !becameHealthy || becameStale {
+		t.Fatalf("recovered: healthy=%v becameHealthy=%v becameStale=%v, want true/true/false", healthy, becameHealthy, becameStale)
+	}
+}
+
+// TestWebhookWakeCycleReEnrichesOnlyDirtyPR is the "mini-cycle" guarantee a
+// webhook-triggered early eval relies on: once a delivery marks one PR dirty,
+// a cycle re-reads that PR from GitHub and serves every other clean PR from
+// the detail cache even past its TTL, so a wake costs one REST read, not one
+// per open PR.
+func TestWebhookWakeCycleReEnrichesOnlyDirtyPR(t *testing.T) {
+	clock := &webhookTestClock{now: time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)}
+	t.Cleanup(resetPRDetailCacheForTest(clock.Now, 0))
+	t.Cleanup(resetWebhookTrackerForTest(clock.Now))
+	SetWebhookHealthWindow(10 * time.Minute)
+	updated := clock.now.Add(-time.Minute)
+
+	detailHits := map[int]int{}
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var n int
+		if _, err := fmt.Sscanf(r.URL.Path, "/repos/org/repo/pulls/%d", &n); err == nil {
+			mu.Lock()
+			detailHits[n]++
+			mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": n, "state": "open", "updated_at": updated.Format(time.RFC3339),
+				"mergeable": true, "mergeable_state": "clean",
+				"head": map[string]any{"sha": fmt.Sprintf("sha-%d", n)}, "user": map[string]any{"login": "alice"},
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/check-runs") {
+			json.NewEncoder(w).Encode(map[string]any{"total_count": 0, "check_runs": []any{}})
+			return
+		}
+		t.Errorf("unexpected path %s", r.URL.Path)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetPRDetailTTLFunc(func() time.Duration { return time.Hour })
+	cycle := func() {
+		for _, n := range []int{7, 8} {
+			pr := PullRequest{Repo: "org/repo", Number: n, HeadSHA: fmt.Sprintf("sha-%d", n), UpdatedAt: updated}
+			c.enrichPRCI(context.Background(), &pr)
+		}
+	}
+	cycle()
+	mu.Lock()
+	if detailHits[7] != 1 || detailHits[8] != 1 {
+		t.Fatalf("first cycle should read both PRs once: %v", detailHits)
+	}
+	mu.Unlock()
+
+	// Past the TTL, a webhook for PR 8 arrives: the repo is now healthy and PR
+	// 8 is dirty; PR 7 is clean and must stay cached.
+	clock.now = clock.now.Add(2 * time.Hour)
+	if _, err := c.HandleWebhookEvent("issue_comment", []byte(`{"issue":{"number":8,"pull_request":{}},"repository":{"full_name":"org/repo"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	clock.now = clock.now.Add(time.Second)
+	cycle()
+	mu.Lock()
+	defer mu.Unlock()
+	if detailHits[7] != 1 {
+		t.Fatalf("clean PR 7 must be served from cache on the wake cycle: %v", detailHits)
+	}
+	if detailHits[8] != 2 {
+		t.Fatalf("dirty PR 8 must be re-read on the wake cycle: %v", detailHits)
 	}
 }
 

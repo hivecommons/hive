@@ -85,10 +85,19 @@ func WebhookHealthSnapshot() WebhookHealth {
 }
 
 // ObserveWebhookHealth reports whether webhooks are healthy and whether this
-// observation is the first one since they went healthy → stale, so callers can
-// WARN exactly once per transition.
-func ObserveWebhookHealth() (healthy, becameStale bool) {
+// observation is the first one since they changed state in either direction
+// (stale → healthy, healthy → stale), so callers can log exactly once per
+// transition.
+func ObserveWebhookHealth() (healthy, becameHealthy, becameStale bool) {
 	return sharedWebhookTracker.observe()
+}
+
+// RecordWebhookEventForTest records a delivery for repo as if a verified
+// webhook had arrived, so tests outside this package can drive webhook health
+// without a GitHub client.
+func RecordWebhookEventForTest(repo string) {
+	key := canonicalPRDetailRepo(repo)
+	sharedWebhookTracker.recordEvent([]string{key})
 }
 
 func (t *webhookTracker) recordEvent(aliases []string) {
@@ -260,13 +269,14 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	return out
 }
 
-func (t *webhookTracker) observe() (healthy, becameStale bool) {
+func (t *webhookTracker) observe() (healthy, becameHealthy, becameStale bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	healthy, _ = t.healthyLocked(t.now())
+	becameHealthy = !t.wasHealthy && healthy
 	becameStale = t.wasHealthy && !healthy
 	t.wasHealthy = healthy
-	return healthy, becameStale
+	return healthy, becameHealthy, becameStale
 }
 
 func pruneWebhookTimes(in []time.Time, now time.Time) []time.Time {
@@ -296,6 +306,13 @@ func resetWebhookTrackerForTest(now func() time.Time) func() {
 // earlier tests in the binary cannot make webhooks look healthy.
 func ResetWebhookTrackerForTest() func() {
 	return resetWebhookTrackerForTest(nil)
+}
+
+// ResetWebhookTrackerForTestWithClock is ResetWebhookTrackerForTest with an
+// injected clock, so a test can age a recorded delivery past the health
+// window without sleeping.
+func ResetWebhookTrackerForTestWithClock(now func() time.Time) func() {
+	return resetWebhookTrackerForTest(now)
 }
 
 type webhookPRRef struct {
@@ -467,7 +484,7 @@ func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []s
 	}
 
 	switch event {
-	case "pull_request", "pull_request_review":
+	case "pull_request", "pull_request_review", "pull_request_review_comment":
 		if p.PullRequest != nil && p.PullRequest.Number > 0 {
 			add(p.PullRequest.Number)
 		} else {

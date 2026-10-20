@@ -2213,12 +2213,20 @@ func (a *AgentConfig) EnabledExplicitlySet() bool {
 }
 
 type GovernorConfig struct {
-	Modes                      map[string]ModeConfig `yaml:"modes"`
-	EvalIntervalS              int                   `yaml:"eval_interval_s"`
-	EvalIntervalMaxS           int                   `yaml:"eval_interval_max_s,omitempty"`
-	EvalIntervalWebhookS       int                   `yaml:"eval_interval_webhook_s,omitempty"`
-	ConserveIntervalMultiplier int                   `yaml:"conserve_interval_multiplier,omitempty"`
-	OptionalSweepEveryNCycles  int                   `yaml:"optional_sweep_every_n_cycles,omitempty"`
+	Modes                map[string]ModeConfig `yaml:"modes"`
+	EvalIntervalS        int                   `yaml:"eval_interval_s"`
+	EvalIntervalMaxS     int                   `yaml:"eval_interval_max_s,omitempty"`
+	EvalIntervalWebhookS int                   `yaml:"eval_interval_webhook_s,omitempty"`
+	// WebhookWakeDebounceS is how long the governor loop waits after a
+	// cache-invalidating GitHub webhook before running an early eval cycle,
+	// so a burst of deliveries (push + check fan-out) coalesces into one
+	// cycle. WebhookWakeMinGapS is the minimum gap between two
+	// webhook-triggered cycles. Both default at Load; see
+	// docs/operator-reference.md "Webhook-driven PR cache invalidation".
+	WebhookWakeDebounceS       int `yaml:"webhook_wake_debounce_s,omitempty"`
+	WebhookWakeMinGapS         int `yaml:"webhook_wake_min_gap_s,omitempty"`
+	ConserveIntervalMultiplier int `yaml:"conserve_interval_multiplier,omitempty"`
+	OptionalSweepEveryNCycles  int `yaml:"optional_sweep_every_n_cycles,omitempty"`
 	// ExplainMode is the hive-wide default explain mode for agents that leave
 	// their own explain_mode unset. "" means "no hive default configured", in
 	// which case ExplainModeEnvVar is consulted and then off — see
@@ -6156,6 +6164,23 @@ func (c *Config) StageTrackerCacheTTL() time.Duration {
 	return time.Duration(defaultEvalIntervalS) * time.Second
 }
 
+// WebhookWakeDebounce and WebhookWakeMinGap are the effective
+// governor.webhook_wake_debounce_s / governor.webhook_wake_min_gap_s, with
+// the Load defaults substituted for a zero (or nil-config) value.
+func (c *Config) WebhookWakeDebounce() time.Duration {
+	if c != nil && c.Governor.WebhookWakeDebounceS > 0 {
+		return time.Duration(c.Governor.WebhookWakeDebounceS) * time.Second
+	}
+	return DefaultWebhookWakeDebounceS * time.Second
+}
+
+func (c *Config) WebhookWakeMinGap() time.Duration {
+	if c != nil && c.Governor.WebhookWakeMinGapS > 0 {
+		return time.Duration(c.Governor.WebhookWakeMinGapS) * time.Second
+	}
+	return DefaultWebhookWakeMinGapS * time.Second
+}
+
 type DashboardIssueBandsConfig struct {
 	WaitingLabels []string `yaml:"waiting_labels,omitempty" json:"waiting_labels,omitempty"`
 	DoneLabels    []string `yaml:"done_labels,omitempty" json:"done_labels,omitempty"`
@@ -7075,6 +7100,8 @@ const (
 const (
 	DefaultEvalIntervalMaxS           = 1800
 	DefaultEvalIntervalWebhookS       = 900
+	DefaultWebhookWakeDebounceS       = 10
+	DefaultWebhookWakeMinGapS         = 30
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )
@@ -7211,6 +7238,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalWebhookS == 0 {
 		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
+	}
+	if c.Governor.WebhookWakeDebounceS == 0 {
+		c.Governor.WebhookWakeDebounceS = DefaultWebhookWakeDebounceS
+	}
+	if c.Governor.WebhookWakeMinGapS == 0 {
+		c.Governor.WebhookWakeMinGapS = DefaultWebhookWakeMinGapS
 	}
 	if c.Governor.ConserveIntervalMultiplier == 0 {
 		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult

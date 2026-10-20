@@ -946,6 +946,22 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	return c.body, c.etag, c.generatedAt, true
 }
 
+// invalidateStageTrackerCache forgets the memoised payload. UpdateStatusIfFresh
+// calls it on every status publish so tracker freshness follows the eval
+// cycle rather than the cache TTL alone.
+func (s *Server) invalidateStageTrackerCache() {
+	s.stageTrackerCacheMu.Lock()
+	s.stageTrackerCache = stageTrackerCache{}
+	s.stageTrackerCacheMu.Unlock()
+}
+
+// stageTrackerSSEFrame is the `stage-tracker` event /api/events sends after
+// each status publish; the SPA refetches /api/stage-tracker on it instead of
+// waiting for its poll. seq is the status sequence the tracker now reflects.
+func stageTrackerSSEFrame(seq uint64) string {
+	return "event: stage-tracker\ndata: {\"seq\":" + strconv.FormatUint(seq, 10) + "}\n\n"
+}
+
 var stageTrackerSourceCache = []byte(`"source":"cache"`)
 var stageTrackerSourceFresh = []byte(`"source":"fresh"`)
 

@@ -35948,6 +35948,13 @@ function burnAreaChart() {
         }
       };
 
+      // A status publish just rebuilt the server-side stage tracker: refetch
+      // now (ETag keeps an unchanged body to one 304) rather than on the next
+      // STAGE_TRACKER_POLL_MS tick. Only once the panel has loaded itself.
+      source.addEventListener('stage-tracker', () => {
+        if (_stageTrackerSig || _stageTrackerEtag) fetchStageTracker();
+      });
+
       source.addEventListener('agent-status', (e) => {
         try {
           const payload = JSON.parse(e.data);

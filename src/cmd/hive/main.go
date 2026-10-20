@@ -1228,6 +1228,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 // collaborators exist; tests that drive a single phase call this directly.
 func (b *boot) wireBootClosures() {
 	b.installReviewEvents()
+	b.installWebhookWake()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1444,6 +1445,8 @@ func (b *boot) wireBootClosures() {
 			GHClient:             b.ghClient,
 			StageEngineStatus:    func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
 			ReviewEvents:         b.reviewEvents,
+			WebhookWake:          b.webhookWakeFunc(),
+			EvalLoop:             b.evalLoopStatusFunc(),
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
 			Tokens:               b.tokenCollector,
@@ -5890,11 +5893,14 @@ func (b *boot) runLoop() { b.runLoopWith(defaultRunLoopDeps()) }
 // runLoopWith is runLoop with its timers and per-tick IO injected; see
 // runLoopDeps.
 func (b *boot) runLoopWith(deps runLoopDeps) {
-	initialEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
-	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()))
+	initialEvalInterval, initialMode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+	b.logger.Info("entering governor loop", "interval_seconds", int(initialEvalInterval.Seconds()), "eval_mode", initialMode)
 	lastEvalInterval := initialEvalInterval
 	ticker := deps.newTicker(initialEvalInterval)
 	defer ticker.Stop()
+	if b.evalLoop != nil {
+		b.evalLoop.setInterval(initialEvalInterval, initialMode)
+	}
 
 	var agentTickCh <-chan time.Time
 	if b.cfg.Dashboard.AgentPollIntervalS > 0 {
@@ -6089,16 +6095,62 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		deps.persist(b)
-		effectiveEvalInterval := evalIntervalForConfig(b.cfg, b.ghClient, b.logger)
+		effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
 		if effectiveEvalInterval != lastEvalInterval {
 			b.logger.Info("eval interval changed, resetting ticker",
-				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()))
+				"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
 			ticker.Reset(effectiveEvalInterval)
 			lastEvalInterval = effectiveEvalInterval
+		}
+		if b.evalLoop != nil {
+			b.evalLoop.setInterval(effectiveEvalInterval, mode)
 		}
 		b.cfgReloadMu.Unlock()
 	}
 	b.startReviewEvents()
+
+	// Webhook health re-check: in webhook mode the base tick (900s) is longer
+	// than the health window (2 × eval_interval_s), so without this a lapse
+	// would only be noticed at the next stretched tick. The timer fires just
+	// after the window would close; if health lapsed, the ticker is reset to
+	// the configured interval right away. Nil newHealthTimer disables it.
+	var (
+		healthTimer loopTicker
+		healthCh    <-chan time.Time
+	)
+	healthNow := deps.now
+	if healthNow == nil {
+		healthNow = time.Now
+	}
+	armWebhookHealthRecheck := func() {
+		if deps.newHealthTimer == nil || b.cfg == nil {
+			return
+		}
+		base := b.cfg.Governor.EvalIntervalS
+		if base <= 0 {
+			base = 300
+		}
+		delay := webhookHealthRecheckDelay(github.WebhookHealthSnapshot(), 2*time.Duration(base)*time.Second, healthNow())
+		if delay <= 0 {
+			if healthTimer != nil {
+				healthTimer.Stop()
+			}
+			return
+		}
+		if healthTimer == nil {
+			healthTimer = deps.newHealthTimer(delay)
+			healthCh = healthTimer.Chan()
+		} else {
+			healthTimer.Stop()
+			healthTimer.Reset(delay)
+		}
+	}
+	armWebhookHealthRecheck()
+	defer func() {
+		if healthTimer != nil {
+			healthTimer.Stop()
+		}
+	}()
 
 	// Continuous re-kick wake: a continuous agent's NextKick (set when its
 	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
@@ -6155,10 +6207,37 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		case <-ticker.Chan():
 			tick()
 			armContinuousWake()
+			armWebhookHealthRecheck()
 		case <-b.reviewWake:
 			b.logger.Info("review webhook wake: running an early eval cycle")
 			tick()
 			armContinuousWake()
+			armWebhookHealthRecheck()
+		case batch := <-b.webhookWakeChan():
+			now := healthNow()
+			b.logger.Info("github webhook wake: running an early eval cycle",
+				"reason", batch.Reason, "last_reason", batch.LastRe, "deliveries", batch.Count,
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+			if b.evalLoop != nil {
+				b.evalLoop.noteWake(batch, now)
+			}
+			tick()
+			armContinuousWake()
+			armWebhookHealthRecheck()
+		case <-healthCh:
+			b.cfgReloadMu.Lock()
+			effectiveEvalInterval, mode := evalIntervalAndModeForConfig(b.cfg, b.ghClient, b.logger)
+			if effectiveEvalInterval != lastEvalInterval {
+				b.logger.Info("eval interval changed, resetting ticker",
+					"from", int(lastEvalInterval.Seconds()), "to", int(effectiveEvalInterval.Seconds()), "eval_mode", mode)
+				ticker.Reset(effectiveEvalInterval)
+				lastEvalInterval = effectiveEvalInterval
+			}
+			if b.evalLoop != nil {
+				b.evalLoop.setInterval(effectiveEvalInterval, mode)
+			}
+			b.cfgReloadMu.Unlock()
+			armWebhookHealthRecheck()
 		case <-wakeCh:
 			now := wakeNow()
 			next, who := b.gov.NextContinuousKickAt()
