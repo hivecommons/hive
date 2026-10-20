@@ -1070,6 +1070,69 @@ Notes:
 - **`remove` discards a token the hub cannot reprint**, so it asks you to type
   the hive name unless `--yes` is given.
 
+#### Staged contribution edits and Apply receipts
+
+`pkg/hivectl.NewStagedEdits` is the shared staging layer for the contribution
+tree surfaces. It freezes the loaded profile revision and the hub/repository
+discovery snapshots used by `BuildContributionTree`. Opening a session, editing
+its tree, reviewing `Diff()`, and discarding unsaved edits perform no writes or
+relay signals. The TUI and Web tree adapters must use this layer's diff and
+receipt; adding those controls to the surfaces is separate integration work.
+
+Repository selection, exclusions, following, and subscription enablement are
+separate operations:
+
+- **Select current / Deselect current** affects the entire named Hive or hub
+  branch, regardless of search filters. Selection retains saved targets absent
+  from discovery and the approved refresh-source mode. Deselect current preserves
+  follow policy and exclusions; **Select none and stop following** remains the distinct CLI
+  `--select none` operation. Inclusion requires complete discovery. Saved
+  selections remain individually editable during an outage.
+- **Exclude / Clear exclusion** changes only the personal veto. Clearing one
+  preserves saved personal inclusions and does not approve an unselected target.
+  Parent selection and enable/disable operations never erase exclusions.
+- **Hive on/off** retains credentials, saved membership, and following. **Hub
+  off** disables its shared subscriptions and turns off that hub's future-Hive
+  enrollment. Re-enabling the hub does not resume future enrollment implicitly.
+- **Review and restrict** explicitly converts a legacy unrestricted profile to
+  the complete discovered snapshot, with following off. Failed discovery leaves
+  it unchanged. Ordinary repository and branch-selection actions cannot convert
+  legacy scope; disabling a legacy subscription does not convert it either.
+
+`Diff()` names selected/deselected subscription–repository pairs and counts them
+once per subscription, even when the subscription appears under multiple hubs.
+It separately records exclusions, follow policies, enablement, legacy
+conversions, and the linked hub appearances. Selection changes masked by a veto
+remain visible as saved-membership changes. Exclusion effects list the remaining
+veto sources, every scoped subscription with affected saved membership
+(including disabled ones), and enabled legacy unrestricted profiles that can
+still receive the repository. This reflects the existing cross-profile exclusion
+union in `ProfileSet.RepositoryScopes()`; it does not change its semantics.
+
+Apply uses `ProfileStore.CommitExpecting` followed by `SignalRunningRelay` and
+returns three independent status fields, plus the saved scope generation:
+
+| Field | Meaning |
+| --- | --- |
+| `Saved` | `profiles-and-projection-saved`, `profiles-saved/projection-failed`, `not-saved`, or `unchanged` for an empty diff. |
+| `RelayReload` | `notified`, `pending-failed`, `no-managed-relay-found — saved for next start`, or `not-requested` when no complete save occurred. |
+| `Acknowledged` | `pending` after a complete save; otherwise `unknown`. Notification alone never proves adoption. |
+
+An empty diff writes and signals nothing. A projection failure reports that
+profiles were already saved, keeps the reviewed diff, and allows an explicit
+Apply retry against that saved revision. Further edits and Discard are refused
+until projection repair completes: Discard cannot undo a save that happened.
+A concurrent edit causes `ErrStaleRevision`, marks the diff stale, and requires
+reloading profiles and reviewing a new session; neither retry nor Discard can
+silently merge or approve the old edits. Successful persistence consumes the diff
+even when notification fails; the saved selection governs the next relay start.
+
+No managed PID record is not proof that no relay exists. Until matching relay
+status evidence is available, show **Change saved — relay adoption pending**;
+do not claim that leasing stopped or an in-flight task was cancelled. Diffs and
+receipts contain no registration tokens, provider/GitHub credentials, raw relay
+command output, or credential-bearing endpoint queries.
+
 #### Contribution presets
 
 A contribution preset is a plain, credential-free document a project publishes
