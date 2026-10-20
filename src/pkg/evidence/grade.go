@@ -314,6 +314,23 @@ type AccuracyStats struct {
 	FalseApproveRate float64
 	FalseBlockRate   float64
 	BundleVerdicts   int
+	// SameFamily and CrossFamily split the same rework-based accuracy by
+	// whether the reviewing model shared a vendor family with the PR's
+	// author model (hivecommons/hive#13243). Either may be empty; the card
+	// compares them only when both have samples.
+	SameFamily  FamilyAccuracy
+	CrossFamily FamilyAccuracy
+	// AuthorFamilies is the per-author-family breakdown (claude / gpt /
+	// gemini / other / human), reported but not graded.
+	AuthorFamilies []FamilyAccuracy
+}
+
+// FamilyAccuracy is one family slice of the rework-based accuracy.
+type FamilyAccuracy struct {
+	Name             string
+	Samples          int
+	FalseApproveRate float64
+	FalseBlockRate   float64
 }
 
 const accuracyRubric = "score = 1 − worse of rework-based false-approve and false-block rate; A+ ≥ 97% … C- < 73%; needs the reviewer outcome ledger and 20 samples"
@@ -332,10 +349,17 @@ func GradeAccuracy(a AccuracyStats) Grade {
 	return graded(letterFromScore(1-worst), reason, accuracyRubric)
 }
 
-// SummarizeAccuracy is the plain sentence for the Accuracy card.
+// SummarizeAccuracy is the plain sentence for the Accuracy card. When both
+// same-family and cross-family reviews have samples it adds the comparison a
+// cross-family review_models pool is there to produce.
 func SummarizeAccuracy(a AccuracyStats) string {
 	if a.Available && a.Samples > 0 {
-		return fmt.Sprintf("Reviewers wrongly approved %d%% and wrongly blocked %d%% of %d PRs with a known result.", int(math.Round(a.FalseApproveRate*100)), int(math.Round(a.FalseBlockRate*100)), a.Samples)
+		approved := fmt.Sprintf("%d%%", int(math.Round(a.FalseApproveRate*100)))
+		if a.SameFamily.Samples > 0 && a.CrossFamily.Samples > 0 {
+			approved += fmt.Sprintf(" (same-family %d%%, cross-family %d%%)",
+				int(math.Round(a.SameFamily.FalseApproveRate*100)), int(math.Round(a.CrossFamily.FalseApproveRate*100)))
+		}
+		return fmt.Sprintf("Reviewers wrongly approved %s and wrongly blocked %d%% of %d PRs with a known result.", approved, int(math.Round(a.FalseBlockRate*100)), a.Samples)
 	}
 	if a.BundleVerdicts == 0 {
 		return "No reviewer verdicts in this window yet."

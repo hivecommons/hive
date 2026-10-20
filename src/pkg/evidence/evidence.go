@@ -107,6 +107,14 @@ type Verdict struct {
 	Confidence  float64   `json:"confidence"`
 	Findings    []Finding `json:"findings,omitempty"`
 	RecordedAt  time.Time `json:"recorded_at"`
+	// AuthorModel is the model the verdict's report named as the PR's
+	// author (the attribution trailer), when it did. The bundle's Author
+	// carries the audit-recorded model; this is the reviewer's view of it.
+	AuthorModel string `json:"author_model,omitempty"`
+	// SameFamily is whether the reviewing model and the author's model share
+	// a vendor family (modelfamily.SameFamily). Nil when either side is
+	// unknown, so cross-family is never confused with cannot-say.
+	SameFamily *bool `json:"same_family,omitempty"`
 }
 
 // Finding is a single review finding.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // Evidence card keys match the dashboard's data-ev-panel attributes.
@@ -67,18 +68,18 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	if ra := resp.ReviewerAccuracy; ra != nil {
 		acc.Available = true
 		acc.Samples = ra.Samples
-		var approvals, falseApprovals, blocks, falseBlocks int
-		for _, g := range ra.ReviewerModels {
-			approvals += g.Approvals
-			falseApprovals += g.FalseApprovals
-			blocks += g.Blocks
-			falseBlocks += g.FalseBlocks
+		acc.FalseApproveRate, acc.FalseBlockRate = accuracyRates(ra.ReviewerModels)
+		for _, g := range ra.FamilyMatch {
+			fa := familyAccuracy(g)
+			switch g.Name {
+			case review.FamilyMatchSame:
+				acc.SameFamily = fa
+			case review.FamilyMatchCross:
+				acc.CrossFamily = fa
+			}
 		}
-		if approvals > 0 {
-			acc.FalseApproveRate = float64(falseApprovals) / float64(approvals)
-		}
-		if blocks > 0 {
-			acc.FalseBlockRate = float64(falseBlocks) / float64(blocks)
+		for _, g := range ra.AuthorFamilies {
+			acc.AuthorFamilies = append(acc.AuthorFamilies, familyAccuracy(g))
 		}
 	}
 	cards[evidenceCardAccuracy] = evidence.Card{Grade: evidence.GradeAccuracy(acc), PlainSummary: evidence.SummarizeAccuracy(acc)}
@@ -171,4 +172,27 @@ func evidenceComplexityTrends(series []EvidenceComplexityRepo, repo string, win 
 		})
 	}
 	return trends, withSnapshots
+}
+
+// accuracyRates pools the groups' approvals and blocks into one false-approve
+// and one false-block rate.
+func accuracyRates(groups []review.ReviewerAccuracyGroup) (falseApprove, falseBlock float64) {
+	var approvals, falseApprovals, blocks, falseBlocks int
+	for _, g := range groups {
+		approvals += g.Approvals
+		falseApprovals += g.FalseApprovals
+		blocks += g.Blocks
+		falseBlocks += g.FalseBlocks
+	}
+	if approvals > 0 {
+		falseApprove = float64(falseApprovals) / float64(approvals)
+	}
+	if blocks > 0 {
+		falseBlock = float64(falseBlocks) / float64(blocks)
+	}
+	return falseApprove, falseBlock
+}
+
+func familyAccuracy(g review.ReviewerAccuracyGroup) evidence.FamilyAccuracy {
+	return evidence.FamilyAccuracy{Name: g.Name, Samples: g.Samples, FalseApproveRate: g.FalseApproveRate, FalseBlockRate: g.FalseBlockRate}
 }

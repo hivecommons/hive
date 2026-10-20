@@ -10060,6 +10060,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// Not a planner input: the fix gate decides on the login author
 			// alone (#8421, #13124).
 			HiveAttributed: pr.HiveAttributed,
+			// The authoring model from the same trailer: what review_models
+			// exclusions compare against, and stamped into the verdict as
+			// author_model (hivecommons/hive#13243).
+			AuthorModel: pr.HiveModel,
 			// Grounding anchor for the review prompt. Repo access is the
 			// measured active ingredient in review quality (17%→67% hit rate,
 			// 61% fewer false positives), so the reviewer is told which commit
@@ -10094,6 +10098,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			LaneKeywords:   ac.LaneKeywords,
 			DetectKeywords: ac.DetectKeywords,
 			Aliases:        ac.Aliases,
+			Backend:        ac.Backend,
+			Model:          ac.Model,
+			ReviewModels:   ac.ReviewModels,
 		})
 	}
 	reviewBotLogins := []string{}
@@ -10122,7 +10129,11 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
+		PerspectiveModels:     cfg.Review.PerspectiveModels,
 	})
+	for _, sk := range plan.SkippedReviewModels {
+		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
+	}
 	for _, e := range plan.Expired {
 		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
 	}
@@ -10146,6 +10157,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
+		ModelStamps:                reviewModelStamps(logger),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -10154,6 +10166,21 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+// reviewModelStamps reads the dispatch state so a verdict whose report
+// omitted author_model / review_model is stamped with what the planner knew
+// when it dispatched that review (hivecommons/hive#13243). No state is no
+// stamps, never an error: the artifact is still correct, just unstamped.
+func reviewModelStamps(logger *slog.Logger) review.ModelStamps {
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Warn("review dispatch state unavailable for model stamping", "error", err)
+		}
+		return nil
+	}
+	return review.ModelStampsFromState(state)
 }
 
 func shouldRefreshReviewVerdicts(cfg *config.Config) bool {

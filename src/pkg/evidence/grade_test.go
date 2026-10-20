@@ -192,6 +192,9 @@ func TestSummarizeAccuracy(t *testing.T) {
 		{AccuracyStats{}, "No reviewer verdicts in this window yet."},
 		{AccuracyStats{BundleVerdicts: 1}, "1 reviewer verdict recorded; accuracy is graded once the outcome ledger covers them."},
 		{AccuracyStats{Available: true, Samples: 120, FalseApproveRate: 0.03, FalseBlockRate: 0.011}, "Reviewers wrongly approved 3% and wrongly blocked 1% of 120 PRs with a known result."},
+		// Only one family side has samples: no comparison sentence.
+		{AccuracyStats{Available: true, Samples: 20, SameFamily: FamilyAccuracy{Samples: 20, FalseApproveRate: 0.1}}, "Reviewers wrongly approved 0% and wrongly blocked 0% of 20 PRs with a known result."},
+		{AccuracyStats{Available: true, Samples: 40, FalseApproveRate: 0.05, SameFamily: FamilyAccuracy{Samples: 25, FalseApproveRate: 0.08}, CrossFamily: FamilyAccuracy{Samples: 15}}, "Reviewers wrongly approved 5% (same-family 8%, cross-family 0%) and wrongly blocked 0% of 40 PRs with a known result."},
 	} {
 		if got := SummarizeAccuracy(tc.in); got != tc.want || words(got) > PlainSummaryMaxWords {
 			t.Errorf("got %q (%d words), want %q", got, words(got), tc.want)
