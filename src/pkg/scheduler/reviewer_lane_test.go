@@ -188,6 +188,11 @@ func TestBuildReviewerMessage_ContractAtL5(t *testing.T) {
 		"advisory digest",
 		"If either record fails, leave `needs-human` in place",
 		"--add-label " + ReviewerRecommendCloseLabel,
+		"HAND-OFF",
+		"--add-label " + ReviewerHandoffLabel,
+		"--body \"" + ReviewerHandoffNextStepPrefix + " <one concrete action>\n",
+		"Reviewer adjudication: HAND-OFF",
+		"There is NO other verdict (no HOLD",
 		"NEVER close the PR yourself",
 		fmt.Sprintf("AT MOST %d PRs this kick", reviewerMaxPRsPerKick),
 		"NEVER touch a human-authored PR",
@@ -575,3 +580,25 @@ func TestReviewerLaneQueuedWork(t *testing.T) {
 }
 
 func intPtr(n int) *int { return &n }
+
+// A HAND-OFF verdict (hivecommons/hive#13183) is a delivered verdict like the
+// others: the row carrying reviewer-handoff stays escalated for a maintainer
+// and must never be re-adjudicated on the next kick.
+func TestFormatReviewerWorkList_ReviewerHandoffExcluded(t *testing.T) {
+	data := `{"ci_failing":[
+  {"number":7,"repo":"o/r","title":"handed off","agent":"scanner","escalated":true,
+   "labels":["needs-human","` + ReviewerHandoffLabel + `"],"failing_checks":["build"]},
+  {"number":8,"repo":"o/r","title":"awaiting adjudication","agent":"scanner","escalated":true,
+   "labels":["needs-human"],"failing_checks":["build"]}
+]}`
+	out := formatReviewerWorkList([]byte(data))
+	if strings.Contains(out, "o/r#7") {
+		t.Errorf("reviewer-handoff PR must be excluded: the verdict was already delivered:\n%s", out)
+	}
+	if !strings.Contains(out, "o/r#8") {
+		t.Errorf("unadjudicated escalated PR missing from the work list:\n%s", out)
+	}
+	if got := len(reviewerWorkRows([]byte(data))); got != 1 {
+		t.Errorf("reviewerWorkRows = %d rows, want 1", got)
+	}
+}

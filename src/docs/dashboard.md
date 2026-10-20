@@ -549,6 +549,7 @@ so the reason text can change without breaking them.
 | `adjudicator_recommended_close` | `CLOSE` |
 | `superseded_recommended_close` | `CLOSE` |
 | `adjudicator_reescalated` | `REVIEW` |
+| `adjudicator_handed_off` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
 | `review_requires_human`, `review_rejected`, `review_dispatch_hold`, `review_loop_cap` | `REVIEW` |
 | `stale_safety_net` | `REVIEW` |
@@ -579,6 +580,7 @@ means the situation cannot occur at that level.
 | Hive PR with `needs-human`, adjudicator recommended close, PR still open | — | — (no adjudicator lane below L5) | Yours — `CLOSE` | same |
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
 | Contributor PR the supersession sweep detected as superseded by a merged PR, without `hive/keep-open` | Yours — `CLOSE` (`superseded_recommended_close`: close as superseded or keep open, whether or not `supersession_sweep.close_contributor_prs` is on) | same | same | same |
+| Hive PR with `needs-human` the adjudicator handed to a maintainer (`reviewer-handoff`) | — | — | Yours — `REVIEW` (`adjudicator_handed_off`) | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
 | PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
@@ -654,11 +656,19 @@ does not attribute to a Hive source counts as `person`.
 hive-wide level is L5 or L6 is your turn immediately, with `reviewer_unavailable`,
 when no agent that runs the reviewer lane serves the repository or every such
 agent is paused or unscheduled in the current mode (the advisory `reviewer`
-agent does not count). Otherwise it becomes your turn four hours after
-escalation, with `adjudicator_wait_elapsed`. Escalation time is the escalation
-ledger's label-applied time, or the first status refresh that saw the label.
-Once the adjudicator adds `reviewer-passed` or `reviewer-recommend-close`, or
-removes `needs-human`, the rows for an adjudicated PR apply instead.
+agent does not count). It is also your turn immediately, with
+`adjudicator_handed_off`, once the adjudicator delivers a HAND-OFF verdict
+(`reviewer-handoff`): the change is fine but only a maintainer can unblock it,
+and the verdict comment's first line is the **Next step for a maintainer**.
+Otherwise it waits elsewhere, with a reason such as "Waiting for the
+adjudicator (escalated 14:32Z); your turn at 18:32Z if it doesn't act", and
+becomes your turn four hours after escalation, with `adjudicator_wait_elapsed`
+("Escalated over 4 hours ago and no verdict Hive recognises was recorded" — a
+comment without a verdict label is not a verdict). Escalation time is the
+escalation ledger's label-applied time, or the first status refresh that saw
+the label. Once the adjudicator adds `reviewer-passed` or
+`reviewer-recommend-close`, or removes `needs-human`, the rows for an
+adjudicated PR apply instead.
 
 **Safety net.** Anything Hive should be progressing can wait unnoticed at most
 one stale period (`dashboard.issue_bands.stale_days`, default 14; there is no

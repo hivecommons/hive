@@ -56,6 +56,18 @@ const (
 	// add the label alongside the recommend-close comment.
 	ReviewerRecommendCloseLabel = "reviewer-recommend-close"
 
+	// ReviewerHandoffLabel marks a PR on which the reviewer has delivered a
+	// HAND-OFF verdict: the change is fine, but only a maintainer can unblock
+	// it (a workflow dispatch, a secret, a cache rebuild). needs-human stays in
+	// place and the verdict comment's first line names the maintainer's next
+	// step. The dashboard reads the label to make the PR your turn at once
+	// instead of waiting out the adjudicator timeout (hivecommons/hive#13183),
+	// and the work-list builder excludes labeled rows like the other verdicts.
+	ReviewerHandoffLabel = "reviewer-handoff"
+
+	// ReviewerHandoffNextStepPrefix opens a HAND-OFF verdict comment.
+	ReviewerHandoffNextStepPrefix = "**Next step for a maintainer:**"
+
 	// reviewerLaneTemplate is the shipped kick template for the reviewer LANE
 	// (kubestellar/hive#5617 item 2). It is deliberately a different file from
 	// reviewer-queue.md, which belongs to the pack-defined cadence reviewer
@@ -251,6 +263,8 @@ func (s *Scheduler) renderReviewerLaneTemplate(agentName string, actionable *git
 		"REVIEWER_MAX_PRS":               func() string { return fmt.Sprintf("%d", reviewerMaxPRsPerKick) },
 		"REVIEWER_PASSED_LABEL":          func() string { return ReviewerPassedLabel },
 		"REVIEWER_RECOMMEND_CLOSE_LABEL": func() string { return ReviewerRecommendCloseLabel },
+		"REVIEWER_HANDOFF_LABEL":         func() string { return ReviewerHandoffLabel },
+		"REVIEWER_HANDOFF_PREFIX":        func() string { return ReviewerHandoffNextStepPrefix },
 		"REVIEWER_CLOSE_AUTHORITY":       func() string { return reviewerCloseAuthority(level) },
 	}
 	body, failClosed := s.substituteTemplateWithVars(tmpl, actionable, agentName, nil, extra)
@@ -312,6 +326,14 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 		b.WriteString(fmt.Sprintf("     ⛔ NEVER close the PR yourself: closing is operator-only below ACMM level %d.\n", reviewerCloseACMMLevel))
 		b.WriteString("     The audited recommendation is your entire verdict; leave needs-human in place.\n")
 	}
+	b.WriteString("  4. HAND-OFF — the change is fine, but only a maintainer can unblock it (a\n")
+	b.WriteString("     workflow dispatch with maintainer-only inputs, a secret, a stale shared cache\n")
+	b.WriteString("     rebuild, a repository setting): complete the mandatory audit below using its\n")
+	b.WriteString("     hand-off review body, leave needs-human in place, then mark the verdict\n")
+	b.WriteString("     delivered so the maintainer is told now rather than after a timeout:\n")
+	b.WriteString(fmt.Sprintf("        gh pr edit <number> --add-label %s\n", ReviewerHandoffLabel))
+	b.WriteString("  ⛔ There is NO other verdict (no HOLD, no WAIT): a verdict without its label is\n")
+	b.WriteString("     invisible to Hive and leaves the PR waiting on nobody.\n")
 
 	b.WriteString("\nMANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or closing:\n")
 	b.WriteString("  1. Submit a comment review through Hive's relay so the adjudication is attributed\n")
@@ -320,6 +342,12 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("          hive-review <number> --repo <owner/repo> --comment --body \"Reviewer adjudication: <REPAIR|DE-ESCALATE> — evidence: <why>; changes: <what>; tests: <commands/results>; remaining risk: <risk or none>\"\n")
 	b.WriteString("        RECOMMEND-CLOSE (this is the one close-recommend record; do not post a second comment):\n")
 	b.WriteString("          hive-review <number> --repo <owner/repo> --comment --body \"[reviewer] recommend close: <duplicate/superseded/lossy rationale>; evidence: <why>; tests: <checks>; remaining risk: <risk or none>\"\n")
+	b.WriteString("        HAND-OFF (this is the one hand-off record; do not post a second comment). The body's\n")
+	b.WriteString(fmt.Sprintf("        FIRST line is a single `%s <one concrete action>` line, e.g.\n", ReviewerHandoffNextStepPrefix))
+	b.WriteString("        \"Run Build And Promote Main Image with rebuild_akmods=true, then rerun checks\":\n")
+	b.WriteString(fmt.Sprintf("          hive-review <number> --repo <owner/repo> --comment --body \"%s <one concrete action>\n", ReviewerHandoffNextStepPrefix))
+	b.WriteString("\n")
+	b.WriteString("          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>\"\n")
 	b.WriteString("     `hive-review` is asynchronous: poll the `.result.json` path it prints and do\n")
 	b.WriteString("     not proceed until that file reports `\"ok\": true`. A queued request is not yet\n")
 	b.WriteString("     an audit record; an error result must leave the PR in `needs-human`.\n")
@@ -394,8 +422,9 @@ func reviewerWorkRows(data []byte) []ciFailingRow {
 			// One reviewer pass per PR, ever — for EVERY verdict class:
 			// reviewer-passed covers REPAIR/DE-ESCALATE; recommend-close
 			// covers the below-close-authority verdict whose PR stays open
-			// awaiting an operator (#5511, gap G4).
-			if l == ReviewerPassedLabel || l == ReviewerRecommendCloseLabel {
+			// awaiting an operator (#5511, gap G4); handoff covers the
+			// verdict that hands the PR to a maintainer (#13183).
+			if l == ReviewerPassedLabel || l == ReviewerRecommendCloseLabel || l == ReviewerHandoffLabel {
 				adjudicated = true
 				break
 			}
@@ -416,8 +445,8 @@ func reviewerWorkRows(data []byte) []ciFailingRow {
 // Rows are ESCALATED hive-authored PRs only —
 // writeMergeEligible builds the file exclusively from the hive's own PR
 // enumeration with per-agent attribution, so every row is hive work; rows
-// whose Labels carry ReviewerPassedLabel or ReviewerRecommendCloseLabel are
-// excluded (one reviewer pass per PR, ever — whatever the verdict was).
+// whose Labels carry ReviewerPassedLabel, ReviewerRecommendCloseLabel or
+// ReviewerHandoffLabel are excluded (one reviewer pass per PR, ever — whatever the verdict was).
 // Output is capped at reviewerMaxPRsPerKick rows, oldest first by the PR's
 // real forge creation time; rows written by a hub that recorded none fall back
 // to the old (repo, number) proxy and sort last (#5617 item 4).

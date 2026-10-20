@@ -69,6 +69,7 @@ const (
 	OwnershipReasonSupersededRecommendedClose  = "superseded_recommended_close"
 	OwnershipReasonAdjudicatorRecommendedClose = "adjudicator_recommended_close"
 	OwnershipReasonAdjudicatorReescalated      = "adjudicator_reescalated"
+	OwnershipReasonAdjudicatorHandedOff        = "adjudicator_handed_off"
 	OwnershipReasonPersonPRNeedsHuman          = "person_pr_needs_human"
 	OwnershipReasonReviewRequiresHuman         = "review_requires_human"
 	OwnershipReasonStaleSafetyNet              = "stale_safety_net"
@@ -96,6 +97,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonAdjudicatorRecommendedClose: OwnershipVerbClose,
 	OwnershipReasonSupersededRecommendedClose:  OwnershipVerbClose,
 	OwnershipReasonAdjudicatorReescalated:      OwnershipVerbReview,
+	OwnershipReasonAdjudicatorHandedOff:        OwnershipVerbReview,
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
 	OwnershipReasonReviewRequiresHuman:         OwnershipVerbReview,
 	OwnershipReasonStaleSafetyNet:              OwnershipVerbReview,
@@ -137,6 +139,9 @@ const (
 	// scheduler.ReviewerRecommendCloseLabel; pkg/dashboard does not import the
 	// scheduler.
 	ownershipLabelReviewerRecommendClose = "reviewer-recommend-close"
+	// ownershipLabelReviewerHandoff mirrors scheduler.ReviewerHandoffLabel:
+	// the adjudicator's HAND-OFF verdict, a maintainer-only next step.
+	ownershipLabelReviewerHandoff = "reviewer-handoff"
 )
 
 // Non-actionable issue buckets recorded by enumeration (github.RepoWorkIssue).
@@ -158,7 +163,8 @@ const (
 // reporter confirmation, an issue an open PR covers, or a blocked issue with
 // an open GitHub blocked-by link. The Overview equation
 // and charts read it; it is never set on a your-turn item and is not part of
-// the ownership identity.
+// the ownership identity. Reason may say what it waits on and until when
+// (the adjudicator wait does; hivecommons/hive#13183).
 type Ownership struct {
 	YourTurn         bool   `json:"your_turn"`
 	Verb             string `json:"verb,omitempty"`
@@ -184,6 +190,30 @@ func notYourTurn() Ownership { return Ownership{} }
 // waitingElsewhere is the not-your-turn decision for an item gated on someone
 // other than the operator.
 func waitingElsewhere() Ownership { return Ownership{WaitingElsewhere: true} }
+
+// waitingElsewhereFor is waitingElsewhere with a display reason.
+func waitingElsewhereFor(reason string) Ownership {
+	return Ownership{WaitingElsewhere: true, Reason: reason}
+}
+
+// adjudicatorWaitReason says who a hive needs-human PR within the adjudicator
+// wait is waiting on and when it becomes your turn. A zero escalation time
+// (not yet recorded) names the adjudicator only.
+func adjudicatorWaitReason(escalatedAt time.Time) string {
+	if escalatedAt.IsZero() {
+		return "Waiting for the adjudicator"
+	}
+	return fmt.Sprintf("Waiting for the adjudicator (escalated %s); your turn at %s if it doesn't act",
+		escalatedAt.UTC().Format(ownershipClockFormat), escalatedAt.Add(ownershipAdjudicatorWait).UTC().Format(ownershipClockFormat))
+}
+
+// ownershipClockFormat renders a UTC clock time the way the issue reports
+// write them, e.g. 14:32Z.
+const ownershipClockFormat = "15:04Z"
+
+// adjudicatorHandoffReason is the reason text of the adjudicator's HAND-OFF
+// verdict. The verdict comment's first line is the maintainer's next step.
+const adjudicatorHandoffReason = "The adjudicator handed this pull request to you — do the step in its \"Next step for a maintainer\" comment, then clear needs-human"
 
 func yourTurn(code, reason string) Ownership {
 	return Ownership{YourTurn: true, Verb: ownershipReasonVerbs[code], ReasonCode: code, Reason: reason}
@@ -616,6 +646,7 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 		return yourTurn(OwnershipReasonAdjudicatorRecommendedClose, "The adjudicator recommended closing this pull request")
 	}
 	withinAdjudicatorWait := false
+	var escalatedAt time.Time
 	if labels[ownershipLabelNeedsHuman] {
 		switch {
 		case !hive:
@@ -624,11 +655,16 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 			return yourTurn(OwnershipReasonHivePRNeedsHuman, "Hive escalated this pull request for human review")
 		case labels[ownershipLabelReviewerPassed]:
 			return yourTurn(OwnershipReasonAdjudicatorReescalated, "Re-escalated after the adjudicator's pass")
+		case labels[ownershipLabelReviewerHandoff]:
+			return yourTurn(OwnershipReasonAdjudicatorHandedOff, adjudicatorHandoffReason)
 		case !env.reviewerLaneAvailableFor(pr.Repo):
 			return yourTurn(OwnershipReasonReviewerUnavailable, "No adjudicator is available to review this escalation")
 		}
-		if at := env.escalatedAtFor(pr.Repo, pr.Number); !at.IsZero() && env.now.Sub(at) >= ownershipAdjudicatorWait {
-			return yourTurn(OwnershipReasonAdjudicatorWaitElapsed, fmt.Sprintf("The adjudicator has not acted within %d hours of escalation", int(ownershipAdjudicatorWait/time.Hour)))
+		escalatedAt = env.escalatedAtFor(pr.Repo, pr.Number)
+		if !escalatedAt.IsZero() && env.now.Sub(escalatedAt) >= ownershipAdjudicatorWait {
+			// The adjudicator may have posted something; only a verdict
+			// label is a verdict Hive can read (#13183).
+			return yourTurn(OwnershipReasonAdjudicatorWaitElapsed, fmt.Sprintf("Escalated over %d hours ago and no verdict Hive recognises was recorded", int(ownershipAdjudicatorWait/time.Hour)))
 		}
 		withinAdjudicatorWait = true
 	}
@@ -643,7 +679,7 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 		return safetyNetOwnership(env.untouchedDays(pr.CreatedAt, pr.UpdatedAt))
 	}
 	if withinAdjudicatorWait {
-		return waitingElsewhere()
+		return waitingElsewhereFor(adjudicatorWaitReason(escalatedAt))
 	}
 	return notYourTurn()
 }
