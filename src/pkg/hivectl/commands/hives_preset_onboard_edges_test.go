@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
 	"github.com/spf13/cobra"
@@ -33,7 +34,7 @@ func TestPresetHubMembersRejectsRegistryLimits(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer hub.Close()
-			e := &commandEnv{}
+			e := &commandEnv{options: &rootOptions{timeout: time.Second}}
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
 			members, err := e.presetHubMembers(cmd, hub.URL)
@@ -65,7 +66,7 @@ func TestPresetOnboardHubExplicitMembersAndExpansionLimit(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
 			cmd.SetOut(h.out)
-			e := &commandEnv{}
+			e := &commandEnv{options: &rootOptions{timeout: time.Second}}
 			expanded, reports := e.expandPresetOnboard(cmd, preset, "members")
 			if len(reports) != 1 {
 				t.Fatalf("reports=%+v", reports)
