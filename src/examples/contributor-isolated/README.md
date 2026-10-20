@@ -11,6 +11,10 @@ The walkthrough uses Codex with a separate ChatGPT subscription. Other backends
 can be selected with `AGENT_BACKEND`, but need their own in-container login and
 must support Hive's headless mode; see the [relay guide](../../docs/contributor-relay.md).
 
+The published image defaults to `:latest` (the v5 release channel) in `compose.yaml` and
+`.env.example`. For repeatable upgrades across branch versions, pin `HIVE_CONTRIBUTOR_IMAGE`
+to a specific version or digest instead of the `:latest` or `:edge` moving tags.
+
 ## Download and configure
 
 ```bash

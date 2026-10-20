@@ -1,4 +1,6 @@
 # Published-image companion to src/compose-contributor.yaml.
+# :latest is the channel this v5 branch publishes (.github/workflows/docker.yml,
+# "v5 true candidate"); :edge is v6's channel. Pin another tag with HIVE_CONTRIBUTOR_IMAGE.
 services:
   contributor:
     image: ${HIVE_CONTRIBUTOR_IMAGE:-ghcr.io/hivecommons/hive-contributor:latest}
