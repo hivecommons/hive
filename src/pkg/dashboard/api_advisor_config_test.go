@@ -231,18 +231,55 @@ func TestAdvisorSettingsPersistsToHiveYAML(t *testing.T) {
 	}
 }
 
+// TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged covers every advisor
+// PUT: when hive.yaml cannot be written the handler answers 500 and the live
+// config is rolled back, so the dashboard never claims an unsaved value is in
+// force (hivecommons/hive#13371).
 func TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged(t *testing.T) {
-	s := newFullServer(t)
-	before := advisorSettingsSection(s.deps.Config)
-	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "missing-dir", "hive.yaml")
-
-	rec := advisorSettingsRequest(t, s, http.MethodPut, "/api/config/advisor",
-		`{"enabled":true,"daily_budget_tokens":5000}`, true)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	tests := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"fleet", "/api/config/advisor", `{"enabled":true,"daily_budget_tokens":5000}`},
+		{"roles", "/api/config/advisor/roles", `{"model_roles":{"advisor":{"backend":"claude","model":"claude-haiku-4.5"}}}`},
+		{"agent", "/api/config/advisor/agent/scanner", `{"override":{"enabled":false,"max_consecutive_blocks":9}}`},
 	}
-	after := decodeAdvisorSettings(t, advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true))
-	if after.Fleet.IsEnabled() != before.Fleet.IsEnabled() || after.Fleet.DailyBudgetTokens != before.Fleet.DailyBudgetTokens {
-		t.Errorf("failed save leaked into live config: before=%+v after=%+v", before.Fleet, after.Fleet)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newFullServer(t)
+			cfg := s.deps.Config
+			before := advisorSettingsSection(cfg)
+			beforeAgent := cfg.Agents["scanner"]
+			cfg.SourcePath = filepath.Join(t.TempDir(), "missing-dir", "hive.yaml")
+
+			rec := advisorSettingsRequest(t, s, http.MethodPut, tc.path, tc.body, true)
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "failed to save config; no change applied") {
+				t.Errorf("500 body must say no change was applied, got %s", rec.Body.String())
+			}
+
+			if cfg.Advisor.IsEnabled() != before.Fleet.IsEnabled() || cfg.Advisor.DailyBudgetTokens != before.Fleet.DailyBudgetTokens {
+				t.Errorf("failed save leaked into fleet block: before=%+v after=%+v", before.Fleet, cfg.Advisor)
+			}
+			if len(cfg.ModelRoles) != len(before.ModelRoles) {
+				t.Errorf("failed save leaked into model_roles: before=%+v after=%+v", before.ModelRoles, cfg.ModelRoles)
+			}
+			for name, role := range before.ModelRoles {
+				if cfg.ModelRoles[name] != role {
+					t.Errorf("model_roles[%q] changed: before=%+v after=%+v", name, role, cfg.ModelRoles[name])
+				}
+			}
+			if cfg.Agents["scanner"].Advisor != beforeAgent.Advisor {
+				t.Errorf("failed save leaked into agent override: before=%+v after=%+v", beforeAgent.Advisor, cfg.Agents["scanner"].Advisor)
+			}
+
+			after := decodeAdvisorSettings(t, advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true))
+			if after.Fleet.IsEnabled() != before.Fleet.IsEnabled() || len(after.ModelRoles) != len(before.ModelRoles) {
+				t.Errorf("GET after failed save differs: before=%+v after=%+v", before, after)
+			}
+		})
 	}
 }

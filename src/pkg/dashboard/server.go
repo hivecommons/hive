@@ -135,6 +135,7 @@ type Server struct {
 	knowledgeMu       sync.Mutex
 	levelMu           sync.Mutex
 	restartMu         sync.Mutex // serializes concurrent agent restart operations
+	advisorWriteMu    sync.Mutex // serializes advisor edits so a rollback cannot undo a concurrent edit
 	gatewayHealthOnce sync.Once
 	gatewayHealth     *serverGatewayHealthStore
 

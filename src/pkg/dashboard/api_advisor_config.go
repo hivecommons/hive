@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -99,10 +98,6 @@ func advisorLaneCandidate(cfg *config.Config) *config.Config {
 	return candidate
 }
 
-// advisorWriteMu serializes advisor edits so a rollback cannot undo a
-// concurrent edit.
-var advisorWriteMu sync.Mutex
-
 // advisorSettingsReady answers 503 when there is no config to edit.
 func (s *Server) advisorSettingsReady(w http.ResponseWriter) bool {
 	if s.deps == nil || s.deps.Config == nil {
@@ -126,7 +121,7 @@ func (s *Server) persistAdvisorSettings(w http.ResponseWriter, r *http.Request, 
 		if s.logger != nil {
 			s.logger.Error("failed to persist config after advisor settings update", "error", err)
 		}
-		jsonError(w, "failed to save config: "+err.Error(), http.StatusInternalServerError)
+		jsonError(w, "failed to save config; no change applied: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.auditFromRequest(r, "config_advisor", auditDetail(append([]string{"section", "advisor"}, detail...)...), "")
@@ -176,8 +171,8 @@ func (s *Server) handleAdvisorSettingsPut(w http.ResponseWriter, r *http.Request
 	if !s.advisorSettingsReady(w) {
 		return
 	}
-	advisorWriteMu.Lock()
-	defer advisorWriteMu.Unlock()
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	var body advisorFleetBody
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -235,8 +230,8 @@ func (s *Server) handleAdvisorRolesPut(w http.ResponseWriter, r *http.Request) {
 	if !s.advisorSettingsReady(w) {
 		return
 	}
-	advisorWriteMu.Lock()
-	defer advisorWriteMu.Unlock()
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	var body struct {
 		ModelRoles map[string]config.ModelRole `json:"model_roles"`
 	}
@@ -294,8 +289,8 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 	if !s.advisorSettingsReady(w) {
 		return
 	}
-	advisorWriteMu.Lock()
-	defer advisorWriteMu.Unlock()
+	s.advisorWriteMu.Lock()
+	defer s.advisorWriteMu.Unlock()
 	name := r.PathValue("name")
 	agent, ok := s.deps.Config.Agents[name]
 	if !ok {
