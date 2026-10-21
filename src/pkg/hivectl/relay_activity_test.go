@@ -3,6 +3,7 @@ package hivectl
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -13,6 +14,33 @@ func TestLoadRelayActivityMissingIsUnavailable(t *testing.T) {
 	}
 	if err := store.ClearRelayActivity(); err != nil {
 		t.Fatalf("clearing absent history: %v", err)
+	}
+}
+
+func TestRelayActivityPathHonoursEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProfileStore(dir)
+	if got, want := store.RelayActivityPath(), filepath.Join(dir, relayActivityFileName); got != want {
+		t.Fatalf("default path = %q, want %q", got, want)
+	}
+	override := filepath.Join(t.TempDir(), "elsewhere.jsonl")
+	t.Setenv("HIVE_RELAY_ACTIVITY_FILE", override)
+	if got := store.RelayActivityPath(); got != override {
+		t.Fatalf("override path = %q, want %q", got, override)
+	}
+	line := `{"key":"a","hub":"wss://h/contribute","task_id":"t1","outcome":"success","started_at":"2026-10-01T10:00:00Z","ended_at":"2026-10-01T10:05:00Z"}` + "\n"
+	if err := os.WriteFile(override, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	records, _, err := store.LoadRelayActivity()
+	if err != nil || len(records) != 1 {
+		t.Fatalf("reader must follow the override: records=%d err=%v", len(records), err)
+	}
+	if err := store.ClearRelayActivity(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(override); !os.IsNotExist(err) {
+		t.Fatalf("--clear must remove the overridden file, stat err=%v", err)
 	}
 }
 

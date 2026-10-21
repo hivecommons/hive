@@ -46,7 +46,11 @@ func RelayActivityRetention() string {
 }
 
 // RelayActivityPath reports where the relay records terminal task attempts.
+// HIVE_RELAY_ACTIVITY_FILE overrides the default, as it does for the relay.
 func (s *ProfileStore) RelayActivityPath() string {
+	if p := os.Getenv("HIVE_RELAY_ACTIVITY_FILE"); p != "" {
+		return p
+	}
 	return filepath.Join(s.dir, relayActivityFileName)
 }
 

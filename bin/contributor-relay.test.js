@@ -3966,6 +3966,23 @@ test('#13293 malformed activity lines are skipped rather than blocking new recor
   } finally { teardown(relay); }
 });
 
+test('#13293 shutdown with a task in flight records a cancelled attempt', () => {
+  const relay = loadRelay({ env: MULTI_HUB_ENV });
+  const log = console.log; console.log = () => {};
+  try {
+    const { hubs } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+    relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    assert.ok(relay.getCurrentTask(), 'precondition: a task is in flight');
+    relay.cleanup();
+    const records = readActivity(relay);
+    assert.strictEqual(records.length, 1);
+    assert.strictEqual(records[0].outcome, 'cancelled');
+    assert.strictEqual(records[0].task_id, 'act-1');
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('HIVE_HUB/HIVE_REGISTRATION_TOKEN comma lists parse into one hub per entry, matched by position', () => {
   const relay = loadRelay({ env: MULTI_HUB_ENV });
   try {
