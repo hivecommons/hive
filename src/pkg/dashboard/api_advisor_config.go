@@ -342,6 +342,12 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 		updated := prev
 		updated.Advisor = o
 		cfg.Agents[name] = updated
-		return func() { cfg.Agents[name] = prev }
+		// Restore only .Advisor so a concurrent non-advisor edit to this
+		// agent landing during saveConfig is not undone.
+		return func() {
+			a := cfg.Agents[name]
+			a.Advisor = prev.Advisor
+			cfg.Agents[name] = a
+		}
 	}, "scope", scope, "agent", name)
 }
