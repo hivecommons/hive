@@ -260,6 +260,8 @@ func socketTransportOf(t *testing.T, rt http.RoundTripper) *http.Transport {
 	t.Helper()
 	for {
 		switch w := rt.(type) {
+		case *otelTransport:
+			rt = w.inner
 		case *slowStartTransport:
 			rt = w.inner
 		case *etagCacheTransport:
@@ -381,9 +383,13 @@ func TestSlowStart_PrimaryLimitEngagesCaution(t *testing.T) {
 // the same chain as every other client.
 func TestGitHubTransportChain_AppClientIsPacedAndCached(t *testing.T) {
 	chain := githubTransportChain(http.DefaultTransport)
-	ss, ok := chain.(*slowStartTransport)
+	ot, ok := chain.(*otelTransport)
 	if !ok {
-		t.Fatalf("chain outermost = %T, want *slowStartTransport", chain)
+		t.Fatalf("chain outermost = %T, want *otelTransport", chain)
+	}
+	ss, ok := ot.inner.(*slowStartTransport)
+	if !ok {
+		t.Fatalf("otel inner = %T, want *slowStartTransport", ot.inner)
 	}
 	if ss.state != sharedSlowStartState {
 		t.Error("chain does not use the shared pacing ledger")
@@ -410,9 +416,13 @@ func TestGitHubTransportChain_AppClientIsPacedAndCached(t *testing.T) {
 
 func TestNewHTTPTransportWrapsSharedChain(t *testing.T) {
 	chain := NewHTTPTransport(http.DefaultTransport)
-	ss, ok := chain.(*slowStartTransport)
+	ot, ok := chain.(*otelTransport)
 	if !ok {
-		t.Fatalf("chain outermost = %T, want *slowStartTransport", chain)
+		t.Fatalf("chain outermost = %T, want *otelTransport", chain)
+	}
+	ss, ok := ot.inner.(*slowStartTransport)
+	if !ok {
+		t.Fatalf("otel inner = %T, want *slowStartTransport", ot.inner)
 	}
 	ec, ok := ss.inner.(*etagCacheTransport)
 	if !ok {

@@ -57,7 +57,10 @@ func (s *Store) Reconcile(ctx context.Context, repo string) error {
 	prs := s.mergeListLocked(rs, KindPR, res.PRs, start, now)
 	drift := 0
 	if rs.ready {
-		drift = countDrift(rs.issues, issues) + countDrift(rs.prs, prs)
+		issueDrift, prDrift := countDrift(rs.issues, issues), countDrift(rs.prs, prs)
+		drift = issueDrift + prDrift
+		recordDrift(ctx, rs.name, KindIssue, issueDrift)
+		recordDrift(ctx, rs.name, KindPR, prDrift)
 	}
 	rs.issues, rs.prs = issues, prs
 	for k, t := range rs.tombs {
@@ -152,14 +155,23 @@ func (s *Store) markStale(rs *repoState, now time.Time, err error) {
 }
 
 // interval is how long until repo's next reconcile: the short interval
-// while it is stale or drifting, the configured one otherwise.
+// while it is stale or drifting, the configured one otherwise. Either is
+// stretched by AdaptiveInterval as the core rate-limit budget drains, so a
+// stale repo on a nearly spent quota is retried less often rather than
+// hammered; a healthy budget leaves the interval alone.
 func (s *Store) interval(rs *repoState) time.Duration {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	base := s.opts.ReconcileInterval
 	if rs.stale || rs.driftHigh {
-		return s.opts.MinReconcileInterval
+		base = s.opts.MinReconcileInterval
 	}
-	return s.opts.ReconcileInterval
+	s.mu.RUnlock()
+	if budget := s.budget(); budget != nil {
+		if remaining, limit, ok := budget(string(BucketCore)); ok {
+			return AdaptiveInterval(base, remaining, limit)
+		}
+	}
+	return base
 }
 
 // Run reconciles every repo immediately and then each on its own interval

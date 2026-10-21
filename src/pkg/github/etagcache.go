@@ -124,13 +124,14 @@ func etagCacheWrap(inner http.RoundTripper) http.RoundTripper {
 }
 
 // githubTransportChain is the set of process-wide behaviours every GitHub
-// client's requests pass through, in order: pacing after a rate limit
-// (slowstart.go) outermost, then conditional-request caching, then the shared
-// socket-owning transport. Pacing sits outside the cache on purpose: a
-// conditional request is free against the PRIMARY quota but is still a
-// request as far as the secondary (burst) limiter is concerned.
+// client's requests pass through, in order: the OTel span/metrics layer
+// (otel_transport.go) outermost so one span covers the whole call, then
+// pacing after a rate limit (slowstart.go), then conditional-request caching,
+// then the shared socket-owning transport. Pacing sits outside the cache on
+// purpose: a conditional request is free against the PRIMARY quota but is
+// still a request as far as the secondary (burst) limiter is concerned.
 func githubTransportChain(inner http.RoundTripper) http.RoundTripper {
-	return slowStartWrap(githubUnpacedTransportChain(inner))
+	return otelWrap(slowStartWrap(githubUnpacedTransportChain(inner)))
 }
 
 // githubUnpacedTransportChain is githubTransportChain without the slow-start
@@ -159,10 +160,10 @@ func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = sharedProxyTrust.sharedTransport()
 	}
-	return &slowStartTransport{
+	return otelWrap(&slowStartTransport{
 		inner: etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(base))),
 		state: externalSlowStartState,
-	}
+	})
 }
 
 // etagCacheKey identifies a cacheable representation: who asked, for what,

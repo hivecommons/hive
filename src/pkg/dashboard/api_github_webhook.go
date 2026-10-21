@@ -10,7 +10,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -37,6 +39,9 @@ func (s *Server) registerGitHubWebhookRoutes() {
 // managed repo refreshes webhook health. Deliveries for repositories this
 // hive does not manage are ignored.
 func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
+	// Receipt time anchors webhook.event_to_patch_ms (hivecommons/hive#13380):
+	// how long a delivery takes to become a cache patch.
+	receivedAt := time.Now()
 	event := r.Header.Get("X-GitHub-Event")
 	if event == "" {
 		jsonError(w, "missing X-GitHub-Event header", http.StatusBadRequest)
@@ -71,6 +76,10 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"status": "ignored", "reason": "unknown repository", "event": event})
 		return
 	}
+	// HandleWebhookEvent is the legacy writer: it invalidated the PR cache
+	// and dirtied issues for the next cycle. The forgestate writer records
+	// its own sample (WriterForgeState) when it applies the item patch.
+	forgestate.RecordEventToPatch(r.Context(), res.Repo, forgestate.WriterCacheInvalidate, receivedAt, time.Now())
 	resp := map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated}
 	if n := s.scheduleWebhookTrackerRefresh(res, r.Header.Get("X-GitHub-Delivery")); n > 0 {
 		resp["tracker_refresh"] = n

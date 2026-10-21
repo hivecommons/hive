@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"go.opentelemetry.io/otel/metric"
 )
 
 var (
@@ -70,6 +71,10 @@ type Options struct {
 	SearchBudget int
 	// Critical is the default Gate's API-budget critical hook.
 	Critical func() bool
+	// Budget reports the rate-limit budget left per bucket; the reconcile
+	// interval stretches as it drains (AdaptiveInterval). Nil uses the
+	// process default from SetDefaultBudgetSource, or no stretching.
+	Budget BudgetFunc
 }
 
 // OptionsFromConfig maps the `forgestate:` block onto Options. The caller
@@ -129,6 +134,7 @@ type Store struct {
 	order     []string
 	ready     chan struct{}
 	readyOnce sync.Once
+	staleness metric.Registration
 }
 
 // New returns a Store for o. It does no I/O; call Run (or Reconcile per
@@ -192,7 +198,17 @@ func New(o Options) (*Store, error) {
 	if len(s.repos) == 0 {
 		s.readyOnce.Do(func() { close(s.ready) })
 	}
+	s.staleness = s.registerStaleness()
 	return s, nil
+}
+
+// Close releases the Store's metric registration. The cache itself needs no
+// teardown; Close only matters for processes that build many Stores.
+func (s *Store) Close() error {
+	if s.staleness != nil {
+		return s.staleness.Unregister()
+	}
+	return nil
 }
 
 func (s *Store) lookup(repo string) *repoState { return s.repos[canonicalRepo(repo)] }

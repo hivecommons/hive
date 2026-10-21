@@ -24,6 +24,7 @@ github.com/hivecommons/hive/pkg/evidence
 github.com/hivecommons/hive/pkg/feedbackbundle
 github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
+github.com/hivecommons/hive/pkg/forgestate
 github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor
 github.com/hivecommons/hive/pkg/hiveadvisor

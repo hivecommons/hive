@@ -166,6 +166,7 @@ func newHarness(t *testing.T, repos ...string) *harness {
 		t.Fatalf("New: %v", err)
 	}
 	h.store = s
+	t.Cleanup(func() { _ = s.Close() })
 	return h
 }
 

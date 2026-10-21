@@ -104,6 +104,53 @@ Before reference, captured 2026-10-08 from the hosted fleet:
 | Second fleet consumer | `hive GET /repos/{owner}/{repo}/issues/{number}/comments 1819/3298` |
 | Third fleet consumer | `hive:enrich_pr_ci GET /repos/{owner}/{repo}/pulls/{number} 1157/2325` |
 
+## OpenTelemetry: GitHub API spend and cache freshness
+
+Hive emits OpenTelemetry spans and metrics for every GitHub call, the governor
+eval cycle, and the ForgeState cache ([#13380](https://github.com/hivecommons/hive/issues/13380),
+Phase 3 of [#13373](https://github.com/hivecommons/hive/issues/13373)). Both
+signals share one switch and are **off by default**; nothing is exported and
+no behaviour changes until an endpoint is configured.
+
+| Setting | Effect |
+|---|---|
+| `otel.enabled: true` (alias `tracing.enabled`) | Turns the pipeline on. Without an endpoint it stays a no-op. |
+| `otel.endpoint` | OTLP/HTTP collector URL. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Standard OTel env var; used when `otel.endpoint` is empty. Traces and metrics go to the same collector. |
+| `otel.headers`, `otel.service_name`, `otel.insecure` | Exporter headers, `service.name` resource attribute, plaintext HTTP. |
+
+Spans:
+
+| Span | Where | Attributes |
+|---|---|---|
+| `github.request` | Outermost layer of the GitHub HTTP transport chain (one per REST/GraphQL call, including ETag replays and pacer refusals) | `http.request.method`, `http.response.status_code`, `github.endpoint` (templated path, e.g. `/repos/{owner}/{repo}/pulls/{number}`; no ids), `github.repo`, `hive.caller` (REST caller tag, `unknown` when untagged), `hive.pacing_class` (`high` / `normal` / `low`), `github.cache_hit` (304 / ETag-cache served), `github.ratelimit.remaining`, `github.ratelimit.bucket` (`core`, `search`, `graphql`, …), `github.shed` (request refused by the pacer) |
+| `governor.eval_cycle` | One per governor eval cycle | `hive.id`, `hive.acmm_level` |
+| `governor.enumerate_actionable` | child of `eval_cycle` | items found |
+| `governor.stage_labels` | child of `eval_cycle` | `hive.stage_labels.items`, `hive.stage_labels.writes` |
+| `governor.kick` | child of `eval_cycle` | `hive.kicks.assembled`, `hive.kicks.review_delivered`; `agent.kick` children per dispatched agent |
+| `governor.automerge` | Sibling of `eval_cycle` (the sweep runs on its own cadence) | `hive.automerge.seen`, `hive.automerge.merged`, `hive.automerge.skipped` |
+
+GitHub calls made inside those spans attach as `github.request` children, so a
+trace answers "which stage of which cycle spent the quota".
+
+Metrics (OTLP, exported on the SDK's periodic reader):
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `github.requests` | counter | `caller`, `endpoint`, `status` | Every GitHub call; `status` is the HTTP code, `shed`, or `error`. |
+| `github.ratelimit.remaining` | gauge | `bucket` | Last `X-RateLimit-Remaining` seen per bucket (unauthenticated 60/hour buckets are ignored). |
+| `github.secondary_limit_hits` | counter | — | 403/429 responses GitHub flagged as secondary/abuse limits. |
+| `forgestate.staleness_s` | observable gauge | `repo` | Seconds since each cached repo was last reconciled or patched. |
+| `forgestate.drift` | counter | `repo`, `kind` (`issue`, `pr`) | Entries the reconcile pass found differing between cache and API. |
+| `webhook.event_to_patch_ms` | histogram | `repo`, `writer` (`forgestate`, `cache_invalidate`) | Latency from webhook receipt to the cache patch being applied. |
+
+Adaptive reconcile: `forgestate.reconcile_interval_s` is the base cadence. The
+store stretches it from the latest `core` bucket observation
+(`forgestate.AdaptiveInterval`): below 20% remaining → 2×, below 10% → 4×,
+below 5% → 8×. Webhook patches keep the cache fresh in the meantime, and the
+interval snaps back once the window resets. When a hive has not yet seen a
+rate-limit header the base interval is used unchanged.
+
 ## Configuration blocks
 
 Top-level YAML keys accepted by `config.Config`:

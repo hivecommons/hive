@@ -41,6 +41,7 @@ import (
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -1176,6 +1177,9 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		Commit: gitShort,
 		Image:  deps.selfImage(),
 	})
+	// The forgestate cache stretches its reconcile cadence from the same
+	// rate-limit headers the GitHub transport observes (hivecommons/hive#13380).
+	forgestate.SetDefaultBudgetSource(github.RateLimitBudget)
 	if traceErr != nil {
 		b.logger.Warn("tracing init failed; continuing without tracing", "error", traceErr)
 	} else if otelCfg.Enabled {
@@ -7466,6 +7470,11 @@ func runEvalCycle(
 	// previously unreachable without a tmux session and a live governor.
 	var deliveredReviewKicks []review.DispatchKick
 	if len(messages) > 0 {
+		// governor.kick wraps the whole dispatch pass; each delivered kick
+		// still gets its own agent.kick child via startKickSpan below.
+		kickCtx, kickPassSpan := tracing.StartSpan(ctx, "governor.kick",
+			attribute.Int("hive.kicks.assembled", len(messages)))
+		ctx := kickCtx
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
@@ -7558,6 +7567,8 @@ func runEvalCycle(
 			markProbeReleased: providerBudgetProbe.MarkReleased,
 			now:               time.Now,
 		}, logger)
+		kickPassSpan.SetAttributes(attribute.Int("hive.kicks.review_delivered", len(deliveredReviewKicks)))
+		kickPassSpan.End()
 	}
 	persistReviewDispatchState(reviewPlan, deliveredReviewKicks, logger)
 
@@ -9057,6 +9068,12 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	ctx = github.WithPacingClass(ctx, github.PacingLow)
+	// governor.automerge covers the queued, trusted-author and contributor-
+	// lane sweeps plus the stage-label pass that follows them. The sweep runs
+	// on its own cadence in the run loop, so this is a sibling of
+	// governor.eval_cycle rather than a child.
+	ctx, sweepSpan := tracing.StartSpan(ctx, "governor.automerge")
+	defer sweepSpan.End()
 	opts := automerge.Options{
 		Logger:                  logger,
 		MergerAuthorizer:        trustedMergerFunc(cfg),
@@ -9106,6 +9123,10 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if len(result.Merged) > 0 || result.Seen > 0 {
 		logger.Info("automerge sweep complete", "seen", result.Seen, "merged", len(result.Merged), "skipped", result.Skipped)
 	}
+	sweepSpan.SetAttributes(
+		attribute.Int("hive.automerge.seen", result.Seen),
+		attribute.Int("hive.automerge.merged", len(result.Merged)),
+		attribute.Int("hive.automerge.skipped", result.Skipped))
 	remaining := automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
 	if remaining > 0 && opts.TrustedAuthorPolicy().Enabled {
 		trustedResult, trustedErr := automerge.SweepTrustedAuthorAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
@@ -9650,8 +9671,13 @@ func applyDuplicatePRGuard(
 	// pass, so bound the sync; a paced request whose slot would miss the
 	// deadline fails fast and the best-effort sync retries next cycle.
 	stageCtx, stageCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
+	stageCtx, stageSpan := tracing.StartSpan(stageCtx, "governor.stage_labels")
 	syncStageEngineMode(cfg, ghClient, logger)
 	res := github.SyncIssueStageLabelsWith(stageCtx, ghClient, actionable, nil, time.Now(), logger, stageEngineOptions(cfg, logger))
+	stageSpan.SetAttributes(
+		attribute.Int("hive.stage_labels.items", res.Items),
+		attribute.Int("hive.stage_labels.writes", res.Writes))
+	stageSpan.End()
 	stageCancel()
 	if res.Writes+res.Comments > 0 {
 		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)

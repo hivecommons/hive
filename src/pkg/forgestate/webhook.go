@@ -21,6 +21,10 @@ type WebhookEvent struct {
 	// confirming fetch fails on a close (the conservative direction).
 	UpdatedAt time.Time
 	HeadSHA   string
+	// ReceivedAt is when the delivery arrived at the hive, stamped by the
+	// webhook handler. When set, ApplyWebhook records the receipt-to-patch
+	// latency as webhook.event_to_patch_ms; zero records nothing.
+	ReceivedAt time.Time
 }
 
 func (ev WebhookEvent) closes() bool { return strings.EqualFold(ev.Action, "closed") }
@@ -82,6 +86,7 @@ func (s *Store) ApplyWebhook(ctx context.Context, repo string, ev WebhookEvent) 
 		}
 	}
 	s.opts.Metrics.WebhookPatch(rs.name, result)
+	RecordEventToPatch(ctx, rs.name, WriterForgeState, ev.ReceivedAt, now)
 	return nil
 }
 

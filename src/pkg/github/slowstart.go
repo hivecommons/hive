@@ -52,6 +52,15 @@ const (
 	slowStartDeadlineMargin = 500 * time.Millisecond
 	// slowStartLogInterval bounds caution-window logs during repeated extensions.
 	slowStartLogInterval = time.Minute
+
+	// pacingLimitHeader is set on a 403/429 response the pacer recognised as
+	// a rate-limit refusal; its value is "primary" or "secondary". The OTel
+	// transport (otel_transport.go) reads it to count secondary-limit hits.
+	pacingLimitHeader = "X-Hive-Pacing-Limit"
+	// pacingErrPrefix starts every error the pacer returns in place of a
+	// response (deadline-miss refusals today, priority shedding when it
+	// lands); the OTel transport reports those as github.shed.
+	pacingErrPrefix = "github pacing:"
 )
 
 // slowStartState is the shared pacing ledger. It is deliberately SEPARATE
@@ -263,6 +272,9 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 			kind = "primary"
 		}
 		if !until.IsZero() {
+			// Tell the observability layer outside this transport which
+			// limit tripped without it having to re-sniff the body.
+			resp.Header.Set(pacingLimitHeader, kind)
 			st.mu.Lock()
 			now := time.Now()
 			if until.After(st.cautiousUntil) {
