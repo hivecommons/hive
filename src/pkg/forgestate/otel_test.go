@@ -149,6 +149,28 @@ func TestDefaultBudgetSource(t *testing.T) {
 
 func TestOTelDriftCounterPerKind(t *testing.T) {
 	reader := otelTestReaderFor(t)
+	// The counter is cumulative and shared by every test in the binary that
+	// reconciles "o/r", so assert the delta from this test's own reconciles.
+	driftByKind := func() (issues, prs int64) {
+		m, ok := collect(t, reader)[MetricDriftTotal]
+		if !ok {
+			return 0, 0
+		}
+		sum, ok := m.Data.(metricdata.Sum[int64])
+		if !ok {
+			t.Fatalf("data = %T, want Sum[int64]", m.Data)
+		}
+		for _, dp := range sum.DataPoints {
+			switch {
+			case hasAttrs(dp.Attributes, attribute.String("repo", "o/r"), attribute.String("kind", string(KindIssue))):
+				issues += dp.Value
+			case hasAttrs(dp.Attributes, attribute.String("repo", "o/r"), attribute.String("kind", string(KindPR))):
+				prs += dp.Value
+			}
+		}
+		return issues, prs
+	}
+	baseIssues, basePRs := driftByKind()
 	h := newHarness(t)
 	h.fetcher.setList([]Item{issue(1, t0), issue(2, t0)}, []Item{pr(10, t0, "a")}, "")
 	mustReconcile(t, h, "o/r")
@@ -157,23 +179,8 @@ func TestOTelDriftCounterPerKind(t *testing.T) {
 	h.fetcher.setList([]Item{issue(1, t0), issue(3, t0)}, []Item{pr(10, t0.Add(time.Second), "b")}, "")
 	mustReconcile(t, h, "o/r")
 
-	m, ok := collect(t, reader)[MetricDriftTotal]
-	if !ok {
-		t.Fatalf("metric %s not recorded", MetricDriftTotal)
-	}
-	sum, ok := m.Data.(metricdata.Sum[int64])
-	if !ok {
-		t.Fatalf("data = %T, want Sum[int64]", m.Data)
-	}
-	var issues, prs int64
-	for _, dp := range sum.DataPoints {
-		switch {
-		case hasAttrs(dp.Attributes, attribute.String("repo", "o/r"), attribute.String("kind", string(KindIssue))):
-			issues += dp.Value
-		case hasAttrs(dp.Attributes, attribute.String("repo", "o/r"), attribute.String("kind", string(KindPR))):
-			prs += dp.Value
-		}
-	}
+	issues, prs := driftByKind()
+	issues, prs = issues-baseIssues, prs-basePRs
 	if issues != 2 || prs != 1 {
 		t.Fatalf("forgestate.drift{issue}=%d {pr}=%d, want 2 and 1", issues, prs)
 	}

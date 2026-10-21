@@ -81,14 +81,48 @@ const stageTrackerMergedWindow = 30 * time.Minute
 
 var stageTrackerAuditNumberRe = regexp.MustCompile(`(?:^|[,\s])number=(\d+)`)
 
+// stageTrackerRepoQualifier maps the short repo name a configured repo
+// goes by in audit entries (the PR poller's terminal observations record
+// `repo=hive`) to the owner/name Items carry (`hivecommons/hive`), so the
+// SPA's merge detector can match the two. Names already qualified, and
+// short names no configured repo accounts for, pass through unchanged.
+func stageTrackerRepoQualifier(status *StatusPayload) func(string) string {
+	full := map[string]string{}
+	if status != nil {
+		for _, repo := range status.Repos {
+			name := overviewRepoName(repo)
+			if short := name[strings.LastIndex(name, "/")+1:]; short != "" && short != name {
+				if prev, dup := full[short]; dup && prev != name {
+					full[short] = "" // ambiguous across owners: leave as is
+					continue
+				}
+				full[short] = name
+			}
+		}
+	}
+	return func(repo string) string {
+		if strings.Contains(repo, "/") {
+			return repo
+		}
+		if q := full[repo]; q != "" {
+			return q
+		}
+		return repo
+	}
+}
+
 // stageTrackerRecentlyMerged reads the pr_merged audit entries newer than
 // now-stageTrackerMergedWindow from the in-memory ring: newest first, one
-// entry per (repo, number). The ring holds auditRingCap entries and is the
+// entry per (repo, number) after qualify has mapped short repo names onto
+// the owner/name Items use. The ring holds auditRingCap entries and is the
 // only source consulted — a window this short never needs the on-disk log,
 // and reading files on every tracker build would defeat its cache.
-func (s *Server) stageTrackerRecentlyMerged(now time.Time) []StageTrackerMerged {
+func (s *Server) stageTrackerRecentlyMerged(now time.Time, qualify func(string) string) []StageTrackerMerged {
 	if s == nil || s.audit == nil {
 		return nil
+	}
+	if qualify == nil {
+		qualify = func(repo string) string { return repo }
 	}
 	seen := map[string]bool{}
 	var out []StageTrackerMerged
@@ -100,6 +134,7 @@ func (s *Server) stageTrackerRecentlyMerged(now time.Time) []StageTrackerMerged 
 		if !ok {
 			continue
 		}
+		repo = qualify(repo)
 		number := e.Target
 		if number == 0 {
 			if m := stageTrackerAuditNumberRe.FindStringSubmatch(e.Detail); m != nil {
@@ -794,7 +829,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		st := s.deps.StageEngineStatus()
 		resp.Engine = &st
 	}
-	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now)
+	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now, stageTrackerRepoQualifier(status))
 	if status == nil {
 		return resp
 	}

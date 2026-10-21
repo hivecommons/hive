@@ -200,18 +200,20 @@ func adoptionBlocked(labels []string) string {
 	return ""
 }
 
-// adoptionDiffRefusal applies the contributor lane's diff fences (CI
-// workflow/action definitions, test deletion) before adoption, so the hive
-// never re-homes such a head into an App-authored PR (hivecommons/hive#12850).
-// It returns the contributor-lane skip reason, or "" when adoption may
-// proceed. The files API answers for the PR's current head while adoption
-// acts on obs.HeadSHA, so a head that moved since the lane recorded it is
-// refused (head-changed-since-eval) rather than judged by another head's
-// diff; the fetched PR also carries changed_files, so an incomplete list
-// (more files than the API will ever return) is a standing files-evidence
-// refusal with a nil error. A transport failure refuses with the error set,
-// so callers can tell a transient read fault from a verdict; both are
-// re-read on the next sweep.
+// adoptionDiffRefusal reads the contributor lane's diff fences (CI
+// workflow/action definitions, test deletion) for the head about to be
+// adopted. It returns the contributor-lane reason, or "" when the diff reads
+// clean. A fence verdict does not refuse adoption — adoption is not a merge;
+// it is recorded and carried so the merge stays manual
+// (automerge_adoption_fence.go) — but a verdict the fence could not reach
+// does defer it (adoptionFenceDefers): the files API answers for the PR's
+// current head while adoption acts on obs.HeadSHA, so a head that moved
+// since the lane recorded it is reported as head-changed-since-eval rather
+// than judged by another head's diff; the fetched PR also carries
+// changed_files, so an incomplete list (more files than the API will ever
+// return) is a standing files-evidence verdict with a nil error. A transport
+// failure reports files-evidence with the error set, so callers can tell a
+// transient read fault from a verdict; both are re-read on the next sweep.
 func (c *Engine) adoptionDiffRefusal(ctx context.Context, obs stageObservation) (string, error) {
 	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
 	if err != nil {
@@ -311,6 +313,12 @@ func AdoptionDCORehomeComment(obs stageObservation, hiveID string, superseding i
 // AdoptionPRBody is the superseding App PR's body.
 func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool) string {
 	var b strings.Builder
+	if rec.AdoptDiffFence != "" {
+		// Read back by carriedFenceGate: the App lanes never merge this
+		// PR unattended, whoever pushes to it.
+		b.WriteString(CarriedFenceMarker(rec.AdoptDiffFence, obs.Number))
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "Supersedes #%d (%s; original commits by @%s preserved).\n\n", obs.Number, adoptionBodyCause(rec.AdoptReason), obs.Author)
 	for _, c := range adoptionCloses(obs.Body) {
 		b.WriteString(c)
@@ -329,6 +337,9 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	b.WriteString("**Hive fix agent:** rebase this branch on `")
 	b.WriteString(nonEmpty(obs.BaseRef, "the base branch"))
 	b.WriteString("`, fix the failing checks / review asks, and push to THIS branch. Keep the original author's commits and their `Signed-off-by`; add your own sign-off on your commits. Do not open another PR.\n")
+	if rec.AdoptDiffFence != "" {
+		fmt.Fprintf(&b, "\n**Merge stays manual** (`%s`, carried from #%d): %s. The hive repairs CI here but will not merge this PR; a maintainer reviews and merges it once green. Do not remove the `%s` marker.\n", rec.AdoptDiffFence, obs.Number, nonEmpty(decisionCause(rec.AdoptDiffFence), "the contributor lane's diff fence tripped"), CarriedFenceMarkerPrefix)
+	}
 	if rec.AdoptReason == AdoptReasonSignoffRehome || rec.AdoptReason == AdoptReasonInPlaceStalled {
 		fmt.Fprintf(&b, "\n**Open review finding carried over from #%d:** the review swarm's latest verdict on `%s` requested changes", obs.Number, shortSHA(obs.HeadSHA))
 		if obs.Detail.VerdictKnown && strings.TrimSpace(obs.Detail.Verdict.Verdict) != "" {
@@ -473,21 +484,31 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
-	if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
-		// Not recorded as an attempt: the PR stays on its 072 route and a
-		// new head from the author is judged afresh.
-		c.info("stage labels: adoption due but refused by diff fence", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", refusal, "error", err)
+	fence, err := c.adoptionDiffRefusal(ctx, obs)
+	if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
+		// The fence could not judge this head (it moved, or its file list
+		// is incomplete / unreadable). Not recorded as an attempt: the PR
+		// stays on its 072 route and the next sweep re-reads.
+		c.info("stage labels: adoption due but deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", fence, "error", err)
 		return 0, nil
+	}
+	if fence != "" {
+		// A fenced diff is adopted all the same — adoption is not a merge.
+		// The fence travels with the head (record + superseding PR body) so
+		// the merge stays a person's (automerge_adoption_fence.go).
+		c.info("stage labels: adopting contributor PR despite diff fence; merge stays manual", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "fence", fence)
 	}
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	// Record the attempt first: whatever happens below, this head is tried once.
 	store.MarkAdopted(key, obs.HeadSHA, 0, now)
+	store.NoteAdoptDiffFence(key, fence)
+	rec.AdoptDiffFence = fence
 	if appLogin == "" {
 		c.warn("stage labels: cannot adopt contributor PR, App login unknown", "repo", obs.Display, "pr", obs.Number)
 		return 0, nil
 	}
-	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason)
+	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
 
 	canPushInPlace := false
 	if policy.AdoptInPlace {
@@ -496,12 +517,12 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
-		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline)
+		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
 		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 			return 0, err
 		}
-		c.info("stage labels: contributor PR adopted in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason)
+		c.info("stage labels: contributor PR adopted in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "fence", fence)
 		return 1, nil
 	}
 
@@ -511,6 +532,11 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	rec.AdoptReason = reason
+	if stored, ok := store.Get(key); ok && stored.AdoptDiffFence != "" {
+		// A second takeover (dco-rehome, signoff-rehome, in-place-stalled)
+		// carries the fence the first adoption recorded.
+		rec.AdoptDiffFence = stored.AdoptDiffFence
+	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
 	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
@@ -561,12 +587,13 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 	}
 	superseding := created.GetNumber()
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
-	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch)
+	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch, "fence", rec.AdoptDiffFence)
 
 	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, online)
 	if dcoRehome {
 		body = AdoptionDCORehomeComment(obs, policy.HiveID, superseding)
 	}
+	body += adoptionFenceNote(rec.AdoptDiffFence)
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", number, "superseded_by", superseding, "error", err)
 		return 0, err
@@ -591,24 +618,20 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 	if adoptedHeadDCORed(obs, rec) {
 		canPushInPlace := c.canPushToPRBranch(ctx, obs)
 		if adoptedHeadNeedsDCORehome(obs, rec, canPushInPlace) {
-			if refusal, err := c.adoptionDiffRefusal(ctx, obs); refusal != "" {
-				if err != nil {
-					// A transient read failure is not a verdict: keep the
-					// adoption so the next sweep re-reads, rather than
-					// releasing it and re-adopting with a duplicate comment.
-					c.warn("stage labels: DCO re-home deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal, "error", err)
-					return 0, nil
-				}
-				if refusal == adoptionReasonHeadChanged {
-					// The next sweep observes the new head and re-reads.
-					c.info("stage labels: DCO re-home deferred, head moved", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
-					return 0, nil
-				}
-				// The hive cannot take this head over, so it gives the PR
-				// back: it returns to 072, where the same fence holds it.
-				c.info("stage labels: DCO re-home refused by diff fence; releasing adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", refusal)
-				store.ClearAdoption(key)
+			fence, err := c.adoptionDiffRefusal(ctx, obs)
+			if fence != "" && (err != nil || adoptionFenceDefers(fence)) {
+				// Not a verdict: the head moved, or its file list is
+				// incomplete / unreadable. Keep the adoption so the next
+				// sweep re-reads, rather than releasing it and re-adopting
+				// with a duplicate comment.
+				c.warn("stage labels: DCO re-home deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", fence, "error", err)
 				return 0, nil
+			}
+			if fence != "" {
+				// The fence travels into the superseding PR's body; the
+				// self-authored lane hands that PR's merge to a person.
+				c.info("stage labels: re-homing adopted PR despite diff fence; merge stays manual", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "fence", fence)
+				store.NoteAdoptDiffFence(key, fence)
 			}
 			c.info("stage labels: re-homing adopted PR for DCO repair", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "unsigned", obs.Detail.DCOUnsigned, "unsigned_hive", obs.Detail.DCOUnsignedHive, "can_push", canPushInPlace)
 			// Record the attempt first, as adoptContributorPR does: this

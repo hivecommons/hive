@@ -829,22 +829,43 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      (hivecommons/hive#12858).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
-   Neither is a PR whose diff trips the contributor lane's diff fences —
-   it touches `.github/workflows/` or `.github/actions/`, deletes a test
-   file, or guts tests — nor one whose file list cannot be read
-   (hivecommons/hive#12850): the hive will not re-home such a head into an
-   App-authored PR or take over its branch. It logs
-   `adoption due but refused by diff fence` with the `contributor-lane:*`
-   reason, the stage stays 072, and the attempt is not recorded, so a later
-   sweep or a new head is judged afresh. The fence reads the PR itself and
-   judges only the head the lane recorded: if the head moved in between
-   (`head-changed-since-eval`) or the file list is shorter than GitHub's
-   `changed_files` count (`contributor-lane:files-evidence`), adoption
-   waits for the next sweep. The same fence guards the `dco-rehome`
-   takeover; only a genuine refusal there releases the in-place adoption, so
-   the PR drops back to 072, where the fence keeps holding it. A transient
-   files-API error defers the re-home and keeps the adoption, as
-   `head-changed-since-eval` does.
+   A PR whose diff trips the contributor lane's diff fences — it touches
+   `.github/workflows/` or `.github/actions/`
+   (`contributor-lane:workflow-path`), deletes a test file, or guts tests
+   (`contributor-lane:tests-removed`) — IS adopted: adoption is not a
+   merge. Refusing it (hivecommons/hive#12850) left exactly the PR the
+   fence protects with nobody working it: red CI, `needs-rebase`, an absent
+   author, and `adoption due but refused by diff fence` on every sweep
+   (hivecommons/hive#13212). The fence's purpose is to stop a fenced diff
+   being laundered into an App-authored PR the self-authored lane then
+   merges unattended, so the hive adopts and carries the fence forward
+   instead. It logs `adopting contributor PR despite diff fence; merge
+   stays manual` with `fence=<reason>`, records the reason on the stage
+   record (`adopt_diff_fence`), and the adoption comment ends with "The
+   merge stays manual: …". What that means per mode:
+   - **in place**: the PR stays contributor-authored and the contributor
+     lane re-reads its diff on every pass, so the fix lane rebases and
+     repairs CI on the PR's branch (074) and the green head lands at
+     `stage/085-needs-decision` with "a maintainer must review and merge
+     this PR manually" — the lane never merges it, and the 085 note says
+     the hive adopted it to repair CI and why it still will not merge it.
+   - **supersede** (and the `dco-rehome`, `signoff-rehome` and
+     `in-place-stalled` second takeovers): the App PR's body opens with
+     `<!-- hive:carried-fence reason=<contributor-lane:…> from=#<n> -->`
+     and a **Merge stays manual** paragraph. Every App merge lane
+     (self-authored, trusted-author, `/hive merge`-queued) refuses a PR
+     carrying that marker once it is green, with the carried
+     `contributor-lane:*` reason, so it routes to 085 like a contributor PR
+     with the same diff; `/hive approve` says so too. The hive's own
+     pushes to the superseding branch do not lift it. A second takeover
+     no longer releases the adoption back to 072 over the fence.
+   Only a verdict the fence could not reach still defers adoption, with no
+   attempt recorded, so the next sweep re-reads: the fence reads the PR
+   itself and judges only the head the lane recorded, so a head that moved
+   in between (`head-changed-since-eval`), a file list shorter than
+   GitHub's `changed_files` count (`contributor-lane:files-evidence`) or a
+   files-API error all wait for the next sweep. The same deferrals apply
+   to the `dco-rehome` takeover, which keeps the adoption meanwhile.
    How the hive takes over depends on whether it can push to the PR's own
    branch (`governor.labels.stage.adoption.in_place`, default `true`):
    - **in place** (`mode=in-place`) — the head is in the base repo, or the

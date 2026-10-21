@@ -45,6 +45,13 @@ type forgeTestForge struct {
 func newForgeTestForge(t *testing.T) *forgeTestForge {
 	t.Helper()
 	f := &forgeTestForge{t: t, org: "org", repo: "cached"}
+	// Process-wide pacing and rate-limit state left by earlier tests can
+	// engage the caution window or critical budget and refuse the
+	// freshness re-read.
+	ResetRateLimitPacingForTest()
+	t.Cleanup(ResetRateLimitPacingForTest)
+	oldAccounting := sharedRESTAccountingPtr.Swap(&restAccountingStore{now: time.Now, coreRemaining: -1})
+	t.Cleanup(func() { sharedRESTAccountingPtr.Store(oldAccounting) })
 	f.issues = []wireIssue{
 		{Number: 1, Title: "first", User: wireUser{"alice"}, CreatedAt: hoursAgo(3), State: "open"},
 		{Number: 2, Title: "second", User: wireUser{"bob"}, CreatedAt: hoursAgo(2), State: "open"},
