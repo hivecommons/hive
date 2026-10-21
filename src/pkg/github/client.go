@@ -712,6 +712,12 @@ type IssueClaimContext struct {
 	// person reopened the issue after the PR named here merged.
 	ReopenedAt time.Time `json:"reopened_at,omitempty"`
 	Decision   string    `json:"decision"`
+	// CoveredLabelSynthesized records that annotateIssueWithClaim added
+	// stage/040-covered-by-pr to the in-memory Issue.Labels because the
+	// forge payload did not carry it. The issue stage sweep strips it again
+	// before planning so the label is written when GitHub actually lacks
+	// it (hivecommons/hive#13316). Process-local; never serialised.
+	CoveredLabelSynthesized bool `json:"-"`
 }
 
 type PullRequest struct {

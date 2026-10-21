@@ -336,6 +336,19 @@ func issueAuthorKind(issue Issue) authorkind.Kind {
 	}
 }
 
+// forgeIssueLabels returns the labels GitHub actually returned for the
+// issue. annotateIssueWithClaim adds stage/040-covered-by-pr to the
+// in-memory copy of an issue an open PR covers; planning against that
+// copy made Plan see the stage as already present, so the sweep that owns
+// the write never wrote it — hivecommons/hive#13221 lost its 040 to a
+// claim release and no cycle restored it (hivecommons/hive#13316).
+func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
+	if claim == nil || !claim.CoveredLabelSynthesized {
+		return labels
+	}
+	return removeIssueLabel(labels, CoveredByPRLabel)
+}
+
 // IssueStageInputs flattens an enumeration result into one row per open
 // issue the cycle saw, actionable items first, then every work-detail row.
 func IssueStageInputs(result *ActionableResult) []IssueStageInput {
@@ -344,7 +357,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue)})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue)})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -367,7 +380,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
 		}
 	}
 	return out

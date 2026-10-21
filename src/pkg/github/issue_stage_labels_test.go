@@ -916,3 +916,71 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 		})
 	}
 }
+
+// hivecommons/hive#13316: #13221 was covered by open PR #13272 but wore no
+// stage label — the claim release had stripped stage/040 and no cycle put
+// it back. annotateIssueWithClaim had added the label to the in-memory
+// issue, so the sweep planned against a payload that already "had" it.
+// The sweep must plan against the labels GitHub returned and write 040.
+func TestSyncIssueStageLabels_WritesCoveredStageHiddenBySyntheticLabel(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	issue := Issue{Repo: "acme/widgets", Number: 13221, Labels: []string{"help wanted", "triage/accepted"}}
+	annotateIssueWithClaim(&issue, IssueClaim{Repo: "acme/widgets", Issue: 13221, PRRepo: "acme/widgets", PRNumber: 13272, Closing: true})
+	if !issueHasLabel(issue.Labels, CoveredByPRLabel) || issue.ClaimContext == nil || !issue.ClaimContext.CoveredLabelSynthesized {
+		t.Fatalf("annotation must add the in-memory label and mark it synthesised: %v %+v", issue.Labels, issue.ClaimContext)
+	}
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, issue, workBucketClaimedByPR, "Open hive-authored PR #13272 already claims this issue")
+
+	inputs := IssueStageInputs(result)
+	if len(inputs) != 1 || issueHasLabel(inputs[0].Labels, CoveredByPRLabel) {
+		t.Fatalf("sweep input must carry the forge labels, got %+v", inputs)
+	}
+	stage, _, _ := IssueStageFor(inputs[0], nil)
+	if stage != stagelabels.CoveredByPR {
+		t.Fatalf("stage = %s, want 040", stage)
+	}
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Join(fake.added[13221], ","); got != CoveredByPRLabel {
+		t.Fatalf("added %q, want %q written to the forge (writes=%d)", got, CoveredByPRLabel, res.Writes)
+	}
+	if len(fake.removed[13221]) != 0 {
+		t.Fatalf("removed %v, want nothing: the issue's other labels are not hive-owned", fake.removed[13221])
+	}
+}
+
+// The label GitHub really returned is not synthesised, so a covered issue
+// already at 040 stays a no-op (no re-read, no write).
+func TestSyncIssueStageLabels_RealCoveredLabelIsNotStripped(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	issue := Issue{Repo: "acme/widgets", Number: 5, Labels: []string{"bug", CoveredByPRLabel}}
+	annotateIssueWithClaim(&issue, IssueClaim{Repo: "acme/widgets", Issue: 5, PRRepo: "acme/widgets", PRNumber: 50})
+	if issue.ClaimContext.CoveredLabelSynthesized {
+		t.Fatal("a label the payload carried must not be marked synthesised")
+	}
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, issue, workBucketClaimedByPR, "open PR")
+	if res := syncSeeded(fake, c, result, store, stageNow()); res.Writes != 0 || fake.writes() != 0 {
+		t.Fatalf("unchanged covered issue produced writes: %+v (%v / %v)", res, fake.added, fake.removed)
+	}
+}
+
+func TestForgeIssueLabels(t *testing.T) {
+	labels := []string{"bug", CoveredByPRLabel}
+	if got := forgeIssueLabels(labels, nil); len(got) != 2 {
+		t.Fatalf("nil claim: %v", got)
+	}
+	if got := forgeIssueLabels(labels, &IssueClaimContext{}); len(got) != 2 {
+		t.Fatalf("real label: %v", got)
+	}
+	if got := forgeIssueLabels(labels, &IssueClaimContext{CoveredLabelSynthesized: true}); len(got) != 1 || got[0] != "bug" {
+		t.Fatalf("synthesised label must come off: %v", got)
+	}
+}

@@ -1790,8 +1790,14 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
 		return
 	}
+	// The in-memory copy says "covered" for the dashboard and the kick;
+	// the forge label itself is the issue stage sweep's to write, so it is
+	// told when this is a synthesised label rather than one GitHub returned
+	// (hivecommons/hive#13316).
+	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
 	issue.ClaimContext = claimContext(claim, "covered_by_open_pr")
+	issue.ClaimContext.CoveredLabelSynthesized = synthesized
 }
 
 // annotateIssueReopenedAfterMerge records a voided merged claim on the issue:
@@ -2050,7 +2056,9 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
 		// The covered-by-PR stage label itself is written by the issue stage
 		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
-		// keeps the issue at 040 while the PR is open; here only the
+		// keeps the issue at 040 while the PR is open — planning against the
+		// forge labels, not the in-memory annotation
+		// (hivecommons/hive#13316); here only the
 		// retired spellings are stripped so the migration completes one cycle
 		// after upgrade, and the in-memory copy reflects the claim either way.
 		for _, name := range legacyCoveredByPRLabels {
