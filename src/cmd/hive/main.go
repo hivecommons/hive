@@ -7348,13 +7348,15 @@ func runEvalCycle(
 
 	// buildStatusSnapshot assembles the full dashboard snapshot from this
 	// cycle's evaluation. It is called twice: once BEFORE the kick dispatch
-	// below and once at the end of the cycle. Kicks are delivered serially
-	// and each one can wait up to the input-prompt timeout for a busy pane,
-	// so with a dozen due agents the dispatch alone has taken 10-15 minutes
-	// on hosted hives — during which /api/status (and everything derived from
-	// it: stage tracker, agent states, governor.nextKickAt) kept showing the
-	// previous cycle's data, and a rolling upgrade landing mid-dispatch meant
-	// the evaluation never reached the dashboard at all.
+	// below and once at the end of the cycle. Each kick can wait up to the
+	// input-prompt timeout for a busy pane; before dispatch ran one agent at
+	// a time, a dozen due agents took 10-15 minutes on hosted hives — during
+	// which /api/status (and everything derived from it: stage tracker, agent
+	// states, governor.nextKickAt) kept showing the previous cycle's data, and
+	// a rolling upgrade landing mid-dispatch meant the evaluation never
+	// reached the dashboard at all. Dispatch is now concurrent across agents
+	// (dispatchAgentKicks), so the wait is one agent's, but the early publish
+	// stays: the evaluation should be visible before any kick is typed.
 	buildStatusSnapshot := func() *dashboard.StatusPayload {
 		payload := dashboard.BuildFrontendStatus(
 			govState,
