@@ -227,6 +227,13 @@ Both reach a live kick prompt. A repo's front-matter request stays self-containe
 inside `pkg/agentsmd`; registry precedence applies to names requested by the
 agent config through `pkg/skillreg.ResolveRequested`.
 
+## Opting a class out per repository
+
+A monitored repo can state in its `AGENTS.md` that a finding class is covered by
+a gate, for example "do not file unasserted-branch findings, they are covered by
+the Stryker mutation-testing gate". When `project.checkouts_dir` is configured,
+every lane honours that statement as a written policy and skips the class.
+
 ## What to read next
 
 - **[Skill registry](skills.md)** — the sibling injection path: file format,
