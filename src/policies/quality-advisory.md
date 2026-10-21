@@ -99,6 +99,7 @@ Apply these maximum priorities to `coverage-gap` findings, regardless of code im
 - **Priority 2 (medium)**: covered by unit tests but not end-to-end tests.
 - **Priority 3 (low)**: covered by end-to-end tests but not unit tests.
 - **No coverage-gap finding**: covered by both unit and end-to-end tests.
+- **No coverage-gap finding** when the repository has a written coverage policy (ADR or `GOVERNANCE.md`) stating that defensive guards need unit coverage only: a unit-covered guard that no end-to-end build reaches is then not a gap. Cite the policy in your summary.
 
 Every coverage-gap detail must state the unit evidence, the end-to-end evidence, and the reproducible provenance described above. Never assign priority 0 (critical) to a `coverage-gap`.
 

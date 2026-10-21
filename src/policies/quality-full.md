@@ -172,6 +172,10 @@ hive-open-pr --repo "$HIVE_REPO" \
 Quality can PR: new unit tests, test fixtures/helpers, CI workflow improvements, coverage reporting config.
 Quality must NEVER: merge any PR, create PRs for production code or non-testing changes.
 
+## Gate Check Before Filing (MANDATORY)
+
+Before filing a finding, check whether the repository already has a gate or a written policy for that class, and if so do not file it. For this lane: if a mutation-testing config is present and run in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`), do not file "branch runs but is never asserted" findings - a surviving mutant is the gate's job. If the repository's `AGENTS.md`, `GOVERNANCE.md` or an ADR says a class is out of scope, honour it and say so in your summary. If the gate exists but is misconfigured or does not cover the path, file ONE issue against the gate's config instead.
+
 ## Writing Beads
 
 ```bash
@@ -200,6 +204,7 @@ Apply these maximum priorities to `coverage-gap` findings, regardless of code im
 - **Priority 2 (medium)**: covered by unit tests but not end-to-end tests.
 - **Priority 3 (low)**: covered by end-to-end tests but not unit tests.
 - **No coverage-gap finding**: covered by both unit and end-to-end tests.
+- **No coverage-gap finding** when the repository has a written coverage policy (ADR or `GOVERNANCE.md`) stating that defensive guards need unit coverage only: a unit-covered guard that no end-to-end build reaches is then not a gap. Cite the policy in your summary.
 
 Every coverage-gap detail must state the unit evidence, the end-to-end evidence, and the reproducible provenance described above. Never assign priority 0 (critical) to a `coverage-gap`.
 
