@@ -76,8 +76,10 @@ func OpsTrackingReason(title, body string) (reason string, ok bool) {
 	if HasOpsTrackingMarker(body) {
 		return "marker", true
 	}
-	text := strings.TrimSpace(title) + "\n" + body
-	if opsTrackingPhrases.MatchString(text) {
+	// Title and body are matched separately so a phrase split across the
+	// two fields ("24h after" / "promotion") is not joined by the whitespace
+	// class in the regexp.
+	if opsTrackingPhrases.MatchString(title) || opsTrackingPhrases.MatchString(body) {
 		return "soak-checklist", true
 	}
 	return "", false
