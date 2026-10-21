@@ -344,10 +344,16 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 		cfg.Agents[name] = updated
 		// Restore only .Advisor so a concurrent non-advisor edit to this
 		// agent landing during saveConfig is not undone.
-		return func() {
-			a := cfg.Agents[name]
-			a.Advisor = prev.Advisor
-			cfg.Agents[name] = a
-		}
+		return func() { restoreAgentAdvisor(cfg, name, prev.Advisor) }
 	}, "scope", scope, "agent", name)
+}
+
+// restoreAgentAdvisor puts old back on the named agent's Advisor field. An
+// agent removed concurrently while saveConfig ran is left removed rather than
+// recreated as an empty AgentConfig (hivecommons/hive#13442).
+func restoreAgentAdvisor(cfg *config.Config, name string, old *config.AdvisorOverride) {
+	if cur, ok := cfg.Agents[name]; ok {
+		cur.Advisor = old
+		cfg.Agents[name] = cur
+	}
 }

@@ -283,3 +283,28 @@ func TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoreAgentAdvisor(t *testing.T) {
+	old := &config.AdvisorOverride{MaxConsecutiveBlocks: intPtr(2)}
+	tests := []struct {
+		name       string
+		agents     map[string]config.AgentConfig
+		wantExists bool
+	}{
+		{"existing agent gets old advisor back", map[string]config.AgentConfig{"scanner": {Backend: "claude", Advisor: &config.AdvisorOverride{}}}, true},
+		{"agent deleted during save is not recreated", map[string]config.AgentConfig{}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.Config{Agents: tc.agents}
+			restoreAgentAdvisor(cfg, "scanner", old)
+			got, ok := cfg.Agents["scanner"]
+			if ok != tc.wantExists {
+				t.Fatalf("agent exists = %v, want %v (%+v)", ok, tc.wantExists, got)
+			}
+			if ok && (got.Advisor != old || got.Backend != "claude") {
+				t.Errorf("rollback must restore only Advisor: %+v", got)
+			}
+		})
+	}
+}
