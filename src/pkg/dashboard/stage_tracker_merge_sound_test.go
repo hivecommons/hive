@@ -105,7 +105,7 @@ func TestStageTrackerMergeSoundWiring(t *testing.T) {
 		`function stageTrackerNewlyOpened(prev, next)`,
 		`function stageTrackerNoteOpened(d)`,
 		`function hamSoundToggle()`,
-		`if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); }`,
+		`if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }`,
 		`if (stageTrackerSoundGate()) stageTrackerPlayZap(`,
 		`if (stageTrackerSoundGate()) stageTrackerPlayBuzz(`,
 		`function stageTrackerSoundGate() { return !!_stageTrackerSoundOn && !document.hidden; }`,

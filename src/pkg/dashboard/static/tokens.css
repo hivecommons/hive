@@ -126,6 +126,11 @@
   --tracking-eyebrow: 0.08em;
   --duration-fast: 140ms;
   --duration-status-pulse: 1500ms;
+  /* Hive activity monitor: one item moving between pipeline chevrons. */
+  --ham-move-ms: 450ms;
+  --ham-move-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ham-move-tint: color-mix(in srgb, var(--brand) 38%, transparent);
+  --ham-move-tint-soft: color-mix(in srgb, var(--brand) 22%, transparent);
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;

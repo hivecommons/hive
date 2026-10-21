@@ -1420,6 +1420,79 @@
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
     @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } }
     @media (max-width: 1100px) { .ham-cols .ham-seg-t { display: none; } }
+    /* Movement animation: when an item's lit chevron changes column between
+       two refreshes, the chosen effect (settings gear → Movement animation)
+       plays once on that row. Overlays live in .ham-anim-layer, an absolute
+       canvas over the <ol> (never an extra <li>, which would reflow the
+       strip); each effect is a self-contained block below. Colours and
+       timing come from --ham-move-* (tokens.css); the duration scales by
+       --ham-anim-scale so the settings preview can slow it down. Reduced
+       motion collapses every effect to .ham-rm-fade on the destination. */
+    .ham-strip-row { position: relative; --ham-anim-scale: 1; --ham-move-dur: calc(var(--ham-move-ms) * var(--ham-anim-scale)); }
+    .ham-anim-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; --ham-notch: 8px; }
+    .ham-anim-ghost { position: absolute; top: 0; height: 18px; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
+    .ham-anim-ghost.first { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
+    .ham-anim-ghost.to-merged, .ham-comet.to-merged { --ham-move-color: var(--green); }
+    .ham-anim-layer { --ham-move-color: var(--amber); }
+    .ham-seg.ham-rm-fade { animation: ham-rm-fade var(--ham-move-dur) ease-out !important; }
+    @keyframes ham-rm-fade { from { opacity: 0.35; } to { opacity: 1; } }
+    /* A: sliding puck — a ghost chevron glides old → new; the destination
+       waits at low opacity and lights fully when the puck lands. */
+    .ham-puck { background: var(--ham-move-color); opacity: 0.55; transition: left var(--ham-move-dur) var(--ham-move-ease), width var(--ham-move-dur) var(--ham-move-ease), opacity calc(var(--ham-move-dur) * 0.4) ease-out; }
+    .ham-puck.landed { opacity: 0; }
+    .ham-seg.active.ham-arriving { opacity: 0.3; animation: none; transition: opacity calc(var(--ham-move-dur) * 0.4) ease-out; }
+    /* B: ripple — each chevron between old and new flashes a faint tint in turn. */
+    .ham-seg.ham-ripple::after { content: ''; position: absolute; inset: 0; background: var(--ham-move-tint); opacity: 0; animation: ham-ripple calc(var(--ham-move-dur) * 0.6) ease-out var(--ham-ripple-delay, 0ms) both; pointer-events: none; }
+    @keyframes ham-ripple { 0% { opacity: 0; } 35% { opacity: 1; } 100% { opacity: 0; } }
+    /* C: ghost crossfade — the old highlight drifts a few pixels in the
+       travel direction while fading; the new one fades in from upstream. */
+    .ham-ghost-old { background: var(--ham-move-color); opacity: 0.7; animation: ham-ghost-out var(--ham-move-dur) var(--ham-move-ease) forwards; }
+    @keyframes ham-ghost-out { to { opacity: 0; transform: translateX(calc(var(--ham-dir, 1) * 10px)); } }
+    .ham-seg.active.ham-ghost-in { animation: ham-ghost-in var(--ham-move-dur) var(--ham-move-ease) both; }
+    @keyframes ham-ghost-in { from { opacity: 0.15; transform: translateX(calc(var(--ham-dir, 1) * -10px)); } to { opacity: 1; transform: none; } }
+    /* D: comet — a gradient streak with a soft glow travels the strip's
+       centre line from the old chevron's centre to the new one's, tail
+       behind it; the head flares and the destination brightens on arrival. */
+    .ham-comet { position: absolute; top: 50%; height: 3px; width: 64px; margin-top: -1.5px; border-radius: var(--r-pill); background: linear-gradient(to right, transparent, color-mix(in srgb, var(--ham-move-color) 55%, transparent) 60%, var(--ham-move-color)); box-shadow: 0 0 6px 1px color-mix(in srgb, var(--ham-move-color) 45%, transparent); opacity: 0.95; transition: transform var(--ham-move-dur) var(--ham-move-ease), opacity calc(var(--ham-move-dur) * 0.35) ease-out; }
+    .ham-comet::after { content: ''; position: absolute; top: 50%; right: 0; width: 7px; height: 7px; margin-top: -3.5px; border-radius: var(--r-pill); background: var(--ham-move-color); box-shadow: 0 0 8px 2px color-mix(in srgb, var(--ham-move-color) 70%, transparent); }
+    .ham-comet.rev { background: linear-gradient(to left, transparent, color-mix(in srgb, var(--ham-move-color) 55%, transparent) 60%, var(--ham-move-color)); }
+    .ham-comet.rev::after { right: auto; left: 0; }
+    .ham-comet.landed { opacity: 0; }
+    .ham-seg.active.ham-comet-hit { animation: ham-comet-hit calc(var(--ham-move-dur) * 0.7) ease-out; }
+    @keyframes ham-comet-hit { 0% { filter: brightness(1.7); box-shadow: 0 0 0 2px var(--ham-move-tint); } 100% { filter: brightness(1); box-shadow: none; } }
+    /* E: destination bump — the new chevron scales up ~6% and settles; a
+       small arrow glyph rises from it and fades. */
+    .ham-seg.active.ham-bump { animation: ham-bump calc(var(--ham-move-dur) * 0.8) var(--ham-move-ease); transform-origin: center; }
+    @keyframes ham-bump { 0% { transform: scale(1); } 40% { transform: scale(1.06); } 100% { transform: scale(1); } }
+    .ham-arrow { position: absolute; top: 50%; font-size: var(--fs-sm); font-weight: var(--fw-bold); color: var(--ham-move-color); line-height: 1; transform: translate(-50%, -50%); opacity: 0; animation: ham-arrow var(--ham-move-dur) ease-out forwards; }
+    @keyframes ham-arrow { 0% { opacity: 0; transform: translate(calc(-50% + var(--ham-dir, 1) * -8px), -50%); } 30% { opacity: 0.9; } 100% { opacity: 0; transform: translate(calc(-50% + var(--ham-dir, 1) * 10px), calc(-50% - 10px)); } }
+    /* F: colour wash — a soft band sweeps across every chevron from old to
+       new, clipped to each chevron's shape (the ::after rides inside the
+       overflow:hidden + clip-path <li>); per-chevron delays chain into one
+       continuous wash, and the destination holds a brief warm afterglow. */
+    .ham-seg.ham-wash::after { content: ''; position: absolute; top: 0; bottom: 0; left: -45%; width: 45%; background: linear-gradient(to right, transparent, var(--ham-move-tint-soft) 35%, var(--ham-move-tint) 50%, var(--ham-move-tint-soft) 65%, transparent); animation: ham-wash var(--ham-wash-ms, 220ms) linear var(--ham-wash-delay, 0ms) both; pointer-events: none; }
+    .ham-seg.ham-wash.rev::after { animation-name: ham-wash-rev; left: auto; right: -45%; }
+    @keyframes ham-wash { to { transform: translateX(325%); } }
+    @keyframes ham-wash-rev { to { transform: translateX(-325%); } }
+    .ham-seg.active.ham-wash-glow { animation: ham-wash-glow calc(var(--ham-move-dur) * 0.9) ease-out var(--ham-wash-glow-delay, 0ms) both; }
+    @keyframes ham-wash-glow { 0% { filter: brightness(1.45) saturate(1.2); } 100% { filter: brightness(1) saturate(1); } }
+    @media (prefers-reduced-motion: reduce) { .ham-anim-layer { display: none; } }
+    .ham-rm-preview .ham-anim-layer { display: none; }
+    /* Settings modal (gear on the card header): the Movement animation
+       section reuses the Overview settings section styles and adds a radio
+       list with one Preview button each plus a sample row the previews play on. */
+    .sts-hint { color: var(--muted); font-size: var(--fs-xs); margin: 0; }
+    .sts-row { display: flex; align-items: center; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-xs); flex-wrap: wrap; }
+    .sts-motion-list { display: grid; gap: var(--sp-2); margin: 0; padding: 0; list-style: none; }
+    .sts-motion-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); color: var(--muted); font-size: var(--fs-sm); }
+    .sts-motion-item:has(input:checked) { border-color: var(--line-strong); background: var(--panel-strong); color: var(--text); }
+    .sts-motion-item input { accent-color: var(--accent); margin: 0; }
+    .sts-motion-label { display: grid; gap: var(--sp-1); cursor: pointer; }
+    .sts-motion-key { font-family: var(--font-mono); color: var(--amber); margin-right: var(--sp-2); }
+    .sts-motion-desc { color: var(--text-faint); font-size: var(--fs-xs); }
+    .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
+    .sts-sample .ham-row { padding: var(--sp-2); }
+    .sts-sample .ham-cols { padding-top: 0; }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -13192,7 +13265,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // A covering PR nested under its issue: "[author icon] #N title" at the
     // PR column, then the PR's own strip from PR in progress onwards. The
     // PR's full tooltip rides its link; the sub-row container has none.
-    function stageTrackerSubRowHtml(lp, issue, stages, nowMs) {
+    function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
       const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
@@ -13201,7 +13274,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
-            <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
+            <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(pr), ctx)}>${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
             <span class="ham-since"></span>
           </div>
         </div>`;
@@ -13251,7 +13324,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // and nothing lit; one sub-row per PR carries the live chevron.
           range = { to: 20 };
           if (stageTrackerAnchor(item.stage, stages, item.kind) <= 20) shown = Object.assign({}, item, { stage: 40 });
-          subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
+          subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs, ctx)).join('');
         }
       }
       // Invariant (owner): the issue slot on the left never holds a PR. A
@@ -13286,10 +13359,247 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
-          <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(shown, stages, range)}</ol>
+          <ol class="ham-strip" aria-label="Pipeline progress"${stageTrackerMoveAttrs(stageTrackerItemKey(item), ctx)}>${stageTrackerStripItems(shown, stages, range)}</ol>
           <span class="ham-since"></span>
         </div>${subs}
       </div>`;
+    }
+
+    /* ---- Movement animation ------------------------------------------------
+       renderStageTracker() replaces the panel's innerHTML on every changed
+       payload, so there is no DOM continuity to watch; a move is detected from
+       data instead. Each payload is reduced to item key → column index
+       (stageTrackerColMap); keys whose column differs from the previous
+       payload's are moves (stageTrackerColMoves), the first payload never
+       animates. The pure row builder stamps data-ham-prev-col / data-ham-col
+       on the moved strips and stageTrackerAnimateMoves() plays the chosen
+       effect after setIfChanged. Detour stages share a column through
+       stageTrackerAnchor, so 050 → 070 is not a move; 110 (merged) is the
+       cap column. */
+    const STAGE_TRACKER_MOTION_KEY = 'hiveStageTrackerMotion';
+    const STAGE_TRACKER_MOTION_DEFAULT = 'wash';
+    const STAGE_TRACKER_MOTION_NONE = 'none';
+    const STAGE_TRACKER_MOTIONS = [
+      { id: 'none', key: '', label: 'None', desc: 'No movement effect; the lit chevron simply changes.' },
+      { id: 'puck', key: 'A', label: 'Sliding puck', desc: 'The highlight glides from the old column to the new one and settles.' },
+      { id: 'ripple', key: 'B', label: 'Ripple', desc: 'Each chevron between old and new flashes faintly in turn.' },
+      { id: 'ghost', key: 'C', label: 'Ghost crossfade', desc: 'The old highlight fades out drifting in the travel direction while the new one fades in.' },
+      { id: 'comet', key: 'D', label: 'Comet', desc: 'A glowing streak travels the strip\u2019s centre line and the destination flares on arrival.' },
+      { id: 'bump', key: 'E', label: 'Destination bump', desc: 'The new chevron scales up slightly and a small arrow rises from it.' },
+      { id: 'wash', key: 'F', label: 'Colour wash', desc: 'A soft band sweeps across the chevrons from old to new, leaving a brief afterglow.' },
+    ];
+    const STAGE_TRACKER_MOVE_MS = 450;
+    // A refresh that moves more rows than this is a reconciler sweep, not
+    // movement worth following; the state still advances, nothing animates.
+    const STAGE_TRACKER_MOTION_MAX_ROWS = 12;
+    const STAGE_TRACKER_CAP_COLUMN = STAGE_TRACKER_PATH.length;
+    var _stageTrackerCols = null;
+    var _stageTrackerMoves = {};
+
+    // Pure: the strip column (0-based; STAGE_TRACKER_PATH.length = merged cap)
+    // an item's stage lights, or -1 for an unknown stage.
+    function stageTrackerColIndex(item, stages) {
+      const anchor = stageTrackerAnchor(item.stage, stages, item.via_pr ? 'pr' : item.kind);
+      if (anchor >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_CAP_COLUMN;
+      return STAGE_TRACKER_PATH.indexOf(anchor);
+    }
+
+    // Pure: item key → column for every row a payload draws. An issue with
+    // one covering PR rides that PR's stage (as stageTrackerRowHtml draws
+    // it); every linked PR is keyed on its own so nested sub-rows move too.
+    function stageTrackerColMap(items, stages) {
+      const out = {};
+      if (!Array.isArray(items)) return out;
+      for (const it of items) {
+        if (!it || !it.kind || !(Number(it.number) > 0)) continue;
+        const linked = it.kind === 'issue' ? stageTrackerLinkedSorted(it, stages).filter(lp => lp && Number(lp.number) > 0) : [];
+        const shown = linked.length === 1 ? Object.assign({}, it, { via_pr: true, stage: linked[0].stage || 40 }) : it;
+        out[stageTrackerItemKey(it)] = stageTrackerColIndex(shown, stages);
+        for (const lp of linked) out[stageTrackerItemKey({ repo: it.repo, kind: 'pr', number: lp.number })] = stageTrackerColIndex({ kind: 'pr', stage: lp.stage || 0 }, stages);
+      }
+      return out;
+    }
+
+    // Pure: key → { from, to } for every key both maps know whose column
+    // changed, either direction. No previous map (first payload) or a new
+    // key (nothing to move from) → nothing.
+    function stageTrackerColMoves(prev, next) {
+      const out = {};
+      if (!prev || !next) return out;
+      for (const k of Object.keys(next)) {
+        if (!(k in prev)) continue;
+        const from = prev[k], to = next[k];
+        if (from !== to && from >= 0 && to >= 0) out[k] = { from, to };
+      }
+      return out;
+    }
+
+    // Pure: attributes the row builder stamps on a moved strip's <ol>.
+    function stageTrackerMoveAttrs(key, ctx) {
+      const mv = ctx && ctx.moves ? ctx.moves[key] : null;
+      if (!mv) return '';
+      return ` data-ham-prev-col="${Number(mv.from)}" data-ham-col="${Number(mv.to)}"`;
+    }
+
+    function stageTrackerMotionSetting() {
+      let v = '';
+      try { v = localStorage.getItem(STAGE_TRACKER_MOTION_KEY) || ''; } catch { v = ''; }
+      return STAGE_TRACKER_MOTIONS.some(m => m.id === v) ? v : STAGE_TRACKER_MOTION_DEFAULT;
+    }
+    function stageTrackerSetMotion(id) {
+      const v = STAGE_TRACKER_MOTIONS.some(m => m.id === id) ? id : STAGE_TRACKER_MOTION_DEFAULT;
+      try { localStorage.setItem(STAGE_TRACKER_MOTION_KEY, v); } catch {}
+      return v;
+    }
+    function stageTrackerReducedMotion() {
+      if (document.body && document.body.classList.contains('ham-rm-preview')) return true;
+      return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    // Pure: which effect to play for a move — '' for none. 'none' disables
+    // outright; reduced motion turns every other choice into the crossfade.
+    function stageTrackerMotionEffect(setting, reduced) {
+      if (setting === STAGE_TRACKER_MOTION_NONE) return '';
+      if (!STAGE_TRACKER_MOTIONS.some(m => m.id === setting)) setting = STAGE_TRACKER_MOTION_DEFAULT;
+      return reduced ? 'rm-fade' : setting;
+    }
+
+    // -- effect plumbing -------------------------------------------------
+    function stageTrackerAnimScale(strip) {
+      const v = parseFloat(getComputedStyle(strip.parentElement).getPropertyValue('--ham-anim-scale'));
+      return v > 0 ? v : 1;
+    }
+    function stageTrackerMoveMs(strip, frac) { return Math.round(STAGE_TRACKER_MOVE_MS * (frac == null ? 1 : frac) * stageTrackerAnimScale(strip)); }
+    function stageTrackerSegBox(li) {
+      const r = li.getBoundingClientRect(), p = li.parentElement.parentElement.getBoundingClientRect();
+      return { left: r.left - p.left, width: r.width, center: r.left - p.left + r.width / 2 };
+    }
+    function stageTrackerAnimLayer(strip) {
+      const row = strip.parentElement;
+      let layer = row.querySelector(':scope > .ham-anim-layer');
+      if (!layer) { layer = document.createElement('div'); layer.className = 'ham-anim-layer'; layer.setAttribute('aria-hidden', 'true'); row.appendChild(layer); }
+      return layer;
+    }
+    // Run fn once the animation/transition ends; the timeout is the safety
+    // net for a tab that is hidden (no frames) so nothing is left behind.
+    function stageTrackerAfter(el, evName, durMs, fn) {
+      let done = false;
+      const go = () => { if (done) return; done = true; el.removeEventListener(evName, go); fn(); };
+      el.addEventListener(evName, go);
+      setTimeout(go, durMs * 1.5);
+    }
+    function stageTrackerTransient(li, cls, durMs) { li.classList.add(cls); stageTrackerAfter(li, 'animationend', durMs, () => li.classList.remove(cls)); }
+    function stageTrackerGhostEl(strip, idx, cls, toMerged) {
+      const b = stageTrackerSegBox(strip.children[idx]);
+      const g = document.createElement('div');
+      g.className = 'ham-anim-ghost ' + cls + (idx === 0 ? ' first' : '') + (toMerged ? ' to-merged' : '');
+      g.style.left = b.left + 'px'; g.style.width = b.width + 'px';
+      return g;
+    }
+
+    // -- the effects (one function each; the registry below picks one) ----
+    function stageTrackerAnimRmFade(strip, from, to) { stageTrackerTransient(strip.children[to], 'ham-rm-fade', stageTrackerMoveMs(strip)); }
+    function stageTrackerAnimPuck(strip, from, to) {
+      const dest = strip.children[to], toMerged = to >= STAGE_TRACKER_CAP_COLUMN;
+      const puck = stageTrackerGhostEl(strip, from, 'ham-puck', toMerged);
+      stageTrackerAnimLayer(strip).appendChild(puck);
+      dest.classList.add('ham-arriving');
+      const b = stageTrackerSegBox(dest);
+      requestAnimationFrame(() => requestAnimationFrame(() => { puck.style.left = b.left + 'px'; puck.style.width = b.width + 'px'; }));
+      setTimeout(() => {
+        dest.classList.remove('ham-arriving');
+        puck.classList.add('landed');
+        stageTrackerAfter(puck, 'transitionend', stageTrackerMoveMs(strip, 0.4), () => puck.remove());
+      }, stageTrackerMoveMs(strip));
+    }
+    function stageTrackerAnimRipple(strip, from, to) {
+      const dir = to > from ? 1 : -1, count = Math.abs(to - from) + 1;
+      const step = Math.min(90, 420 / count) * stageTrackerAnimScale(strip);
+      for (let k = 0; k < count; k++) {
+        const li = strip.children[from + dir * k];
+        li.style.setProperty('--ham-ripple-delay', Math.round(k * step) + 'ms');
+        stageTrackerTransient(li, 'ham-ripple', stageTrackerMoveMs(strip, 0.6) + k * step);
+      }
+    }
+    function stageTrackerAnimGhost(strip, from, to) {
+      const dir = to > from ? 1 : -1;
+      const ghost = stageTrackerGhostEl(strip, from, 'ham-ghost-old', to >= STAGE_TRACKER_CAP_COLUMN);
+      ghost.style.setProperty('--ham-dir', dir);
+      stageTrackerAnimLayer(strip).appendChild(ghost);
+      stageTrackerAfter(ghost, 'animationend', stageTrackerMoveMs(strip), () => ghost.remove());
+      const dest = strip.children[to];
+      dest.style.setProperty('--ham-dir', dir);
+      stageTrackerTransient(dest, 'ham-ghost-in', stageTrackerMoveMs(strip));
+    }
+    function stageTrackerAnimComet(strip, from, to) {
+      const dir = to > from ? 1 : -1;
+      const a = stageTrackerSegBox(strip.children[from]).center, b = stageTrackerSegBox(strip.children[to]).center;
+      const c = document.createElement('div');
+      c.className = 'ham-comet' + (dir < 0 ? ' rev' : '') + (to >= STAGE_TRACKER_CAP_COLUMN ? ' to-merged' : '');
+      stageTrackerAnimLayer(strip).appendChild(c);
+      // The glowing head sits at the column centre; the tail trails behind.
+      const w = c.getBoundingClientRect().width || 64;
+      const at = x => `translateX(${dir > 0 ? x - w : x}px)`;
+      c.style.transform = at(a);
+      requestAnimationFrame(() => requestAnimationFrame(() => { c.style.transform = at(b); }));
+      setTimeout(() => {
+        c.classList.add('landed');
+        stageTrackerTransient(strip.children[to], 'ham-comet-hit', stageTrackerMoveMs(strip, 0.7));
+        stageTrackerAfter(c, 'transitionend', stageTrackerMoveMs(strip, 0.35), () => c.remove());
+      }, stageTrackerMoveMs(strip));
+    }
+    function stageTrackerAnimBump(strip, from, to) {
+      const dir = to > from ? 1 : -1, dest = strip.children[to];
+      stageTrackerTransient(dest, 'ham-bump', stageTrackerMoveMs(strip, 0.8));
+      const ar = document.createElement('span');
+      ar.className = 'ham-arrow';
+      ar.textContent = dir > 0 ? '\u2192' : '\u2190';
+      ar.style.left = stageTrackerSegBox(dest).center + 'px';
+      ar.style.setProperty('--ham-dir', dir);
+      if (to >= STAGE_TRACKER_CAP_COLUMN) ar.style.setProperty('--ham-move-color', 'var(--green)');
+      stageTrackerAnimLayer(strip).appendChild(ar);
+      stageTrackerAfter(ar, 'animationend', stageTrackerMoveMs(strip), () => ar.remove());
+    }
+    function stageTrackerAnimWash(strip, from, to) {
+      const dir = to > from ? 1 : -1, count = Math.abs(to - from) + 1, scale = stageTrackerAnimScale(strip);
+      // One continuous band: each chevron's sweep starts as the previous one
+      // is 80% through, and the whole run stays inside the 300–700 ms window.
+      const per = Math.max(120, Math.min(260, 560 / count)) * scale;
+      for (let k = 0; k < count; k++) {
+        const li = strip.children[from + dir * k];
+        li.style.setProperty('--ham-wash-ms', Math.round(per) + 'ms');
+        li.style.setProperty('--ham-wash-delay', Math.round(k * per * 0.8) + 'ms');
+        if (dir < 0) li.classList.add('rev');
+        li.classList.add('ham-wash');
+        stageTrackerAfter(li, 'animationend', per + k * per * 0.8, () => li.classList.remove('ham-wash', 'rev'));
+      }
+      const dest = strip.children[to];
+      dest.style.setProperty('--ham-wash-glow-delay', Math.round((count - 1) * per * 0.8) + 'ms');
+      stageTrackerTransient(dest, 'ham-wash-glow', stageTrackerMoveMs(strip, 0.9) + (count - 1) * per * 0.8);
+    }
+    const STAGE_TRACKER_MOTION_FNS = { 'rm-fade': stageTrackerAnimRmFade, puck: stageTrackerAnimPuck, ripple: stageTrackerAnimRipple, ghost: stageTrackerAnimGhost, comet: stageTrackerAnimComet, bump: stageTrackerAnimBump, wash: stageTrackerAnimWash };
+
+    // Play one effect on a strip whose chevrons already show the new state.
+    function stageTrackerAnimateMove(strip, from, to, effect) {
+      const fn = STAGE_TRACKER_MOTION_FNS[effect];
+      if (!fn || !strip || from === to) return false;
+      const dest = strip.children[to], src = strip.children[from];
+      if (!dest || !src || dest.classList.contains('blank')) return false;
+      const layer = stageTrackerAnimLayer(strip);
+      layer.innerHTML = '';
+      fn(strip, from, to);
+      return true;
+    }
+
+    // After a render: every strip the row builder flagged as moved plays the
+    // effect the setting picks, unless the tab is hidden or too many moved.
+    function stageTrackerAnimateMoves(root) {
+      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
+      if (!effect || !root || document.hidden) return 0;
+      const strips = Array.from(root.querySelectorAll('.ham-strip[data-ham-prev-col]'));
+      if (!strips.length || strips.length > STAGE_TRACKER_MOTION_MAX_ROWS) return 0;
+      let n = 0;
+      for (const strip of strips) if (stageTrackerAnimateMove(strip, Number(strip.dataset.hamPrevCol), Number(strip.dataset.hamCol), effect)) n++;
+      return n;
     }
 
     // What a PR row's issue slot shows: the open issue the PR closes (number,
@@ -13582,7 +13892,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); }
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); stageTrackerNoteMoves(data); }
       const el = document.getElementById('activity-monitor-panel');
       if (!el) return;
       const d = _stageTracker;
@@ -13600,7 +13910,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
       stageTrackerSyncToolbar(f);
-      const ctx = { nowMs, stages };
+      const ctx = { nowMs, stages, moves: _stageTrackerMoves };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const ordered = stageTrackerSort(visible, stages, f);
       const page = stageTrackerPage(ordered, f);
@@ -13631,8 +13941,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`);
         return;
       }
-      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
+      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, ctx)).join('');
       setIfChanged(el, html);
+      // Moves play once, on the render that follows the payload; a filter
+      // or paging re-render of the same payload does not replay them.
+      if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }
+    }
+
+    // Stateful: reduce the payload to columns, diff against the previous
+    // one, and keep the moves for the render that follows.
+    function stageTrackerNoteMoves(d) {
+      const next = stageTrackerColMap(d && d.items, d && d.stages);
+      _stageTrackerMoves = stageTrackerColMoves(_stageTrackerCols, next);
+      _stageTrackerCols = next;
     }
 
     // The endpoint is served from a server-side cache with an ETag; a poll
@@ -14050,25 +14371,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           + `<label class="hv-btn btn-sm ham-sound-file">Choose WAV…<input type="file" accept="audio/wav,audio/x-wav,audio/*" data-change-action="stageTrackerUploadSound" data-arg0="${esc(kind)}" data-arg-types="s,t" aria-label="${esc(k.label)} file"></label>`
           + `<button type="button" class="hv-btn btn-sm" data-action="stageTrackerResetSound" data-arg0="${esc(kind)}" data-stop="1"${custom ? '' : ' disabled'}>Reset to built-in</button></span></div>`;
       }).join('');
-      return `<div class="overview-settings-section"><div class="overview-settings-card-title">Sounds</div>`
+      return `<div class="overview-settings-section" id="sts-sounds"><div class="overview-settings-card-title">Sounds</div>`
         + `<div class="overview-settings-grid"><label class="overview-settings-row"><input type="checkbox" data-change-action="stageTrackerSetSoundOn" data-arg-types="c"${on ? ' checked' : ''}>Play sounds</label>`
         + `<label class="overview-settings-field">Volume <span class="ham-sound-volume-value" id="activity-monitor-volume-value">${vol}</span><input type="range" min="0" max="${STAGE_TRACKER_VOLUME_MAX}" step="1" value="${vol}" data-input-action="stageTrackerSetVolume" data-arg-types="N" aria-label="Volume"></label></div>`
         + `<p class="ham-sound-help text-muted">Sounds play for every repo this hive governs when the tab is visible. Replace either with your own WAV (or any audio the browser decodes, up to ${Math.round(STAGE_TRACKER_CLIP_MAX_BYTES / (1024 * 1024))} MB); files stay in this browser.</p>`
         + rows
-        + `<div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPlayTest" data-stop="1">▶ Play both</button></div></div>`;
+        + `<div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPlayTest" data-stop="1">▶ Play both</button></div></div>`
+        + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
     }
     function stageTrackerRenderSettings() {
       const body = document.getElementById('activity-monitor-settings-body');
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [] }));
+      const rm = document.getElementById('sts-rm-preview');
+      if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
     function openStageTrackerSettings() {
       const overlay = document.getElementById('activity-monitor-settings-overlay');
       const btn = stageTrackerSettingsGearButton();
       if (!overlay) return;
       _stageTrackerSettingsReturnFocus = btn || document.activeElement;
+      _stageTrackerPreviewAt = 0;
       stageTrackerRenderSettings();
       overlay.classList.remove('hidden');
       hiveRememberModalOpen(overlay);
@@ -14080,6 +14405,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function closeStageTrackerSettings() {
       const overlay = document.getElementById('activity-monitor-settings-overlay');
       if (overlay) overlay.classList.add('hidden');
+      document.body.classList.remove('ham-rm-preview');
       const btn = stageTrackerSettingsGearButton();
       if (btn) btn.setAttribute('aria-expanded', 'false');
       const ret = _stageTrackerSettingsReturnFocus || btn;
@@ -14181,6 +14507,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // test of each sound when turning on so the user hears what they opted
     // into.
     function hamSoundToggle() { stageTrackerSetSoundOn(!_stageTrackerSoundOn); }
+
+    /* ---- Movement animation settings section ------------------------------
+       Rendered into the card settings modal after Sounds. Each option has a
+       Preview that plays it on a sample row inside the modal. */
+    const STAGE_TRACKER_PREVIEW_STAGES = [20, 50];
+    var _stageTrackerPreviewAt = 0;
+    // Pure: the #sts-motion section. `motion` is the saved choice, `stages`
+    // the live stage list for the sample row.
+    function stageTrackerMotionSectionHtml(motion, stages) {
+      const opts = STAGE_TRACKER_MOTIONS.map(m => `<li class="sts-motion-item">
+          <input type="radio" name="sts-motion" id="sts-motion-${esc(m.id)}" value="${esc(m.id)}"${m.id === motion ? ' checked' : ''} data-change-action="stageTrackerMotionChange" data-arg-types="v">
+          <label class="sts-motion-label" for="sts-motion-${esc(m.id)}"><span>${m.key ? `<span class="sts-motion-key">${esc(m.key)}</span>` : ''}${esc(m.label)}${m.id === STAGE_TRACKER_MOTION_DEFAULT ? ' <span class="sts-motion-desc">(default)</span>' : ''}</span><span class="sts-motion-desc">${esc(m.desc)}</span></label>
+          ${m.id === STAGE_TRACKER_MOTION_NONE ? '<span></span>' : `<button type="button" class="ham-chip" data-action="stageTrackerPreviewMotion" data-arg0="${esc(m.id)}" data-stop="1" title="Play ${esc(m.label)} on the sample row">Preview</button>`}
+        </li>`).join('');
+      const sample = { repo: 'hive/sample', number: 1, kind: 'issue', title: 'Sample item', url: '#', stage: STAGE_TRACKER_PREVIEW_STAGES[0], stage_since: '' };
+      return `<section class="overview-settings-section" id="sts-motion" aria-labelledby="sts-motion-title">
+          <div class="overview-settings-card-title" id="sts-motion-title">Movement animation</div>
+          <p class="sts-hint">Plays once on a row when its lit chevron moves to another column between refreshes, forwards or back. Every choice becomes a plain crossfade when the system asks for reduced motion.</p>
+          <ol class="sts-motion-list" role="radiogroup" aria-label="Movement animation">${opts}</ol>
+          <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerHeaderHtml(stages)}${stageTrackerRowHtml(sample, stages, { nowMs: Date.now() })}</div>
+          <div class="sts-row"><label><input type="checkbox" id="sts-rm-preview" data-change-action="stageTrackerRmPreview" data-arg-types="c"> Preview the reduced-motion fallback</label></div>
+        </section>`;
+    }
+    function stageTrackerMotionChange(value) {
+      const v = stageTrackerSetMotion(value);
+      if (v !== STAGE_TRACKER_MOTION_NONE) stageTrackerPreviewMotion(v);
+    }
+    function stageTrackerRmPreview(checked) { document.body.classList.toggle('ham-rm-preview', !!checked); }
+    // Walk the sample row between Claimed and CI / Review, alternating
+    // direction, and play the named effect (the saved setting is not
+    // consulted; reduced motion still is).
+    function stageTrackerPreviewMotion(id) {
+      const sample = document.getElementById('sts-sample');
+      const strip = sample && sample.querySelector('.ham-row .ham-strip');
+      if (!strip) return;
+      const stages = (_stageTracker && _stageTracker.stages) || [];
+      const fromStage = STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt];
+      _stageTrackerPreviewAt = (_stageTrackerPreviewAt + 1) % STAGE_TRACKER_PREVIEW_STAGES.length;
+      const toStage = STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt];
+      const from = stageTrackerColIndex({ kind: 'issue', stage: fromStage }, stages), to = stageTrackerColIndex({ kind: 'issue', stage: toStage }, stages);
+      strip.innerHTML = stageTrackerStripItems({ repo: 'hive/sample', number: 1, kind: 'issue', stage: toStage }, stages, null);
+      stageTrackerAnimateMove(strip, from, to, stageTrackerMotionEffect(id, stageTrackerReducedMotion()));
+    }
 
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;

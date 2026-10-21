@@ -129,6 +129,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
+		jsFunc(t, html, "stageTrackerItemKey"),
+		jsFunc(t, html, "stageTrackerMoveAttrs"),
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerVisible"),
 	}, "\n") + `

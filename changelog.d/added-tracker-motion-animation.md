@@ -1,0 +1,1 @@
+- Hive activity monitor: a **Movement animation** section in the card settings (⚙) with a subtle, user-selectable animation when an item's lit chevron moves to another column (six styles, default colour wash; respects `prefers-reduced-motion`).
