@@ -382,11 +382,12 @@ type AgentProcess struct {
 	StallNudges             int // total post-kick stall nudges sent (surfaced to the dashboard)
 	// StallRecoveries is credited when the next idle-prompt poll sees the pane
 	// hash change after a stall nudge (the same "nudge consumed" signal the
-	// action-nudge path relies on). A provider-error disarm
-	// (markProviderErrorLocked clears lastInferKickPane) or a new kick
-	// (recordInferenceKick resets stallNudgeSent) before that poll loses the
-	// credit, so the counter can only undercount and the fleet report errs
-	// toward still reporting a stall.
+	// action-nudge path relies on). When a provider-error disarm
+	// (nudgeIfKickStalled) or a new kick (recordInferenceKick) arrives first
+	// and the pane has changed since the nudge, creditStallRecoveryLocked
+	// credits the recovery before the armed state is reset. Disarms from
+	// other paths that carry no pane still drop the credit, so the counter
+	// can undercount but never overcount.
 	StallRecoveries int
 	// Transient API-error recovery (#4697), for CLI backends. lastTransientNudge
 	// is the cooldown anchor — the poller runs every 3s and the error text stays
