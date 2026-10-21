@@ -64,6 +64,8 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "renderActionableEquationSubline") + `
 ` + jsFunc(t, html, "overviewEquationTermCount") + `
 ` + jsFunc(t, html, "overviewOutsideBreakdownText") + `
+` + jsFunc(t, html, "overviewStaleSince") + `
+` + jsFunc(t, html, "fmtOverviewStaleSince") + `
 ` + jsFunc(t, html, "renderOverviewTotalPartitionSubline") + `
 ` + jsFunc(t, html, "renderOverviewSplitSubline") + `
 ` + jsFunc(t, html, "overviewKPIEquation") + `

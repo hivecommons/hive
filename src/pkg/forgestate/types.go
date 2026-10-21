@@ -37,8 +37,20 @@ type Item struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Draft     bool      `json:"draft,omitempty"`
 	Closed    bool      `json:"closed,omitempty"`
+	// Author is the login that opened the item; Title, Body, HTMLURL and
+	// CreatedAt are the payload fields readers that used to list GitHub
+	// themselves still need (the automerge lanes' prefilters and stage
+	// observations, hivecommons/hive#13377).
+	Author    string    `json:"author,omitempty"`
+	Title     string    `json:"title,omitempty"`
+	Body      string    `json:"body,omitempty"`
+	HTMLURL   string    `json:"html_url,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
 	// PR-only fields.
 	HeadSHA        string `json:"head_sha,omitempty"`
+	HeadRef        string `json:"head_ref,omitempty"`
+	HeadRepo       string `json:"head_repo,omitempty"`
+	BaseRef        string `json:"base_ref,omitempty"`
 	Merged         bool   `json:"merged,omitempty"`
 	MergeableState string `json:"mergeable_state,omitempty"`
 

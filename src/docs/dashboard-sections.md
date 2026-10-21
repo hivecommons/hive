@@ -40,6 +40,8 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 **How the numbers are worked out.**
 
 - **Total open issues** and **Total open PRs** count every open issue and every open pull request in the repositories you selected. Draft pull requests count too.
+- When the ForgeState cache (`forgestate.enabled: true`) has finished its first full scan of a repository, the two totals are read from that cache instead of from the GitHub search API. The cache is kept current by webhook events and its own low-rate refresh, so the totals do not cost a `/search/issues` request on every status refresh. The actionable, held, blocked and outside parts still come from Hive's own classification; whatever the cache counts that the classification has not placed yet lands in Outside's **hold-adjacent/other** part, so the sum always matches the total.
+- If GitHub rate-limits or fails the count request, the tiles keep the last good numbers and show **Counts stale since <time> — serving last-good** instead of dropping to zero. The status payload carries the same moment as `staleSince` (shared with the enumeration last-good marker), and each repository as `countsStale` / `countsStaleSince`.
 - Each total is written as a sum, for example `10 = 2 actionable + 0 held + 1 blocked + 7 outside`.
 - **Actionable now** counts tracked items that Hive could work on now. Tracked means Hive put the item on its work list. Actionable means nothing is waiting on a person.
 - Issues in the "Needs human" and "Confirm & close" bands are left out of Actionable now. A band is a display group named after what the item needs next.
@@ -297,6 +299,8 @@ An estimate of what Hive's use of AI models has cost so far, based on public lis
 - Cost is tokens multiplied by each model's public list price. The badge "est." is a reminder that it is an estimate.
 - If you pay a flat subscription, your real bill may differ.
 - **Cost per merged PR** and **cost per closed issue** divide the estimate by how many were merged or closed. With none, they show a dash.
+- The merged and closed counts behind those two figures are kept by Hive itself: every `pull_request closed` (merged) and `issues closed` webhook event for the hive's own author adds one, and once an hour (`forgestate.CountsReconcileInterval`) the counts are re-read from GitHub search and overwritten so drift from missed events is corrected. Search is no longer queried on every 5-minute collection.
+- When that hourly check is rate-limited or fails, the last good counts stay in use and the count label reads **stale since <time>**. The cost API carries the moment as `count_stale_since` and names where the counts came from in `count_source` (`forgestate` or `search`).
 - When your AI gateway reports its own spending, that figure appears too.
 - The spend-over-time chart has a range selector: **hourly** (the current clock hour and the 23 before it, one bar per hour), **daily** (the last 7 calendar days including today, one bar per day labelled by weekday), **weekly** (the current Monday→Sunday week, one bar per day; days still ahead are empty), **monthly** (the current calendar month, one bar per day labelled by date) and **custom** (your own start and end; hour bars up to 2 days, day bars beyond). Boundaries follow your browser's clock.
 - **Spend in selected range** adds up the bars of that same window, and **run-rate** divides it by the part of the window that has elapsed so far — per hour for hourly bars, per day otherwise. Switching the range changes the chart and both figures together.

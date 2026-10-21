@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -18,20 +19,143 @@ import (
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
 // (and the humans who hand-resolve their conflicts) use for line-to-line
-// forward-merges, e.g. "sync/v5-to-v6" or a scanner-namespaced variant like
-// "scanner/sync-v5-to-v6-9919". Squashing one of these erases the source
-// line's ancestry and makes every later top-up re-conflict on the same
-// hunks (#9957, #9956).
-var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+`)
+// forward-merges, e.g. "sync/v5-to-v6", a scanner-namespaced variant like
+// "scanner/sync-v5-to-v6-9919", or a "topup/v5-into-v6-20261020" head. Squashing
+// one of these erases the source line's ancestry and makes every later top-up
+// re-conflict on the same hunks (#9957, #9956, #13404).
+var forwardMergeHeadRe = regexp.MustCompile(`sync/?-?v\d+-to-v\d+|^topup/`)
+
+// forwardMergeTitleRe matches top-up / sync PR titles after an optional
+// leading emoji, e.g. "🌱 top-up: merge v5 into v6 (51 commits)" (#13404).
+var forwardMergeTitleRe = regexp.MustCompile(`(?i)^[^\p{L}\p{N}]*(top-up|sync):`)
+
+// releaseLineBranchRe matches release-line branch names ("v5", "v6").
+var releaseLineBranchRe = regexp.MustCompile(`^v\d+$`)
 
 // IsForwardMergePR reports whether pr is a forward-merge between release
-// lines, which must land as a merge commit rather than a squash.
+// lines, which must land as a merge commit rather than a squash. It only
+// looks at the PR's metadata; ResolveForwardMergeMethod adds the head-history
+// check for PRs whose branch and title give no hint.
 func IsForwardMergePR(pr *gh.PullRequest) bool {
 	if pr == nil {
 		return false
 	}
+	title := strings.TrimSpace(pr.GetTitle())
 	return forwardMergeHeadRe.MatchString(pr.GetHead().GetRef()) ||
-		strings.Contains(strings.ToLower(pr.GetTitle()), "forward-merge")
+		forwardMergeTitleRe.MatchString(title) ||
+		strings.Contains(strings.ToLower(title), "forward-merge")
+}
+
+const releaseLineMergeCacheMax = 1024
+
+var releaseLineMergeCache = struct {
+	sync.Mutex
+	m map[string]string
+}{m: map[string]string{}}
+
+// HeadMergesReleaseLine returns the release-line branch (other than pr's base)
+// whose history pr's head brings in, or "" when it brings in none. A head
+// "brings in" another line when that line's tip is an ancestor of the head, or
+// when the head's merge-base with that line is not already in the base — i.e.
+// the head carries a merge of the other line (#13404). Only PRs based on a
+// release line are checked; candidate lines are the repository's protected
+// "vN" branches. Results are cached per base and head SHA.
+func HeadMergesReleaseLine(ctx context.Context, client *gh.Client, owner, repo string, pr *gh.PullRequest) (string, error) {
+	if client == nil || pr == nil {
+		return "", nil
+	}
+	base := pr.GetBase().GetRef()
+	headSHA := pr.GetHead().GetSHA()
+	if headSHA == "" || !releaseLineBranchRe.MatchString(base) {
+		return "", nil
+	}
+	key := owner + "/" + repo + "#" + base + "@" + headSHA
+	releaseLineMergeCache.Lock()
+	cached, ok := releaseLineMergeCache.m[key]
+	releaseLineMergeCache.Unlock()
+	if ok {
+		return cached, nil
+	}
+
+	branches, _, err := client.Repositories.ListBranches(ctx, owner, repo, &gh.BranchListOptions{
+		Protected:   gh.Ptr(true),
+		ListOptions: gh.ListOptions{PerPage: 100},
+	})
+	if err != nil {
+		return "", fmt.Errorf("list protected branches: %w", err)
+	}
+	found := ""
+	for _, b := range branches {
+		other := b.GetName()
+		if other == base || !releaseLineBranchRe.MatchString(other) {
+			continue
+		}
+		cmp, _, err := client.Repositories.CompareCommits(ctx, owner, repo, other, headSHA, &gh.ListOptions{PerPage: 1})
+		if err != nil {
+			return "", fmt.Errorf("compare %s...%s: %w", other, headSHA, err)
+		}
+		if st := cmp.GetStatus(); st == "ahead" || st == "identical" {
+			found = other
+			break
+		}
+		mergeBase := cmp.GetMergeBaseCommit().GetSHA()
+		if mergeBase == "" {
+			continue
+		}
+		inBase, _, err := client.Repositories.CompareCommits(ctx, owner, repo, base, mergeBase, &gh.ListOptions{PerPage: 1})
+		if err != nil {
+			return "", fmt.Errorf("compare %s...%s: %w", base, mergeBase, err)
+		}
+		if st := inBase.GetStatus(); st != "behind" && st != "identical" {
+			found = other
+			break
+		}
+	}
+	releaseLineMergeCache.Lock()
+	if len(releaseLineMergeCache.m) >= releaseLineMergeCacheMax {
+		releaseLineMergeCache.m = map[string]string{}
+	}
+	releaseLineMergeCache.m[key] = found
+	releaseLineMergeCache.Unlock()
+	return found, nil
+}
+
+// ResolveForwardMergeMethod is the one place every hive merge path (the
+// automerge lanes and the MergePR relay) decides whether a requested squash or
+// rebase must be upgraded to a merge commit: forward-merge / top-up PRs, by
+// metadata (IsForwardMergePR) or by head history (HeadMergesReleaseLine), never
+// squash. A failed history lookup is logged and keeps the requested method.
+func ResolveForwardMergeMethod(ctx context.Context, client *gh.Client, logger *slog.Logger, owner, repo string, pr *gh.PullRequest, method string) string {
+	if method == "merge" || pr == nil {
+		return method
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	reason, line := "", ""
+	if IsForwardMergePR(pr) {
+		reason = "metadata"
+	} else {
+		var err error
+		line, err = HeadMergesReleaseLine(ctx, client, owner, repo, pr)
+		if err != nil {
+			logger.Warn("forward-merge guard: head-history check failed",
+				slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()),
+				slog.String("error", err.Error()))
+			return method
+		}
+		if line != "" {
+			reason = "head-merges-release-line"
+		}
+	}
+	if reason == "" {
+		return method
+	}
+	logger.Warn("forward-merge guard: refusing to squash, forcing merge commit",
+		slog.String("repo", owner+"/"+repo), slog.Int("number", pr.GetNumber()),
+		slog.String("requested", method), slog.String("reason", reason),
+		slog.String("release_line", line), slog.String("head", pr.GetHead().GetRef()))
+	return "merge"
 }
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
@@ -292,11 +416,10 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	// Forward-merges keep ancestry no matter which caller (sweep or the
 	// hive-merge relay) asked for the merge. A failed lookup falls through to
 	// the requested method.
-	if mergeMethod == "squash" {
-		if pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:merge_pr"), owner, repo, number); err == nil && IsForwardMergePR(pr) {
-			c.logger.Warn("MergePR: forcing merge commit for forward-merge PR",
-				slog.String("requested", mergeMethod), slog.Int("number", number))
-			mergeMethod = "merge"
+	if mergeMethod != "merge" {
+		restCtx := WithRESTCaller(ctx, "hive:merge_pr")
+		if pr, _, err := c.client.PullRequests.Get(restCtx, owner, repo, number); err == nil {
+			mergeMethod = ResolveForwardMergeMethod(restCtx, c.client, c.logger, owner, repo, pr, mergeMethod)
 		}
 	}
 

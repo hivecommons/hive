@@ -30,8 +30,8 @@ Three settings decide who can make Hive act, and how far:
 3. **GitHub App install scope / repo allowlist.** Whichever repositories you
    installed the Forge App on (or listed in `project.repos`) are the only
    ones a hive can touch at all, enforced twice: once at the network proxy and
-   once as a prompt-level reminder. See [security-model.md § Layer
-   5](security-model.md#layer-5--github-blast-radius-controls).
+   once as a prompt-level reminder. See [security-model.md § GitHub blast-radius
+   controls](security-model.md#github-blast-radius-controls).
 
 Everything below is these three settings interacting with a fourth fact you
 don't configure: GitHub's own `author_association` on every issue and PR
@@ -61,8 +61,8 @@ what labels and gates apply. The PR is still held the same way.
 
 **Who merges:** a human, always. Merge permission "simply is not granted below
 L6" — the token tier and proxy rules refuse it regardless of level-hold
-labels (see [security-model.md § Layer
-5](security-model.md#layer-5--github-blast-radius-controls)).
+labels (see [security-model.md § GitHub blast-radius
+controls](security-model.md#github-blast-radius-controls)).
 
 ### Trusted team — L6, reporter trust on, trusting OWNER/MEMBER/COLLABORATOR
 
@@ -413,8 +413,8 @@ project:
   (`advisor`, `newcomer`, `contributor`, `trusted`) matched to the agent's
   policy mode; advisory tiers get read-only tokens that cannot even create
   issues, and only trusted tiers get contents/PR write. See
-  [security-model.md § Layer
-  5](security-model.md#layer-5--github-blast-radius-controls).
+  [security-model.md § GitHub blast-radius
+  controls](security-model.md#github-blast-radius-controls).
 - **GitHub App install scope** — the set of repositories you installed the
   Forge App on; a hive can never act outside it, GitHub-side.
 - **repo allowlist** — the hive-side configured repo list

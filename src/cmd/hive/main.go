@@ -1452,6 +1452,7 @@ func (b *boot) wireBootClosures() {
 			ReviewEvents:         b.reviewEvents,
 			WebhookWake:          b.webhookWakeFunc(),
 			ApplyWebhookItems:    b.applyWebhookItemsFunc(),
+			WebhookDelivery:      b.webhookDeliveryFunc(),
 			EvalLoop:             b.evalLoopStatusFunc(),
 			SentinelPREvent:      b.sentinelPREventFunc(),
 			ProjectsV2ItemEvent:  b.projectsV2ItemEventFunc(),
@@ -2335,6 +2336,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// anything, and a sockpuppet pair defeats the self-merge ban. Resolved
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
+	// ForgeState (hivecommons/hive#13377): with the cache on, the lanes read
+	// its open-PR set and run on webhook events instead of listing /pulls.
+	forgeOpenPRs := b.forgeStateOpenPRs()
 	autoMergeOpts := automerge.Options{
 		Logger:                  b.logger,
 		MergerAuthorizer:        trustedMergerFunc(b.cfg),
@@ -2347,6 +2351,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		StageEngine:             stageEngineOptions(b.cfg, b.logger),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		SweepTrigger:            b.sweepTrigger,
+	}
+	if forgeOpenPRs != nil {
+		autoMergeOpts.OpenPRs = forgeOpenPRs
 	}
 	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
 	// here (see lateContributorNudgeSink).
@@ -2968,6 +2976,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		}
 		return time.UnixMilli(history[0].Timestamp).UTC()
 	})
+	// Merged / closed counts move on webhook events and the Search API is
+	// asked only hourly; with forgestate.enabled the Overview's open totals
+	// come from the cache the governor already reads (#13376).
+	wireForgeStateCounts(b.metricsCollector, b.forgeState.Load)
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
@@ -6016,7 +6028,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// Startup gate (#13375): with the state cache on, the first decision
 	// pass waits for the first successful reconcile of every repo so it
 	// never plans against an empty or partial cache.
-	if err := waitForgeStateReady(b.ctx, b.forgeState, b.logger, forgeStateReadyLogInterval); err != nil {
+	if err := waitForgeStateReady(b.ctx, b.forgeState.Load(), b.logger, forgeStateReadyLogInterval); err != nil {
 		return
 	}
 	b.evalCycles++

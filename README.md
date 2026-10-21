@@ -150,7 +150,7 @@ Recent user-visible changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security
 
-Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Data collection and telemetry paths are documented in [src/docs/telemetry.md](src/docs/telemetry.md). Do not report security vulnerabilities through public issues or pull requests.
+[src/docs/security-model.md](src/docs/security-model.md) is the complete inventory of how hive keeps autonomous agents from doing damage (threat model, every control with its code/ADR citation, known gaps, audit checklist). Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Data collection and telemetry paths are documented in [src/docs/telemetry.md](src/docs/telemetry.md). Do not report security vulnerabilities through public issues or pull requests.
 
 ---
 

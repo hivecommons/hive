@@ -48,7 +48,8 @@ const mergeRequestMaxAttempts = 3
 
 // MergeRequest is the JSON an agent writes to MergeRequestDir to ask the hive to
 // merge a PR on its behalf. Repo may be "owner/repo" or a bare repo name.
-// Method defaults to "squash"; forward-merge PRs are always upgraded to
+// Method defaults to "squash"; forward-merge / top-up PRs (by branch, title,
+// or head history) are always upgraded to
 // "merge" by MergePR. ExpectSHA, when set, is passed as the required head SHA so a moved head fails the merge cleanly instead of merging an
 // unexpected commit.
 type MergeRequest struct {

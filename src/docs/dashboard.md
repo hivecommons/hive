@@ -146,6 +146,20 @@ precise buckets:
   are kept in the actor matrix as unrecorded evidence but are excluded from the
   trend share math so missing attribution is never mislabeled as automation.
 
+The merged-PR and closed-issue totals that feed the Cost section's
+cost-per-merged-PR and cost-per-closed-issue figures (`/api/cost`
+`merged_prs` / `closed_issues`) are not re-queried from `/search/issues` on
+every collection cycle. `pkg/forgestate.Counts` increments them from
+`pull_request closed` (merged) and `issues closed` webhook deliveries whose
+actor matches the hive's author and reconciles them against GitHub search once
+per `forgestate.CountsReconcileInterval` (one hour), overwriting the webhook
+tally. A rate-limited or failed reconcile keeps the last good totals and marks
+them stale: `/api/cost` reports `count_stale`, `count_stale_since` and
+`count_source`, and the Overview tiles read their open issue / PR totals from
+the ForgeState cache when it is ready, exposing `staleSince` on
+`/api/status` and `countsStale` / `countsStaleSince` per repository so the page
+shows "stale since" instead of zeros.
+
 Issue data comes from the existing issue-request and claim-poller audit stream:
 agent-created issues, agent comments/claims as triage/review signals, and
 agent issue-close events. Historical human issue creation/review/closure is not

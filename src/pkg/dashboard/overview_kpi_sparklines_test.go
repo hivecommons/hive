@@ -181,7 +181,7 @@ function repoItemNeedsHuman(item){ return ((item && item.labels) || []).some(l =
 		"overviewRepoNumber", "overviewRepoOpenIssueCount", "overviewRepoOpenPRCount",
 		"overviewBreakdownTotal", "overviewRepoForgeTotals", "overviewKPIForgeTotals", "overviewKPIBreakdownSubline",
 		"overviewKPITerm", "dashboardDocsHref", "dashboardDocsHrefFromPath", "overviewPartitionDocsLink", "overviewPartitionSettingsButton", "overviewPartitionSummaryLine", "overviewPartitionGloss", "overviewPartitionPreferredDocs", "overviewPartitionPreferredSettings", "overviewPartitionRowHTML", "overviewPartitionTooltip", "overviewPartitionInfo", "overviewActionableTermHTML", "renderActionableEquationSubline",
-		"overviewEquationTermCount", "overviewOutsideBreakdownText", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
+		"overviewEquationTermCount", "overviewOutsideBreakdownText", "overviewStaleSince", "fmtOverviewStaleSince", "renderOverviewTotalPartitionSubline", "renderOverviewSplitSubline",
 		"overviewKPIEquation", "overviewKPIKindEquation", "overviewKPISparkTitle", "overviewKPISpark", "overviewKPICurrentSample",
 		"overviewCoverageInfo", "overviewCoverageState", "overviewCoverageColor", "overviewCoverageInfoHTML", "overviewCoverageBar", "overviewCoverageCard", "renderOverviewCoverageKPI",
 		"overviewProjectFilterSpec", "overviewRepoTrackedIssueEntries", "overviewRepoTrackedPREntries", "overviewProjectBucketCount",
