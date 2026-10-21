@@ -35,8 +35,10 @@ func reviewRequestDir() string {
 	return ReviewRequestDir
 }
 
-// reviewRequestPollInterval mirrors prRequestPollInterval — reviews are not
-// latency-critical. A var so tests can drive the ticker quickly.
+// reviewRequestPollInterval mirrors prRequestPollInterval. Since #13378 it
+// is the cadence only while webhooks are degraded or the request dir cannot
+// be watched; see ReviewRequestWebhookFallbackInterval for the healthy
+// cadence. A var so tests can drive the ticker quickly.
 var reviewRequestPollInterval = 10 * time.Second
 
 // reviewRequestTickBudget is how long one watcher tick may wait for its
@@ -157,39 +159,65 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 		close(done)
 		return done
 	}
-	// Capture the poll interval BEFORE spawning: the goroutine's first read of
-	// the package-level interval races with a test's fastTick cleanup restoring
-	// it (the race detector flagged exactly that on v4 CI). Reading it here is
-	// sequenced with the caller, and the loop only ever needed it once anyway.
-	interval := reviewRequestPollInterval
+	// Capture the intervals BEFORE spawning: the goroutine's first read of
+	// the package-level vars races with a test's fastTick cleanup restoring
+	// them (the race detector flagged exactly that on v4 CI). Reading them
+	// here is sequenced with the caller.
+	poll, fallback := reviewRequestPollInterval, reviewRequestFallbackInterval
+	dir := reviewRequestDir()
+	// Event-driven since #13378: a request-file drop (fsnotify) or a
+	// review-shaped webhook delivery (reviewRequestWakeEvent) wakes the
+	// loop; the timer is a reconcile that runs every fallback while webhooks
+	// are healthy and every poll while they are degraded or the dir cannot be
+	// watched. The wake channel is per client, so a delivery handled by
+	// HandleWebhookEvent reaches this loop without a package-level seam.
+	wake := c.reviewWake.c()
+	dirNotify, stopNotify := watchReviewRequestDir(dir, c.logger)
 	go func() {
 		defer close(done)
-		t := time.NewTicker(interval)
+		defer stopNotify()
+		t := time.NewTimer(reviewRequestScanInterval(dirNotify != nil, poll, fallback))
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				// A cancelled ctx can lose the select to an already-ready tick
-				// (select picks randomly among ready cases), letting the loop
-				// process one more scan after cancellation. Fail the tick
-				// closed so cancel means no further processing.
-				if ctx.Err() != nil {
-					return
-				}
-				// Housekeeping cadence against the pacer: a tick whose
-				// requests would queue behind the governor's enumeration
-				// during a caution window waits for the next tick instead.
-				if ShedLowPriorityTick("review-request-watcher", reviewRequestTickBudget) {
-					continue
-				}
-				c.processReviewRequests(WithPacingClass(ctx, PacingLow), nowFn)
+			case <-wake:
+			case <-dirNotify:
 			}
+			// A cancelled ctx can lose the select to an already-ready tick
+			// (select picks randomly among ready cases), letting the loop
+			// process one more scan after cancellation. Fail the tick
+			// closed so cancel means no further processing.
+			if ctx.Err() != nil {
+				return
+			}
+			c.reviewRequestTick(ctx, nowFn)
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
+			t.Reset(reviewRequestScanInterval(dirNotify != nil, poll, fallback))
 		}
 	}()
-	c.logger.Info("review-request watcher started", slog.String("dir", reviewRequestDir()))
+	c.logger.Info("review-request watcher started", slog.String("dir", dir),
+		slog.Bool("dir_notify", dirNotify != nil),
+		slog.Duration("webhook_fallback", fallback), slog.Duration("degraded_poll", poll))
 	return done
+}
+
+// reviewRequestTick is one scheduled or woken pass of the watcher.
+// Housekeeping cadence against the pacer (#13382): a pass whose requests
+// would queue behind the governor's enumeration during a caution window is
+// shed; the next wake or timer retries it.
+func (c *Client) reviewRequestTick(ctx context.Context, nowFn func() time.Time) {
+	if ShedLowPriorityTick("review-request-watcher", reviewRequestTickBudget) {
+		return
+	}
+	c.processReviewRequests(WithPacingClass(ctx, PacingLow), nowFn)
 }
 
 func (c *Client) processReviewRequests(ctx context.Context, nowFn func() time.Time) {
@@ -478,6 +506,13 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 			return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(req.Number)}, apiErr
 		})
+	}
+	if errors.Is(err, errReviseNotAllowlisted) {
+		// Policy, not a transient fault (#13252): the repo is not in
+		// review.revise_repos, and no retry changes that. Deny once and move
+		// the file aside so it is not re-attempted on every tick.
+		c.denyReviewRequest(path, req, err.Error(), nowFn)
+		return
 	}
 	if err != nil {
 		// Retry with exponential backoff and quarantine at the give-up horizon

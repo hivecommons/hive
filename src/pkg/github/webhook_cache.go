@@ -47,6 +47,9 @@ type WebhookEventResult struct {
 	// ConfiguredRepo is the repo as this hive configured it (the name the
 	// status snapshot uses), which may differ in case from Repo.
 	ConfiguredRepo string `json:"configured_repo,omitempty"`
+	// WokeReviewWatcher is set when the delivery woke the review-request
+	// watcher (hivecommons/hive#13378).
+	WokeReviewWatcher bool `json:"woke_review_watcher,omitempty"`
 }
 
 // webhookTracker records webhook liveness per repository and the set of PRs a
@@ -425,6 +428,10 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 
 	if n, ok := webhookTouchedIssue(event, p); ok {
 		res.TouchedIssues = []int{n}
+	}
+	if reviewRequestWakeEvent(event, p) {
+		c.reviewWake.wake()
+		res.WokeReviewWatcher = true
 	}
 
 	if n, ok := webhookIssueLabelTarget(event, p); ok {

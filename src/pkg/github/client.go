@@ -320,6 +320,12 @@ type Client struct {
 	// Zero values are ready to use.
 	prRetries     retryTracker
 	reviewRetries retryTracker
+	// forgeState memoizes the advisory issue the attached ForgeState cache
+	// resolved (advisory_forgestate.go, hivecommons/hive#13378).
+	forgeState forgeStateBinding
+	// reviewWake wakes the review-request watcher between ticks
+	// (review_request_wake.go). Zero value is ready to use.
+	reviewWake reviewRequestWaker
 	// defaultBranchMu guards defaultBranches, which memoizes the resolved
 	// default branch per "owner/repo" (see defaultbranch.go). A repo's default
 	// branch changes about as often as the repo is renamed, so caching it keeps

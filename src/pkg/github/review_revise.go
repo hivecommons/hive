@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -88,6 +89,10 @@ func (c *Client) findOwnLatestReview(ctx context.Context, owner, repoName string
 	return latest, nil
 }
 
+// errReviseNotAllowlisted is the terminal refusal for a --revise request on a
+// repo outside review.revise_repos; the watcher denies rather than retries it.
+var errReviseNotAllowlisted = errors.New("is not allowlisted for in-place review revision")
+
 // reviseReviewAllowed reports whether this repo has been granted the in-place
 // revision path.
 func reviseReviewAllowed(repo string, allowlist []string) bool {
@@ -108,7 +113,7 @@ func reviseReviewAllowed(repo string, allowlist []string) bool {
 // is identical to what is already published.
 func (c *Client) reviseReview(ctx context.Context, req ReviewRequest, body string) (*gh.PullRequestReview, bool, error) {
 	if !reviseReviewAllowed(req.Repo, c.reviseRepos) {
-		return nil, false, fmt.Errorf("repo %s is not allowlisted for in-place review revision", req.Repo)
+		return nil, false, fmt.Errorf("repo %s %w", req.Repo, errReviseNotAllowlisted)
 	}
 
 	owner, repoName := c.splitRepo(req.Repo)

@@ -1180,6 +1180,30 @@ starve the governor:
   a mint that queued behind paced traffic failed every request that needed
   the token.
 
+##### Event-driven readers (ForgeState phase 2d)
+
+- **The review-request watcher runs on events.** The relay that submits
+  `hive-review` requests (`review_request_watcher.go`) no longer polls its
+  drop box every 10 s. A request file drop wakes it through a directory
+  notification, and `issue_comment`, `pull_request_review`,
+  `pull_request_review_comment` and `issues` `labeled`/`unlabeled`
+  deliveries wake it for a pass (`/api/status.webhooks` deliveries report
+  `woke_review_watcher`). While webhooks are healthy the unprompted scan is a
+  five-minute reconcile (`ReviewRequestWebhookFallbackInterval`); when
+  webhooks go stale, or the drop box cannot be watched, the watcher returns
+  to the legacy 10 s poll. A `--revise` request for a repo outside
+  `review.revise_repos` is a policy denial (`.denied`, one WARN), not a
+  retried failure.
+- **The advisory issue is resolved from the ForgeState cache.** When a
+  `forgestate` store is bound to the GitHub client (`forgestate.enabled`,
+  hivecommons/hive#13373), `EnsureAdvisoryIssue` answers from the cache: the
+  memoized advisory issue is read through the cache within its freshness
+  bound (zero GitHub calls on a healthy cycle), a stale or missing cached
+  copy costs one targeted `GET` of that issue, and a closed advisory issue
+  is reopened in place and written through. The search → label list →
+  title-scan path runs only when the cache cannot answer (repo not yet
+  reconciled, or no labelled advisory issue to confirm).
+
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
 targeted_refreshes_1h, tracker_invalidations_1h}` (the last two count the

@@ -296,8 +296,10 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		}
 		c.logger.Info("advisory issue create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repo), slog.Int("number", number))
+		c.rememberAdvisoryIssue(owner+"/"+repo, number)
 		return number, nil
 	}
+	c.rememberAdvisoryIssue(owner+"/"+repo, issue.GetNumber())
 	c.recordWriteAudit(AuditActionHiveIssueCreated, meta,
 		WriteTarget{Repo: owner + "/" + repo, Number: issue.GetNumber()},
 		"author", issue.GetUser().GetLogin(),
@@ -729,6 +731,27 @@ func digestCommentFrom(comment *gh.IssueComment) digestComment {
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {
+	// ForgeState cache first (#13378): a memoized or labelled advisory issue
+	// resolves from the cache with at most one targeted GET, so the search
+	// and the paginated lists below only run when the cache cannot answer.
+	num, err := c.findAdvisoryIssueCached(ctx, owner, repo)
+	if err == nil {
+		c.rememberAdvisoryIssue(owner+"/"+repo, num)
+		return num, nil
+	}
+	if !errors.Is(err, errAdvisoryCacheMiss) {
+		return 0, err
+	}
+	num, err = c.findAdvisoryIssueListed(ctx, owner, repo)
+	if err == nil && num > 0 {
+		c.rememberAdvisoryIssue(owner+"/"+repo, num)
+	}
+	return num, err
+}
+
+// findAdvisoryIssueListed is the search → label list → title scan → closed
+// reuse path that runs when the ForgeState cache cannot answer.
+func (c *Client) findAdvisoryIssueListed(ctx context.Context, owner, repo string) (int, error) {
 	// Use search API to find the advisory issue across all open issues,
 	// regardless of how many issues the repo has.
 	query := fmt.Sprintf(`repo:%s/%s is:issue is:open in:title "%s"`, owner, repo, advisoryTitle)
