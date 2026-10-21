@@ -22,6 +22,7 @@ func TestDefaultPersistPathsPinsCanonicalDataFiles(t *testing.T) {
 		TokenSparklineHistory: "/data/token-sparkline-history.json",
 		FactHistory:           "/data/fact-history.json",
 		CostHistory:           "/data/cost-history.json",
+		CostDailyRollup:       "/data/cost-daily-rollup.json",
 		TrendHistory:          "/data/trend-history.json",
 		BudgetWindowHistory:   "/data/budget-window-history.json",
 		ConvergenceSoak:       "/data/convergence-soak-history.json",

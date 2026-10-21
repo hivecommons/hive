@@ -158,6 +158,7 @@ type boot struct {
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry
 	pendingCostSeed            []dashboard.CostHistoryEntry
+	pendingCostRollupSeed      []dashboard.CostDailyRollup
 	pendingBudgetWindowSeed    []collect.BudgetWindowEntry
 	pendingConvergenceSoakSeed []dashboard.ConvergenceSoakEntry
 	pendingTrendSeed           []dashboard.TrendHistoryEntry

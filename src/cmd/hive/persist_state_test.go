@@ -277,6 +277,7 @@ func persistStateTestPaths(dir string) persistPaths {
 		TokenSparklineHistory: filepath.Join(dir, "token-sparkline-history.json"),
 		FactHistory:           filepath.Join(dir, "fact-history.json"),
 		CostHistory:           filepath.Join(dir, "cost-history.json"),
+		CostDailyRollup:       filepath.Join(dir, "cost-daily-rollup.json"),
 		TrendHistory:          filepath.Join(dir, "trend-history.json"),
 		BudgetWindowHistory:   filepath.Join(dir, "budget-window-history.json"),
 		ConvergenceSoak:       filepath.Join(dir, "convergence-soak-history.json"),

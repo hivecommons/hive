@@ -172,6 +172,7 @@ type persistPaths struct {
 	TokenSparklineHistory string
 	FactHistory           string
 	CostHistory           string
+	CostDailyRollup       string
 	TrendHistory          string
 	BudgetWindowHistory   string
 	ConvergenceSoak       string
@@ -185,6 +186,7 @@ func defaultPersistPaths() persistPaths {
 		TokenSparklineHistory: "/data/token-sparkline-history.json",
 		FactHistory:           "/data/fact-history.json",
 		CostHistory:           "/data/cost-history.json",
+		CostDailyRollup:       "/data/cost-daily-rollup.json",
 		TrendHistory:          "/data/trend-history.json",
 		BudgetWindowHistory:   "/data/budget-window-history.json",
 		ConvergenceSoak:       "/data/convergence-soak-history.json",
@@ -1895,6 +1897,16 @@ func (b *boot) bootGovernor() {
 		}
 	}
 
+	// Restore the per-day cost rollup (the years-long tail behind the 30-day
+	// snapshot ring). Missing is ordinary on a hive upgrading into the feature:
+	// the live fold starts filling it from the snapshots.
+	const costDailyRollupPath = "/data/cost-daily-rollup.json"
+	if rollupData, err := os.ReadFile(costDailyRollupPath); err == nil {
+		if err := json.Unmarshal(rollupData, &b.pendingCostRollupSeed); err == nil && len(b.pendingCostRollupSeed) > 0 {
+			b.logger.Info("cost daily rollup loaded", "days", len(b.pendingCostRollupSeed))
+		}
+	}
+
 	// #4298: restore per-budget-window history so past resets survive a restart.
 	// A missing or unparseable file is ordinary on a hive upgrading into this
 	// feature — it simply starts with no history rather than failing to boot.
@@ -2815,6 +2827,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	if len(b.pendingCostSeed) > 0 {
 		b.dashSrv.SeedCostHistory(b.pendingCostSeed)
 		b.logger.Info("cost history restored", "entries", len(b.pendingCostSeed))
+	}
+	if len(b.pendingCostRollupSeed) > 0 {
+		b.dashSrv.SeedCostDailyRollups(b.pendingCostRollupSeed)
+		b.logger.Info("cost daily rollup restored", "days", len(b.pendingCostRollupSeed))
 	}
 
 	if len(b.pendingBudgetWindowSeed) > 0 {
@@ -8294,6 +8310,14 @@ func persistStateWithPaths(agentMgr *agent.Manager, gov *governor.Governor, cfg 
 			costData, err := json.Marshal(costHist)
 			if err == nil {
 				atomicWrite(paths.CostHistory, costData)
+			}
+		}
+
+		costRollup := dashSrv.CostDailyRollups()
+		if len(costRollup) > 0 {
+			rollupData, err := json.Marshal(costRollup)
+			if err == nil {
+				atomicWrite(paths.CostDailyRollup, rollupData)
 			}
 		}
 

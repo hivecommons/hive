@@ -189,6 +189,10 @@ type Server struct {
 	tokenHist *collect.TimeSeries[TokenSparklineEntry]
 	factHist  *collect.TimeSeries[FactHistoryEntry]
 	costHist  *collect.TimeSeries[CostHistoryEntry]
+	// costRollup holds per-UTC-day spend folded out of costHist so the Cost
+	// section can reach beyond the ring's ~30 days (see cost_rollup.go).
+	costRollupMu sync.Mutex
+	costRollup   map[string]CostDailyRollup
 	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
 	// built like the sparkline rings so a zero-value Server works in tests.
 	budgetWindowOnce sync.Once
@@ -3737,7 +3741,9 @@ func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, m
 	if len(models) > 0 {
 		entry.Models = models
 	}
-	s.costSeries().Append(entry)
+	if s.costSeries().Append(entry) {
+		s.foldCostRollups(time.UnixMilli(entry.Timestamp))
+	}
 }
 
 // CostHistory returns a copy of the estimated-cost history.
@@ -3748,6 +3754,7 @@ func (s *Server) CostHistory() []CostHistoryEntry {
 // SeedCostHistory restores persisted cost history on startup.
 func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
 	s.costSeries().Seed(entries)
+	s.foldCostRollups(time.Now())
 }
 
 // AppendTrendHistory samples the governor / per-repo / beads / system-gauge
