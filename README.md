@@ -150,7 +150,9 @@ Recent user-visible changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Security
 
-[src/docs/security-model.md](src/docs/security-model.md) is the complete inventory of how hive keeps autonomous agents from doing damage (threat model, every control with its code/ADR citation, known gaps, audit checklist). Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Data collection and telemetry paths are documented in [src/docs/telemetry.md](src/docs/telemetry.md). Do not report security vulnerabilities through public issues or pull requests.
+For a code-grounded inventory of agent safety controls, enforcing versus advisory modes, known gaps, and running-hive audit steps, see the [Security Model](src/docs/security-model.md).
+
+Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. Data collection and telemetry paths are documented in [src/docs/telemetry.md](src/docs/telemetry.md). Do not report security vulnerabilities through public issues or pull requests.
 
 ---
 
