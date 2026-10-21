@@ -2911,7 +2911,7 @@ app.get('/contribute/register', (_req, res) => {
       <pre style="background:#161b22;padding:16px;border-radius:8px">curl -X POST ${_req.protocol}://${_req.get('host')}/api/contribute/register \\
   -H "Content-Type: application/json" \\
   -d '{"github_username": "your-github-username"}'</pre>
-      <p>Or run: <code>just contribute-register</code></p>
+      <p>Or run: <code>just contribute-setup</code></p>
     </body></html>`);
   }
   const state = crypto.randomBytes(16).toString('hex');
