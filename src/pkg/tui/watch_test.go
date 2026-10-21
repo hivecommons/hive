@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -179,5 +180,343 @@ func TestWatchSourceMissingRecordAndShutdown(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("watch source did not shut down")
+	}
+}
+
+// writeWatchRecord publishes a relay PID record the way the relay does, so the
+// tests exercise the real discovery path instead of a stub.
+func writeWatchRecord(t *testing.T, store *hivectl.ProfileStore, r hivectl.ContributorRelay) {
+	t.Helper()
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(store.RelayPIDPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.RelayPIDPath(), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fakeWatchTool puts an executable named name first on PATH.
+func fakeWatchTool(t *testing.T, dir, name, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWatchSourceShowsEachRunningContributorState(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("requires a POSIX shell")
+	}
+	bin := t.TempDir()
+	argsFile := filepath.Join(bin, "tmux-args")
+	t.Setenv("WATCH_TEST_ARGS", argsFile)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeWatchTool(t, bin, "tmux", "printf '%s\\n' \"$@\" > \"$WATCH_TEST_ARGS\"\nif [ \"$5\" = broken ]; then echo 'no server'; exit 1; fi\nprintf 'agent pane\\n'\n")
+
+	logFile := filepath.Join(t.TempDir(), "relay.log")
+	if err := os.WriteFile(logFile, []byte("relay heartbeat\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := hivectl.NewProfileStore(t.TempDir())
+	// The test process is a live native PID, so discovery accepts the record.
+	pid := os.Getpid()
+	writeWatchRecord(t, store, hivectl.ContributorRelay{PID: pid, Mode: "local", TmuxSession: "hive-pi-1", LogFile: logFile})
+
+	source := &watchSource{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); source.run(ctx, store) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	waitFor := func(msg string, ok func(watchSnapshot) bool) {
+		t.Helper()
+		testutil.Eventually(t, 5*time.Second, func() bool { return ok(source.get()) }, "%s", msg)
+	}
+	waitFor("tmux mirror and relay log not shown", func(s watchSnapshot) bool {
+		return s.session == "agent pane\n" && s.log == "relay heartbeat\n" && s.relay != nil && s.relay.PID == pid
+	})
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(args) != "capture-pane\n-p\n-e\n-t\nhive-pi-1\n" {
+		t.Fatalf("mirror must only capture the pane, got %q", args)
+	}
+
+	writeWatchRecord(t, store, hivectl.ContributorRelay{PID: pid, Mode: "local", TmuxSession: "broken", LogFile: logFile})
+	waitFor("capture failure not reported", func(s watchSnapshot) bool {
+		return strings.HasPrefix(s.session, "Session unavailable:") && strings.Contains(s.session, "no server")
+	})
+
+	writeWatchRecord(t, store, hivectl.ContributorRelay{PID: pid, Mode: "headless", TmuxSession: "hive-pi-1", LogFile: logFile})
+	waitFor("headless state not shown", func(s watchSnapshot) bool {
+		return s.session == "headless: no session" && s.log == "relay heartbeat\n"
+	})
+
+	writeWatchRecord(t, store, hivectl.ContributorRelay{PID: pid})
+	waitFor("legacy record states not shown", func(s watchSnapshot) bool {
+		return strings.HasPrefix(s.session, "session unknown") && strings.HasPrefix(s.log, "Relay log unavailable — restart")
+	})
+
+	if err := os.WriteFile(store.RelayPIDPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("corrupt record not reported", func(s watchSnapshot) bool {
+		return s.relay == nil && strings.Contains(s.status, "parse contributor PID record") && strings.HasPrefix(s.session, "No contributor running")
+	})
+}
+
+func TestWatchSourceFollowsContainerLogsAndSwapsFollowerOnReplacement(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("requires a POSIX shell")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeWatchTool(t, bin, "docker", `case "$1" in
+inspect) echo true ;;
+logs) printf 'log from %s\n' "$5"; exec sleep 60 ;;
+exec) printf 'pane of %s\n' "$2" ;;
+esac
+`)
+	store := hivectl.NewProfileStore(t.TempDir())
+	record := hivectl.ContributorRelay{PID: 1, Mode: "container", ContainerRuntime: "docker", ContainerName: "first", TmuxSession: "hive-pi-1"}
+	writeWatchRecord(t, store, record)
+
+	source := &watchSource{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); source.run(ctx, store) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		s := source.get()
+		return s.log == "log from first\n" && s.session == "pane of first\n"
+	}, "container log and pane not shown")
+
+	record.ContainerName = "second"
+	writeWatchRecord(t, store, record)
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		return source.get().log == "log from second\n"
+	}, "replacement contributor kept the old log follower")
+}
+
+func TestWatchLogReadsOnlyTheTailAndReportsMissingLog(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "relay.log")
+	if got := readWatchLog(file); !strings.HasPrefix(got, "Relay log unavailable: ") {
+		t.Fatalf("missing log: %q", got)
+	}
+	data := strings.Repeat("x", watchBufferSize) + "newest"
+	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := readWatchLog(file)
+	if len(got) != watchBufferSize || !strings.HasSuffix(got, "newest") {
+		t.Fatalf("large log not tailed: len=%d", len(got))
+	}
+}
+
+func watchKey(s string) tea.KeyMsg {
+	switch s {
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	}
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+}
+
+func pressWatch(t *testing.T, m watchModel, keys ...string) (watchModel, tea.Cmd) {
+	t.Helper()
+	var cmd tea.Cmd
+	for _, k := range keys {
+		var next tea.Model
+		next, cmd = m.Update(watchKey(k))
+		m = next.(watchModel)
+	}
+	return m, cmd
+}
+
+func TestWatchQuotaKeysRunTheMatchingRecipeAction(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("requires a POSIX shell")
+	}
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeWatchTool(t, bin, "just", "if [ \"$2\" = resume ]; then echo 'not paused'; exit 3; fi\necho \"$@\"\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	actions := &watchActions{ctx: ctx}
+	t.Cleanup(func() { cancel(); actions.wg.Wait() })
+	base := watchModel{source: &watchSource{}, actions: actions, snapshot: watchSnapshot{relay: &hivectl.ContributorRelay{PID: 1}}}
+
+	for i, action := range watchQuotaActions[:5] {
+		m, cmd := pressWatch(t, base, "c", string(rune('1'+i)))
+		if cmd == nil || !m.busy || m.quota {
+			t.Fatalf("key %d did not start %s", i+1, action)
+		}
+		if got := cmd().(watchActionDone).text; got != "contribute-quota "+action {
+			t.Fatalf("key %d ran %q, want %s", i+1, got, action)
+		}
+	}
+	_, cmd := pressWatch(t, base, "c", "6")
+	if got := cmd().(watchActionDone).text; !strings.HasPrefix(got, "Quota: exit status 3 — not paused") {
+		t.Fatalf("recipe failure not surfaced: %q", got)
+	}
+
+	m, cmd := pressWatch(t, base, "c", "7")
+	if cmd != nil || !m.quota {
+		t.Fatal("out-of-range quota key ran an action or closed the menu")
+	}
+	if m, _ = pressWatch(t, m, "esc"); m.quota {
+		t.Fatal("esc did not close the quota menu")
+	}
+}
+
+func TestWatchBusyOrMissingContributorBlocksActions(t *testing.T) {
+	relay := &hivectl.ContributorRelay{PID: 1, TmuxSession: "hive-pi-1"}
+	busy := watchModel{source: &watchSource{}, busy: true, snapshot: watchSnapshot{relay: relay}}
+	idle := watchModel{source: &watchSource{}}
+	for _, m := range []watchModel{busy, idle} {
+		for _, k := range []string{"s", "c", "a"} {
+			got, cmd := pressWatch(t, m, k)
+			if cmd != nil || got.confirmStop || got.quota {
+				t.Fatalf("busy=%v relay=%v: %q started an action", m.busy, m.snapshot.relay != nil, k)
+			}
+		}
+	}
+	// A confirmation that arrives after an action started must not stop anything.
+	busy.confirmStop = true
+	if got, cmd := pressWatch(t, busy, "y"); cmd != nil || got.confirmStop {
+		t.Fatal("stop confirmed while another action was running")
+	}
+}
+
+func TestWatchAttachOnlyWhenASessionIsKnown(t *testing.T) {
+	m := watchModel{source: &watchSource{}, snapshot: watchSnapshot{relay: &hivectl.ContributorRelay{PID: 1, Mode: "headless", TmuxSession: "hive-pi-1"}}}
+	got, cmd := pressWatch(t, m, "a")
+	if cmd != nil || got.busy || got.status != "No attach target (headless or session unknown)" {
+		t.Fatalf("headless attach: busy=%v status=%q", got.busy, got.status)
+	}
+	m.snapshot.relay = &hivectl.ContributorRelay{PID: 1, Mode: "local", TmuxSession: "hive-pi-1"}
+	if got, cmd = pressWatch(t, m, "a"); cmd == nil || !got.busy {
+		t.Fatal("attach to a known session did not suspend the viewer")
+	}
+	next, _ := got.Update(watchActionDone{text: "Detached; read-only mirror resumed"})
+	if done := next.(watchModel); done.busy || done.status != "Detached; read-only mirror resumed" {
+		t.Fatal("detach did not resume the mirror")
+	}
+}
+
+func TestWatchStopRevalidatesTheRecordBeforeStopping(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store := hivectl.NewProfileStore(filepath.Join(home, ".config", "hive"))
+	// The record now names a different (live) contributor than the one shown.
+	writeWatchRecord(t, store, hivectl.ContributorRelay{PID: os.Getpid(), StartedAt: "replacement"})
+	ctx, cancel := context.WithCancel(context.Background())
+	actions := &watchActions{ctx: ctx}
+	t.Cleanup(func() { cancel(); actions.wg.Wait() })
+	m := watchModel{source: &watchSource{}, actions: actions, snapshot: watchSnapshot{relay: &hivectl.ContributorRelay{PID: os.Getpid(), StartedAt: "original"}}}
+	m, cmd := pressWatch(t, m, "s", "y")
+	if cmd == nil || !m.busy {
+		t.Fatal("confirmed stop did not start")
+	}
+	if got := cmd().(watchActionDone).text; got != "Contributor changed; refresh before stopping" {
+		t.Fatalf("stale confirmation acted on a replacement: %q", got)
+	}
+	if err := os.Remove(store.RelayPIDPath()); err != nil {
+		t.Fatal(err)
+	}
+	_, cmd = pressWatch(t, m, "s", "y")
+	if cmd != nil {
+		t.Fatal("busy viewer started a second stop")
+	}
+	m.busy = false
+	_, cmd = pressWatch(t, m, "s", "y")
+	if got := cmd().(watchActionDone).text; got != "Contributor changed; refresh before stopping" {
+		t.Fatalf("stop of an exited contributor: %q", got)
+	}
+}
+
+func TestWatchActionOutputScrollsAndDismisses(t *testing.T) {
+	m := watchModel{source: &watchSource{}, width: 60, height: 14, busy: true}
+	next, _ := m.Update(watchActionDone{text: "line0\nline1\nline2"})
+	m = next.(watchModel)
+	if m.busy || m.output == "" || !strings.HasPrefix(m.View(), "Action result") {
+		t.Fatal("multi-line result not shown in the output view")
+	}
+	m, _ = pressWatch(t, m, "down", "down", "down", "down")
+	if m.outputOffset != 2 {
+		t.Fatalf("scroll past the end: offset %d", m.outputOffset)
+	}
+	if !strings.HasPrefix(strings.Split(m.View(), "\n")[1], "line2") {
+		t.Fatal("scrolled view does not start at the offset")
+	}
+	m, _ = pressWatch(t, m, "up", "up", "up")
+	if m.outputOffset != 0 {
+		t.Fatalf("scroll before the start: offset %d", m.outputOffset)
+	}
+	if m, _ = pressWatch(t, m, "s"); m.confirmStop {
+		t.Fatal("keys reached the main view while output was open")
+	}
+	if m, _ = pressWatch(t, m, "esc"); m.output != "" {
+		t.Fatal("esc did not dismiss the output")
+	}
+	next, _ = m.Update(watchActionDone{text: "single line"})
+	if got := next.(watchModel); got.output != "" || got.status != "single line" {
+		t.Fatal("single-line result should go to the status line")
+	}
+}
+
+func TestWatchViewReflectsModeAndSnapshot(t *testing.T) {
+	source := &watchSource{}
+	source.set(watchSnapshot{relay: &hivectl.ContributorRelay{TmuxSession: "hive-pi-9", Mode: "container"}, session: "pane", log: "log", status: "poll error"})
+	m := watchModel{source: source}
+	next, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	if cmd != nil {
+		t.Fatal("resize scheduled work")
+	}
+	next, cmd = next.Update(watchTick{})
+	m = next.(watchModel)
+	if cmd == nil || m.snapshot.session != "pane" {
+		t.Fatal("tick did not refresh the snapshot and reschedule")
+	}
+	view := m.View()
+	for _, want := range []string{"Session: hive-pi-9 (container)", "pane", "log", "poll error", "a attach · c quota"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if got := len(strings.Split(view, "\n")); got > m.height {
+		t.Fatalf("view is %d lines for a %d-line terminal", got, m.height)
+	}
+	for _, tc := range []struct {
+		keys []string
+		want string
+	}{
+		{[]string{"?"}, "Quitting this viewer leaves the contributor running."},
+		{[]string{"c"}, "5 disable-session · 6 resume"},
+		{[]string{"s"}, "Stop the running contributor? y confirms"},
+		{[]string{"tab"}, "a attach · c quota"},
+	} {
+		got, _ := pressWatch(t, m, tc.keys...)
+		if v := got.View(); !strings.Contains(v, tc.want) || len(strings.Split(v, "\n")) > m.height {
+			t.Fatalf("%v: view missing %q or wrong height:\n%s", tc.keys, tc.want, v)
+		}
+	}
+	m.status, m.busy = "older status", true
+	if !strings.Contains(m.View(), "Action in progress…") {
+		t.Fatal("busy state hidden")
+	}
+	m.width = 20
+	if !strings.HasPrefix(m.View(), "Enlarge terminal") {
+		t.Fatal("tiny terminal not handled")
 	}
 }
