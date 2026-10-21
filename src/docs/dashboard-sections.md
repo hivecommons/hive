@@ -92,6 +92,7 @@ How busy Hive thinks your projects are right now, and how often it wakes its wor
 - The **hold** list names every held item. Held means someone parked it with a hold label.
 - The **cadence table** shows, for each worker, how often it runs in each mode. Continuous means it runs again as soon as it finishes.
 - The **budget** shows how much of the AI spending allowance for the current period has been used.
+- The **next kick** estimate follows the eval tick, which is longer while GitHub webhooks are trusted (`/api/status.webhooks.mode` reads `webhook`) and drops back to `governor.eval_interval_s` when they degrade (`polling`). How that decision is made is in [webhooks.md](webhooks.md#fallback-when-webhooks-degrade).
 
 **What it is good for.** Check it when Hive seems too slow or too busy. If the mode stays idle while work piles up, check the thresholds. If one worker never runs, check its row in the cadence table.
 

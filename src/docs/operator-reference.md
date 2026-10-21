@@ -1032,18 +1032,26 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `deliveries`, `coalesced`, `source=cached`), followed by
   `eval cycle planning from cached snapshot`.
 - Webhooks are **healthy** while the last delivery for a managed repository is
-  newer than `2 × governor.eval_interval_s`. While healthy the governor's base
-  eval interval rises to `governor.eval_interval_webhook_s` (default `900`,
-  capped by `governor.eval_interval_max_s`) — safe because the wakes above
-  carry the latency — and `/api/status.evalMode` reads `webhook`. The API
-  budget stretch still applies; the larger interval wins.
-- When deliveries stop, webhooks go stale after `2 × governor.eval_interval_s`.
-  The loop re-checks health as that window closes (not just at the next
-  stretched tick), resets its ticker to the configured interval, logs one
-  WARN per healthy → stale transition
-  (`github webhooks went stale; eval mode poll`) and one INFO per stale →
-  healthy transition (`github webhooks healthy; eval mode webhook`), and
-  `evalMode` reads `poll`.
+  newer than `2 × governor.eval_interval_s`. The first healthy window puts
+  the loop in **webhook mode**: the governor's base eval interval rises to
+  `governor.eval_interval_webhook_s` (default `900`, capped by
+  `governor.eval_interval_max_s`) — safe because the wakes above carry the
+  latency — and `/api/status.evalMode` reads `webhook`,
+  `/api/status.webhooks.mode` reads `webhook`. The API budget stretch still
+  applies; the larger interval wins.
+- **Fallback to polling** ([webhooks.md](webhooks.md#fallback-when-webhooks-degrade)).
+  Webhook mode degrades when the window lapses *while GitHub was active*
+  (a cadence pass listed an item updated after the newest delivery) or when
+  deliveries reach the receiver but fail verification; a quiet repository
+  with no deliveries and no activity keeps the stretched tick. The loop
+  re-checks as the window closes (not just at the next stretched tick),
+  resets its ticker to `governor.eval_interval_s`, logs one INFO
+  `webhooks degraded; polling cadence restored` (with `reason`), and
+  `evalMode` reads `poll`, `webhooks.mode` reads `polling` with `since` and
+  `mode_reason`. The way back has hysteresis: deliveries must keep arriving
+  for `2` consecutive healthy windows (`webhooks.healthy_windows` counts
+  them) before one INFO `webhooks healthy; webhook cadence engaged` restores
+  the webhook cadence.
 - `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and
   `review_requested` deliveries also queue an early review dispatch when
   `review.event_driven` is on; see
@@ -1077,8 +1085,10 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
 
 #### Polling cadence vs webhook patch vs reconcile
 
-Inbound webhooks cost nothing against the GitHub rate limit; outbound API
-calls do. The governor therefore keeps three distinct paths and never lets a
+The full model — the three writers, the accuracy guarantees of #13373, every
+cadence key with its default, and the webhook-outage fallback — is
+[webhooks.md](webhooks.md). In brief: inbound webhooks cost nothing against
+the GitHub rate limit; outbound API calls do. The governor therefore keeps three distinct paths and never lets a
 delivery trigger a full re-list:
 
 | Path | Trigger | GitHub cost | What it does |
@@ -1182,8 +1192,10 @@ starve the governor:
 
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
-targeted_refreshes_1h, tracker_invalidations_1h}` (the last two count the
-single-item re-reads and the tracker cache drops webhooks caused);
+targeted_refreshes_1h, tracker_invalidations_1h, mode, since, mode_reason,
+healthy_windows}` (the middle two count the single-item re-reads and the
+tracker cache drops webhooks caused; `mode` is `webhook` | `polling` and
+`since` when it began — see [webhooks.md](webhooks.md));
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
 `lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing

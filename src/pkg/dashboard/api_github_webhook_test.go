@@ -13,6 +13,7 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -145,5 +146,65 @@ func TestGitHubWebhookReceiverInvalidatesKnownRepoAndIgnoresUnknown(t *testing.T
 	}
 	if _, ok := filtered["webhooks"]; !ok || len(filtered) != 1 {
 		t.Fatalf("?fields=webhooks = %v, want only webhooks", filtered)
+	}
+}
+
+// TestStatusWebhooksModeAndSince: /api/status.webhooks carries the cadence
+// mode (`mode` webhook|polling, `since`) the governor's reconcile tick
+// follows (hivecommons/hive#13381), and deliveries that fail verification
+// count as degradation once observed.
+func TestStatusWebhooksModeAndSince(t *testing.T) {
+	const secret = "s3cr3t"
+	t.Setenv(githubWebhookSecretEnvVar, secret)
+	t.Cleanup(github.ResetWebhookTrackerForTest())
+	s := newGitHubWebhookTestServer(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{HiveID: "webhook-mode-test"}
+	s.statusMu.Unlock()
+
+	readWebhooks := func() map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/status?fields=webhooks", nil))
+		var status map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+			t.Fatal(err)
+		}
+		webhooks, ok := status["webhooks"].(map[string]any)
+		if !ok {
+			t.Fatalf("/api/status has no webhooks block: %s", rec.Body.String())
+		}
+		return webhooks
+	}
+
+	if got := readWebhooks(); got["mode"] != string(github.WebhookModePolling) || got["since"] == nil {
+		t.Fatalf("before any delivery webhooks = %v, want mode polling with since", got)
+	}
+
+	known := []byte(`{"number":5,"pull_request":{"number":5},"repository":{"full_name":"webhookorg/webhookrepo"}}`)
+	if rec := postGitHubWebhook(s, "pull_request", signGitHubWebhookForTest(secret, known), known); rec.Code != http.StatusOK {
+		t.Fatalf("delivery: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if _, _, recovered := github.ObserveWebhookMode(); !recovered {
+		t.Fatal("first verified delivery should engage webhook mode")
+	}
+	if got := readWebhooks(); got["mode"] != string(github.WebhookModeWebhook) || got["healthy"] != true {
+		t.Fatalf("after a delivery webhooks = %v, want mode webhook", got)
+	}
+
+	// A delivery that fails signature verification is recorded as a failure
+	// and, being newer than the last good one, degrades the cadence.
+	if rec := postGitHubWebhook(s, "pull_request", "sha256=00", known); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad signature: status = %d, want 401", rec.Code)
+	}
+	if _, degraded, _ := github.ObserveWebhookMode(); !degraded {
+		t.Fatal("a failing delivery after the last good one should degrade to polling")
+	}
+	got := readWebhooks()
+	if got["mode"] != string(github.WebhookModePolling) || got["mode_reason"] != github.WebhookDegradedReasonFailures {
+		t.Fatalf("after a failed delivery webhooks = %v, want mode polling with the failure reason", got)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, got["since"].(string)); err != nil {
+		t.Fatalf("since = %v, want RFC3339: %v", got["since"], err)
 	}
 }

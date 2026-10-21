@@ -93,16 +93,25 @@ func webhookAwareEvalInterval(budgetInterval time.Duration, webhookSeconds, maxS
 }
 
 // evalIntervalForConfig is the governor loop's effective eval interval: the
-// API-budget stretch composed with the webhook-healthy interval. It also
+// API-budget stretch composed with the webhook-mode interval. It also
 // publishes the webhook health window (2 × eval_interval_s) and logs once per
-// transition: WARN on healthy → stale, INFO on stale → healthy.
+// cadence-mode transition (#13381): INFO "webhooks degraded; polling cadence
+// restored" on webhook → polling and INFO "webhooks healthy; webhook cadence
+// engaged" on polling → webhook.
 func evalIntervalForConfig(cfg *config.Config, client *github.Client, logger *slog.Logger) time.Duration {
 	interval, _ := evalIntervalAndModeForConfig(cfg, client, logger)
 	return interval
 }
 
 // evalIntervalAndModeForConfig is evalIntervalForConfig plus the pacing mode
-// /api/status reports ("webhook" while healthy webhooks set the base tick).
+// /api/status reports ("webhook" while webhook mode sets the base tick).
+//
+// The mode is github.ObserveWebhookMode's state machine, not the raw health
+// window: a quiet repository with no deliveries and no GitHub activity stays
+// on the webhook cadence, while silence during activity (or deliveries
+// failing verification) drops the cadence back to eval_interval_s, and the
+// return requires github.WebhookRecoveryHealthyWindows consecutive healthy
+// windows.
 func evalIntervalAndModeForConfig(cfg *config.Config, client *github.Client, logger *slog.Logger) (time.Duration, string) {
 	budget := apiBudgetIntervalForConfig(cfg, client)
 	base, webhookS, maxS := 300, 900, 1800
@@ -113,20 +122,22 @@ func evalIntervalAndModeForConfig(cfg *config.Config, client *github.Client, log
 		}
 	}
 	github.SetWebhookHealthWindow(2 * time.Duration(base) * time.Second)
-	healthy, becameHealthy, becameStale := github.ObserveWebhookHealth()
-	interval := webhookAwareEvalInterval(budget, webhookS, maxS, healthy)
-	if logger != nil && (becameHealthy || becameStale) {
+	mode, degraded, recovered := github.ObserveWebhookMode()
+	webhookCadence := mode.Mode == github.WebhookModeWebhook
+	interval := webhookAwareEvalInterval(budget, webhookS, maxS, webhookCadence)
+	if logger != nil && (degraded || recovered) {
 		snap := github.WebhookHealthSnapshot()
 		args := []any{"window_seconds", 2 * base, "eval_interval_s", base, "eval_interval_webhook_s", webhookS,
-			"effective_interval_s", int(interval.Seconds())}
+			"effective_interval_s", int(interval.Seconds()), "webhooks_healthy", snap.Healthy}
 		if snap.LastEventAt != nil {
 			args = append(args, "last_event_at", snap.LastEventAt.Format(time.RFC3339))
 		}
-		if becameStale {
-			logger.Warn("github webhooks went stale; eval mode poll: falling back to the configured eval interval and TTL-bound PR cache", args...)
+		if degraded {
+			logger.Info("webhooks degraded; polling cadence restored", append(args, "reason", mode.Reason,
+				"recovery_healthy_windows", github.WebhookRecoveryHealthyWindows)...)
 		} else {
-			logger.Info("github webhooks healthy; eval mode webhook: base tick stretched to eval_interval_webhook_s, webhook wakes drive early cycles", args...)
+			logger.Info("webhooks healthy; webhook cadence engaged", args...)
 		}
 	}
-	return interval, evalModeForInterval(healthy, webhookS)
+	return interval, evalModeForInterval(webhookCadence, webhookS)
 }

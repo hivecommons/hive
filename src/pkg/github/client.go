@@ -1495,6 +1495,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			}
 		}
 		c.lastGoodEnum.store(repo, enum)
+		RecordGitHubActivity(newestEnumeratedUpdate(issues, prs, heldPRs))
 	}
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a

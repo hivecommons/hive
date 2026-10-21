@@ -2055,7 +2055,7 @@ func governorStatusEvalInterval(cfg *config.Config, apiBudget ...map[string]any)
 	if cfg.Governor.EvalIntervalMaxS > 0 && effective > cfg.Governor.EvalIntervalMaxS {
 		effective = cfg.Governor.EvalIntervalMaxS
 	}
-	if cfg.Governor.EvalIntervalWebhookS > effective && github.WebhookHealthSnapshot().Healthy {
+	if cfg.Governor.EvalIntervalWebhookS > effective && github.WebhookModeSnapshot().Mode == github.WebhookModeWebhook {
 		effective = cfg.Governor.EvalIntervalWebhookS
 		if cfg.Governor.EvalIntervalMaxS > 0 && effective > cfg.Governor.EvalIntervalMaxS {
 			effective = cfg.Governor.EvalIntervalMaxS

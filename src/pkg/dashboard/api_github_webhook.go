@@ -55,6 +55,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if !verifyGitHubWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
 		s.webhookLogger().Warn("github webhook signature verification failed", "event", event)
+		github.RecordWebhookDeliveryFailure()
 		jsonError(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
@@ -64,6 +65,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.deps.GHClient.HandleWebhookEvent(event, body)
 	if err != nil {
+		github.RecordWebhookDeliveryFailure()
 		jsonError(w, "invalid webhook payload", http.StatusBadRequest)
 		return
 	}

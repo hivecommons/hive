@@ -28,6 +28,9 @@ type WebhookHealth struct {
 	// deliveries and refreshes caused.
 	TargetedRefreshes1h    int `json:"targeted_refreshes_1h"`
 	TrackerInvalidations1h int `json:"tracker_invalidations_1h"`
+	// WebhookModeStatus is the reconcile cadence the health drives:
+	// `mode` webhook|polling and `since` (hivecommons/hive#13381).
+	WebhookModeStatus
 }
 
 // WebhookEventResult reports what one delivered GitHub webhook did.
@@ -66,6 +69,12 @@ type webhookTracker struct {
 	refreshes     []time.Time
 	trackerDrops  []time.Time
 	wasHealthy    bool
+	// lastActivity is the newest GitHub `updated_at` a poll listed and
+	// lastFailure the newest delivery that failed verification; both feed
+	// the cadence mode machine (webhook_mode.go).
+	lastActivity time.Time
+	lastFailure  time.Time
+	mode         webhookModeMachine
 }
 
 func newWebhookTracker() *webhookTracker {
@@ -305,7 +314,8 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	t.trackerDrops = pruneWebhookTimes(t.trackerDrops, now)
 	healthy, latest := t.healthyLocked(now)
 	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
-		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops)}
+		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops),
+		WebhookModeStatus: t.mode.status(t.window, now)}
 	if !latest.IsZero() {
 		at := latest.UTC()
 		out.LastEventAt = &at
