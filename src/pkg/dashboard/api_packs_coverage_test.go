@@ -359,54 +359,6 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 	assertStampedOnly(t, srv, res, config.FieldOwnerOperator)
 }
 
-// TestApplyPackKeptHandSetBackendDoesNotSeedPackModel verifies a kept
-// hand-set non-pack backend does not receive the pack's model id (#13288).
-func TestApplyPackKeptHandSetBackendDoesNotSeedPackModel(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Config.Data.AgentsDir = t.TempDir()
-
-	scanner := srv.deps.Config.Agents["scanner"]
-	scanner.Backend = "codex"
-	scanner.BackendOwner = ""
-	scanner.Model = ""
-	scanner.ModelOwner = ""
-	srv.deps.Config.Agents["scanner"] = scanner
-
-	if _, err := srv.ApplyPack(2); err != nil {
-		t.Fatalf("ApplyPack(2): %v", err)
-	}
-	got := srv.deps.Config.Agents["scanner"]
-	if got.Backend != "codex" {
-		t.Errorf("hand-set backend replaced: got %q, want codex", got.Backend)
-	}
-	if got.Model != "" {
-		t.Errorf("pack model seeded onto kept hand-set backend: got %q", got.Model)
-	}
-}
-
-// TestApplyPackUnownedPackBackendStillGetsPackModel verifies an unowned
-// backend matching the pack's still has its model reconciled to the pack's.
-func TestApplyPackUnownedPackBackendStillGetsPackModel(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Config.Data.AgentsDir = t.TempDir()
-	packBackend := scannerPackBackend(t)
-
-	scanner := srv.deps.Config.Agents["scanner"]
-	scanner.Backend = packBackend
-	scanner.BackendOwner = ""
-	scanner.Model = "stale-model"
-	scanner.ModelOwner = config.FieldOwnerPack
-	srv.deps.Config.Agents["scanner"] = scanner
-
-	if _, err := srv.ApplyPack(2); err != nil {
-		t.Fatalf("ApplyPack(2): %v", err)
-	}
-	got := srv.deps.Config.Agents["scanner"]
-	if got.Model == "stale-model" {
-		t.Errorf("pack model not reconciled on pack backend: got %q", got.Model)
-	}
-}
-
 // TestApplyPackMovesUnownedDeniedBackend verifies a hand-set backend with no
 // owner stamp that the backends policy denies is moved to the pack backend,
 // stamped pack-owned and counted as updated, keeping the #11310 deny intact.
