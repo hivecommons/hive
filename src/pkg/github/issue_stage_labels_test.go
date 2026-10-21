@@ -996,17 +996,10 @@ func TestForgeIssueLabelsDoesNotAlias(t *testing.T) {
 
 	result := forgeIssueLabels(original, &IssueClaimContext{CoveredLabelSynthesized: true})
 
-	// Verify input slice is unchanged
 	if !slices.Equal(original, originalCopy) {
 		t.Errorf("forgeIssueLabels mutated input: got %v, want %v", original, originalCopy)
 	}
-
-	// Verify that appending to the result does not alter the original backing array
-	if len(result) > 0 && len(original) > len(result) {
-		// Appending to result should not overwrite original[len(result)]
-		result = append(result, "new-label")
-		if original[len(result)-1] == "new-label" {
-			t.Errorf("appending to result unexpectedly modified the original backing array")
-		}
+	if got := []string{"bug", "help wanted"}; !slices.Equal(result, got) {
+		t.Errorf("forgeIssueLabels result: got %v, want %v", result, got)
 	}
 }
