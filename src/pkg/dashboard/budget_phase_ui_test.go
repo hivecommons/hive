@@ -130,7 +130,7 @@ func TestCostPanelSeparatesRangesFromBudgetPeriods(t *testing.T) {
 		"no spend recorded in this range",
 		"`${COST_RANGES[_costRange].label} range`",
 		"Budget history — tokens used vs. limit per reset period",
-		": cfg.windowMs;",
+		"const win = costWindow(now);",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Cost panel is missing clarified range/period copy %q", want)

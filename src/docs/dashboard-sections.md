@@ -297,6 +297,8 @@ An estimate of what Hive's use of AI models has cost so far, based on public lis
 - If you pay a flat subscription, your real bill may differ.
 - **Cost per merged PR** and **cost per closed issue** divide the estimate by how many were merged or closed. With none, they show a dash.
 - When your AI gateway reports its own spending, that figure appears too.
+- The spend-over-time chart has a range selector: **hourly** (the current clock hour and the 23 before it, one bar per hour), **daily** (the last 7 calendar days including today, one bar per day labelled by weekday), **weekly** (the current Monday→Sunday week, one bar per day; days still ahead are empty), **monthly** (the current calendar month, one bar per day labelled by date) and **custom** (your own start and end; hour bars up to 2 days, day bars beyond). Boundaries follow your browser's clock.
+- **Spend in selected range** adds up the bars of that same window, and **run-rate** divides it by the part of the window that has elapsed so far — per hour for hourly bars, per day otherwise. Switching the range changes the chart and both figures together.
 
 **What it is good for.** Use it to judge whether Hive is worth its cost. Compare cost per merged pull request over time.
 

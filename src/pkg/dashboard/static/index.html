@@ -11541,18 +11541,47 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
     }
 
-    // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
+    // ── Cost spend-over-time (hourly / daily / weekly / monthly / custom) ──
     // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
     // ~5-min resolution. We derive per-bucket SPEND on the client by taking the
     // delta of the cumulative value across each bucket boundary — no backend
     // change needed. Selected range persists across re-renders and page loads.
+    //
+    // Every selector value defines ONE window and ONE bucket size, and the bar
+    // chart, "spend in selected range" and the run-rate are all derived from
+    // that same window (costWindow()). Boundaries are in the browser's local
+    // clock, matching the axis labels:
+    //   hourly  — the current clock hour plus the COST_HOURLY_WINDOW_H−1 before
+    //             it (≈ last 24h); one bar per hour, labelled by hour.
+    //   daily   — the last COST_DAILY_WINDOW_DAYS calendar days, today
+    //             included; one bar per day, labelled by weekday.
+    //   weekly  — the current calendar week (Mon → Sun); one bar per day,
+    //             labelled by weekday. Days still ahead draw empty.
+    //   monthly — the current calendar month (1st → last day); one bar per
+    //             day, labelled by date. Days still ahead draw empty.
+    //   custom  — the picked bounds; hourly bars when the span is at most
+    //             COST_CUSTOM_HOUR_BUCKET_MAX_MS, daily bars otherwise.
+    // The run-rate is spend-in-window ÷ ELAPSED window length (never the part
+    // of a calendar week/month still in the future), shown per hour for hourly
+    // bars and per day for daily bars.
+    const COST_HOUR_MS = 3600e3;
+    const COST_DAY_MS = 24 * COST_HOUR_MS;
+    const COST_HOURLY_WINDOW_H = 24;
+    const COST_DAILY_WINDOW_DAYS = 7;
+    const COST_WEEK_DAYS = 7;
+    const COST_CUSTOM_HOUR_BUCKET_MAX_MS = 2 * COST_DAY_MS;
+    const COST_CUSTOM_MIN_SPAN_MS = 60e3;
+    // Charts with this many bars or fewer label every bar; wider charts label
+    // first / middle / last only.
+    const COST_AXIS_LABEL_EVERY_BAR_MAX = 7;
+    const COST_WEEKDAY_LABELS = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
     const COST_RANGES = {
-      // key: { label, bucketMs, windowMs, buckets }
-      hourly:  { label: 'hourly',  bucketMs: 3600e3,        windowMs: 24 * 3600e3,      buckets: 24 },
-      daily:   { label: 'daily',   bucketMs: 24 * 3600e3,   windowMs: 30 * 24 * 3600e3, buckets: 30 },
-      weekly:  { label: 'weekly',  bucketMs: 7 * 24 * 3600e3, windowMs: 12 * 7 * 24 * 3600e3, buckets: 12 },
-      monthly: { label: 'monthly', bucketMs: 30 * 24 * 3600e3, windowMs: 12 * 30 * 24 * 3600e3, buckets: 12 },
-      custom:  { label: 'custom' }, // bounds come from _costCustom; slices derived
+      // key: { label, bucket } — bucket 'hour' | 'day' | 'auto' (custom: by span)
+      hourly:  { label: 'hourly',  bucket: 'hour' },
+      daily:   { label: 'daily',   bucket: 'day' },
+      weekly:  { label: 'weekly',  bucket: 'day' },
+      monthly: { label: 'monthly', bucket: 'day' },
+      custom:  { label: 'custom',  bucket: 'auto' }, // bounds come from _costCustom
     };
     let _costRange = (() => {
       try { const s = localStorage.getItem('hiveCostRange'); if (s && COST_RANGES[s]) return s; } catch {}
@@ -11565,21 +11594,68 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (s && typeof s.start === 'number' && typeof s.end === 'number' && s.end > s.start) return s;
       } catch {}
       const now = Date.now();
-      return { start: now - 24 * 3600e3, end: now };
+      return { start: now - COST_DAY_MS, end: now };
     })();
-    const COST_CUSTOM_BUCKETS = 24; // bar-chart slices for a custom range
 
-    // costWindow: {start, end, bucketMs, count} for the active range. Preset
-    // ranges anchor to now and walk backwards; custom uses the picked bounds.
-    function costWindow() {
-      if (_costRange === 'custom') {
-        const span = Math.max(_costCustom.end - _costCustom.start, 60e3);
-        return { start: _costCustom.start, end: _costCustom.end,
-                 bucketMs: span / COST_CUSTOM_BUCKETS, count: COST_CUSTOM_BUCKETS };
+    function costStartOfHour(ms) { const d = new Date(ms); d.setMinutes(0, 0, 0); return d.getTime(); }
+    function costStartOfDay(ms) { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    // Calendar-day stepping (setDate) so DST transitions keep bucket edges on
+    // local midnight instead of drifting an hour.
+    function costAddDays(ms, n) { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime(); }
+
+    // costBucketEdges: ascending boundaries [start, …, end] stepping one hour or
+    // one calendar day from start; the final bucket is clipped at end.
+    function costBucketEdges(start, end, bucket) {
+      const edges = [start];
+      let t = start;
+      while (t < end) {
+        const next = bucket === 'day' ? costAddDays(t, 1) : t + COST_HOUR_MS;
+        t = Math.min(next, end);
+        edges.push(t);
       }
-      const cfg = COST_RANGES[_costRange];
-      const now = Date.now();
-      return { start: now - cfg.windowMs, end: now, bucketMs: cfg.bucketMs, count: cfg.buckets };
+      return edges;
+    }
+
+    // costWindow: the single source of truth for the active range —
+    // {key, start, end, bucket, bucketMs, edges, count, elapsedMs}. The chart
+    // buckets, the "spend in selected range" sum and the run-rate all read it.
+    // `now` is injectable for tests.
+    function costWindow(now) {
+      now = typeof now === 'number' ? now : Date.now();
+      const key = _costRange;
+      let start, end, bucket;
+      if (key === 'custom') {
+        start = _costCustom.start;
+        end = Math.max(_costCustom.end, start + COST_CUSTOM_MIN_SPAN_MS);
+        bucket = (end - start) <= COST_CUSTOM_HOUR_BUCKET_MAX_MS ? 'hour' : 'day';
+      } else if (key === 'hourly') {
+        start = costStartOfHour(now) - (COST_HOURLY_WINDOW_H - 1) * COST_HOUR_MS;
+        end = now;
+        bucket = 'hour';
+      } else if (key === 'daily') {
+        start = costAddDays(costStartOfDay(now), -(COST_DAILY_WINDOW_DAYS - 1));
+        end = now;
+        bucket = 'day';
+      } else if (key === 'weekly') {
+        const today = costStartOfDay(now);
+        const sinceMonday = (new Date(today).getDay() + 6) % 7;
+        start = costAddDays(today, -sinceMonday);
+        end = costAddDays(start, COST_WEEK_DAYS);
+        bucket = 'day';
+      } else { // monthly
+        const d = new Date(now);
+        start = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+        end = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+        bucket = 'day';
+      }
+      const edges = costBucketEdges(start, end, bucket);
+      return {
+        key, start, end, bucket,
+        bucketMs: bucket === 'day' ? COST_DAY_MS : COST_HOUR_MS,
+        edges,
+        count: edges.length - 1,
+        elapsedMs: Math.max(0, Math.min(now, end) - start),
+      };
     }
 
     function fmtCostDateTime(ms) {
@@ -11714,18 +11790,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return v;
     }
 
-    // costBuckets: returns [{start, end, spend}] for the active range. spend is the
-    // cumulative-$ delta over the bucket; 30d of history means longer ranges are
-    // truncated to whatever the ring buffer holds (labeled in the UI).
-    function costBuckets() {
-      const win = costWindow();
+    // costBuckets: returns [{start, end, spend, hasData}] — one per bucket of the
+    // active window (costWindow()). spend is the cumulative-$ delta over the
+    // bucket; 30d of history means older buckets may be uncovered (hasData=false),
+    // as are calendar days still ahead in the weekly/monthly views.
+    function costBuckets(win) {
+      win = win || costWindow();
       const hist = costHist();
       const buckets = [];
-      for (let i = win.count - 1; i >= 0; i--) {
-        const end = win.end - i * win.bucketMs;
-        const start = end - win.bucketMs;
-        if (end <= win.start) continue;
-        buckets.push({ start, end, spend: 0, hasData: false });
+      for (let i = 0; i + 1 < win.edges.length; i++) {
+        buckets.push({ start: win.edges[i], end: win.edges[i + 1], spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
       // Per-bucket spend = sum of POSITIVE per-model token increments inside the
@@ -11784,20 +11858,40 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return saw ? spend : null;
     }
 
-    function costBucketAxisLabel(b) {
-      const d = new Date(b.end);
-      if (_costRange === 'hourly') return String(d.getHours()).padStart(2, '0');
-      if (_costRange === 'daily')  return `${d.getMonth() + 1}/${d.getDate()}`;
-      if (_costRange === 'weekly') return `${d.getMonth() + 1}/${d.getDate()}`;
-      if (_costRange === 'custom') return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}h`;
-      return formatDashboardDateTime(d, { month:'short', timeZoneName:undefined });
+    // costBucketAxisLabel: the bar is labelled by the hour/day it COVERS (its
+    // start), in the browser's local clock like the window boundaries.
+    function costBucketAxisLabel(b, win) {
+      win = win || costWindow();
+      const d = new Date(b.start);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const md = `${d.getMonth() + 1}/${d.getDate()}`;
+      if (win.key === 'hourly') return hh;
+      if (win.key === 'daily' || win.key === 'weekly') return COST_WEEKDAY_LABELS[d.getDay()];
+      if (win.key === 'monthly') return md;
+      return win.bucket === 'hour' ? `${md} ${hh}h` : md;
     }
 
-    // costRunRate: estimated $ spent per millisecond, from recent token
-    // consumption. Uses the per-model TOKEN delta over the most recent span of
-    // history (price-independent, monotonic) priced at each model's current
-    // effective rate — so it never goes negative across a price change. Returns
-    // null if there isn't enough history to establish a pace.
+    // costAxisLabelsHtml: every bar when there are few (weekday views), else
+    // first / middle / last to avoid crowding.
+    function costAxisLabelsHtml(buckets, win) {
+      if (!buckets.length) return '';
+      const picks = buckets.length <= COST_AXIS_LABEL_EVERY_BAR_MAX
+        ? buckets
+        : [buckets[0], buckets[Math.floor(buckets.length / 2)], buckets[buckets.length - 1]];
+      return picks.map(b => `<span>${esc(costBucketAxisLabel(b, win))}</span>`).join('');
+    }
+
+    // costWindowRunRate: $ per ms = spend inside the window ÷ the part of the
+    // window that has elapsed so far. null when nothing was spent or no time
+    // has passed (the caller then omits the run-rate).
+    function costWindowRunRate(spend, win) {
+      if (!(spend > 0) || !(win && win.elapsedMs > 0)) return null;
+      return spend / win.elapsedMs;
+    }
+    // costRunRateUnit: the natural unit for the window's bucket size.
+    function costRunRateUnit(win) {
+      return win.bucket === 'hour' ? { ms: COST_HOUR_MS, label: '/hr' } : { ms: COST_DAY_MS, label: '/day' };
+    }
     // priceMap: current $/token per model from the newest snapshot that has one.
     function costPriceMap(hist) {
       const rate = {};
@@ -12002,29 +12096,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return sawWindow ? spend : null;
     }
 
-    function costRunRate() {
-      const hist = costHist();
-      if (hist.length < 2) return null;
-      const latest = hist[hist.length - 1];
-      const rate = costPriceMap(hist);
-      // Spend over the most recent 6h (or all history if shorter), divided by the
-      // span, using the positive-increment sum so a shrinking counter can't zero it.
-      const start = latest.timestamp - 6 * 3600e3;
-      let anchorTs = null;
-      for (const e of hist) { if (e.models && e.timestamp >= start) { anchorTs = e.timestamp; break; } }
-      if (anchorTs == null) { for (const e of hist) { if (e.models) { anchorTs = e.timestamp; break; } } }
-      if (anchorTs == null || anchorTs >= latest.timestamp) return null;
-      // Same discontinuity ceiling as the hourly buckets so a one-time re-seed
-      // jump can't inflate the run-rate either.
-      const ceiling = costDiscontinuityCeiling(hist, rate);
-      const spend = costSpendBetween(hist, rate, anchorTs, latest.timestamp, ceiling);
-      const dMs = latest.timestamp - anchorTs;
-      if (spend == null || !(dMs > 0) || !(spend > 0)) return null;
-      return spend / dMs; // $ per ms
-    }
-
-    function costTrendHtml() {
-      const cfg = COST_RANGES[_costRange];
+    // `now` is injectable for tests; renders use the wall clock.
+    function costTrendHtml(now) {
+      const win = costWindow(now);
       const pills = Object.keys(COST_RANGES).map(k =>
         `<button data-cost-range="${k}" class="${k === _costRange ? 'active' : ''}">${COST_RANGES[k].label}</button>`
       ).join('');
@@ -12038,7 +12112,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <input type="datetime-local" id="cost-custom-end" value="${toLocal(_costCustom.end)}" data-change-action="costCustomChanged" title="Custom range end">
         </div>`;
       }
-      const buckets = costBuckets();
+      const buckets = costBuckets(win);
       const withData = buckets.filter(b => b.hasData);
       const total = withData.reduce((s, b) => s + b.spend, 0);
       const max = Math.max(...buckets.map(b => b.spend), 0);
@@ -12065,44 +12139,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const overlay = allZero
           ? `<div class="cost-bars-note">no spend recorded in this range</div>`
           : '';
-        // Show first, middle, and last axis labels to avoid crowding.
-        const first = buckets[0], mid = buckets[Math.floor(buckets.length / 2)], last = buckets[buckets.length - 1];
         body = `<div class="cost-bars-wrap"><div class="cost-bars">${bars}</div>${overlay}</div>
-          <div class="cost-bars-axis"><span>${esc(costBucketAxisLabel(first))}</span><span>${esc(costBucketAxisLabel(mid))}</span><span>${esc(costBucketAxisLabel(last))}</span></div>`;
+          <div class="cost-bars-axis">${costAxisLabelsHtml(buckets, win)}</div>`;
       }
 
       const totalLabel = 'spend in selected range';
-      // Spend during the selected range. Agents are always running, so a bare
-      // $0.00 is misleading — when the range has no computable delta (too few snapshots,
-      // or a price-table shift zeroed the cumulative delta), estimate it from the
-      // run-rate × range length and mark it approximate (~).
-      const rate = costRunRate(); // $ per ms, or null
-      const rangeMs = _costRange === 'custom'
-        ? Math.max(_costCustom.end - _costCustom.start, 60e3)
-        : cfg.windowMs;
-      let spendStr, approx = false;
-      if (total > 0) {
-        spendStr = fmtUSD(total);
-      } else if (rate != null) {
-        spendStr = '~' + fmtUSD(rate * rangeMs); approx = true;
-      } else {
-        spendStr = fmtUSD(0);
-      }
-      // Run-rate normalized to a readable unit per range.
+      // Spend and run-rate come from the SAME window as the bars: the run-rate
+      // is that spend over the elapsed part of the window, in the unit of the
+      // bucket size (per hour for hourly bars, per day for daily bars).
+      const spendStr = fmtUSD(total);
+      const rate = costWindowRunRate(total, win); // $ per ms, or null
       let rateStr = '';
       if (rate != null) {
-        const perUnit = _costRange === 'hourly' ? rate * 3600e3
-          : _costRange === 'weekly' ? rate * 24 * 3600e3          // $/day within a week view
-          : _costRange === 'monthly' ? rate * 24 * 3600e3         // $/day within a month view
-          : rate * 24 * 3600e3;                                    // daily/custom → $/day
-        const unit = _costRange === 'hourly' ? '/hr' : '/day';
-        rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(perUnit)}${unit}</b>`;
+        const unit = costRunRateUnit(win);
+        rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(rate * unit.ms)}${unit.label}</b>`;
       }
+      const summaryTitle = `${costRangeTitle(win.start, win.end, win.bucketMs)} · elapsed ${fmtCostDuration(win.elapsedMs)}`;
       return `<div class="cost-trend">
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
           ${customControls}
-          <div class="cost-trend-total">${totalLabel}: <b>${spendStr}</b>${approx ? ' <span title="estimated from current run-rate — selected range had no computable delta">(est.)</span>' : ''}${rateStr}</div>
+          <div class="cost-trend-total" title="${esc(summaryTitle)}">${totalLabel}: <b>${spendStr}</b>${rateStr}</div>
         </div>
         ${body}
       </div>`;
