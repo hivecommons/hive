@@ -49,7 +49,7 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
 
           Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>
 
-          When the step is done, remove the ${REVIEWER_HANDOFF_LABEL} and needs-human labels — Hive never removes them."
+          When the step is done, a trusted merger replies /hive approve: Hive lifts its own needs-human, removes ${REVIEWER_HANDOFF_LABEL} and adds ${REVIEWER_PASSED_LABEL}; a needs-human a person added is removed by hand."
      `hive-review` is asynchronous: poll the `.result.json` path it prints and do
      not proceed until that file reports `"ok": true`. A queued request is not yet
      an audit record; an error result must leave the PR in `needs-human`.

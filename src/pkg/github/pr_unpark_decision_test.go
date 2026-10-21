@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -227,7 +228,7 @@ func TestSweepIssueUnparkCommandsPRApproveAndHelpPointAtReviews(t *testing.T) {
 		{
 			name:    "approve on a PR explains the release it records",
 			issue:   hiveParkedPR(humanComment(1, "clubanderson", "/hive approve")),
-			want:    []string{"`/hive approve` reply posted after the swarm's `requires_human` verdict releases that hold on head `e653b6d`", "GitHub **Approve** review", "does not bypass CI, `hold`-class labels", PRNeedsDecisionStageLabel},
+			want:    []string{"`/hive approve` reply posted after the swarm's `requires_human` verdict releases that hold on head `e653b6d`", "GitHub **Approve** review", "does not bypass CI, soak, `hold`-class labels", PRNeedsDecisionStageLabel, "No `needs-human` label blocks this PR."},
 			notWant: "is for parked issues",
 		},
 		{
@@ -263,6 +264,104 @@ func TestSweepIssueUnparkCommandsPRApproveAndHelpPointAtReviews(t *testing.T) {
 				t.Fatalf("reply should not contain %q:\n%s", tt.notWant, reply)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#13309, seen on Danathar/akmods#158: the supersession
+// sweep put needs-human on a hive-authored PR, the adjudicator ruled
+// DE-ESCALATE and handed off (reviewer-handoff), and no /hive command could
+// lift the hive's own label. A trusted merger's `/hive approve` now lifts a
+// needs-human Hive added and applies the hand-off transition; a person's
+// needs-human, or one the timeline cannot attribute, stays untouched.
+func TestSweepIssueUnparkCommandsPRApproveReleasesHiveNeedsHuman(t *testing.T) {
+	base := time.Now().Add(-time.Hour)
+	tests := []struct {
+		name        string
+		author      string
+		labels      []string
+		timeline    []unparkWireTimelineEvent
+		wantAdded   []string
+		wantRemoved []string
+		want        []string
+	}{
+		{
+			name:        "hive-added needs-human lifts with the hand-off transition",
+			author:      "hive[bot]",
+			labels:      []string{PRNeedsDecisionStageLabel, "author/hive", "needs-human", "reviewer-handoff"},
+			timeline:    []unparkWireTimelineEvent{labeledAt(1, "hive[bot]", "needs-human", base)},
+			wantAdded:   []string{"reviewer-passed"},
+			wantRemoved: []string{"reviewer-handoff", "needs-human"},
+			want:        []string{"`needs-human` cleared: Hive added it", "`reviewer-passed` applied", "`reviewer-handoff` and `needs-human` removed", "No `needs-human` label still blocks this PR", "green CI and soak"},
+		},
+		{
+			name:        "reviewer-passed already present is not re-added",
+			author:      "hive[bot]",
+			labels:      []string{PRNeedsDecisionStageLabel, "author/hive", "needs-human", "reviewer-passed"},
+			timeline:    []unparkWireTimelineEvent{labeledAt(1, "hive[bot]", "needs-human", base)},
+			wantRemoved: []string{"needs-human"},
+			want:        []string{"`needs-human` cleared", "`needs-human` removed"},
+		},
+		{
+			name:     "a person's needs-human stays",
+			author:   "hive[bot]",
+			labels:   []string{PRNeedsDecisionStageLabel, "author/hive", "needs-human", "reviewer-handoff"},
+			timeline: []unparkWireTimelineEvent{labeledAt(1, "hive[bot]", "needs-human", base), labeledAt(2, "owner", "needs-human", base.Add(time.Minute))},
+			want:     []string{"`needs-human` still blocks this PR (added by @owner)", "never lifts a person's hold"},
+		},
+		{
+			name:   "an unattributed needs-human stays",
+			author: "hive[bot]",
+			labels: []string{PRNeedsDecisionStageLabel, "author/hive", "needs-human"},
+			want:   []string{"`needs-human` still blocks this PR (Hive could not read who added it)"},
+		},
+		{
+			name:     "a PR the hive did not open keeps needs-human",
+			author:   "alice",
+			labels:   []string{PRNeedsDecisionStageLabel, "needs-human"},
+			timeline: []unparkWireTimelineEvent{labeledAt(1, "hive[bot]", "needs-human", base)},
+			want:     []string{"`needs-human` still blocks this PR: `/hive approve` lifts it only on a PR the hive opened"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issue := parkedPR(158, tt.author, tt.labels, humanComment(1, "clubanderson", "/hive approve"))
+			c, rec := newUnparkPRClient(t, []unparkWireIssue{issue}, map[string]string{"clubanderson": "admin"})
+			rec.timelines = map[int][]unparkWireTimelineEvent{158: tt.timeline}
+			store := review.NewHumanChangeRequests("")
+			result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("clubanderson")})
+			if err != nil {
+				t.Fatalf("sweep: %v", err)
+			}
+			if result.Replies != 1 || len(result.PRDecisions) != 0 || store.Len() != 0 {
+				t.Fatalf("result = %+v store=%d", result, store.Len())
+			}
+			if strings.Join(rec.added[158], ",") != strings.Join(tt.wantAdded, ",") {
+				t.Fatalf("added = %v, want %v", rec.added[158], tt.wantAdded)
+			}
+			if strings.Join(rec.removed[158], ",") != strings.Join(tt.wantRemoved, ",") {
+				t.Fatalf("removed = %v, want %v", rec.removed[158], tt.wantRemoved)
+			}
+			reply := strings.Join(rec.posted[158], "\n")
+			for _, want := range append(tt.want, "releases that hold on head `e653b6d`") {
+				if !strings.Contains(reply, want) {
+					t.Fatalf("reply missing %q:\n%s", want, reply)
+				}
+			}
+		})
+	}
+}
+
+// An untrusted commenter's `/hive approve` never touches a PR's labels, even
+// a needs-human Hive added.
+func TestSweepIssueUnparkCommandsPRApproveUntrustedLeavesNeedsHuman(t *testing.T) {
+	issue := parkedPR(158, "hive[bot]", []string{PRNeedsDecisionStageLabel, "author/hive", "needs-human"}, humanComment(1, "stranger", "/hive approve"))
+	c, rec := newUnparkPRClient(t, []unparkWireIssue{issue}, map[string]string{"stranger": "write"})
+	rec.timelines = map[int][]unparkWireTimelineEvent{158: {labeledAt(1, "hive[bot]", "needs-human", time.Now().Add(-time.Hour))}}
+	if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: review.NewHumanChangeRequests(""), TrustedMerger: trustedMergerSet("clubanderson")}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(rec.added[158]) != 0 || len(rec.removed[158]) != 0 || len(rec.posted[158]) != 0 {
+		t.Fatalf("untrusted approve acted: added %v removed %v posted %v", rec.added[158], rec.removed[158], rec.posted[158])
 	}
 }
 

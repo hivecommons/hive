@@ -351,7 +351,7 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("\n")
 	b.WriteString("          Reviewer adjudication: HAND-OFF — evidence: <why only a maintainer can act>; remaining risk: <risk or none>\n")
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("          When the step is done, remove the %s and needs-human labels — Hive never removes them.\"\n", ReviewerHandoffLabel))
+	b.WriteString(fmt.Sprintf("          When the step is done, a trusted merger replies /hive approve: Hive lifts its own needs-human, removes %s and adds %s; a needs-human a person added is removed by hand.\"\n", ReviewerHandoffLabel, ReviewerPassedLabel))
 	b.WriteString("     `hive-review` is asynchronous: poll the `.result.json` path it prints and do\n")
 	b.WriteString("     not proceed until that file reports `\"ok\": true`. A queued request is not yet\n")
 	b.WriteString("     an audit record; an error result must leave the PR in `needs-human`.\n")

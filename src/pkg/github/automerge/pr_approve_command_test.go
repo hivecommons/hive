@@ -15,15 +15,18 @@ import (
 func TestPRApproveReply(t *testing.T) {
 	for _, tc := range []struct {
 		name, author, actor, verdict, file, want string
+		labels                                   []string
 		bot, disabled, readError, trustedAuthor  bool
 	}{
-		{name: "App lane", author: testHiveAppBotLogin, actor: "owner", want: "does not consume it on a pull request"},
-		{name: "trusted owner on own contributor PR", author: "owner", actor: "owner", want: "does not consume it on a pull request"},
-		{name: "trusted merger on contributor PR", author: "contributor", actor: "owner", want: "does not consume it on a pull request"},
-		{name: "trusted-author lane", author: "maintainer", actor: "owner", trustedAuthor: true, want: "does not consume it on a pull request"},
+		{name: "says no needs-human blocks", author: testHiveAppBotLogin, actor: "owner", want: "No `needs-human` label blocks this PR."},
+		{name: "says needs-human still blocks", author: testHiveAppBotLogin, actor: "owner", labels: []string{"needs-human"}, want: "`needs-human` still blocks this PR"},
+		{name: "App lane", author: testHiveAppBotLogin, actor: "owner", want: "releases that hold on the current head"},
+		{name: "trusted owner on own contributor PR", author: "owner", actor: "owner", want: "releases that hold on the current head"},
+		{name: "trusted merger on contributor PR", author: "contributor", actor: "owner", want: "releases that hold on the current head"},
+		{name: "trusted-author lane", author: "maintainer", actor: "owner", trustedAuthor: true, want: "releases that hold on the current head"},
 		{name: "untrusted person on trusted-author lane", author: "maintainer", actor: "stranger", trustedAuthor: true, want: "not a trusted merger"},
 		{name: "untrusted person on App lane", author: testHiveAppBotLogin, actor: "stranger", want: "not a trusted merger"},
-		{name: "names the release lever", author: "contributor", actor: "owner", want: "GitHub **Approve** review for the current head (`sha7`)"},
+		{name: "names the release lever", author: "contributor", actor: "owner", want: "releases that hold on the current head (`sha7`) on the lane's next pass, exactly as a GitHub **Approve** review"},
 		{name: "untrusted self release", author: "contributor", actor: "contributor", want: "cannot release their own PR"},
 		{name: "untrusted other release", author: "contributor", actor: "stranger", want: "not a trusted merger"},
 		{name: "bot", author: "contributor", actor: "owner", bot: true, want: "a bot cannot release"},
@@ -46,7 +49,11 @@ func TestPRApproveReply(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/repos/acme/widget/pulls/7":
-					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(tc.author)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}})
+					var labels []*gh.Label
+					for _, l := range tc.labels {
+						labels = append(labels, &gh.Label{Name: gh.Ptr(l)})
+					}
+					json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(tc.author)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}, Labels: labels})
 				case "/repos/acme/widget/pulls/7/files":
 					if tc.readError {
 						w.WriteHeader(http.StatusInternalServerError)
@@ -89,6 +96,9 @@ func TestPRApproveReply(t *testing.T) {
 			}
 			if err != nil || !strings.Contains(reply, tc.want) {
 				t.Fatalf("reply=%q err=%v, want %q", reply, err, tc.want)
+			}
+			if strings.Contains(reply, "does not consume it") {
+				t.Fatalf("reply still says the lane ignores /hive approve: %q", reply)
 			}
 		})
 	}

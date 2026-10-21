@@ -10,12 +10,20 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// prApproveReleaseHint names the lever that actually clears a
-// `requires_human` verdict on this release line: the merge lanes do not
-// consume `/hive approve` on a PR, they clear the hold when a trusted merger
-// submits a GitHub Approve review for the exact head
-// (trustedHumanApprovedRequiresHuman).
-const prApproveReleaseHint = "To release a `requires_human` hold, a trusted merger submits a GitHub **Approve** review for the current head"
+// prApproveReleaseHint names what a trusted merger's `/hive approve` does on
+// a pull request: the merge lanes read it, exactly like a GitHub Approve
+// review on the head, as the release of a `requires_human` verdict
+// (FindReviewHoldRelease, hivecommons/hive#13087).
+const prApproveReleaseHint = "a trusted merger's `/hive approve` posted after the swarm's `requires_human` verdict releases that hold on the current head"
+
+// prApproveNeedsHumanNote says whether a `needs-human` label still blocks the
+// PR: the verdict release does not touch it (hivecommons/hive#13309).
+func prApproveNeedsHumanNote(labels []string) string {
+	if !hasLabelFold(labels, "needs-human") {
+		return "No `needs-human` label blocks this PR."
+	}
+	return "`needs-human` still blocks this PR: on a hive-authored PR parked at `" + stagelabels.NeedsDecision.Label() + "` the un-park sweep lifts it when Hive added it, and a `needs-human` a person added stays until a person removes it."
+}
 
 // PRApproveReply describes what a `/hive approve` reply on a pull request
 // means to the existing merge lanes (hivecommons/hive#13087). It is
@@ -74,5 +82,5 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 			return "`/hive approve` acknowledged, but this PR changes files that its lane requires a person to merge manually. The command cannot override that rule; a maintainer must review and merge it.", nil
 		}
 	}
-	return "`/hive approve` acknowledged, but the merge lane does not consume it on a pull request. " + prApproveReleaseHint + " (`" + stagelabels.ShortSHA(head) + "`); the lane re-evaluates on its next pass and author admission, hold labels, CI and all other merge gates still apply. This reply does not mean the PR has merged.", nil
+	return "`/hive approve` acknowledged: " + prApproveReleaseHint + " (`" + stagelabels.ShortSHA(head) + "`) on the lane's next pass, exactly as a GitHub **Approve** review for that head does. " + prApproveNeedsHumanNote(labelNames(pr.Labels)) + " Author admission, hold labels, CI, soak and all other merge gates still apply. This reply does not mean the PR has merged.", nil
 }
