@@ -9504,6 +9504,15 @@ func hiveIdentity(cfg *config.Config) github.HiveIdentity {
 // rate-limit pacing queue cannot stall the run loop (hivecommons/hive#12983).
 const issueStageSyncTimeout = 2 * time.Minute
 
+// recheckSoakHubURL is the hub the soak triage probes, "" when this hive has
+// no hub (the probe then reads the spoke's own /api/version).
+func recheckSoakHubURL(cfg *config.Config) string {
+	if cfg == nil || !cfg.Hub.Enabled {
+		return ""
+	}
+	return cfg.Hub.URL
+}
+
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
@@ -9560,9 +9569,12 @@ func applyDuplicatePRGuard(
 	}
 	// hivecommons/hive#13093: issues parked on an unmerged PR come back once
 	// that PR settles, and never advertise `help wanted` while parked.
+	// hivecommons/hive#13311: ops-tracking soak checklists past their
+	// recheck-after deadline get evidence from the hub (or this spoke).
+	github.SetRecheckSoakProbe(github.NewHTTPSoakProbe(recheckSoakHubURL(cfg), fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port), nil))
 	blockedCtx, blockedCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
-	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.Errors > 0 {
-		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "errors", br.Errors)
+	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.SoakTriaged+br.Errors > 0 {
+		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "soak_triaged", br.SoakTriaged, "errors", br.Errors)
 	}
 	blockedCancel()
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)

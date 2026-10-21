@@ -300,6 +300,13 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && !row.includes('ham-mod-needs-decision'), row);
 assert.ok(tooltip(row).includes('Needs a human decision'), row);
+// A blocked issue with a hive:recheck-after deadline names it on the chip
+// (hivecommons/hive#13310); a bare blocked row keeps the plain chip.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'issue', stage: 0, modifiers: ['blocked'], bucket: 'filtered', bucket_reason: 'blocked until 2020-01-02T03:04:00Z' }, stages, ctx);
+// The time goes through agentNowClockTime, so only the stable parts are pinned: the chip text and the minute.
+assert.ok(/>blocked · re-check at [^<]*03:04[^<]*<\/span>/.test(row), row);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'issue', stage: 0, modifiers: ['blocked'], bucket: 'filtered', bucket_reason: 'blocked' }, stages, ctx);
+assert.ok(row.includes('>blocked</span>') && !row.includes('re-check'), row);
 // An ISSUE parked on a person wears 045 (owner decision: 085 is PR-only)
 // before any PR exists: it lights Actionable (the issue side) as a detour,
 // not the merge gate, and its headline carries no "(its PR)" suffix. A
