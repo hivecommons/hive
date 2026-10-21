@@ -55,6 +55,23 @@ func NewStagedEdits(set *ProfileSet, hubs []TreeHubSnapshot, repos map[string]Tr
 	return s, nil
 }
 
+// Revision is the profiles.yml revision this session was reviewed against. UIs
+// echo it (If-Match) so a tab that reviewed an older session cannot apply.
+func (s *StagedEdits) Revision() string { return s.revision }
+
+// Pending reports whether an unsaved diff exists, so a refresh that would drop
+// staged edits can be refused until the contributor applies or discards.
+func (s *StagedEdits) Pending() bool { return !s.Diff().Empty() }
+
+// SetRelaySignal replaces the reload request Apply sends after a save. Surfaces
+// pass the same injected signaller they use for every other mutation; nil keeps
+// SignalRunningRelay.
+func (s *StagedEdits) SetRelaySignal(fn func(context.Context, *ProfileStore) (RelaySwitchResult, error)) {
+	if fn != nil {
+		s.signal = fn
+	}
+}
+
 func cloneStageSet(set *ProfileSet) *ProfileSet {
 	next := *set
 	next.Profiles = append([]Profile(nil), set.Profiles...)

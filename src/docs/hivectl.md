@@ -1047,6 +1047,23 @@ Notes:
   rows or use ↑/↓ to rank them, and choose `ranked`, `spread` or `neediest`.
   The API and HTML never return registration tokens; the printed URL carries a
   short-lived local UI token and should not be shared.
+- **The web UI shows a Hub → Hive → Repository contribution tree.** Below the
+  profile table, `hivectl hives web` renders every configured hub, the hives it
+  offers and each hive's repositories as an accessible tree (keyboard: ↑/↓,
+  ←/→ to collapse/expand, space to select the current repositories, `f` to
+  follow new repositories, `x` to exclude, `A`/`U` to apply/discard). Every
+  change is **staged**: nothing is written until **Apply**, which shows the
+  full diff — including exclusion effects, branches shared across hubs and
+  legacy profiles converted by *Review and restrict* — and then a truthful
+  receipt (*Saved*, *Relay reload* notified / not required / failed,
+  *Acknowledged* pending). Checked state is never vacuous: a hive with no
+  known repositories cannot be ticked, an exclusion is shown separately from
+  deselection, and when hub or repository discovery is unavailable the branch
+  is labelled so instead of being shown as empty. Apply uses the same lock and
+  expected-revision check as the CLI, so a change made by another surface
+  since the page loaded yields `409` and a fresh tree to review again. Live and
+  durable activity columns read *unavailable* until the relay status and
+  activity store surfaces land.
 - **Concurrent edits are never silently lost.** The CLI, the TUI and the web
   UI all commit `profiles.yml` under a shared owner-only lock file
   (`profiles.yml.lock`) and only if the file is still the revision they loaded.
