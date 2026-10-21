@@ -48,7 +48,7 @@ func newTUICommand(_ *commandEnv) *cobra.Command {
 			"Use --watch to watch and steer a running contributor, also without credentials.\n\n" +
 			"Requires a terminal. Press q or ctrl+c to exit.",
 		Args:    argsNone(),
-		Example: "  hivectl tui\n  hivectl tui --hives",
+		Example: "  hivectl tui\n  hivectl tui --hives\n  hivectl tui --watch",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if watch {
 				return runTUIWatch()
