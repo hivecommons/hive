@@ -872,6 +872,13 @@ jobs:
           node --check bin/vibe-kanban-mirror.js
           node bin/vibe-kanban-mirror.test.js
 
+      # src/pkg/dashboard/*.test.js lift inline helpers out of
+      # static/index.html and run them under node:test; nothing else
+      # executes them, so run the whole glob here.
+      - name: Dashboard inline JS helper tests
+        working-directory: .
+        run: node --test src/pkg/dashboard/*.test.js
+
       # backend-smoke.yml's failure-issue script runs only on a scheduled
       # failure, in production, and its output is an issue somebody acts on —
       # so nothing ever exercised it, and it spent a day announcing that the
