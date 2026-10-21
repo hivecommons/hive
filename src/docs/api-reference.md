@@ -132,6 +132,10 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/config/agent/{name}/variables` | Dashboard auth/session | Per-agent Variables tab: the agent's own `${VAR}` definitions plus the hive-level ones it inherits (each flagged `overridden` when the agent redefines it) and the seed-only exec/http gate flags. Never returns values — only name, type, scope and a non-secret source hint | `pkg/dashboard/api_variables.go:298` |
 | `PUT` | `/api/config/agent/{name}/variables/{var}` | Owner only | Create or update one per-agent variable (`static`/`env` only; `script`/`http` are 403 and seed-only; scope `template` or `both`; secret-looking static values rejected). Persisted on the agent entry; overrides a same-named hive-level variable in this agent's kick prompt | `pkg/dashboard/api_variables.go:299` |
 | `DELETE` | `/api/config/agent/{name}/variables/{var}` | Owner only | Delete one per-agent variable (404 for inherited hive-level variables — delete those via `/api/config/variables/{name}`) | `pkg/dashboard/api_variables.go:300` |
+| `GET` | `/api/config/advisor` | Owner only | Advisor Config Get (fleet block, model roles map, and per-agent overrides; includes effective `fleet.enabled` boolean from IsEnabled()) | `pkg/dashboard/api.go:57` |
+| `PUT` | `/api/config/advisor` | Owner only | Advisor Config Set (fleet-wide settings; only fields present in body change) | `pkg/dashboard/api.go:58` |
+| `PUT` | `/api/config/advisor/roles` | Owner only | Advisor Model Roles Set (replaces named model_roles map; roles in use cannot be removed) | `pkg/dashboard/api.go:59` |
+| `PUT` | `/api/config/advisor/agent/{name}` | Owner only | Advisor Agent Override Set (set or clear one agent's override; null/empty clears it) | `pkg/dashboard/api.go:60` |
 | `GET` | `/api/config/stat-sources` | Dashboard auth/session | Stat Sources | `pkg/dashboard/api.go:209` |
 | `GET` | `/api/config/governor` | Dashboard auth/session | Governor Config Get | `pkg/dashboard/api.go:211` |
 | `PUT` | `/api/config/governor/sensing` | Owner only | Governor Sensing | `pkg/dashboard/api.go:214` |
