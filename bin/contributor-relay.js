@@ -9293,6 +9293,8 @@ function cleanup() {
   // the release through the disconnect handler's cooldown path (#5097).
   if (currentTask) {
     stopAgentForTaskExit({ reason: 'relay shutdown', noRelaunch: true });
+    // A local shutdown is a terminal attempt, recorded like a revocation.
+    recordCancelledActivity(currentTask);
     currentTask = null;
     releaseQuotaPoolReservation();
   }
