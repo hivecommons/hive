@@ -36,16 +36,16 @@ func stageFixtureData() (*ProfileSet, []TreeHubSnapshot, map[string]TreeReposito
 		{Name: "alpha", Hub: "wss://alpha.example/contribute?token=endpoint-secret", RegistrationToken: "registration-secret", Selection: &RepositorySelection{Mode: SelectionSelected}},
 		{Name: "beta", Hub: "wss://beta.example/contribute", RegistrationToken: "other-secret", Selection: &RepositorySelection{Mode: SelectionSelected}},
 	}, Hubs: []HubEntry{
-		{Name: "one", URL: ContributionFixtureHubOne, Follow: HubFollowCurrentAndFutureRepos},
-		{Name: "two", URL: ContributionFixtureHubTwo, Follow: HubFollowCurrent},
+		{Name: "one", URL: stageHubOne, Follow: HubFollowCurrentAndFutureRepos},
+		{Name: "two", URL: stageHubTwo, Follow: HubFollowCurrent},
 	}}
 	hubs := []TreeHubSnapshot{
-		{Name: "one", URL: ContributionFixtureHubOne, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example", "https://beta.example"}},
-		{Name: "two", URL: ContributionFixtureHubTwo, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example"}},
+		{Name: "one", URL: stageHubOne, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example", "https://beta.example"}},
+		{Name: "two", URL: stageHubTwo, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example"}},
 	}
 	repos := map[string]TreeRepositorySnapshot{
-		"alpha": {Discovery: TreeComplete, Repositories: []string{ContributionFixtureRepoA, ContributionFixtureRepoB}},
-		"beta":  {Discovery: TreeComplete, Repositories: []string{ContributionFixtureRepoA, ContributionFixtureRepoB}},
+		"alpha": {Discovery: TreeComplete, Repositories: []string{stageRepoA, stageRepoB}},
+		"beta":  {Discovery: TreeComplete, Repositories: []string{stageRepoA, stageRepoB}},
 	}
 	return set, hubs, repos
 }
