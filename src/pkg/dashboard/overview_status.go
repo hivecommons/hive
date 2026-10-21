@@ -235,8 +235,8 @@ func overviewTotals(status *StatusPayload) FrontendOverviewTotals {
 			addOverviewBreakdown(totals.Issues.Breakdown, "exempt", ib.Exempt)
 			addOverviewBreakdown(totals.Issues.Breakdown, "filtered", overviewGenericIssueFiltered(ib))
 			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_triage", ib.ReporterTriage)
-			addOverviewBreakdown(totals.Issues.Breakdown, "hive_advisory", ib.HiveAdvisory)
-			addOverviewBreakdown(totals.Issues.Breakdown, "dependency_dashboard", ib.DependencyDashboard)
+			addOverviewBreakdown(totals.Issues.Breakdown, repoWorkBucketHiveAdvisory, ib.HiveAdvisory)
+			addOverviewBreakdown(totals.Issues.Breakdown, repoWorkBucketDependencyDashboard, ib.DependencyDashboard)
 			addOverviewBreakdown(totals.Issues.Breakdown, "other", ib.Other)
 
 			pb := repo.WorkBreakdown.PRs
@@ -554,8 +554,8 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 	issueFiltered := issueBreakdown["filtered"]
 	issueExempt := issueBreakdown["exempt"]
 	issueReporter := issueBreakdown["reporter_triage"]
-	issueAdvisory := issueBreakdown["hive_advisory"]
-	issueDependencyDashboard := issueBreakdown["dependency_dashboard"]
+	issueAdvisory := issueBreakdown[repoWorkBucketHiveAdvisory]
+	issueDependencyDashboard := issueBreakdown[repoWorkBucketDependencyDashboard]
 	issueOther := issueBreakdown["other"]
 	issueRows := []FrontendActionableBreakdownTerm{
 		overviewBreakdownTerm("needs-human", "needs-human", issueBreakdown["needs_human"], "Issue carries a needs-human hard-suppress label, so Hive waits for a person before offering it to agents.", "project.issue_filter.hard_suppress_labels.needs_human", overviewValue(meta.HardSuppressNeedsHuman), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
