@@ -69,6 +69,39 @@ func TestGFICandidatesProjection(t *testing.T) {
 	}
 }
 
+// Filtered rows (blocked, held, parked) still wearing the label are handed
+// to the sweep so it can withdraw them (hivecommons/hive#13267); unlabelled
+// filtered rows and non-filtered rows are not duplicated.
+func TestGFICandidatesIncludeLabelledFilteredRows(t *testing.T) {
+	now := time.Now()
+	res := &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{{Repo: "widgets", Number: 1, Title: "a", Body: "b", Labels: []string{"good first issue"}, CreatedAt: now}}},
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"widgets": {Issues: []github.RepoWorkIssue{
+				{Repo: "widgets", Number: 1, Labels: []string{"good first issue"}, Bucket: "filtered", Reason: "blocked"},
+				{Repo: "widgets", Number: 13267, Title: "soak", Labels: []string{"good first issue", "help wanted", "blocked"}, Bucket: "filtered", Reason: "blocked", CreatedAt: now},
+				{Repo: "widgets", Number: 7, Labels: []string{"blocked"}, Bucket: "filtered", Reason: "blocked"},
+				{Repo: "widgets", Number: 8, Labels: []string{"good first issue"}, Bucket: "claimed", Reason: "claimed"},
+			}},
+			"other": {Issues: []github.RepoWorkIssue{{Repo: "other", Number: 2, Labels: []string{"good first issue", "hold"}, Bucket: "filtered", Reason: "hold label"}}},
+		},
+	}
+	cands, labelled := gfiCandidates("acme", res, nil)
+	if len(cands) != 3 || cands[0].Number != 1 || cands[1].Number != 2 || cands[2].Number != 13267 {
+		t.Fatalf("cands %+v", cands)
+	}
+	if !labelled["acme/widgets#13267"] || !labelled["acme/other#2"] || len(labelled) != 3 {
+		t.Fatalf("labelled %v", labelled)
+	}
+	if got := cands[2].Labels; len(got) != 3 || cands[2].Title != "soak" {
+		t.Fatalf("filtered row projection %+v", cands[2])
+	}
+	only, _ := gfiCandidates("acme", res, func(repo string) bool { return repo == "acme/other" })
+	if len(only) != 1 || only[0].Number != 2 {
+		t.Fatalf("filter %+v", only)
+	}
+}
+
 // gfiFakeGitHub serves the handful of endpoints the sweep and release touch.
 type gfiFakeGitHub struct {
 	mu       sync.Mutex
@@ -91,6 +124,13 @@ func (f *gfiFakeGitHub) handler() http.Handler {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "encoding": "base64", "content": "IyBBR0VOVFM=", "name": "AGENTS.md", "path": "AGENTS.md"})
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/issues/7"):
+			// The sweep's live-label re-read before labelling.
+			labels := []map[string]any{{"name": "kind/bug"}, {"name": "size/S"}}
+			for _, l := range f.added {
+				labels = append(labels, map[string]any{"name": l})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels})
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/issues/7/comments"):
 			_ = json.NewEncoder(w).Encode(f.comments)
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/issues/7/comments"):

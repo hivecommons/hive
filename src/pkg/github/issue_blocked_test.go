@@ -247,6 +247,8 @@ func TestReconcileBlockedIssues(t *testing.T) {
 			_, _ = io.WriteString(w, `{"number":3,"state":"closed","merged":false}`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/30/comments":
 			_, _ = io.WriteString(w, `[{"id":1,"body":"triage"},{"id":2,"body":"`+BlockedOnMarker("o/r", 3)+`\nBlocked on #3"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/60/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"blocked: awaiting the 24-hour checks"}]`)
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -265,10 +267,13 @@ func TestReconcileBlockedIssues(t *testing.T) {
 			{Repo: "o/r", Number: 30, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked"},
 			{Repo: "o/r", Number: 40, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#404"},
 			{Repo: "o/r", Number: 50, Labels: []string{"hold"}, Bucket: workBucketFiltered, Reason: "hold label"},
+			// A relay's blocked verdict, no tracked PR (hivecommons/hive#13267):
+			// nothing to lift, but `help wanted` still comes off.
+			{Repo: "o/r", Number: 60, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked"},
 		}},
 	}}
 	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
-	if res.Items != 4 || res.Unblocked != 2 || res.Stripped != 1 || res.Errors != 1 {
+	if res.Items != 5 || res.Unblocked != 2 || res.Stripped != 2 || res.Errors != 1 {
 		t.Fatalf("result = %+v", res)
 	}
 	mu.Lock()
@@ -280,6 +285,8 @@ func TestReconcileBlockedIssues(t *testing.T) {
 		"DELETE /repos/o/r/issues/20/labels/help wanted",
 		"GET /repos/o/r/issues/30/comments",
 		"DELETE /repos/o/r/issues/30/labels/blocked",
+		"GET /repos/o/r/issues/60/comments",
+		"DELETE /repos/o/r/issues/60/labels/help wanted",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing call %q in:\n%s", want, joined)
@@ -289,6 +296,7 @@ func TestReconcileBlockedIssues(t *testing.T) {
 		"DELETE /repos/o/r/issues/20/labels/blocked",
 		"DELETE /repos/o/r/issues/40/",
 		"/repos/o/r/issues/50",
+		"DELETE /repos/o/r/issues/60/labels/blocked",
 	} {
 		if strings.Contains(joined, never) {
 			t.Errorf("unexpected call %q in:\n%s", never, joined)

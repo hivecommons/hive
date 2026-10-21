@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -150,7 +151,37 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 		}
 		out = append(out, c)
 	}
+	// Issues the enumeration filtered out (blocked, held, parked on a
+	// person) that still wear the label are handed to the sweep so it can
+	// withdraw the advertisement (hivecommons/hive#13267); the labels alone
+	// decide, so the missing body is harmless.
+	for _, repo := range sortedRepoKeys(result.WorkDetailsByRepo) {
+		for _, row := range result.WorkDetailsByRepo[repo].Issues {
+			if row.Number <= 0 || row.Bucket != "filtered" || !gfi.HasLabel(row.Labels) {
+				continue
+			}
+			full := qualifyClaimRepo(org, row.Repo)
+			if allowed != nil && !allowed(full) {
+				continue
+			}
+			c := gfi.Candidate{Repo: full, Number: row.Number, Title: row.Title, URL: row.URL, Labels: row.Labels, Assignees: row.Assignees, CreatedAt: row.CreatedAt}
+			if labelled[c.Key()] {
+				continue
+			}
+			labelled[c.Key()] = true
+			out = append(out, c)
+		}
+	}
 	return out, labelled
+}
+
+func sortedRepoKeys(m map[string]github.RepoWorkDetails) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // runGoodFirstIssueSweepIfDue is the periodic curation pass
@@ -181,7 +212,7 @@ func runGoodFirstIssueSweepIfDue(ctx context.Context, ghClient *github.Client, c
 	}
 	opts.AgentsMD = func(ctx context.Context, repo string) string { return state.agentsMDURL(ctx, ghClient, repo) }
 	res := state.sweeper.Sweep(ctx, ghClient, candidates, opts)
-	logger.Info("gfi sweep", "scanned", res.Scanned, "selected", len(res.Selected), "errors", res.Errors, "skipped", fmt.Sprint(res.Skipped))
+	logger.Info("gfi sweep", "scanned", res.Scanned, "selected", len(res.Selected), "withdrawn", len(res.Withdrawn), "errors", res.Errors, "skipped", fmt.Sprint(res.Skipped))
 }
 
 // gfiReleaseOnHiveStart withdraws the advertisement when a hive agent starts

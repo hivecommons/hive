@@ -52,4 +52,17 @@ func (c *Client) UpsertIssueMarkerComment(ctx context.Context, repo string, numb
 	return gfi.MarkerComment{Created: true}, nil
 }
 
-var _ gfi.Forge = (*Client)(nil)
+// IssueLabels implements gfi.LabelReader: the issue's labels as GitHub has
+// them now, not as the last enumeration recorded them.
+func (c *Client) IssueLabels(ctx context.Context, repo string, number int) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	return c.StageLabeler().Labels(ctx, owner, repoName, number)
+}
+
+var (
+	_ gfi.Forge       = (*Client)(nil)
+	_ gfi.LabelReader = (*Client)(nil)
+)
