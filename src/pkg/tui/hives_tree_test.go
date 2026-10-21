@@ -161,7 +161,7 @@ func TestTreeOpensWithSharedBranchesAndUnavailableRuntime(t *testing.T) {
 	h := newTreeHarness(t, treeFixtureSet())
 	h.openTree(t)
 	view := h.view()
-	for _, want := range []string{"CONTRIBUTION TREE", "live: unavailable", "durable: unavailable", "one", "two", "alpha", "beta", "Shared across 2 hubs", "No staged changes.", "[ ]", "Future Hives: current"} {
+	for _, want := range []string{"CONTRIBUTION TREE", "live: unavailable — no profile store", "durable: unavailable — no profile store", "one", "two", "alpha", "beta", "Shared across 2 hubs", "No staged changes.", "[ ]", "Future Hives: current"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("tree view lacks %q:\n%s", want, view)
 		}
@@ -650,7 +650,7 @@ func TestTreeDiscoveryWithoutSourcesAndUnusableHubURL(t *testing.T) {
 	}
 	// A hub whose URL cannot become a Hive origin is omitted by the read model;
 	// its discovery reason must still surface as a placeholder, never vanish.
-	rows, _, err := hiveTreeRows(h.model.hivesStage, map[string]string{"odd": "not a usable origin"})
+	rows, _, err := hiveTreeRows(h.model.hivesStage, map[string]string{"odd": "not a usable origin"}, nil)
 	if err != nil {
 		t.Fatalf("rows: %v", err)
 	}
@@ -692,5 +692,59 @@ func TestTreeReceiptWording(t *testing.T) {
 	}
 	if got := hiveDash(""); got != "—" {
 		t.Fatalf("hiveDash = %q", got)
+	}
+}
+
+func TestTreeRuntimeOverlayLabelsRowsAndHeader(t *testing.T) {
+	h := newTreeHarness(t, treeFixtureSet())
+	calls := 0
+	h.model.hivesEnv.treeRuntime = func() hivectl.TreeRuntime {
+		calls++
+		return hivectl.TreeRuntime{
+			Live: hivectl.TreeLive{Available: true, PID: 5, AdoptedScopeVersion: 2, Acknowledged: "acknowledged",
+				CurrentTask:   &hivectl.RelayCurrentTask{Hive: treeOrgAlpha, Repository: treeRepoA},
+				Subscriptions: map[string]hivectl.TreeLiveSubscription{treeOrgAlpha: {Readiness: "connected", Acknowledged: "acknowledged"}}},
+			Durable: hivectl.TreeDurable{Reason: "activity store not readable"},
+		}
+	}
+	h.openTree(t)
+	if calls == 0 {
+		t.Fatal("runtime source was not consulted")
+	}
+	view := h.view()
+	for _, want := range []string{"live: relay pid 5 · scope v2 acknowledged · working on " + treeRepoA, "durable: unavailable — activity store not readable"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("tree view lacks %q:\n%s", want, view)
+		}
+	}
+	alpha := h.moveTo(t, treeAlphaKey)
+	detail := strings.Join(alpha.Detail, "\n")
+	for _, want := range []string{"readiness: connected", "activity: working on " + treeRepoA, "history: unavailable"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("alpha detail lacks %q: %v", want, alpha.Detail)
+		}
+	}
+	beta := h.moveTo(t, treeBetaKey)
+	if !strings.Contains(strings.Join(beta.Detail, "\n"), "readiness: not adopted by relay") {
+		t.Errorf("beta detail = %v", beta.Detail)
+	}
+	h.press(t, "l")
+	repo, _ := h.model.hives.TreeSelected()
+	if repo.Kind != panes.HiveTreeRepo || !strings.Contains(strings.Join(repo.Detail, "\n"), "activity: idle") {
+		t.Errorf("beta repo detail = %+v", repo)
+	}
+	// A real store wires the default runtime reader; without a relay the
+	// overlay is unavailable with a reason, never idle.
+	env := defaultHivesEnv()
+	if env.store == nil || env.treeRuntime == nil {
+		t.Skip("no profile store in this environment")
+	}
+	t.Setenv("HIVE_RELAY_STATUS_FILE", "")
+	rt := env.treeRuntime()
+	if rt.Live.Available && rt.Live.PID == 0 {
+		t.Fatalf("live = %+v", rt.Live)
+	}
+	if rt.Durable.Available || rt.Durable.Reason != hivectl.DurableActivityNotShipped {
+		t.Fatalf("durable = %+v", rt.Durable)
 	}
 }

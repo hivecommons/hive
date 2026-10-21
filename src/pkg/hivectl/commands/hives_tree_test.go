@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -43,12 +44,68 @@ func TestHivesTreeReadOnly(t *testing.T) {
 					t.Fatalf("tree leaks %s", secret)
 				}
 			}
-			for _, want := range []string{"Direct Hives", "github/github.com/org/repo", "unavailable"} {
+			for _, want := range []string{"Direct Hives", "github/github.com/org/repo", "unavailable", "relay has not published a status snapshot", hivectl.DurableActivityNotShipped} {
 				if !strings.Contains(output, want) {
 					t.Fatalf("missing %q: %s", want, output)
 				}
 			}
+			if strings.Contains(output, "idle") || strings.Contains(output, "0 completed") {
+				t.Fatalf("unavailable runtime rendered as a claim: %s", output)
+			}
 		})
+	}
+}
+
+func TestHivesTreeRendersRuntimeOverlay(t *testing.T) {
+	h := newHivesHarness(t)
+	set := twoHives()
+	set.RepoScopeVersion = 3
+	set.Profiles[0].Selection = &hivectl.RepositorySelection{Mode: hivectl.SelectionSelected, Repositories: []string{"github/github.com/org/repo"}}
+	h.seed(t, set)
+	hiveID, err := hivectl.NormalizeHiveID(set.Profiles[0].Hub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawSaved uint64
+	h.treeLive = func(saved *hivectl.ProfileSet) hivectl.TreeLive {
+		sawSaved = saved.RepoScopeVersion
+		return hivectl.TreeLive{Available: true, PID: 77, AdoptedScopeVersion: 3, SavedScopeVersion: 3, Acknowledged: "acknowledged",
+			CurrentTask:   &hivectl.RelayCurrentTask{Hive: hiveID, Repository: "github/github.com/org/repo"},
+			Subscriptions: map[string]hivectl.TreeLiveSubscription{hiveID: {Readiness: "connected", Acknowledged: "acknowledged"}}}
+	}
+	h.treeDurable = func(*hivectl.ProfileStore) (hivectl.TreeDurable, error) {
+		return hivectl.TreeDurable{Available: true, Retention: "30d", Attempts: 1, Completed: 1,
+			Repositories: map[string]hivectl.TreeDurableRepository{"github/github.com/org/repo": {Attempts: 1, Completed: 1}}}, nil
+	}
+	if err := h.run(t, "", "hives", "tree"); err != nil {
+		t.Fatal(err)
+	}
+	if sawSaved != 3 {
+		t.Fatalf("live overlay saw saved scope version %d", sawSaved)
+	}
+	output := h.out.String()
+	for _, want := range []string{"readiness=connected", "activity=working on github/github.com/org/repo", "history=1 attempt(s) · 1 completed", "Live: relay pid 77 · scope v3 acknowledged · working on github/github.com/org/repo", "Durable: 1 attempt(s) · 1 completed · retention 30d"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("missing %q: %s", want, output)
+		}
+	}
+	if err := h.run(t, "", "hives", "tree", "-o", "json"); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runtime       hivectl.TreeRuntime        `json:"runtime"`
+		Subscriptions []hivectl.TreeSubscription `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(h.out.Bytes(), &doc); err != nil {
+		t.Fatalf("json: %v\n%s", err, h.out.String())
+	}
+	if !doc.Runtime.Live.Available || doc.Runtime.Durable.Attempts != 1 || len(doc.Subscriptions) == 0 {
+		t.Fatalf("json runtime = %+v", doc.Runtime)
+	}
+	for _, s := range doc.Subscriptions {
+		if s.ID == set.Profiles[0].Name && (s.Readiness != "connected" || s.Repositories[0].Activity != "in progress" || s.Repositories[0].History != "1 attempt(s) · 1 completed") {
+			t.Fatalf("json subscription = %+v", s)
+		}
 	}
 }
 

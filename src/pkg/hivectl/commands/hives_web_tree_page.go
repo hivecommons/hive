@@ -9,7 +9,8 @@ package commands
 const commonsWebTreeHTML = `
 <section id="tree-section" aria-labelledby="tree-heading">
 <h2 id="tree-heading">Contribution tree</h2>
-<p class="muted">Hub → Hive → Repository consent over the same profile store. Toggling stages an edit; nothing is saved and no new work is solicited until you press Apply. Readiness and activity columns read <em>unavailable</em> until the local relay publishes them.</p>
+<p class="muted">Hub → Hive → Repository consent over the same profile store. Toggling stages an edit; nothing is saved and no new work is solicited until you press Apply. Readiness and activity come from the local relay's status snapshot; history from the local activity store. Each column reads <em>unavailable</em> with a reason when its source is missing — never idle or zero without evidence.</p>
+<dl id="tree-runtime" class="muted" aria-label="Runtime sources"><dt>Live</dt><dd id="tree-live">unavailable</dd><dt>Durable</dt><dd id="tree-durable">unavailable</dd></dl>
 <div class="tree-tools">
   <label>Search <input id="tree-search" type="search" placeholder="hub, hive or owner/repo" aria-describedby="tree-search-help"></label>
   <span id="tree-search-help" class="muted">Matches keep their ancestors; bulk actions still affect the whole branch.</span>
@@ -39,7 +40,14 @@ const applyBtn = document.getElementById('apply');
 const discardBtn = document.getElementById('discard');
 const searchEl = document.getElementById('tree-search');
 let state = null, expanded = {}, focusId = '', filter = 'all', query = '', treeRevision = '';
-const RUNTIME_NOTE = 'unavailable — no local relay telemetry source';
+const liveEl = document.getElementById('tree-live');
+const durableEl = document.getElementById('tree-durable');
+function runtimeText(v){ return v && v.summary ? v.summary : 'unavailable'; }
+function renderRuntime(){
+  const rt = state.runtime || {};
+  liveEl.textContent = runtimeText(rt.live);
+  durableEl.textContent = runtimeText(rt.durable);
+}
 function treeApi(path, opts){
   opts = opts || {};
   const h = Object.assign({}, headers);
@@ -144,7 +152,7 @@ function render(){
     const group = document.createElement('ul'); group.setAttribute('role', 'group'); it.li.appendChild(group);
     for (const sub of visibleSubs) renderSub(group, hub, sub, ch);
   }
-  renderStage();
+  renderStage(); renderRuntime();
   focusRow();
 }
 function renderSub(group, hub, sub, ch){
@@ -160,6 +168,7 @@ function renderSub(group, hub, sub, ch){
   if (sub.discovery !== 'complete') { const d = (state.discovery.subscriptions||{})[sub.id]; badge(it.row, 'Discovery ' + (d ? d.status : 'unknown') + (d && d.reason ? ' — ' + d.reason : ''), 'warn'); }
   badge(it.row, 'Readiness: ' + sub.readiness, 'muted');
   badge(it.row, 'Activity: ' + sub.activity, 'muted');
+  badge(it.row, 'History: ' + sub.history, 'muted');
   const acts = document.createElement('span'); acts.className = 'row-actions';
   if (sel.legacy_unrestricted) actionBtn(acts, 'Review and restrict', () => reviewRestrict(sub));
   else actionBtn(acts, sub.follow_new_repositories ? 'Stop following' : 'Follow new repositories', () => stageEdit({op: 'follow', subscription: sub.id, value: !sub.follow_new_repositories}));
@@ -273,11 +282,11 @@ function showDetail(id){
     kv('Subscription', sub.id); kv('Hive origin', sub.hive_id); kv('Enabled', sub.disabled ? 'no — credentials and selections retained' : 'yes');
     kv('Selection', selectionLabel(sub.selection, sub.discovery)); kv('Follow new repositories', sub.follow_new_repositories ? 'on (refresh-driven, from the displayed source)' : 'off');
     kv('Shared across hubs', String(sub.shared_across_hubs || 0)); kv('Selection sources', (sub.selection_sources||[]).join(', ') || 'none recorded (selection-level attribution)');
-    kv('Readiness', sub.readiness === 'unknown' ? RUNTIME_NOTE : sub.readiness); kv('Activity', sub.activity === 'unavailable' ? RUNTIME_NOTE : sub.activity);
+    kv('Readiness', sub.readiness); kv('Activity', sub.activity); kv('History', sub.history); kv('Live source', runtimeText((state.runtime||{}).live)); kv('Durable source', runtimeText((state.runtime||{}).durable));
   }
   if (sub && parts.length === 3) {
     const r = sub.repositories.find(x => 'repo:' + x.id === parts[2]);
-    if (r) { kv('Repository', r.id); kv('Subscription', sub.id + ' (' + sub.hive_id + ')'); kv('Selected', r.selected ? 'yes' : 'no'); kv('Excluded by', (r.excluded_by||[]).join(', ') || 'none'); kv('Unreviewed', r.unreviewed ? 'yes — select, exclude, or leave pending' : 'no'); kv('Offered by Hive', r.offered); kv('Recommendation attribution', 'unavailable per repository; selection-level sources: ' + ((sub.selection_sources||[]).join(', ') || 'none')); kv('Activity', RUNTIME_NOTE); }
+    if (r) { kv('Repository', r.id); kv('Subscription', sub.id + ' (' + sub.hive_id + ')'); kv('Selected', r.selected ? 'yes' : 'no'); kv('Excluded by', (r.excluded_by||[]).join(', ') || 'none'); kv('Unreviewed', r.unreviewed ? 'yes — select, exclude, or leave pending' : 'no'); kv('Offered by Hive', r.offered); kv('Recommendation attribution', 'unavailable per repository; selection-level sources: ' + ((sub.selection_sources||[]).join(', ') || 'none')); kv('Activity', r.activity); kv('History', r.history); }
   }
   detailEl.appendChild(dl);
 }

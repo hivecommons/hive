@@ -94,37 +94,8 @@ func (s *ProfileStore) LoadRelayStatus() (*RelayStatus, error) {
 // Acknowledgement reports whether the live relay and a specific subscription
 // have adopted and acknowledged at least the saved profile generation.
 func (s *ProfileStore) Acknowledgement(subscription string, savedScopeVersion uint64) string {
-	status, err := s.LoadRelayStatus()
-	if err != nil {
-		return "unknown"
-	}
-	data, err := os.ReadFile(s.RelayPIDPath())
-	if err != nil {
-		return "unknown"
-	}
-	var pidFile struct {
-		PID              int    `json:"pid"`
-		StartedAt        string `json:"started_at"`
-		Session          string `json:"session"`
-		ContainerRuntime string `json:"container_runtime"`
-		ContainerName    string `json:"container_name"`
-	}
-	if json.Unmarshal(data, &pidFile) != nil || pidFile.PID != status.PID ||
-		pidFile.StartedAt != status.StartedAt || pidFile.Session == "" || pidFile.Session != status.Session {
-		return "unknown"
-	}
-	if pidFile.ContainerName != "" {
-		runtime := strings.TrimSpace(pidFile.ContainerRuntime)
-		if runtime == "" {
-			runtime = "docker"
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		out, err := runRelayCommand(ctx, runtime, "inspect", "-f", "{{.State.Running}}", pidFile.ContainerName)
-		if err != nil || strings.TrimSpace(string(out)) != "true" {
-			return "unknown"
-		}
-	} else if err := signalRelayPID(pidFile.PID, syscall.Signal(0)); err != nil {
+	status, _ := s.liveRelayStatus()
+	if status == nil {
 		return "unknown"
 	}
 	id, err := NormalizeHiveID(subscription)
@@ -149,4 +120,48 @@ func (s *ProfileStore) Acknowledgement(subscription string, savedScopeVersion ui
 		return "acknowledged"
 	}
 	return "pending"
+}
+
+// liveRelayStatus returns the status snapshot only when it belongs to the
+// relay the PID record names and that relay is still running. Otherwise it
+// returns nil with a short, credential-free reason the UIs can show in place
+// of a claim.
+func (s *ProfileStore) liveRelayStatus() (*RelayStatus, string) {
+	status, err := s.LoadRelayStatus()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "relay has not published a status snapshot"
+		}
+		return nil, "relay status snapshot is unreadable"
+	}
+	data, err := os.ReadFile(s.RelayPIDPath())
+	if err != nil {
+		return nil, "no managed relay PID record"
+	}
+	var pidFile struct {
+		PID              int    `json:"pid"`
+		StartedAt        string `json:"started_at"`
+		Session          string `json:"session"`
+		ContainerRuntime string `json:"container_runtime"`
+		ContainerName    string `json:"container_name"`
+	}
+	if json.Unmarshal(data, &pidFile) != nil || pidFile.PID != status.PID ||
+		pidFile.StartedAt != status.StartedAt || pidFile.Session == "" || pidFile.Session != status.Session {
+		return nil, "status snapshot is from a previous relay session"
+	}
+	if pidFile.ContainerName != "" {
+		runtime := strings.TrimSpace(pidFile.ContainerRuntime)
+		if runtime == "" {
+			runtime = "docker"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := runRelayCommand(ctx, runtime, "inspect", "-f", "{{.State.Running}}", pidFile.ContainerName)
+		if err != nil || strings.TrimSpace(string(out)) != "true" {
+			return nil, "relay container is not running"
+		}
+	} else if err := signalRelayPID(pidFile.PID, syscall.Signal(0)); err != nil {
+		return nil, "relay process is not running"
+	}
+	return status, ""
 }

@@ -25,9 +25,10 @@ import (
 // hivesTreeDiscoveryTimeout bounds hub and repository discovery for one open.
 const hivesTreeDiscoveryTimeout = hivesProbeTimeout
 
-// hivesTreeRuntimeUnavailable is the live/durable column until the relay
-// status and activity store surfaces land. It is a label, not a claim.
-const hivesTreeRuntimeUnavailable = "unavailable"
+// hivesTreeRuntimeNoStore is the runtime line when the TUI has no profile
+// store at all, so neither the relay status snapshot nor the activity store
+// can be located. A label, not a claim.
+const hivesTreeRuntimeNoStore = hivectl.TreeRuntimeUnavailable + " — no profile store"
 
 var errHivesTreeRefreshPending = errors.New("staged edits are pending; apply (A) or discard (U) before refreshing discovery")
 
@@ -187,10 +188,15 @@ func hivesTreeDiscoveryReason(err error) string {
 
 // hiveTreeRows flattens the read model into the overlay's rows, carrying the
 // staged diff's marks and the capability flags the key handler consults.
-func hiveTreeRows(edits *hivectl.StagedEdits, discovery map[string]string) ([]panes.HiveTreeRow, panes.HiveTreeSummary, error) {
+func hiveTreeRows(edits *hivectl.StagedEdits, discovery map[string]string, runtime *hivectl.TreeRuntime) ([]panes.HiveTreeRow, panes.HiveTreeSummary, error) {
 	tree, err := edits.Tree()
 	if err != nil {
 		return nil, panes.HiveTreeSummary{}, err
+	}
+	live, durable := hivesTreeRuntimeNoStore, hivesTreeRuntimeNoStore
+	if runtime != nil {
+		tree.ApplyRuntime(*runtime)
+		live, durable = runtime.Live.Label(), runtime.Durable.Label()
 	}
 	diff := edits.Diff()
 	changedSubs, changedRepos := diff.Changed()
@@ -241,7 +247,7 @@ func hiveTreeRows(edits *hivectl.StagedEdits, discovery map[string]string) ([]pa
 	for _, name := range sortedDiscoveryOrphans(discovery, tree) {
 		rows = append(rows, panes.HiveTreeRow{Kind: panes.HiveTreePlaceholder, Key: "orphan:" + name, Level: 1, Label: name + " — " + discovery[name], NeedsReview: true})
 	}
-	summary := panes.HiveTreeSummary{Staged: !diff.Empty(), Lines: diff.Lines(), Live: hivesTreeRuntimeUnavailable, Durable: hivesTreeRuntimeUnavailable}
+	summary := panes.HiveTreeSummary{Staged: !diff.Empty(), Lines: diff.Lines(), Live: live, Durable: durable}
 	return rows, summary, nil
 }
 
@@ -277,7 +283,7 @@ func hiveTreeSubscriptionRows(hubKey string, s hivectl.TreeSubscription, discove
 	if sel.Legacy {
 		row.NeedsReview = true
 	}
-	row.Detail = append(row.Detail, "hive "+s.HiveID, "readiness: "+s.Readiness, "activity: "+s.Activity)
+	row.Detail = append(row.Detail, "hive "+s.HiveID, "readiness: "+s.Readiness, "activity: "+s.Activity, "history: "+s.History)
 	if len(s.Sources) > 0 {
 		row.Detail = append(row.Detail, "selection sources: "+strings.Join(s.Sources, ", "))
 	}
@@ -321,7 +327,7 @@ func hiveTreeSubscriptionRows(hubKey string, s hivectl.TreeSubscription, discove
 		if repo.Changed {
 			repo.Badges = append(repo.Badges, "Changed")
 		}
-		repo.Detail = append(repo.Detail, "offered: "+hiveDash(r.Offered))
+		repo.Detail = append(repo.Detail, "offered: "+hiveDash(r.Offered), "activity: "+hiveDash(r.Activity), "history: "+hiveDash(r.History))
 		rows = append(rows, repo)
 	}
 	return rows
@@ -599,7 +605,12 @@ func (m model) editHivesTree(edit hivesTreeEdit) (tea.Model, tea.Cmd) {
 
 // projectHivesTree redraws the tree from the session.
 func (m model) projectHivesTree(note string) (tea.Model, tea.Cmd) {
-	rows, summary, err := hiveTreeRows(m.hivesStage, m.hivesTreeDiscovery)
+	var runtime *hivectl.TreeRuntime
+	if m.hivesEnv.treeRuntime != nil {
+		rt := m.hivesEnv.treeRuntime()
+		runtime = &rt
+	}
+	rows, summary, err := hiveTreeRows(m.hivesStage, m.hivesTreeDiscovery, runtime)
 	if err != nil {
 		next := m.hives.SetTreeError(err)
 		m.hives = &next

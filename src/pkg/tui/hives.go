@@ -73,6 +73,9 @@ type hivesEnv struct {
 	discoverHubHives     func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error)
 	discoverRepositories func(ctx context.Context, hub string) ([]string, error)
 	applyStaged          func(ctx context.Context, edits *hivectl.StagedEdits) (hivectl.ApplyReceipt, error)
+	// treeRuntime reads the live relay and durable activity overlays from the
+	// saved set. Nil leaves both columns "unavailable" with a reason.
+	treeRuntime func() hivectl.TreeRuntime
 }
 
 // defaultHivesEnv wires the production implementations.
@@ -105,6 +108,12 @@ func defaultHivesEnv() hivesEnv {
 		}
 		env.applyStaged = func(ctx context.Context, edits *hivectl.StagedEdits) (hivectl.ApplyReceipt, error) {
 			return edits.Apply(ctx, store)
+		}
+		env.treeRuntime = func() hivectl.TreeRuntime {
+			// Load, not LoadOrMigrate: the overlay only compares against what
+			// is saved; a read failure leaves the saved scope version unknown.
+			set, _ := store.Load()
+			return hivectl.TreeRuntime{Live: store.LiveTreeRuntime(set), Durable: store.DurableTreeRuntime(nil)}
 		}
 	}
 	return env

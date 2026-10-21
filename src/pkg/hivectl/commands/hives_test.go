@@ -57,6 +57,10 @@ type hivesHarness struct {
 	signalResult hivectl.RelaySwitchResult
 	signalErr    error
 	signalCalls  int
+	// treeLive and treeDurable override the tree runtime overlays; nil
+	// reads the real (empty) status snapshot and the absent activity store.
+	treeLive    func(*hivectl.ProfileSet) hivectl.TreeLive
+	treeDurable hivectl.DurableActivitySource
 }
 
 // newHivesHarness points `hivectl hives` at a temporary config directory and a
@@ -93,7 +97,9 @@ func newHivesHarness(t *testing.T) *hivesHarness {
 				h.signalCalls++
 				return h.signalResult, h.signalErr
 			},
-			now: func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
+			now:             func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
+			liveRuntime:     h.treeLive,
+			durableActivity: h.treeDurable,
 		}, nil
 	}
 	t.Cleanup(func() { hivesDepsFor = prev })

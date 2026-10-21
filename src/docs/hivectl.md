@@ -965,7 +965,17 @@ Absent repository selections are **Unrestricted — legacy**, not selected empty
 snapshots. Explicitly empty consent remains off. Cross-profile repository
 exclusions list their source subscription names and do not narrow legacy
 profiles. Disabled subscriptions retain saved selections and follow policy.
-Runtime readiness is unknown (or disabled); activity is unavailable, not zero.
+Readiness, activity and history come from two local sources that are shown
+separately and never inferred: **live** is the managed relay's status snapshot
+(`relay-status.json`), trusted only when it belongs to the relay named by the
+PID record and that relay is still running; **durable** is the local activity
+store, when this build has one. When a source is missing, the `Live:` /
+`Durable:` lines say *unavailable* with the reason (no snapshot, stale
+session, relay not running, no activity store) and every row keeps
+*unavailable* — never *idle*, *connected* or *0 completed* without evidence.
+With a live relay, each hive reads its readiness (*connected*, *scope-pending*,
+… or *not adopted by relay*), its activity (*idle* or *working on <repo>*) and
+whether the saved scope generation is *acknowledged* or *pending*.
 No credentials or contributor identities are included in JSON/YAML output.
 Selection source IDs are selection-level provenance, not repository ownership.
 Profile-name keys identify the current snapshot only, not durable history.
@@ -1056,7 +1066,10 @@ Notes:
   separately; `U` discards, `esc` warns once when edits are staged. A hive
   whose discovery is unavailable is labelled so and cannot be ticked, and a
   change another surface saved in the meantime is reported as stale with a
-  fresh tree to review rather than overwritten.
+  fresh tree to review rather than overwritten. Two header lines name the
+  runtime sources — `live:` (relay status snapshot) and `durable:` (local
+  activity store) — with a reason when either is unavailable; `enter` on a
+  hive or repository shows its readiness, activity and history.
 - **Disable instead of removing a hive to pause it.** `hivectl hives disable <name>`
   (or `just contribute-hives disable <name>`) preserves its URL, registration token,
   contributor ID and rank. `enable <name>` restores eligibility without registration
@@ -1101,9 +1114,12 @@ Notes:
   deselection, and when hub or repository discovery is unavailable the branch
   is labelled so instead of being shown as empty. Apply uses the same lock and
   expected-revision check as the CLI, so a change made by another surface
-  since the page loaded yields `409` and a fresh tree to review again. Live and
-  durable activity columns read *unavailable* until the relay status and
-  activity store surfaces land.
+  since the page loaded yields `409` and a fresh tree to review again. The
+  **Live** and **Durable** lines above the tree name the runtime sources —
+  the managed relay's status snapshot and the local activity store — and each
+  hive and repository shows readiness, activity and history from them; when a
+  source is missing the line says *unavailable* with the reason and the rows
+  stay *unavailable* rather than reading idle or zero.
 - **Concurrent edits are never silently lost.** The CLI, the TUI and the web
   UI all commit `profiles.yml` under a shared owner-only lock file
   (`profiles.yml.lock`) and only if the file is still the revision they loaded.

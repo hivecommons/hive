@@ -82,8 +82,9 @@ type HiveTreeRow struct {
 type HiveTreeSummary struct {
 	Staged bool
 	Lines  []string
-	// Live and Durable are the runtime columns; "unavailable" until the relay
-	// status and activity store surfaces land.
+	// Live and Durable are the runtime source lines: what the local relay's
+	// status snapshot and the local activity store say, or "unavailable — "
+	// with a reason when a source is missing. Labels, never claims.
 	Live, Durable string
 }
 
@@ -454,6 +455,10 @@ func (o HivesOverlay) treeBody(contentWidth int) string {
 	var out strings.Builder
 	out.WriteString(hivesHeaderStyle.Render(o.treeHeaderLine()))
 	out.WriteString("\n")
+	for _, line := range o.treeRuntimeLines() {
+		out.WriteString(hivesNoteStyle.Render(line))
+		out.WriteString("\n")
+	}
 	out.WriteString(hivesRuleStyle.Render(strings.Repeat("─", contentWidth)))
 	out.WriteString("\n")
 	visible := o.TreeVisible()
@@ -491,8 +496,13 @@ func (o HivesOverlay) treeHeaderLine() string {
 	} else if o.tree.query != "" {
 		line += "  search: " + o.tree.query
 	}
-	line += "  live: " + hiveDash(o.tree.summary.Live) + "  durable: " + hiveDash(o.tree.summary.Durable)
 	return line
+}
+
+// treeRuntimeLines gives each runtime source its own line so an
+// unavailability reason is never truncated out of the header.
+func (o HivesOverlay) treeRuntimeLines() []string {
+	return []string{"live: " + hiveDash(o.tree.summary.Live), "durable: " + hiveDash(o.tree.summary.Durable)}
 }
 
 func (o HivesOverlay) treeQuerySuffix() string {

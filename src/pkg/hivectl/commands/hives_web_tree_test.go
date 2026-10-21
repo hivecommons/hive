@@ -169,8 +169,14 @@ func TestCommonsTreeRendersSharedBranchesAndRuntimeUnavailable(t *testing.T) {
 	if alpha.Readiness != "unknown" || alpha.Activity != "unavailable" {
 		t.Fatalf("runtime columns must be unavailable, got %q/%q", alpha.Readiness, alpha.Activity)
 	}
-	if tree.Runtime.Live != commonsTreeRuntimeUnavailable || tree.Runtime.Durable != commonsTreeRuntimeUnavailable {
+	if tree.Runtime.Live.Available || tree.Runtime.Live.Reason == "" || tree.Runtime.Durable.Available || tree.Runtime.Durable.Reason != hivectl.DurableActivityNotShipped {
 		t.Fatalf("runtime = %+v", tree.Runtime)
+	}
+	if !strings.HasPrefix(tree.Runtime.Live.Summary, "unavailable — ") || !strings.HasPrefix(tree.Runtime.Durable.Summary, "unavailable — ") {
+		t.Fatalf("runtime summaries = %q / %q", tree.Runtime.Live.Summary, tree.Runtime.Durable.Summary)
+	}
+	if alpha.History != "unavailable" {
+		t.Fatalf("history = %q", alpha.History)
 	}
 	if !tree.Discovery.Available || tree.Discovery.Hubs[treeHubOne].Status != commonsDiscoveryComplete || tree.Discovery.Subscriptions["beta"].Status != commonsDiscoveryComplete {
 		t.Fatalf("discovery = %+v", tree.Discovery)
@@ -509,7 +515,7 @@ func TestCommonsTreePageMarkupIsAccessibleAndStyleFree(t *testing.T) {
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	page := string(raw)
-	for _, want := range []string{`role="tree"`, `aria-live="polite"`, `id="apply"`, `id="discard"`, `name="tree-filter"`, `id="tree-search"`, "Review and restrict", "Deselect current", "relay adoption pending"} {
+	for _, want := range []string{`role="tree"`, `aria-live="polite"`, `id="apply"`, `id="discard"`, `name="tree-filter"`, `id="tree-search"`, `id="tree-live"`, `id="tree-durable"`, "Review and restrict", "Deselect current", "relay adoption pending", "'History: '"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %q", want)
 		}
@@ -522,6 +528,53 @@ func TestCommonsTreePageMarkupIsAccessibleAndStyleFree(t *testing.T) {
 	}
 	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Referrer-Policy") != "no-referrer" {
 		t.Errorf("headers = %v", resp.Header)
+	}
+}
+
+func TestCommonsTreeRuntimeOverlayFollowsSavedState(t *testing.T) {
+	h := newTreeHarness(t, treeFixtureSet())
+	var sawSaved atomic.Int64
+	h.deps.liveRuntime = func(saved *hivectl.ProfileSet) hivectl.TreeLive {
+		if saved != nil {
+			sawSaved.Store(int64(saved.RepoScopeVersion))
+		}
+		return hivectl.TreeLive{Available: true, PID: 9, AdoptedScopeVersion: 1, Acknowledged: "pending", Summary: "live summary",
+			CurrentTask:   &hivectl.RelayCurrentTask{Hive: treeOrgAlpha, Repository: treeRepoA},
+			Subscriptions: map[string]hivectl.TreeLiveSubscription{treeOrgAlpha: {Readiness: "scope-pending", Acknowledged: "pending"}}}
+	}
+	h.deps.durableActivity = func(*hivectl.ProfileStore) (hivectl.TreeDurable, error) {
+		return hivectl.TreeDurable{Available: true, Attempts: 2, Completed: 1, Repositories: map[string]hivectl.TreeDurableRepository{treeRepoA: {Attempts: 2, Completed: 1}}}, nil
+	}
+	tree := h.tree(t, http.MethodGet, "/api/tree", nil)
+	if !tree.Runtime.Live.Available || tree.Runtime.Live.Summary != "live summary" || tree.Runtime.Durable.Summary != "2 attempt(s) · 1 completed" {
+		t.Fatalf("runtime = %+v", tree.Runtime)
+	}
+	alpha := treeSub(t, tree, "alpha")
+	if alpha.Readiness != "scope-pending" || alpha.Activity != "working on "+treeRepoA || alpha.History != "2 attempt(s) · 1 completed" {
+		t.Fatalf("alpha overlay = %+v", alpha)
+	}
+	beta := treeSub(t, tree, "beta")
+	if beta.Readiness != "not adopted by relay" || beta.Activity != "idle" || beta.History != "2 attempt(s) · 1 completed" {
+		t.Fatalf("beta overlay = %+v", beta)
+	}
+	for _, r := range alpha.Repositories {
+		switch r.ID {
+		case treeRepoA:
+			if r.Activity != "in progress" || r.History != "2 attempt(s) · 1 completed" {
+				t.Fatalf("repo A = %+v", r)
+			}
+		case treeRepoB:
+			if r.Activity != "idle" || r.History != "no recorded activity" {
+				t.Fatalf("repo B = %+v", r)
+			}
+		}
+	}
+	// Staging does not change what the overlay compares against: the saved
+	// scope version is read from disk, not from the staged session.
+	before := sawSaved.Load()
+	h.tree(t, http.MethodPost, "/api/tree/edit", map[string]any{"op": "select", "subscription": "alpha", "repository": treeRepoA, "value": true})
+	if sawSaved.Load() != before {
+		t.Fatalf("saved scope version moved while staging: %d → %d", before, sawSaved.Load())
 	}
 }
 

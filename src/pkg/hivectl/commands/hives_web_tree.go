@@ -42,18 +42,13 @@ type commonsTreeResponse struct {
 	Staged    bool                      `json:"staged"`
 	Discovery commonsTreeDiscovery      `json:"discovery"`
 	OpenedAt  time.Time                 `json:"opened_at"`
-	// Readiness and activity sources are not wired yet (#13290, #13293); the
-	// page must label them unavailable rather than idle or zero.
-	Runtime commonsTreeRuntime `json:"runtime"`
-}
-
-type commonsTreeRuntime struct {
-	Live    string `json:"live"`
-	Durable string `json:"durable"`
+	// Runtime carries the live relay and durable activity overlays; when a
+	// source is missing it says so with a reason rather than showing idle or
+	// zero.
+	Runtime hivectl.TreeRuntime `json:"runtime"`
 }
 
 const (
-	commonsTreeRuntimeUnavailable = "unavailable"
 	commonsDiscoveryUnavailable   = "unavailable"
 	commonsDiscoveryComplete      = "complete"
 	commonsDiscoveryReasonMissing = "no discovery source configured"
@@ -75,6 +70,9 @@ func (s *commonsWebServer) discoverCommonsTree(ctx context.Context, set *hivectl
 	repos := make(map[string]hivectl.TreeRepositorySnapshot, len(set.Profiles))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	// Snapshot every hub before any goroutine starts: the slice header and
+	// the discovery maps are then only written concurrently under mu.
+	hubIDs := make([]string, 0, len(set.Hubs))
 	for _, h := range set.Hubs {
 		id, err := hivectl.NormalizeHiveID(h.URL)
 		if err != nil {
@@ -84,10 +82,22 @@ func (s *commonsWebServer) discoverCommonsTree(ctx context.Context, set *hivectl
 			continue
 		}
 		hubs = append(hubs, hivectl.TreeHubSnapshot{Name: h.Name, URL: h.URL, Follow: h.EffectiveFollow(), Discovery: hivectl.TreeUnavailable})
-		i := len(hubs) - 1
-		if s.deps.discoverHubHives == nil {
+		hubIDs = append(hubIDs, id)
+	}
+	if s.deps.discoverHubHives == nil {
+		for _, id := range hubIDs {
 			disc.Hubs[id] = commonsTreeDiscoveryState{Status: commonsDiscoveryUnavailable, Reason: commonsDiscoveryReasonMissing}
-			continue
+		}
+	}
+	if s.deps.discoverRepositories == nil {
+		for _, p := range set.Profiles {
+			repos[p.Name] = hivectl.TreeRepositorySnapshot{Discovery: hivectl.TreeUnavailable}
+			disc.Subscriptions[p.Name] = commonsTreeDiscoveryState{Status: commonsDiscoveryUnavailable, Reason: commonsDiscoveryReasonMissing}
+		}
+	}
+	for i := range hubs {
+		if s.deps.discoverHubHives == nil {
+			break
 		}
 		wg.Add(1)
 		go func(i int, id, hubURL string) {
@@ -104,13 +114,11 @@ func (s *commonsWebServer) discoverCommonsTree(ctx context.Context, set *hivectl
 				hubs[i].HiveOrigins = append(hubs[i].HiveOrigins, hive.HubURL)
 			}
 			disc.Hubs[id] = commonsTreeDiscoveryState{Status: commonsDiscoveryComplete}
-		}(i, id, h.URL)
+		}(i, hubIDs[i], hubs[i].URL)
 	}
 	for _, p := range set.Profiles {
 		if s.deps.discoverRepositories == nil {
-			repos[p.Name] = hivectl.TreeRepositorySnapshot{Discovery: hivectl.TreeUnavailable}
-			disc.Subscriptions[p.Name] = commonsTreeDiscoveryState{Status: commonsDiscoveryUnavailable, Reason: commonsDiscoveryReasonMissing}
-			continue
+			break
 		}
 		wg.Add(1)
 		go func(name, hub string) {
@@ -204,6 +212,12 @@ func (s *commonsWebServer) commonsTreeResponse(session *commonsTreeSession) (com
 		return commonsTreeResponse{}, err
 	}
 	diff := session.edits.Diff()
+	// Load, not LoadOrMigrate: the overlay compares against saved state and
+	// must not touch legacy files. A read failure leaves the saved scope
+	// version unknown, which the live label reports.
+	saved, _ := s.deps.store.Load()
+	runtime := s.deps.treeRuntime(saved)
+	tree.ApplyRuntime(runtime)
 	return commonsTreeResponse{
 		Tree:      tree,
 		Diff:      diff,
@@ -211,7 +225,7 @@ func (s *commonsWebServer) commonsTreeResponse(session *commonsTreeSession) (com
 		Staged:    !diff.Empty(),
 		Discovery: session.discovery,
 		OpenedAt:  session.openedAt,
-		Runtime:   commonsTreeRuntime{Live: commonsTreeRuntimeUnavailable, Durable: commonsTreeRuntimeUnavailable},
+		Runtime:   runtime,
 	}, nil
 }
 

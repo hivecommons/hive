@@ -65,17 +65,20 @@ type TreeHub struct {
 	Selection     TreeSelection `json:"selection" yaml:"selection"`
 }
 type TreeSubscription struct {
-	ID               string           `json:"id" yaml:"id"`
-	HiveID           string           `json:"hive_id" yaml:"hive_id"`
-	Disabled         bool             `json:"disabled" yaml:"disabled"`
-	SharedAcrossHubs int              `json:"shared_across_hubs" yaml:"shared_across_hubs"`
-	Follow           bool             `json:"follow_new_repositories" yaml:"follow_new_repositories"`
-	Discovery        TreeDiscovery    `json:"discovery" yaml:"discovery"`
-	Readiness        string           `json:"readiness" yaml:"readiness"`
-	Activity         string           `json:"activity" yaml:"activity"`
-	Sources          []string         `json:"selection_sources,omitempty" yaml:"selection_sources,omitempty"`
-	Repositories     []TreeRepository `json:"repositories" yaml:"repositories"`
-	Selection        TreeSelection    `json:"selection" yaml:"selection"`
+	ID               string        `json:"id" yaml:"id"`
+	HiveID           string        `json:"hive_id" yaml:"hive_id"`
+	Disabled         bool          `json:"disabled" yaml:"disabled"`
+	SharedAcrossHubs int           `json:"shared_across_hubs" yaml:"shared_across_hubs"`
+	Follow           bool          `json:"follow_new_repositories" yaml:"follow_new_repositories"`
+	Discovery        TreeDiscovery `json:"discovery" yaml:"discovery"`
+	Readiness        string        `json:"readiness" yaml:"readiness"`
+	Activity         string        `json:"activity" yaml:"activity"`
+	// History is the durable overlay; "unavailable" until ApplyRuntime finds
+	// a local activity store.
+	History      string           `json:"history" yaml:"history"`
+	Sources      []string         `json:"selection_sources,omitempty" yaml:"selection_sources,omitempty"`
+	Repositories []TreeRepository `json:"repositories" yaml:"repositories"`
+	Selection    TreeSelection    `json:"selection" yaml:"selection"`
 }
 type TreeRepository struct {
 	ID         string   `json:"id" yaml:"id"`
@@ -85,6 +88,10 @@ type TreeRepository struct {
 	// Offered is unknown unless discovery is complete. Saved consent survives
 	// an outage or removal; it is not evidence of runtime eligibility.
 	Offered string `json:"offered" yaml:"offered"`
+	// Activity and History are the live and durable overlays for this
+	// repository; both read "unavailable" until ApplyRuntime has evidence.
+	Activity string `json:"activity" yaml:"activity"`
+	History  string `json:"history" yaml:"history"`
 }
 
 func finishTreeSelection(s *TreeSelection) {
@@ -147,7 +154,7 @@ func BuildContributionTree(set *ProfileSet, hubs []TreeHubSnapshot, repos map[st
 		if !validTreeDiscovery(snapshot.Discovery) {
 			return nil, fmt.Errorf("invalid repository discovery state")
 		}
-		s := TreeSubscription{ID: p.Name, HiveID: origin, Disabled: p.Disabled, Discovery: snapshot.Discovery, Readiness: "unknown", Activity: "unavailable", Repositories: []TreeRepository{}}
+		s := TreeSubscription{ID: p.Name, HiveID: origin, Disabled: p.Disabled, Discovery: snapshot.Discovery, Readiness: "unknown", Activity: TreeRuntimeUnavailable, History: TreeRuntimeUnavailable, Repositories: []TreeRepository{}}
 		if p.Disabled {
 			s.Readiness = "disabled"
 		}
@@ -176,7 +183,7 @@ func BuildContributionTree(set *ProfileSet, hubs []TreeHubSnapshot, repos map[st
 			}
 		}
 		for id := range members {
-			r := TreeRepository{ID: id, Selected: selected[id], Offered: "unknown"}
+			r := TreeRepository{ID: id, Selected: selected[id], Offered: "unknown", Activity: TreeRuntimeUnavailable, History: TreeRuntimeUnavailable}
 			if snapshot.Discovery == TreeComplete {
 				r.Offered = "no"
 				if offered[id] {

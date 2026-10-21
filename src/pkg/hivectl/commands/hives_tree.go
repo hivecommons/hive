@@ -10,7 +10,7 @@ import (
 func newHivesTreeCommand(env *commandEnv) *cobra.Command {
 	return &cobra.Command{
 		Use: "tree", Short: "Inspect saved contribution consent without changing local state",
-		Long: "Show a credential-free contribution tree from saved profiles. Does not migrate legacy credentials, discover membership, register, commit, or signal the relay. Missing discovery, readiness and activity remain unknown. Hub discovery integration is pending; saved subscriptions appear under Direct Hives.",
+		Long: "Show a credential-free contribution tree from saved profiles. Does not migrate legacy credentials, discover membership, register, commit, or signal the relay. Missing discovery remains unknown; relay readiness and activity come from the local relay status snapshot when a managed relay is running, and durable history from the local activity store when present. Saved subscriptions appear under Direct Hives.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !validOutput(env.options.output) {
@@ -32,8 +32,13 @@ func newHivesTreeCommand(env *commandEnv) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			runtime := deps.treeRuntime(set)
+			tree.ApplyRuntime(runtime)
 			if env.options.output != "table" {
-				return env.print(cmd, tree)
+				return env.print(cmd, struct {
+					*hivectl.ContributionTree
+					Runtime hivectl.TreeRuntime `json:"runtime" yaml:"runtime"`
+				}{tree, runtime})
 			}
 			byID := map[string]hivectl.TreeSubscription{}
 			for _, s := range tree.Subscriptions {
@@ -47,7 +52,7 @@ func newHivesTreeCommand(env *commandEnv) *cobra.Command {
 					if s.SharedAcrossHubs > 1 {
 						shared = fmt.Sprintf("; Shared across %d hubs", s.SharedAcrossHubs)
 					}
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s) — %s; follow=%t; readiness=%s; activity=%s%s\n", s.ID, s.HiveID, treeSelectionLabel(s.Selection), s.Follow, s.Readiness, s.Activity, shared)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s) — %s; follow=%t; readiness=%s; activity=%s; history=%s%s\n", s.ID, s.HiveID, treeSelectionLabel(s.Selection), s.Follow, s.Readiness, s.Activity, s.History, shared)
 					for _, r := range s.Repositories {
 						mark := "[ ]"
 						if r.Selected {
@@ -64,7 +69,8 @@ func newHivesTreeCommand(env *commandEnv) *cobra.Command {
 					}
 				}
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Saved consent only — membership incomplete; relay readiness and activity unavailable. Hub integration pending.")
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Live: %s\nDurable: %s\n", runtime.Live.Label(), runtime.Durable.Label())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Saved consent only — membership incomplete here; use hives web or tui --hives for discovery and edits.")
 			return nil
 		},
 	}

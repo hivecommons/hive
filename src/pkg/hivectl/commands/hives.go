@@ -65,6 +65,21 @@ type hivesDeps struct {
 	// the tree reports as such rather than as an empty collection.
 	discoverHubHives     func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error)
 	discoverRepositories func(ctx context.Context, hub string) ([]string, error)
+	// liveRuntime and durableActivity feed the tree's runtime overlay. nil
+	// liveRuntime reads the relay status snapshot through the store; nil
+	// durableActivity reports the durable column unavailable with a reason.
+	liveRuntime     func(set *hivectl.ProfileSet) hivectl.TreeLive
+	durableActivity hivectl.DurableActivitySource
+}
+
+// treeRuntime assembles both overlays; every tree surface calls it so the
+// labels agree.
+func (d *hivesDeps) treeRuntime(set *hivectl.ProfileSet) hivectl.TreeRuntime {
+	live := d.liveRuntime
+	if live == nil {
+		live = d.store.LiveTreeRuntime
+	}
+	return hivectl.TreeRuntime{Live: live(set), Durable: d.store.DurableTreeRuntime(d.durableActivity)}
 }
 
 func newHivesCommand(env *commandEnv) *cobra.Command {
