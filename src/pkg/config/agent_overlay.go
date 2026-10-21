@@ -181,6 +181,13 @@ func (c *Config) MergeAgentOverrides(overlays map[string]AgentConfig) {
 // wins; its owner stays empty so ApplyPack treats it as hand-set (and stamps
 // it operator) instead of reconciling it. Operator-owned or unowned overlay
 // backends, and an empty base backend, keep the overlay value as before.
+//
+// Only an UNSTAMPED base backend counts as a hand edit. A base entry that
+// Save() wrote back with backend_owner: pack and whose backend: line alone was
+// then edited still loses to the overlay: a pack-owned base/overlay pair that
+// disagree can also be a runtime file saved before a pack upgrade, and keeping
+// the stale base there would pin an old pack backend for good. The changelog
+// fragment names the workaround (delete the backend_owner: line too).
 func (c *Config) keepHandSetBackend(name string, base, overlay AgentConfig) AgentConfig {
 	if base.Backend == "" || base.BackendOwner != "" || overlay.BackendOwner != FieldOwnerPack ||
 		strings.EqualFold(base.Backend, overlay.Backend) {
