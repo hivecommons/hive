@@ -12,6 +12,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -335,6 +336,9 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 		// the journaled merge SHA as provenance; surface it as the typed
 		// result rather than an empty, unmerged-looking success.
 		sha, merged = out.Provenance, out.Provenance != ""
+	}
+	if merged {
+		c.forgeWriteThrough(owner+"/"+repo, number, forgestate.Mutation{Op: forgestate.OpMerge, Kind: forgestate.KindPR})
 	}
 	c.logger.Info("MergePR: merged PR as the App bot over REST",
 		slog.String("repo", owner+"/"+repo), slog.Int("number", number),

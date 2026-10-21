@@ -197,6 +197,9 @@ func New(o Options) (*Store, error) {
 
 func (s *Store) lookup(repo string) *repoState { return s.repos[canonicalRepo(repo)] }
 
+// ReconcileInterval is the steady-state interval between full reconciles.
+func (s *Store) ReconcileInterval() time.Duration { return s.opts.ReconcileInterval }
+
 // Repos returns the cached repos in configuration order.
 func (s *Store) Repos() []string {
 	out := make([]string, 0, len(s.order))

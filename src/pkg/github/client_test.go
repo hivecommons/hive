@@ -79,6 +79,7 @@ type wireIssue struct {
 	Labels    []wireLabel `json:"labels"`
 	Assignees []wireUser  `json:"assignees"`
 	CreatedAt string      `json:"created_at"`
+	UpdatedAt string      `json:"updated_at,omitempty"`
 	HTMLURL   string      `json:"html_url,omitempty"`
 	Body      string      `json:"body,omitempty"`
 	// State is GitHub's open/closed; the #9840 parent check reads it.

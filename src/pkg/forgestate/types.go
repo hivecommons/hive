@@ -44,6 +44,14 @@ type Item struct {
 
 	FetchedAt time.Time `json:"fetched_at"`
 	Source    Source    `json:"source"`
+	// Raw is the Fetcher's full payload for the item (for the GitHub
+	// fetcher, the go-github issue or pull request plus the summaries the
+	// list carried). Readers that classify items — the governor's work
+	// source — take it from the cache instead of listing again. It is
+	// treated as immutable once stored and shared between clones; the
+	// typed fields above are authoritative where the two disagree (a
+	// write-through updates Labels, not Raw). Never serialised.
+	Raw any `json:"-"`
 }
 
 // Open reports whether the item belongs in the cache.

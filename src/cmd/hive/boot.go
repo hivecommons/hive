@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/defsrc"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
@@ -77,8 +78,15 @@ type boot struct {
 	// requestRelays runs the request watchers and the self-authored merge
 	// sweep on the current client. adoptGitHubClient swaps both on every
 	// rebuild (#9621); see github_client_provider.go.
-	ghClientLive  atomic.Pointer[githubClientRef]
-	requestRelays *requestRelaySupervisor
+	ghClientLive atomic.Pointer[githubClientRef]
+
+	// forgeState is the per-repo GitHub state cache the governor work
+	// source reads from when `forgestate.enabled` is on (#13375). Built
+	// once by the first configureGitHubClient and attached to every
+	// rebuilt client after that; forgeStateOnce guards the build.
+	forgeState     *forgestate.Store
+	forgeStateOnce sync.Once
+	requestRelays  *requestRelaySupervisor
 
 	// bootConfig
 	startTime                     time.Time

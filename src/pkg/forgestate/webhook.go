@@ -85,6 +85,65 @@ func (s *Store) ApplyWebhook(ctx context.Context, repo string, ev WebhookEvent) 
 	return nil
 }
 
+// Observe applies an item another reader has just fetched from GitHub —
+// the dashboard's webhook re-read, a freshness-bound confirming GET before
+// an irreversible action — so one call serves both that reader and the
+// cache. The upsert is monotonic exactly as ApplyWebhook's is: an older
+// read than the cached copy (or a tombstone) is ignored, a closed or merged
+// item is removed and leaves a tombstone. src should be SourceWebhook when
+// a delivery prompted the read (deliveryID is then recorded for audit and
+// dedupe) and SourceReadThrough otherwise. It reports whether the cache
+// changed.
+func (s *Store) Observe(repo string, it Item, src Source, deliveryID string) (bool, error) {
+	rs := s.lookup(repo)
+	if rs == nil {
+		return false, fmt.Errorf("%w: %s", ErrUnknownRepo, repo)
+	}
+	if it.Number <= 0 || (it.Kind != KindIssue && it.Kind != KindPR) {
+		return false, fmt.Errorf("forgestate: observe needs an issue or pr number")
+	}
+	if src == "" {
+		src = SourceReadThrough
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.opts.Now()
+	result := s.upsertLocked(rs, it, src, now)
+	if result == resultIgnored {
+		// A re-read that found the item unchanged still proves it as of
+		// now: refresh the fetch time (and provenance) so the freshness
+		// bound sees the confirmation rather than the older list.
+		if cur, ok := rs.items(it.Kind)[it.Number]; ok && cur.UpdatedAt.Equal(it.UpdatedAt) {
+			cur.FetchedAt, cur.Source = now, src
+			rs.items(it.Kind)[it.Number] = cur
+			result = resultOK
+		}
+	}
+	if deliveryID != "" {
+		rs.lastDelivery = deliveryID
+		dup := false
+		for _, d := range rs.deliveries {
+			if d == deliveryID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			rs.deliveries = append(rs.deliveries, deliveryID)
+			if len(rs.deliveries) > maxDeliveries {
+				rs.deliveries = rs.deliveries[len(rs.deliveries)-maxDeliveries:]
+			}
+		}
+	}
+	switch src {
+	case SourceWebhook:
+		s.opts.Metrics.WebhookPatch(rs.name, result)
+	default:
+		s.opts.Metrics.ReadThrough(rs.name, result)
+	}
+	return result != resultIgnored, nil
+}
+
 // webhookPayload is the subset of GitHub's issue/PR event payloads ParseWebhook reads.
 type webhookPayload struct {
 	Action     string `json:"action"`

@@ -1114,6 +1114,48 @@ stale-as-of time and the Overview shows a `stale · as of HH:MM` badge.
 Raising `eval_interval_webhook_s` lowers list-call volume further at the cost
 of a longer window before a missed delivery is corrected by reconciliation.
 
+##### Reading from the ForgeState cache (`forgestate.enabled: true`)
+
+With the per-repo state cache on (`forgestate:` block in `hive.yaml`,
+default off; [#13373](https://github.com/hivecommons/hive/issues/13373)) the
+governor work source stops listing GitHub on the cadence tick too
+([#13375](https://github.com/hivecommons/hive/issues/13375)). The cache's own
+reconcile loop (`forgestate.reconcile_interval_s`, default `900`, shortened
+to one minute while a repo is stale or its drift is high) is the **only**
+full list; every governor pass — cadence tick, webhook wake, review wake —
+takes each repo's open issues and PRs from the cached snapshot and classifies
+them exactly as before. What changes:
+
+- **Startup gate.** No decision pass runs before every repo has completed
+  its first successful reconcile. The loop logs `forgestate: waiting for the
+  first reconcile before the first decision pass` once a minute while it
+  waits and `first reconcile complete` when it is released. A repo whose
+  cache is not ready in a later pass is served from its last-good
+  enumeration and marked stale, like a transient GitHub refusal.
+- **Stale is inherited.** A repo whose last reconcile failed keeps its
+  last-good items and appears in `stale_repos` with `stale_since` set to the
+  last good reconcile, so the same close/merge guard applies.
+- **Freshness bound before a kick.** Every GitHub ref in an assembled kick
+  goes through the same 60 s bound as close and merge: a copy younger than
+  the bound is kicked as-is, an older one is confirmed with one targeted
+  `GET` (dropped from the kick if it closed or merged meanwhile), and a ref
+  in a stale repo is withheld (`kick ref withheld: snapshot not fresh enough
+  to act on`). A kick whose refs all fail is not sent.
+- **Single-item reads feed the cache.** The webhook patch `GET` and the
+  freshness confirmation `GET` are observed into the cache (as a webhook
+  patch carrying the `X-GitHub-Delivery` id, or as a read-through), and the
+  hive's own label add/remove, issue close and PR merge are written through
+  immediately, so the next pass sees them without waiting for a webhook.
+- **`item_patches` covers every cached item.** With the cache, the pass's
+  `generated_at` says nothing about an item's age, so the fetch time of
+  every item served from the cache is recorded there; the closed attributed
+  PR history scan is reused for one reconcile interval rather than re-run
+  on every wake.
+
+Repos added to the config after boot list live until the next restart
+rebuilds the store with them. Enabling the cache changes no classification:
+only the two list calls per repo move behind it.
+
 ##### Rate-limit pacing priority
 
 After a GitHub rate-limit refusal (a secondary-limit 403 or a primary-limit

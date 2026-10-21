@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 // webhookRefreshRESTCaller tags the single-item reads the stage tracker makes
@@ -83,13 +85,21 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 	owner, repoName := c.splitRepo(repo)
 	ctx = WithRESTCaller(ctx, webhookRefreshRESTCaller)
 	now := time.Now()
-	snap := WebhookItemSnapshot{Repo: repo, Number: number, IsPR: isPR, FetchedAt: now}
+	deliveryID := WebhookDeliveryFrom(ctx)
+	// The same GET feeds the attached state cache (forgestate_reader.go):
+	// a delivery-prompted read is a webhook patch, any other a read-through.
+	observeSource := forgestate.SourceReadThrough
+	if deliveryID != "" {
+		observeSource = forgestate.SourceWebhook
+	}
+	snap := WebhookItemSnapshot{Repo: repo, Number: number, IsPR: isPR, FetchedAt: now, DeliveryID: deliveryID}
 	if isPR {
 		pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
 		if err != nil {
 			return WebhookItemSnapshot{}, fmt.Errorf("fetching %s#%d for webhook refresh: %w", repo, number, err)
 		}
 		c.storePRDetail(repo, number, pr)
+		c.forgeObserve(repo, forgePRItem(pr), observeSource, deliveryID)
 		author := safeGetLogin(pr.GetUser())
 		_, hasAttr := ParseAttributionTrailer(pr.GetBody())
 		labels := append([]string{}, extractPRLabels(pr.Labels)...)
@@ -109,11 +119,14 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 		}
 		return snap, nil
 	}
-	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
+	issue, blockedBy, children, err := c.getIssueWithBlockedCount(ctx, owner, repoName, number)
 	if err != nil {
 		return WebhookItemSnapshot{}, fmt.Errorf("fetching %s#%d for webhook refresh: %w", repo, number, err)
 	}
 	snap.IsPR = issue.IsPullRequest()
+	if !snap.IsPR {
+		c.forgeObserve(repo, forgeIssueItem(issue, blockedBy, children), observeSource, deliveryID)
+	}
 	snap.Title = issue.GetTitle()
 	snap.Author = safeGetLogin(issue.GetUser())
 	labels := append([]string{}, extractLabels(issue.Labels)...)

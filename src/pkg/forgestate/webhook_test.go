@@ -272,3 +272,63 @@ func TestParseWebhook(t *testing.T) {
 		t.Fatalf("closed event = %+v", ev)
 	}
 }
+
+// Observe lets a reader that already fetched an item (the dashboard's
+// webhook re-read, a freshness confirmation) hand it to the cache without
+// a second fetch: newer wins, an unchanged re-read refreshes the fetch
+// time, an older copy is ignored, and a delivery id is recorded once.
+func TestObserveUpsertsWithoutFetching(t *testing.T) {
+	h := newHarness(t)
+	h.fetcher.setList([]Item{issue(1, t0), issue(2, t0)}, nil, "")
+	mustReconcile(t, h, "o/r")
+	h.clock.Advance(time.Minute)
+
+	changed, err := h.store.Observe("o/r", issue(1, t0.Add(time.Second), "bug"), SourceWebhook, "d-1")
+	if err != nil || !changed {
+		t.Fatalf("Observe newer = (%v, %v), want (true, nil)", changed, err)
+	}
+	it, _ := h.store.Issue("o/r", 1)
+	if len(it.Labels) != 1 || it.Labels[0] != "bug" || it.Source != SourceWebhook || !it.FetchedAt.Equal(h.clock.Now()) {
+		t.Fatalf("item after newer observe = %+v", it)
+	}
+
+	h.clock.Advance(time.Minute)
+	changed, err = h.store.Observe("o/r", issue(2, t0), SourceReadThrough, "")
+	if err != nil || !changed {
+		t.Fatalf("Observe unchanged = (%v, %v), want (true, nil)", changed, err)
+	}
+	it, _ = h.store.Issue("o/r", 2)
+	if !it.FetchedAt.Equal(h.clock.Now()) || it.Source != SourceReadThrough {
+		t.Fatalf("unchanged re-read did not refresh fetch time: %+v", it)
+	}
+
+	changed, err = h.store.Observe("o/r", issue(1, t0.Add(-time.Hour)), SourceReadThrough, "")
+	if err != nil || changed {
+		t.Fatalf("Observe older = (%v, %v), want (false, nil)", changed, err)
+	}
+	if it, _ = h.store.Issue("o/r", 1); len(it.Labels) != 1 {
+		t.Fatalf("older observe overwrote labels: %+v", it)
+	}
+
+	if _, err := h.store.Observe("o/r", closedIssue(2, t0.Add(time.Hour)), SourceWebhook, "d-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.store.Issue("o/r", 2); ok {
+		t.Fatal("closed observation left the issue cached")
+	}
+	if got := h.store.Deliveries("o/r"); len(got) != 1 || got[0] != "d-1" {
+		t.Fatalf("Deliveries = %v, want [d-1] recorded once", got)
+	}
+	if list, item := h.fetcher.calls(); list != 1 || item != 0 {
+		t.Fatalf("fetcher calls = (%d list, %d item), want (1, 0)", list, item)
+	}
+	if got := h.metrics.Value(MetricWebhookPatch, "repo", "o/r", "result", resultOK); got != 1 {
+		t.Errorf("webhook patch ok metric = %d, want 1", got)
+	}
+	if _, err := h.store.Observe("o/r", Item{Kind: KindIssue}, SourceWebhook, ""); err == nil {
+		t.Error("Observe without a number succeeded")
+	}
+	if _, err := h.store.Observe("o/other", issue(1, t0), SourceWebhook, ""); !errors.Is(err, ErrUnknownRepo) {
+		t.Errorf("Observe unknown repo = %v, want ErrUnknownRepo", err)
+	}
+}

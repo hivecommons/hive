@@ -995,8 +995,11 @@ dashboard:
 # stale instead of going empty), webhook patches that re-fetch only the
 # named item, and write-through of the hive's own label/comment/merge/close/
 # claim mutations. Irreversible actions re-read items older than
-# freshness_bound_s and never act on a stale snapshot. Readers are migrated
-# onto it separately; enabling it alone changes no behaviour.
+# freshness_bound_s and never act on a stale snapshot. With it enabled the
+# governor work source lists each repo's open issues/PRs from the cache
+# (#13375): the store's reconcile is the only full list, webhook wakes
+# decide from the cached snapshot, and the first decision pass waits for
+# the first successful reconcile of every repo.
 # forgestate:
 #   enabled: false
 #   reconcile_interval_s: 900   # full list per repo; shortened while drift is high

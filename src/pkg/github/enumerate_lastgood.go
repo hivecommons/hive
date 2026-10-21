@@ -112,6 +112,11 @@ func isTransientEnumerationError(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
+	// A state cache that has not reconciled yet says nothing about the
+	// repo's work either (forgestate_reader.go).
+	if errors.Is(err, ErrForgeStateNotReady) {
+		return true
+	}
 	if isRetryableGitHubError(err) {
 		return true
 	}

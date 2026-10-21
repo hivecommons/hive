@@ -6006,6 +6006,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			b.logger.Warn("claimed-by-human label migration incomplete; open issues may still carry a per-login hive/claimed-by-<login> label", "error", err)
 		}
 	}
+	// Startup gate (#13375): with the state cache on, the first decision
+	// pass waits for the first successful reconcile of every repo so it
+	// never plans against an empty or partial cache.
+	if err := waitForgeStateReady(b.ctx, b.forgeState, b.logger, forgeStateReadyLogInterval); err != nil {
+		return
+	}
 	b.evalCycles++
 	deps.runEval(b, nil, evalSourceEnumerate)
 	deps.runRotation(b)
@@ -7343,6 +7349,10 @@ func runEvalCycle(
 	// the governor kick owns the agent and the fix kick times out every
 	// cycle (hivecommons/hive#13100).
 	messages = orderReviewFixKicksFirst(messages, reviewKickByMessage)
+	// Freshness bound before a kick (#13375): a ref older than
+	// github.DecisionFreshnessBound in a cache-served or last-good snapshot
+	// is confirmed with one targeted GET; a stale repo's refs are withheld.
+	messages = freshenKickMessages(ctx, ghClient.SnapshotFreshnessGuard(actionable, time.Now), actionable, messages, logger)
 	// #4294: drop EVERY assembled kick while the provider is refusing on a
 	// spending limit. Placed after all three sources have contributed —
 	// governor-due agents, the CEL union, and the review swarm — because gating

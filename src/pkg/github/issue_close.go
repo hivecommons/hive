@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+
+	"github.com/hivecommons/hive/pkg/forgestate"
 )
 
 var ErrReporterConfirmationRequired = errors.New("reporter confirmation required before closing human-filed bug issue")
@@ -116,6 +118,11 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	if _, _, err := c.client.Issues.Edit(ctx, owner, repoName, number, req); err != nil {
 		return false, fmt.Errorf("closing issue %s/%s#%d: %w", owner, repoName, number, err)
 	}
+	closedKind := forgestate.KindIssue
+	if isPR {
+		closedKind = forgestate.KindPR
+	}
+	c.forgeWriteThrough(repo, number, forgestate.Mutation{Op: forgestate.OpClose, Kind: closedKind})
 	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, issueNeedsReporterConfirmationLabel); err != nil && !githubStatusError(err, http.StatusNotFound) {
 		// Best-effort: the issue is already closed, so a stale label must not fail the close.
 		c.logger.Warn("removing reporter-confirmation label after close failed",

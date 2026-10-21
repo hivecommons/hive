@@ -105,6 +105,28 @@ func (c *Client) listOpenIssuesWithBlockedCounts(ctx context.Context, owner, rep
 	return all, blocked, children, nil
 }
 
+// getIssueWithBlockedCount is Issues.Get with the dependency and sub-issue
+// summaries preserved, so a single-item re-read (webhook patch, freshness
+// confirmation) carries the same evidence the list does and the state
+// cache never trades a known blocker count for an unknown one.
+func (c *Client) getIssueWithBlockedCount(ctx context.Context, owner, repoName string, number int) (*gh.Issue, int, *IssueChildren, error) {
+	path := fmt.Sprintf("repos/%s/%s/issues/%d", owner, repoName, number)
+	req, err := c.client.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	var is issueWithDependencies
+	if _, err := c.client.Do(ctx, req, &is); err != nil {
+		return nil, 0, nil, err
+	}
+	issue := is.Issue
+	blocked := 0
+	if is.DependenciesSummary != nil {
+		blocked = is.DependenciesSummary.BlockedBy
+	}
+	return &issue, blocked, is.SubIssuesSummary, nil
+}
+
 // blockerRef is one entry of GET .../issues/{n}/dependencies/blocked_by.
 // Blockers may live in another repository, so the repo is taken from the
 // payload rather than assumed.

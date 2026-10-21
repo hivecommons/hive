@@ -139,7 +139,10 @@ func (r *webhookTrackerRefresher) flush() {
 			break
 		}
 		fetched++
-		snap, err := fetch(ctx, k.repo, k.number, k.pr)
+		// The delivery id rides the context so the fetch can record it on
+		// the governor's state cache as a webhook patch rather than a
+		// read-through (pkg/forgestate).
+		snap, err := fetch(github.WithWebhookDelivery(ctx, deliveries[k]), k.repo, k.number, k.pr)
 		if err != nil {
 			continue
 		}
