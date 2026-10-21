@@ -32,6 +32,7 @@ func openTree(t *testing.T, view panes.HiveTreeView) panes.HivesOverlay {
 
 func focus(t *testing.T, o panes.HivesOverlay, key string) panes.HivesOverlay {
 	t.Helper()
+	o = o.TreeMove(-20)
 	for i := 0; i < 20; i++ {
 		if n, _ := o.TreeCurrent(); n.Key == key {
 			return o
@@ -229,9 +230,11 @@ func TestHivesTreeSearch(t *testing.T) {
 // Cancelling a filter while focused on a row only the filter revealed moves
 // focus to the nearest ancestor that is still drawn.
 func TestHivesTreeSearchCancelRefocusesAncestor(t *testing.T) {
-	o := openTree(t, treeView()).TreeBeginSearch().TreeType("repo-two")
+	// Movement is only honoured while browsing, so leave the prompt with the
+	// filter kept, focus the revealed row, then reopen the prompt and cancel.
+	o := openTree(t, treeView()).TreeBeginSearch().TreeType("repo-two").TreeEndSearch()
 	o = focus(t, o, "hub/s1/r2")
-	o = o.TreeCancel()
+	o = o.TreeBeginSearch().TreeCancel()
 	if n, _ := o.TreeCurrent(); n.Key != "hub/s1" {
 		t.Errorf("focus after cancel = %q, want the collapsed hive", n.Key)
 	}
