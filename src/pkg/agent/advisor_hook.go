@@ -189,6 +189,7 @@ func (m *Manager) advisorHooksActive(agent *AgentProcess, backend string) bool {
 // Best-effort like the other home provisioning: a failure is logged and the
 // agent launches without the advisor. Call after the homes are provisioned.
 func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
+	backend = strings.ToLower(strings.TrimSpace(backend))
 	if !advisorFileBackend(backend) {
 		return
 	}
@@ -206,7 +207,7 @@ func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
 		return
 	}
 	content := codexAdvisorHooksJSON()
-	if strings.EqualFold(strings.TrimSpace(backend), config.AdvisorCopilotBackend) {
+	if backend == config.AdvisorCopilotBackend {
 		content = copilotAdvisorHooksJSON()
 	}
 	if len(content) == 0 {
@@ -220,7 +221,7 @@ func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
 		m.logger.Warn("failed to write advisor hook file; agent launches without the advisor", "agent", agent.Name, "path", path, "error", err)
 		return
 	}
-	if strings.EqualFold(strings.TrimSpace(backend), config.AdvisorCodexBackend) {
+	if backend == config.AdvisorCodexBackend {
 		if err := m.trustCodexAdvisorHook(user, path); err != nil {
 			m.logger.Warn("failed to trust the advisor's Codex Stop hook; agent launches but Codex may skip the advisor",
 				"agent", agent.Name, "path", path, "reason", err)
