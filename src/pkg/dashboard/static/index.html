@@ -13580,9 +13580,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        (stageTrackerOpenKeys + stageTrackerNewlyOpened) works the same way
        on every item's key with a per-key "buzzed" set and the same cap.
        Both sounds are synthesised with the Web Audio API (no asset, no
-       URL — the CSP allows neither). Zap: a short burst of crackling
-       white noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a
-       low sine "thunk" at onset. Buzz: a sawtooth near 120 Hz with a ~30 Hz
+       URL — the CSP allows neither). Zap: a bug-zapper arc baked into one
+       buffer — a ~4 ms broadband "snap", then a sizzle of bright noise
+       and a 240 Hz square chopped by a 120 Hz rectified mains pulse
+       train, with a random sputter gate (the arc drops out and
+       re-strikes), under a fast-attack / ~80 ms-sustain / decaying
+       envelope, high-passed at 700 Hz. Buzz: a sawtooth near 120 Hz with a ~30 Hz
        amplitude tremolo through a lowpass, quieter than the zap. The
        AudioContext is created lazily on a user gesture and resumed when
        suspended; a context the autoplay policy still holds suspended at
@@ -13591,15 +13594,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
     const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
     const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
-    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.3;
-    const STAGE_TRACKER_ZAP_S = 0.34;
-    const STAGE_TRACKER_ZAP_BAND_FROM_HZ = 3600;
-    const STAGE_TRACKER_ZAP_BAND_TO_HZ = 1200;
-    const STAGE_TRACKER_ZAP_BAND_Q = 5;
-    const STAGE_TRACKER_ZAP_CRACKLE_FLIP = 0.006;
-    const STAGE_TRACKER_ZAP_CRACKLE_FLOOR = 0.12;
-    const STAGE_TRACKER_THUNK_HZ = 90;
-    const STAGE_TRACKER_THUNK_S = 0.14;
+    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.5;
+    const STAGE_TRACKER_ZAP_S = 0.45;
+    const STAGE_TRACKER_ZAP_SNAP_DECAY = 900;
+    const STAGE_TRACKER_ZAP_MAINS_HZ = 120;
+    const STAGE_TRACKER_ZAP_PULSE_POW = 6;
+    const STAGE_TRACKER_ZAP_SQUARE_HZ = 240;
+    const STAGE_TRACKER_ZAP_NOISE_MIX = 0.75;
+    const STAGE_TRACKER_ZAP_SQUARE_MIX = 0.25;
+    const STAGE_TRACKER_ZAP_SPUTTER_P = 0.02;
+    const STAGE_TRACKER_ZAP_RESTRIKE_P = 0.25;
+    const STAGE_TRACKER_ZAP_ATTACK_S = 0.004;
+    const STAGE_TRACKER_ZAP_SUSTAIN_S = 0.08;
+    const STAGE_TRACKER_ZAP_DECAY = 7;
+    const STAGE_TRACKER_ZAP_HIGHPASS_HZ = 700;
     const STAGE_TRACKER_GAIN_FLOOR = 0.0001;
     const STAGE_TRACKER_BUZZ_S = 0.18;
     const STAGE_TRACKER_BUZZ_MASTER_GAIN = 0.2;
@@ -13715,38 +13723,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.addEventListener('keydown', prime, { once: true, passive: true });
     }
 
+    // Baked sample by sample like the reference render: the snap is a raw
+    // noise impulse; the sizzle (noise + square under the rectified mains
+    // pulse train, through the sputter gate) rides the envelope.
     function stageTrackerZapVoice(ctx, out, at) {
       const sr = ctx.sampleRate;
       const buf = ctx.createBuffer(1, Math.ceil(sr * STAGE_TRACKER_ZAP_S), sr);
       const data = buf.getChannelData(0);
-      let gate = 1;
+      let arcOn = 1;
       for (let i = 0; i < data.length; i++) {
-        if (Math.random() < STAGE_TRACKER_ZAP_CRACKLE_FLIP) gate = gate ? 0 : 1;
-        data[i] = (Math.random() * 2 - 1) * (gate ? 1 : STAGE_TRACKER_ZAP_CRACKLE_FLOOR);
+        const t = i / sr;
+        const snap = (Math.random() * 2 - 1) * Math.exp(-t * STAGE_TRACKER_ZAP_SNAP_DECAY);
+        const pulse = Math.pow(Math.max(0, Math.sin(2 * Math.PI * STAGE_TRACKER_ZAP_MAINS_HZ * t)), STAGE_TRACKER_ZAP_PULSE_POW);
+        const square = Math.sin(2 * Math.PI * STAGE_TRACKER_ZAP_SQUARE_HZ * t) > 0 ? 1 : -1;
+        if (Math.random() < STAGE_TRACKER_ZAP_SPUTTER_P) arcOn = arcOn ? 0 : 1;
+        if (!arcOn && Math.random() < STAGE_TRACKER_ZAP_RESTRIKE_P) arcOn = 1;
+        const noise = Math.random() * 2 - 1;
+        const sizzle = (STAGE_TRACKER_ZAP_NOISE_MIX * noise + STAGE_TRACKER_ZAP_SQUARE_MIX * square) * pulse * arcOn;
+        const env = Math.min(1, t / STAGE_TRACKER_ZAP_ATTACK_S) * Math.exp(-Math.max(0, t - STAGE_TRACKER_ZAP_SUSTAIN_S) * STAGE_TRACKER_ZAP_DECAY);
+        data[i] = snap + sizzle * env;
       }
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      const band = ctx.createBiquadFilter();
-      band.type = 'bandpass';
-      band.Q.value = STAGE_TRACKER_ZAP_BAND_Q;
-      band.frequency.setValueAtTime(STAGE_TRACKER_ZAP_BAND_FROM_HZ, at);
-      band.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_ZAP_BAND_TO_HZ, at + STAGE_TRACKER_ZAP_S);
-      const env = ctx.createGain();
-      env.gain.setValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at);
-      env.gain.exponentialRampToValueAtTime(1, at + 0.012);
-      env.gain.exponentialRampToValueAtTime(0.6, at + STAGE_TRACKER_ZAP_S * 0.5);
-      env.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_ZAP_S);
-      src.connect(band); band.connect(env); env.connect(out);
+      const high = ctx.createBiquadFilter();
+      high.type = 'highpass';
+      high.frequency.value = STAGE_TRACKER_ZAP_HIGHPASS_HZ;
+      src.connect(high); high.connect(out);
       src.start(at); src.stop(at + STAGE_TRACKER_ZAP_S);
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(STAGE_TRACKER_THUNK_HZ, at);
-      osc.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_THUNK_HZ / 2, at + STAGE_TRACKER_THUNK_S);
-      const thunk = ctx.createGain();
-      thunk.gain.setValueAtTime(0.7, at);
-      thunk.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_THUNK_S);
-      osc.connect(thunk); thunk.connect(out);
-      osc.start(at); osc.stop(at + STAGE_TRACKER_THUNK_S);
     }
 
     // A bee passing by: a sawtooth that drifts down a few Hz, chopped by a
