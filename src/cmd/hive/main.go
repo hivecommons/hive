@@ -1229,6 +1229,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 func (b *boot) wireBootClosures() {
 	b.installReviewEvents()
 	b.installWebhookWake()
+	b.installSentinelEvents()
 	b.heartbeatFleetStats = func() (*int, *int, *int, string) {
 		var prsMerged, prsRejected, cvesClosed *int
 		collectedAt := ""
@@ -1448,6 +1449,8 @@ func (b *boot) wireBootClosures() {
 			WebhookWake:          b.webhookWakeFunc(),
 			ApplyWebhookItems:    b.applyWebhookItemsFunc(),
 			EvalLoop:             b.evalLoopStatusFunc(),
+			SentinelPREvent:      b.sentinelPREventFunc(),
+			ProjectsV2ItemEvent:  b.projectsV2ItemEventFunc(),
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
 			Tokens:               b.tokenCollector,
@@ -9367,28 +9370,20 @@ func runDuplicateSweepIfDue(ctx context.Context, cfg *config.Config, ghClient *g
 	})
 }
 
-// sentinelSweepInterval is the minimum spacing between sentinel passes. The
-// sweep lists open PRs per repo every pass but fetches a PR's files only when
-// its head SHA changed since the last evaluation, so steady state is one list
-// call per repo; fifteen minutes bounds how long a hostile PR sits unlabelled.
-const sentinelSweepInterval = 15 * time.Minute
+// sentinelSweepInterval is the reconcile cadence of the full sentinel pass
+// (#13379). `pull_request` opened/synchronize/reopened webhooks evaluate the
+// named PR as they arrive (runSentinelPREvent); the full pass enumerates
+// open PRs from the forgestate cache, skips every head it already evaluated
+// without a GitHub call, and exists to catch a PR whose delivery was lost.
+// Fifteen minutes bounds how long such a PR sits unlabelled.
+const sentinelSweepInterval = github.SentinelReconcileInterval
 
-// runSentinelSweepIfDue flags open PRs that look like security overrides,
-// privilege escalation or codebase damage (pkg/sentinel) at most once per
-// sentinelSweepInterval. Default on; `sentinel.enabled: false` disables it.
-func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
-		return
-	}
-	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sentinelSweepInterval {
-		return
-	}
-	if lastRun != nil {
-		*lastRun = now
-	}
+// sentinelSweepOptions is the one option set both sentinel entry points use,
+// so the webhook path and the reconcile pass cannot disagree on label,
+// trust or rules.
+func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *dashboard.Server) github.SentinelSweepOptions {
 	sc := cfg.Sentinel
-	result, err := ghClient.SweepSentinel(ctx, github.SentinelSweepOptions{
+	return github.SentinelSweepOptions{
 		Label:               sc.LabelOrDefault(),
 		LabelColor:          config.DefaultSentinelLabelColor,
 		LabelDescription:    config.DefaultSentinelLabelDescription,
@@ -9405,25 +9400,47 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 				event.Repo, event.Number, event.Author, event.HeadSHA, strings.Join(event.Rules(), ","))
 			dashSrv.AuditLogRecord("system", "sentinel-alert", detail, "", event.Repo, event.Number)
 		},
-	})
+	}
+}
+
+// runSentinelPREvent is the dashboard.Dependencies.SentinelPREvent hook: a
+// verified `pull_request` opened/synchronize/reopened delivery evaluates
+// that one PR now, reading only it and its files. Default on with the
+// sweep; `sentinel.enabled: false` disables both.
+func runSentinelPREvent(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, repo string, number int, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
+		return
+	}
+	result, err := ghClient.SweepSentinelPR(ctx, repo, number, sentinelSweepOptions(cfg, ghClient, dashSrv))
+	if err != nil {
+		logger.Warn("sentinel webhook evaluation failed", "repo", repo, "pr", number, "error", err)
+		return
+	}
+	logSentinelResult(result, logger)
+}
+
+// runSentinelSweepIfDue flags open PRs that look like security overrides,
+// privilege escalation or codebase damage (pkg/sentinel) at most once per
+// sentinelSweepInterval. Default on; `sentinel.enabled: false` disables it.
+func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil || !cfg.Sentinel.IsEnabled() {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sentinelSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepSentinel(ctx, sentinelSweepOptions(cfg, ghClient, dashSrv))
 	if err != nil {
 		logger.Warn("sentinel sweep failed", "error", err)
 		return
 	}
-	for _, e := range result.Errors {
-		logger.Warn("sentinel sweep: PR skipped", "detail", e)
-	}
-	for _, ev := range result.Flagged {
-		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
-	}
-	for _, ev := range result.Notified {
-		logger.Info("sentinel notice", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "rules", strings.Join(ev.Rules(), ","))
-	}
-	for _, ev := range result.Remediated {
-		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
-	}
+	logSentinelResult(result, logger)
 	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors))
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9436,6 +9453,21 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 			"skipped":    strconv.Itoa(result.Skipped),
 		},
 	})
+}
+
+func logSentinelResult(result *github.SentinelSweepResult, logger *slog.Logger) {
+	for _, e := range result.Errors {
+		logger.Warn("sentinel sweep: PR skipped", "detail", e)
+	}
+	for _, ev := range result.Flagged {
+		logger.Warn("sentinel alert", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "rules", strings.Join(ev.Rules(), ","))
+	}
+	for _, ev := range result.Notified {
+		logger.Info("sentinel notice", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "rules", strings.Join(ev.Rules(), ","))
+	}
+	for _, ev := range result.Remediated {
+		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
+	}
 }
 
 // issueUnparkSweepInterval is the minimum spacing between un-park sweeps. A

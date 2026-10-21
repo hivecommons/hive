@@ -609,11 +609,23 @@ someone re-runs it. The shared-CI rerun sweep
 
 ## Suspicious-activity alerts (`sentinel`)
 
-The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
-(`pkg/sentinel`, `pkg/github.SweepSentinel`). It inspects every open PR in the
-watched repos — human, bot, or agent — and, when a PR matches one of the
-behaviors below, posts one `<!-- hive-sentinel -->` comment per head SHA
-listing the matched rules and paths. For untrusted authors, it also adds the
+The sentinel evaluates open PRs in the watched repos — human, bot, or agent —
+and, when a PR matches one of the behaviors below, posts one
+`<!-- hive-sentinel -->` comment per head SHA listing the matched rules and
+paths (`pkg/sentinel`, `pkg/github/sentinel_sweep.go`). Since
+[#13379](https://github.com/hivecommons/hive/issues/13379) it runs in two
+ways. A verified `pull_request` `opened`/`synchronize`/`reopened` webhook
+evaluates that one PR at once, reading only the PR and its changed files
+(`SweepSentinelPR`); deliveries for the same PR coalesce while one is
+pending. The full sweep (`SweepSentinel`) is the reconcile cadence: every
+`github.SentinelReconcileInterval` (15 minutes) it enumerates open PRs from
+the ForgeState cache when `forgestate.enabled` is on (registered at boot by
+`cmd/hive/forgestate_boot.go`; with the cache off it lists the repo as
+before), skips every head it has already
+evaluated with no GitHub call, reads the remaining candidates once each, and
+so bounds how long a PR whose delivery was lost sits unevaluated. The log
+line `sentinel sweep complete` carries `cached_repos`/`listed_repos`. Both
+paths share one option set and the detection, comment and label logic. For untrusted authors, it also adds the
 alert label. The label is a hard hold: while present, Hive will not submit an
 APPROVE review, apply LGTM/approval labels, or merge the PR through any
 auto-merge lane (dashboard queue, self-authored App sweep, trusted bot authors,
@@ -987,7 +999,9 @@ manage are ignored.
    `/api/webhook/github` for a stand-alone hive (a repository or organization
    webhook with the same secret works too). Subscribe the App to these events:
    `pull_request`, `pull_request_review`, `pull_request_review_comment`,
-   `issue_comment`, `issues`, `check_suite`, `check_run`, `status`, `push`.
+   `issue_comment`, `issues`, `check_suite`, `check_run`, `status`, `push`,
+   and, with `governor.work_source.type: github_projects`, `projects_v2_item`
+   (organization-scoped; see [Work sources](work-sources.md#type-github_projects--github-projects-projects-v2)).
 3. **Hub relay.** The hub verifies the HMAC and relays the body byte-for-byte,
    with the original signature and `X-GitHub-Delivery`, to the spoke whose
    reported dashboard URL manages the repository. Nothing to configure on the
@@ -1016,6 +1030,19 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   without a PR list); `push` invalidates every open PR whose base or head
   branch is the pushed branch. `issues` `labeled`/`unlabeled`/`reopened`
   mark the issue for the next un-park sweep.
+- `pull_request` `opened`/`synchronize`/`reopened` also hands the PR to the
+  [sentinel](#suspicious-activity-alerts-sentinel), which evaluates it now
+  instead of waiting for its reconcile cadence
+  ([#13379](https://github.com/hivecommons/hive/issues/13379)).
+- `projects_v2_item` (`created`/`edited`/`deleted`/`reordered`/`archived`/
+  `restored`/`converted`) patches the GitHub Projects work-source cache: the
+  delivery names the item and its project, the hive re-reads that one item
+  (one GraphQL call) and upserts it, or drops it on `deleted`/archived. The
+  payload carries no repository, so the spoke receiver routes it ahead of the
+  repository-keyed events and the response carries `projects_patch`. The hub
+  relay forwards repository-keyed deliveries only, so a hosted spoke using a
+  Projects board needs the organization webhook pointed at its own
+  `/api/webhook/github` for this event.
 - **Every invalidating delivery wakes the governor loop.** The wake is
   debounced for `governor.webhook_wake_debounce_s` so a push and its check
   fan-out coalesce into one cycle, and webhook-triggered cycles are at least

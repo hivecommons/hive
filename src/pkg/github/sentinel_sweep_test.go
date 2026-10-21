@@ -35,6 +35,18 @@ type sentinelFixture struct {
 	// is how the fixture started and what the any-author fallback tests use.
 	commentUsers map[int][]string
 	filesHits    int
+	listHits     int
+	getHits      []int
+}
+
+// prByNumber returns the fixture PR with that number, or nil.
+func (f *sentinelFixture) prByNumber(num int) map[string]any {
+	for _, pr := range f.prs {
+		if n, ok := pr["number"].(int); ok && n == num {
+			return pr
+		}
+	}
+	return nil
 }
 
 func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
@@ -96,8 +108,23 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 				return
 			}
 		}
+		if r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/pulls/") && !strings.Contains(strings.TrimPrefix(p, "/repos/o/r/pulls/"), "/") {
+			n := 0
+			for _, ch := range strings.TrimPrefix(p, "/repos/o/r/pulls/") {
+				n = n*10 + int(ch-'0')
+			}
+			f.getHits = append(f.getHits, n)
+			if pr := f.prByNumber(n); pr != nil {
+				_ = json.NewEncoder(w).Encode(pr)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls":
+			f.listHits++
 			_ = json.NewEncoder(w).Encode(f.prs)
 		case r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/o/r/labels/"):
 			if f.labelExists {

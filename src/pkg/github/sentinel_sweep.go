@@ -9,16 +9,30 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
-// Sentinel sweep: evaluates every open PR in the watched repos with
-// pkg/sentinel and, on a finding, posts one marker-stamped comment naming the
-// finding(s) and reports the event for auditing. Untrusted authors also get
-// the configured alert label, which is a hard hold for Hive approvals and
+// Sentinel sweep: evaluates open PRs in the watched repos with pkg/sentinel
+// and, on a finding, posts one marker-stamped comment naming the finding(s)
+// and reports the event for auditing. Untrusted authors also get the
+// configured alert label, which is a hard hold for Hive approvals and
 // auto-merge lanes. Trusted authors default to an informational notice without
 // the label unless the operator opts into blocking them.
+//
+// Two entry points share the evaluation (#13379): SweepSentinelPR runs for
+// one PR when a `pull_request` opened/synchronize/reopened webhook names it
+// and fetches only that PR and its files; SweepSentinel is the reconcile
+// cadence (SentinelReconcileInterval) that enumerates every open PR from the
+// forgestate cache — or lists them when no cache is registered — and
+// catches whatever a missed delivery left behind.
 const (
+	// SentinelReconcileInterval is the cadence of the full sweep. Webhook
+	// deliveries carry the latency for new and updated PRs, so the full pass
+	// only has to bound how long a PR whose delivery was lost sits
+	// unevaluated.
+	SentinelReconcileInterval = 15 * time.Minute
+
 	// SentinelMarker stamps the alert comment so later ticks find it and do
 	// not repost for the same head.
 	SentinelMarker = "<!-- hive-sentinel -->"
@@ -48,6 +62,50 @@ type SentinelSweepOptions struct {
 	MaxActions  int
 	// Audit receives one event per PR with a finding this pass.
 	Audit func(SentinelSweepEvent)
+	// PRCache enumerates open PRs for the full sweep. nil uses the
+	// process-wide cache from SetSentinelPRCache; with neither, or for a
+	// repo the cache has not reconciled yet, the sweep lists the repo.
+	PRCache SentinelPRCache
+}
+
+// SentinelPRCache is the forgestate view the full sweep enumerates from.
+// *forgestate.Store satisfies it.
+type SentinelPRCache interface {
+	Snapshot(repo string) (forgestate.Snapshot, bool)
+}
+
+var (
+	sentinelPRCacheMu sync.RWMutex
+	sentinelPRCache   SentinelPRCache
+)
+
+// SetSentinelPRCache installs (or, with nil, removes) the process-wide
+// forgestate cache the sentinel sweep enumerates open PRs from. It is the
+// composition root's one line of wiring once a forgestate.Store runs.
+func SetSentinelPRCache(c SentinelPRCache) {
+	sentinelPRCacheMu.Lock()
+	sentinelPRCache = c
+	sentinelPRCacheMu.Unlock()
+}
+
+func (opts SentinelSweepOptions) prCache() SentinelPRCache {
+	if opts.PRCache != nil {
+		return opts.PRCache
+	}
+	sentinelPRCacheMu.RLock()
+	defer sentinelPRCacheMu.RUnlock()
+	return sentinelPRCache
+}
+
+// SentinelPREventActions are the `pull_request` webhook actions that run
+// SweepSentinelPR: the PR is new or its head moved, so its files need
+// evaluating. Every other action leaves the head as it was.
+var SentinelPREventActions = map[string]bool{"opened": true, "synchronize": true, "reopened": true}
+
+// SentinelPREventWanted reports whether a `pull_request` delivery with
+// action should run the per-PR sentinel evaluation.
+func SentinelPREventWanted(event, action string) bool {
+	return event == "pull_request" && SentinelPREventActions[strings.ToLower(strings.TrimSpace(action))]
 }
 
 // SentinelAuthorTrust records whether the PR author is in a trusted lane and
@@ -104,16 +162,34 @@ type SentinelSweepResult struct {
 	Skipped    int
 	Errors     []string
 	ReposHit   map[string]int
+	// CachedRepos counts repos enumerated from the forgestate cache rather
+	// than listed; ListedRepos counts the fallback.
+	CachedRepos int
+	ListedRepos int
+}
+
+func (r *SentinelSweepResult) actions() int {
+	return len(r.Flagged) + len(r.Notified) + len(r.Remediated)
 }
 
 // sentinelHeadsSeen remembers the head SHA each PR was last evaluated at so
-// an unchanged PR costs one list call per pass, not a files fetch. It is
-// in-memory only: a restart or a second replica starts empty and re-evaluates
-// every open PR once, so it is a cost optimisation, not the record of a
-// maintainer's clearance — that lives on GitHub (sentinelClearedByMaintainer).
+// an unchanged PR costs nothing on the cadence pass (no PR read, no files
+// fetch). It is in-memory only: a restart or a second replica starts empty
+// and re-evaluates every open PR once, so it is a cost optimisation, not the
+// record of a maintainer's clearance — that lives on GitHub
+// (sentinelClearedByMaintainer).
 type sentinelHeadsSeen struct {
 	mu   sync.Mutex
 	seen map[string]string
+}
+
+// isSeen reports whether key was last evaluated at head without recording
+// anything; unchanged records.
+func (s *sentinelHeadsSeen) isSeen(key, head string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev, ok := s.seen[key]
+	return ok && prev == head && head != ""
 }
 
 func (s *sentinelHeadsSeen) unchanged(key, head string) bool {
@@ -129,66 +205,188 @@ func (s *sentinelHeadsSeen) unchanged(key, head string) bool {
 	return false
 }
 
-// SweepSentinel runs one sentinel pass over the watched repos.
-func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (*SentinelSweepResult, error) {
+func sentinelKey(owner, repo string, number int) string {
+	return strings.ToLower(owner+"/"+repo) + "#" + fmt.Sprint(number)
+}
+
+// sentinelSweepPrepared validates opts and returns the label, action cap and
+// an empty result.
+func (c *Client) sentinelSweepPrepared(opts SentinelSweepOptions) (string, int, *SentinelSweepResult, error) {
 	if c == nil {
-		return nil, ErrNoGitHubClient
+		return "", 0, nil, ErrNoGitHubClient
 	}
 	label := strings.TrimSpace(opts.Label)
 	if label == "" {
-		return nil, fmt.Errorf("sentinel sweep: label is required")
+		return "", 0, nil, fmt.Errorf("sentinel sweep: label is required")
 	}
 	maxActions := opts.MaxActions
 	if maxActions <= 0 {
 		maxActions = 20
 	}
-	result := &SentinelSweepResult{ReposHit: map[string]int{}}
+	return label, maxActions, &SentinelSweepResult{ReposHit: map[string]int{}}, nil
+}
+
+// SweepSentinel runs one full sentinel pass over the watched repos: the
+// reconcile cadence. Open PRs come from the forgestate cache when one is
+// registered and has reconciled the repo; a PR whose head the sweep already
+// evaluated and that carries no alert label is skipped without any GitHub
+// call, and every other candidate is read once and evaluated. Without a
+// cache the repo is listed, as before.
+func (c *Client) SweepSentinel(ctx context.Context, opts SentinelSweepOptions) (*SentinelSweepResult, error) {
+	label, maxActions, result, err := c.sentinelSweepPrepared(opts)
+	if err != nil {
+		return nil, err
+	}
+	cache := opts.prCache()
 	for _, repo := range c.getRepos() {
 		if opts.RepoAllowed != nil && !opts.RepoAllowed(repo) {
 			continue
 		}
-		if len(result.Flagged)+len(result.Notified)+len(result.Remediated) >= maxActions {
+		if result.actions() >= maxActions {
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
+		if cache != nil {
+			if snap, ok := cache.Snapshot(repo); ok && snap.Ready {
+				result.CachedRepos++
+				c.sweepSentinelCached(ctx, result, repo, owner, repoName, snap, label, maxActions, opts)
+				continue
+			}
+		}
+		result.ListedRepos++
 		prs, err := c.listOpenPRsForSupersessionSweep(ctx, owner, repoName)
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: list PRs: %v", repo, err))
 			continue
 		}
 		for _, pr := range prs {
-			if len(result.Flagged)+len(result.Notified)+len(result.Remediated) >= maxActions {
+			if result.actions() >= maxActions {
 				break
 			}
 			if pr == nil {
 				continue
 			}
 			result.Seen++
-			event, acted, err := c.trySentinelPR(ctx, repo, owner, repoName, pr, label, opts)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("%s#%d: %v", repo, pr.GetNumber(), err))
-				continue
-			}
-			if !acted {
-				result.Skipped++
-				continue
-			}
-			event.Repo = repo
-			c.recordReviewEvidenceSentinel(repo, pr, event.Findings, time.Now())
-			if event.Blocked {
-				result.Flagged = append(result.Flagged, event)
-			} else if prHasLabel(pr, label) {
-				result.Remediated = append(result.Remediated, event)
-			} else {
-				result.Notified = append(result.Notified, event)
-			}
-			result.ReposHit[repo]++
-			if opts.Audit != nil {
-				opts.Audit(event)
-			}
+			c.sentinelEvaluatePR(ctx, result, repo, owner, repoName, pr, label, opts)
 		}
 	}
 	return result, nil
+}
+
+// sweepSentinelCached evaluates the cached open PRs of one repo. Cached items
+// carry number, head SHA and labels but not author, title or file count, so
+// a candidate the heads map does not rule out is read once (GET pull) before
+// trySentinelPR runs on it exactly as on a listed PR. A snapshot marked stale
+// is still the right enumeration: it is the last good list, and the per-PR
+// read confirms each candidate is still open.
+func (c *Client) sweepSentinelCached(ctx context.Context, result *SentinelSweepResult, repo, owner, repoName string, snap forgestate.Snapshot, label string, maxActions int, opts SentinelSweepOptions) {
+	numbers := make([]int, 0, len(snap.PRs))
+	for n := range snap.PRs {
+		numbers = append(numbers, n)
+	}
+	sort.Ints(numbers)
+	for _, n := range numbers {
+		if result.actions() >= maxActions {
+			return
+		}
+		item := snap.PRs[n]
+		result.Seen++
+		if !item.HasLabel(label) && c.sentinelHeads.isSeen(sentinelKey(owner, repoName, n), item.HeadSHA) {
+			result.Skipped++
+			continue
+		}
+		pr, open, err := c.sentinelReadPR(ctx, owner, repoName, n)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s#%d: %v", repo, n, err))
+			continue
+		}
+		if !open {
+			result.Skipped++
+			continue
+		}
+		c.sentinelEvaluatePR(ctx, result, repo, owner, repoName, pr, label, opts)
+	}
+}
+
+// SweepSentinelPR evaluates one PR: the `pull_request` opened/synchronize/
+// reopened webhook path. It reads that PR and, if its head is new, its
+// files; nothing is listed. repo may be the configured slug or the
+// delivery's full_name. A PR that is not open, or a repo the sweep does not
+// cover, is skipped and reported in the result rather than as an error.
+func (c *Client) SweepSentinelPR(ctx context.Context, repo string, number int, opts SentinelSweepOptions) (*SentinelSweepResult, error) {
+	label, _, result, err := c.sentinelSweepPrepared(opts)
+	if err != nil {
+		return nil, err
+	}
+	if number <= 0 {
+		return nil, fmt.Errorf("sentinel sweep: PR number is required")
+	}
+	configured, ok := c.webhookConfiguredRepo(repo)
+	if !ok {
+		result.Skipped++
+		return result, nil
+	}
+	if opts.RepoAllowed != nil && !opts.RepoAllowed(configured) {
+		result.Skipped++
+		return result, nil
+	}
+	owner, repoName := c.splitRepo(configured)
+	pr, open, err := c.sentinelReadPR(ctx, owner, repoName, number)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s#%d: %v", configured, number, err))
+		return result, nil
+	}
+	result.Seen++
+	if !open {
+		result.Skipped++
+		return result, nil
+	}
+	c.sentinelEvaluatePR(ctx, result, configured, owner, repoName, pr, label, opts)
+	return result, nil
+}
+
+// sentinelReadPR is the one targeted read both cached paths make. open is
+// false for a closed or merged PR.
+func (c *Client) sentinelReadPR(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, bool, error) {
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		return nil, false, fmt.Errorf("reading PR: %w", err)
+	}
+	if pr == nil {
+		return nil, false, fmt.Errorf("reading PR: empty response")
+	}
+	if pr.GetMerged() || (pr.State != nil && !strings.EqualFold(pr.GetState(), "open")) {
+		return pr, false, nil
+	}
+	return pr, true, nil
+}
+
+// sentinelEvaluatePR runs trySentinelPR on one open PR and files the outcome
+// into result; the caller has already counted the PR as seen. The detection
+// and labelling logic is trySentinelPR's alone; every entry point ends here.
+func (c *Client) sentinelEvaluatePR(ctx context.Context, result *SentinelSweepResult, repo, owner, repoName string, pr *gh.PullRequest, label string, opts SentinelSweepOptions) {
+	event, acted, err := c.trySentinelPR(ctx, repo, owner, repoName, pr, label, opts)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("%s#%d: %v", repo, pr.GetNumber(), err))
+		return
+	}
+	if !acted {
+		result.Skipped++
+		return
+	}
+	event.Repo = repo
+	c.recordReviewEvidenceSentinel(repo, pr, event.Findings, time.Now())
+	if event.Blocked {
+		result.Flagged = append(result.Flagged, event)
+	} else if prHasLabel(pr, label) {
+		result.Remediated = append(result.Remediated, event)
+	} else {
+		result.Notified = append(result.Notified, event)
+	}
+	result.ReposHit[repo]++
+	if opts.Audit != nil {
+		opts.Audit(event)
+	}
 }
 
 func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, label string, opts SentinelSweepOptions) (SentinelSweepEvent, bool, error) {
@@ -201,7 +399,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	}
 	decision := DecideSentinelAction(label, trust, opts.TrustedAuthorsBlock)
 	hasAlertLabel := prHasLabel(pr, label)
-	key := strings.ToLower(owner+"/"+repo) + "#" + fmt.Sprint(number)
+	key := sentinelKey(owner, repo, number)
 	if !hasAlertLabel && c.sentinelHeads.unchanged(key, head) {
 		return SentinelSweepEvent{}, false, nil
 	}

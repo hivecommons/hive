@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,8 +35,11 @@ func (s *Server) registerGitHubWebhookRoutes() {
 // events invalidate the matching cached PR state and mark it dirty for the
 // next eval cycle, queue a targeted re-read of the named PR or issue for the
 // activity monitor (webhook_tracker_refresh.go), and every delivery for a
-// managed repo refreshes webhook health. Deliveries for repositories this
-// hive does not manage are ignored.
+// managed repo refreshes webhook health. A `pull_request` opened/synchronize/
+// reopened delivery also hands the PR to the sentinel (#13379), and the
+// organization-scoped `projects_v2_item` delivery patches the GitHub
+// Projects work source cache. Deliveries for repositories this hive does not
+// manage are ignored.
 func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	event := r.Header.Get("X-GitHub-Event")
 	if event == "" {
@@ -56,6 +60,17 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if !verifyGitHubWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
 		s.webhookLogger().Warn("github webhook signature verification failed", "event", event)
 		jsonError(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+	if event == githubWebhookEventProjectsV2Item {
+		// Organization-scoped: no repository to resolve, so it never reaches
+		// the PR-cache handler. The work source applies it as a patch.
+		if s.deps == nil || s.deps.ProjectsV2ItemEvent == nil {
+			jsonResponse(w, map[string]any{"status": "ignored", "reason": "no projects v2 work source", "event": event})
+			return
+		}
+		outcome := s.deps.ProjectsV2ItemEvent(body)
+		jsonResponse(w, map[string]any{"status": "ok", "event": event, "projects_patch": outcome})
 		return
 	}
 	if s.deps == nil || s.deps.GHClient == nil {
@@ -82,7 +97,38 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		s.deps.WebhookWake(reason)
 		resp["wake"] = reason
 	}
+	if n, ok := sentinelPREventTarget(event, body); ok && s.deps.SentinelPREvent != nil {
+		s.deps.SentinelPREvent(res.ConfiguredRepo, n)
+		resp["sentinel"] = n
+	}
 	jsonResponse(w, resp)
+}
+
+// githubWebhookEventProjectsV2Item is the organization-scoped Projects v2
+// item delivery (created/edited/deleted/reordered/archived/restored/
+// converted). It is handled ahead of the repository-keyed events because its
+// payload names a project, not a repository.
+const githubWebhookEventProjectsV2Item = "projects_v2_item"
+
+// sentinelPREventTarget returns the PR number of a `pull_request` delivery
+// whose action means the head is new (opened, synchronize, reopened), the
+// only deliveries the sentinel evaluates per event.
+func sentinelPREventTarget(event string, body []byte) (int, bool) {
+	var p struct {
+		Action      string `json:"action"`
+		Number      int    `json:"number"`
+		PullRequest *struct {
+			Number int `json:"number"`
+		} `json:"pull_request"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil || !github.SentinelPREventWanted(event, p.Action) {
+		return 0, false
+	}
+	n := p.Number
+	if n <= 0 && p.PullRequest != nil {
+		n = p.PullRequest.Number
+	}
+	return n, n > 0
 }
 
 // webhookWakeReason reports whether a verified delivery changed cached state

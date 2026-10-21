@@ -45,6 +45,9 @@ func (b *boot) applyGitHubClientForgeState(client *github.Client) {
 			return
 		}
 		b.forgeState = store
+		// The sentinel's reconcile sweep enumerates open PRs from the
+		// same cache instead of listing each repo (#13379).
+		github.SetSentinelPRCache(store)
 		ctx := b.ctx
 		if ctx == nil {
 			ctx = context.Background()

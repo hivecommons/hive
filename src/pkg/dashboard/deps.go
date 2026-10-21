@@ -251,6 +251,23 @@ type Dependencies struct {
 	// EvalLoop reports the governor loop's live pacing (poll vs webhook mode
 	// and the last early wake) for /api/status. Nil omits the fields.
 	EvalLoop func() EvalLoopStatus
+	// SentinelPREvent evaluates one PR with the sentinel after a verified
+	// `pull_request` opened/synchronize/reopened delivery named it (#13379);
+	// repo is the configured slug. It must not block the webhook response.
+	// Nil leaves PRs to the sentinel's reconcile cadence.
+	SentinelPREvent func(repo string, number int)
+	// ProjectsV2ItemEvent applies a verified `projects_v2_item` delivery to
+	// the GitHub Projects work source cache as a targeted patch (#13379).
+	// These deliveries are organization-scoped and carry no repository. Nil
+	// leaves the project list to its reconcile cadence.
+	ProjectsV2ItemEvent func(payload []byte) WebhookPatchOutcome
+}
+
+// WebhookPatchOutcome is what a targeted webhook patch did, for the
+// delivery response and the log line.
+type WebhookPatchOutcome struct {
+	Applied bool   `json:"applied"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 // EvalLoopStatus is the governor loop's pacing block served by /api/status:

@@ -44,6 +44,8 @@ type GitHubProjectsConfig struct {
 type githubProjectsSource struct {
 	cfg    GitHubProjectsConfig
 	client *http.Client
+	// nowFn is the clock the reconcile cadence reads; tests inject one.
+	nowFn func() time.Time
 }
 
 // NewGitHubProjectsSource builds a WorkSource backed by GitHub Projects v2.
@@ -51,16 +53,22 @@ func NewGitHubProjectsSource(cfg GitHubProjectsConfig) WorkSource {
 	return &githubProjectsSource{cfg: cfg, client: &http.Client{Timeout: 30 * time.Second}}
 }
 
+func (s *githubProjectsSource) now() time.Time {
+	if s.nowFn != nil {
+		return s.nowFn()
+	}
+	return time.Now()
+}
+
 func (s *githubProjectsSource) SourceType() string { return "github_projects" }
 
-const githubProjectsQuery = `query($org: String!, $number: Int!, $cursor: String) {
-  organization(login: $org) {
-    projectV2(number: $number) {
-      items(first: 100, after: $cursor) {
-        pageInfo { hasNextPage endCursor }
-        nodes {
+// githubProjectsItemFields is the ProjectV2Item selection both the full
+// listing and the per-item webhook patch read, so a patched item carries
+// exactly what a listed one does.
+const githubProjectsItemFields = `
           id
           type
+          isArchived
           fieldValues(first: 20) {
             nodes {
               ... on ProjectV2ItemFieldSingleSelectValue {
@@ -88,9 +96,28 @@ const githubProjectsQuery = `query($org: String!, $number: Int!, $cursor: String
               assignees(first: 10) { nodes { login } }
               repository { nameWithOwner }
             }
-          }
+          }`
+
+const githubProjectsQuery = `query($org: String!, $number: Int!, $cursor: String) {
+  organization(login: $org) {
+    projectV2(number: $number) {
+      id
+      items(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {` + githubProjectsItemFields + `
         }
       }
+    }
+  }
+}`
+
+// githubProjectsItemQuery reads one project item by node id for the
+// projects_v2_item webhook patch. The project id confirms the item belongs
+// to the configured board.
+const githubProjectsItemQuery = `query($id: ID!) {
+  node(id: $id) {
+    ... on ProjectV2Item {` + githubProjectsItemFields + `
+      project { id }
     }
   }
 }`
@@ -106,8 +133,12 @@ type gqlFieldValue struct {
 }
 
 type gqlItem struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"`
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	IsArchived bool   `json:"isArchived"`
+	Project    struct {
+		ID string `json:"id"`
+	} `json:"project"`
 	FieldValues struct {
 		Nodes []gqlFieldValue `json:"nodes"`
 	} `json:"fieldValues"`
@@ -141,6 +172,7 @@ type gqlResponse struct {
 	Data struct {
 		Organization struct {
 			ProjectV2 struct {
+				ID    string `json:"id"`
 				Items struct {
 					PageInfo struct {
 						HasNextPage bool   `json:"hasNextPage"`
@@ -164,21 +196,50 @@ func (s *githubProjectsSource) endpoint() string {
 	return strings.TrimSuffix(baseURL, "/") + "/graphql"
 }
 
+// ListIssues returns the project's issues. The GraphQL listing runs on the
+// reconcile cadence (githubProjectsReconcileInterval), not on every eval
+// cycle: between listings the items come from the process-wide cache,
+// which projects_v2_item webhook deliveries patch (ApplyProjectsV2ItemEvent).
+// Filters (status, iteration, priority) are applied at read time, so the
+// current-iteration window moves without a re-list. A failed re-list serves
+// the last good listing while it is younger than
+// githubProjectsLastGoodMaxAge and returns the error otherwise.
 func (s *githubProjectsSource) ListIssues(ctx context.Context) ([]Issue, error) {
-	endpoint := s.endpoint()
+	entry := s.cacheEntry()
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	now := s.now()
+	if entry.fresh(now) {
+		return s.mapItems(entry.items), nil
+	}
+	items, projectID, err := s.listAllItems(ctx)
+	if err != nil {
+		if entry.serveLastGood(now) {
+			entry.stale = true
+			return s.mapItems(entry.items), nil
+		}
+		return nil, err
+	}
+	entry.replace(items, projectID, now, s)
+	return s.mapItems(entry.items), nil
+}
 
-	var issues []Issue
+// listAllItems is the full GraphQL listing: every page of the project's
+// items and the project's node id.
+func (s *githubProjectsSource) listAllItems(ctx context.Context) ([]gqlItem, string, error) {
+	endpoint := s.endpoint()
+	var items []gqlItem
+	var projectID string
 	var cursor *string
 	for {
 		resp, err := s.queryPage(ctx, endpoint, cursor)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		for _, item := range resp.Data.Organization.ProjectV2.Items.Nodes {
-			if issue, ok := s.mapItem(item); ok {
-				issues = append(issues, issue)
-			}
+		if id := resp.Data.Organization.ProjectV2.ID; id != "" {
+			projectID = id
 		}
+		items = append(items, resp.Data.Organization.ProjectV2.Items.Nodes...)
 		pi := resp.Data.Organization.ProjectV2.Items.PageInfo
 		if !pi.HasNextPage {
 			break
@@ -186,7 +247,33 @@ func (s *githubProjectsSource) ListIssues(ctx context.Context) ([]Issue, error) 
 		c := pi.EndCursor
 		cursor = &c
 	}
-	return issues, nil
+	return items, projectID, nil
+}
+
+func (s *githubProjectsSource) mapItems(items []gqlItem) []Issue {
+	var issues []Issue
+	for _, item := range items {
+		if issue, ok := s.mapItem(item); ok {
+			issues = append(issues, issue)
+		}
+	}
+	return issues
+}
+
+// fetchItem reads one project item by node id for a webhook patch.
+func (s *githubProjectsSource) fetchItem(ctx context.Context, nodeID string) (gqlItem, error) {
+	var resp struct {
+		Data struct {
+			Node *gqlItem `json:"node"`
+		} `json:"data"`
+	}
+	if err := s.graphql(ctx, s.endpoint(), githubProjectsItemQuery, map[string]any{"id": nodeID}, &resp); err != nil {
+		return gqlItem{}, err
+	}
+	if resp.Data.Node == nil || resp.Data.Node.ID == "" {
+		return gqlItem{}, errProjectsItemGone
+	}
+	return *resp.Data.Node, nil
 }
 
 func (s *githubProjectsSource) queryPage(ctx context.Context, endpoint string, cursor *string) (*gqlResponse, error) {
@@ -346,7 +433,7 @@ func (s *githubProjectsSource) AddIssueToColumn(ctx context.Context, owner, repo
 // when the item should be skipped (non-issue, filtered out by state, or not
 // in the current iteration).
 func (s *githubProjectsSource) mapItem(item gqlItem) (Issue, bool) {
-	if item.Type != "ISSUE" {
+	if item.Type != "ISSUE" || item.IsArchived {
 		return Issue{}, false
 	}
 

@@ -170,8 +170,8 @@ Config fields (`GitHubProjectsSourceConfig`, `pkg/config/config.go:1696-1703`):
 | `project_number` | `ProjectNumber` | Yes | The project's number, visible in its URL (`.../projects/7`). |
 | `org` | `Org` | No | Defaults to `project.org` if empty (`factory.go:23`). |
 | `states` | `States` | No | Filters on the project's `Status` single-select field. Empty means no filtering. |
-| `priority_field` | `PriorityField` | No | Name of a single-select field to map to normalized priority (`urgent`/`high`/`medium`/`low`/`none`; see `normalizePriority`, `github_projects.go:438-451`). Empty means every issue gets priority `none`. |
-| `iteration_field` | `IterationField` | No | Name of an iteration field. When set, only items whose iteration window covers "now" are returned (`inCurrentIteration`, `github_projects.go:419-435`). |
+| `priority_field` | `PriorityField` | No | Name of a single-select field to map to normalized priority (`urgent`/`high`/`medium`/`low`/`none`; see `normalizePriority`, `github_projects.go:525-538`). Empty means every issue gets priority `none`. |
+| `iteration_field` | `IterationField` | No | Name of an iteration field. When set, only items whose iteration window covers "now" are returned (`inCurrentIteration`, `github_projects.go:506-522`). |
 | `default_repo` | `DefaultRepo` | No | `owner/repo` used when the project item's own repository can't be read from the GraphQL response. |
 
 **Credentials.** The adapter authenticates with the same GitHub token the
@@ -182,11 +182,30 @@ separate `token` field in `github_projects:`. That token needs the
 a classic PAT with only `repo` cannot read a Projects v2 board and the
 GraphQL call fails with a GraphQL-level authorization error surfaced as
 `worksource/github_projects: graphql error: ...`
-(`github_projects.go:243-245`).
+(`github_projects.go:330-332`).
+
+**Cadence and webhooks** ([#13379](https://github.com/hivecommons/hive/issues/13379)).
+The GraphQL listing is not made on every eval cycle. It runs on a reconcile
+cadence (`githubProjectsReconcileInterval`, 15 minutes,
+`pkg/worksource/github_projects_cache.go`) and the result is held in a
+process-wide per-board cache; cycles in between read the cache, with the
+status, iteration and priority filters applied at read time so the
+current-iteration window moves without a re-list. Subscribing the App or
+organization webhook to `projects_v2_item` keeps the cache current between
+listings: each `created`/`edited`/`deleted`/`reordered`/`archived`/
+`restored`/`converted` delivery is a hint that re-reads that one item by
+node id (one GraphQL call; `deleted` removes it with no call) and patches
+the cache (`worksource.ApplyProjectsV2ItemEvent`). The delivery's
+`project_node_id` must match a board that has listed at least once;
+anything else waits for the next listing. Writes
+(`AddIssueToColumn`, the review backlog destination) are unchanged and
+still go straight to GitHub.
 
 **Failure mode.** A wrong `project_number` or an org the token can't see
-returns a GraphQL error on every governor cycle, logged but not fatal — the
-hive keeps running with an empty work-item list from this source.
+returns a GraphQL error on the first listing, logged but not fatal — the
+hive keeps running with an empty work-item list from this source. When a
+later re-list fails, the previous listing is served (and the entry marked
+stale) for up to two hours before the error surfaces again.
 
 ## `type: linear`
 
@@ -373,5 +392,5 @@ If the destination's work source is not active, or cannot be built (for example 
   a "project node ID". The code instead takes a plain integer
   `project_number` (the number visible in the project's URL) and resolves it
   server-side via GraphQL (`organization(login).projectV2(number)`,
-  `github_projects.go:56-57`) — there is no node-ID field in
+  `github_projects.go:102-103`) — there is no node-ID field in
   `GitHubProjectsSourceConfig`. This page documents the code as written.

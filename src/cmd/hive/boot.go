@@ -237,6 +237,10 @@ type boot struct {
 	// snapshotPatch applies webhook re-reads to lastActionable so wake
 	// cycles plan from a patched snapshot instead of re-listing.
 	snapshotPatch *snapshotPatcher
+
+	// sentinelEvents serializes the per-PR sentinel evaluations that
+	// `pull_request` webhooks request (#13379).
+	sentinelEvents *sentinelEventQueue
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

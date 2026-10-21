@@ -57,6 +57,7 @@ func pageJSON(hasNext bool, cursor string, items ...string) string {
 
 func stubServer(t *testing.T, pages []string) *httptest.Server {
 	t.Helper()
+	ResetGitHubProjectsCacheForTest()
 	call := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/graphql" {
