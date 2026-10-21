@@ -33,8 +33,9 @@ repository touches it.
 - **No shared RWX volume.** Go promises safe concurrent cache use only on a
   local filesystem. `GOMODCACHE` and the runner tool cache are per-node
   `hostPath`s under `/var/lib/hive-ci/`; `GOCACHE` stays per-job
-  (`HIVE_GO_BUILD_CACHE=job`). `cache-prune-daemonset.yaml` bounds the
-  hostPaths. Module zips and tool archives are content-addressed, so duplication
+  (`HIVE_GO_BUILD_CACHE=job`). `cache-prune-daemonset.yaml` bounds the module
+  download cache only; reclaim tool-cache space on drained nodes (section 3b).
+  Module zips and tool archives are content-addressed, so duplication
   across nodes is safe.
 - **`ephemeral-storage` request == limit** (25 Gi runner + 20 Gi dind), so the
   scheduler packs at most ~14 pods' worth of disk on a 655 GB node and eviction
@@ -149,6 +150,26 @@ A half-written node entry can also have `bin/node` but no `bin/npm`
 removes the stale `.complete` marker, so the node self-repairs on the next
 job; `warm-toolcache` applies the same check. The values.yaml change only takes
 effect after a `helm upgrade` of the `hive-runners` release.
+
+A complete Go cache entry missing `bin/go` can also be caused by the old
+`cache-prune-daemonset.yaml` (#13425): its per-file `find -mtime` used archive
+release timestamps, not last use. It deleted old binaries while leaving newer
+`.complete` markers behind, even for actively used versions. The DaemonSet now
+prunes only module downloads and has no tool-cache mount. Operators must apply
+the updated manifest (the Helm runner upgrade does not update this DaemonSet):
+
+```sh
+kubectl --context hive-ci -n arc-hive apply -f src/deploy/ci-runners/lke/cache-prune-daemonset.yaml
+kubectl --context hive-ci -n arc-hive rollout status ds/hive-ci-cache-prune
+```
+
+The canary invalidates broken markers and the Go guard / warm init rebuilds
+requested versions. Confirm a subsequent canary is green; a merged manifest
+alone does not repair the live pool. Do not delete tool-cache directories on
+active nodes, even under `.warm.lock`: running jobs do not hold that lock.
+Reclaim tool-cache space only after an operator drains the affected runner
+node and verifies no jobs remain, or recycle it during a quiet window. Monitor
+node disk usage in section 7 until an active-job-aware eviction policy exists.
 
 ## 4. ARC controller and system services
 
