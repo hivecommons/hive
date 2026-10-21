@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/hivecommons/hive/internal/hivectltest"
 	"github.com/hivecommons/hive/pkg/hivectl"
-	"github.com/hivecommons/hive/pkg/hivectltest"
 )
 
 // TestStageFixtureMatchesHivectltest guards the hand-copied fixture in

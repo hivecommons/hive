@@ -28,7 +28,7 @@ func stageFixture() (*ProfileSet, []TreeHubSnapshot, map[string]TreeRepositorySn
 
 // stageFixtureData mirrors hivectltest.ContributionStageFixture, which cannot be
 // imported here without an import cycle. Keep the two in sync: any edit here
-// must be applied to pkg/hivectltest/contribution_fixture.go too, since the
+// must be applied to internal/hivectltest/contribution_fixture.go too, since the
 // surface tests compare against that copy; TestStageFixtureMatchesHivectltest
 // fails when they diverge. It returns two scoped subscriptions ("alpha", shared
 // across hubs one and two; "beta", on hub one only), both with complete

@@ -10,8 +10,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/hivecommons/hive/internal/hivectltest"
 	"github.com/hivecommons/hive/pkg/hivectl"
-	"github.com/hivecommons/hive/pkg/hivectltest"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
