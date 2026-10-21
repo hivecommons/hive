@@ -23,13 +23,13 @@ func costRangeScript(t *testing.T, html string) string {
 	return html[start : start+fn+len(body)]
 }
 
-// TestCostRangeBucketsFollowSelector pins the fix for the Cost section: the
-// bar chart, "spend in selected range" and the run-rate are all derived from
-// the ONE window the selector names — hourly = 24 hour bars, daily/weekly =
-// 7 weekday bars, monthly = one bar per calendar day, custom = hour or day
-// bars by span — and the run-rate is spend ÷ elapsed window in the bucket's
-// unit. Before, weekly/monthly drew 12 multi-week bars over 84/360 days and
-// the run-rate came from a fixed trailing 6h regardless of the selector.
+// TestCostRangeBucketsFollowSelector pins the Cost section's window model:
+// the bar chart, "spend in selected range" and the run-rate are all derived
+// from the ONE window the selector names — hourly = 24 hour bars, daily = 14
+// day bars (M/D labels once there are more than 7), weekly = 5 week bars,
+// monthly = 5 month bars, custom = hour or day bars by span — each count
+// adjustable with the −/+ stepper within named bounds, and the run-rate is
+// spend ÷ elapsed window in the bucket's unit.
 func TestCostRangeBucketsFollowSelector(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -41,6 +41,7 @@ func TestCostRangeBucketsFollowSelector(t *testing.T) {
 		"process.env.TZ = 'UTC';\n" +
 		"let _costHistory = [];\n" +
 		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
 		"function esc(s){ return String(s); }\n" +
 		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
 		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
@@ -56,14 +57,33 @@ const H = 3600e3, D = 24 * H;
 // the last 40 days, observed once an hour on the hour (sparser than the
 // accrual-liveness gap, so each $1 lands in the bucket it was observed in),
 // priced at $1 per 1000 tokens.
+const HIST_START = NOW - 40 * D - 30 * 60e3;
 _costHistory = [];
-for (let t = NOW - 40 * D - 30 * 60e3; t <= NOW; t += H) {
-  const hours = (t - (NOW - 40 * D - 30 * 60e3)) / H;
+for (let t = HIST_START; t <= NOW; t += H) {
+  const hours = (t - HIST_START) / H;
   _costHistory.push({ t, usd: hours, models: { m: { i: hours * 1000, o: 0, usd: hours } } });
 }
 
 function setRange(k){ _costRange = k; }
 const approx = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, msg + ': ' + a + ' vs ' + b);
+const sum = (bs) => bs.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
+
+// Defaults and stepper bounds.
+assert.deepEqual(Object.keys(COST_RANGE_COUNT), ['hourly', 'daily', 'weekly', 'monthly']);
+assert.equal(costRangeCount('hourly'), 24);
+assert.equal(costRangeCount('daily'), 14);
+assert.equal(costRangeCount('weekly'), 5);
+assert.equal(costRangeCount('monthly'), 5);
+assert.equal(costRangeCount('custom'), null, 'custom has no count');
+for (const k in COST_RANGE_COUNT) {
+  const c = COST_RANGE_COUNT[k];
+  assert.ok(c.min <= c.def && c.def <= c.max && c.step > 0, k + ' bounds bracket the default');
+  assert.equal((c.def - c.min) % c.step, 0, k + ' default sits on the step grid');
+}
+assert.equal(costClampCount('daily', 100), 60, 'clamps above max');
+assert.equal(costClampCount('daily', 1), 7, 'clamps below min');
+assert.equal(costClampCount('daily', 16), 14, 'snaps onto the 7-day grid');
+assert.equal(costClampCount('hourly', NaN), 24, 'garbage falls back to the default');
 
 // hourly: 24 one-hour bars, the last one partial (clock hour → now).
 setRange('hourly');
@@ -75,57 +95,115 @@ assert.equal(win.end, NOW);
 let buckets = costBuckets(win);
 assert.deepEqual(buckets.slice(0, 3).map(b => costBucketAxisLabel(b, win)), ['13', '14', '15']);
 assert.equal(costBucketAxisLabel(buckets[23], win), '12');
-let total = buckets.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
+let total = sum(buckets);
 assert.equal(total, 23, 'hourly spend: 23 observed $1 steps inside (13:00, 12:30]');
 let rate = costWindowRunRate(total, win);
 assert.equal(costRunRateUnit(win).label, '/hr');
 approx(rate * H, 1, 0.05, 'hourly run-rate ≈ $1/hr');
+// Stepper: +6h twice → 36 bars; −6h back to 30; floor/ceiling respected.
+assert.equal(costStepCount(1), true);
+assert.equal(costStepCount(1), true);
+assert.equal(costRangeCount(), 36);
+assert.equal(costWindow(NOW).count, 36, 'hourly window follows the count');
+assert.equal(costWindow(NOW).start, Date.UTC(2026, 9, 20, 1, 0, 0));
+assert.equal(costStepCount(-1), true);
+assert.equal(costRangeCount(), 30);
+assert.equal(JSON.parse(localStorage.getItem('hiveCostRangeCounts')).hourly, 30, 'count persisted per range');
+for (let i = 0; i < 20; i++) costStepCount(-1);
+assert.equal(costRangeCount(), 6, 'hourly floor');
+assert.equal(costStepCount(-1), false, 'at the floor the step is a no-op');
+for (let i = 0; i < 20; i++) costStepCount(1);
+assert.equal(costRangeCount(), 72, 'hourly ceiling');
+_costCounts.hourly = 24;
 
-// daily: last 7 calendar days incl. today, labelled by weekday.
+// daily: last 14 calendar days incl. today, labelled by M/D (14 weekday
+// names would repeat).
 setRange('daily');
 win = costWindow(NOW);
-assert.equal(win.count, 7, 'daily bucket count');
-assert.equal(win.start, Date.UTC(2026, 9, 15), 'daily window starts at local midnight 6 days ago');
+assert.equal(win.count, 14, 'daily bucket count');
+assert.equal(win.start, Date.UTC(2026, 9, 8), 'daily window starts at local midnight 13 days ago');
 buckets = costBuckets(win);
-assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['Th', 'F', 'Sa', 'Su', 'M', 'Tu', 'W']);
-total = buckets.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
-assert.equal(total, 6 * 24 + 12, 'daily spend: $1 steps inside the 7 calendar days');
+assert.deepEqual(buckets.slice(0, 2).map(b => costBucketAxisLabel(b, win)), ['10/8', '10/9']);
+assert.equal(costBucketAxisLabel(buckets[13], win), '10/21');
+total = sum(buckets);
+assert.equal(total, 13 * 24 + 12, 'daily spend: $1 steps inside the 14 calendar days');
 rate = costWindowRunRate(total, win);
 assert.equal(costRunRateUnit(win).label, '/day');
 approx(rate * D, 24, 0.5, 'daily run-rate ≈ $24/day');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5, '14 bars get 5 evenly spaced labels');
+// Shrunk to 7 days the weekday labels come back, unambiguous again.
+assert.equal(costStepCount(-1), true);
+win = costWindow(NOW);
+assert.equal(win.count, 7);
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['Th', 'F', 'Sa', 'Su', 'M', 'Tu', 'W']);
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 7, '7 bars label every bar');
+assert.equal(costStepCount(-1), false, 'daily floor is 7');
+_costCounts.daily = 14;
 
-// weekly: the current calendar week Mon→Sun, one bar per day; days ahead empty.
+// weekly: the current Mon→Sun week plus the 4 before it, one bar per week
+// labelled by its Monday; the rest of this week carries no data.
 setRange('weekly');
 win = costWindow(NOW);
-assert.equal(win.count, 7, 'weekly bucket count');
-assert.equal(win.start, Date.UTC(2026, 9, 19), 'week starts Monday');
-assert.equal(win.end, Date.UTC(2026, 9, 26), 'week ends next Monday 00:00');
+assert.equal(win.count, 5, 'weekly bucket count');
+assert.equal(win.bucket, 'week');
+assert.equal(win.start, Date.UTC(2026, 8, 21), 'first week starts on a Monday 4 weeks back');
+assert.equal(win.end, Date.UTC(2026, 9, 26), 'window ends next Monday 00:00');
 buckets = costBuckets(win);
-assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['M', 'Tu', 'W', 'Th', 'F', 'Sa', 'Su']);
-assert.deepEqual(buckets.map(b => b.hasData), [true, true, true, false, false, false, false], 'future days carry no data');
-total = buckets.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
-assert.equal(total, 2 * 24 + 12, 'weekly spend: Mon + Tue + half of Wed');
-assert.equal(win.elapsedMs, 2 * D + 12.5 * H, 'elapsed stops at now, not at the end of the week');
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['9/21', '9/28', '10/5', '10/12', '10/19']);
+assert.deepEqual(buckets.map(b => b.hasData), [true, true, true, true, true]);
+total = sum(buckets);
+assert.equal(total, 4 * 7 * 24 + 2 * 24 + 12, 'weekly spend: four full weeks + Mon, Tue and half of Wed');
+assert.equal(win.elapsedMs, 4 * 7 * D + 2 * D + 12.5 * H, 'elapsed stops at now, not at the end of the week');
 rate = costWindowRunRate(total, win);
+assert.equal(costRunRateUnit(win).label, '/day');
 approx(rate * D, 24, 0.5, 'weekly run-rate is $/day over elapsed time');
-const axis = costAxisLabelsHtml(buckets, win);
-assert.equal((axis.match(/<span>/g) || []).length, 7, 'weekly axis labels every bar');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5, 'weekly axis labels every bar');
+assert.equal(costStepCount(1), true);
+assert.equal(costWindow(NOW).count, 6);
+assert.equal(costWindow(NOW).start, Date.UTC(2026, 8, 14));
+_costCounts.weekly = 5;
 
-// monthly: calendar month, one bar per day, labelled by date.
+// monthly: the current calendar month plus the 4 before it, one bar per
+// month labelled by name. History only reaches 40 days back, so the three
+// oldest months have no data at all.
 setRange('monthly');
 win = costWindow(NOW);
-assert.equal(win.count, 31, 'October has 31 day buckets');
-assert.equal(win.start, Date.UTC(2026, 9, 1));
+assert.equal(win.count, 5, 'monthly bucket count');
+assert.equal(win.bucket, 'month');
+assert.equal(win.start, Date.UTC(2026, 5, 1));
 assert.equal(win.end, Date.UTC(2026, 10, 1));
 buckets = costBuckets(win);
-assert.equal(costBucketAxisLabel(buckets[0], win), '10/1');
-assert.equal(costBucketAxisLabel(buckets[30], win), '10/31');
-assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 3, 'wide charts label first/mid/last');
-total = buckets.filter(b => b.hasData).reduce((s, b) => s + b.spend, 0);
-assert.equal(total, 20 * 24 + 12, 'monthly spend: Oct 1 through now');
-approx(costWindowRunRate(total, win) * D, 24, 0.5, 'monthly run-rate in $/day');
+assert.deepEqual(buckets.map(b => costBucketAxisLabel(b, win)), ['Jun', 'Jul', 'Aug', 'Sep', 'Oct']);
+assert.deepEqual(buckets.map(b => b.hasData), [false, false, false, true, true], 'months before history are uncovered');
+total = sum(buckets);
+assert.equal(total, 40 * 24, 'monthly spend: everything since history began');
+approx(costWindowRunRate(total, win) * D, 40 * 24 / (142 + 12.5 / 24), 0.5, 'monthly run-rate in $/day over the elapsed Jun 1 → now');
+assert.equal((costAxisLabelsHtml(buckets, win).match(/<span>/g) || []).length, 5);
+
+// Daily rollup (from /api/cost) backs buckets older than the snapshots:
+// $10/day for Jun 1 → Sep 10 UTC, every day ending before the first snapshot.
+const roll = [];
+for (let d = Date.UTC(2026, 5, 1); d < Date.UTC(2026, 8, 11); d += D) {
+  roll.push({ day: new Date(d).toISOString().slice(0, 10), cost_usd: 10, input_tokens: 1000, output_tokens: 100, samples: 288 });
+}
+// A day the snapshots already cover must NOT be double counted, and a day
+// with no samples is not data.
+roll.push({ day: '2026-10-01', cost_usd: 999, samples: 288 });
+roll.push({ day: '2026-05-31', cost_usd: 999, samples: 0 });
+_lastCost = { daily_rollup: roll };
+assert.equal(costHistoryStart(), Date.UTC(2026, 5, 1), 'history starts at the first rollup day');
+buckets = costBuckets(win);
+assert.deepEqual(buckets.map(b => b.hasData), [true, true, true, true, true], 'rollup covers the older months');
+assert.deepEqual(buckets.map(b => b.rollup), [true, true, true, true, false], 'September mixes rollup days and snapshots');
+assert.equal(buckets[0].spend, 300, 'June: 30 rollup days × $10');
+assert.equal(buckets[1].spend, 310, 'July: 31 rollup days × $10');
+// September: rollup Sep 1–10 ($100) + snapshots from Sep 11 12:30 → Oct 1 ($1/hr).
+assert.equal(buckets[3].spend, 100 + Math.floor((Date.UTC(2026, 9, 1) - HIST_START) / H), 'September sums rollup days before the snapshots with the snapshots');
+assert.equal(buckets[4].spend, 20 * 24 + 12, 'October ignores the rollup for a day the snapshots cover');
 
 // custom: hour buckets up to 2 days, day buckets beyond.
+_lastCost = null;
 setRange('custom');
 _costCustom = { start: NOW - 36 * H, end: NOW };
 win = costWindow(NOW);
@@ -139,6 +217,7 @@ assert.equal(win.count, 5);
 assert.equal(costRunRateUnit(win).label, '/day');
 _costCustom = { start: NOW - 2 * D - 1, end: NOW };
 assert.equal(costWindow(NOW).bucket, 'day', 'just over 2 days switches to day buckets');
+assert.equal(costStepCount(1), false, 'custom has no stepper');
 
 // Run-rate guards.
 assert.equal(costWindowRunRate(0, win), null, 'no spend → no run-rate');
@@ -147,14 +226,32 @@ assert.equal(costWindowRunRate(5, { elapsedMs: 0 }), null, 'no elapsed time → 
 // The rendered summary carries both values and the chart switches with the selector.
 setRange('weekly');
 let out = costTrendHtml(NOW);
-assert.match(out, /spend in selected range: <b>\$6[0-9]\.[0-9]{2}<\/b>/, 'weekly summary spend');
+assert.match(out, /spend in selected range: <b>\$73[0-9]\.[0-9]{2}<\/b>/, 'weekly summary spend (4 weeks + 2.5 days at $24/day)');
 assert.match(out, /run-rate: <b>~\$2[34]\.[0-9]{2}\/day<\/b>/, 'weekly run-rate per day');
-assert.equal((out.match(/class="cost-bar( zero)?"/g) || []).length, 7, 'weekly chart has 7 bars');
+assert.equal((out.match(/class="cost-bar( zero)?"/g) || []).length, 5, 'weekly chart has 5 bars');
+assert.match(out, /class="cost-range-step" role="group"/, 'stepper rendered');
+assert.match(out, /data-cost-step="-1"[^>]*aria-label="Shrink weekly window by 1 weeks"/, 'shrink chip labelled');
+assert.match(out, /data-cost-step="1"[^>]*aria-label="Grow weekly window by 1 weeks"/, 'grow chip labelled');
+assert.match(out, /class="cost-range-step-val"[^>]*>5&thinsp;wk</, 'count with unit');
+assert.ok(!out.includes('history starts'), 'no horizon note when every bar is covered');
 setRange('hourly');
 out = costTrendHtml(NOW);
 assert.match(out, /run-rate: <b>~\$[01]\.[0-9]{2}\/hr<\/b>/, 'hourly run-rate per hour');
 assert.equal((out.match(/class="cost-bar( zero)?"/g) || []).length, 24, 'hourly chart has 24 bars');
 assert.ok(!out.includes('(est.)'), 'no run-rate-extrapolated estimate marker');
+assert.match(out, />24&thinsp;h</, 'hourly count');
+// Monthly without a rollup: three hatched no-data bars and a horizon note.
+setRange('monthly');
+out = costTrendHtml(NOW);
+assert.equal((out.match(/class="cost-bar nodata"/g) || []).length, 3, 'months before history draw hatched');
+assert.match(out, /history starts 9\/11/, 'summary names the first data point');
+// Stepper at a bound disables the matching chip.
+_costCounts.monthly = COST_RANGE_COUNT.monthly.max;
+out = costTrendHtml(NOW);
+assert.match(out, /data-cost-step="1"[^>]*disabled/, 'grow disabled at the ceiling');
+assert.ok(!/data-cost-step="-1"[^>]*disabled/.test(out), 'shrink still enabled at the ceiling');
+setRange('custom');
+assert.ok(!costTrendHtml(NOW).includes('cost-range-step'), 'custom range shows no stepper');
 console.log('ok');
 `
 	cmd := exec.Command(node, "-e", script)

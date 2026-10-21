@@ -2745,12 +2745,23 @@
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+    /* −/+ stepper beside the range pills: same pill look, count + unit between */
+    .cost-range-step { display: inline-flex; align-items: center; gap: var(--sp-0); background: color-mix(in srgb, var(--muted) 14%, transparent); border-radius: var(--radius); padding: var(--sp-1); }
+    .cost-range-step button { border: none; background: none; color: var(--muted); font-size: var(--fs-sm); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font-mono); }
+    .cost-range-step button:hover:not(:disabled) { color: var(--text); background: var(--panel); }
+    .cost-range-step button:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
+    .cost-range-step button:disabled { opacity: 0.35; cursor: default; }
+    .cost-range-step-val { min-width: 3.2em; text-align: center; color: var(--text); font-size: var(--fs-xs); font-weight: 600; font-family: var(--font-mono); }
+    .cost-history-start { font-style: italic; }
     .cost-trend-total { font-size: 0.66rem; color: var(--muted); font-family: var(--font-mono); }
     .cost-trend-total b { color: var(--text); font-size: 0.78rem; }
     .cost-bars { display: flex; align-items: flex-end; gap: var(--sp-1); height: 52px; padding-top: var(--sp-2); }
     .cost-bar { flex: 1 1 0; min-width: 2px; background: var(--green); border-radius: 2px 2px 0 0; opacity: 0.8; transition: opacity 0.1s; align-self: flex-end; }
     .cost-bar:hover { opacity: 1; }
     .cost-bar.zero { background: rgba(128,128,128,0.25); }
+    /* No history at all for this bucket (before the first snapshot/rollup): a
+       dim hatch so it cannot be mistaken for a recorded $0. */
+    .cost-bar.nodata { height: 100%; opacity: 0.35; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 45%, transparent) 0 2px, transparent 2px 5px); }
     .cost-bars-wrap { position: relative; }
     /* Centered over the flat bars when a covered window really did spend $0, so
        empty axes never read as a failed render. */
@@ -11550,44 +11561,103 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //
     // Every selector value defines ONE window and ONE bucket size, and the bar
     // chart, "spend in selected range" and the run-rate are all derived from
-    // that same window (costWindow()). Boundaries are in the browser's local
-    // clock, matching the axis labels:
-    //   hourly  — the current clock hour plus the COST_HOURLY_WINDOW_H−1 before
-    //             it (≈ last 24h); one bar per hour, labelled by hour.
-    //   daily   — the last COST_DAILY_WINDOW_DAYS calendar days, today
-    //             included; one bar per day, labelled by weekday.
-    //   weekly  — the current calendar week (Mon → Sun); one bar per day,
-    //             labelled by weekday. Days still ahead draw empty.
-    //   monthly — the current calendar month (1st → last day); one bar per
-    //             day, labelled by date. Days still ahead draw empty.
+    // that same window (costWindow()). Each non-custom range has a COUNT of
+    // buckets — a default, adjusted with the −/+ stepper beside the chips and
+    // remembered per range — and the window is the newest `count` buckets,
+    // the current (partial) one included. Boundaries are in the browser's
+    // local clock, matching the axis labels:
+    //   hourly  — the current clock hour plus the count−1 before it (24 by
+    //             default ≈ last 24h); one bar per hour, labelled by hour.
+    //   daily   — the last `count` calendar days, today included (14 by
+    //             default); one bar per day, labelled by weekday when there
+    //             are 7 or fewer bars and by M/D beyond that.
+    //   weekly  — the current Mon → Sun week plus the count−1 before it (5 by
+    //             default); one bar per week, labelled by its Monday (M/D).
+    //             The part of the current week still ahead draws empty.
+    //   monthly — the current calendar month plus the count−1 before it (5 by
+    //             default); one bar per month, labelled by month name.
     //   custom  — the picked bounds; hourly bars when the span is at most
     //             COST_CUSTOM_HOUR_BUCKET_MAX_MS, daily bars otherwise.
     // The run-rate is spend-in-window ÷ ELAPSED window length (never the part
     // of a calendar week/month still in the future), shown per hour for hourly
-    // bars and per day for daily bars.
+    // bars and per day for every wider bucket.
+    //
+    // Data horizon: the server keeps ~30 days of 5-minute snapshots plus a
+    // per-day rollup (/api/cost daily_rollup, UTC days, kept ~2 years). A
+    // bucket is filled from the snapshots where they reach and from the
+    // rollup for days entirely before the first snapshot; a bucket neither
+    // covers is drawn hatched and the summary says when history starts.
     const COST_HOUR_MS = 3600e3;
     const COST_DAY_MS = 24 * COST_HOUR_MS;
-    const COST_HOURLY_WINDOW_H = 24;
-    const COST_DAILY_WINDOW_DAYS = 7;
     const COST_WEEK_DAYS = 7;
+    const COST_WEEK_MS = COST_WEEK_DAYS * COST_DAY_MS;
+    // Nominal month length, used only for the "bucket/step" tooltip text.
+    const COST_MONTH_NOMINAL_MS = 30 * COST_DAY_MS;
     const COST_CUSTOM_HOUR_BUCKET_MAX_MS = 2 * COST_DAY_MS;
     const COST_CUSTOM_MIN_SPAN_MS = 60e3;
     // Charts with this many bars or fewer label every bar; wider charts label
-    // first / middle / last only.
+    // COST_AXIS_LABEL_SPARSE_COUNT evenly spaced bars (first and last included).
     const COST_AXIS_LABEL_EVERY_BAR_MAX = 7;
+    const COST_AXIS_LABEL_SPARSE_COUNT = 5;
     const COST_WEEKDAY_LABELS = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
+    const COST_MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const COST_RANGES = {
-      // key: { label, bucket } — bucket 'hour' | 'day' | 'auto' (custom: by span)
+      // key: { label, bucket } — bucket 'hour' | 'day' | 'week' | 'month' |
+      // 'auto' (custom: by span)
       hourly:  { label: 'hourly',  bucket: 'hour' },
       daily:   { label: 'daily',   bucket: 'day' },
-      weekly:  { label: 'weekly',  bucket: 'day' },
-      monthly: { label: 'monthly', bucket: 'day' },
+      weekly:  { label: 'weekly',  bucket: 'week' },
+      monthly: { label: 'monthly', bucket: 'month' },
       custom:  { label: 'custom',  bucket: 'auto' }, // bounds come from _costCustom
     };
+    // Per-range bucket counts: default and the stepper's bounds/step, with
+    // the unit shown next to the count ("14 d", "5 wk", …).
+    const COST_RANGE_COUNT = {
+      hourly:  { def: 24, min: 6, max: 72, step: 6, unit: 'h' },
+      daily:   { def: 14, min: 7, max: 60, step: 7, unit: 'd' },
+      weekly:  { def: 5,  min: 2, max: 26, step: 1, unit: 'wk' },
+      monthly: { def: 5,  min: 2, max: 24, step: 1, unit: 'mo' },
+    };
+    const COST_RANGE_STORAGE_KEY = 'hiveCostRange';
+    const COST_RANGE_COUNTS_STORAGE_KEY = 'hiveCostRangeCounts';
     let _costRange = (() => {
-      try { const s = localStorage.getItem('hiveCostRange'); if (s && COST_RANGES[s]) return s; } catch {}
+      try { const s = localStorage.getItem(COST_RANGE_STORAGE_KEY); if (s && COST_RANGES[s]) return s; } catch {}
       return 'daily';
     })();
+    // costClampCount: snap a requested count onto the range's min..max grid.
+    function costClampCount(key, n) {
+      const c = COST_RANGE_COUNT[key];
+      if (!c) return null;
+      if (!Number.isFinite(n)) return c.def;
+      const snapped = c.min + Math.round((n - c.min) / c.step) * c.step;
+      return Math.min(c.max, Math.max(c.min, snapped));
+    }
+    // Chosen bucket count per range, persisted together under one key.
+    let _costCounts = (() => {
+      const out = {};
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(COST_RANGE_COUNTS_STORAGE_KEY) || '{}') || {}; } catch {}
+      for (const k in COST_RANGE_COUNT) out[k] = costClampCount(k, Number(saved[k]));
+      return out;
+    })();
+    function costRangeCount(key) {
+      key = key || _costRange;
+      const c = COST_RANGE_COUNT[key];
+      if (!c) return null;
+      return _costCounts[key] ?? c.def;
+    }
+    // costStepCount: move the active range's count by ±1 step (clamped) and
+    // persist. Returns true when the count changed.
+    function costStepCount(dir, key) {
+      key = key || _costRange;
+      const c = COST_RANGE_COUNT[key];
+      if (!c) return false;
+      const next = costClampCount(key, costRangeCount(key) + Math.sign(dir) * c.step);
+      if (next === costRangeCount(key)) return false;
+      _costCounts[key] = next;
+      try { localStorage.setItem(COST_RANGE_COUNTS_STORAGE_KEY, JSON.stringify(_costCounts)); } catch {}
+      return true;
+    }
     // Custom range bounds (ms since epoch), persisted like the range key.
     let _costCustom = (() => {
       try {
@@ -11603,15 +11673,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Calendar-day stepping (setDate) so DST transitions keep bucket edges on
     // local midnight instead of drifting an hour.
     function costAddDays(ms, n) { const d = new Date(ms); d.setDate(d.getDate() + n); return d.getTime(); }
+    // Calendar-month stepping from a 1st-of-month instant.
+    function costAddMonths(ms, n) { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth() + n, 1).getTime(); }
+    function costStartOfWeek(ms) {
+      const today = costStartOfDay(ms);
+      const sinceMonday = (new Date(today).getDay() + 6) % 7;
+      return costAddDays(today, -sinceMonday);
+    }
+    function costStartOfMonth(ms) { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), 1).getTime(); }
+    // costBucketNext: the boundary one bucket after t.
+    function costBucketNext(t, bucket) {
+      if (bucket === 'day') return costAddDays(t, 1);
+      if (bucket === 'week') return costAddDays(t, COST_WEEK_DAYS);
+      if (bucket === 'month') return costAddMonths(t, 1);
+      return t + COST_HOUR_MS;
+    }
+    function costBucketNominalMs(bucket) {
+      if (bucket === 'day') return COST_DAY_MS;
+      if (bucket === 'week') return COST_WEEK_MS;
+      if (bucket === 'month') return COST_MONTH_NOMINAL_MS;
+      return COST_HOUR_MS;
+    }
 
-    // costBucketEdges: ascending boundaries [start, …, end] stepping one hour or
-    // one calendar day from start; the final bucket is clipped at end.
+    // costBucketEdges: ascending boundaries [start, …, end] stepping one hour,
+    // calendar day, week or month from start; the final bucket is clipped at end.
     function costBucketEdges(start, end, bucket) {
       const edges = [start];
       let t = start;
       while (t < end) {
-        const next = bucket === 'day' ? costAddDays(t, 1) : t + COST_HOUR_MS;
-        t = Math.min(next, end);
+        t = Math.min(costBucketNext(t, bucket), end);
         edges.push(t);
       }
       return edges;
@@ -11624,35 +11714,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function costWindow(now) {
       now = typeof now === 'number' ? now : Date.now();
       const key = _costRange;
+      const n = costRangeCount(key);
       let start, end, bucket;
       if (key === 'custom') {
         start = _costCustom.start;
         end = Math.max(_costCustom.end, start + COST_CUSTOM_MIN_SPAN_MS);
         bucket = (end - start) <= COST_CUSTOM_HOUR_BUCKET_MAX_MS ? 'hour' : 'day';
       } else if (key === 'hourly') {
-        start = costStartOfHour(now) - (COST_HOURLY_WINDOW_H - 1) * COST_HOUR_MS;
+        start = costStartOfHour(now) - (n - 1) * COST_HOUR_MS;
         end = now;
         bucket = 'hour';
       } else if (key === 'daily') {
-        start = costAddDays(costStartOfDay(now), -(COST_DAILY_WINDOW_DAYS - 1));
+        start = costAddDays(costStartOfDay(now), -(n - 1));
         end = now;
         bucket = 'day';
       } else if (key === 'weekly') {
-        const today = costStartOfDay(now);
-        const sinceMonday = (new Date(today).getDay() + 6) % 7;
-        start = costAddDays(today, -sinceMonday);
-        end = costAddDays(start, COST_WEEK_DAYS);
-        bucket = 'day';
+        const thisWeek = costStartOfWeek(now);
+        start = costAddDays(thisWeek, -(n - 1) * COST_WEEK_DAYS);
+        end = costAddDays(thisWeek, COST_WEEK_DAYS);
+        bucket = 'week';
       } else { // monthly
-        const d = new Date(now);
-        start = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
-        end = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
-        bucket = 'day';
+        const thisMonth = costStartOfMonth(now);
+        start = costAddMonths(thisMonth, -(n - 1));
+        end = costAddMonths(thisMonth, 1);
+        bucket = 'month';
       }
       const edges = costBucketEdges(start, end, bucket);
       return {
         key, start, end, bucket,
-        bucketMs: bucket === 'day' ? COST_DAY_MS : COST_HOUR_MS,
+        bucketMs: costBucketNominalMs(bucket),
         edges,
         count: edges.length - 1,
         elapsedMs: Math.max(0, Math.min(now, end) - start),
@@ -11690,6 +11780,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return (_costHistory || [])
         .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
         .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    // Per-day rollups from /api/cost (daily_rollup): [{start, end, spend,
+    // samples}] in ascending order, each UTC day placed on the LOCAL calendar
+    // day of the same date so it lines up with the day/week/month buckets.
+    // Only days with at least one sample count as data.
+    function costDailyRollups() {
+      const raw = (_lastCost && Array.isArray(_lastCost.daily_rollup)) ? _lastCost.daily_rollup : [];
+      const out = [];
+      for (const r of raw) {
+        if (!r || typeof r.day !== 'string' || !(r.samples > 0)) continue;
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.day);
+        if (!m) continue;
+        const start = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+        out.push({ start, end: costAddDays(start, 1), spend: Number(r.cost_usd) || 0, samples: r.samples });
+      }
+      out.sort((a, b) => a.start - b.start);
+      return out;
+    }
+
+    // costHistoryStart: the earliest instant any cost data covers — the first
+    // rollup day or the first snapshot, whichever is older; null with no data.
+    function costHistoryStart() {
+      const hist = costHist();
+      const roll = costDailyRollups();
+      const a = hist.length ? hist[0].timestamp : null;
+      const b = roll.length ? roll[0].start : null;
+      if (a == null) return b;
+      if (b == null) return a;
+      return Math.min(a, b);
     }
 
     const COST_LINEAGE_RESET_FLOOR_USD = 100;
@@ -11791,17 +11911,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return v;
     }
 
-    // costBuckets: returns [{start, end, spend, hasData}] — one per bucket of the
-    // active window (costWindow()). spend is the cumulative-$ delta over the
-    // bucket; 30d of history means older buckets may be uncovered (hasData=false),
-    // as are calendar days still ahead in the weekly/monthly views.
+    // costBuckets: returns [{start, end, spend, hasData, rollup}] — one per
+    // bucket of the active window (costWindow()). spend is the cumulative-$
+    // delta over the bucket from the 5-minute snapshots, plus — for days that
+    // lie entirely before the first snapshot — the per-day rollup. Buckets
+    // neither source reaches stay hasData=false, as do calendar periods still
+    // ahead in the weekly/monthly views. rollup=true marks a bucket that drew
+    // any of its spend from the rollup.
     function costBuckets(win) {
       win = win || costWindow();
       const hist = costHist();
       const buckets = [];
       for (let i = 0; i + 1 < win.edges.length; i++) {
-        buckets.push({ start: win.edges[i], end: win.edges[i + 1], spend: 0, hasData: false });
+        buckets.push({ start: win.edges[i], end: win.edges[i + 1], spend: 0, hasData: false, rollup: false });
       }
+      costApplyRollups(buckets, hist);
       if (hist.length < 2) return buckets;
       // Per-bucket spend = sum of POSITIVE per-model token increments inside the
       // bucket, priced at each model's current effective rate.
@@ -11831,10 +11955,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const covered = costSpendBetween(hist, rate, b.start, b.end, ceiling) != null
           || spans.some(s => s.to > b.start && s.from < b.end);
         if (!covered) continue;
-        b.spend = costSpreadSpendBetween(spans, b.start, b.end, ceiling);
+        b.spend += costSpreadSpendBetween(spans, b.start, b.end, ceiling);
         b.hasData = true;
       }
       return buckets;
+    }
+
+    // costApplyRollups: add rollup days that fall inside a bucket AND end at or
+    // before the first snapshot (so a day the snapshots already cover is never
+    // counted twice).
+    function costApplyRollups(buckets, hist) {
+      const roll = costDailyRollups();
+      if (!roll.length) return;
+      const fineStart = hist.length ? hist[0].timestamp : Infinity;
+      for (const b of buckets) {
+        for (const r of roll) {
+          if (r.start < b.start || r.end > b.end || r.end > fineStart) continue;
+          b.spend += r.spend;
+          b.hasData = true;
+          b.rollup = true;
+        }
+      }
     }
 
     // agentWindowSpend: estimated $ spent by one agent inside the active cost
@@ -11859,26 +12000,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return saw ? spend : null;
     }
 
-    // costBucketAxisLabel: the bar is labelled by the hour/day it COVERS (its
-    // start), in the browser's local clock like the window boundaries.
+    // costBucketAxisLabel: the bar is labelled by the hour/day/week/month it
+    // COVERS (its start), in the browser's local clock like the window
+    // boundaries. Daily charts use weekday names only while every weekday is
+    // unique (≤ 7 bars); wider daily charts label by M/D.
     function costBucketAxisLabel(b, win) {
       win = win || costWindow();
       const d = new Date(b.start);
       const hh = String(d.getHours()).padStart(2, '0');
       const md = `${d.getMonth() + 1}/${d.getDate()}`;
       if (win.key === 'hourly') return hh;
-      if (win.key === 'daily' || win.key === 'weekly') return COST_WEEKDAY_LABELS[d.getDay()];
-      if (win.key === 'monthly') return md;
+      if (win.key === 'daily') return win.count <= COST_WEEK_DAYS ? COST_WEEKDAY_LABELS[d.getDay()] : md;
+      if (win.key === 'weekly') return md;
+      if (win.key === 'monthly') return COST_MONTH_LABELS[d.getMonth()];
       return win.bucket === 'hour' ? `${md} ${hh}h` : md;
     }
 
-    // costAxisLabelsHtml: every bar when there are few (weekday views), else
-    // first / middle / last to avoid crowding.
+    // costAxisLabelsHtml: every bar when there are few, else
+    // COST_AXIS_LABEL_SPARSE_COUNT evenly spaced bars (first and last included)
+    // to avoid crowding.
     function costAxisLabelsHtml(buckets, win) {
       if (!buckets.length) return '';
-      const picks = buckets.length <= COST_AXIS_LABEL_EVERY_BAR_MAX
-        ? buckets
-        : [buckets[0], buckets[Math.floor(buckets.length / 2)], buckets[buckets.length - 1]];
+      let picks = buckets;
+      if (buckets.length > COST_AXIS_LABEL_EVERY_BAR_MAX) {
+        picks = [];
+        const k = COST_AXIS_LABEL_SPARSE_COUNT, n = buckets.length;
+        for (let i = 0; i < k; i++) picks.push(buckets[Math.round(i * (n - 1) / (k - 1))]);
+      }
       return picks.map(b => `<span>${esc(costBucketAxisLabel(b, win))}</span>`).join('');
     }
 
@@ -12097,12 +12245,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return sawWindow ? spend : null;
     }
 
+    // costRangeStepperHtml: the −/+ chips that grow or shrink the active
+    // range's bucket count; hidden for custom (its bounds are explicit).
+    function costRangeStepperHtml() {
+      const c = COST_RANGE_COUNT[_costRange];
+      if (!c) return '';
+      const n = costRangeCount();
+      const label = COST_RANGES[_costRange].label;
+      const unitWord = { h: 'hours', d: 'days', wk: 'weeks', mo: 'months' }[c.unit] || c.unit;
+      return `<div class="cost-range-step" role="group" aria-label="${esc(label)} window size">
+        <button type="button" data-cost-step="-1" aria-label="Shrink ${esc(label)} window by ${c.step} ${esc(unitWord)}" title="−${c.step} ${esc(c.unit)}" ${n <= c.min ? 'disabled' : ''}>−</button>
+        <span class="cost-range-step-val" aria-live="polite" title="Showing the last ${n} ${esc(unitWord)} (${c.min}–${c.max})">${n}&thinsp;${esc(c.unit)}</span>
+        <button type="button" data-cost-step="1" aria-label="Grow ${esc(label)} window by ${c.step} ${esc(unitWord)}" title="+${c.step} ${esc(c.unit)}" ${n >= c.max ? 'disabled' : ''}>+</button>
+      </div>`;
+    }
+
     // `now` is injectable for tests; renders use the wall clock.
     function costTrendHtml(now) {
+      now = typeof now === 'number' ? now : Date.now();
       const win = costWindow(now);
       const pills = Object.keys(COST_RANGES).map(k =>
-        `<button data-cost-range="${k}" class="${k === _costRange ? 'active' : ''}">${COST_RANGES[k].label}</button>`
+        `<button data-cost-range="${k}" class="${k === _costRange ? 'active' : ''}" aria-pressed="${k === _costRange}">${COST_RANGES[k].label}</button>`
       ).join('');
+      const stepper = costRangeStepperHtml();
       let customControls = '';
       if (_costRange === 'custom') {
         // datetime-local wants local wall-clock time without zone suffix.
@@ -12117,9 +12282,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const withData = buckets.filter(b => b.hasData);
       const total = withData.reduce((s, b) => s + b.spend, 0);
       const max = Math.max(...buckets.map(b => b.spend), 0);
+      // Buckets that begin before the earliest recorded data point: the
+      // window extends past the recorded history.
+      const histStart = costHistoryStart();
+      const beforeHistory = histStart == null ? [] : buckets.filter(b => !b.hasData && b.start < now && b.start < histStart);
 
       let body;
-      if (!_costHistory || _costHistory.length < 2 || withData.length === 0) {
+      if (withData.length === 0) {
         // Nothing recorded anywhere in this window — distinct from "recorded and
         // it was $0", which is handled by the overlay below.
         body = `<div class="cost-trend-empty">No cost history recorded for this range — data accrues as agents run.</div>`;
@@ -12127,9 +12296,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const bars = buckets.map(b => {
           // All-zero windows still draw a 2% baseline so the chart reads as
           // "flat at zero" rather than missing (only axis labels visible).
+          const span = `${formatDashboardDateTime(b.start)} → ${formatDashboardDateTime(b.end)}`;
+          if (!b.hasData && b.start < now) {
+            // Hatched full-height placeholder: no history at all here, which is
+            // different from a recorded $0.
+            return `<div class="cost-bar nodata" title="${esc(`${span}: no cost history recorded`)}"></div>`;
+          }
           const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : (b.hasData ? 2 : 0);
           const cls = b.spend > 0 ? 'cost-bar' : 'cost-bar zero';
-          const tip = `${formatDashboardDateTime(b.start)} → ${formatDashboardDateTime(b.end)}: ${fmtUSD(b.spend)}`;
+          const tip = `${span}: ${fmtUSD(b.spend)}${b.rollup ? ' (includes daily rollup)' : ''}`;
           return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
         }).join('');
         // Bare axes with no visible series are indistinguishable from a broken
@@ -12155,12 +12330,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const unit = costRunRateUnit(win);
         rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(rate * unit.ms)}${unit.label}</b>`;
       }
+      // When the window reaches past the recorded history, say where history
+      // starts so the owner knows the earlier bars are blank, not $0.
+      let horizonStr = '';
+      if (beforeHistory.length && histStart != null) {
+        const hd = new Date(histStart);
+        horizonStr = ` &nbsp;·&nbsp; <span class="cost-history-start" title="${esc(`Earliest cost data point: ${fmtCostDateTime(histStart)}. Hatched bars have no recorded history.`)}">history starts ${hd.getMonth() + 1}/${hd.getDate()}${hd.getFullYear() !== new Date(now).getFullYear() ? `/${hd.getFullYear()}` : ''}</span>`;
+      }
       const summaryTitle = `${costRangeTitle(win.start, win.end, win.bucketMs)} · elapsed ${fmtCostDuration(win.elapsedMs)}`;
       return `<div class="cost-trend">
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
+          ${stepper}
           ${customControls}
-          <div class="cost-trend-total" title="${esc(summaryTitle)}">${totalLabel}: <b>${spendStr}</b>${rateStr}</div>
+          <div class="cost-trend-total" title="${esc(summaryTitle)}">${totalLabel}: <b>${spendStr}</b>${rateStr}${horizonStr}</div>
         </div>
         ${body}
       </div>`;
@@ -24917,9 +25100,17 @@ function burnAreaChart() {
       const r = btn.getAttribute('data-cost-range');
       if (!COST_RANGES[r] || r === _costRange) return;
       _costRange = r;
-      try { localStorage.setItem('hiveCostRange', r); } catch {}
+      try { localStorage.setItem(COST_RANGE_STORAGE_KEY, r); } catch {}
       if (_lastCost) renderCost(_lastCost);
       // Agent cards' spend chips follow this selector as their global filter.
+      if (window._lastAgents) renderAgents(window._lastAgents);
+    });
+    // Cost range −/+ stepper: grow or shrink the active range's bucket count.
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-cost-step]');
+      if (!btn || btn.disabled) return;
+      if (!costStepCount(Number(btn.getAttribute('data-cost-step')))) return;
+      if (_lastCost) renderCost(_lastCost);
       if (window._lastAgents) renderAgents(window._lastAgents);
     });
 
