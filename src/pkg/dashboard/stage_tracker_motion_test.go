@@ -260,6 +260,7 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerStripItems"),
+		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),

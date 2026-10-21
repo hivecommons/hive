@@ -204,7 +204,7 @@ assert.ok(tooltip(row).includes('Open · on hold (do-not-merge/hold) · No stage
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', title: 'New report', stage: 0, caption: 'No stage recorded yet', labels: ['needs-triage'], modifiers: ['needs-triage'] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 assert.ok(row.includes('ham-mod-needs-triage">triage needed</span>'), row);
-assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Open</span></li>'), row);
+assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Open<\/span><\/li>/.test(row), row);
 assert.ok(tooltip(row).startsWith('Open No stage recorded yet') && tooltip(row).includes('Flags: triage needed'), tooltip(row));
 
 // 015 triage-needed: the Actionable column lights (not a detour) with the
@@ -212,7 +212,7 @@ assert.ok(tooltip(row).startsWith('Open No stage recorded yet') && tooltip(row).
 // chevron tooltip name the stage; the server already dropped the chip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 13262, kind: 'issue', title: 'Review backlog (security)', stage: 15, author: 'hive-bot', author_kind: 'hive', caption: 'Actionable, but no maintainer has looked at it yet; waiting for triage' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap'], '015 lights the Actionable column: ' + row);
-assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Triage needed</span><svg class="ham-ico ham-actor-ico"') && row.includes('aria-label="Next move: human"'), '015 word + maintainer move: ' + row);
+assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Triage needed<\/span><svg class="ham-ico ham-actor-ico"/.test(row) && row.includes('aria-label="Next move: human"'), '015 word + maintainer move: ' + row);
 assert.ok(!row.includes('ham-detour'), '015 is not a detour');
 assert.ok(strip(row).includes('title="Triage needed — Actionable but no maintainer has looked at it yet · Next move: human"'), 'chevron tooltip names 015: ' + row);
 assert.ok(tooltip(row).startsWith('Triage needed Actionable, but no maintainer has looked at it yet; waiting for triage'), tooltip(row));
@@ -223,7 +223,7 @@ assert.ok(!stageTrackerNeedsAttention({ kind: 'issue', stage: 15 }), '015 is a t
 // A plain 010 row is unchanged by the new stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 12999, kind: 'issue', title: 'Epic', stage: 10 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, 'active', T, T, T, T, 'todo cap']);
-assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Actionable</span></li>'), row);
+assert.ok(/aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-seg-t">Actionable<\/span><\/li>/.test(row), row);
 
 // Issue with exactly one covering PR (only its number known, legacy linked_pr):
 // a single entry whose strip is driven by the PR; with no PR stage it lights
