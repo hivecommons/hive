@@ -1044,6 +1044,15 @@ Notes:
   with `enter` to switch, `[`/`]` to rank, `s` to cycle the strategy, `e` to enable/disable and
   `a`/`d`/`r` to add, remove and rename. It calls these same functions, so
   either surface leaves the files in the same state.
+- **The contribution tree is in the TUI too.** In the Hives overlay, `t` opens the
+  same Hub → Hive → Repository tree as `hivectl hives web`, with the same staged
+  edits, diff and Saved / Relay reload / Acknowledged receipt. `space` selects,
+  `x` excludes or clears an exclusion, `f` follows, `e` enables, `R` reviews and
+  restricts a legacy profile, `/` searches (keeping ancestry), `A` reviews and
+  applies, `D` discards and `ctrl+r` refreshes without losing staged edits. Hub
+  and Hive actions show affected counts before staging. Nothing is written until
+  Apply; a review whose profiles changed elsewhere must be discarded and reviewed
+  again, and leaving or quitting with unapplied edits asks first.
 - **Disable instead of removing a hive to pause it.** `hivectl hives disable <name>`
   (or `just contribute-hives disable <name>`) preserves its URL, registration token,
   contributor ID and rank. `enable <name>` restores eligibility without registration

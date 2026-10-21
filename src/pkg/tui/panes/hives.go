@@ -85,6 +85,9 @@ type HivesOverlay struct {
 	// escQuits is set by the hives-only entry, where the overlay is the whole
 	// program rather than a modal above the operator grid.
 	escQuits bool
+
+	// tree is the contribution tree's state; see hives_tree.go.
+	tree hivesTreeState
 }
 
 // HiveRow is one hive as the overlay draws it.
@@ -122,6 +125,9 @@ const (
 	// hivesModeRename is the single-field rename form.
 	hivesModeRename
 	hivesModeRepo
+	// hivesModeTree is the staged contribution tree (#13291). Its keys are
+	// bindings, not text, except while its search field is open.
+	hivesModeTree
 )
 
 // HivesActionKind names the mutation the app should perform.
@@ -186,7 +192,8 @@ func (o HivesOverlay) Pending() bool { return o.pending }
 //
 // The app routes rune presses to Type only while this is true, which is what
 // makes `a`, `d` and `r` bindings on the list and literal characters inside a
-// hive name.
+// hive name. The contribution tree also reports true: its letters are its own
+// bindings, so none of them may fall through to the program's quit keys.
 func (o HivesOverlay) Typing() bool { return o.mode != hivesModeList }
 
 // Rows returns the hives currently on screen, in the order they are drawn.
@@ -668,6 +675,8 @@ func (o HivesOverlay) bodyText(contentWidth int) string {
 	switch {
 	case o.pending:
 		return o.pendingWhat + "…"
+	case o.mode == hivesModeTree:
+		return o.treeBody(contentWidth)
 	case o.mode == hivesModeAdd:
 		return o.addBody()
 	case o.mode == hivesModeRemove:
@@ -996,6 +1005,8 @@ func (o HivesOverlay) footer() string {
 	}
 	keys := ""
 	switch {
+	case o.mode == hivesModeTree:
+		keys = o.treeFooter()
 	case o.pending:
 		// No cancel offered while pending: the write is already under way and
 		// closing the overlay would neither undo it nor show its result.
@@ -1011,7 +1022,7 @@ func (o HivesOverlay) footer() string {
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		keys = "j/k move  [/] rank  s strategy  e toggle  x repo  enter use  a/d/r edit  " + closeHint
+		keys = "j/k move  [/] rank  s strategy  e toggle  x repo  enter use  a/d/r edit  t tree  " + closeHint
 	default:
 		keys = "a add  " + closeHint
 	}

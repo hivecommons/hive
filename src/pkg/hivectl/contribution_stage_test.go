@@ -15,29 +15,15 @@ import (
 )
 
 const (
-	stageRepoA  = "github/github.com/org/a"
-	stageRepoB  = "github/github.com/org/b"
-	stageHubOne = "https://one.example"
-	stageHubTwo = "https://two.example"
+	stageRepoA  = ContributionFixtureRepoA
+	stageRepoB  = ContributionFixtureRepoB
+	stageHubOne = ContributionFixtureHubOne
+	stageHubTwo = ContributionFixtureHubTwo
 )
 
+// stageFixture is the shared fixture every tree surface's tests also use.
 func stageFixture() (*ProfileSet, []TreeHubSnapshot, map[string]TreeRepositorySnapshot) {
-	set := &ProfileSet{Version: ProfilesVersion, Active: "alpha", Profiles: []Profile{
-		{Name: "alpha", Hub: "wss://alpha.example/contribute?token=endpoint-secret", RegistrationToken: "registration-secret", Selection: &RepositorySelection{Mode: SelectionSelected}},
-		{Name: "beta", Hub: "wss://beta.example/contribute", RegistrationToken: "other-secret", Selection: &RepositorySelection{Mode: SelectionSelected}},
-	}, Hubs: []HubEntry{
-		{Name: "one", URL: stageHubOne, Follow: HubFollowCurrentAndFutureRepos},
-		{Name: "two", URL: stageHubTwo, Follow: HubFollowCurrent},
-	}}
-	hubs := []TreeHubSnapshot{
-		{Name: "one", URL: stageHubOne, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example", "https://beta.example"}},
-		{Name: "two", URL: stageHubTwo, Discovery: TreeComplete, HiveOrigins: []string{"https://alpha.example"}},
-	}
-	repos := map[string]TreeRepositorySnapshot{
-		"alpha": {Discovery: TreeComplete, Repositories: []string{stageRepoA, stageRepoB}},
-		"beta":  {Discovery: TreeComplete, Repositories: []string{stageRepoA, stageRepoB}},
-	}
-	return set, hubs, repos
+	return ContributionStageFixture()
 }
 
 func mustStage(t *testing.T, set *ProfileSet, hubs []TreeHubSnapshot, repos map[string]TreeRepositorySnapshot) *StagedEdits {

@@ -344,6 +344,11 @@ type model struct {
 	// hives.go for why it goes through pkg/hivectl rather than the API client.
 	hivesEnv hivesEnv
 
+	// hivesTree is the contribution tree's staged review session (#13291),
+	// non-nil while the tree mode of the Hives overlay has loaded one. Its
+	// edits live only in memory until Apply.
+	hivesTree *hivesTreeSession
+
 	// actionSeq identifies each confirmed HTTP call. Agent and verb alone are
 	// not enough: an operator can dismiss an in-flight request and open the
 	// same action again, and the first response must not close the new modal.
@@ -713,6 +718,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleHivesProbe(msg)
 	case hivesActionMsg:
 		return m.handleHivesAction(msg)
+	case hivesTreeLoadedMsg:
+		return m.handleHivesTreeLoaded(msg)
+	case hivesTreeAppliedMsg:
+		return m.handleHivesTreeApplied(msg)
 	case attachReadyMsg:
 		if msg.err != nil {
 			m.attachPending = false
@@ -915,6 +924,10 @@ func (m model) updateHivesOnly(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleHivesProbe(msg)
 	case hivesActionMsg:
 		return m.handleHivesAction(msg)
+	case hivesTreeLoadedMsg:
+		return m.handleHivesTreeLoaded(msg)
+	case hivesTreeAppliedMsg:
+		return m.handleHivesTreeApplied(msg)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":

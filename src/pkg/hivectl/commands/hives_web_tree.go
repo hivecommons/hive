@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
-	"github.com/spf13/cobra"
 )
 
 // Each tab reviews a private frozen snapshot. The opaque session ID and edit
@@ -64,47 +63,10 @@ func (s *commonsWebServer) reviewSet() (*hivectl.ProfileSet, error) {
 	return set, nil
 }
 
-// Refresh uses the existing public discovery adapters without credentials,
-// registrations, follow-driven enrollment, or writes. Saved hub membership
-// survives an outage; repository outages remain explicitly incomplete.
+// Refresh uses the shared public discovery adapters; see
+// hivectl.DiscoverContributionTree.
 func discoverCommonsTree(ctx context.Context, set *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	hubs := savedCommonsHubs(set)
-	for i, h := range set.Hubs {
-		advertised, err := hivectl.DiscoverHubHives(ctx, &http.Client{Timeout: 10 * time.Second}, h.URL)
-		if err != nil {
-			hubs[i].Discovery = hivectl.TreeUnavailable
-			continue
-		}
-		hubs[i].Discovery = hivectl.TreeComplete
-		hubs[i].HiveOrigins = nil
-		for _, hive := range advertised {
-			hubs[i].HiveOrigins = append(hubs[i].HiveOrigins, hive.ID)
-		}
-	}
-	repos := make(map[string]hivectl.TreeRepositorySnapshot)
-	cmd := &cobra.Command{}
-	cmd.SetContext(ctx)
-	env := &commandEnv{options: &rootOptions{timeout: 10 * time.Second}}
-	for _, p := range set.Profiles {
-		ids, err := discoverSelectionRepositories(cmd, p.Hub, env)
-		state := hivectl.TreeComplete
-		if err != nil {
-			state = hivectl.TreeUnavailable
-			ids = nil
-		}
-		repos[p.Name] = hivectl.TreeRepositorySnapshot{Discovery: state, Repositories: ids}
-	}
-	return hubs, repos
-}
-
-func savedCommonsHubs(set *hivectl.ProfileSet) []hivectl.TreeHubSnapshot {
-	var hubs []hivectl.TreeHubSnapshot
-	for _, h := range set.Hubs {
-		hubs = append(hubs, hivectl.TreeHubSnapshot{Name: h.Name, URL: h.URL, Follow: h.EffectiveFollow(), HiveOrigins: append([]string(nil), h.Reviewed...)})
-	}
-	return hubs
+	return hivectl.DiscoverContributionTree(ctx, set, 10*time.Second)
 }
 
 func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +96,7 @@ func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
 		writeCommonsError(w, err)
 		return
 	}
-	hubs, repos := savedCommonsHubs(set), map[string]hivectl.TreeRepositorySnapshot(nil)
+	hubs, repos := hivectl.SavedTreeHubs(set), map[string]hivectl.TreeRepositorySnapshot(nil)
 	if r.URL.Query().Get("discover") == "1" {
 		hubs, repos = s.discover(r.Context(), set)
 	}

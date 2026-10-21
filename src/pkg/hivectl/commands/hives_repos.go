@@ -1,9 +1,7 @@
 package commands
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -143,47 +141,7 @@ func reloadHivesAfterEdit(cmd *cobra.Command, deps *hivesDeps) error {
 // Discovery is public. Never attach the saved registration token or turn an
 // error/unsupported endpoint into an empty snapshot or a wildcard.
 func discoverSelectionRepositories(cmd *cobra.Command, hub string, env *commandEnv) ([]string, error) {
-	base, err := hivectl.HubHTTPBase(hub)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, strings.TrimRight(base, "/")+"/api/contribute/repositories", nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{Timeout: env.options.timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("repository discovery unavailable; selection unchanged: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("repository discovery returned HTTP %d; selection unchanged", response.StatusCode)
-	}
-	var payload struct {
-		Repositories *[]struct {
-			ID string `json:"id"`
-		} `json:"repositories"`
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<20))
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("invalid repository discovery; selection unchanged: %w", err)
-	}
-	if payload.Repositories == nil {
-		return nil, fmt.Errorf("repository discovery omitted repositories; selection unchanged")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, fmt.Errorf("invalid trailing repository discovery data; selection unchanged")
-	}
-	repos := make([]string, 0, len(*payload.Repositories))
-	for _, repo := range *payload.Repositories {
-		id, err := hivectl.NormalizeRepositoryID(repo.ID)
-		if err != nil {
-			return nil, err
-		}
-		repos = append(repos, id)
-	}
-	return repos, nil
+	return hivectl.DiscoverHiveRepositories(cmd.Context(), &http.Client{Timeout: env.options.timeout}, hub)
 }
 
 type repoSelectionRow struct {
