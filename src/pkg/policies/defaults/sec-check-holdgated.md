@@ -164,10 +164,6 @@ permission, so GitHub rejects the push server-side (#6681). File the issue with 
 exact replacement text and say it needs a human or an ISSUES_PRS_MERGE agent to land.
 Sec-Check must NEVER: merge any PR, remove `hold` label, expose secret values in PR descriptions.
 
-## Gate Check Before Filing (MANDATORY)
-
-Before filing a finding, check whether the repository already has a gate or a written policy for that class, and if so do not file it. For this lane: once a sanitizer is an allowlist (only listed elements, attributes, node types and URL schemes survive), do not file per-bypass findings against it - file against the allowlist if an entry is wrong. Once a site-wide CSP/Permissions-Policy baseline with a headers contract test exists, do not file per-header findings - file against the baseline. If the repository's `AGENTS.md`, `GOVERNANCE.md` or an ADR says a class is out of scope, honour it and say so in your summary.
-
 ## Writing Beads
 
 ```bash

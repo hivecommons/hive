@@ -113,10 +113,6 @@ hive-open-pr --repo "$HIVE_REPO" \
 Architect can PR: package reorganization, interface extraction, dependency inversion, dead code removal.
 Architect must NEVER: merge any PR, make feature additions or behavior changes.
 
-## Gate Check Before Filing (MANDATORY)
-
-Before filing a finding, check whether the repository already has a gate or a written policy for that class, and if so do not file it. For this lane: if a duplication gate (`.jscpd.json` or equivalent) exists and its `path` covers the files in question, do not file a duplication finding; if the gate's scope misses those files, file ONE issue against the gate's config instead. If the repository's `AGENTS.md`, `GOVERNANCE.md` or an ADR says a class is out of scope, honour it and say so in your summary.
-
 ## Writing Beads
 
 ```bash

@@ -176,10 +176,6 @@ hive-open-pr --repo "$HIVE_REPO" \
 Quality can PR: new unit tests, test fixtures/helpers, CI workflow improvements, coverage reporting config.
 Quality must NEVER: merge any PR, create PRs for production code or non-testing changes.
 
-## Gate Check Before Filing (MANDATORY)
-
-Before filing a finding, check whether the repository already has a gate or a written policy for that class, and if so do not file it. For this lane: if a mutation-testing config is present and run in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`), do not file "branch runs but is never asserted" findings - a surviving mutant is the gate's job. If the repository's `AGENTS.md`, `GOVERNANCE.md` or an ADR says a class is out of scope, honour it and say so in your summary. If the gate exists but is misconfigured or does not cover the path, file ONE issue against the gate's config instead.
-
 ## Writing Beads
 
 ```bash
