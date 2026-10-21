@@ -1321,6 +1321,15 @@
     /* Sound toggle (merge zap + new-item buzz): a speaker chip at the toolbar's far end; pressed = on. */
     .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
     .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
+    /* Settings modal rows: one per sound — label, current clip, actions. */
+    .ham-sound-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--border); font-size: var(--fs-xs); }
+    .ham-sound-row-label { color: var(--text); font-weight: 600; flex: 1 1 14rem; }
+    .ham-sound-name { color: var(--muted); max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ham-sound-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-left: auto; }
+    .ham-sound-file { position: relative; overflow: hidden; cursor: pointer; }
+    .ham-sound-file input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .ham-sound-help { font-size: var(--fs-xs); margin: var(--sp-0); }
+    .ham-sound-volume-value { color: var(--text); font-variant-numeric: tabular-nums; }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
@@ -6611,6 +6620,15 @@
        test can run it; guarded by stage_tracker_ui_test.go. -->
   <div class="mt-6 mb-8" id="activity-monitor-section" data-dashboard-section="activity-monitor-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="activity-monitor-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Hive activity monitor section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Hive activity monitor</h2>
+    <div class="config-overlay hidden" id="activity-monitor-settings-overlay">
+      <div class="config-modal overview-settings-modal" id="activity-monitor-settings" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-settings-title">
+        <div class="config-header">
+          <h2 class="config-title" id="activity-monitor-settings-title">Hive activity monitor settings</h2>
+          <button type="button" class="config-close" data-action="closeStageTrackerSettings" aria-label="Close Hive activity monitor settings">&times;</button>
+        </div>
+        <div class="config-body overview-settings-body" id="activity-monitor-settings-body"></div>
+      </div>
+    </div>
     <div class="section-body">
       <div class="ham-toolbar" id="activity-monitor-toolbar">
         <span class="ham-chips" role="group" aria-label="Item kind">
@@ -7812,7 +7830,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
-      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items' },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items', actionIds: ['activity-monitor-settings'], settingsHtml: sectionSettingsGear('Hive activity monitor', 'toggleStageTrackerSettings', 'Configure Hive activity monitor sounds — open buzz, merge zap, your own WAV files, volume', ' aria-haspopup="true" aria-expanded="false" aria-controls="activity-monitor-settings"') },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -13673,6 +13691,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_BUZZ_TREMOLO_DEPTH = 0.45;
     const STAGE_TRACKER_BUZZ_LOWPASS_HZ = 900;
     const STAGE_TRACKER_BUZZ_ATTACK_S = 0.015;
+    // User-supplied clips (settings modal): one per event, kept in
+    // IndexedDB as raw bytes and decoded on the AudioContext when it exists.
+    const STAGE_TRACKER_VOLUME_KEY = 'hive.tracker.sound.volume';
+    const STAGE_TRACKER_VOLUME_MAX = 100;
+    const STAGE_TRACKER_VOLUME_DEFAULT = 100;
+    const STAGE_TRACKER_CLIP_DB = 'hive-tracker-sounds';
+    const STAGE_TRACKER_CLIP_STORE = 'clips';
+    const STAGE_TRACKER_CLIP_MAX_BYTES = 4 * 1024 * 1024;
+    const STAGE_TRACKER_CLIP_PREVIEW_GAP_S = 0.12;
+    const STAGE_TRACKER_SOUND_KINDS = Object.freeze({
+      open: { label: 'Open sound', builtin: 'Built-in (bee buzz)', event: 'a new issue or pull request appears' },
+      merge: { label: 'Merge sound', builtin: 'Built-in (zapper)', event: 'a pull request merges' },
+    });
     var _stageTrackerMergeState = null;
     var _stageTrackerZapped = {};
     var _stageTrackerOpenState = null;
@@ -13680,6 +13711,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerAudioCtx = null;
     var _stageTrackerSoundOn = false;
     var _stageTrackerSoundPrimed = false;
+    var _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT;
+    // kind → { name, bytes (ArrayBuffer), buffer (AudioBuffer|null), failed }
+    var _stageTrackerClips = { open: null, merge: null };
+    var _stageTrackerSettingsReturnFocus = null;
 
     function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
     function stageTrackerItemKey(it) { return (it.repo || '') + '/' + (it.kind || '') + '#' + (Number(it.number) || 0); }
@@ -13733,8 +13768,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerMergeState = next;
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
-      if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
+      if (stageTrackerSoundGate()) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
+    // A closed issue is not an event the tracker payload carries today
+    // (items only ever list open work and the audit side list is pr_merged
+    // only); when a recently_closed list lands, mark those issue keys true
+    // in stageTrackerMergeState and they will zap through the same path.
+
+    // Pure: the master toggle and a visible tab gate every automatic play.
+    function stageTrackerSoundGate() { return !!_stageTrackerSoundOn && !document.hidden; }
 
     // Pure: item key → true for every issue and PR one payload lists.
     function stageTrackerOpenKeys(d) {
@@ -13758,13 +13800,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       _stageTrackerOpenState = next;
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerBuzzed[k] = true; });
-      if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayBuzz(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
+      if (stageTrackerSoundGate()) stageTrackerPlayBuzz(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
 
     function stageTrackerAudioContext() {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
-      if (!_stageTrackerAudioCtx) { try { _stageTrackerAudioCtx = new AC(); } catch { return null; } }
+      if (!_stageTrackerAudioCtx) { try { _stageTrackerAudioCtx = new AC(); } catch { return null; } stageTrackerDecodeClips(); }
       if (_stageTrackerAudioCtx.state === 'suspended') { try { _stageTrackerAudioCtx.resume(); } catch {} }
       return _stageTrackerAudioCtx;
     }
@@ -13858,12 +13900,238 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch { return false; }
     }
 
-    function stageTrackerPlayZap(count, startOffsetS) {
-      return stageTrackerPlayVoices(stageTrackerZapVoice, count, STAGE_TRACKER_SOUND_MASTER_GAIN, startOffsetS);
+    // Pure: a voice that plays one decoded clip.
+    function stageTrackerClipVoice(buffer) {
+      return function(ctx, out, at) {
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(out);
+        src.start(at);
+      };
     }
 
-    function stageTrackerPlayBuzz(count, startOffsetS) {
-      return stageTrackerPlayVoices(stageTrackerBuzzVoice, count, STAGE_TRACKER_BUZZ_MASTER_GAIN, startOffsetS);
+    // Pure: the voice for an event — the user's decoded clip when there is
+    // one, else the built-in synth (also the fallback when a stored clip
+    // failed to decode).
+    function stageTrackerVoiceFor(kind, clips) {
+      const clip = clips && clips[kind];
+      if (clip && clip.buffer) return stageTrackerClipVoice(clip.buffer);
+      return kind === 'merge' ? stageTrackerZapVoice : stageTrackerBuzzVoice;
+    }
+
+    // Pure: the master gain for an event at a 0–100 volume. Built-in voices
+    // keep their relative loudness; a clip plays at the volume alone.
+    function stageTrackerGainFor(kind, clips, volume) {
+      const v = Math.max(0, Math.min(Number(volume) || 0, STAGE_TRACKER_VOLUME_MAX)) / STAGE_TRACKER_VOLUME_MAX;
+      const clip = clips && clips[kind];
+      if (clip && clip.buffer) return v;
+      return (kind === 'merge' ? STAGE_TRACKER_SOUND_MASTER_GAIN : STAGE_TRACKER_BUZZ_MASTER_GAIN) * v;
+    }
+
+    function stageTrackerPlaySound(kind, count, startOffsetS) {
+      return stageTrackerPlayVoices(stageTrackerVoiceFor(kind, _stageTrackerClips), count, stageTrackerGainFor(kind, _stageTrackerClips, _stageTrackerVolume), startOffsetS);
+    }
+    function stageTrackerPlayZap(count, startOffsetS) { return stageTrackerPlaySound('merge', count, startOffsetS); }
+    function stageTrackerPlayBuzz(count, startOffsetS) { return stageTrackerPlaySound('open', count, startOffsetS); }
+
+    // Length of what plays for kind once, for sequencing the test plays.
+    function stageTrackerSoundLengthS(kind) {
+      const clip = _stageTrackerClips[kind];
+      if (clip && clip.buffer) return Number(clip.buffer.duration) || 0;
+      return kind === 'merge' ? STAGE_TRACKER_ZAP_S : STAGE_TRACKER_BUZZ_S;
+    }
+    function stageTrackerPlayTest() {
+      stageTrackerPlayZap(1);
+      stageTrackerPlayBuzz(1, stageTrackerSoundLengthS('merge') + STAGE_TRACKER_CLIP_PREVIEW_GAP_S);
+    }
+
+    /* ---- Clip storage (IndexedDB) ---- */
+    function stageTrackerClipDB() {
+      return new Promise((resolve, reject) => {
+        const idb = window.indexedDB;
+        if (!idb) { reject(new Error('IndexedDB unavailable')); return; }
+        let req;
+        try { req = idb.open(STAGE_TRACKER_CLIP_DB, 1); } catch (e) { reject(e); return; }
+        req.onupgradeneeded = () => { req.result.createObjectStore(STAGE_TRACKER_CLIP_STORE); };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+      });
+    }
+    function stageTrackerClipTx(mode, run) {
+      return stageTrackerClipDB().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STAGE_TRACKER_CLIP_STORE, mode);
+        const store = tx.objectStore(STAGE_TRACKER_CLIP_STORE);
+        const req = run(store);
+        tx.oncomplete = () => { db.close(); resolve(req && req.result); };
+        tx.onerror = () => { db.close(); reject(tx.error || new Error('IndexedDB transaction failed')); };
+        tx.onabort = tx.onerror;
+      }));
+    }
+    function stageTrackerClipsLoad() {
+      return stageTrackerClipTx('readonly', store => store.getAll ? store.getAll() : null).then(rows => {
+        // Rows carry their kind; fall back to a per-kind get on old engines.
+        const list = Array.isArray(rows) ? rows : [];
+        for (const row of list) if (row && STAGE_TRACKER_SOUND_KINDS[row.kind] && row.bytes) _stageTrackerClips[row.kind] = { name: String(row.name || 'clip'), bytes: row.bytes, buffer: null, failed: false };
+      }).catch(() => {});
+    }
+    function stageTrackerClipSave(kind, name, bytes) {
+      return stageTrackerClipTx('readwrite', store => store.put({ kind, name, bytes }, kind));
+    }
+    function stageTrackerClipDelete(kind) {
+      return stageTrackerClipTx('readwrite', store => store.delete(kind));
+    }
+
+    // Decode every stored clip that has bytes but no buffer yet. A clip
+    // that fails to decode is marked so the synth plays instead and the
+    // modal says why.
+    function stageTrackerDecodeClips() {
+      const ctx = _stageTrackerAudioCtx;
+      if (!ctx || typeof ctx.decodeAudioData !== 'function') return;
+      for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) {
+        const clip = _stageTrackerClips[kind];
+        if (!clip || clip.buffer || clip.failed || clip.decoding || !clip.bytes) continue;
+        clip.decoding = true;
+        let p;
+        try { p = ctx.decodeAudioData(clip.bytes.slice(0)); } catch (e) { p = Promise.reject(e); }
+        Promise.resolve(p).then(buf => { clip.buffer = buf; }, () => {
+          clip.failed = true;
+          showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ': "' + clip.name + '" could not be decoded — playing the built-in sound instead.', 'error');
+        }).then(() => { clip.decoding = false; stageTrackerRenderSettings(); });
+      }
+    }
+
+    /* ---- Settings modal ---- */
+    function stageTrackerSettingsGearButton() {
+      return document.querySelector('[data-action="toggleStageTrackerSettings"]');
+    }
+    function stageTrackerSettingsFocusables() {
+      const dialog = document.getElementById('activity-monitor-settings');
+      if (!dialog) return [];
+      return Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter(el => !el.disabled && el.offsetParent !== null);
+    }
+    function stageTrackerClipStatusText(kind) {
+      const clip = _stageTrackerClips[kind];
+      if (!clip) return STAGE_TRACKER_SOUND_KINDS[kind].builtin;
+      if (clip.failed) return clip.name + ' (could not decode — built-in plays)';
+      if (!clip.buffer) return clip.name + ' (decodes on first play)';
+      return clip.name;
+    }
+    // Pure: the modal body for the current state.
+    function stageTrackerSettingsHtml(state) {
+      const on = !!state.on;
+      const vol = Math.max(0, Math.min(Number(state.volume) || 0, STAGE_TRACKER_VOLUME_MAX));
+      const rows = Object.keys(STAGE_TRACKER_SOUND_KINDS).map(kind => {
+        const k = STAGE_TRACKER_SOUND_KINDS[kind];
+        const custom = !!(state.clips && state.clips[kind]);
+        return `<div class="ham-sound-row" data-sound-kind="${esc(kind)}"><span class="ham-sound-row-label">${esc(k.label)}<span class="text-muted"> — ${esc(k.event)}</span></span>`
+          + `<span class="ham-sound-name" title="${esc(state.names[kind])}">${esc(state.names[kind])}</span>`
+          + `<span class="ham-sound-actions"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPreviewSound" data-arg0="${esc(kind)}" data-stop="1">▶ Play</button>`
+          + `<label class="hv-btn btn-sm ham-sound-file">Choose WAV…<input type="file" accept="audio/wav,audio/x-wav,audio/*" data-change-action="stageTrackerUploadSound" data-arg0="${esc(kind)}" data-arg-types="s,t" aria-label="${esc(k.label)} file"></label>`
+          + `<button type="button" class="hv-btn btn-sm" data-action="stageTrackerResetSound" data-arg0="${esc(kind)}" data-stop="1"${custom ? '' : ' disabled'}>Reset to built-in</button></span></div>`;
+      }).join('');
+      return `<div class="overview-settings-section"><div class="overview-settings-card-title">Sounds</div>`
+        + `<div class="overview-settings-grid"><label class="overview-settings-row"><input type="checkbox" data-change-action="stageTrackerSetSoundOn" data-arg-types="c"${on ? ' checked' : ''}>Play sounds</label>`
+        + `<label class="overview-settings-field">Volume <span class="ham-sound-volume-value" id="activity-monitor-volume-value">${vol}</span><input type="range" min="0" max="${STAGE_TRACKER_VOLUME_MAX}" step="1" value="${vol}" data-input-action="stageTrackerSetVolume" data-arg-types="N" aria-label="Volume"></label></div>`
+        + `<p class="ham-sound-help text-muted">Sounds play for every repo this hive governs when the tab is visible. Replace either with your own WAV (or any audio the browser decodes, up to ${Math.round(STAGE_TRACKER_CLIP_MAX_BYTES / (1024 * 1024))} MB); files stay in this browser.</p>`
+        + rows
+        + `<div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPlayTest" data-stop="1">▶ Play both</button></div></div>`;
+    }
+    function stageTrackerRenderSettings() {
+      const body = document.getElementById('activity-monitor-settings-body');
+      if (!body) return;
+      const names = {};
+      for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names }));
+    }
+    function openStageTrackerSettings() {
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      const btn = stageTrackerSettingsGearButton();
+      if (!overlay) return;
+      _stageTrackerSettingsReturnFocus = btn || document.activeElement;
+      stageTrackerRenderSettings();
+      overlay.classList.remove('hidden');
+      hiveRememberModalOpen(overlay);
+      if (btn) btn.setAttribute('aria-expanded', 'true');
+      const focusables = stageTrackerSettingsFocusables();
+      const initial = focusables.find(el => el.classList && el.classList.contains('config-close')) || focusables[0];
+      if (initial) setTimeout(() => initial.focus(), 0);
+    }
+    function closeStageTrackerSettings() {
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (overlay) overlay.classList.add('hidden');
+      const btn = stageTrackerSettingsGearButton();
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+      const ret = _stageTrackerSettingsReturnFocus || btn;
+      _stageTrackerSettingsReturnFocus = null;
+      if (ret && ret.focus) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+    }
+    function toggleStageTrackerSettings() {
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (!overlay) return;
+      if (overlay.classList.contains('hidden')) openStageTrackerSettings();
+      else closeStageTrackerSettings();
+    }
+    document.addEventListener('click', function(e) {
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (overlay && e.target === overlay) closeStageTrackerSettings();
+    });
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Tab') return;
+      const overlay = document.getElementById('activity-monitor-settings-overlay');
+      if (!overlay || overlay.classList.contains('hidden')) return;
+      const nodes = stageTrackerSettingsFocusables();
+      if (!nodes.length) return;
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }, true);
+
+    /* ---- Settings actions ---- */
+    function stageTrackerSetSoundOn(on) {
+      _stageTrackerSoundOn = !!on;
+      try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
+      stageTrackerSoundSyncButton();
+      stageTrackerRenderSettings();
+      if (_stageTrackerSoundOn) stageTrackerPlayTest();
+    }
+    function stageTrackerSetVolume(v) {
+      _stageTrackerVolume = Math.max(0, Math.min(Math.round(Number(v) || 0), STAGE_TRACKER_VOLUME_MAX));
+      try { localStorage.setItem(STAGE_TRACKER_VOLUME_KEY, String(_stageTrackerVolume)); } catch {}
+      const out = document.getElementById('activity-monitor-volume-value');
+      if (out) out.textContent = String(_stageTrackerVolume);
+    }
+    // Preview plays regardless of the master toggle: the user is auditioning.
+    function stageTrackerPreviewSound(kind) {
+      if (!STAGE_TRACKER_SOUND_KINDS[kind]) return;
+      stageTrackerPlaySound(kind, 1);
+    }
+    function stageTrackerUploadSound(kind, input) {
+      if (!STAGE_TRACKER_SOUND_KINDS[kind] || !input || !input.files || !input.files[0]) return;
+      const file = input.files[0];
+      input.value = '';
+      if (file.size > STAGE_TRACKER_CLIP_MAX_BYTES) {
+        showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ': "' + file.name + '" is ' + Math.round(file.size / (1024 * 1024)) + ' MB; the limit is ' + Math.round(STAGE_TRACKER_CLIP_MAX_BYTES / (1024 * 1024)) + ' MB.', 'error');
+        return;
+      }
+      const read = typeof file.arrayBuffer === 'function' ? file.arrayBuffer() : new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = () => reject(r.error); r.readAsArrayBuffer(file); });
+      read.then(bytes => {
+        _stageTrackerClips[kind] = { name: file.name, bytes, buffer: null, failed: false };
+        stageTrackerRenderSettings();
+        // The upload is a gesture, so the context can be created here and
+        // the clip decoded (and previewed) at once.
+        stageTrackerAudioContext();
+        return stageTrackerClipSave(kind, file.name, bytes).then(() => {
+          showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ' set to "' + file.name + '".', 'success');
+        }, () => {
+          showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ': "' + file.name + '" plays this visit but could not be saved in this browser.', 'warning');
+        });
+      }).catch(() => showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ': could not read "' + file.name + '".', 'error'));
+    }
+    function stageTrackerResetSound(kind) {
+      if (!STAGE_TRACKER_SOUND_KINDS[kind]) return;
+      _stageTrackerClips[kind] = null;
+      stageTrackerRenderSettings();
+      stageTrackerClipDelete(kind).catch(() => {});
     }
 
     function stageTrackerSoundSyncButton() {
@@ -13879,19 +14147,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function stageTrackerSoundInit() {
       try { _stageTrackerSoundOn = localStorage.getItem(STAGE_TRACKER_SOUND_KEY) === '1'; } catch { _stageTrackerSoundOn = false; }
+      try {
+        const v = localStorage.getItem(STAGE_TRACKER_VOLUME_KEY);
+        _stageTrackerVolume = v === null ? STAGE_TRACKER_VOLUME_DEFAULT : Math.max(0, Math.min(Number(v) || 0, STAGE_TRACKER_VOLUME_MAX));
+      } catch { _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT; }
       stageTrackerSoundSyncButton();
       if (_stageTrackerSoundOn) stageTrackerSoundPrime();
+      stageTrackerClipsLoad().then(() => { stageTrackerDecodeClips(); stageTrackerRenderSettings(); });
     }
 
     // Toolbar speaker chip: flips the preference, persists it, and plays one
-    // test zap then one buzz when turning on so the user hears both sounds
-    // they opted into.
-    function hamSoundToggle() {
-      _stageTrackerSoundOn = !_stageTrackerSoundOn;
-      try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
-      stageTrackerSoundSyncButton();
-      if (_stageTrackerSoundOn) { stageTrackerPlayZap(1); stageTrackerPlayBuzz(1, STAGE_TRACKER_ZAP_S + STAGE_TRACKER_SOUND_OFFSET_S); }
-    }
+    // test of each sound when turning on so the user hears what they opted
+    // into.
+    function hamSoundToggle() { stageTrackerSetSoundOn(!_stageTrackerSoundOn); }
 
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
@@ -37519,6 +37787,7 @@ function burnAreaChart() {
       add(document.getElementById('welcome-overlay'), closeWelcomeDialog, 10000);
       add(document.getElementById('config-overlay'), closeConfigDialog, 10000);
       add(document.getElementById('overview-chart-settings-overlay'), closeOverviewChartSettings, 10000);
+      add(document.getElementById('activity-monitor-settings-overlay'), closeStageTrackerSettings, 10000);
       add(document.getElementById('acmm-overlay'), closeACMMDialog, 10000);
       const nousOverlay = document.getElementById('nous-config-overlay');
       add(nousOverlay, function() { if (typeof closeNousConfig === 'function') closeNousConfig(); else nousOverlay.style.display = 'none'; }, 1000);

@@ -106,8 +106,23 @@ func TestStageTrackerMergeSoundWiring(t *testing.T) {
 		`function stageTrackerNoteOpened(d)`,
 		`function hamSoundToggle()`,
 		`if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); }`,
-		`if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayZap(`,
-		`if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayBuzz(`,
+		`if (stageTrackerSoundGate()) stageTrackerPlayZap(`,
+		`if (stageTrackerSoundGate()) stageTrackerPlayBuzz(`,
+		`function stageTrackerSoundGate() { return !!_stageTrackerSoundOn && !document.hidden; }`,
+		`function stageTrackerVoiceFor(kind, clips)`,
+		`function stageTrackerGainFor(kind, clips, volume)`,
+		`ctx.decodeAudioData(clip.bytes.slice(0))`,
+		`id="activity-monitor-settings-overlay"`,
+		`data-action="closeStageTrackerSettings"`,
+		`'toggleStageTrackerSettings'`,
+		`add(document.getElementById('activity-monitor-settings-overlay'), closeStageTrackerSettings, 10000);`,
+		`accept="audio/wav,audio/x-wav,audio/*"`,
+		`data-change-action="stageTrackerUploadSound"`,
+		`data-action="stageTrackerResetSound"`,
+		`data-action="stageTrackerPreviewSound"`,
+		`data-change-action="stageTrackerSetSoundOn"`,
+		`data-input-action="stageTrackerSetVolume"`,
+		`function hamSoundToggle() { stageTrackerSetSoundOn(!_stageTrackerSoundOn); }`,
 		`window.AudioContext || window.webkitAudioContext`,
 		`if (_stageTrackerAudioCtx.state === 'suspended')`,
 		`if (ctx.state === 'suspended') { stageTrackerSoundPrime(); return false; }`,
@@ -152,6 +167,7 @@ func TestStageTrackerNewlyMergedDetector(t *testing.T) {
 		jsFunc(t, html, "stageTrackerCarryOpen"),
 		jsFunc(t, html, "stageTrackerNewlyMerged"),
 		jsFunc(t, html, "stageTrackerNoteMerges"),
+		jsFunc(t, html, "stageTrackerSoundGate"),
 		"var _stageTrackerMergeState = null; var _stageTrackerZapped = {}; var _stageTrackerSoundOn = true;",
 		"const plays = []; function stageTrackerPlayZap(n) { plays.push(n); return true; }",
 	}, "\n") + `
@@ -252,6 +268,7 @@ func TestStageTrackerNewlyOpenedDetector(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOpenKeys"),
 		jsFunc(t, html, "stageTrackerNewlyOpened"),
 		jsFunc(t, html, "stageTrackerNoteOpened"),
+		jsFunc(t, html, "stageTrackerSoundGate"),
 		"var _stageTrackerOpenState = null; var _stageTrackerBuzzed = {}; var _stageTrackerSoundOn = true;",
 		"const plays = []; function stageTrackerPlayBuzz(n) { plays.push(n); return true; }",
 	}, "\n") + `
@@ -363,6 +380,7 @@ func TestStageTrackerSoundsEveryRepo(t *testing.T) {
 		jsFunc(t, html, "stageTrackerOpenKeys"),
 		jsFunc(t, html, "stageTrackerNewlyOpened"),
 		jsFunc(t, html, "stageTrackerNoteOpened"),
+		jsFunc(t, html, "stageTrackerSoundGate"),
 		"var _stageTrackerMergeState = null; var _stageTrackerZapped = {}; var _stageTrackerSoundOn = true;",
 		"var _stageTrackerOpenState = null; var _stageTrackerBuzzed = {};",
 		"const zaps = []; function stageTrackerPlayZap(n) { zaps.push(n); return true; }",
@@ -433,5 +451,216 @@ assert.deepStrictEqual(zaps, [1, 1, 1, 1], 'late short-name entry for a non-prim
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node multi-repo sound fixture failed: %v\n%s", err, out)
+	}
+}
+
+// TestStageTrackerSoundSelection drives the pure sound-selection path under
+// node: an uploaded clip (decoded buffer) is chosen over the synth voice, a
+// clip that failed to decode falls back to the synth, the volume slider
+// scales the master gain for both, and the master toggle silences the
+// automatic plays while the preview still auditions.
+func TestStageTrackerSoundSelection(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		"const window = {}; const document = { hidden: false };",
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_OFFSET_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MASTER_GAIN"),
+		jsConstLine(t, html, "STAGE_TRACKER_BUZZ_MASTER_GAIN"),
+		jsConstLine(t, html, "STAGE_TRACKER_VOLUME_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_VOLUME_DEFAULT"),
+		jsConstLine(t, html, "STAGE_TRACKER_VOLUME_KEY"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_KEY"),
+		jsFunc(t, html, "stageTrackerClipVoice"),
+		jsFunc(t, html, "stageTrackerVoiceFor"),
+		jsFunc(t, html, "stageTrackerGainFor"),
+		jsFunc(t, html, "stageTrackerPlayVoices"),
+		jsFunc(t, html, "stageTrackerPlaySound"),
+		jsFunc(t, html, "stageTrackerPlayZap"),
+		jsFunc(t, html, "stageTrackerPlayBuzz"),
+		jsFunc(t, html, "stageTrackerSoundGate"),
+		jsFunc(t, html, "stageTrackerSetVolume"),
+		jsFunc(t, html, "stageTrackerSetSoundOn"),
+		jsFunc(t, html, "stageTrackerPreviewSound"),
+		jsFunc(t, html, "stageTrackerDecodeClips"),
+		"function stageTrackerZapVoice(ctx, out, at) { out.voices.push('zap'); }",
+		"function stageTrackerBuzzVoice(ctx, out, at) { out.voices.push('buzz'); }",
+		"function stageTrackerSoundPrime() {}",
+		"function stageTrackerSoundSyncButton() {}",
+		"function stageTrackerRenderSettings() {}",
+		"function stageTrackerPlayTest() {}",
+		"const toasts = []; function showToast(m) { toasts.push(m); }",
+		"const STAGE_TRACKER_SOUND_KINDS = { open: { label: 'Open sound' }, merge: { label: 'Merge sound' } };",
+		"var _stageTrackerSoundOn = true; var _stageTrackerVolume = STAGE_TRACKER_VOLUME_DEFAULT; var _stageTrackerClips = { open: null, merge: null };",
+		"const store = {}; const localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };",
+		"document.getElementById = () => null;",
+	}, "\n") + `
+// Fake AudioContext: records the master gain and which voices were scheduled.
+const gains = [];
+const fakeCtx = {
+  state: 'running', currentTime: 0, sampleRate: 48000,
+  createGain() { const g = { gain: { value: 1 }, voices: [], connect() {} }; gains.push(g); return g; },
+  createBufferSource() { return { buffer: null, connect(out) { this.out = out; }, start() { this.out.voices.push('clip:' + this.buffer.id); } }; },
+  destination: {},
+};
+var _stageTrackerAudioCtx = fakeCtx;
+function stageTrackerAudioContext() { return _stageTrackerAudioCtx; }
+const last = () => gains[gains.length - 1];
+
+// Built-ins at full volume.
+assert.strictEqual(stageTrackerPlayZap(1), true);
+assert.deepStrictEqual(last().voices, ['zap']);
+assert.strictEqual(last().gain.value, STAGE_TRACKER_SOUND_MASTER_GAIN);
+assert.strictEqual(stageTrackerPlayBuzz(3), true);
+assert.deepStrictEqual(last().voices, ['buzz', 'buzz'], 'capped at STAGE_TRACKER_SOUND_MAX_PLAYS');
+assert.strictEqual(last().gain.value, STAGE_TRACKER_BUZZ_MASTER_GAIN);
+
+// Uploaded clip (decoded) wins over the synth, at the raw volume.
+const clipBuf = { id: 'zapper.wav', duration: 0.5 };
+assert.strictEqual(stageTrackerVoiceFor('merge', { merge: { buffer: clipBuf } }) === stageTrackerZapVoice, false);
+assert.strictEqual(stageTrackerVoiceFor('merge', { merge: null }), stageTrackerZapVoice);
+assert.strictEqual(stageTrackerVoiceFor('open', {}), stageTrackerBuzzVoice);
+_stageTrackerClips.merge = { name: 'zapper.wav', bytes: new ArrayBuffer(4), buffer: clipBuf, failed: false };
+assert.strictEqual(stageTrackerPlayZap(1), true);
+assert.deepStrictEqual(last().voices, ['clip:zapper.wav']);
+assert.strictEqual(last().gain.value, 1);
+// The other kind is untouched.
+stageTrackerPlayBuzz(1);
+assert.deepStrictEqual(last().voices, ['buzz']);
+
+// Volume scales both built-in and clip gains; persisted; clamped.
+stageTrackerSetVolume(50);
+assert.strictEqual(store[STAGE_TRACKER_VOLUME_KEY], '50');
+stageTrackerPlayZap(1);
+assert.ok(Math.abs(last().gain.value - 0.5) < 1e-9, 'clip at 50% → 0.5');
+stageTrackerPlayBuzz(1);
+assert.ok(Math.abs(last().gain.value - STAGE_TRACKER_BUZZ_MASTER_GAIN * 0.5) < 1e-9, 'synth at 50% → half its master gain');
+stageTrackerSetVolume(250);
+assert.strictEqual(_stageTrackerVolume, STAGE_TRACKER_VOLUME_MAX);
+stageTrackerSetVolume(-3);
+assert.strictEqual(_stageTrackerVolume, 0);
+stageTrackerPlayZap(1);
+assert.strictEqual(last().gain.value, 0);
+assert.strictEqual(stageTrackerGainFor('merge', {}, 'junk'), 0);
+stageTrackerSetVolume(STAGE_TRACKER_VOLUME_MAX);
+
+// Decode failure → synth fallback, one toast.
+_stageTrackerClips.open = { name: 'bad.wav', bytes: new ArrayBuffer(4), buffer: null, failed: false };
+fakeCtx.decodeAudioData = bytes => bytes.byteLength === 4 ? Promise.reject(new Error('EncodingError')) : Promise.resolve({ id: 'ok' });
+stageTrackerDecodeClips();
+setTimeout(() => {
+  assert.strictEqual(_stageTrackerClips.open.failed, true);
+  assert.strictEqual(_stageTrackerClips.open.buffer, null);
+  assert.strictEqual(toasts.length, 1);
+  assert.ok(/bad\.wav/.test(toasts[0]) && /built-in/.test(toasts[0]), toasts[0]);
+  stageTrackerPlayBuzz(1);
+  assert.deepStrictEqual(last().voices, ['buzz'], 'failed clip → synth');
+  assert.strictEqual(last().gain.value, STAGE_TRACKER_BUZZ_MASTER_GAIN);
+
+  // A good clip decodes and is then chosen.
+  _stageTrackerClips.open = { name: 'bee.wav', bytes: new ArrayBuffer(8), buffer: null, failed: false };
+  stageTrackerDecodeClips();
+  setTimeout(() => {
+    assert.strictEqual(_stageTrackerClips.open.buffer.id, 'ok');
+    stageTrackerPlayBuzz(1);
+    assert.deepStrictEqual(last().voices, ['clip:ok']);
+
+    // Master toggle: gate closes, persisted; preview still plays.
+    stageTrackerSetSoundOn(false);
+    assert.strictEqual(stageTrackerSoundGate(), false);
+    assert.strictEqual(store[STAGE_TRACKER_SOUND_KEY], '0');
+    const before = gains.length;
+    stageTrackerPreviewSound('merge');
+    assert.strictEqual(gains.length, before + 1, 'preview ignores the master toggle');
+    stageTrackerPreviewSound('nope');
+    assert.strictEqual(gains.length, before + 1);
+    stageTrackerSetSoundOn(true);
+    assert.strictEqual(stageTrackerSoundGate(), true);
+    document.hidden = true;
+    assert.strictEqual(stageTrackerSoundGate(), false, 'hidden tab is silent');
+    document.hidden = false;
+
+    // Suspended context: nothing scheduled, caller told so.
+    fakeCtx.state = 'suspended';
+    assert.strictEqual(stageTrackerPlayZap(1), false);
+    // No context at all.
+    _stageTrackerAudioCtx = null;
+    assert.strictEqual(stageTrackerPlayZap(1), false);
+    console.log('ok');
+  }, 0);
+}, 0);
+`
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node sound selection fixture failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ok") {
+		t.Fatalf("node sound selection fixture did not reach the end:\n%s", out)
+	}
+}
+
+// TestStageTrackerSoundGateMutesAutomaticPlays runs the real detectors with
+// the master toggle off and asserts neither sound fires, then on again.
+func TestStageTrackerSoundGateMutesAutomaticPlays(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		"const window = {}; const document = { hidden: false };",
+		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
+		jsFunc(t, html, "stageTrackerPRKey"),
+		jsFunc(t, html, "stageTrackerItemKey"),
+		jsFunc(t, html, "stageTrackerMergeState"),
+		jsFunc(t, html, "stageTrackerCarryOpen"),
+		jsFunc(t, html, "stageTrackerNewlyMerged"),
+		jsFunc(t, html, "stageTrackerNoteMerges"),
+		jsFunc(t, html, "stageTrackerOpenKeys"),
+		jsFunc(t, html, "stageTrackerNewlyOpened"),
+		jsFunc(t, html, "stageTrackerNoteOpened"),
+		jsFunc(t, html, "stageTrackerSoundGate"),
+		"var _stageTrackerMergeState = null; var _stageTrackerZapped = {}; var _stageTrackerSoundOn = false;",
+		"var _stageTrackerOpenState = null; var _stageTrackerBuzzed = {};",
+		"const zaps = []; function stageTrackerPlayZap(n) { zaps.push(n); return true; }",
+		"const buzzes = []; function stageTrackerPlayBuzz(n) { buzzes.push(n); return true; }",
+	}, "\n") + `
+const P = (repo, n, stage) => ({ kind: 'pr', repo, number: n, stage });
+const I = (repo, n) => ({ kind: 'issue', repo, number: n, stage: 20 });
+const note = d => { stageTrackerNoteMerges(d); stageTrackerNoteOpened(d); };
+note({ items: [P('hivecommons/hive', 1, 50), P('hivecommons/pluk', 2, 50)] });
+// Muted: a merge and two new items across repos make no sound.
+note({ items: [P('hivecommons/hive', 1, STAGE_TRACKER_TERMINAL), P('hivecommons/pluk', 2, 50), I('hivecommons/pluk', 3), P('fork/hive', 4, 10)] });
+assert.deepStrictEqual(zaps, []);
+assert.deepStrictEqual(buzzes, []);
+// Unmuted: the next merge and new item sound; the muted ones were still noted
+// (no retroactive replay).
+_stageTrackerSoundOn = true;
+note({ items: [P('hivecommons/hive', 1, STAGE_TRACKER_TERMINAL), P('hivecommons/pluk', 2, 50), I('hivecommons/pluk', 3), P('fork/hive', 4, 10)] });
+assert.deepStrictEqual(zaps, []);
+assert.deepStrictEqual(buzzes, []);
+note({ items: [P('hivecommons/pluk', 2, STAGE_TRACKER_TERMINAL), I('hivecommons/pluk', 3), P('fork/hive', 4, 10), I('fork/hive', 5)] });
+assert.deepStrictEqual(zaps, [1]);
+assert.deepStrictEqual(buzzes, [1]);
+// Hidden tab mutes too.
+document.hidden = true;
+note({ items: [P('hivecommons/pluk', 2, STAGE_TRACKER_TERMINAL), I('hivecommons/pluk', 3), P('fork/hive', 4, STAGE_TRACKER_TERMINAL), I('fork/hive', 5), I('fork/hive', 6)] });
+assert.deepStrictEqual(zaps, [1]);
+assert.deepStrictEqual(buzzes, [1]);
+console.log('ok');
+`
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node sound gate fixture failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ok") {
+		t.Fatalf("node sound gate fixture did not reach the end:\n%s", out)
 	}
 }
