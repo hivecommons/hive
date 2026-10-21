@@ -2,9 +2,7 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -151,47 +149,8 @@ func discoverSelectionRepositories(cmd *cobra.Command, hub string, env *commandE
 // discoverRepositoriesWithTimeout is the context-driven form shared by the CLI
 // and the Web/TUI tree surfaces, which have no cobra command in hand.
 func discoverRepositoriesWithTimeout(ctx context.Context, hub string, timeout time.Duration) ([]string, error) {
-	base, err := hivectl.HubHTTPBase(hub)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/contribute/repositories", nil)
-	if err != nil {
-		return nil, err
-	}
 	client := &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("repository discovery unavailable; selection unchanged: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("repository discovery returned HTTP %d; selection unchanged", response.StatusCode)
-	}
-	var payload struct {
-		Repositories *[]struct {
-			ID string `json:"id"`
-		} `json:"repositories"`
-	}
-	decoder := json.NewDecoder(io.LimitReader(response.Body, 4<<20))
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, fmt.Errorf("invalid repository discovery; selection unchanged: %w", err)
-	}
-	if payload.Repositories == nil {
-		return nil, fmt.Errorf("repository discovery omitted repositories; selection unchanged")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, fmt.Errorf("invalid trailing repository discovery data; selection unchanged")
-	}
-	repos := make([]string, 0, len(*payload.Repositories))
-	for _, repo := range *payload.Repositories {
-		id, err := hivectl.NormalizeRepositoryID(repo.ID)
-		if err != nil {
-			return nil, err
-		}
-		repos = append(repos, id)
-	}
-	return repos, nil
+	return hivectl.DiscoverHubRepositories(ctx, client, hub)
 }
 
 type repoSelectionRow struct {

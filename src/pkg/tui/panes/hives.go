@@ -85,6 +85,9 @@ type HivesOverlay struct {
 	// escQuits is set by the hives-only entry, where the overlay is the whole
 	// program rather than a modal above the operator grid.
 	escQuits bool
+
+	// tree is the contribution tree screen's state; see hives_tree.go.
+	tree hiveTreeState
 }
 
 // HiveRow is one hive as the overlay draws it.
@@ -122,6 +125,10 @@ const (
 	// hivesModeRename is the single-field rename form.
 	hivesModeRename
 	hivesModeRepo
+	// hivesModeTree is the Hub → Hive → Repository contribution tree with its
+	// staged edits; hivesModeTreeConfirm is its Apply confirmation.
+	hivesModeTree
+	hivesModeTreeConfirm
 )
 
 // HivesActionKind names the mutation the app should perform.
@@ -187,7 +194,12 @@ func (o HivesOverlay) Pending() bool { return o.pending }
 // The app routes rune presses to Type only while this is true, which is what
 // makes `a`, `d` and `r` bindings on the list and literal characters inside a
 // hive name.
-func (o HivesOverlay) Typing() bool { return o.mode != hivesModeList }
+func (o HivesOverlay) Typing() bool {
+	if o.InTree() {
+		return o.TreeSearching()
+	}
+	return o.mode != hivesModeList
+}
 
 // Rows returns the hives currently on screen, in the order they are drawn.
 func (o HivesOverlay) Rows() []HiveRow { return o.rows }
@@ -680,6 +692,8 @@ func (o HivesOverlay) bodyText(contentWidth int) string {
 		return body
 	case o.mode == hivesModeRename:
 		return o.renameBody()
+	case o.InTree():
+		return o.treeBody(contentWidth)
 	default:
 		return o.listBody(contentWidth)
 	}
@@ -1008,6 +1022,8 @@ func (o HivesOverlay) footer() string {
 		keys = "type repository  enter toggle exclusion  esc cancel"
 	case o.mode == hivesModeRename:
 		keys = "type to edit  backspace edit  enter rename  esc cancel"
+	case o.InTree():
+		return o.treeFooter(closeHint)
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
