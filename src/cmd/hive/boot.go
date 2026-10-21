@@ -83,8 +83,10 @@ type boot struct {
 	// forgeState is the per-repo GitHub state cache the governor work
 	// source reads from when `forgestate.enabled` is on (#13375). Built
 	// once by the first configureGitHubClient and attached to every
-	// rebuilt client after that; forgeStateOnce guards the build.
-	forgeState     *forgestate.Store
+	// rebuilt client after that; forgeStateOnce guards the build. Held in
+	// an atomic because the dashboard's count wiring reads it late, from
+	// the metrics collector goroutine (#13376).
+	forgeState     atomic.Pointer[forgestate.Store]
 	forgeStateOnce sync.Once
 	requestRelays  *requestRelaySupervisor
 

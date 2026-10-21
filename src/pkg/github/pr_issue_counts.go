@@ -24,7 +24,16 @@ type PRIssueCounts struct {
 	Basis        string `json:"basis,omitempty"`
 	WindowStart  string `json:"window_start,omitempty"`
 	Stale        bool   `json:"stale,omitempty"`
-	Status       string `json:"status,omitempty"`
+	// StaleSince is when the counts stopped being confirmed by GitHub (RFC
+	// 3339); set with Stale when the last-good counts are being served so
+	// the dashboard can say "stale since <t>" instead of showing zeros
+	// (hivecommons/hive#13376).
+	StaleSince string `json:"stale_since,omitempty"`
+	Status     string `json:"status,omitempty"`
+	// Source is "search" when the counts came straight from the Search API,
+	// "forgestate" when they are the cache's webhook-maintained counters
+	// (reconciled against search hourly).
+	Source string `json:"source,omitempty"`
 }
 
 // ComputePRIssueCounts fetches the hive-attributed number of merged pull
@@ -97,6 +106,7 @@ func (c *Client) ComputePRIssueCountsForReposSince(ctx context.Context, repos []
 		Basis:        "hive-attributed",
 		WindowStart:  windowStart,
 		Status:       "fresh",
+		Source:       "search",
 	}, nil
 }
 

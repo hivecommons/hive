@@ -45,7 +45,9 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// scope-free (hivecommons/hive#1927), plus pkg/forgestate so the GitHub
 	// webhook handler can stamp the receipt time and record the
 	// webhook.event_to_patch_ms latency sample once the cache patch lands
-	// (hivecommons/hive#13380).
+	// (hivecommons/hive#13380) and so the Overview totals and the
+	// merged/closed cost counters read the ForgeState cache instead of
+	// issuing /search/issues on every cycle (hivecommons/hive#13376).
 	const maxDashboardInternalImports = 54
 
 	entries, err := os.ReadDir(".")

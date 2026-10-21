@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
@@ -378,7 +379,13 @@ func BuildFrontendStatus(
 
 	hiveIDLocked, hiveIDLockReason := hiveIDLockedByHub(cfg)
 
-	repos := buildRepos(cfg, actionable, govState)
+	var forge forgeOpenCounter
+	if metricsCollector != nil {
+		if fc := metricsCollector.ForgeCounts(); fc != nil {
+			forge = fc
+		}
+	}
+	repos := buildReposWithForge(cfg, actionable, govState, forge)
 	payload := &StatusPayload{
 		Timestamp:             time.Now().UTC().Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
@@ -392,8 +399,8 @@ func BuildFrontendStatus(
 		Governor:              buildGovernor(govState, cfg, apiBudgetFromRateLimits(ghRateLimits)),
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
-		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
-		StaleSince:            staleSinceRFC3339(actionable),
+		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
+		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
 		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
 		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:                health,
@@ -2187,7 +2194,81 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 	return out
 }
 
+// forgeOpenCounter is the slice of *forgestate.Counts buildRepos reads: the
+// cache's open issue / PR totals per repo (hivecommons/hive#13376).
+type forgeOpenCounter interface {
+	Open(repo string) (forgestate.OpenCounts, bool)
+}
+
+// overviewStaleSince is the earliest countsStaleSince over repos, or "" when
+// no repo is serving last-good counts. The Overview shows it as "stale since
+// <t>" instead of zeros, and KPI history skips the snapshot.
+func overviewStaleSince(repos []FrontendRepo) string {
+	earliest := ""
+	for _, r := range repos {
+		if !r.CountsStale || r.CountsStaleSince == "" {
+			continue
+		}
+		if earliest == "" || r.CountsStaleSince < earliest {
+			earliest = r.CountsStaleSince
+		}
+	}
+	return earliest
+}
+
+// applyForgeOpenCounts overlays the forgestate cache's open totals on r. The
+// cache is authoritative for how many issues and PRs are open: the
+// enumeration's TotalByRepo is its own (possibly refused) listing, while the
+// cache keeps last-good items through a 403 and removes closed ones on their
+// webhook. When the enumeration classified fewer items than the cache holds,
+// the difference lands in the breakdown's Other bucket so the Overview's
+// partition still sums to the total; the cache can never lower a bucket the
+// enumeration actually saw. A repo whose cache is not ready yet is left as
+// the enumeration reported it.
+func applyForgeOpenCounts(r *FrontendRepo, open forgestate.OpenCounts) bool {
+	if !open.Ready {
+		return false
+	}
+	r.Issues = open.Issues
+	r.PRs = open.PRs
+	if r.WorkBreakdown != nil {
+		wb := *r.WorkBreakdown
+		classified := wb.Issues.Total() - wb.Issues.Other
+		wb.Issues.Other = max(0, open.Issues-classified)
+		classified = wb.PRs.Total() - wb.PRs.Other
+		wb.PRs.Other = max(0, open.PRs-classified)
+		r.WorkBreakdown = &wb
+	}
+	r.CountsIncomplete = false
+	if open.Stale {
+		r.CountsStale = true
+		if !open.StaleSince.IsZero() {
+			r.CountsStaleSince = earliestRFC3339(r.CountsStaleSince, open.StaleSince.UTC().Format(time.RFC3339))
+		}
+	}
+	return true
+}
+
+// earliestRFC3339 returns the earlier of two RFC 3339 timestamps, ignoring
+// empty ones; RFC 3339 UTC strings order lexically.
+func earliestRFC3339(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	case b < a:
+		return b
+	default:
+		return a
+	}
+}
+
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
+	return buildReposWithForge(cfg, actionable, govState, nil)
+}
+
+func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {
 	repos := make([]FrontendRepo, 0, len(cfg.Project.Repos))
 	repoRows := make(map[string]string, len(cfg.Project.Repos)*2)
 	for _, repoName := range cfg.Project.Repos {
@@ -2330,6 +2411,11 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		if actionable != nil && slices.Contains(actionable.StaleRepos, repoName) {
 			r.CountsStale = true
 			r.CountsStaleSince = staleSinceRFC3339(actionable)
+		}
+		if forge != nil {
+			if open, ok := forge.Open(full); ok {
+				applyForgeOpenCounts(&r, open)
+			}
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}

@@ -2968,6 +2968,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		}
 		return time.UnixMilli(history[0].Timestamp).UTC()
 	})
+	// Merged / closed counts move on webhook events and the Search API is
+	// asked only hourly; with forgestate.enabled the Overview's open totals
+	// come from the cache the governor already reads (#13376).
+	wireForgeStateCounts(b.metricsCollector, b.forgeState.Load)
 	deps.startCollector(b.ctx, "metrics", b.metricsCollector)
 
 	// Fleet-stats collector: computes this hive's AI-author contribution counts
@@ -6016,7 +6020,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// Startup gate (#13375): with the state cache on, the first decision
 	// pass waits for the first successful reconcile of every repo so it
 	// never plans against an empty or partial cache.
-	if err := waitForgeStateReady(b.ctx, b.forgeState, b.logger, forgeStateReadyLogInterval); err != nil {
+	if err := waitForgeStateReady(b.ctx, b.forgeState.Load(), b.logger, forgeStateReadyLogInterval); err != nil {
 		return
 	}
 	b.evalCycles++

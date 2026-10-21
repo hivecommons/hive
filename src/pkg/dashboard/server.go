@@ -446,9 +446,11 @@ type StatusPayload struct {
 	// forge totals for this status snapshot, so Overview KPI history must not
 	// record it as a real point.
 	OverviewKPIIncomplete bool `json:"overviewKPIIncomplete"`
-	// StaleSince (RFC 3339) is set when any repo's counts and items are the
-	// last-good enumeration kept after GitHub refused the fetch: the figures
-	// are current as of this time, not zero. Empty when everything is fresh.
+	// StaleSince (RFC 3339) is set when any repo's counts and items are
+	// last-good figures rather than a fresh read: the previous enumeration
+	// kept after GitHub refused the fetch (#13382), or the forgestate cache's
+	// last-good open totals after a failed reconcile (#13376). The Overview
+	// says "stale since <t>" instead of showing zeros. Empty when fresh.
 	StaleSince string `json:"staleSince,omitempty"`
 	Timestamp  string `json:"timestamp"`
 	TimeZone   string `json:"timeZone,omitempty"`
@@ -979,9 +981,11 @@ type FrontendRepo struct {
 	PRs              int    `json:"prs"`
 	Mode             string `json:"mode,omitempty"`
 	CountsIncomplete bool   `json:"countsIncomplete,omitempty"`
-	// CountsStale means this repo's counts and items come from the previous
-	// successful enumeration because GitHub refused this pass's fetch
-	// transiently (rate limit, 5xx); see github.ActionableResult.StaleRepos.
+	// CountsStale means this repo's counts are last-good figures: either the
+	// previous successful enumeration because GitHub refused this pass's fetch
+	// transiently (rate limit, 5xx; see github.ActionableResult.StaleRepos) or
+	// the forgestate cache's last-good open totals after a failed reconcile
+	// (hivecommons/hive#13376).
 	CountsStale bool `json:"countsStale,omitempty"`
 	// CountsStaleSince (RFC 3339) is when the stale figures were last read
 	// for real; set with CountsStale.
@@ -3815,7 +3819,7 @@ func overviewKPISnapshotComplete(status *StatusPayload) bool {
 		return false
 	}
 	for _, repo := range status.Repos {
-		if repo.CountsIncomplete {
+		if repo.CountsIncomplete || repo.CountsStale {
 			return false
 		}
 	}

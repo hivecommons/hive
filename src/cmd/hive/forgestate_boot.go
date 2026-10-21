@@ -44,7 +44,7 @@ func (b *boot) applyGitHubClientForgeState(client *github.Client) {
 			b.logger.Error("forgestate: state cache disabled; governor lists GitHub each cycle", "error", err)
 			return
 		}
-		b.forgeState = store
+		b.forgeState.Store(store)
 		// The sentinel's reconcile sweep enumerates open PRs from the
 		// same cache instead of listing each repo (#13379).
 		github.SetSentinelPRCache(store)
@@ -62,7 +62,7 @@ func (b *boot) applyGitHubClientForgeState(client *github.Client) {
 			slog.Duration("reconcile_interval", opts.ReconcileInterval),
 			slog.Duration("freshness_bound", opts.FreshnessBound))
 	})
-	client.SetForgeState(b.forgeState)
+	client.SetForgeState(b.forgeState.Load())
 }
 
 // waitForgeStateReady is the startup gate (#13375): when the state cache is

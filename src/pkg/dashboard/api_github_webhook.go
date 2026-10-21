@@ -104,6 +104,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if outcome := s.enqueueReviewEvent(event, body); outcome != "" {
 		resp["review_dispatch"] = outcome
 	}
+	if moved := s.noteForgeOutcome(event, body); moved {
+		resp["outcome_counted"] = true
+	}
 	if reason, ok := webhookWakeReason(event, res); ok && s.deps.WebhookWake != nil {
 		s.deps.WebhookWake(reason)
 		resp["wake"] = reason
@@ -140,6 +143,28 @@ func sentinelPREventTarget(event string, body []byte) (int, bool) {
 		n = p.PullRequest.Number
 	}
 	return n, n > 0
+}
+
+// noteForgeOutcome feeds a verified `pull_request closed` (merged) or
+// `issues closed` delivery to the forgestate outcome counters so the
+// dashboard's merged / closed totals move on the event instead of on a
+// per-cycle search (hivecommons/hive#13376). It reports whether a counter
+// moved; a body the counters cannot decode is logged and otherwise ignored
+// since HandleWebhookEvent already accepted it.
+func (s *Server) noteForgeOutcome(event string, body []byte) bool {
+	if s == nil || s.deps == nil || s.deps.MetricsCollector == nil {
+		return false
+	}
+	fc := s.deps.MetricsCollector.ForgeCounts()
+	if fc == nil {
+		return false
+	}
+	moved, err := fc.NoteWebhook(event, body)
+	if err != nil {
+		s.webhookLogger().Warn("forgestate outcome counter skipped delivery", "event", event, "error", err)
+		return false
+	}
+	return moved
 }
 
 // webhookWakeReason reports whether a verified delivery changed cached state

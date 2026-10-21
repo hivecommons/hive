@@ -18294,6 +18294,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return rows.map(row => `${Number(row?.count || 0)} ${row?.label || row?.key || 'other'}`).join(' · ');
     }
 
+    // overviewStaleSince is the earliest countsStaleSince over the selected
+    // repos, or the server's staleSince when every repo is selected.
+    function overviewStaleSince(repos) {
+      if (_overviewKPILocalScope === 'all' && window._lastStatus?.staleSince) return window._lastStatus.staleSince;
+      let earliest = '';
+      (repos || []).forEach(r => {
+        if (!r || !r.countsStale || !r.countsStaleSince) return;
+        if (!earliest || r.countsStaleSince < earliest) earliest = r.countsStaleSince;
+      });
+      return earliest;
+    }
+    function fmtOverviewStaleSince(ts) {
+      if (typeof formatDashboardDateTime === 'function') return formatDashboardDateTime(ts, undefined, String(ts || ''));
+      const t = new Date(ts || '').getTime();
+      return Number.isFinite(t) ? new Date(t).toISOString() : String(ts || '');
+    }
+
     function renderOverviewTotalPartitionSubline(equation) {
       if (!equation) return '';
       const total = Number(equation.open || equation.totalOpen || 0);
@@ -18432,14 +18449,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         { key: 'outside', field: 'overviewOutside', label: 'Outside', value: outside, rawValue: outside, color: 'var(--muted)', tip: `${outside} outside = ${outsideIssues} issues + ${outsidePRs} PRs. Open items excluded before they enter Overview bands by this hive's scanner settings. Click to filter Projects.`, subline: renderOverviewSplitSubline(outside, outsideIssues, outsidePRs, 'outside'), infoHTML: outsideInfo }
       ];
       const coverageCard = overviewCoverageCard();
-      const snapshotComplete = !(repos || []).some(r => r && r.countsIncomplete) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
+      const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+'];
       const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${held} held + ${blockedNeedsHuman} blocked or needs-human + ${outside} outside`;
-      const staleSince = window._lastStatus && window._lastStatus.staleSince;
-      // Last-good figures after a refused enumeration are current as of
-      // staleSince, not zero; say so beside the KPIs.
-      const staleBadge = staleSince ? `<span class="overview-kpi-stale" title="GitHub refused the latest enumeration (rate limit or outage). These figures are the last successful read, as of ${esc(overviewStaleAsOf(staleSince))}; they refresh on the next reconcile pass.">⚠ stale · as of ${esc(overviewStaleAsOf(staleSince))}</span>` : '';
+      // Last-good figures after a refused enumeration (#13382) or a failed
+      // forgestate reconcile (#13376) are current as of staleSince, not
+      // zero; say so beside the KPIs.
+      const staleSince = overviewStaleSince(repos);
+      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage). These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
@@ -18449,11 +18467,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const tile = `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span>${label}${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
         return tile + (ops[i] ? `<span class="overview-kpi-operator" aria-hidden="true">${ops[i]}</span>` : '');
       }).join('')}${coverageCard ? `<span class="overview-kpi-coverage-spacer" aria-hidden="true"></span>${renderOverviewCoverageKPI(coverageCard, useServerHistory)}` : ''}</div></div>`;
-    }
-
-    function overviewStaleAsOf(staleSince) {
-      const at = new Date(staleSince);
-      return Number.isNaN(at.getTime()) ? String(staleSince) : formatDashboardTime(at, { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
     }
 
     function overviewRepoFilterHTML(repos) {
@@ -21662,7 +21675,8 @@ function burnAreaChart() {
     function costCountLabel(cost, count, unitLabel, outcomeWindow) {
       if (!cost || !cost.count_available) return 'counts unavailable (GitHub rate-limited)';
       const n = Number(count) || 0;
-      const stale = cost.count_stale ? ` · ${cost.count_status || 'stale'}` : '';
+      const staleSince = cost.count_stale && cost.count_stale_since ? ` since ${fmtOverviewStaleSince(cost.count_stale_since)}` : '';
+      const stale = cost.count_stale ? ` · ${cost.count_status || 'stale'}${staleSince}` : '';
       const window = outcomeWindow ? ` ${outcomeWindow}` : '';
       return `${formatNumber(n, 'en-US')} ${unitLabel}${window}${stale}`;
     }
