@@ -93,6 +93,16 @@ const (
 	// the soak is complete. Appended for the same persisted-enum reason as
 	// NeedsDecision.
 	PreMergeSoak
+	// TriageNeeded is stage/015: an ISSUE that is actionable but no
+	// maintainer has looked at it yet — it carries the reporter-trust
+	// awaiting label (`needs-triage`) or the gate holds it in the
+	// reporter_triage bucket. Never derived from who filed it: hive-,
+	// agent- and trusted-human-filed issues are 010. A display and
+	// tracking state, NOT a gate: the scanner claims from 015 exactly as
+	// from 010 (the reporter-trust gate withholds `needs-triage` issues on
+	// its own). Appended for the same persisted-enum reason as
+	// NeedsDecision.
+	TriageNeeded
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -170,8 +180,9 @@ type Definition struct {
 type Item int
 
 const (
-	// IssueItem: an issue. Only Issue:true stages (010–045; 045 is the
-	// issue parked on a person) may land on it.
+	// IssueItem: an issue. Only Issue:true stages (010–045; 015 is the
+	// untriaged actionable issue, 045 the issue parked on a person) may
+	// land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
 	PRItem
@@ -225,6 +236,7 @@ func (s Stage) For(k Item) Stage {
 // stage; nothing else in the hive hard-codes a stage label string.
 var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
+	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent has a PR under way for this issue (branch pushed or PR request in flight)", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
@@ -273,6 +285,12 @@ func AuthorBlocked(s Stage) bool {
 // to match; a stall here means the soak has elapsed but the lane never
 // promoted the PR — a lane bug, not an author problem, hence StallNote.
 const PreMergeSoakDwell = 45 * time.Minute
+
+// TriageNeededDwell matches 010-actionable: an untriaged issue is still in
+// the agent queue (015 is not a gate), so it stalls on the same clock as a
+// triaged one — a quiet 015 past a day means nobody, hive or human, has
+// touched it.
+const TriageNeededDwell = 24 * time.Hour
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
 // stages are inserted between existing numbers, never above 100.

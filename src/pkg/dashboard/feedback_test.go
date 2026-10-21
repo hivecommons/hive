@@ -393,6 +393,21 @@ func TestFeedbackStaticUIWiring(t *testing.T) {
 	if !strings.Contains(buildPayload, "submitter: { github_login: enteredLogin }") {
 		t.Fatal("feedback payload does not include the entered GitHub username")
 	}
+	if !strings.Contains(html, `id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit"`) {
+		t.Fatal("header feedback button must open the report form, not the empty reports tab")
+	}
+	if !strings.Contains(html, `data-arg0="submit">New report</button>`) {
+		t.Fatal("feedback form tab is not labelled New report")
+	}
+	if !strings.Contains(submit, "' from /api/feedback/report: ' + (data.error || String(raw)") {
+		t.Fatal("feedback failure toast must include the HTTP status and the server error message (or the raw non-JSON body)")
+	}
+	if strings.Contains(submit, "feedbackStripQuery(raw)") {
+		t.Fatal("the raw error body must not go through the URL query stripper; it would truncate at ? or #")
+	}
+	if !strings.Contains(submit, "console.error('feedback submission failed', e)") {
+		t.Fatal("submission failures must be logged to the browser console")
+	}
 	unread := jsFunctionBody(t, html, "function feedbackUnreadCount(items)")
 	if !strings.Contains(unread, "updated_at > item.last_seen_updated_at") {
 		t.Fatal("feedback unread pill is not derived from updated_at > last_seen_updated_at")
@@ -609,5 +624,17 @@ func TestFeedbackScreenshotsMustBeRealImages(t *testing.T) {
 		if err := validateFeedbackRequest(req); err == nil {
 			t.Fatalf("%s payload passed request validation", name)
 		}
+	}
+}
+
+func TestFeedbackReportInvalidRequestReturnsSpecificError(t *testing.T) {
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleFeedbackReport(rr, httptest.NewRequest(http.MethodPost, "/api/feedback/report", strings.NewReader(`{"title":"x","description":"","request_type":"bug"}`)))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "description is required") {
+		t.Fatalf("body = %s, want specific validation error", rr.Body.String())
 	}
 }

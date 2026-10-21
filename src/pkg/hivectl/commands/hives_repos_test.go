@@ -45,6 +45,78 @@ func TestHivesReposPersistThenReload(t *testing.T) {
 	}
 }
 
+func TestHivesReposDeselectCurrent(t *testing.T) {
+	h := newHivesHarness(t)
+	set := twoHives()
+	set.Profiles[0].Selection = &hivectl.RepositorySelection{
+		Mode: hivectl.SelectionAllCurrent, MembershipSnapshot: []string{"github/github.com/org/repo"},
+		Include: []string{"github/github.com/org/personal"}, Exclude: []string{"github/github.com/org/excluded"},
+		FollowNewRepositories: true, Sources: []string{"invitation"},
+	}
+	set.Presets = []hivectl.PresetProvenance{{ID: "invitation", Source: "https://project.example/preset.yml", ReviewedRevision: "v1"}}
+	h.seed(t, set)
+	expected := twoHives()
+	expected.Profiles[0] = set.Profiles[0]
+	expected.Presets = set.Presets
+	// The shared operation copies the selection before changing it.
+	if err := expected.DeselectCurrent("acme"); err != nil {
+		t.Fatal(err)
+	}
+	store := hivectl.NewProfileStore(t.TempDir())
+	if err := store.Commit(expected); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.run(t, "", "hives", "repos", "acme", "--deselect-current"); err != nil {
+		t.Fatal(err)
+	}
+	for _, paths := range [][2]string{{h.store.Path(), store.Path()}, {h.store.EnvPath(), store.EnvPath()}} {
+		actual, err := os.ReadFile(paths[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := os.ReadFile(paths[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(actual) != string(want) {
+			t.Fatalf("CLI and shared deselect differ:\n%s\n%s", actual, want)
+		}
+	}
+	if h.signalCalls != 1 || len(h.reg.calls) != 0 || len(h.reissuer.calls) != 0 {
+		t.Fatal("deselect must reload once without registration or credential rotation")
+	}
+	if !strings.Contains(h.out.String(), "No repositories selected") || !strings.Contains(h.out.String(), "Follow future repositories: requested") {
+		t.Fatal("empty selection and retained follow policy must both be visible")
+	}
+}
+
+func TestHivesReposFollowPolicy(t *testing.T) {
+	h := newHivesHarness(t)
+	set := twoHives()
+	set.Profiles[0].Selection = &hivectl.RepositorySelection{
+		Mode: hivectl.SelectionAllCurrent, MembershipSnapshot: []string{"github/github.com/org/repo"},
+		Exclude: []string{"github/github.com/org/excluded"}, Sources: []string{"invitation"},
+	}
+	h.seed(t, set)
+	want := *set.Profiles[0].Selection
+	for i, flag := range []string{"--follow-new-repos", "--follow-new-repos=false"} {
+		if err := h.run(t, "", "hives", "repos", "acme", flag); err != nil {
+			t.Fatal(err)
+		}
+		want.FollowNewRepositories = i == 0
+		current := h.profiles(t)
+		if !reflect.DeepEqual(*current.Profiles[0].Selection, want) || current.SelectionSummary("acme") != "1 repos" {
+			t.Fatal("follow-policy edit changed saved membership")
+		}
+		if h.signalCalls != i+1 || current.Profiles[0].RegistrationToken != "tok-acme" {
+			t.Fatal("follow-policy edit failed to reload or changed credentials")
+		}
+	}
+	if len(h.reg.calls) != 0 || len(h.reissuer.calls) != 0 {
+		t.Fatal("follow edit must not register or rotate credentials")
+	}
+}
+
 func TestHivesReposSignalSeesCommittedProjection(t *testing.T) {
 	h := newHivesHarness(t)
 	h.seed(t, twoHives())
@@ -93,7 +165,7 @@ func TestHivesReposRejectBeforeWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"--reset"}, {"--select", "all"}, {"--include", "bare"}, {"--exclude", "org/repo"}, {"--select", "none", "--include", "org/repo"}, {"--include", ""}, {"--include", "org/repo", "--forge", "unsupported"},
+		{"--follow-new-repos"}, {"--follow-new-repos=false"}, {"--deselect-current", "--follow-new-repos=false"}, {"--deselect-current"}, {"--deselect-current=false"}, {"--deselect-current", "--select", "none"}, {"--reset"}, {"--select", "all"}, {"--include", "bare"}, {"--exclude", "org/repo"}, {"--select", "none", "--include", "org/repo"}, {"--include", ""}, {"--include", "org/repo", "--forge", "unsupported"},
 	} {
 		if err := h.run(t, "", append([]string{"hives", "repos", "acme"}, args...)...); err == nil {
 			t.Fatalf("accepted %v", args)

@@ -160,8 +160,12 @@ rollback digest, and `emergency-followup-issue` must name the follow-up issue fo
 skipped soak or smoke evidence. The exception still requires the candidate to be
 current, required workflows to be green, no open `release-blocker`, and the
 monotonic generation guard to pass. When an emergency promotion succeeds, the
-workflow records the exception in the step summary and comments on the follow-up
-issue.
+workflow records the exception in the step summary, comments on the follow-up
+issue, and stamps the issue body with `<!-- hive:ops-tracking -->` and
+`<!-- hive:recheck-after <promotion + soak-hours> -->` so the hive's
+good-first-issue picker and contributor lane leave the checklist to the
+maintainer ([good-first-issue.md](good-first-issue.md#what-qualifies)); a
+hand-written follow-up should carry the same two markers.
 
 ### What the exception actually waives
 

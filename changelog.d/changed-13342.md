@@ -1,0 +1,1 @@
+- Moved the contribution stage test fixture out of the shipped `hivectl` package into `hivectltest`, so its placeholder credentials are no longer compiled into the hivectl binary ([#13342](https://github.com/hivecommons/hive/issues/13342)).

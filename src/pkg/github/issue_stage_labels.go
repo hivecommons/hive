@@ -5,7 +5,15 @@ package github
 // this file does the same for issues from what the enumeration cycle already
 // decided about each one — no extra GitHub reads:
 //
-//   - still in the actionable set            → stage/010-actionable
+//   - still in the actionable set            → stage/010-actionable, or
+//     stage/015-triage-needed when the #9665 reporter gate is holding it:
+//     it carries the reporter-trust awaiting label (needs-triage) or sits
+//     in the gate's reporter_triage bucket (issueUntriaged). Issues the
+//     hive or an agent files, and issues from trusted humans, are triaged
+//     by construction and stay 010 — 015 is never derived from who filed
+//     it. 015 is a tracking state, not a gate: the gate withholds the
+//     issue; the scanner claims from 015 exactly as from 010 once it lets
+//     go.
 //   - withheld by a live issue claim or by the in-progress sweep (a live
 //     kind=agent start mark)                 → stage/020-claimed, or
 //     stage/030-pr-in-progress only when the claim carries PR evidence
@@ -58,7 +66,9 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -128,7 +138,15 @@ const (
 	workBucketClaimed     = "claimed"
 	workBucketClaimedByPR = "claimed_by_pr"
 	workBucketFiltered    = "filtered"
+	// workBucketReporterTriage is a human-filed issue the #9665 reporter-
+	// trust gate holds until a maintainer adds the triage label
+	// (stageengine.BucketReporterTriage).
+	workBucketReporterTriage = string(stageengine.BucketReporterTriage)
 )
+
+// Triage evidence for stage/015-triage-needed (stagelabels.TriageNeeded):
+// the reporter-trust gate's awaiting label (`reporter_trust.awaiting_label`).
+var triageAwaitingLabel = config.DefaultReporterTrustAwaitingLabel
 
 // IssueStageInput is the one shape both actionable items and work-detail
 // rows reduce to before classification.
@@ -153,6 +171,34 @@ type IssueStageInput struct {
 	// labels directly so a caller without the enumeration context agrees
 	// (hivecommons/hive#13012).
 	Held bool
+	// AuthorKind is who filed the issue, as the enumeration judged it
+	// (issueAuthorKind: Human, Hive, or Unknown when no login was seen).
+	// Carried through to the stage engine's AuthorFacts; the 010/015
+	// derivation does not read it.
+	AuthorKind authorkind.Kind
+}
+
+// issueUntriaged reports whether an actionable issue derives
+// 015-triage-needed instead of 010: it carries the reporter-trust awaiting
+// label or sits in the gate's reporter_triage bucket. Who filed the issue
+// is deliberately not consulted — hive-, agent- and trusted-human-filed
+// issues are 010 (owner decision, hivecommons/hive#13287 follow-up).
+func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
+	if issueHasLabel(in.Labels, triageAwaitingLabel) {
+		return true, "carries " + triageAwaitingLabel
+	}
+	if in.Bucket == workBucketReporterTriage {
+		return true, "reporter-trust gate: awaiting the triage label"
+	}
+	return false, ""
+}
+
+// actionableStage is 010-actionable or, for an untriaged issue, 015.
+func actionableStage(in IssueStageInput, reason string) (stagelabels.Stage, string) {
+	if untriaged, why := issueUntriaged(in); untriaged {
+		return stagelabels.TriageNeeded, "triage needed: " + why
+	}
+	return stagelabels.Actionable, reason
 }
 
 // IssueStageFor classifies one enumerated issue. covered reports whether an
@@ -191,11 +237,13 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	// exists (recorded before the gate, or by a human) leaves the epic at
 	// its umbrella stage, 010 while open (hivecommons/hive#12999).
 	if label := issueUmbrellaLabel(in.Labels); label != "" && (in.Bucket == workBucketClaimed || in.Bucket == inProgressWorkBucket) {
-		return stagelabels.Actionable, false, "umbrella issue (" + label + "): claim not staged"
+		stage, reason := actionableStage(in, "umbrella issue ("+label+"): claim not staged")
+		return stage, false, reason
 	}
 	switch in.Bucket {
-	case "":
-		return stagelabels.Actionable, false, "actionable"
+	case "", workBucketReporterTriage:
+		stage, reason := actionableStage(in, "actionable")
+		return stage, false, reason
 	case workBucketClaimed:
 		if in.PRStarted {
 			return stagelabels.PRInProgress, false, "live claim with a PR under way"
@@ -272,6 +320,35 @@ func parkedOnPersonLabel(in IssueStageInput) string {
 	return ""
 }
 
+// issueAuthorKind is the stage input's author kind from the enumeration's
+// verdict (Client.isHumanAuthor): Human when it said so, Hive — the App
+// bot, a `[bot]` login or a hive identity — when it did not. The verdict
+// is a tri-state like isKnownNonHumanAuthor: a row with no author login
+// at all ("we could not tell") is Unknown, never "a bot filed it".
+func issueAuthorKind(issue Issue) authorkind.Kind {
+	switch {
+	case issue.AuthorIsHuman:
+		return authorkind.Human
+	case strings.TrimSpace(issue.Author) == "":
+		return authorkind.Unknown
+	default:
+		return authorkind.Hive
+	}
+}
+
+// forgeIssueLabels returns the labels GitHub actually returned for the
+// issue. annotateIssueWithClaim adds stage/040-covered-by-pr to the
+// in-memory copy of an issue an open PR covers; planning against that
+// copy made Plan see the stage as already present, so the sweep that owns
+// the write never wrote it — hivecommons/hive#13221 lost its 040 to a
+// claim release and no cycle restored it (hivecommons/hive#13316).
+func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
+	if claim == nil || !claim.CoveredLabelSynthesized {
+		return labels
+	}
+	return removeIssueLabel(slices.Clone(labels), CoveredByPRLabel)
+}
+
 // IssueStageInputs flattens an enumeration result into one row per open
 // issue the cycle saw, actionable items first, then every work-detail row.
 func IssueStageInputs(result *ActionableResult) []IssueStageInput {
@@ -280,7 +357,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue)})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -303,7 +380,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: forgeIssueLabels(row.Labels, row.ClaimContext), Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, PRStarted: row.ClaimPRStarted, Claim: row.ClaimContext, Children: row.Children})
 		}
 	}
 	return out

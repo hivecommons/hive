@@ -475,12 +475,38 @@ type kickDispatchDeps struct {
 	now func() time.Time
 }
 
+// kickDeliveryOutcome is what one delivery lane reports back for one message:
+// which step failed (start or send), if any.
+type kickDeliveryOutcome struct {
+	startErr error
+	sendErr  error
+}
+
 // dispatchAgentKicks sends this cycle's kick messages, applying the two skip
 // rules and the single-probe rule.
 //
-// It returns the agents whose kicks were actually delivered, in order, which
-// is what lets a caller (and a test) distinguish "withheld" from "failed" from
-// "sent" without reaching into the effects.
+// It returns the agents whose kicks were actually delivered, in message order,
+// which is what lets a caller (and a test) distinguish "withheld" from "failed"
+// from "sent" without reaching into the effects.
+//
+// Delivery is CONCURRENT ACROSS AGENTS and SERIAL WITHIN an agent. SendKick
+// blocks until the agent's CLI shows its input prompt, up to
+// inputPromptTimeout (120s) per kick, and a busy agent routinely takes most of
+// that. Delivering strictly in sequence made the governor tick's wall time the
+// SUM of those waits: measured live on hive's hive, 8-9 due kicks took 10-13
+// minutes between "governor eval complete" and the first sweep, so a 120s
+// eval interval produced one cycle every ~20 minutes and a webhook wake was
+// no faster than the cadence. Kicks to different agents are independent
+// (separate tmux panes; SendKick is already called concurrently by the
+// dashboard and the request watchers), so each agent gets its own delivery
+// lane and the tick waits only for the SLOWEST agent, not for all of them.
+// Messages to the same agent keep their order: a fix kick ordered ahead of the
+// governor kick by orderReviewFixKicksFirst still goes first.
+//
+// Only the slow legs — startStoppedAgent and sendKick — run on the lanes. The
+// backoff check, the span, and every delivered/failed effect run on the
+// calling goroutine, in message order, so the effect ORDER per message is
+// unchanged and callers' effect closures need no locking.
 //
 // The rules, all of which are load-bearing and individually guarded:
 //
@@ -495,7 +521,11 @@ type kickDispatchDeps struct {
 //     the entire point of releasing a probe.
 func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps kickDispatchDeps, logger *slog.Logger) []string {
 	var delivered []string
-	for _, msg := range msgs {
+	// Decide, open spans and log in message order BEFORE any lane starts, so a
+	// withheld agent never has a lane and the audit log reads in plan order.
+	attempted := make([]bool, len(msgs))
+	endSpans := make([]func(error), len(msgs))
+	for i, msg := range msgs {
 		if remaining, class, line, ok := deps.backoffRemaining(msg.Agent); ok {
 			logger.Warn("provider inference error: withholding agent kick during backoff",
 				"agent", msg.Agent,
@@ -504,21 +534,60 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 				"error", line)
 			continue
 		}
-		endSpan := deps.startKickSpan(msg.Agent)
+		attempted[i] = true
+		endSpans[i] = deps.startKickSpan(msg.Agent)
 		logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
-		if err := deps.startStoppedAgent(msg.Agent); err != nil {
-			endSpan(err)
-			logger.Warn("failed to start stopped agent before kick", "agent", msg.Agent, "error", err)
+	}
+
+	// One lane per agent, each delivering that agent's messages in order and
+	// closing the per-message result channel as it goes.
+	results := make([]chan kickDeliveryOutcome, len(msgs))
+	lanes := map[string][]int{}
+	var laneOrder []string
+	for i, msg := range msgs {
+		if !attempted[i] {
+			continue
+		}
+		results[i] = make(chan kickDeliveryOutcome, 1)
+		if _, seen := lanes[msg.Agent]; !seen {
+			laneOrder = append(laneOrder, msg.Agent)
+		}
+		lanes[msg.Agent] = append(lanes[msg.Agent], i)
+	}
+	for _, agentName := range laneOrder {
+		go func(indexes []int) {
+			for _, i := range indexes {
+				msg := msgs[i]
+				var out kickDeliveryOutcome
+				if out.startErr = deps.startStoppedAgent(msg.Agent); out.startErr == nil {
+					out.sendErr = deps.sendKick(msg.Agent, msg.Message)
+				}
+				results[i] <- out
+			}
+		}(lanes[agentName])
+	}
+
+	// Apply effects in message order. Waiting on message i's result never
+	// blocks a later lane: every lane runs independently of this loop.
+	for i, msg := range msgs {
+		if !attempted[i] {
+			continue
+		}
+		out := <-results[i]
+		endSpan := endSpans[i]
+		if out.startErr != nil {
+			endSpan(out.startErr)
+			logger.Warn("failed to start stopped agent before kick", "agent", msg.Agent, "error", out.startErr)
 			if deps.onFailed != nil {
-				deps.onFailed(msg, err)
+				deps.onFailed(msg, out.startErr)
 			}
 			continue
 		}
-		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
-			endSpan(err)
-			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
+		if out.sendErr != nil {
+			endSpan(out.sendErr)
+			logger.Warn("failed to send kick", "agent", msg.Agent, "error", out.sendErr)
 			if deps.onFailed != nil {
-				deps.onFailed(msg, err)
+				deps.onFailed(msg, out.sendErr)
 			}
 			continue
 		}

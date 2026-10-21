@@ -13,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -55,6 +56,80 @@ type StageTrackerResponse struct {
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
+	// RecentlyMerged lists the pull requests the hive saw merge within
+	// stageTrackerMergedWindow, from the audit log's pr_merged entries
+	// (sweep, queue, relay and human merges observed by the PR poller
+	// alike). Items only ever lists open work, so a merged PR simply
+	// drops out of Items on the next build; this side list is what lets
+	// the SPA tell "merged" from "closed" between two polls and play its
+	// opt-in merge sound for the right rows.
+	RecentlyMerged []StageTrackerMerged `json:"recently_merged,omitempty"`
+}
+
+// StageTrackerMerged is one recently merged pull request.
+type StageTrackerMerged struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	MergedAt time.Time `json:"merged_at"`
+}
+
+// stageTrackerMergedWindow bounds RecentlyMerged. It is deliberately much
+// longer than the cache TTL plus the SPA's 30 s poll: a tab that missed a
+// few polls (throttled in the background) still sees the merge it was
+// watching for, and the SPA dedupes per PR so a longer list never replays.
+const stageTrackerMergedWindow = 30 * time.Minute
+
+var stageTrackerAuditNumberRe = regexp.MustCompile(`(?:^|[,\s])number=(\d+)`)
+
+// stageTrackerRecentlyMerged reads the pr_merged audit entries newer than
+// now-stageTrackerMergedWindow from the in-memory ring: newest first, one
+// entry per (repo, number). The ring holds auditRingCap entries and is the
+// only source consulted — a window this short never needs the on-disk log,
+// and reading files on every tracker build would defeat its cache.
+func (s *Server) stageTrackerRecentlyMerged(now time.Time) []StageTrackerMerged {
+	if s == nil || s.audit == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []StageTrackerMerged
+	for _, e := range s.audit.RecentWithPrefixSince(now.Add(-stageTrackerMergedWindow), github.AuditActionPRMerged) {
+		if e.Action != github.AuditActionPRMerged {
+			continue
+		}
+		repo, ok := collect.AuditEntryRepo(e)
+		if !ok {
+			continue
+		}
+		number := e.Target
+		if number == 0 {
+			if m := stageTrackerAuditNumberRe.FindStringSubmatch(e.Detail); m != nil {
+				number, _ = strconv.Atoi(m[1])
+			}
+		}
+		if number <= 0 {
+			continue
+		}
+		key := repo + "#" + strconv.Itoa(number)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		at, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil {
+			at = now
+		}
+		out = append(out, StageTrackerMerged{Repo: repo, Number: number, MergedAt: at.UTC()})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].MergedAt.Equal(out[j].MergedAt) {
+			return out[i].MergedAt.After(out[j].MergedAt)
+		}
+		if out[i].Repo != out[j].Repo {
+			return out[i].Repo < out[j].Repo
+		}
+		return out[i].Number < out[j].Number
+	})
+	return out
 }
 
 // StageTrackerStage is one row of stagelabels.Table as the strip needs it.
@@ -91,6 +166,9 @@ type StageTrackerItem struct {
 	Title  string `json:"title"`
 	URL    string `json:"url,omitempty"`
 	Author string `json:"author,omitempty"`
+	// Head is the PR head SHA the lane last evaluated ("" for issues), so
+	// a "waiting for a verdict" caption can name the revision it waits on.
+	Head string `json:"head,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
 	Labels    []string   `json:"labels,omitempty"`
@@ -181,13 +259,16 @@ const (
 	trackerNumberNeedsDecision = 85
 	// trackerNumberIssueDecision is the issue parking stage (045): a main
 	// issue-side stop, not a detour off the merge gate.
-	trackerNumberIssueDecision  = 45
-	trackerNumberReadyForHuman  = 90
-	trackerNumberPreMergeSoak   = 95
-	trackerNumberCoveredByPR    = 40
-	trackerNumberClaimed        = 20
-	trackerNumberPRInProgress   = 30
-	trackerNumberActionable     = 10
+	trackerNumberIssueDecision = 45
+	trackerNumberReadyForHuman = 90
+	trackerNumberPreMergeSoak  = 95
+	trackerNumberCoveredByPR   = 40
+	trackerNumberClaimed       = 20
+	trackerNumberPRInProgress  = 30
+	trackerNumberActionable    = 10
+	// trackerNumberTriageNeeded is the untriaged-actionable stage (015): it
+	// lights the Actionable column with the word "Triage needed".
+	trackerNumberTriageNeeded   = 15
 	stageTrackerHistoryMaxItems = stagelabels.HistoryLimit
 )
 
@@ -198,6 +279,7 @@ const (
 	modHold          = "hold"
 	modNeedsHuman    = "needs-human"
 	modNeedsDecision = "needs-decision"
+	modNeedsTriage   = "needs-triage"
 	modNeedsRebase   = "needs-rebase"
 	modBlocked       = "blocked"
 	modDraft         = "draft"
@@ -241,6 +323,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	switch s {
 	case stagelabels.Actionable:
 		return "Actionable"
+	case stagelabels.TriageNeeded:
+		return "Triage needed"
 	case stagelabels.Claimed:
 		return "Claimed"
 	case stagelabels.PRInProgress:
@@ -384,6 +468,10 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			// 045 on an issue, 085 on a PR); the retired spelling is read
 			// until migrated.
 			set[modNeedsDecision] = true
+		case "needs-triage":
+			// Still waiting on triage (reporter trust / maintainer look):
+			// the Open row's action chip reads "triage needed".
+			set[modNeedsTriage] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
 		case "blocked":
@@ -405,12 +493,27 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}
 	}
 	return out
+}
+
+// noVerdictClause is the bare no-verdict clause; stageTrackerCaption swaps
+// in "awaiting review of head <sha7>" when the item's head is known.
+const noVerdictClause = "no review verdict yet"
+
+// shortHeadLen is the abbreviated SHA length the captions print.
+const shortHeadLen = 7
+
+func shortHead(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if len(sha) > shortHeadLen {
+		return sha[:shortHeadLen]
+	}
+	return sha
 }
 
 // humanizeStageReason turns a lane reason token into a short clause with
@@ -432,7 +535,7 @@ func humanizeStageReason(reason string) string {
 	case "untrusted-author-role":
 		return "author's role is not trusted for unattended merge"
 	case "contributor-lane:no-verdict":
-		return "no review verdict yet"
+		return noVerdictClause
 	case "contributor-lane:no-claim":
 		return "no verified claim links this PR to an issue"
 	case "contributor-lane:claim-tier-untrusted":
@@ -451,6 +554,12 @@ func humanizeStageReason(reason string) string {
 	}
 	if rest, ok := strings.CutPrefix(r, "optional-check-failing:"); ok {
 		return "optional check " + rest + " failing"
+	}
+	if rest, ok := strings.CutPrefix(r, "base-branch-red:"); ok {
+		return "waiting for the base branch's CI to recover (" + strings.ReplaceAll(rest, ",", ", ") + ") — not this PR's fault"
+	}
+	if rest, ok := strings.CutPrefix(r, "shared-ci-incident:"); ok {
+		return "deferred to shared-CI incident #" + rest + " — not this PR's fault"
 	}
 	if rest, ok := strings.CutPrefix(lower, "reviewer-verdict:"); ok {
 		switch rest {
@@ -527,6 +636,28 @@ func stageTrackerSoakRemaining(rec stagelabels.Record, now time.Time) time.Durat
 	return left
 }
 
+// adoptedWorkCaption names what the hive is doing on a PR it adopted in
+// place (stage 074) from the lane's reason token: the 074 label stays
+// whether the head is conflicted, red or awaiting rework, so the caption is
+// where "hive rebasing" vs "hive fixing CI" shows. Unknown reasons fall back
+// to the bare ownership sentence.
+func adoptedWorkCaption(reason string) string {
+	const owned = "Hive adopted this PR"
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case lower == "":
+		return owned
+	case lower == "conflicting" || lower == "not-mergeable" || strings.Contains(lower, "rebase"):
+		return owned + "; hive is rebasing it onto the base branch"
+	case strings.HasPrefix(lower, "check-failing:") || strings.HasPrefix(lower, "required-check-failing:") ||
+		strings.HasPrefix(lower, "optional-check-failing:") || lower == "ci-red" || lower == "check-runs":
+		return owned + "; hive is fixing CI"
+	case strings.HasPrefix(lower, "reviewer-verdict:") || strings.Contains(lower, "changes-requested") || strings.Contains(lower, "changes_requested"):
+		return owned + "; hive is addressing the review findings"
+	}
+	return owned
+}
+
 func joinClause(head, clause string) string {
 	if clause == "" {
 		return head
@@ -535,8 +666,13 @@ func joinClause(head, clause string) string {
 }
 
 // stageTrackerCaption builds the human sentence and the actor for an item.
-func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
+func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int, head string) (caption, actor string) {
 	clause := humanizeStageReason(reason)
+	if clause == noVerdictClause {
+		if sha := shortHead(head); sha != "" {
+			clause = "awaiting review of head " + sha
+		}
+	}
 	who := strings.TrimSpace(author)
 	if who == "" {
 		who = "the author"
@@ -553,6 +689,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	switch stage {
 	case stagelabels.Actionable:
 		return joinClause("Triaged and eligible; waiting for the scanner to pick it up", clause), "scanner"
+	case stagelabels.TriageNeeded:
+		return joinClause("Actionable, but no maintainer has looked at it yet; waiting for triage", clause), "maintainer"
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:
@@ -574,7 +712,7 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		}
 		return c, strings.TrimPrefix(who, "@")
 	case stagelabels.AdoptedByHive:
-		c := "Hive adopted this PR"
+		c := adoptedWorkCaption(reason)
 		if hasRec && rec.AdoptedBy > 0 {
 			c += " (superseded by #" + strconv.Itoa(rec.AdoptedBy) + ")"
 		}
@@ -656,6 +794,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		st := s.deps.StageEngineStatus()
 		resp.Engine = &st
 	}
+	resp.RecentlyMerged = s.stageTrackerRecentlyMerged(now)
 	if status == nil {
 		return resp
 	}
@@ -697,7 +836,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision || stage == stagelabels.IssueNeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
+		// Likewise 015 says "Triage needed" itself; the needs-triage chip
+		// only adds information on another stage (a claimed or covered
+		// issue the gate is still holding).
+		if stage == stagelabels.TriageNeeded {
+			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsTriage })
+		}
+		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR, it.Head)
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -757,7 +902,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
 		pr.Repo = nonEmpty(pr.Repo, repoName)
 		rec, ok := lookup(repoName, pr.Number)
-		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author,
+		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author, Head: pr.HeadSHA,
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}

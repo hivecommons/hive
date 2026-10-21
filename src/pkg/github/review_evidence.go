@@ -18,6 +18,8 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/modelfamily"
+	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
@@ -125,6 +127,7 @@ type reviewEvidenceUpdate struct {
 	posted   []evidence.PostedReview
 	sentinel []evidence.SentinelFinding
 	ci       *evidence.CI
+	signals  review.ConfidenceSignals
 }
 
 // recordReviewEvidence adds what the relay just recorded to the evidence
@@ -223,6 +226,25 @@ func (c *Client) recordReviewEvidence(ctx context.Context, req ReviewRequest, re
 		key = nil
 	}
 	for _, head := range heads {
+		u := updates[head]
+		if len(u.verdicts) > 0 {
+			existing, _ := LoadReviewEvidence(ReviewEvidencePath("", repo, req.Number, head))
+			needsSignals := existing == nil
+			for _, v := range u.verdicts {
+				if existing != nil && !containsEvidenceVerdict(existing.Verdicts, v) {
+					needsSignals = true
+				}
+			}
+			if needsSignals {
+				base := ""
+				if existing != nil {
+					base = existing.BaseSHA
+				} else {
+					base = fetchPR().GetBase().GetSHA()
+				}
+				u.signals = c.reviewConfidenceDiff(ctx, owner, name, base, head)
+			}
+		}
 		c.upsertReviewEvidence(repo, req.Number, head, *updates[head], settings.Policy, key, fetchPR, now)
 	}
 }
@@ -271,8 +293,23 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 	}
 
 	changed := b.UpdatedAt.IsZero()
+	signals := u.signals
+	// Read only CI already captured before this verdict. Later CI/merge writes
+	// never recompute scores, so calibration cannot learn the outcome in advance.
+	if !b.CI.CapturedAt.IsZero() && !b.CI.CapturedAt.After(now) {
+		signals.CIState = b.CI.Status
+	}
+	for _, v := range b.Verdicts {
+		signals.Peers = append(signals.Peers, evidenceConfidenceReport(v, repo, number, head))
+	}
 	for _, v := range u.verdicts {
+		signals.Peers = append(signals.Peers, evidenceConfidenceReport(v, repo, number, head))
+	}
+	for _, v := range u.verdicts {
+		v = stampEvidenceVerdictFamily(v, b.Author)
 		if !containsEvidenceVerdict(b.Verdicts, v) {
+			derived := review.DerivedConfidence(evidenceConfidenceReport(v, repo, number, head), signals)
+			v.ConfidenceDerived = &derived
 			b.Verdicts = append(b.Verdicts, v)
 			changed = true
 		}
@@ -506,8 +543,8 @@ func evidenceAuthor(repo string, number int, user *gh.User) evidence.Author {
 }
 
 // evidenceVerdict maps a recorded perspective report onto the bundle schema.
-// Confidence is that perspective's own review.ScoreConfidence score scaled to
-// [0,1], so it means the same thing the comment's Confidence line does.
+// Confidence is the binned self-report, with the historical verdict-derived
+// score retained only for reports that omitted confidence. Gating is unchanged.
 func evidenceVerdict(r review.PerspectiveReport, meta InvocationMeta, now time.Time) evidence.Verdict {
 	model := strings.TrimSpace(r.ReviewModel)
 	if model == "" {
@@ -524,6 +561,15 @@ func evidenceVerdict(r review.PerspectiveReport, meta InvocationMeta, now time.T
 		Verdict:     string(r.Verdict),
 		Confidence:  float64(score) / float64(review.ConfidenceMax),
 		RecordedAt:  now,
+		AuthorModel: strings.TrimSpace(r.AuthorModel),
+	}
+	if r.Confidence != nil {
+		raw := *r.Confidence
+		if r.ConfidenceRaw != nil {
+			raw = *r.ConfidenceRaw
+		}
+		v.Confidence = review.SnapConfidence(raw)
+		v.ConfidenceRaw = &raw
 	}
 	for _, f := range r.Findings {
 		path := strings.TrimSpace(f.File)
@@ -549,10 +595,29 @@ func evidenceVerdict(r review.PerspectiveReport, meta InvocationMeta, now time.T
 // containsEvidenceVerdict reports whether have already holds v. RecordedAt is
 // ignored: the same verdict relayed twice is one verdict, while a changed
 // verdict for the same perspective is new evidence and is kept beside the old.
+// stampEvidenceVerdictFamily sets SameFamily once the bundle's author is
+// known: the report's own author_model when it carried one, else the model
+// the audit log recorded for the PR's agent. Unknown on either side leaves
+// it nil.
+func stampEvidenceVerdictFamily(v evidence.Verdict, author evidence.Author) evidence.Verdict {
+	authorModel := v.AuthorModel
+	if authorModel == "" {
+		authorModel = author.Model
+	}
+	if same, known := modelfamily.SameFamily(v.Model, authorModel); known {
+		v.SameFamily = &same
+	}
+	return v
+}
+
 func containsEvidenceVerdict(have []evidence.Verdict, v evidence.Verdict) bool {
-	v.RecordedAt = time.Time{}
+	// Family stamps are derived, not observed: a verdict recorded before
+	// they existed must still match its re-relayed self. Derived scores
+	// snapshot the first observation: a retry must not become a second
+	// verdict just because more peers or a newer CI state arrived.
+	v.RecordedAt, v.AuthorModel, v.SameFamily, v.ConfidenceDerived = time.Time{}, "", nil, nil
 	for _, h := range have {
-		h.RecordedAt = time.Time{}
+		h.RecordedAt, h.AuthorModel, h.SameFamily, h.ConfidenceDerived = time.Time{}, "", nil, nil
 		if reflect.DeepEqual(h, v) {
 			return true
 		}
@@ -595,4 +660,33 @@ func previousReviewEvidenceID(dir, head string) string {
 		return ""
 	}
 	return best.ID
+}
+
+// Compare immutable SHAs rather than PR files, which may already describe a
+// newer push. GitHub caps comparison files at 300; conservatively treat a full
+// page as unknown rather than claiming a truncated diff is small/test-free.
+func (c *Client) reviewConfidenceDiff(ctx context.Context, owner, name, base, head string) review.ConfidenceSignals {
+	var s review.ConfidenceSignals
+	if c.client == nil || base == "" || head == "" {
+		return s
+	}
+	comparison, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:review_evidence"), owner, name, base, head, &gh.ListOptions{PerPage: 1})
+	const comparisonFileLimit = 300
+	if err != nil || comparison == nil || comparison.Files == nil || len(comparison.Files) >= comparisonFileLimit {
+		return s
+	}
+	s.DiffKnown = true
+	for _, f := range comparison.Files {
+		s.ChangedLines += f.GetAdditions() + f.GetDeletions()
+		s.TouchesTests = s.TouchesTests || review.ConfidenceTestPath(f.GetFilename())
+	}
+	return s
+}
+
+func evidenceConfidenceReport(v evidence.Verdict, repo string, number int, head string) review.PerspectiveReport {
+	r := review.PerspectiveReport{Repo: repo, Number: number, HeadSHA: head, Perspective: review.Perspective(v.Perspective), Verdict: review.Verdict(v.Verdict)}
+	for _, f := range v.Findings {
+		r.Findings = append(r.Findings, outputschema.Finding{File: f.Path, Line: f.Line})
+	}
+	return r
 }

@@ -124,6 +124,10 @@ type Entry struct {
 	// the shared incident clears, instead of waiting for a human to notice
 	// that a runner outage — not the PR — was the cause.
 	SharedAtEscalation []string `json:"shared_at_escalation,omitempty"`
+	// BaseRedHeldSHA is the head the base-branch-red hold comment was last
+	// posted for (Result.BaseRedHold), so the comment is posted once per
+	// head however many passes the base stays red.
+	BaseRedHeldSHA string `json:"base_red_held_sha,omitempty"`
 	// Escalated is set once the escalation actions (comment + label) have
 	// fired, so they never repeat for the same PR.
 	Escalated bool `json:"escalated"`
@@ -279,6 +283,17 @@ type Observation struct {
 	FailingChecks []string
 	SharedChecks  []string
 	Shared        bool
+	// BaseRedChecks names the failing checks that are also red on the PR's
+	// base branch tip while the PR touches no CI-owning path
+	// (github.PullRequest.BaseRedChecks). MarkSharedFailures folds them into
+	// SharedChecks: a check red on the base is shared breakage whatever the
+	// rest of the fleet shows. When they cover every failing check the pass
+	// is a base-branch-red hold (Result.BaseRedHold), and an escalation the
+	// hive itself raised over such a head is un-parked.
+	BaseRedChecks []string
+	// SharedCIIncident is the open [shared-ci] incident the PR is deferred
+	// to, 0 when none; named in the hold comment.
+	SharedCIIncident int
 }
 
 // MarkSharedFailures classifies each red observation's failing checks as
@@ -329,19 +344,30 @@ func MarkSharedFailures(obs []Observation) {
 
 	for i := range obs {
 		o := &obs[i]
-		e := evidence[o.Repo]
-		if !o.Red || e == nil || e.conclusive < 2 || !e.hasControl || len(e.common) == 0 {
+		if !o.Red {
 			continue
 		}
-
 		checks := uniqueStrings(o.FailingChecks)
+		e := evidence[o.Repo]
+		fleetWide := e != nil && e.conclusive >= 2 && e.hasControl && len(e.common) > 0
 		for _, check := range checks {
-			if e.common[check] {
+			// A check that is red on the base branch tip is shared breakage
+			// on its own evidence: the fleet-wide consensus is not needed,
+			// and a green PR that has not been rebased onto the red base
+			// does not disprove it.
+			if (fleetWide && e.common[check]) || slices.Contains(o.BaseRedChecks, check) {
 				o.SharedChecks = append(o.SharedChecks, check)
 			}
 		}
-		o.Shared = len(o.SharedChecks) == len(checks)
+		o.Shared = len(checks) > 0 && len(o.SharedChecks) == len(checks)
 	}
+}
+
+// baseRedHold reports a red observation whose every failing check is red
+// on the base branch: nothing about the PR is broken, so the fix loop holds
+// rather than counts, kicks or escalates.
+func baseRedHold(o Observation) bool {
+	return o.Red && o.Shared && len(o.BaseRedChecks) > 0
 }
 
 func uniqueStrings(in []string) []string {
@@ -396,6 +422,12 @@ type Result struct {
 	// UnparkReason is the human-readable sentence explaining an Unparked
 	// result. Empty unless Unparked is set.
 	UnparkReason string
+	// BaseRedHold is set on the first pass that sees a head red only on
+	// checks that are also red on the base branch (Observation.BaseRedChecks
+	// covering every failing check). The caller posts BaseRedHoldCommentBody
+	// once and then calls MarkBaseRedHeld; later passes on the same head
+	// report Shared without BaseRedHold.
+	BaseRedHold bool
 }
 
 // PruneAfter is how long a ledger entry survives after its PR stops
@@ -485,6 +517,22 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 				}
 				continue
 			}
+			// Auto-un-park #3: the hive itself applied the label (LabelApplied
+			// — a human's needs-human is never touched) and every check now
+			// red on the head is red on the base branch too. The attempts
+			// that escalated it were spent against a red baseline; the PR is
+			// held, not parked, until the base recovers (hivecommons/hive
+			// 2026-10-20, #13258). The un-park comment is the hold notice.
+			if e.LabelApplied && baseRedHold(o) {
+				checks := strings.Join(o.BaseRedChecks, ", ")
+				s.unparkLocked(e)
+				e.BaseRedHeldSHA = o.HeadSHA
+				results[key] = Result{
+					Unparked:     true,
+					UnparkReason: baseRedUnparkReason(checks, o.SharedCIIncident),
+				}
+				continue
+			}
 			e.Escalated = true
 			if !e.LabelApplied {
 				e.LabelApplied = true
@@ -540,6 +588,14 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			// used to advance the attempt count, which is how one gocache
 			// outage escalated twelve unrelated PRs in a morning
 			// (hivecommons/hive#9473).
+			hold := baseRedHold(o) && o.HeadSHA != "" && (e == nil || e.BaseRedHeldSHA != o.HeadSHA)
+			if e == nil && hold {
+				// A fresh PR red only on the base's checks still gets its
+				// hold notice once; the entry carries nothing else and is
+				// dropped as soon as the head goes green.
+				e = &Entry{Machinery: MachineryVersion}
+				s.entries[key] = e
+			}
 			if e != nil {
 				e.UpdatedAt = s.now()
 				results[key] = Result{
@@ -550,6 +606,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 					ReEngagements: e.ReEngagements,
 					SharedChecks:  o.SharedChecks,
 					Shared:        o.Shared,
+					BaseRedHold:   hold,
 				}
 			}
 			continue
@@ -761,6 +818,21 @@ func (s *Store) MarkLabelApplied(repo string, number int) {
 		e.LabelAppliedAt = s.now()
 		e.UpdatedAt = s.now()
 	}
+	s.saveLocked()
+}
+
+// MarkBaseRedHeld records that the base-branch-red hold comment was posted
+// for headSHA, so Sweep stops asking for it until the head moves.
+func (s *Store) MarkBaseRedHeld(repo string, number int, headSHA string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	if e == nil {
+		e = &Entry{Machinery: MachineryVersion}
+		s.entries[Key(repo, number)] = e
+	}
+	e.BaseRedHeldSHA = headSHA
+	e.UpdatedAt = s.now()
 	s.saveLocked()
 }
 
@@ -1156,6 +1228,37 @@ func HandoffCommentBody(ev Evidence, h ReviewerHandoff) string {
 // UnparkCommentBody renders the one-line note posted when the sweep returns an
 // escalated PR to the automated lane by itself (its head went green, or the
 // shared CI incident behind the escalation cleared).
+// BaseRedHoldMarker is the hidden marker on the base-branch-red hold
+// comment, so the notice stays greppable and is never posted twice for one
+// head.
+const BaseRedHoldMarker = "<!-- hive-base-branch-red -->"
+
+// BaseRedHoldCommentBody is the one-line hold notice for a head whose every
+// failing check is red on the base branch too. incident, when non-zero,
+// names the open [shared-ci] issue tracking the breakage.
+func BaseRedHoldCommentBody(checks []string, incident int) string {
+	var b strings.Builder
+	b.WriteString(BaseRedHoldMarker)
+	b.WriteString("\n⏸️ CI is red on the base branch (")
+	b.WriteString(strings.Join(checks, ", "))
+	b.WriteString("); holding until it recovers — this is not a failure in this PR, so no fix attempt is counted and no one needs to act here.")
+	if incident > 0 {
+		fmt.Fprintf(&b, " Tracked on the shared-CI incident #%d.", incident)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// baseRedUnparkReason words the auto-un-park of an escalation the hive
+// raised over a red base branch.
+func baseRedUnparkReason(checks string, incident int) string {
+	reason := fmt.Sprintf("CI is red on the base branch (%s) — not this PR's fault. The fix attempts that escalated it were spent against a red baseline; removing needs-human and holding until the base recovers.", checks)
+	if incident > 0 {
+		reason += fmt.Sprintf(" Tracked on the shared-CI incident #%d.", incident)
+	}
+	return reason
+}
+
 func UnparkCommentBody(reason string) string {
 	return fmt.Sprintf("## ✅ Escalation cleared — back in the automated lane\n\n%s\n\nThe `%s` label has been removed; the fix loop owns this PR again.\n",
 		reason, NeedsHumanLabel)

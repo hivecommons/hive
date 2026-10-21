@@ -43,7 +43,7 @@ const hivesProbeTimeout = 5 * time.Second
 // it; nothing else implements it in production.
 type hivesStore interface {
 	LoadOrMigrate() (*hivectl.ProfileSet, bool, error)
-	Commit(*hivectl.ProfileSet) error
+	CommitExpecting(set *hivectl.ProfileSet, expected string) error
 	Path() string
 	EnvPath() string
 }
@@ -67,6 +67,10 @@ type hivesEnv struct {
 	login       func(ctx context.Context) (string, error)
 	register    func(ctx context.Context, hubHTTPBase, githubUser string) (hivectl.Registration, error)
 	signalRelay func(ctx context.Context) (hivectl.RelaySwitchResult, error)
+	// discoverTree supplies the contribution tree's hub and repository
+	// discovery snapshots. nil means saved state only, which the tree shows as
+	// membership incomplete rather than empty.
+	discoverTree hivesTreeDiscoverer
 }
 
 // defaultHivesEnv wires the production implementations.
@@ -85,6 +89,7 @@ func defaultHivesEnv() hivesEnv {
 		register: func(ctx context.Context, base, user string) (hivectl.Registration, error) {
 			return hivectl.Register(ctx, base, user, 0)
 		},
+		discoverTree: defaultHivesTreeDiscovery,
 	}
 	if store, err := hivectl.DefaultProfileStore(); err == nil {
 		env.store = store
@@ -142,6 +147,7 @@ func (m model) openHives() (model, tea.Cmd) {
 		overlay = overlay.WithEscQuit()
 	}
 	m.hives = &overlay
+	m.hivesTree = nil
 	m.footerStatus = ""
 	return m, m.loadHives(m.hivesID)
 }
@@ -160,6 +166,9 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// answers — not enter (which would run it twice), not esc (which would
 		// hide a result that has already happened).
 		return m, nil
+	}
+	if m.hives.InTree() {
+		return m.updateHivesTree(msg)
 	}
 
 	// While a form is composing, ordinary letters are TEXT. This is checked
@@ -225,6 +234,13 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		next, _ := m.hives.BeginRename()
 		m.hives = &next
 		return m, nil
+	case "t":
+		next, ok := m.hives.OpenTree()
+		m.hives = &next
+		if !ok {
+			return m, nil
+		}
+		return m, m.loadHivesTree(m.hivesID, nil)
 	case "[":
 		next, action, ok := m.hives.MoveSelectedRank(-1)
 		m.hives = &next
@@ -425,7 +441,12 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 		if err != nil {
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
-		if err := env.store.Commit(set); err != nil {
+		// Commit against the revision just reloaded: the reload narrows the
+		// window, the expected-revision check under the store's lock closes it.
+		if err := env.store.CommitExpecting(set, set.Revision()); err != nil {
+			if errors.Is(err, hivectl.ErrStaleRevision) {
+				err = fmt.Errorf("%w — profiles.yml was changed by another hivectl, TUI or Commons web session; nothing was written, review the hives again and retry", err)
+			}
 			return hivesActionMsg{overlayID: overlayID, err: err}
 		}
 		if hivesActionSignalsRelay(action.Kind) && env.signalRelay != nil {

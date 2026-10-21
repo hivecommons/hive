@@ -310,25 +310,17 @@ func (s *Scheduler) BuildKickMessagesWithSkips(actionable *github.ActionableResu
 	return messages, skipped
 }
 
+// selectReviewModel is the cadence-kick face of
+// config.ReviewModelsConfig.Select; the review swarm calls the same function
+// (review.PlanDispatch), so a pool, its exclusions and its fallback mean one
+// thing however the review is dispatched. The third result is true when the
+// configured fallback was used; a "skip" fallback returns an empty model.
 func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.PullRequest) (string, string, bool) {
-	authorModel := github.NormalizeAttributionModel(pr.HiveModel)
-	authorFamily := github.ModelFamily(authorModel)
-	for _, entry := range agentCfg.ReviewModels.Pool {
-		candidate := github.NormalizeAttributionModel(entry.Model)
-		if agentCfg.ReviewModels.ExcludeAuthorModelEnabled() && candidate == authorModel {
-			continue
-		}
-		if agentCfg.ReviewModels.ExcludeAuthorFamily && github.ModelFamily(candidate) == authorFamily {
-			continue
-		}
-		return strings.TrimSpace(entry.Backend), strings.TrimSpace(entry.Model), false
-	}
-	switch agentCfg.ReviewModels.EffectiveFallback() {
-	case config.ReviewModelsFallbackSkip:
+	sel := agentCfg.ReviewModels.Select(pr.HiveModel, agentCfg.Backend, agentCfg.Model)
+	if sel.Skip {
 		return "", "", true
-	default:
-		return strings.TrimSpace(agentCfg.Backend), strings.TrimSpace(agentCfg.Model), true
 	}
+	return sel.Backend, sel.Model, sel.Fallback
 }
 
 // BuildAgentMessageFromLastActionable builds a kick message for the named

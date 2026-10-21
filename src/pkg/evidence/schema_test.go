@@ -225,3 +225,40 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 		})
 	}
 }
+
+func TestCalibrationConfidenceSchemaRoundTrip(t *testing.T) {
+	b := sample()
+	raw, derived := .82, .75
+	b.Verdicts[0].Confidence, b.Verdicts[0].ConfidenceRaw, b.Verdicts[0].ConfidenceDerived = .85, &raw, &derived
+	if err := b.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	schema := loadSchema(t)
+	if errs := validateSchema(schema, schema, toGeneric(t, b), "bundle"); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Bundle
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if *decoded.Verdicts[0].ConfidenceRaw != raw || *decoded.Verdicts[0].ConfidenceDerived != derived {
+		t.Fatal("confidence fields lost")
+	}
+	derived = 1.1
+	if b.Validate() == nil {
+		t.Fatal("accepted derived score above 1")
+	}
+	if errs := validateSchema(schema, schema, toGeneric(t, b), "bundle"); len(errs) == 0 {
+		t.Fatal("schema accepted derived score above 1")
+	}
+	// Optional fields must not change the canonical JSON of legacy records.
+	b = sample()
+	data, _ = json.Marshal(b)
+	if strings.Contains(string(data), "confidence_derived") || strings.Contains(string(data), "confidence_raw") {
+		t.Fatal("legacy bundle gained fields")
+	}
+}

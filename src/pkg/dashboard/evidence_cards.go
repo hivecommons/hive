@@ -6,18 +6,20 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // Evidence card keys match the dashboard's data-ev-panel attributes.
 const (
-	evidenceCardOutcome         = "outcome-by-author"
-	evidenceCardCalibration     = "calibration"
-	evidenceCardAccuracy        = "accuracy-by-model"
-	evidenceCardMaintainability = "maintainability"
-	evidenceCardBoundary        = "boundary-enforcement"
-	evidenceCardCIGate          = "claim-vs-verdict"
-	evidenceCardWorkBalance     = "work-balance"
-	evidenceCardShadow          = "shadow-gates"
+	evidenceCardOutcome            = "outcome-by-author"
+	evidenceCardCalibration        = "calibration"
+	evidenceCardCalibrationDerived = "calibration-derived"
+	evidenceCardAccuracy           = "accuracy-by-model"
+	evidenceCardMaintainability    = "maintainability"
+	evidenceCardBoundary           = "boundary-enforcement"
+	evidenceCardCIGate             = "claim-vs-verdict"
+	evidenceCardWorkBalance        = "work-balance"
+	evidenceCardShadow             = "shadow-gates"
 )
 
 // evidenceCards derives the per-card letter grade and plain-English summary
@@ -34,7 +36,7 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	sort.Strings(kinds)
 	for _, k := range kinds {
 		o := resp.Outcomes[k]
-		s := evidence.OutcomeStats{Kind: k, N: o.N, Merged: o.Merged, Closed: o.Closed, Open: o.Open, Unknown: o.Unknown}
+		s := evidence.OutcomeStats{Kind: k, N: o.N, Merged: o.Merged, Closed: o.Closed, Open: o.Open, Unknown: o.Unknown, Reopened: o.IssueReopenedWithin14d}
 		if o.RevertedWithin14d != nil {
 			s.Reverted = *o.RevertedWithin14d
 		}
@@ -42,23 +44,11 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	}
 	cards[evidenceCardOutcome] = evidence.Card{Grade: evidence.GradeOutcome(outcomes), PlainSummary: evidence.SummarizeOutcome(outcomes)}
 
-	buckets := make([]evidence.CalibrationBucket, len(evidenceSummaryBuckets))
-	for i, b := range evidenceSummaryBuckets {
-		buckets[i].Bucket = b.name
-	}
-	for _, p := range resp.Calibration {
-		for i, b := range p.Buckets {
-			if i >= len(buckets) {
-				break
-			}
-			buckets[i].Known += b.N - b.Unknown
-			buckets[i].Merged += b.Merged
-		}
-	}
-	if len(resp.Calibration) == 0 {
-		buckets = nil
-	}
-	cards[evidenceCardCalibration] = evidence.Card{Grade: evidence.GradeCalibration(buckets), PlainSummary: evidence.SummarizeCalibration(buckets)}
+	self := calibrationCardBuckets(resp.Calibration)
+	derived := calibrationCardBuckets(resp.CalibrationDerived)
+	comparison := evidence.SummarizeCalibrationComparison(self, derived)
+	cards[evidenceCardCalibration] = evidence.Card{Grade: evidence.GradeCalibration(self), PlainSummary: comparison}
+	cards[evidenceCardCalibrationDerived] = evidence.Card{Grade: evidence.GradeCalibration(derived), PlainSummary: comparison}
 
 	acc := evidence.AccuracyStats{}
 	for _, m := range resp.ReviewerModels {
@@ -67,18 +57,18 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	if ra := resp.ReviewerAccuracy; ra != nil {
 		acc.Available = true
 		acc.Samples = ra.Samples
-		var approvals, falseApprovals, blocks, falseBlocks int
-		for _, g := range ra.ReviewerModels {
-			approvals += g.Approvals
-			falseApprovals += g.FalseApprovals
-			blocks += g.Blocks
-			falseBlocks += g.FalseBlocks
+		acc.FalseApproveRate, acc.FalseBlockRate = accuracyRates(ra.ReviewerModels)
+		for _, g := range ra.FamilyMatch {
+			fa := familyAccuracy(g)
+			switch g.Name {
+			case review.FamilyMatchSame:
+				acc.SameFamily = fa
+			case review.FamilyMatchCross:
+				acc.CrossFamily = fa
+			}
 		}
-		if approvals > 0 {
-			acc.FalseApproveRate = float64(falseApprovals) / float64(approvals)
-		}
-		if blocks > 0 {
-			acc.FalseBlockRate = float64(falseBlocks) / float64(blocks)
+		for _, g := range ra.AuthorFamilies {
+			acc.AuthorFamilies = append(acc.AuthorFamilies, familyAccuracy(g))
 		}
 	}
 	cards[evidenceCardAccuracy] = evidence.Card{Grade: evidence.GradeAccuracy(acc), PlainSummary: evidence.SummarizeAccuracy(acc)}
@@ -171,4 +161,47 @@ func evidenceComplexityTrends(series []EvidenceComplexityRepo, repo string, win 
 		})
 	}
 	return trends, withSnapshots
+}
+
+// accuracyRates pools the groups' approvals and blocks into one false-approve
+// and one false-block rate.
+func accuracyRates(groups []review.ReviewerAccuracyGroup) (falseApprove, falseBlock float64) {
+	var approvals, falseApprovals, blocks, falseBlocks int
+	for _, g := range groups {
+		approvals += g.Approvals
+		falseApprovals += g.FalseApprovals
+		blocks += g.Blocks
+		falseBlocks += g.FalseBlocks
+	}
+	if approvals > 0 {
+		falseApprove = float64(falseApprovals) / float64(approvals)
+	}
+	if blocks > 0 {
+		falseBlock = float64(falseBlocks) / float64(blocks)
+	}
+	return falseApprove, falseBlock
+}
+
+func familyAccuracy(g review.ReviewerAccuracyGroup) evidence.FamilyAccuracy {
+	return evidence.FamilyAccuracy{Name: g.Name, Samples: g.Samples, FalseApproveRate: g.FalseApproveRate, FalseBlockRate: g.FalseBlockRate}
+}
+
+func calibrationCardBuckets(series []EvidencePerspectiveCalib) []evidence.CalibrationBucket {
+	if len(series) == 0 {
+		return nil
+	}
+	buckets := make([]evidence.CalibrationBucket, len(evidenceSummaryBuckets))
+	for i, b := range evidenceSummaryBuckets {
+		buckets[i].Bucket = b.name
+	}
+	for _, p := range series {
+		for i, b := range p.Buckets {
+			if i >= len(buckets) {
+				break
+			}
+			buckets[i].Known += b.N - b.Unknown
+			buckets[i].Merged += b.Merged
+		}
+	}
+	return buckets
 }

@@ -130,6 +130,9 @@ type PerspectiveReport struct {
 	HiveAuthored bool        `json:"hive_authored,omitempty"`
 	AuthorModel  string      `json:"author_model,omitempty"`
 	ReviewModel  string      `json:"review_model,omitempty"`
+	// Confidence is the optional binned self-report; it never feeds the gate.
+	Confidence    *float64 `json:"confidence,omitempty"`
+	ConfidenceRaw *float64 `json:"confidence_raw,omitempty"`
 	// DecisionRequested means the review found no code defect it can route
 	// to the author, but explicitly deferred a maintainer/product decision.
 	DecisionRequested bool   `json:"decision_requested,omitempty"`
@@ -177,6 +180,10 @@ type AggregateOptions struct {
 	// actually configured rather than a hardcoded five -- a hive that reviews
 	// with three could otherwise never reach unanimity at all.
 	Perspectives PerspectiveSet
+	// ModelStamps fills author_model / review_model on reports that omitted
+	// them, from what the planner recorded when it dispatched the review
+	// (ModelStampsFromState). Nil leaves reports as written.
+	ModelStamps ModelStamps
 }
 
 type Aggregate struct {
@@ -272,6 +279,7 @@ func ValidateReportFor(raw []byte, set PerspectiveSet) (*PerspectiveReport, erro
 	if report.Number <= 0 {
 		return nil, fmt.Errorf("number must be greater than zero")
 	}
+	normalizeReportedConfidence(&report)
 	return &report, nil
 }
 
@@ -1053,6 +1061,7 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}
+		opts.ModelStamps.apply(report)
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
 	}
@@ -1275,7 +1284,7 @@ func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) 
 	var ok bool
 	for _, item := range a.Items {
 		item = item.Normalize()
-		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || !SameHeadSHA(item.HeadSHA, wantSHA) {
 			continue
 		}
 		if !ok || item.RecordedAt.After(match.RecordedAt) {

@@ -100,6 +100,13 @@ type StageLabelPolicy struct {
 	// deferred to one is kept out of 070/072 and never nudged
 	// (hivecommons/hive#12606). nil = unknown (no deferral).
 	SharedCIIncident func(repo string, number int, head string) int
+	// BaseBranchRed returns the failing checks on the PR head (repo
+	// "owner/name", number, head SHA) that are also red on the base branch
+	// tip, when EVERY failing check is — hgithub.PullRequest.BaseRedChecks
+	// with AllFailuresBaseRed. Such a PR is kept out of 070/071/072 with
+	// reason `base-branch-red:<checks>` and never nudged: the red is the
+	// base branch's, not the author's. nil = unknown (no deferral).
+	BaseBranchRed func(repo string, number int, head string) []string
 }
 
 // ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
@@ -266,6 +273,10 @@ type stageObservation struct {
 	// SharedCIIncident is the open shared-CI incident the head is deferred
 	// to (StageLabelPolicy.SharedCIIncident), 0 when none.
 	SharedCIIncident int
+	// BaseRedChecks are the head's failing checks that are also red on the
+	// base branch (StageLabelPolicy.BaseBranchRed); non-empty only when
+	// every failing check is.
+	BaseRedChecks []string
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -480,6 +491,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	obs.Body = pr.GetBody()
 	obs.OpenedAt = pr.GetCreatedAt().Time
 	obs.SharedCIIncident = stageSharedCIIncident(policy, owner, repo, obs.Number, obs.HeadSHA)
+	obs.BaseRedChecks = stageBaseBranchRed(policy, owner, repo, obs.Number, obs.HeadSHA)
 	c.stageTrackerOrShared().record(obs)
 }
 
@@ -710,7 +722,8 @@ func classifyCIReason(reason string) ciReasonKind {
 		strings.HasPrefix(reason, "required-check-pending:"), ciReasonInconclusive(reason):
 		return ciReasonPending
 	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
-		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs":
+		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs",
+		strings.HasPrefix(reason, stageReasonBaseBranchRed):
 		return ciReasonRed
 	}
 	return ciReasonNone
@@ -877,6 +890,9 @@ func classifyStage(o stageObservation) stageVerdict {
 		if v, ok := sharedCIDeferredStage(o); ok {
 			return v
 		}
+		if v, ok := baseBranchRedStage(o); ok {
+			return v
+		}
 		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 		}
@@ -938,6 +954,10 @@ func classifyStage(o stageObservation) stageVerdict {
 	}
 	if v, ok := sharedCIDeferredStage(o); ok {
 		// The red is the shared incident's, not the head's.
+		return v
+	}
+	if v, ok := baseBranchRedStage(o); ok {
+		// The red is the base branch's, not the head's.
 		return v
 	}
 	if classifyCIReason(reason) == ciReasonRed {

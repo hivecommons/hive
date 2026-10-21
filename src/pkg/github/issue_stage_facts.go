@@ -24,6 +24,7 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 		Ref:    stageengine.Ref{Owner: owner, Repo: repo, Number: in.Number, Kind: stagelabels.IssueItem},
 		Labels: append([]string(nil), in.Labels...),
 		Open:   true,
+		Author: stageengine.AuthorFacts{Kind: in.AuthorKind},
 		Park: stageengine.ParkFacts{
 			Holds:         stagelabels.Holds(in.Labels),
 			NeedsHuman:    issueHeldByNeedsHuman(in),
@@ -68,7 +69,7 @@ func issueBucketFrom(bucket string) stageengine.IssueBucket {
 // issueInputFrom is the inverse of issueFactsFrom for the fields
 // IssueStageFor reads.
 func issueInputFrom(f stageengine.Facts) IssueStageInput {
-	in := IssueStageInput{Repo: f.Ref.FullRepo(), Number: f.Ref.Number, Labels: append([]string(nil), f.Labels...)}
+	in := IssueStageInput{Repo: f.Ref.FullRepo(), Number: f.Ref.Number, Labels: append([]string(nil), f.Labels...), AuthorKind: f.Author.Kind}
 	if f.Issue == nil {
 		return in
 	}

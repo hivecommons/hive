@@ -1395,20 +1395,36 @@ func (l *ClaimLedger) MarkIssueReopened(repo string, issue int, at time.Time) bo
 	if l == nil || issue <= 0 || repo == "" || at.IsZero() {
 		return false
 	}
+	c, ok := l.markIssueReopenedLocked(repo, issue, at)
+	if !ok {
+		return false
+	}
+	// The reopen is also a change-failure signal for the closing PR's
+	// evidence record (hivecommons/hive#13241). Called outside the lock: the
+	// recorder reads and writes bundles, never this ledger.
+	if rec := issueReopenRecorder(); rec != nil {
+		rec(c, at)
+	}
+	return true
+}
+
+// markIssueReopenedLocked is MarkIssueReopened's ledger update; it returns
+// the voided claim when the ledger changed.
+func (l *ClaimLedger) markIssueReopenedLocked(repo string, issue int, at time.Time) (IssueClaim, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	key := claimKey(repo, issue)
 	c, ok := l.claims[key]
 	if !ok || !c.MergedPR || !c.ReopenedAt.IsZero() {
-		return false
+		return IssueClaim{}, false
 	}
 	if !c.MergedAt.IsZero() && !at.After(c.MergedAt) {
-		return false
+		return IssueClaim{}, false
 	}
 	c.ReopenedAt = at
 	c.ReopenCheckedAt = at
 	l.claims[key] = c
-	return true
+	return c, true
 }
 
 // markReopenChecked records that the reopen check read the issue's timeline
@@ -1774,8 +1790,14 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
 		return
 	}
+	// The in-memory copy says "covered" for the dashboard and the kick;
+	// the forge label itself is the issue stage sweep's to write, so it is
+	// told when this is a synthesised label rather than one GitHub returned
+	// (hivecommons/hive#13316).
+	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
 	issue.ClaimContext = claimContext(claim, "covered_by_open_pr")
+	issue.ClaimContext.CoveredLabelSynthesized = synthesized
 }
 
 // annotateIssueReopenedAfterMerge records a voided merged claim on the issue:
@@ -2034,7 +2056,9 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
 		// The covered-by-PR stage label itself is written by the issue stage
 		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
-		// keeps the issue at 040 while the PR is open; here only the
+		// keeps the issue at 040 while the PR is open — planning against the
+		// forge labels, not the in-memory annotation
+		// (hivecommons/hive#13316); here only the
 		// retired spellings are stripped so the migration completes one cycle
 		// after upgrade, and the in-memory copy reflects the claim either way.
 		for _, name := range legacyCoveredByPRLabels {

@@ -72,6 +72,17 @@ check-version skip="false":
 contribute-check-backend backend="claude":
     #!/usr/bin/env bash
     set -euo pipefail
+    # config/backends.conf KNOWN_BACKENDS is the single source of truth for the
+    # supported set (#13262, #13263); the case below only adds per-CLI probes.
+    # shellcheck source=config/backends.conf disable=SC1091
+    source "{{justfile_directory()}}/config/backends.conf"
+    case " ${KNOWN_BACKENDS} " in
+      *" {{backend}} "*) ;;
+      *)
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: ${KNOWN_BACKENDS// /, }"
+        exit 1
+        ;;
+    esac
     echo "── Preflight: {{backend}} CLI ──"
     # Say which CLI this probes. It is the HOST's copy, which is what local
     # mode runs and what container mode stages a sign-in from — but container
@@ -105,11 +116,11 @@ contribute-check-backend backend="claude":
           exit 1
         fi
         ;;
-      gemini)
-        if command -v gemini &>/dev/null; then
-          echo "Gemini CLI detected — run 'gemini auth login' if not already authenticated."
+      aider)
+        if command -v aider &>/dev/null; then
+          echo "aider detected — export the API key for your chosen provider for containerized runs."
         else
-          echo "ERROR: Gemini CLI not installed."
+          echo "ERROR: aider not found. Install: https://aider.chat/docs/install.html"
           exit 1
         fi
         ;;
@@ -299,7 +310,7 @@ contribute-check-backend backend="claude":
         fi
         ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm, opencode, kilo, muse, omp, openhands"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: ${KNOWN_BACKENDS// /, }"
         exit 1
         ;;
     esac

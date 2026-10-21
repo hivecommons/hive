@@ -712,6 +712,12 @@ type IssueClaimContext struct {
 	// person reopened the issue after the PR named here merged.
 	ReopenedAt time.Time `json:"reopened_at,omitempty"`
 	Decision   string    `json:"decision"`
+	// CoveredLabelSynthesized records that annotateIssueWithClaim added
+	// stage/040-covered-by-pr to the in-memory Issue.Labels because the
+	// forge payload did not carry it. The issue stage sweep strips it again
+	// before planning so the label is written when GitHub actually lacks
+	// it (hivecommons/hive#13316). Process-local; never serialised.
+	CoveredLabelSynthesized bool `json:"-"`
 }
 
 type PullRequest struct {
@@ -834,6 +840,12 @@ type PullRequest struct {
 	// or the lookup failed. Kick builders keep such a PR out of their repair
 	// lists until the incident closes (hivecommons/hive#10528).
 	SharedCIIncident int `json:"shared_ci_incident,omitempty"`
+	// BaseRedChecks names the failing checks that are also red on the base
+	// branch's tip while the PR touches no CI-owning path (base_branch_red.go).
+	// When it covers every failing check (AllFailuresBaseRed) the red is the
+	// base branch's, not this PR's: no 070/071/072, no fix kick, no
+	// escalation attempt counted.
+	BaseRedChecks []string `json:"base_red_checks,omitempty"`
 	// BaseSHA is the commit on the base branch the PR targets — the tree a
 	// reviewer should read to judge the change in context. It is carried so a
 	// repo-grounded review can be pinned to a specific commit rather than to
@@ -1443,11 +1455,16 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		}
 		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
 		// actionable set until ReconcileBlockedIssues lifts the label. The
-		// reason names the PR when the body carries the blocked-on marker.
+		// reason names the PR when the body carries the blocked-on marker,
+		// else the recheck-after deadline when it carries one
+		// (hivecommons/hive#13310).
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			details = append(details, repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody())))
+			row := repoWorkIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
+			row.RecheckDone = blockedRecheckDone(issue.GetBody())
+			details = append(details, row)
 			continue
 		}
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
@@ -1484,7 +1501,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
 				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
-				details = append(details, repoWorkIssue(repo, issue, labels, "reporter_triage", "Awaiting maintainer triage label"))
+				details = append(details, repoWorkIssue(repo, issue, labels, workBucketReporterTriage, "Awaiting maintainer triage label"))
 				continue
 			}
 			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
@@ -1992,7 +2009,9 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 //
 // For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528):
 // one comment listing per red PR, plus one issue GET per distinct incident
-// number named by a `<!-- hive-shared-ci-<n> -->` marker in this pass.
+// number named by a `<!-- hive-shared-ci-<n> -->` marker in this pass — and
+// BaseRedChecks (base_branch_red.go): one check-run listing per distinct
+// base branch, plus one file listing per red PR whose failures overlap it.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	if c == nil {
 		return
@@ -2006,6 +2025,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		}
 		facts.attach(ctx, &prs[i], reported)
 	}
+	c.enrichBaseBranchRed(ctx, prs)
 }
 
 // EnrichReviewSignals stamps only the review-decision and repo-card triage
@@ -2080,7 +2100,13 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
 	// Snapshot the CI verdict for the evidence bundle once it is known. Never
 	// affects the verdict or any merge decision.
-	defer func() { c.recordReviewEvidenceCI(pr.Repo, pr.Number, pr.HeadSHA, pr.CIStatus, full, latestCheckRuns) }()
+	// Keyed by owner/name: pr.Repo may be the bare repo name, and a bundle
+	// filed under it validates as "repo must be owner/name" and is dropped,
+	// leaving the lane's bundle at <owner>/<name>/<n>/<head>.json without
+	// its CI snapshot.
+	defer func() {
+		c.recordReviewEvidenceCI(owner+"/"+repoName, pr.Number, pr.HeadSHA, pr.CIStatus, full, latestCheckRuns)
+	}()
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
@@ -2409,6 +2435,11 @@ type PRState struct {
 	BaseRef string
 	// MergedBy is the login that merged the PR ("" when not merged or unknown).
 	MergedBy string
+	// Title, Body and HeadSHA are carried so a merged PR's text can be
+	// scanned for a revert without another fetch (hivecommons/hive#13241).
+	Title   string
+	Body    string
+	HeadSHA string
 }
 
 // GetPRState fetches a single PR's state. The review-outcome ledger calls it
@@ -2430,7 +2461,8 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		}
 		c.storePRDetail(repo, number, pr)
 	}
-	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin()}
+	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin(),
+		Title: pr.GetTitle(), Body: pr.GetBody(), HeadSHA: pr.GetHead().GetSHA()}
 	if !pr.GetMergedAt().IsZero() {
 		st.MergedAt = pr.GetMergedAt().Time
 	}
@@ -3863,6 +3895,14 @@ type RepoWorkIssue struct {
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 	// Children is Issue.Children, copied for the issue stage reconciler.
 	Children *IssueChildren `json:"children,omitempty"`
+	// RecheckAfter and OpsTracking are read from a blocked issue's body
+	// (`<!-- hive:recheck-after <RFC3339> -->`, `<!-- hive:ops-tracking -->`)
+	// for ReconcileBlockedIssues (hivecommons/hive#13310).
+	RecheckAfter time.Time `json:"recheck_after,omitzero"`
+	OpsTracking  bool      `json:"ops_tracking,omitempty"`
+	// RecheckDone is set once the soak triage has stamped
+	// `<!-- hive:recheck-done -->` into the body (hivecommons/hive#13311).
+	RecheckDone bool `json:"recheck_done,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {

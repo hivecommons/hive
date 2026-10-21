@@ -29,7 +29,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -59,6 +61,9 @@ type issueStageGoldenInput struct {
 	// CoveringPRStage is what prStage returns for any (repo, number);
 	// CoveringPRLookup records the (repo, number) it was asked for.
 	CoveringPRStage string `json:"covering_pr_stage,omitempty"`
+	// AuthorKind mirrors IssueStageInput.AuthorKind ("" = Unknown, read
+	// as human-filed) for the 015-triage-needed derivation.
+	AuthorKind string `json:"author_kind,omitempty"`
 }
 
 type issueStageGoldenWant struct {
@@ -77,7 +82,7 @@ type issueStageGoldenCase struct {
 }
 
 func (in issueStageGoldenInput) toInput() IssueStageInput {
-	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted}
+	out := IssueStageInput{Repo: in.Repo, Number: in.Number, Labels: in.Labels, Bucket: in.Bucket, Reason: in.Reason, ClaimKind: in.ClaimKind, ClaimedBy: in.ClaimedBy, PRStarted: in.PRStarted, AuthorKind: authorkind.Kind(in.AuthorKind)}
 	if in.ClaimPresent {
 		out.Claim = &IssueClaimContext{PRNumber: in.ClaimPR, PRRepo: in.ClaimPRRepo}
 	}
@@ -307,6 +312,56 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 	} {
 		add("regressions.json", c)
 	}
+
+	// 015-triage-needed: every author kind × triage-evidence label set ×
+	// the buckets that reach the actionable rule (hivecommons/hive#13268).
+	triageLabels := map[string][]string{
+		"nolabel":               nil,
+		"needs-triage":          {triageAwaitingLabel},
+		"triage-accepted":       {config.DefaultUntrustedRequireLabels[0]},
+		"verified-open":         {VerifiedOpenLabel},
+		"approved-direction":    {HumanAckLabel},
+		"needs-triage+accepted": {triageAwaitingLabel, config.DefaultUntrustedRequireLabels[0]},
+		"epic":                  {"Epic"},
+		"epic+verified-open":    {"Epic", VerifiedOpenLabel},
+	}
+	triageLabelNames := make([]string, 0, len(triageLabels))
+	for k := range triageLabels {
+		triageLabelNames = append(triageLabelNames, k)
+	}
+	sort.Strings(triageLabelNames)
+	for _, kind := range []authorkind.Kind{authorkind.Unknown, authorkind.Human, authorkind.Hive, authorkind.Clanker} {
+		kname := string(kind)
+		if kname == "" {
+			kname = "unknown"
+		}
+		for _, bucket := range []string{"", workBucketReporterTriage, workBucketClaimed} {
+			bname := bucket
+			if bname == "" {
+				bname = "actionable"
+			}
+			ck := ""
+			if bucket == workBucketClaimed {
+				ck = string(claims.KindAgent)
+			}
+			for _, ln := range triageLabelNames {
+				add("triage.json", issueStageGoldenCase{
+					Name:  "triage/" + kname + "/" + bname + "/" + ln,
+					Input: issueStageGoldenInput{Repo: repo, Number: 1, Labels: triageLabels[ln], Bucket: bucket, ClaimKind: ck, AuthorKind: string(kind)},
+				})
+			}
+		}
+	}
+	add("triage.json", issueStageGoldenCase{
+		Name:  "triage/13262-hive-filed-review-backlog-stays-010",
+		Note:  "hivecommons/hive#13262 (a hive-filed 'Review backlog (security)' issue): hive agents do not need triage, so who filed it never derives 015; it is 010.",
+		Input: issueStageGoldenInput{Repo: repo, Number: 13262, Labels: []string{"kind/review-backlog", stagelabels.Actionable.Label()}, AuthorKind: string(authorkind.Hive)},
+	})
+	add("triage.json", issueStageGoldenCase{
+		Name:  "triage/12999-human-epic-with-verified-open-stays-010",
+		Note:  "hivecommons/hive#12999 was filed by a maintainer and carries hive/verified-open: triaged, 010.",
+		Input: issueStageGoldenInput{Repo: repo, Number: 12999, Labels: []string{"Epic", VerifiedOpenLabel}, AuthorKind: string(authorkind.Human)},
+	})
 
 	for file := range out {
 		sort.Slice(out[file], func(i, j int) bool { return out[file][i].Name < out[file][j].Name })

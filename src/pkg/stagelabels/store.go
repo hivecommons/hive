@@ -588,6 +588,11 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
+	case TriageNeeded:
+		// 015 → 010 is a maintainer triaging the issue (triage/accepted,
+		// hive/verified-open, approved-direction added or needs-triage
+		// removed): the only lower stage, and it is progress, not a fall.
+		return false
 	case MergeQueue:
 		// 100 → 095 is a reclassification, not a knock-back: the PR was
 		// soaking all along and records written before 095 existed called

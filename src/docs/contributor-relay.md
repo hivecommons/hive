@@ -513,7 +513,11 @@ hivectl hives remove staging                              # asks you to type the
 
 The active profile is written first in each list, which is the hub the relay solicits from when it starts. When a relay is **already running**, `hivectl hives use <name>` writes the projection and signals that relay to reload it, so the next solicitation goes to the new active hive without a restart. Work already in flight stays with the hub that assigned it and completes there.
 
-The relay writes two non-secret control files beside the profiles: `contributor-relay.pid`, so `hivectl hives use` can signal the native process or recorded docker/podman container, and `hubs-seen.json`, so `hivectl hives list` can show when each hub last authenticated or heartbeated successfully without probing every hub.
+The relay writes three non-secret control files beside the profiles: `contributor-relay.pid`, so `hivectl hives use` can signal the native process or recorded docker/podman container; `hubs-seen.json`, so `hivectl hives list` can show when each hub last authenticated or heartbeated successfully without probing every hub; and `relay-status.json`, an owner-only (`0600`) atomic snapshot of adopted scope, subscription readiness, and current work. `HIVE_RELAY_STATUS_FILE` overrides its path.
+
+The status file's `pid`, `started_at`, and per-start `session` match the PID record. `adopted_scope_version` and `adopted_at` change only after the relay successfully reads `contributor.env` on reload. Each `subscriptions` entry identifies its Hive by canonical HTTP origin and records `readiness` (`connected`, `scope-pending`, `scope-unsupported`, `quota-held`, `disabled`, or `discovery-unavailable`), `acknowledged_scope_version`, and `observed_at`. `current_task` has the Hive, canonical repository, issue and task identifiers, start time, and a `draining` flag when its target leaves the adopted scope; the existing lease can finish, but that target receives no new lease. `idle_reason` distinguishes an all-disabled set from a set with no selected repositories.
+
+`hivectl` treats a missing, malformed, dead-process, or mismatched-session status as unknown. A saved generation remains pending until its subscription acknowledges at least that version. The snapshot contains no prompt, task payload, token, credential, or log text.
 
 The first `hivectl hives` command on a machine that still has a positional `contributor.env` migrates it in place — entries named after their hub host, the first hub still active — and leaves `contributor.env` untouched until a later command actually changes your hives. A legacy file whose three lists disagree in length is refused rather than guessed at.
 
@@ -556,6 +560,20 @@ The profile list is available in the terminal UI: `just contribute-tui` (or `hiv
 From a fresh checkout, `just contribute-tui`, `just contribute-watch` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
 
 See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
+
+### Onboarding a whole hub's Hives (`hivectl hives hub`)
+
+A hub that publishes a federation registry can be tracked as a discovery collection, so you do not run `hives add` once per Hive. Tracking stores only the hub's name and URL in `profiles.yml` — never a credential — and each Hive is still registered through the same per-Hive registration and identity flow as `hives add`:
+
+```bash
+hivectl hives hub add commons --url https://hub.example             # track it, store no credential
+hivectl hives hub show commons                                      # read-only: which Hives it advertises
+hivectl hives hub adopt commons                                     # review the list, confirm, enroll missing Hives
+hivectl hives hub follow commons --mode current-and-future-repos    # policy for Hives it advertises later
+hivectl hives hub refresh commons                                   # apply the policy: additions and removals, shown separately
+```
+
+`adopt` prompts before any registration (`--yes` skips the prompt for scripted setups). `follow` only records the hub's `follow` policy (`off`, `current`, `current-and-future-repos`); it is applied by `refresh`, not by a background poller. `refresh` enrolls newly advertised Hives within that policy, lists Hives the hub no longer advertises as `no longer advertised`, and never removes a profile for you. See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the `hubs:` schema and the exact confirmation rules.
 
 ## Moving the relay to another machine
 

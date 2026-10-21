@@ -17,6 +17,7 @@
 #   A  static drift checks — keyless, deterministic, always run:
 #      A1 HEADLESS_BACKENDS (relay) vs KNOWN_BACKENDS (backends.conf), a pair
 #         kept in sync by comment only before this test existed;
+#      A4 the Justfile preflight gate derives from KNOWN_BACKENDS (#13262);
 #      A2/A3 codex + claude version pins agree across src/Dockerfile and
 #         src/Dockerfile.contributor.
 #   S  stub wire-contract scenarios — keyless, deterministic: a stub backend
@@ -136,6 +137,42 @@ $k
   check "backends without a headless mode are exactly the documented set" \
         "aider bob omp" "$(echo "$NON_HEADLESS" | tr ' ' '\n' | grep -v '^$' | sort | tr '\n' ' ' | sed 's/ $//')"
 fi
+
+echo ""
+echo "-- A4: Justfile contribute-check-backend derives its gate from KNOWN_BACKENDS (#13262, #13263) --"
+JUSTFILE="$ROOT/Justfile"
+CHECK_RECIPE="$(sed -n '/^contribute-check-backend backend=/,/^[a-z][a-z-]* .*:$/p' "$JUSTFILE")"
+if printf '%s\n' "$CHECK_RECIPE" | grep -q 'source .*config/backends.conf'; then
+  pass "contribute-check-backend sources config/backends.conf"
+else
+  fail "contribute-check-backend sources config/backends.conf" \
+       "the recipe must read KNOWN_BACKENDS rather than hard-code the list"
+fi
+if printf '%s\n' "$CHECK_RECIPE" | grep -qE 'Supported: [a-z]+,'; then
+  fail "no hard-coded supported list in contribute-check-backend" \
+       "the error message must print \$KNOWN_BACKENDS"
+else
+  pass "no hard-coded supported list in contribute-check-backend"
+fi
+PROBE_LABELS="$(printf '%s\n' "$CHECK_RECIPE" | grep -E '^      [a-z]+\)$' | sed -E 's/^ +([a-z]+)\)$/\1/')"
+for k in $PROBE_LABELS; do
+  case " $KNOWN_BACKENDS " in
+    *" $k "*) pass "probe '$k' is in KNOWN_BACKENDS" ;;
+    *) fail "probe '$k' is in KNOWN_BACKENDS" \
+            "contribute-check-backend probes '$k' but KNOWN_BACKENDS does not list it" ;;
+  esac
+done
+for k in $KNOWN_BACKENDS; do
+  case "
+$PROBE_LABELS
+" in
+    *"
+$k
+"*) pass "KNOWN_BACKENDS entry '$k' has a preflight probe" ;;
+    *) fail "KNOWN_BACKENDS entry '$k' has a preflight probe" \
+            "contribute-check-backend has no case for '$k'" ;;
+  esac
+done
 
 echo ""
 echo "-- A2/A3: CLI version pins agree across both Dockerfiles --"

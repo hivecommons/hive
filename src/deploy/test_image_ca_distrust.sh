@@ -12,6 +12,10 @@
 #
 # Usage: test_image_ca_distrust.sh --image <ref>
 #
+# A cross-built image (arm64 under QEMU on an amd64 runner) makes docker print
+# a platform-mismatch warning on stderr; probes therefore parse stdout only,
+# and docker's stderr is shown only when a run fails unexpectedly.
+#
 # Network is required (the endpoints are public). If the test host itself is
 # unreachable (DNS/connect failure rather than a TLS verify failure) the check
 # is reported as SKIP, not PASS, so a sandbox without egress cannot go green
@@ -46,26 +50,44 @@ in_image() {
   docker run --rm --entrypoint sh "$IMAGE" -c "$1"
 }
 
+# curl_rc <url>: curl's exit code from inside the image; docker's own stderr
+# is kept and printed when the code is not one the caller understands.
+CURL_ERR=""
+curl_rc() {
+  local rc=0 err
+  err="$(mktemp)"
+  in_image "curl -sS -o /dev/null --max-time 30 '$1'" >/dev/null 2>"$err" || rc=$?
+  CURL_ERR="$(cat "$err")"; rm -f "$err"
+  return "$rc"
+}
+
+# node_out <url>: the probe prints exactly one stdout line (TRUSTED/REJECTED/
+# NETWORK ...). Only stdout is parsed; docker's own stderr chatter (platform
+# warnings, pull progress) must never be mistaken for probe output.
+node_out() {
+  in_image "$node_probe '$1'" 2>/dev/null | tail -n 1 || true
+}
+
 echo "=== CA distrust check: $IMAGE ==="
 
 # curl: exit 60 is "peer certificate cannot be authenticated"; 6/7/28 are
 # resolve/connect/timeout, i.e. the network, not the trust store.
 for url in "${ENDPOINTS[@]}"; do
   rc=0
-  in_image "curl -sS -o /dev/null --max-time 30 '$url'" >/dev/null 2>&1 || rc=$?
+  curl_rc "$url" || rc=$?
   case "$rc" in
     60) ok "curl rejects $url" ;;
     0)  bad "curl TRUSTED $url (HTTP response received; distrusted root still in bundle)" ;;
     6|7|28) skip "curl could not reach $url (rc=$rc)" ;;
-    *)  bad "curl unexpected rc=$rc for $url" ;;
+    *)  bad "curl unexpected rc=$rc for $url: $CURL_ERR" ;;
   esac
 done
 rc=0
-in_image "curl -sS -o /dev/null --max-time 30 '$CONTROL'" >/dev/null 2>&1 || rc=$?
+curl_rc "$CONTROL" || rc=$?
 case "$rc" in
   0) ok "curl control still trusts $CONTROL" ;;
   6|7|28) skip "curl could not reach control $CONTROL (rc=$rc)" ;;
-  *) bad "curl control rc=$rc for $CONTROL — bundle may have been emptied" ;;
+  *) bad "curl control rc=$rc for $CONTROL — bundle may have been emptied: $CURL_ERR" ;;
 esac
 
 # node: the image sets NODE_OPTIONS=--use-openssl-ca, so this exercises the
@@ -74,7 +96,7 @@ esac
 node_probe='node -e "fetch(process.argv[1]).then(r=>console.log(\"TRUSTED\",r.status)).catch(e=>{const c=e.cause?.code||e.message;console.log(/CERT|SSL|certificate/i.test(c)?\"REJECTED\":\"NETWORK\",c)})" '
 if in_image "command -v node" >/dev/null 2>&1; then
   for url in "${ENDPOINTS[@]}"; do
-    out="$(in_image "$node_probe '$url'" 2>&1 || true)"
+    out="$(node_out "$url")"
     case "$out" in
       REJECTED*) ok "node rejects $url ($out)" ;;
       TRUSTED*)  bad "node TRUSTED $url ($out)" ;;
@@ -82,7 +104,7 @@ if in_image "command -v node" >/dev/null 2>&1; then
       *)         bad "node unexpected output for $url: $out" ;;
     esac
   done
-  out="$(in_image "$node_probe '$CONTROL'" 2>&1 || true)"
+  out="$(node_out "$CONTROL")"
   case "$out" in
     TRUSTED*) ok "node control still trusts $CONTROL" ;;
     NETWORK*) skip "node could not reach control $CONTROL ($out)" ;;

@@ -69,15 +69,21 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"dto.outcomes_by_author_kind || {}",
 		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),",
 		"const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];",
-		"reverted: Number(o.reverted_14d) || 0",
-		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}${bar('ou', row.unknown, 3)}",
+		"const reverted = Number(o.reverted_14d) || 0, reopened = Number(o.issue_reopened_14d) || 0;",
+		"reverted, reopened, failed: reverted + reopened };",
+		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.failed, 2)}${bar('ou', row.unknown, 3)}",
 		"no PRs with an evidence bundle in this window",
 		"A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead",
 		"${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open.",
 		"prs_outcome_from_ledger",
 		"merged_elsewhere",
 		"is shown as unknown and excluded from every rate, not counted as open or as not merged.",
-		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
+		// #13241: both change-failure signals, with their detection method and
+		// the 14-day window spelled out.
+		"Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit",
+		"re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing",
+		"Change-failure rate = (reverted + re-opened) within 14 days ÷ merged.",
+		"const EV_REOPENS_SINCE = '2026-10-20';",
 		// Unknown-outcome policy (#12514 follow-up): never a denominator, always a count.
 		"prs_outcome_unknown",
 		"unknown: Number(o.unknown) || 0",
@@ -239,8 +245,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -320,6 +326,24 @@ renderEvidenceSummary({...dto, all_time: true, cards: {
 assert.match(card.innerHTML, /<summary>Maintainability trend<span[^>]*>n=1<\/span><span class="ev-letter ev-band-a" title="median flat &amp; fewer complex &lt;fns&gt;" aria-label="Grade A: median flat &amp; fewer complex &lt;fns&gt;">A<\/span><\/summary><div class="ev-plain">Code complexity across 1 repo: median flat, 4 complex functions \(was 1\).<\/div>/);
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Not enough data yet: needs 20 observed PRs"[^>]*>—<\/span><\/summary><div class="ev-plain">No PRs observed by the shadow gates in this window.<\/div>/);
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><details|<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><div class="ev-(empty|headline)/);
+// Switching series updates the selected n, chart and server grade together.
+const selfRows = [{perspective: 'security', n: 8, buckets: [{bucket: '0.55', n: 8, merged: 4, unknown: 0}]}];
+const derivedRows = [{perspective: 'security', n: 3, buckets: [{bucket: '0.85', n: 3, merged: 2, unknown: 0}]}];
+renderEvidenceSummary({reviewer_calibration: selfRows, reviewer_calibration_derived: derivedRows, cards: {
+  calibration: {grade: {letter: 'A', band: 'a', reason: 'self', enough_data: true}, plain_summary: 'comparison'},
+  'calibration-derived': {grade: {letter: 'C', band: 'c', reason: 'derived', enough_data: true}, plain_summary: 'comparison'}
+}});
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=8/);
+assert.match(card.innerHTML, /aria-pressed="true" data-action="evSelectConfidence" data-arg0="self-reported"/);
+evSelectConfidence('derived');
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=3/);
+assert.match(card.innerHTML, /aria-label="Grade C: derived"/);
+assert.match(card.innerHTML, /aria-pressed="true" data-action="evSelectConfidence" data-arg0="derived"/);
+assert.match(card.innerHTML, /0.85/);
+renderEvidenceSummary({reviewer_calibration: selfRows});
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=0/);
+assert.match(card.innerHTML, /no reviewer verdicts with a confidence/);
+evSelectConfidence('self-reported');
 // A band the client does not know falls back to the neutral pill.
 renderEvidenceSummary({cards: {'work-balance': {grade: {letter: 'Z', band: 'z', reason: 'x', enough_data: true}}}});
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="x" aria-label="Grade Z: x">Z<\/span>/);
@@ -442,7 +466,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"section('What ours shows', x.ours)",
 		"evGradeLine(x.grade, x.reason)",
 		"if (e.key !== 'Escape' || !evExplainOpen.size) return;",
-		"is reported as unknown and left out of every rate, never counted as \"not merged\". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
+		"is reported as unknown and left out of every rate, never counted as \"not merged\". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE}, reverts only since ${EV_REVERTS_SINCE} and issue re-opens only since ${EV_REOPENS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
 		"false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome",
 		"merged ÷ verdicts on PRs with a known outcome",
 		"Gate integrity = (with_checks − breaches) ÷ with_checks",
@@ -450,7 +474,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"First-pass share = green on pass 1 ÷ PRs that went green: a neutral line (the RFC’s C1 number), not graded",
 		"Denominator = hive-mediated writes",
 		"Ratios: issues closed ÷ issues opened and PRs merged ÷ PRs opened over the whole window",
-		"A well-calibrated reviewer would be near 90–100% in the top bucket.",
+		"Merged share measures association with merges, not correctness.",
 		".ev-explainer[hidden] { display:none; }",
 		".ev-grade.weak",
 	} {

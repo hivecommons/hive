@@ -7348,13 +7348,15 @@ func runEvalCycle(
 
 	// buildStatusSnapshot assembles the full dashboard snapshot from this
 	// cycle's evaluation. It is called twice: once BEFORE the kick dispatch
-	// below and once at the end of the cycle. Kicks are delivered serially
-	// and each one can wait up to the input-prompt timeout for a busy pane,
-	// so with a dozen due agents the dispatch alone has taken 10-15 minutes
-	// on hosted hives — during which /api/status (and everything derived from
-	// it: stage tracker, agent states, governor.nextKickAt) kept showing the
-	// previous cycle's data, and a rolling upgrade landing mid-dispatch meant
-	// the evaluation never reached the dashboard at all.
+	// below and once at the end of the cycle. Each kick can wait up to the
+	// input-prompt timeout for a busy pane; before dispatch ran one agent at
+	// a time, a dozen due agents took 10-15 minutes on hosted hives — during
+	// which /api/status (and everything derived from it: stage tracker, agent
+	// states, governor.nextKickAt) kept showing the previous cycle's data, and
+	// a rolling upgrade landing mid-dispatch meant the evaluation never
+	// reached the dashboard at all. Dispatch is now concurrent across agents
+	// (dispatchAgentKicks), so the wait is one agent's, but the early publish
+	// stays: the evaluation should be visible before any kick is typed.
 	buildStatusSnapshot := func() *dashboard.StatusPayload {
 		payload := dashboard.BuildFrontendStatus(
 			govState,
@@ -8305,6 +8307,8 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 		Excerpt:            pr.CIFailureExcerpt,
 		Labels:             pr.Labels,
 		FailingChecks:      pr.FailingChecks,
+		BaseRedChecks:      pr.BaseRedChecks,
+		SharedCIIncident:   pr.SharedCIIncident,
 		Agent:              owners[escalation.Key(repo, pr.Number)],
 		IndependentControl: isIndependentCIControl(cfg, pr),
 	}
@@ -8719,6 +8723,18 @@ func runEscalationSweep(
 		}
 		if r.Escalated {
 			escalated[key] = true
+		}
+		if r.BaseRedHold {
+			// Every failing check is red on the base branch too: say so
+			// once per head, count nothing, kick no one. The hold clears
+			// by itself when the base recovers and the head is re-evaluated.
+			body := escalation.BaseRedHoldCommentBody(o.BaseRedChecks, o.SharedCIIncident)
+			if err := writer.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
+				logger.Warn("base-branch-red hold comment failed; will retry next pass", "repo", o.Repo, "pr", o.Number, "error", err)
+			} else {
+				escalationStore.MarkBaseRedHeld(o.Repo, o.Number, o.HeadSHA)
+				logger.Info("fix loop holding: base branch red", "repo", o.Repo, "pr", o.Number, "head_sha", o.HeadSHA, "checks", strings.Join(o.BaseRedChecks, ","))
+			}
 		}
 		if r.NeedsLabel && !o.Labeled {
 			// Escalated on an earlier pass but the label never landed (the
@@ -9488,6 +9504,15 @@ func hiveIdentity(cfg *config.Config) github.HiveIdentity {
 // rate-limit pacing queue cannot stall the run loop (hivecommons/hive#12983).
 const issueStageSyncTimeout = 2 * time.Minute
 
+// recheckSoakHubURL is the hub the soak triage probes, "" when this hive has
+// no hub (the probe then reads the spoke's own /api/version).
+func recheckSoakHubURL(cfg *config.Config) string {
+	if cfg == nil || !cfg.Hub.Enabled {
+		return ""
+	}
+	return cfg.Hub.URL
+}
+
 // applyDuplicatePRGuard filters issues already claimed by an open hive-authored
 // PR out of the actionable set. Failures are logged, never fatal: the guard is
 // a safety net, and a broken net must not take the hive down with it.
@@ -9544,9 +9569,12 @@ func applyDuplicatePRGuard(
 	}
 	// hivecommons/hive#13093: issues parked on an unmerged PR come back once
 	// that PR settles, and never advertise `help wanted` while parked.
+	// hivecommons/hive#13311: ops-tracking soak checklists past their
+	// recheck-after deadline get evidence from the hub (or this spoke).
+	github.SetRecheckSoakProbe(github.NewHTTPSoakProbe(recheckSoakHubURL(cfg), fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port), nil))
 	blockedCtx, blockedCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
-	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.Errors > 0 {
-		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "errors", br.Errors)
+	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.SoakTriaged+br.Errors > 0 {
+		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "soak_triaged", br.SoakTriaged, "errors", br.Errors)
 	}
 	blockedCancel()
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
@@ -9728,6 +9756,10 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetReviewEvidence(func(repo string) github.ReviewEvidenceSettings {
 		return reviewEvidenceSettings(cfg, repo)
 	})
+	// hivecommons/hive#13241: an issue a person reopens after its closing PR
+	// merged is a change failure on that PR's evidence record, from both the
+	// issues.reopened webhook and the enumeration reopen check.
+	github.SetIssueReopenRecorder(client.RecordReviewEvidenceIssueReopen)
 	// #8380: issue claims are read at enumeration time only while
 	// governor.claims.enabled is on; the setting is read live so the Features
 	// toggle applies without a client rebuild.
@@ -10056,6 +10088,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// Not a planner input: the fix gate decides on the login author
 			// alone (#8421, #13124).
 			HiveAttributed: pr.HiveAttributed,
+			// The authoring model from the same trailer: what review_models
+			// exclusions compare against, and stamped into the verdict as
+			// author_model (hivecommons/hive#13243).
+			AuthorModel: pr.HiveModel,
 			// Grounding anchor for the review prompt. Repo access is the
 			// measured active ingredient in review quality (17%→67% hit rate,
 			// 61% fewer false positives), so the reviewer is told which commit
@@ -10090,6 +10126,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			LaneKeywords:   ac.LaneKeywords,
 			DetectKeywords: ac.DetectKeywords,
 			Aliases:        ac.Aliases,
+			Backend:        ac.Backend,
+			Model:          ac.Model,
+			ReviewModels:   ac.ReviewModels,
 		})
 	}
 	reviewBotLogins := []string{}
@@ -10118,7 +10157,11 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
+		PerspectiveModels:     cfg.Review.PerspectiveModels,
 	})
+	for _, sk := range plan.SkippedReviewModels {
+		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
+	}
 	for _, e := range plan.Expired {
 		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
 	}
@@ -10142,6 +10185,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		MaxPerspectivesPerPR:       cfg.Review.MaxPerspectivesPerPR,
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
+		ModelStamps:                reviewModelStamps(logger),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -10150,6 +10194,21 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	logger.Info("review verdict artifact refreshed", "aggregates", len(artifact.Items))
+}
+
+// reviewModelStamps reads the dispatch state so a verdict whose report
+// omitted author_model / review_model is stamped with what the planner knew
+// when it dispatched that review (hivecommons/hive#13243). No state is no
+// stamps, never an error: the artifact is still correct, just unstamped.
+func reviewModelStamps(logger *slog.Logger) review.ModelStamps {
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Warn("review dispatch state unavailable for model stamping", "error", err)
+		}
+		return nil
+	}
+	return review.ModelStampsFromState(state)
 }
 
 func shouldRefreshReviewVerdicts(cfg *config.Config) bool {

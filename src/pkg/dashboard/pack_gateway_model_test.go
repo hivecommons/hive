@@ -90,3 +90,37 @@ func TestApplyPackSeedsModelOnPackBackend(t *testing.T) {
 		t.Errorf("scanner on pack backend: backend=%q model=%q, want copilot with the pack model claude-sonnet-4-6", got.Backend, got.Model)
 	}
 }
+
+// TestApplyPackModelOnKeptOrReplacedBackend covers #13288: a hand-set CLI
+// backend that is kept must not receive the pack's model id.
+func TestApplyPackModelOnKeptOrReplacedBackend(t *testing.T) {
+	tests := []struct {
+		name      string
+		backend   string
+		model     string
+		wantModel string
+	}{
+		{"kept codex keeps its model", "codex", "gpt-5-codex", "gpt-5-codex"},
+		{"kept codex without model is not seeded", "codex", "", ""},
+		{"pack backend is seeded", "copilot", "", "claude-sonnet-4-6"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			enableScanner(t, srv)
+			sc := srv.deps.Config.Agents["scanner"]
+			sc.Backend = tt.backend
+			sc.BackendOwner = config.FieldOwnerOperator
+			sc.Model = tt.model
+			sc.ModelOwner = config.FieldOwnerPack
+			srv.deps.Config.Agents["scanner"] = sc
+			if _, err := srv.ApplyPack(3); err != nil {
+				t.Fatalf("ApplyPack(3): %v", err)
+			}
+			got := srv.deps.Config.Agents["scanner"]
+			if got.Backend != tt.backend || got.Model != tt.wantModel {
+				t.Errorf("backend=%q model=%q, want %q / %q", got.Backend, got.Model, tt.backend, tt.wantModel)
+			}
+		})
+	}
+}

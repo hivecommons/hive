@@ -89,6 +89,7 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 	if decisionRequested || reviewReportsHoldForHuman(reports) {
 		tightening = c.workflowPermissionsTighteningOnly(ctx, req)
 	}
+	prHead := c.reviewedPRHeadFunc(ctx, req)
 	var recorded []review.PerspectiveReport
 	for _, report := range reports {
 		if decisionRequested {
@@ -98,11 +99,81 @@ func (c *Client) recordReviewVerdict(ctx context.Context, req ReviewRequest, dir
 			report.Verdict = review.VerdictRequiresHuman
 		}
 		report.PermissionsTighteningOnly = tightening
-		if written, ok := c.writeOneVerdict(req, report, dir); ok {
+		if written, ok := c.writeOneVerdict(ctx, req, report, dir, prHead); ok {
 			recorded = append(recorded, written)
 		}
 	}
 	return recorded
+}
+
+// canonicalVerdictHead returns the head SHA a verdict is stored under. The
+// lanes (contributor-lane verdict gate, merge-eligibility, evidence bundles)
+// all look verdicts up by the 40-character head GitHub reports, so a verdict
+// is stored under that spelling: a blank head takes the dispatch head; an
+// abbreviated one ("98489e7", what reviewers copy from the PR page) is
+// widened to the dispatch head it prefixes, or, when nothing dispatched it,
+// to the PR's current head if it prefixes that. A short head that matches
+// neither is kept as written: it names an older revision and must not be
+// re-attributed to the current one.
+func (c *Client) canonicalVerdictHead(req ReviewRequest, reported, dispatchHead string, prHead func() string) string {
+	head := strings.TrimSpace(reported)
+	dispatchHead = strings.TrimSpace(dispatchHead)
+	if head == "" {
+		return dispatchHead
+	}
+	if !review.IsAbbreviatedSHA(head) {
+		return head
+	}
+	if widened := review.CanonicalHeadSHA(head, dispatchHead); widened != head {
+		return widened
+	}
+	if prHead == nil {
+		return head
+	}
+	current := prHead()
+	if widened := review.CanonicalHeadSHA(head, current); widened != head {
+		c.logger.Info("review-request watcher: abbreviated verdict head widened to the PR head",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("reported", head), slog.String("head", widened))
+		return widened
+	}
+	if current != "" {
+		c.logger.Warn("review-request watcher: abbreviated verdict head is not the PR's current head; recorded as written",
+			slog.String("repo", req.Repo), slog.Int("number", req.Number),
+			slog.String("reported", head), slog.String("current", current))
+	}
+	return head
+}
+
+// reviewedPRHeadFunc returns a memoized lookup of req's PR head SHA: one
+// GitHub GET per relay pass at most, only when a verdict actually needs it,
+// and "" when the client is unavailable or the fetch fails.
+func (c *Client) reviewedPRHeadFunc(ctx context.Context, req ReviewRequest) func() string {
+	var (
+		head    string
+		fetched bool
+	)
+	return func() string {
+		if fetched {
+			return head
+		}
+		fetched = true
+		if c == nil || c.client == nil {
+			return ""
+		}
+		owner, name := c.splitRepo(strings.TrimSpace(req.Repo))
+		if owner == "" || name == "" || req.Number <= 0 {
+			return ""
+		}
+		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_verdict_relay"), owner, name, req.Number)
+		if err != nil || pr == nil {
+			c.logger.Warn("review-request watcher: could not fetch PR head to widen abbreviated verdict head",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number))
+			return ""
+		}
+		head = strings.TrimSpace(pr.GetHead().GetSHA())
+		return head
+	}
 }
 
 func reviewReportsHoldForHuman(reports []review.PerspectiveReport) bool {
@@ -258,7 +329,7 @@ func maintainerCallQuestion(body string) string {
 // always read — a combined review changes how verdicts arrive, not how they
 // are stored, so nothing downstream needs to know the difference. It returns
 // the report as stored and whether it was.
-func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveReport, dir string) (review.PerspectiveReport, bool) {
+func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, dir string, prHead func() string) (review.PerspectiveReport, bool) {
 	// The verdict must be about the PR that was actually reviewed. Without this
 	// an agent authorized to comment on one PR could record a binding
 	// requires_human/reject verdict against any other PR in the fleet.
@@ -282,9 +353,7 @@ func (c *Client) writeOneVerdict(req ReviewRequest, report review.PerspectiveRep
 			slog.String("reason", reason))
 		return report, false
 	}
-	if strings.TrimSpace(report.HeadSHA) == "" && strings.TrimSpace(dispatchHead) != "" {
-		report.HeadSHA = strings.TrimSpace(dispatchHead)
-	}
+	report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, dispatchHead, prHead)
 	report.HiveAuthored = hiveAuthored
 	if review.ConcreteRemediationText(req.Body) {
 		report.ConcreteRemediation = true
@@ -423,10 +492,9 @@ func reviewDispatchFieldsMatch(repo string, number int, headSHA string, perspect
 	if number != report.Number || perspective != report.Perspective || strings.TrimSpace(agent) != strings.TrimSpace(req.Agent) {
 		return false
 	}
-	if strings.TrimSpace(headSHA) != "" && strings.TrimSpace(report.HeadSHA) != "" && strings.TrimSpace(headSHA) != strings.TrimSpace(report.HeadSHA) {
-		return false
-	}
-	return true
+	// An abbreviated head from the reviewer still binds to the dispatch that
+	// named the full one (review.SameHeadSHA).
+	return review.HeadSHAMatchesOrBlank(headSHA, report.HeadSHA)
 }
 
 func sameVerdictAuthor(authorAgent, agent string) bool {

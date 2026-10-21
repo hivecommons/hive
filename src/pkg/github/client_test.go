@@ -80,6 +80,7 @@ type wireIssue struct {
 	Assignees []wireUser  `json:"assignees"`
 	CreatedAt string      `json:"created_at"`
 	HTMLURL   string      `json:"html_url,omitempty"`
+	Body      string      `json:"body,omitempty"`
 	// State is GitHub's open/closed; the #9840 parent check reads it.
 	State string `json:"state,omitempty"`
 	// AuthorAssociation is GitHub's author_association (OWNER, MEMBER, ...);

@@ -879,6 +879,7 @@ func paneAfterKickBaseline(pane, baseline string) string {
 // right after delivery. Caller must hold m.mu.
 func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 	visible := m.captureVisiblePaneForAgent(agent)
+	creditStallRecoveryLocked(agent, paneContentHash(visible))
 	agent.lastInferKickAt = at
 	agent.lastInferKickPane = paneContentHash(visible)
 	agent.lastInferKickVisible = visible
@@ -887,6 +888,20 @@ func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 	// work done before this kick must not count as post-kick tool activity.
 	agent.lastInferKickMarks = countToolMarkers(m.captureTmuxPaneForAgent(agent))
 	agent.actionNudgeSent = false
+}
+
+// creditStallRecoveryLocked credits a stall recovery when a nudge is
+// outstanding and the pane has moved off the hash recorded at the previous
+// kick, then clears the armed state. Called before a new kick or a
+// provider-error disarm would reset it unseen. Caller must hold m.mu.
+func creditStallRecoveryLocked(agent *AgentProcess, paneHash string) {
+	if !agent.stallNudgeSent {
+		return
+	}
+	if agent.lastInferKickPane != "" && paneHash != agent.lastInferKickPane {
+		agent.StallRecoveries++
+	}
+	agent.stallNudgeSent = false
 }
 
 // nudgeIfKickStalled watches an inference agent after a kick and corrects
@@ -918,6 +933,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	}
 	sinceKick := now.Sub(agent.lastInferKickAt)
 	if match, ok := classifyProviderError(paneAfterKickBaseline(pane, agent.lastInferKickVisible)); ok {
+		creditStallRecoveryLocked(agent, paneContentHash(pane))
 		backoff := m.markProviderErrorLocked(agent, match, now)
 		attempt := agent.providerErrorBackoffAttempt
 		m.mu.Unlock()

@@ -105,11 +105,15 @@ const (
 	BucketInProgress  IssueBucket = "in_progress"
 	BucketCoveredByPR IssueBucket = "claimed_by_pr"
 	BucketFiltered    IssueBucket = "filtered"
+	// BucketReporterTriage is a human-filed issue the reporter-trust gate
+	// (#9665) holds out until a maintainer adds the triage label; it
+	// derives 015-triage-needed.
+	BucketReporterTriage IssueBucket = "reporter_triage"
 )
 
 // IssueFacts is the issue-side evidence.
 type IssueFacts struct {
-	Bucket         IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason)
+	Bucket         IssueBucket // Actionable | Claimed | InProgress | CoveredByPR | Filtered(reason) | ReporterTriage
 	FilteredReason string
 	Claim          *ClaimFact
 	LikelyDone     bool
@@ -149,7 +153,11 @@ type PRFacts struct {
 	Review            ReviewFacts
 	Soak, SoakElapsed time.Duration
 	SharedCIIncident  int
-	Lanes             []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// BaseRedChecks are the head's failing checks that are also red on the
+	// base branch tip; non-empty only when every failing check is (the PR
+	// is then kept out of the repair stages with reason base-branch-red).
+	BaseRedChecks []string
+	Lanes         []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
 	// Pass is what the sweep's own pass learned after the lanes spoke and
 	// before the stage was written: the inputs of ApplyStageLabels' pure
 	// post-steps (author-kind split, normalized-fixing guard, human route,

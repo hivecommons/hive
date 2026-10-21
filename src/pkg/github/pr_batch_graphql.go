@@ -17,6 +17,7 @@ query($owner: String!, $name: String!, $first: Int!, $cursor: String) {
       nodes {
         number
         headRefOid
+        baseRefOid
         updatedAt
         isDraft
         mergeable
@@ -76,6 +77,7 @@ type graphQLPRBatchResponse struct {
 type graphQLPRBatchNode struct {
 	Number           int       `json:"number"`
 	HeadRefOID       string    `json:"headRefOid"`
+	BaseRefOID       string    `json:"baseRefOid"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 	IsDraft          bool      `json:"isDraft"`
 	Mergeable        string    `json:"mergeable"`
@@ -240,7 +242,7 @@ func (c *Client) storeGraphQLPRBatchNode(repo string, n graphQLPRBatchNode) {
 		Mergeable:      mergeable,
 		MergeableState: gh.Ptr(state),
 		Head:           &gh.PullRequestBranch{SHA: gh.Ptr(n.HeadRefOID), Ref: gh.Ptr(n.HeadRefName)},
-		Base:           &gh.PullRequestBranch{Ref: gh.Ptr(n.BaseRefName)},
+		Base:           &gh.PullRequestBranch{SHA: gh.Ptr(n.BaseRefOID), Ref: gh.Ptr(n.BaseRefName)},
 	}
 	for _, l := range n.Labels.Nodes {
 		if strings.TrimSpace(l.Name) != "" {

@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -324,7 +326,9 @@ func TestIssueStageFor(t *testing.T) {
 		{"renamed needs-human bucket is parked at 045", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.IssueNeedsDecision, false},
 		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.IssueNeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
-		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
+		// hivecommons/hive#13268: the reporter-trust gate's bucket is
+		// "actionable but untriaged" — 015, not "outside the pipeline".
+		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.TriageNeeded, false},
 		// hivecommons/hive#13012: a held issue is paused, not parked — hold
 		// outranks needs-human / needs-decision / needs-spec and the issue
 		// shows as "Open · on hold", never 045. #9846's label set first.
@@ -357,6 +361,83 @@ func TestIssueStageFor(t *testing.T) {
 				t.Fatal("issue derivation must never emit the PR-only 085")
 			}
 		})
+	}
+}
+
+// TestIssueStageFor_TriageNeeded pins the 015 rule (hivecommons/hive#13268):
+// an actionable issue is 015-triage-needed when it carries needs-triage (or
+// sits in the reporter_triage bucket), or when the hive / an agent filed it
+// and no maintainer label (triage/accepted, hive/verified-open,
+// approved-direction) is on it. Human-filed issues stay 010, and 015 never
+// outranks a claim, a covering PR or a park.
+func TestIssueStageFor_TriageNeeded(t *testing.T) {
+	const (
+		accepted = "triage/accepted"
+		awaiting = "needs-triage"
+	)
+	if triageAwaitingLabel != awaiting {
+		t.Fatalf("defaults moved: %q", triageAwaitingLabel)
+	}
+	cases := []struct {
+		name string
+		in   IssueStageInput
+		want stagelabels.Stage
+		why  string
+	}{
+		{"hive-filed, nothing else (#13262) stays 010", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"kind/review-backlog"}}, stagelabels.Actionable, ""},
+		{"agent-filed (clanker) stays 010", IssueStageInput{AuthorKind: authorkind.Clanker}, stagelabels.Actionable, ""},
+		{"hive-filed + triage/accepted", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{accepted}}, stagelabels.Actionable, ""},
+		{"hive-filed + hive/verified-open", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{VerifiedOpenLabel}}, stagelabels.Actionable, ""},
+		{"hive-filed + approved-direction", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{HumanAckLabel}}, stagelabels.Actionable, ""},
+		{"hive-filed epic without a maintainer label is 010 (umbrella, claim not staged)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"Epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Actionable, ""},
+		{"human-filed, no labels", IssueStageInput{AuthorKind: authorkind.Human}, stagelabels.Actionable, ""},
+		{"human-filed epic + verified-open (#12999)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"Epic", VerifiedOpenLabel}}, stagelabels.Actionable, ""},
+		{"unknown author is read as human", IssueStageInput{}, stagelabels.Actionable, ""},
+		{"human-filed + needs-triage", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{awaiting}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"needs-triage beats triage/accepted", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{awaiting, accepted}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"needs-triage is case-insensitive", IssueStageInput{Labels: []string{"Needs-Triage"}}, stagelabels.TriageNeeded, "carries needs-triage"},
+		{"reporter_triage bucket, human", IssueStageInput{Bucket: workBucketReporterTriage, AuthorKind: authorkind.Human, Labels: []string{accepted}}, stagelabels.TriageNeeded, "reporter-trust gate"},
+		// 015 is a tracking state, not a gate: everything that outranks
+		// 010 outranks it too.
+		{"claim from an untriaged issue is 020", IssueStageInput{AuthorKind: authorkind.Hive, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Claimed, ""},
+		{"claim with PR evidence is 030", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{awaiting}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), PRStarted: true}, stagelabels.PRInProgress, ""},
+		{"covered untriaged issue is 040", IssueStageInput{AuthorKind: authorkind.Hive, Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5}}, stagelabels.CoveredByPR, ""},
+		{"parked untriaged issue is 045", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{awaiting, "needs-human"}}, stagelabels.IssueNeedsDecision, ""},
+		{"held untriaged issue is Open · on hold", IssueStageInput{AuthorKind: authorkind.Hive, Held: true, Labels: []string{"hold"}}, stagelabels.None, ""},
+		{"likely-done untriaged issue leaves the pipeline", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{LikelyDoneLabel}}, stagelabels.None, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, covered, reason := IssueStageFor(tc.in, nil)
+			if got != tc.want || covered {
+				t.Fatalf("IssueStageFor = %s/%v %q, want %s", got, covered, reason, tc.want)
+			}
+			if got == stagelabels.TriageNeeded && (!strings.HasPrefix(reason, "triage needed: ") || !strings.Contains(reason, tc.why)) {
+				t.Fatalf("reason %q must explain the triage verdict (%q)", reason, tc.why)
+			}
+			if got == stagelabels.Actionable && strings.Contains(reason, "triage") {
+				t.Fatalf("010 reason %q must not mention triage", reason)
+			}
+		})
+	}
+}
+
+// issueAuthorKind maps the enumeration's human verdict onto the stage
+// input; IssueStageInputs carries it for every actionable item.
+func TestIssueStageInputs_CarriesAuthorKind(t *testing.T) {
+	res := &ActionableResult{}
+	res.Issues.Items = []Issue{
+		{Repo: "o/r", Number: 1, Author: "alice", AuthorIsHuman: true},
+		{Repo: "o/r", Number: 2, Author: "hive-app[bot]"},
+		// No login at all is "could not tell", read as human downstream.
+		{Repo: "o/r", Number: 3},
+	}
+	var got []authorkind.Kind
+	for _, in := range IssueStageInputs(res) {
+		got = append(got, in.AuthorKind)
+	}
+	if len(got) != 3 || got[0] != authorkind.Human || got[1] != authorkind.Hive || got[2] != authorkind.Unknown {
+		t.Fatalf("author kinds = %v", got)
 	}
 }
 
@@ -834,5 +915,91 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// hivecommons/hive#13316: #13221 was covered by open PR #13272 but wore no
+// stage label — the claim release had stripped stage/040 and no cycle put
+// it back. annotateIssueWithClaim had added the label to the in-memory
+// issue, so the sweep planned against a payload that already "had" it.
+// The sweep must plan against the labels GitHub returned and write 040.
+func TestSyncIssueStageLabels_WritesCoveredStageHiddenBySyntheticLabel(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	issue := Issue{Repo: "acme/widgets", Number: 13221, Labels: []string{"help wanted", "triage/accepted"}}
+	annotateIssueWithClaim(&issue, IssueClaim{Repo: "acme/widgets", Issue: 13221, PRRepo: "acme/widgets", PRNumber: 13272, Closing: true})
+	if !issueHasLabel(issue.Labels, CoveredByPRLabel) || issue.ClaimContext == nil || !issue.ClaimContext.CoveredLabelSynthesized {
+		t.Fatalf("annotation must add the in-memory label and mark it synthesised: %v %+v", issue.Labels, issue.ClaimContext)
+	}
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, issue, workBucketClaimedByPR, "Open hive-authored PR #13272 already claims this issue")
+
+	inputs := IssueStageInputs(result)
+	if len(inputs) != 1 || issueHasLabel(inputs[0].Labels, CoveredByPRLabel) {
+		t.Fatalf("sweep input must carry the forge labels, got %+v", inputs)
+	}
+	stage, _, _ := IssueStageFor(inputs[0], nil)
+	if stage != stagelabels.CoveredByPR {
+		t.Fatalf("stage = %s, want 040", stage)
+	}
+
+	res := syncSeeded(fake, c, result, store, stageNow())
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Join(fake.added[13221], ","); got != CoveredByPRLabel {
+		t.Fatalf("added %q, want %q written to the forge (writes=%d)", got, CoveredByPRLabel, res.Writes)
+	}
+	if len(fake.removed[13221]) != 0 {
+		t.Fatalf("removed %v, want nothing: the issue's other labels are not hive-owned", fake.removed[13221])
+	}
+}
+
+// The label GitHub really returned is not synthesised, so a covered issue
+// already at 040 stays a no-op (no re-read, no write).
+func TestSyncIssueStageLabels_RealCoveredLabelIsNotStripped(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	issue := Issue{Repo: "acme/widgets", Number: 5, Labels: []string{"bug", CoveredByPRLabel}}
+	annotateIssueWithClaim(&issue, IssueClaim{Repo: "acme/widgets", Issue: 5, PRRepo: "acme/widgets", PRNumber: 50})
+	if issue.ClaimContext.CoveredLabelSynthesized {
+		t.Fatal("a label the payload carried must not be marked synthesised")
+	}
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, issue, workBucketClaimedByPR, "open PR")
+	if res := syncSeeded(fake, c, result, store, stageNow()); res.Writes != 0 || fake.writes() != 0 {
+		t.Fatalf("unchanged covered issue produced writes: %+v (%v / %v)", res, fake.added, fake.removed)
+	}
+}
+
+func TestForgeIssueLabels(t *testing.T) {
+	labels := []string{"bug", CoveredByPRLabel}
+	if got := forgeIssueLabels(labels, nil); len(got) != 2 {
+		t.Fatalf("nil claim: %v", got)
+	}
+	if got := forgeIssueLabels(labels, &IssueClaimContext{}); len(got) != 2 {
+		t.Fatalf("real label: %v", got)
+	}
+	if got := forgeIssueLabels(labels, &IssueClaimContext{CoveredLabelSynthesized: true}); len(got) != 1 || got[0] != "bug" {
+		t.Fatalf("synthesised label must come off: %v", got)
+	}
+}
+
+func TestForgeIssueLabelsDoesNotAlias(t *testing.T) {
+	// Test that forgeIssueLabels does not mutate the caller's backing array.
+	// This verifies the fix for hivecommons/hive#13323: removeIssueLabel used
+	// to compact in-place (out := labels[:0]), which would mutate the backing
+	// array shared with the caller.
+	original := []string{"bug", "help wanted", CoveredByPRLabel}
+	originalCopy := append([]string(nil), original...)
+
+	result := forgeIssueLabels(original, &IssueClaimContext{CoveredLabelSynthesized: true})
+
+	if !slices.Equal(original, originalCopy) {
+		t.Errorf("forgeIssueLabels mutated input: got %v, want %v", original, originalCopy)
+	}
+	if got := []string{"bug", "help wanted"}; !slices.Equal(result, got) {
+		t.Errorf("forgeIssueLabels result: got %v, want %v", result, got)
 	}
 }

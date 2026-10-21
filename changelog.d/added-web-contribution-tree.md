@@ -1,0 +1,1 @@
+- `hivectl hives web` now renders the shared Hub → Hive → Repository contribution tree with keyboard navigation, mixed selection states, staged Apply/Discard, revision-checked review, and separate Saved / Relay reload / Acknowledged receipts; opening the page preserves legacy profiles without migration.

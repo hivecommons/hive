@@ -1,0 +1,1 @@
+- Governor eval cycles no longer take 10-20 minutes on hives with several due agents: kicks are now delivered to different agents concurrently (still in order per agent), so the tick waits for the slowest agent's input prompt instead of the sum of every agent's wait, and a webhook wake reaches the activity tracker within one short cycle.

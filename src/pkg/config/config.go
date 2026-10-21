@@ -26,6 +26,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"gopkg.in/yaml.v3"
@@ -1530,6 +1531,61 @@ func (r ReviewModelsConfig) EffectiveFallback() string {
 	default:
 		return strings.TrimSpace(r.Fallback)
 	}
+}
+
+// ReviewModelSelection is the outcome of ReviewModelsConfig.Select: the
+// backend/model a review should run with, and whether that came from the
+// configured fallback rather than the pool. Skip is the "skip" fallback with
+// no eligible pool entry: no model, and the review is not dispatched.
+// RequiresHuman is the "requires_human" fallback in the same situation: the
+// pinned model is returned so the caller can still name it, but the review
+// should be marked for a person instead of dispatched as independent.
+type ReviewModelSelection struct {
+	Backend       string
+	Model         string
+	Fallback      bool
+	Skip          bool
+	RequiresHuman bool
+}
+
+// Select picks the first pool entry that is not excluded against the PR's
+// author model, exactly as the cadence kick's `review_with=` annotation does.
+// pinnedBackend/pinnedModel are the reviewer agent's own launch backend and
+// model, returned under the "pinned" (default) fallback. Author and candidate
+// models are compared normalized (modelfamily.Normalize), and family on the
+// vendor prefix (modelfamily.Family). An empty pool with no exclusions
+// configured still returns the pinned model as a fallback, so a caller that
+// wants "no instruction" must check Configured() first.
+func (r ReviewModelsConfig) Select(authorModel, pinnedBackend, pinnedModel string) ReviewModelSelection {
+	author := modelfamily.Normalize(authorModel)
+	authorFamily := modelfamily.Family(author)
+	for _, entry := range r.Pool {
+		candidate := modelfamily.Normalize(entry.Model)
+		if r.ExcludeAuthorModelEnabled() && candidate == author {
+			continue
+		}
+		if r.ExcludeAuthorFamily && modelfamily.Family(candidate) == authorFamily {
+			continue
+		}
+		return ReviewModelSelection{Backend: strings.TrimSpace(entry.Backend), Model: strings.TrimSpace(entry.Model)}
+	}
+	switch r.EffectiveFallback() {
+	case ReviewModelsFallbackSkip:
+		return ReviewModelSelection{Fallback: true, Skip: true}
+	case ReviewModelsFallbackRequiresHuman:
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true, RequiresHuman: true}
+	default:
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true}
+	}
+}
+
+// WithPool returns a copy whose pool is replaced, keeping the exclusion and
+// fallback settings. The swarm uses it to apply review.perspective_models: a
+// per-perspective entry overrides WHICH models are eligible, not the rule
+// that decides whether one is.
+func (r ReviewModelsConfig) WithPool(pool []ReviewModelPoolEntry) ReviewModelsConfig {
+	r.Pool = append([]ReviewModelPoolEntry(nil), pool...)
+	return r
 }
 
 func ValidateReviewModelsFallback(v string) bool {
@@ -6150,6 +6206,37 @@ type DashboardStageTrackerConfig struct {
 	// endpoint never calls GitHub either way; the TTL only bounds how often
 	// the in-memory snapshot is re-read. 0 means governor.eval_interval_s.
 	CacheTTLS int `yaml:"cache_ttl_s,omitempty" json:"cache_ttl_s,omitempty"`
+	// WebhookRefresh lets a verified GitHub webhook delivery re-read just the
+	// PR or issue it named (one GET) and patch that row of the activity
+	// monitor at once, instead of waiting for the next eval cycle to
+	// re-enumerate the repository. Default true.
+	WebhookRefresh *bool `yaml:"webhook_refresh,omitempty" json:"webhook_refresh,omitempty"`
+	// WebhookRefreshDebounceMS is how long, in milliseconds, deliveries for
+	// the same item are coalesced before that one read is made, so a check
+	// fan-out costs one GET. 0 means the default (2000).
+	WebhookRefreshDebounceMS int `yaml:"webhook_refresh_debounce_ms,omitempty" json:"webhook_refresh_debounce_ms,omitempty"`
+}
+
+// defaultStageTrackerWebhookRefreshDebounce is the default
+// dashboard.stage_tracker.webhook_refresh_debounce_ms.
+const defaultStageTrackerWebhookRefreshDebounce = 2000 * time.Millisecond
+
+// StageTrackerWebhookRefresh is the effective
+// dashboard.stage_tracker.webhook_refresh (default true).
+func (c *Config) StageTrackerWebhookRefresh() bool {
+	if c == nil || c.Dashboard.StageTracker.WebhookRefresh == nil {
+		return true
+	}
+	return *c.Dashboard.StageTracker.WebhookRefresh
+}
+
+// StageTrackerWebhookRefreshDebounce is the effective
+// dashboard.stage_tracker.webhook_refresh_debounce_ms as a duration.
+func (c *Config) StageTrackerWebhookRefreshDebounce() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.WebhookRefreshDebounceMS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshDebounceMS) * time.Millisecond
+	}
+	return defaultStageTrackerWebhookRefreshDebounce
 }
 
 // StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
@@ -8853,6 +8940,14 @@ type ReviewConfig struct {
 	// rather than left to infer them from the tree; a hive can only get that
 	// by writing it down. An entry that is blank means "use the built-in".
 	PerspectivePrompts map[string]string `yaml:"perspective_prompts,omitempty" json:"perspective_prompts,omitempty"`
+	// PerspectiveModels pins the backend/model one perspective's swarm review
+	// runs with, keyed by perspective name. An entry replaces the reviewer
+	// agent's review_models pool for that perspective only; the agent's
+	// exclude_author_model / exclude_author_family / fallback settings still
+	// apply to it, so a pinned model that matches the author's family is
+	// still refused when exclude_author_family is on. Perspectives not named
+	// here use the agent's pool as usual. Empty by default.
+	PerspectiveModels map[string]ReviewModelPoolEntry `yaml:"perspective_models,omitempty" json:"perspective_models,omitempty"`
 	// CombinedPerspectives reviews every perspective in ONE agent session that
 	// leaves ONE comment, instead of one session and one comment per
 	// perspective.
