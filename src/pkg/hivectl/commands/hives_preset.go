@@ -49,8 +49,8 @@ func newHivesPresetCommand(env *commandEnv) *cobra.Command {
 }
 
 func newHivesPresetAdoptCommand(env *commandEnv) *cobra.Command {
-	var hive string
-	var yes, follow bool
+	var hive, githubUser string
+	var yes, follow, onboard bool
 	cmd := &cobra.Command{
 		Use: "adopt <url-or-file>",
 		Example: `  hivectl hives preset adopt https://bluefin.example/hive-preset.yml
@@ -61,10 +61,20 @@ func newHivesPresetAdoptCommand(env *commandEnv) *cobra.Command {
 			"profile is reported as not onboarded and skipped; no credentials are created), shows the additions " +
 			"against your saved selection and, once confirmed, records them with the preset's provenance. " +
 			"all-current snapshots the Hive's currently eligible repositories; it does not follow future ones " +
-			"unless --follow-new-repos is given.",
+			"unless --follow-new-repos is given. With --onboard, also review and enroll missing Hives " +
+			"and the current members selected by preset hubs, after mandatory confirmation.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !validOutput(env.options.output) {
 				return fmt.Errorf("invalid output format %q", env.options.output)
+			}
+			if onboard {
+				if yes {
+					return errors.New("--onboard requires confirmation; omit --yes and review the destinations interactively")
+				}
+				return env.runPresetOnboard(cmd, args[0], hive, githubUser, follow)
+			}
+			if githubUser != "" {
+				return errors.New("--github-user requires --onboard")
 			}
 			deps, err := env.hivesDeps()
 			if err != nil {
@@ -166,6 +176,8 @@ func newHivesPresetAdoptCommand(env *commandEnv) *cobra.Command {
 			return presetUnavailableError(unavailable)
 		},
 	}
+	cmd.Flags().BoolVar(&onboard, "onboard", false, "review and enroll missing Hives, including preset hub snapshots (requires confirmation; cannot use --yes)")
+	cmd.Flags().StringVar(&githubUser, "github-user", "", "GitHub login for --onboard (default: the account gh is signed in as)")
 	cmd.Flags().StringVar(&hive, "hive", "", "only review the preset's recommendation for this hive profile")
 	cmd.Flags().BoolVar(&yes, "yes", false, "adopt the reviewed additions without prompting")
 	cmd.Flags().BoolVar(&follow, "follow-new-repos", false, "also include future additions at the adopted hives on refresh (off by default; exclusions still win)")
@@ -225,8 +237,13 @@ func newHivesPresetRefreshCommand(env *commandEnv) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				reports := env.reviewPreset(cmd, set, preset, recorded.ID, hive, true)
-				complete := hive == ""
+				expanded, hubReports := env.expandPresetOnboard(cmd, preset, recorded.ID)
+				reports := env.reviewPreset(cmd, set, expanded, recorded.ID, hive, true)
+				reports = append(reports, hubReports...)
+				complete := hive == "" && len(hubReports) == 0
+				for _, report := range hubReports {
+					unavailable = append(unavailable, report.Hive)
+				}
 				for i := range reports {
 					r := &reports[i]
 					if r.Status == presetStatusUnavailable {
