@@ -1,0 +1,1 @@
+- test(dashboard): cover advisor fleet settings default-off in JS (#13388)
