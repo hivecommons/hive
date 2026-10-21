@@ -157,9 +157,16 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 			github.Issue{Number: 106, Title: "Closed-feed PR", Author: "pat", URL: "https://github.com/acme/console/pull/106", Labels: []string{"stage/050-review-pending"}},
 		},
 		OpenPrs: []any{
-			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-returned-to-contributor", "author/contributor", "needs-rebase"}}},
+			// 101's body says `Fixes #90`, an issue already closed: no open
+			// issue to pair with, so it stays a PR row naming #90 as closed.
+			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-returned-to-contributor", "author/contributor", "needs-rebase"},
+				LinkedIssues: []github.PRLinkedIssue{{Number: 90, State: "closed"}}}},
 			FrontendPR{PullRequest: github.PullRequest{Number: 102, Title: "Stabilise test", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/095-pre-merge-soak", "author/trusted", "author/hive"}}, MergeVerdict: &github.MergeVerdict{Tier: "trusted"}},
-			FrontendPR{PullRequest: github.PullRequest{Number: 103, Title: "Relay PR", Author: "zoe", HiveAttributed: true, Labels: []string{"stage/050-review-pending"}}},
+			// 103's body says `Fixes #8` (GitHub's closingIssuesReferences);
+			// issue 8's own claim evidence has not caught up, so the PR side
+			// alone pairs them. A self-reference and a foreign repo are dropped.
+			FrontendPR{PullRequest: github.PullRequest{Number: 103, Title: "Relay PR", Author: "zoe", HiveAttributed: true, Labels: []string{"stage/050-review-pending"},
+				LinkedIssues: []github.PRLinkedIssue{{Number: 8}, {Number: 103}, {Number: 8}, {Number: 5, Repo: "acme/other"}}}},
 			// Label only: the store never saw it.
 			FrontendPR{PullRequest: github.PullRequest{Number: 104, Title: "Hand-made", Author: "pat", Labels: []string{"stage/085-needs-decision", "needs-decision"}}},
 		},
@@ -519,5 +526,77 @@ func TestStageTrackerCaptionNamesHeadAwaitingVerdict(t *testing.T) {
 	caption, _ = stageTrackerCaption(stagelabels.ReviewPending, "contributor-lane:no-verdict", "mendezr", "pr", false, stagelabels.Record{}, false, 0, "")
 	if !strings.HasSuffix(caption, "no review verdict yet") {
 		t.Fatalf("caption without head = %q", caption)
+	}
+}
+
+// Owner invariant (hivecommons/hive activity monitor, 2026-10-21): a PR
+// row always has its issue on the left and the PR on the right. The payload
+// pairs from the PR side too — GitHub's closingIssuesReferences, i.e. the
+// `Fixes/Closes/Resolves #N` keywords in the PR body — so a PR whose open
+// issue is listed nests under it even before the issue's claim evidence
+// names the PR, and a PR with no open issue still carries what its issue
+// slot shows (the closed issue it names, or nothing).
+func TestStageTrackerPRSidePairing(t *testing.T) {
+	now := time.Date(2026, 10, 21, 18, 49, 0, 0, time.UTC)
+	s, store := stageTrackerFixture(t, now)
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	resp := s.buildStageTracker(status, store, now)
+
+	pr103 := trackerItem(t, resp, "pr", 103)
+	if pr103.NestedUnder != 8 {
+		t.Fatalf("PR #103 (Fixes #8) nested_under = %d, want 8", pr103.NestedUnder)
+	}
+	if len(pr103.LinkedIssues) != 1 || pr103.LinkedIssues[0] != (StageTrackerLinkedIssue{Number: 8, Title: "Flaky test", URL: "https://github.com/acme/console/issues/8", State: "open", Listed: true}) {
+		t.Fatalf("PR #103 linked_issues = %+v", pr103.LinkedIssues)
+	}
+	issue8 := trackerItem(t, resp, "issue", 8)
+	if len(issue8.LinkedPRs) != 1 || issue8.LinkedPRs[0].Number != 103 || issue8.LinkedPRs[0].Title != "Relay PR" || issue8.LinkedPRs[0].Stage != 50 || issue8.LinkedPRs[0].URL != pr103.URL {
+		t.Fatalf("issue #8 linked_prs = %+v", issue8.LinkedPRs)
+	}
+
+	pr101 := trackerItem(t, resp, "pr", 101)
+	if pr101.NestedUnder != 0 || len(pr101.LinkedIssues) != 1 || pr101.LinkedIssues[0] != (StageTrackerLinkedIssue{Number: 90, URL: "https://github.com/acme/console/issues/90", State: "closed"}) {
+		t.Fatalf("PR #101 (Fixes #90, closed) = nested %d, linked_issues %+v", pr101.NestedUnder, pr101.LinkedIssues)
+	}
+	// The issue→PR pass also names the issue on the PR's side: issue 7's
+	// stage reason covers PR 102, which carries no closing reference.
+	pr102 := trackerItem(t, resp, "pr", 102)
+	if pr102.NestedUnder != 7 || len(pr102.LinkedIssues) != 1 || !pr102.LinkedIssues[0].Listed || pr102.LinkedIssues[0].Number != 7 || pr102.LinkedIssues[0].Title == "" {
+		t.Fatalf("PR #102 linked_issues = %+v (nested %d)", pr102.LinkedIssues, pr102.NestedUnder)
+	}
+	if pr104 := trackerItem(t, resp, "pr", 104); len(pr104.LinkedIssues) != 0 || pr104.NestedUnder != 0 {
+		t.Fatalf("PR #104 with no closing reference = %+v", pr104.LinkedIssues)
+	}
+}
+
+func TestStageTrackerPRLinkedIssues(t *testing.T) {
+	pr := github.PullRequest{Repo: "acme/console", Number: 42}
+	tests := []struct {
+		name   string
+		linked []github.PRLinkedIssue
+		want   []StageTrackerLinkedIssue
+	}{
+		{"none", nil, nil},
+		{"same repo bare", []github.PRLinkedIssue{{Number: 7}}, []StageTrackerLinkedIssue{{Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
+		{"explicit same repo, any case, state lower-cased", []github.PRLinkedIssue{{Number: 7, Repo: "Acme/Console", State: "CLOSED", URL: "https://gh/7"}}, []StageTrackerLinkedIssue{{Number: 7, URL: "https://gh/7", State: "closed"}}},
+		{"foreign repo dropped", []github.PRLinkedIssue{{Number: 7, Repo: "acme/other"}}, nil},
+		{"self and non-positive dropped", []github.PRLinkedIssue{{Number: 42}, {Number: 0}, {Number: -1}}, nil},
+		{"multiple, deduplicated, order kept", []github.PRLinkedIssue{{Number: 9}, {Number: 7}, {Number: 9}}, []StageTrackerLinkedIssue{{Number: 9, URL: "https://github.com/acme/console/issues/9"}, {Number: 7, URL: "https://github.com/acme/console/issues/7"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pr.LinkedIssues = tt.linked
+			got := stageTrackerPRLinkedIssues(pr, "")
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("[%d] got %+v, want %+v", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }

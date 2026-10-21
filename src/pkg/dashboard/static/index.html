@@ -1383,6 +1383,9 @@
     .ham-ref { color: var(--muted); text-decoration: none; white-space: nowrap; }
     .ham-ref:hover { text-decoration: underline; color: var(--text); }
     .ham-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* Issue slot of a PR row that has no open issue: muted placeholder. */
+    .ham-no-issue .ham-kind-ico { opacity: 0.55; }
+    .ham-no-issue-t { color: var(--text-faint); font-style: italic; }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
@@ -13026,8 +13029,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // An issue with no PR yet, or exactly one covering PR, is a single entry
     // (the PR's stage drives the strip and its "[icon] #N title" sits in the
     // PR column). With two or more covering PRs the issue strip stops at
-    // Claimed and one sub-row per PR continues it. A PR without an issue
-    // owns the whole strip.
+    // Claimed and one sub-row per PR continues it. A PR drawn on its own
+    // row owns the whole strip; its issue slot names the issue it closes or
+    // the "no linked issue" placeholder, never the PR itself.
     function stageTrackerRowHtml(item, stages, ctx) {
       ctx = ctx || {};
       const nowMs = Number(ctx.nowMs) || Date.now();
@@ -13049,24 +13053,56 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
         }
       }
-      // A PR is never its own parent: a standalone PR is named once, on the
-      // left, with its author-kind icon; the PR column stays empty and the
-      // title may run across it.
-      const ak = !isIssue ? (item.author_kind || 'hive') : '';
-      const who = ak ? ak + (item.author ? ' · @' + item.author : '') : '';
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
-        <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
-            ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
+      // Invariant (owner): the issue slot on the left never holds a PR. A
+      // PR whose issue is listed is nested under it; a PR seen on its own
+      // (no issue, a closed issue, or the Pull requests view) puts the issue
+      // it closes — or a muted "no linked issue" placeholder — on the left
+      // and names itself in the PR column, exactly where a covering PR sits
+      // on an issue row.
+      let leadHtml;
+      if (isIssue) {
+        leadHtml = `<div class="ham-head-main">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
-          </div>`, stageTrackerChipsHtml(shown))}
+          </div>`;
+      } else {
+        const li = stageTrackerPRIssueSlot(item);
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
+        leadHtml = li.number
+          ? `<div class="ham-head-main">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
+            <span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>
+          </div>`
+          : `<div class="ham-head-main ham-no-issue">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
+          </div>`;
+      }
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
+        <div class="ham-row-head">
+          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(shown, stages, range)}</ol>
           <span class="ham-since"></span>
         </div>${subs}
       </div>`;
+    }
+
+    // What a PR row's issue slot shows: the open issue the PR closes (number,
+    // title, url) when one is known, else { text } for the placeholder —
+    // "linked issue #N closed" when GitHub links it to an issue that is no
+    // longer open, "no linked issue" when its body names none.
+    function stageTrackerPRIssueSlot(item) {
+      const linked = (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0);
+      const open = linked.find(li => Number(li.number) === Number(item.nested_under)) || linked.find(li => li.listed || (li.state || '') === 'open');
+      if (open) return { number: Number(open.number), title: open.title || '', url: open.url || '' };
+      const closed = linked.filter(li => (li.state || '') === 'closed');
+      if (closed.length) return { number: 0, text: 'linked issue ' + closed.map(li => '#' + Number(li.number)).join(', ') + ' closed' };
+      if (linked.length) return { number: Number(linked[0].number), title: linked[0].title || '', url: linked[0].url || '' };
+      return { number: 0, text: 'no linked issue' };
     }
 
     function stageTrackerNeedsAttention(item) {
@@ -13125,7 +13161,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const byNumber = /^\d+$/.test(num) && String(item.number) === num;
         const byTitle = String(item.title || '').toLowerCase().indexOf(q) >= 0;
         const byLinked = (Array.isArray(item.linked_prs) ? item.linked_prs : []).some(lp => (/^\d+$/.test(num) && String(lp.number) === num) || String(lp.title || '').toLowerCase().indexOf(q) >= 0);
-        if (!byNumber && !byTitle && !byLinked) return false;
+        const byIssue = (Array.isArray(item.linked_issues) ? item.linked_issues : []).some(li => (/^\d+$/.test(num) && String(li.number) === num) || String(li.title || '').toLowerCase().indexOf(q) >= 0);
+        if (!byNumber && !byTitle && !byLinked && !byIssue) return false;
       }
       if (f.labels.length) {
         const have = new Set((Array.isArray(item.labels) ? item.labels : []).map(l => String(l).toLowerCase()));
