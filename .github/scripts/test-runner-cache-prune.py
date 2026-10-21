@@ -56,6 +56,10 @@ class RunnerCachePruneTest(unittest.TestCase):
             # fails safely inside this fixture, never against host caches.
             shell = shell.replace("/mnt/gomod", str(root / "gomod"))
             shell = shell.replace("/mnt/toolcache", str(root / "toolcache"))
+            # Runner pods mount the live shared tool cache; refuse to execute
+            # any manifest path literal the substitution above did not cover.
+            self.assertNotIn("/mnt/", shell)
+            self.assertNotIn("/var/lib/hive-ci", shell)
             result = subprocess.run(
                 ["sh", "-c", "sleep() { exit 0; };\n" + shell],
                 env={**os.environ, "MAX_AGE_DAYS": "14"},

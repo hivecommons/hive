@@ -168,8 +168,9 @@ requested versions. Confirm a subsequent canary is green; a merged manifest
 alone does not repair the live pool. Do not delete tool-cache directories on
 active nodes, even under `.warm.lock`: running jobs do not hold that lock.
 Reclaim tool-cache space only after an operator drains the affected runner
-node and verifies no jobs remain, or recycle it during a quiet window. Monitor
-node disk usage in section 7 until an active-job-aware eviction policy exists.
+node and verifies no jobs remain, or recycle it during a quiet window. The
+prune log now covers the module cache only, so check tool-cache size per node
+(section 7, Disk row) until an active-job-aware eviction policy exists.
 
 ## 4. ARC controller and system services
 
@@ -246,7 +247,8 @@ Rollback at any point before step 3 is the same variable set back to
 | --- | --- |
 | Queue depth vs capacity | `gh run list --status queued`; `kubectl -n arc-hive get autoscalingrunnersets` (`currentRunners`, `pendingEphemeralRunners`) |
 | Node pressure | `kubectl --context hive-ci top nodes`; autoscaler events in `kubectl get events -A --field-selector reason=TriggeredScaleUp` |
-| Disk | `kubectl --context hive-ci -n arc-hive logs ds/hive-ci-cache-prune`; `df` inside any runner (`/var/lib/hive-ci` on the node) |
+| Disk | `kubectl --context hive-ci -n arc-hive logs ds/hive-ci-cache-prune` (module cache only); `df` inside any runner (`/var/lib/hive-ci` on the node) |
+| Tool-cache size (unbounded; see 3b) | `kubectl --context hive-ci debug node/<node> -it --image=busybox:1.36 -- du -sh /host/var/lib/hive-ci/toolcache`, or `du -sh /var/lib/hive-ci/toolcache` on the node |
 | Registry cache hit rate | `kubectl -n arc-systems logs deploy/registry-cache | grep -c 'blob unknown'` should trend down |
 
 Runner image upgrades follow the parent README (`ci-runner-image.yml`), then
