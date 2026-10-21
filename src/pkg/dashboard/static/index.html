@@ -13226,7 +13226,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       if (!mods.length) return '';
-      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      let text = STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' ');
+      // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
+      const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
+      const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
+      if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
+      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries

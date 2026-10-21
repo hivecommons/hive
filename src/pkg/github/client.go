@@ -1509,11 +1509,15 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		}
 		// Blocked on an unmerged PR (hivecommons/hive#13093): out of the
 		// actionable set until ReconcileBlockedIssues lifts the label. The
-		// reason names the PR when the body carries the blocked-on marker.
+		// reason names the PR when the body carries the blocked-on marker,
+		// else the recheck-after deadline when it carries one
+		// (hivecommons/hive#13310).
 		if hasBlockedLabel(labels) {
 			breakdown.Filtered++
 			breakdown.Blocked++
-			details = append(details, c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody())))
+			row := c.workIssue(repo, issue, labels, "filtered", blockedFilterReason(issue.GetBody()))
+			row.RecheckAfter, row.OpsTracking = blockedRecheck(issue.GetBody())
+			details = append(details, row)
 			continue
 		}
 		if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
@@ -3981,6 +3985,11 @@ type RepoWorkIssue struct {
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 	// Children is Issue.Children, copied for the issue stage reconciler.
 	Children *IssueChildren `json:"children,omitempty"`
+	// RecheckAfter and OpsTracking are read from a blocked issue's body
+	// (`<!-- hive:recheck-after <RFC3339> -->`, `<!-- hive:ops-tracking -->`)
+	// for ReconcileBlockedIssues (hivecommons/hive#13310).
+	RecheckAfter time.Time `json:"recheck_after,omitzero"`
+	OpsTracking  bool      `json:"ops_tracking,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {

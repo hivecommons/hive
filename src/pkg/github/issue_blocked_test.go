@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -365,5 +366,157 @@ func TestIssueRequestWatcherBlockedOnPRComment(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(calls, "\n"), "DELETE /repos/o/r/issues/12/labels/help wanted") {
 		t.Fatalf("help wanted not removed: %v", calls)
+	}
+}
+
+// hivecommons/hive#13310: a blocked issue whose body carries a recheck-after
+// deadline (and no blocked-on marker) is filed "blocked until <RFC3339>" with
+// the deadline on the row, and IssueStageFor echoes that reason.
+func TestBlockedFilterReasonRecheckAfter(t *testing.T) {
+	at := time.Date(2026, 10, 21, 21, 20, 0, 0, time.UTC)
+	body := "soak checklist\n" + gfi.RecheckAfterMarker(at)
+	if got := blockedFilterReason(body); got != "blocked until 2026-10-21T21:20:00Z" {
+		t.Fatalf("filter reason = %q", got)
+	}
+	if got := blockedFilterReason(body + "\n" + BlockedOnMarker("o/r", 7)); got != "blocked on o/r#7" {
+		t.Fatalf("blocked-on marker must win: %q", got)
+	}
+	if got, ops := blockedRecheck(body); !got.Equal(at) || ops {
+		t.Fatalf("blockedRecheck = %v %v", got, ops)
+	}
+	if got, ops := blockedRecheck(body + "\n" + gfi.OpsTrackingMarker); !got.Equal(at) || !ops {
+		t.Fatalf("blockedRecheck ops = %v %v", got, ops)
+	}
+	if got, ops := blockedRecheck("no markers"); !got.IsZero() || ops {
+		t.Fatalf("blockedRecheck bare = %v %v", got, ops)
+	}
+	if !IsBlockedIssueReason("blocked until 2026-10-21T21:20:00Z") {
+		t.Fatal("deadline reason not recognised as blocked")
+	}
+	if _, _, ok := parseBlockedOnReason("blocked until 2026-10-21T21:20:00Z"); ok {
+		t.Fatal("deadline reason parsed as a tracked PR")
+	}
+	stage, covered, reason := IssueStageFor(IssueStageInput{
+		Repo: "o/r", Number: 13267, Labels: []string{"blocked"},
+		Bucket: workBucketFiltered, Reason: "blocked until 2026-10-21T21:20:00Z",
+	}, nil)
+	if stage != stagelabels.None || covered || reason != "blocked until 2026-10-21T21:20:00Z" {
+		t.Fatalf("IssueStageFor = %v %v %q", stage, covered, reason)
+	}
+}
+
+func TestEnumerateActionableRecordsBlockedRecheckAfter(t *testing.T) {
+	const org, repo = "testorg", "testrepo"
+	at := time.Date(2026, 10, 21, 21, 20, 0, 0, time.UTC)
+	issues := []wireIssue{
+		{Number: 1, Title: "soak", User: wireUser{"alice"}, Labels: []wireLabel{{Name: "blocked"}}, CreatedAt: hoursAgo(3),
+			Body: "checklist\n" + gfi.OpsTrackingMarker + "\n" + gfi.RecheckAfterMarker(at)},
+		{Number: 2, Title: "bare", User: wireUser{"bob"}, Labels: []wireLabel{{Name: "blocked"}}, CreatedAt: hoursAgo(2)},
+	}
+	server := httptest.NewServer(buildMux(t, org, repo, issues, []wirePR{}))
+	t.Cleanup(server.Close)
+	c := newTestClient(t, server, org, []string{repo})
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	rows := map[int]RepoWorkIssue{}
+	for _, row := range result.WorkDetailsByRepo[repo].Issues {
+		rows[row.Number] = row
+	}
+	if r := rows[1]; r.Bucket != workBucketFiltered || r.Reason != "blocked until 2026-10-21T21:20:00Z" || !r.RecheckAfter.Equal(at) || !r.OpsTracking {
+		t.Fatalf("deadline row = %+v", r)
+	}
+	if r := rows[2]; r.Bucket != workBucketFiltered || r.Reason != "blocked" || !r.RecheckAfter.IsZero() || r.OpsTracking {
+		t.Fatalf("bare row = %+v", r)
+	}
+}
+
+// The sweep lifts `blocked` from a row whose recheck-after deadline has
+// passed (no tracked PR, no ops-tracking marker) with one unblocked note,
+// leaves rows whose deadline is ahead, ops-tracking rows and rows that
+// already carry the note for this deadline alone, and never posts twice.
+func TestReconcileBlockedIssuesRecheckAfter(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	prev := blockedSweepNow
+	blockedSweepNow = func() time.Time { return now }
+	t.Cleanup(func() { blockedSweepNow = prev })
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+	pastReason := "blocked until " + past.Format(time.RFC3339)
+
+	var mu sync.Mutex
+	var calls []string
+	comments := map[string][]string{
+		"/repos/o/r/issues/63/comments": {blockedDeadlineNote(past.Format(time.RFC3339))},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		defer mu.Unlock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			out := []map[string]any{}
+			for i, b := range comments[r.URL.Path] {
+				out = append(out, map[string]any{"id": i + 1, "body": b})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			comments[r.URL.Path] = append(comments[r.URL.Path], payload.Body)
+			_, _ = io.WriteString(w, `{"id":9}`)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			{Repo: "o/r", Number: 60, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: pastReason, RecheckAfter: past},
+			{Repo: "o/r", Number: 61, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked until " + future.Format(time.RFC3339), RecheckAfter: future},
+			{Repo: "o/r", Number: 62, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: pastReason, RecheckAfter: past, OpsTracking: true},
+			{Repo: "o/r", Number: 63, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: pastReason, RecheckAfter: past},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 4 || res.Unblocked != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	// A second cycle on the same snapshot (the label lift not yet seen by
+	// the enumeration) finds the note and posts nothing more.
+	res = ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Unblocked != 0 || res.Errors != 0 {
+		t.Fatalf("second pass result = %+v", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(calls, "\n")
+	if n := strings.Count(joined, "DELETE /repos/o/r/issues/60/labels/blocked"); n != 1 {
+		t.Errorf("issue 60 unblocked %d times, want 1:\n%s", n, joined)
+	}
+	if n := strings.Count(joined, "POST /repos/o/r/issues/60/comments"); n != 1 {
+		t.Errorf("issue 60 noted %d times, want 1:\n%s", n, joined)
+	}
+	note := comments["/repos/o/r/issues/60/comments"]
+	if len(note) != 1 || !strings.HasPrefix(note[0], blockedUnblockedMarker+"\n") || !strings.Contains(note[0], "deadline "+past.Format(time.RFC3339)+" passed; re-triaging") {
+		t.Errorf("issue 60 note = %q", note)
+	}
+	for _, n := range []int{61, 62, 63} {
+		for _, never := range []string{fmt.Sprintf("DELETE /repos/o/r/issues/%d/", n), fmt.Sprintf("POST /repos/o/r/issues/%d/", n)} {
+			if strings.Contains(joined, never) {
+				t.Errorf("unexpected call %q in:\n%s", never, joined)
+			}
+		}
+	}
+	if got := len(comments["/repos/o/r/issues/63/comments"]); got != 1 {
+		t.Errorf("issue 63 comments = %d, want the existing note only", got)
 	}
 }
