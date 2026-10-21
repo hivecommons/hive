@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -59,6 +60,11 @@ type hivesDeps struct {
 	githubToken func(ctx context.Context) (string, error)
 	signalRelay func(ctx context.Context, store *hivectl.ProfileStore) (hivectl.RelaySwitchResult, error)
 	now         func() time.Time
+	// discoverHubHives and discoverRepositories feed the contribution tree.
+	// Both are credential-free reads; nil means discovery is unavailable, which
+	// the tree reports as such rather than as an empty collection.
+	discoverHubHives     func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error)
+	discoverRepositories func(ctx context.Context, hub string) ([]string, error)
 }
 
 func newHivesCommand(env *commandEnv) *cobra.Command {
@@ -119,6 +125,12 @@ func defaultHivesDeps(timeout time.Duration) (*hivesDeps, error) {
 		githubToken: hivectl.GitHubToken,
 		signalRelay: hivectl.SignalRunningRelay,
 		now:         time.Now,
+		discoverHubHives: func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error) {
+			return hivectl.DiscoverHubHives(ctx, &http.Client{Timeout: timeout}, hubURL)
+		},
+		discoverRepositories: func(ctx context.Context, hub string) ([]string, error) {
+			return discoverRepositoriesWithTimeout(ctx, hub, timeout)
+		},
 	}, nil
 }
 

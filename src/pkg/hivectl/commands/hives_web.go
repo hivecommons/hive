@@ -36,7 +36,9 @@ func newHivesWebCommand(env *commandEnv) *cobra.Command {
 		Use:   "web",
 		Short: "Serve a loopback-only The Commons web UI",
 		Long: "Serves a local, token-authenticated page for subscribing to hives, " +
-			"unsubscribing, changing rank order and choosing The Commons routing strategy. " +
+			"unsubscribing, changing rank order and choosing The Commons routing strategy, " +
+			"plus the Hub → Hive → Repository contribution tree: stage repository selection, " +
+			"exclusions, follow policy and enable/disable edits, review the diff, then Apply. " +
 			"The server binds only to loopback and never returns registration tokens.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return env.runHivesWeb(cmd, opts)
@@ -114,6 +116,9 @@ type commonsWebServer struct {
 	deps  *hivesDeps
 	token string
 	mu    sync.Mutex
+	// tree is the staged contribution-tree session (hives_web_tree.go), guarded
+	// by mu like every other profile read or write on this server.
+	tree *commonsTreeSession
 }
 
 func newCommonsWebServer(deps *hivesDeps, token string) http.Handler {
@@ -152,6 +157,14 @@ func (s *commonsWebServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.handleMove(w, r)
 	case r.URL.Path == "/api/strategy" && r.Method == http.MethodPost:
 		s.handleStrategy(w, r)
+	case r.URL.Path == "/api/tree" && r.Method == http.MethodGet:
+		s.handleTree(w, r)
+	case r.URL.Path == "/api/tree/edit" && r.Method == http.MethodPost:
+		s.handleTreeEdit(w, r)
+	case r.URL.Path == "/api/tree/apply" && r.Method == http.MethodPost:
+		s.handleTreeApply(w, r)
+	case r.URL.Path == "/api/tree/discard" && r.Method == http.MethodPost:
+		s.handleTreeDiscard(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -508,6 +521,7 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 <title>The Commons — Hive</title>
 <style>
 :root{color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#777}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:16rem;flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}.modal-back{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50}.modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;max-width:420px;width:90%}.modal div{display:flex;gap:8px;justify-content:flex-end}.modal button{border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:#fff;cursor:pointer}.modal [data-act=yes]{background:#b42318;color:#fff;border-color:#b42318}
+.modal-wide{max-width:720px;max-height:80vh;overflow:auto}.modal ul{padding-left:1.2rem}.tree-tools{display:flex;gap:1rem;flex-wrap:wrap;align-items:center;margin:.5rem 0}.tree-filters{display:inline-flex;gap:.6rem;border:0;padding:0;margin:0}.tree-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(14rem,1fr);gap:1rem}@media (max-width:760px){.tree-layout{grid-template-columns:1fr}}[role=tree],[role=tree] ul{list-style:none;margin:0;padding:0}[role=tree] ul{padding-left:1.4rem}.tree-row{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;padding:.25rem .3rem;border-bottom:1px solid #8882}li[role=treeitem]:focus{outline:none}li[role=treeitem]:focus>.tree-row{outline:2px solid #2a7ae2;outline-offset:-2px}.tree-toggle{border:0;background:none;cursor:pointer;width:1.4rem;padding:0}.pill.warn{border-color:#b26a00;color:#b26a00}.pill.ok{border-color:#087f23;color:#087f23}.pill.muted{color:#777}.stage{position:sticky;bottom:0;display:flex;justify-content:space-between;gap:.5rem;flex-wrap:wrap;align-items:center;padding:.6rem;margin-top:1rem;border-top:1px solid #8884;background:Canvas}#detail{border:1px solid #8884;border-radius:8px;padding:.6rem;align-self:start}#detail dt{font-weight:600;margin-top:.4rem}#detail dd{margin:0;overflow-wrap:anywhere}
 </style>
 <h1>The Commons</h1>
 <p class="muted">This loopback-only page edits the same local profile store as <code>hivectl hives</code> and the TUI. Registration tokens are never displayed.</p>
@@ -526,7 +540,7 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
   <input id="hub" type="text" required placeholder="wss://hive.example/contribute">
   <button>Subscribe</button>
 </form>
-<div id="message" class="muted"></div>
+<div id="message" class="muted" role="status" aria-live="polite"></div>
 <table>
   <thead><tr><th>Rank</th><th>Hive</th><th>Hub</th><th>Contributor</th><th>Session</th><th>Actions</th></tr></thead>
   <tbody id="hives"></tbody>
@@ -555,6 +569,7 @@ async function load(){
   strategySelect.value = data.strategy || 'ranked';
   document.getElementById('path').textContent = data.path || '';
   document.getElementById('envpath').textContent = data.env_path || '';
+  if (window.loadTree) window.loadTree().catch(e => say(e.message, 'error'));
   const body = document.getElementById('hives');
   body.textContent = '';
   for (const h of data.hives || []) {
@@ -624,4 +639,4 @@ document.getElementById('hives').addEventListener('drop', async ev => {
 });
 load().catch(e => say(e.message, 'error'));
 </script>
-</html>`))
+` + commonsWebTreeHTML + `</html>`))

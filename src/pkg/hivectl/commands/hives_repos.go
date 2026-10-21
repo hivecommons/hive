@@ -1,12 +1,14 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
 	"github.com/spf13/cobra"
@@ -143,15 +145,21 @@ func reloadHivesAfterEdit(cmd *cobra.Command, deps *hivesDeps) error {
 // Discovery is public. Never attach the saved registration token or turn an
 // error/unsupported endpoint into an empty snapshot or a wildcard.
 func discoverSelectionRepositories(cmd *cobra.Command, hub string, env *commandEnv) ([]string, error) {
+	return discoverRepositoriesWithTimeout(cmd.Context(), hub, env.options.timeout)
+}
+
+// discoverRepositoriesWithTimeout is the context-driven form shared by the CLI
+// and the Web/TUI tree surfaces, which have no cobra command in hand.
+func discoverRepositoriesWithTimeout(ctx context.Context, hub string, timeout time.Duration) ([]string, error) {
 	base, err := hivectl.HubHTTPBase(hub)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, strings.TrimRight(base, "/")+"/api/contribute/repositories", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/contribute/repositories", nil)
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Timeout: env.options.timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("repository discovery unavailable; selection unchanged: %w", err)
