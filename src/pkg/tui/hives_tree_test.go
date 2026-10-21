@@ -314,7 +314,9 @@ func TestHivesTreeEditsBlockedWhileRefreshOutstanding(t *testing.T) {
 	if h.model.hives.TreeLoading() {
 		t.Fatal("refresh left the tree loading")
 	}
-	h.focusRepoA(t)
+	if n := h.treeFocus(t); n.Repository != hivectl.ContributionFixtureRepoA {
+		t.Fatalf("focus = %+v, want repository a after refresh", n)
+	}
 	h.send(t, treeSpace)
 	if h.model.hives.TreeStaged() != 1 {
 		t.Fatal("could not stage after the refresh landed")
