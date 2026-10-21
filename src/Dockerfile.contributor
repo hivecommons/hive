@@ -35,7 +35,7 @@
 # QEMU emulation for the foreign arch costs minutes per build for no benefit —
 # a pure-Go static binary cross-compiles exactly.
 ARG BASE_REGISTRY=mirror.gcr.io/library
-FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS quota-publisher-builder
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS quota-publisher-builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -495,9 +495,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # inject a tampered toolchain. Bump GO_SHA256_AMD64/ARM64 whenever GO_VERSION
 # changes — the values come from https://go.dev/dl/?mode=json for that version.
 ARG TARGETARCH
-ARG GO_VERSION=1.24.4
-ARG GO_SHA256_AMD64=77e5da33bb72aeaef1ba4418b6fe511bc4d041873cbf82e5aa6318740df98717
-ARG GO_SHA256_ARM64=d5501ee5aca0f258d5fe9bfaed401958445014495dc115f202d43d5210b45241
+ARG GO_VERSION=1.27.3
+ARG GO_SHA256_AMD64=65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+ARG GO_SHA256_ARM64=a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64) GO_SHA256="$GO_SHA256_AMD64" ;; \

@@ -21,9 +21,9 @@
 # stage, so placing it after builder's FROM hijacked the builder steps and
 # left /hive, /bd, /hivectl unbuilt (v5 docker build broke on 470c2002).
 ARG BASE_REGISTRY=mirror.gcr.io/library
-FROM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS agent-go
+FROM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS agent-go
 
-FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
