@@ -521,7 +521,7 @@ assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributo
 // chevron; the placeholder issue slot carries none.
 row = stageTrackerRowHtml(g[6], stages, ctx);
 expectTitles(row, ['a.ham-pr-ref', 'li.ham-seg'], 'standalone PR');
-assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Ready for auto merge[^"]*@cy \(author\/human\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="Standalone PR · Not yet admitted to auto merge[^"]*@cy \(author\/human\)/.test(row), 'PR link: title, then the row tooltip: ' + row);
 assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');
