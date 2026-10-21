@@ -346,7 +346,7 @@ func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
 	if claim == nil || !claim.CoveredLabelSynthesized {
 		return labels
 	}
-	return removeIssueLabel(labels, CoveredByPRLabel)
+	return removeIssueLabel(slices.Clone(labels), CoveredByPRLabel)
 }
 
 // IssueStageInputs flattens an enumeration result into one row per open

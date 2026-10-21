@@ -984,3 +984,28 @@ func TestForgeIssueLabels(t *testing.T) {
 		t.Fatalf("synthesised label must come off: %v", got)
 	}
 }
+
+func TestForgeIssueLabelsDoesNotAlias(t *testing.T) {
+	// Test that forgeIssueLabels does not mutate the caller's backing array.
+	// This verifies the fix for hivecommons/hive#13323: removeIssueLabel used
+	// to compact in-place (out := labels[:0]), which would mutate the backing
+	// array shared with the caller.
+	original := []string{"bug", "help wanted", CoveredByPRLabel}
+	originalCopy := append([]string(nil), original...)
+
+	result := forgeIssueLabels(original, &IssueClaimContext{CoveredLabelSynthesized: true})
+
+	// Verify input slice is unchanged
+	if !slices.Equal(original, originalCopy) {
+		t.Errorf("forgeIssueLabels mutated input: got %v, want %v", original, originalCopy)
+	}
+
+	// Verify that appending to the result does not alter the original backing array
+	if len(result) > 0 && len(original) > len(result) {
+		// Appending to result should not overwrite original[len(result)]
+		result = append(result, "new-label")
+		if original[len(result)-1] == "new-label" {
+			t.Errorf("appending to result unexpectedly modified the original backing array")
+		}
+	}
+}
