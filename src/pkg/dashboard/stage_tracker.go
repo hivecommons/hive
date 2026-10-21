@@ -262,10 +262,22 @@ type StageTrackerItem struct {
 	// named in the stage reason first) with everything the tracker needs
 	// to draw each as a sub-row nested under the issue.
 	LinkedPRs []StageTrackerLinkedPR `json:"linked_prs,omitempty"`
+	// LinkedIssues carries same-repo closing references from the PR side.
+	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
 	// NestedUnder is, on a PR, the issue in the same repo whose row nests
 	// it (0 when the PR has no listed issue and stands on its own).
 	NestedUnder int               `json:"nested_under,omitempty"`
 	History     []StageTrackerHop `json:"history"`
+}
+
+// StageTrackerLinkedIssue is a PR's same-repo closing reference.
+// Listed means the open issue has its own row in this response.
+type StageTrackerLinkedIssue struct {
+	Number int    `json:"number"`
+	State  string `json:"state"`
+	URL    string `json:"url"`
+	Title  string `json:"title"`
+	Listed bool   `json:"listed"`
 }
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
@@ -941,6 +953,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
+		for _, li := range pr.LinkedIssues {
+			if li.Number <= 0 || li.Number == pr.Number || (li.Repo != "" && !strings.EqualFold(li.Repo, repoName)) {
+				continue
+			}
+			it.LinkedIssues = append(it.LinkedIssues, StageTrackerLinkedIssue{Number: li.Number, Title: li.Title, State: strings.ToLower(li.State),
+				URL: overviewItemURL(li.URL, repoName, li.Number, "issue", status.GitHubBaseURL)})
+		}
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
@@ -1194,9 +1213,31 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 // such PR as nested under the lowest-numbered issue that lists it.
 func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
+	issues := map[string]*StageTrackerItem{}
 	for i := range items {
+		key := items[i].Repo + "#" + strconv.Itoa(items[i].Number)
 		if items[i].Kind == "pr" {
-			prs[items[i].Repo+"#"+strconv.Itoa(items[i].Number)] = &items[i]
+			prs[key] = &items[i]
+		} else if items[i].Kind == "issue" {
+			issues[key] = &items[i]
+		}
+	}
+	// Iterate the response, not the map, so PR-side links have stable order.
+	for i := range items {
+		pr := &items[i]
+		if pr.Kind != "pr" {
+			continue
+		}
+		for j := range pr.LinkedIssues {
+			li := &pr.LinkedIssues[j]
+			li.Listed = false
+			if li.Number <= 0 || li.Number == pr.Number || strings.EqualFold(li.State, "closed") {
+				continue
+			}
+			if issue := issues[pr.Repo+"#"+strconv.Itoa(li.Number)]; issue != nil {
+				li.Listed, li.State, li.Title, li.URL = true, "open", issue.Title, issue.URL
+				issue.LinkedPRs = append(issue.LinkedPRs, StageTrackerLinkedPR{Number: pr.Number, URL: pr.URL})
+			}
 		}
 	}
 	for i := range items {

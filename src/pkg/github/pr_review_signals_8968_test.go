@@ -88,7 +88,7 @@ func TestEnrichCIStatus_CarriesConversationCountsAndLinkedIssues(t *testing.T) {
 		comments:       3,
 		reviewThreads:  2,
 		closingIssues: []map[string]any{
-			{"number": 12, "state": "OPEN", "url": "https://github.test/org/repo/issues/12", "repository": map[string]any{"nameWithOwner": "org/repo"}},
+			{"number": 12, "title": "Fix login", "state": "OPEN", "url": "https://github.test/org/repo/issues/12", "repository": map[string]any{"nameWithOwner": "org/repo"}},
 			{"number": 7, "state": "CLOSED", "url": "https://github.test/org/other/issues/7", "repository": map[string]any{"nameWithOwner": "org/other"}},
 			{"number": 0},
 		},
@@ -101,7 +101,7 @@ func TestEnrichCIStatus_CarriesConversationCountsAndLinkedIssues(t *testing.T) {
 		t.Errorf("counts = %d comments / %d threads, want 3 / 2", pr.CommentCount, pr.ReviewThreadCount)
 	}
 	wantLinked := []PRLinkedIssue{
-		{Number: 12, Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/12"},
+		{Number: 12, Title: "Fix login", Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/12"},
 		{Number: 7, Repo: "org/other", State: "closed", URL: "https://github.test/org/other/issues/7"},
 	}
 	if !reflect.DeepEqual(pr.LinkedIssues, wantLinked) {

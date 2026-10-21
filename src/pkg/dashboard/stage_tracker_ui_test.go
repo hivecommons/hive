@@ -163,7 +163,7 @@ const titles = (html, t) => (html.match(new RegExp('>' + t.replace(/[.*+?^${}()|
 const prCol = (html) => Array.from(html.slice(0, html.indexOf('aria-label="Pipeline progress"')).matchAll(/<a class="ham-pr-ref"[^>]*>(.*?)<\/a>/g)).map(m => m[1]);
 const B = 'blank';
 const text = (h) => h.replace(/<[^>]+>/g, '').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
-const tooltip = (row) => /<a class="ham-ref"[^>]*title="([^"]*)"/.exec(row)[1];
+const tooltip = (row) => /<a class="ham-(?:ref|pr-ref)"[^>]*title="([^"]*)"/.exec(row)[1];
 const chips = (row) => (row.match(/class="ham-badge /g) || []).length;
 const ctx = { nowMs: now };
 const D = 'done', T = 'todo';
@@ -262,12 +262,13 @@ assert.strictEqual(stageTrackerAnchor(95, stages, 'pr'), STAGE_TRACKER_MERGE_COL
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{stage:50},{stage:60},{stage:72}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Returned to contributor</span>'));
-// A standalone PR is never its own parent: named once, on the left, with its
-// author-kind icon; no PR-column entry, lead cell spans the ghost strip.
-assert.deepStrictEqual(prCol(row).length, 0, 'a standalone PR row must not repeat itself in the PR column');
-assert.ok(!row.includes('class="ham-seg ham-head-pr"'), 'no PR cell on a standalone PR row');
-assert.ok(row.includes('class="ham-seg ham-head-lead ham-head-wide"'), 'lead cell is wide on a standalone PR row');
-assert.ok(/ham-kind-ico[\s\S]*?ham-author-ico ham-author-clanker[\s\S]*?aria-label="clanker · @karibhou"[\s\S]*?<a class="ham-ref"[^>]*>#102<\/a>/.test(row.slice(0, row.indexOf('aria-label="Pipeline progress"'))), 'kind icon, coloured author icon, then #102 on the title line');
+// A standalone PR always occupies the PR column, never the issue slot.
+assert.strictEqual(prCol(row).length, 1);
+assert.ok(row.includes('class="ham-seg ham-head-pr"'));
+assert.ok(!row.includes('ham-head-wide'));
+assert.ok(row.includes('no linked issue'));
+assert.ok(!row.includes('class="ham-ref"'), 'no PR link in the issue slot');
+assert.ok(prCol(row)[0].includes('ham-author-clanker') && prCol(row)[0].includes('#102'), 'author icon and PR number in PR column');
 assert.strictEqual(titles(row, 'Fix flaky'), 1, 'title appears once');
 assert.strictEqual(chips(row), 1, 'author kind is an icon, not a chip');
 assert.ok(row.includes('ham-mod-needs-human">needs human +1</span>'), row);
@@ -355,11 +356,21 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, D, 'active cap merged']);
 assert.ok(/<li class="ham-seg active cap merged"[^>]*><svg class="ham-ico"/.test(row), 'merged cap is the lit segment with the check icon');
 
-// Hive-authored standalone PR: hive icon on the title line, no PR column, no chips.
+// Hive-authored standalone PR: hive icon in the PR column, no chips.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 50, author: 'hive-bot', author_kind: 'hive' }, stages, ctx);
 assert.strictEqual(chips(row), 0);
-assert.strictEqual(prCol(row).length, 0);
-assert.ok(row.slice(0, row.indexOf('aria-label="Pipeline progress"')).includes('ham-author-ico ham-author-hive'));
+assert.strictEqual(prCol(row).length, 1);
+assert.ok(prCol(row)[0].includes('ham-author-ico ham-author-hive'));
+
+// Closed references never put the PR or a closed issue in the issue slot.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 50, linked_issues: [{ number: 7, state: 'closed', title: 'Old issue' }] }, stages, ctx);
+assert.ok(row.includes('no linked issue') && !row.includes('class="ham-ref"'));
+assert.strictEqual(prCol(row).length, 1);
+// A PR shown independently (PR-only/filter view) still names its open issue.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 50, linked_issues: [{ number: 7, state: 'open', title: 'Fix <login>', url: 'https://x/issues/7', listed: true }] }, stages, ctx);
+assert.ok(row.includes('class="ham-ref" href="https://x/issues/7"') && row.includes('>#7</a>'));
+assert.ok(row.includes('Fix &lt;login&gt;') && !row.includes('no linked issue'));
+assert.ok(prCol(row)[0].includes('#108'));
 
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
@@ -450,8 +461,8 @@ const golden = stageTrackerVisible(g, { kind: 'all', repo: '' }).map(it => stage
 for (const it of g) assert.strictEqual(titles(golden, it.title), 1, 'exactly one visible title for #' + it.number + ' (' + it.title + ')');
 assert.strictEqual((golden.match(/<div class="ham-row"/g) || []).length, 4, 'four top-level rows: 3 issues + 1 standalone PR');
 assert.strictEqual((golden.match(/<div class="ham-sub"/g) || []).length, 2, 'two sub-rows, only under the two-PR issue');
-assert.strictEqual((golden.match(/ham-head-wide/g) || []).length, 3, 'wide lead wherever the title line has no PR entry: PR-less issue, two-PR issue (PRs in sub-rows), standalone PR');
-assert.strictEqual((golden.match(/<span class="ham-pr-num">#40<\/span>/g) || []).length, 0, 'the standalone PR is not listed as a covering PR');
+assert.strictEqual((golden.match(/ham-head-wide/g) || []).length, 2, 'only PR-less and multi-PR issue leads are wide');
+assert.strictEqual((golden.match(/<span class="ham-pr-num">#40<\/span>/g) || []).length, 1, 'standalone PR occupies the PR column');
 assert.ok(golden.includes('ham-mod-needs-rebase">needs rebase</span>'), 'standalone PR keeps its chip on the title line');
 assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'issue', repo: '' }).map(it => it.kind), ['issue', 'issue', 'issue'], 'Issues filter never shows a PR');
 assert.deepStrictEqual(stageTrackerVisible(g, { kind: 'pr', repo: '' }).map(it => it.number), [21, 31, 32, 40], 'Pull requests filter flattens every PR once');
@@ -490,7 +501,7 @@ for (const s of subs(row)) expectTitles(s, ['a.ham-pr-ref', 'li.ham-seg'], 'sub-
 assert.ok(/<a class="ham-pr-ref"[^>]*title="First PR · Back with the contributor[^"]*@bo \(author\/clanker\)[^"]*"/.test(subs(row)[1]), 'sub-row PR link: PR title, then the PR tooltip: ' + subs(row)[1]);
 // Standalone PR: #N link, PR title, active chevron.
 row = stageTrackerRowHtml(g[6], stages, ctx);
-expectTitles(row, ['a.ham-ref', 'span.ham-title', 'li.ham-seg'], 'standalone PR');
+expectTitles(row, ['a.ham-pr-ref', 'li.ham-seg'], 'standalone PR');
 assert.ok(row.includes('aria-label="human · @cy"') && !row.includes('<title>'), 'author icon label is aria-only: ' + row);
 // Since cells are untouched: plain text, no title.
 assert.ok(/<span class="ham-since( ham-stalled)?">[^<]*<\/span>/.test(row) && !/ham-since[^>]*title=/.test(golden), 'since cells unchanged');

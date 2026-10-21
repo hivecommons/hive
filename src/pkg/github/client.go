@@ -938,6 +938,7 @@ type PullRequest struct {
 // GitHub's issue state lower-cased ("open" / "closed"), as on Issue.State.
 type PRLinkedIssue struct {
 	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
 	Repo   string `json:"repo,omitempty"`
 	State  string `json:"state,omitempty"`
 	URL    string `json:"url,omitempty"`

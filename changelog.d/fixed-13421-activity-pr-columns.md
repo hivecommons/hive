@@ -1,0 +1,1 @@
+- Activity monitor rows keep issues on the left and PRs in the PR column, show a muted placeholder for PRs without an open linked issue, and pair listed issues using PR-side closing references.

@@ -1364,6 +1364,7 @@
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; }
     .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
+    .ham-no-issue { color: var(--muted); }
     .ham-head-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; white-space: nowrap; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); white-space: nowrap; }
     .ham-pr-ref:hover { color: var(--text); }
@@ -13232,18 +13233,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
         }
       }
-      // A PR is never its own parent: a standalone PR is named once, on the
-      // left, with its author-kind icon; the PR column stays empty and the
-      // title may run across it.
-      const ak = !isIssue ? (item.author_kind || 'hive') : '';
-      const who = ak ? ak + (item.author ? ' · @' + item.author : '') : '';
+      // The left slot is always an issue, even in the PR-only view. Closed
+      // closing references do not stand in for an open issue.
+      const linkedIssue = !isIssue && (Array.isArray(item.linked_issues) ? item.linked_issues : [])
+        .find(li => li && Number(li.number) > 0 && Number(li.number) !== Number(item.number) && li.state === 'open');
+      let leadHtml = `<div class="ham-head-main">
+        ${stageTrackerIcon('issue', 'ham-kind-ico')}
+        <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
+        <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+      </div>`;
+      if (!isIssue) {
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || 'hive', item.author, title, stageTrackerTooltip(item, nowMs))];
+        leadHtml = linkedIssue ? `<div class="ham-head-main">
+          ${stageTrackerIcon('issue', 'ham-kind-ico')}
+          <a class="ham-ref" href="${esc(linkedIssue.url || '#')}" target="_blank" rel="noopener">#${Number(linkedIssue.number)}</a>
+          <span class="ham-title" title="${esc(linkedIssue.title || '')}">${esc(linkedIssue.title || '')}</span>
+        </div>` : '<span class="ham-no-issue">no linked issue</span>';
+      }
       return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
-            ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}${ak ? stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who) : ''}
-            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
-            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
-          </div>`, stageTrackerChipsHtml(shown))}
+          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(shown, stages, range)}</ol>
