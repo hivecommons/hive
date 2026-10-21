@@ -298,6 +298,29 @@ func TestHivesTreeRefreshKeepsFocusAndStagedEdits(t *testing.T) {
 	}
 }
 
+func TestHivesTreeEditsBlockedWhileRefreshOutstanding(t *testing.T) {
+	h := treeHarness(t, nil)
+	h.openTree(t)
+	h.focusRepoA(t)
+	cmd := h.send(t, treeCtrlR)
+	if !h.model.hives.TreeLoading() {
+		t.Fatal("refresh did not mark the tree loading")
+	}
+	h.send(t, treeSpace)
+	if h.model.hives.TreeStaged() != 0 || (h.model.hivesTree != nil && h.model.hivesTree.staged()) {
+		t.Fatal("edit staged while a refresh was outstanding")
+	}
+	h.run(t, cmd)
+	if h.model.hives.TreeLoading() {
+		t.Fatal("refresh left the tree loading")
+	}
+	h.focusRepoA(t)
+	h.send(t, treeSpace)
+	if h.model.hives.TreeStaged() != 1 {
+		t.Fatal("could not stage after the refresh landed")
+	}
+}
+
 func TestHivesTreeStaleRevisionForcesRenewedReview(t *testing.T) {
 	h := treeHarness(t, nil)
 	h.openTree(t)

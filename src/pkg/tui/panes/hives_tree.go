@@ -150,6 +150,13 @@ func (o HivesOverlay) OpenTree() (HivesOverlay, bool) {
 	return o, true
 }
 
+// BeginTreeRefresh marks a re-read outstanding so edits cannot be staged until
+// it lands; staged edits already held by the app are kept.
+func (o HivesOverlay) BeginTreeRefresh() HivesOverlay {
+	o.tree.loading = true
+	return o
+}
+
 // InTree reports whether the contribution tree is showing.
 func (o HivesOverlay) InTree() bool { return o.mode == hivesModeTree }
 

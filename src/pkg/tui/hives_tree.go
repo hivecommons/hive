@@ -188,6 +188,8 @@ func (m model) handleHivesTreeApplied(msg hivesTreeAppliedMsg) (tea.Model, tea.C
 	m.hives = &next
 	if msg.receipt.Saved == hivectl.StageSaved || msg.receipt.Saved == hivectl.StageUnchanged {
 		// The applied review is spent; the next one starts from the saved file.
+		next = next.BeginTreeRefresh()
+		m.hives = &next
 		return m, m.loadHivesTree(msg.overlayID, nil)
 	}
 	return m, nil
@@ -407,6 +409,7 @@ func (m model) updateHivesTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		o, _ = o.TreeBeginLeave(panes.HivesTreeStay)
 	case "ctrl+r":
 		if !o.TreeLoading() {
+			o = o.BeginTreeRefresh()
 			m.hives = &o
 			return m, m.loadHivesTree(m.hivesID, m.hivesTree)
 		}
