@@ -374,8 +374,8 @@ func TestIssueStageFor_TriageNeeded(t *testing.T) {
 		accepted = "triage/accepted"
 		awaiting = "needs-triage"
 	)
-	if triageAwaitingLabel != awaiting || triageAcceptedLabels[0] != accepted {
-		t.Fatalf("defaults moved: %q %v", triageAwaitingLabel, triageAcceptedLabels)
+	if triageAwaitingLabel != awaiting {
+		t.Fatalf("defaults moved: %q", triageAwaitingLabel)
 	}
 	cases := []struct {
 		name string
@@ -383,12 +383,12 @@ func TestIssueStageFor_TriageNeeded(t *testing.T) {
 		want stagelabels.Stage
 		why  string
 	}{
-		{"hive-filed, nothing else (#13262)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"kind/review-backlog"}}, stagelabels.TriageNeeded, "filed by the hive (hive)"},
-		{"agent-filed (clanker)", IssueStageInput{AuthorKind: authorkind.Clanker}, stagelabels.TriageNeeded, "filed by the hive (clanker)"},
+		{"hive-filed, nothing else (#13262) stays 010", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"kind/review-backlog"}}, stagelabels.Actionable, ""},
+		{"agent-filed (clanker) stays 010", IssueStageInput{AuthorKind: authorkind.Clanker}, stagelabels.Actionable, ""},
 		{"hive-filed + triage/accepted", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{accepted}}, stagelabels.Actionable, ""},
 		{"hive-filed + hive/verified-open", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{VerifiedOpenLabel}}, stagelabels.Actionable, ""},
 		{"hive-filed + approved-direction", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{HumanAckLabel}}, stagelabels.Actionable, ""},
-		{"hive-filed epic without a maintainer label", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"Epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.TriageNeeded, "filed by the hive"},
+		{"hive-filed epic without a maintainer label is 010 (umbrella, claim not staged)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"Epic"}, Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.Actionable, ""},
 		{"human-filed, no labels", IssueStageInput{AuthorKind: authorkind.Human}, stagelabels.Actionable, ""},
 		{"human-filed epic + verified-open (#12999)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"Epic", VerifiedOpenLabel}}, stagelabels.Actionable, ""},
 		{"unknown author is read as human", IssueStageInput{}, stagelabels.Actionable, ""},

@@ -95,9 +95,9 @@ const (
 	PreMergeSoak
 	// TriageNeeded is stage/015: an ISSUE that is actionable but no
 	// maintainer has looked at it yet — it carries the reporter-trust
-	// awaiting label (`needs-triage`), or the hive / an agent filed it and
-	// no "a maintainer looked at it" label (`triage/accepted`,
-	// `hive/verified-open`, `approved-direction`) is on it. A display and
+	// awaiting label (`needs-triage`) or the gate holds it in the
+	// reporter_triage bucket. Never derived from who filed it: hive-,
+	// agent- and trusted-human-filed issues are 010. A display and
 	// tracking state, NOT a gate: the scanner claims from 015 exactly as
 	// from 010 (the reporter-trust gate withholds `needs-triage` issues on
 	// its own). Appended for the same persisted-enum reason as
@@ -236,7 +236,7 @@ func (s Stage) For(k Item) Stage {
 // stage; nothing else in the hive hard-codes a stage label string.
 var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
-	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but no maintainer has looked at it yet (hive-filed, or awaiting the triage label)", Dwell: TriageNeededDwell, Issue: true},
+	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent has a PR under way for this issue (branch pushed or PR request in flight)", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},

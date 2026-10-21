@@ -906,8 +906,8 @@ requires the companion relay/Hive acknowledgement and admission work in
 [#12570](https://github.com/hivecommons/hive/issues/12570). Operator admission,
 trust and quota gates remain authoritative.
 
-The first `hivectl hives` command on a machine that still has the old
-positional `contributor.env` migrates it: entries are named after their hub
+The first `hivectl hives` command (except the strictly read-only `hives tree`)
+on a machine that still has the old positional `contributor.env` migrates it: entries are named after their hub
 host, and the first hub in the legacy list stays active, so a running relay is
 unaffected. Migration alone does not rewrite `contributor.env` — the
 projection is written only when a command actually changes your hives. A
@@ -915,6 +915,33 @@ legacy file whose three lists disagree in length is **refused** rather than
 guessed at, because pairing a token with the wrong hub points a live
 credential at the wrong hive; fix the file (or re-run
 `just contribute-setup`) and try again.
+
+### Inspecting the contribution tree (read-only)
+
+```bash
+hivectl hives tree
+hivectl hives tree -o json
+hivectl hives tree -o yaml
+```
+
+Reads saved `profiles.yml` without migration, network requests, registration,
+projection writes, or relay signals. Subscriptions currently appear under
+**Direct Hives**: wiring persisted hub discovery into this command follows the
+hub-entry work in #13174 / #13189. The shared `BuildContributionTree` read model
+already accepts hub and repository discovery snapshots for TUI/Web adapters;
+shared hub appearances reference one subscription and rollups count it once.
+Separate profiles at one origin are never merged.
+
+Selection, follow policy, readiness, and activity are separate. Without current
+discovery the tree says **Membership incomplete**, never **All current**.
+Absent repository selections are **Unrestricted — legacy**, not selected empty
+snapshots. Explicitly empty consent remains off. Cross-profile repository
+exclusions list their source subscription names and do not narrow legacy
+profiles. Disabled subscriptions retain saved selections and follow policy.
+Runtime readiness is unknown (or disabled); activity is unavailable, not zero.
+No credentials or contributor identities are included in JSON/YAML output.
+Selection source IDs are selection-level provenance, not repository ownership.
+Profile-name keys identify the current snapshot only, not durable history.
 
 ### Editing repository selections
 
