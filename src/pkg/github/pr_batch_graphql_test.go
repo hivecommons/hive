@@ -186,7 +186,7 @@ func TestGraphQLPRBatchDisabledAndErrorUseREST(t *testing.T) {
 }
 
 func gqlPRNodeJSON(number int, mergeState, mergeable, sha, checkStatus, conclusion string) string {
-	return fmt.Sprintf(`{"number":%d,"headRefOid":%q,"updatedAt":"2026-10-08T20:00:00Z","isDraft":false,"mergeable":%q,"mergeStateStatus":%q,"reviewDecision":"APPROVED","labels":{"nodes":[{"name":"bug"}]},"author":{"login":"bot"},"baseRefName":"v5","title":"PR %d","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS","contexts":{"nodes":[{"__typename":"CheckRun","name":"unit","status":%q,"conclusion":%q,"detailsUrl":"https://ci.example/%d"}]}}}}]},"closingIssuesReferences":{"nodes":[{"number":111}]}}`, number, sha, mergeable, mergeState, number, checkStatus, conclusion, number)
+	return fmt.Sprintf(`{"number":%d,"headRefOid":%q,"updatedAt":"2026-10-08T20:00:00Z","isDraft":false,"mergeable":%q,"mergeStateStatus":%q,"reviewDecision":"APPROVED","labels":{"nodes":[{"name":"bug"}]},"author":{"login":"bot"},"baseRefName":"v5","title":"PR %d","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS","contexts":{"nodes":[{"__typename":"CheckRun","name":"unit","status":%q,"conclusion":%q,"detailsUrl":"https://ci.example/%d"}]}}}}]},"closingIssuesReferences":{"nodes":[{"number":111,"title":"Issue 111","state":"OPEN","url":"https://github.test/org/repo/issues/111","repository":{"nameWithOwner":"org/repo"}}]}}`, number, sha, mergeable, mergeState, number, checkStatus, conclusion, number)
 }
 
 func mustTime(raw string) time.Time {

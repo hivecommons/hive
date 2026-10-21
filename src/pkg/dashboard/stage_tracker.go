@@ -953,10 +953,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
+		seenIssue := map[int]bool{}
 		for _, li := range pr.LinkedIssues {
-			if li.Number <= 0 || li.Number == pr.Number || (li.Repo != "" && !strings.EqualFold(li.Repo, repoName)) {
+			if li.Number <= 0 || li.Number == pr.Number || seenIssue[li.Number] || (li.Repo != "" && !strings.EqualFold(li.Repo, repoName)) {
 				continue
 			}
+			seenIssue[li.Number] = true
 			it.LinkedIssues = append(it.LinkedIssues, StageTrackerLinkedIssue{Number: li.Number, Title: li.Title, State: strings.ToLower(li.State),
 				URL: overviewItemURL(li.URL, repoName, li.Number, "issue", status.GitHubBaseURL)})
 		}
@@ -1207,10 +1209,13 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stageTrackerResolveLinkedPRs fills each issue's linked PR entries from the
-// PR items in the same response (title, author, stage, since, modifiers),
-// puts the PR the stage reason names first, drops duplicates and marks each
-// such PR as nested under the lowest-numbered issue that lists it.
+// stageTrackerResolveLinkedPRs first pairs from the PR side (each PR's open,
+// same-repo closing reference that has its own row is marked Listed and
+// appended to that issue's LinkedPRs), then fills each issue's linked PR
+// entries from the PR items in the same response (title, author, stage,
+// since, modifiers), puts the PR the stage reason names first, drops
+// duplicates and marks each such PR as nested under the lowest-numbered
+// issue that lists it.
 func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
 	issues := map[string]*StageTrackerItem{}

@@ -115,6 +115,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerStripItems"),
 		jsFunc(t, html, "stageTrackerTooltip"),
 		jsFunc(t, html, "stageTrackerChipsHtml"),
+		jsFunc(t, html, "stageTrackerIssueLead"),
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -282,8 +283,12 @@ func TestGraphQLPRBatchRefetchClearsStaleRepoEntries(t *testing.T) {
 	if !ok || len(states) != 2 || states[1].decision != ReviewDecision("APPROVED") {
 		t.Fatalf("first fetch: review states = %v ok=%v, want 2 approved entries", states, ok)
 	}
-	if len(states[1].linkedIssues) != 1 || states[1].linkedIssues[0].Number != 111 {
-		t.Fatalf("first fetch: PR 1 linked issues = %v, want [111]", states[1].linkedIssues)
+	// The batch path must carry the same closing-reference fields as the
+	// per-PR review-signals query, so the stage tracker sees state/title/url
+	// whichever producer ran.
+	wantLinked := []PRLinkedIssue{{Number: 111, Title: "Issue 111", Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/111"}}
+	if !reflect.DeepEqual(states[1].linkedIssues, wantLinked) {
+		t.Fatalf("first fetch: PR 1 linked issues = %+v, want %+v", states[1].linkedIssues, wantLinked)
 	}
 	// Mutating the returned copy must not leak into the client's cache.
 	states[1].linkedIssues[0].Number = 999

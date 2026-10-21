@@ -13158,6 +13158,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
     // the given refs, and the since column the time on the current step
     // (the chip sits in the cap cell, to its left).
+    // The issue named in a row's left slot: its own row, or the open
+    // closing-reference issue a PR row stands under.
+    function stageTrackerIssueLead(number, url, title, tip) {
+      return `<div class="ham-head-main">
+        ${stageTrackerIcon('issue', 'ham-kind-ico')}
+        <a class="ham-ref" href="${esc(url || '#')}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''}>#${Number(number) || 0}</a>
+        <span class="ham-title" title="${esc(title || '')}">${esc(title || '')}</span>
+      </div>`;
+    }
     function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
       const wide = !(prRefs && prRefs.length);
       return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
@@ -13237,19 +13246,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // closing references do not stand in for an open issue.
       const linkedIssue = !isIssue && (Array.isArray(item.linked_issues) ? item.linked_issues : [])
         .find(li => li && Number(li.number) > 0 && Number(li.number) !== Number(item.number) && li.state === 'open');
-      let leadHtml = `<div class="ham-head-main">
-        ${stageTrackerIcon('issue', 'ham-kind-ico')}
-        <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
-        <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
-      </div>`;
-      if (!isIssue) {
-        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || 'hive', item.author, title, stageTrackerTooltip(item, nowMs))];
-        leadHtml = linkedIssue ? `<div class="ham-head-main">
-          ${stageTrackerIcon('issue', 'ham-kind-ico')}
-          <a class="ham-ref" href="${esc(linkedIssue.url || '#')}" target="_blank" rel="noopener">#${Number(linkedIssue.number)}</a>
-          <span class="ham-title" title="${esc(linkedIssue.title || '')}">${esc(linkedIssue.title || '')}</span>
-        </div>` : '<span class="ham-no-issue">no linked issue</span>';
-      }
+      if (!isIssue) prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || 'hive', item.author, title, stageTrackerTooltip(item, nowMs))];
+      const leadHtml = isIssue ? stageTrackerIssueLead(item.number, item.url, title, stageTrackerTooltip(shown, nowMs))
+        : linkedIssue ? stageTrackerIssueLead(linkedIssue.number, linkedIssue.url, linkedIssue.title)
+        : '<span class="ham-no-issue">no linked issue</span>';
       return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}

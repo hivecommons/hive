@@ -33,17 +33,18 @@ func TestStageTrackerPRSideClosingReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := trackerItem(t, resp, "pr", 120)
-	if pr.NestedUnder != 8 || len(pr.LinkedIssues) != 4 {
+	// Duplicate, cross-repo, self and zero references are dropped on the wire.
+	if pr.NestedUnder != 8 || len(pr.LinkedIssues) != 3 {
 		t.Fatalf("PR links = %+v", pr)
 	}
 	li := pr.LinkedIssues[0]
 	if !li.Listed || li.State != "open" || li.Title != "Flaky test" || li.URL == "" {
 		t.Fatalf("listed issue = %+v", li)
 	}
-	if li := pr.LinkedIssues[2]; li.Listed || li.State != "closed" || li.Title != "Already closed" || li.URL == "" {
+	if li := pr.LinkedIssues[1]; li.Listed || li.State != "closed" || li.Title != "Already closed" || li.URL == "" {
 		t.Fatalf("closed issue = %+v", li)
 	}
-	if li := pr.LinkedIssues[3]; li.Listed || li.Title != "Not listed" {
+	if li := pr.LinkedIssues[2]; li.Listed || li.Title != "Not listed" {
 		t.Fatalf("unlisted issue = %+v", li)
 	}
 	issue := trackerItem(t, resp, "issue", 8)
