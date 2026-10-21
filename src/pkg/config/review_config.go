@@ -8,6 +8,8 @@ import (
 
 	"log"
 	"sync"
+
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 func repoListSet(repos []string) map[string]bool {
@@ -62,6 +64,61 @@ func (r ReviewModelsConfig) EffectiveFallback() string {
 	default:
 		return strings.TrimSpace(r.Fallback)
 	}
+}
+
+// ReviewModelSelection is the outcome of ReviewModelsConfig.Select: the
+// backend/model a review should run with, and whether that came from the
+// configured fallback rather than the pool. Skip is the "skip" fallback with
+// no eligible pool entry: no model, and the review is not dispatched.
+// RequiresHuman is the "requires_human" fallback in the same situation: the
+// pinned model is returned so the caller can still name it, but the review
+// should be marked for a person instead of dispatched as independent.
+type ReviewModelSelection struct {
+	Backend       string
+	Model         string
+	Fallback      bool
+	Skip          bool
+	RequiresHuman bool
+}
+
+// Select picks the first pool entry that is not excluded against the PR's
+// author model, exactly as the cadence kick's `review_with=` annotation does.
+// pinnedBackend/pinnedModel are the reviewer agent's own launch backend and
+// model, returned under the "pinned" (default) fallback. Author and candidate
+// models are compared normalized (modelfamily.Normalize), and family on the
+// vendor prefix (modelfamily.Family). An empty pool with no exclusions
+// configured still returns the pinned model as a fallback, so a caller that
+// wants "no instruction" must check Configured() first.
+func (r ReviewModelsConfig) Select(authorModel, pinnedBackend, pinnedModel string) ReviewModelSelection {
+	author := modelfamily.Normalize(authorModel)
+	authorFamily := modelfamily.Family(author)
+	for _, entry := range r.Pool {
+		candidate := modelfamily.Normalize(entry.Model)
+		if r.ExcludeAuthorModelEnabled() && candidate == author {
+			continue
+		}
+		if r.ExcludeAuthorFamily && modelfamily.Family(candidate) == authorFamily {
+			continue
+		}
+		return ReviewModelSelection{Backend: strings.TrimSpace(entry.Backend), Model: strings.TrimSpace(entry.Model)}
+	}
+	switch r.EffectiveFallback() {
+	case ReviewModelsFallbackSkip:
+		return ReviewModelSelection{Fallback: true, Skip: true}
+	case ReviewModelsFallbackRequiresHuman:
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true, RequiresHuman: true}
+	default:
+		return ReviewModelSelection{Backend: strings.TrimSpace(pinnedBackend), Model: strings.TrimSpace(pinnedModel), Fallback: true}
+	}
+}
+
+// WithPool returns a copy whose pool is replaced, keeping the exclusion and
+// fallback settings. The swarm uses it to apply review.perspective_models: a
+// per-perspective entry overrides WHICH models are eligible, not the rule
+// that decides whether one is.
+func (r ReviewModelsConfig) WithPool(pool []ReviewModelPoolEntry) ReviewModelsConfig {
+	r.Pool = append([]ReviewModelPoolEntry(nil), pool...)
+	return r
 }
 
 func ValidateReviewModelsFallback(v string) bool {
@@ -145,6 +202,14 @@ type ReviewConfig struct {
 	// rather than left to infer them from the tree; a hive can only get that
 	// by writing it down. An entry that is blank means "use the built-in".
 	PerspectivePrompts map[string]string `yaml:"perspective_prompts,omitempty" json:"perspective_prompts,omitempty"`
+	// PerspectiveModels pins the backend/model one perspective's swarm review
+	// runs with, keyed by perspective name. An entry replaces the reviewer
+	// agent's review_models pool for that perspective only; the agent's
+	// exclude_author_model / exclude_author_family / fallback settings still
+	// apply to it, so a pinned model that matches the author's family is
+	// still refused when exclude_author_family is on. Perspectives not named
+	// here use the agent's pool as usual. Empty by default.
+	PerspectiveModels map[string]ReviewModelPoolEntry `yaml:"perspective_models,omitempty" json:"perspective_models,omitempty"`
 	// CombinedPerspectives reviews every perspective in ONE agent session that
 	// leaves ONE comment, instead of one session and one comment per
 	// perspective.

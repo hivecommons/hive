@@ -33,7 +33,12 @@ const maxGitHubLoginLen = 39
 
 // AffectedHive is one entry of the affected block.
 type AffectedHive struct {
-	Hive     string
+	Hive string
+	// Name is the hive's human display name and URL its public dashboard
+	// (#13211); both optional. The line renders "<name> (<hive>)" and an
+	// "[open](<url>)" cell when they are known.
+	Name     string
+	URL      string
 	Instance string
 	// Owners are the GitHub logins of the hive's owner(s), without "@".
 	Owners []string
@@ -122,6 +127,11 @@ func normalizeInstance(instance string) string {
 // normalize canonicalises an entry so renders are idempotent.
 func (h AffectedHive) normalize() AffectedHive {
 	h.Hive = labelValue(h.Hive)
+	h.Name = NormalizeHiveName(h.Name)
+	if h.Name == h.Hive {
+		h.Name = ""
+	}
+	h.URL = NormalizeSpokeURL(h.URL)
 	h.Instance = normalizeInstance(h.Instance)
 	if h.Instance == h.Hive {
 		h.Instance = ""
@@ -151,13 +161,22 @@ func (h AffectedHive) ownersLabel() string {
 }
 
 // renderLine renders
-// "- <hive> (instance <id>) — owner(s): @a, @b — seen N, last <ts>".
+// "- <name> (<hive>) (instance <id>) — [open](<url>) — owner(s): @a, @b — seen N, last <ts>".
+// The name and the open link are omitted when unknown, which keeps a line
+// written before #13211 byte-identical.
 func (h AffectedHive) renderLine() string {
 	var b strings.Builder
 	b.WriteString("- ")
-	b.WriteString(h.Hive)
+	if h.Name != "" {
+		fmt.Fprintf(&b, "%s (%s)", h.Name, h.Hive)
+	} else {
+		b.WriteString(h.Hive)
+	}
 	if h.Instance != "" {
 		fmt.Fprintf(&b, " (instance %s)", h.Instance)
+	}
+	if h.URL != "" {
+		fmt.Fprintf(&b, " — [%s](%s)", affectedOpenLabel, h.URL)
 	}
 	fmt.Fprintf(&b, " — owner(s): %s — seen %d", h.ownersLabel(), h.Seen)
 	if !h.Last.IsZero() {
@@ -183,10 +202,20 @@ func parseAffectedLine(line string) (AffectedHive, bool) {
 		h.Instance = strings.TrimSuffix(strings.TrimSpace(head[i+len(" (instance "):]), ")")
 		head = strings.TrimSpace(head[:i])
 	}
+	// "<name> (<hive>)": the hive id is the last parenthesised token; a
+	// display name may itself contain parentheses, so split on the last one.
+	if strings.HasSuffix(head, ")") {
+		if i := strings.LastIndex(head, " ("); i >= 0 {
+			h.Name = strings.TrimSpace(head[:i])
+			head = strings.TrimSpace(strings.TrimSuffix(head[i+len(" ("):], ")"))
+		}
+	}
 	h.Hive = head
 	for _, p := range parts[1:] {
 		p = strings.TrimSpace(p)
 		switch {
+		case strings.HasPrefix(p, "["+affectedOpenLabel+"](") && strings.HasSuffix(p, ")"):
+			h.URL = strings.TrimSuffix(strings.TrimPrefix(p, "["+affectedOpenLabel+"]("), ")")
 		case strings.HasPrefix(p, "owner(s):"):
 			v := strings.TrimSpace(strings.TrimPrefix(p, "owner(s):"))
 			switch v {
@@ -262,6 +291,14 @@ func (blk AffectedBlock) normalizedHives() []AffectedHive {
 func mergeAffected(have, in AffectedHive, bump bool) AffectedHive {
 	if have.Instance == "" {
 		have.Instance = in.Instance
+	}
+	// Name and URL follow the newest report so a rename or a new vanity
+	// host shows up on the next join; an empty incoming value keeps the old.
+	if in.Name != "" {
+		have.Name = in.Name
+	}
+	if in.URL != "" {
+		have.URL = in.URL
 	}
 	switch {
 	case in.OwnersHidden:

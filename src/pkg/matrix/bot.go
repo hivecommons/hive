@@ -51,6 +51,7 @@ type Config struct {
 	AccessToken    string
 	RoomID         string
 	DashboardURL   string
+	PublicURL      string // user-facing dashboard origin; empty omits notification links
 	DashboardToken string
 	// AllowedUsers is the set of full Matrix IDs permitted to issue commands.
 	// Empty = commands disabled (fail closed) by the chat spine.
@@ -158,6 +159,7 @@ func NewBot(cfg Config, logger *slog.Logger) *Bot {
 	}
 	service := chat.NewService(backend, chat.Config{
 		DashboardURL:      cfg.DashboardURL,
+		PublicURL:         cfg.PublicURL,
 		DashboardToken:    cfg.DashboardToken,
 		AllowedUsers:      cfg.AllowedUsers,
 		PersonaStore:      cfg.PersonaStore,

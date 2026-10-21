@@ -28,6 +28,8 @@ const (
 const (
 	DefaultEvalIntervalMaxS           = 1800
 	DefaultEvalIntervalWebhookS       = 900
+	DefaultWebhookWakeDebounceS       = 10
+	DefaultWebhookWakeMinGapS         = 30
 	DefaultConserveIntervalMultiplier = 2
 	DefaultOptionalSweepEveryNCycles  = 1
 )
@@ -174,6 +176,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalWebhookS == 0 {
 		c.Governor.EvalIntervalWebhookS = defaultEvalIntervalWebhookS
+	}
+	if c.Governor.WebhookWakeDebounceS == 0 {
+		c.Governor.WebhookWakeDebounceS = DefaultWebhookWakeDebounceS
+	}
+	if c.Governor.WebhookWakeMinGapS == 0 {
+		c.Governor.WebhookWakeMinGapS = DefaultWebhookWakeMinGapS
 	}
 	if c.Governor.ConserveIntervalMultiplier == 0 {
 		c.Governor.ConserveIntervalMultiplier = defaultConserveIntervalMult

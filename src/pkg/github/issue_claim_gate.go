@@ -100,6 +100,8 @@ func (c *Client) issueClaimParkLabel(labels []string) string {
 //
 //   - a pull request (ClaimBlockReasonPullRequest);
 //   - needs-human and the hold family, like a hold, even when forced;
+//   - an issue blocked on an unmerged PR (`blocked` label, hivecommons/hive#13093):
+//     the work it names is not on any branch yet;
 //   - an issue parked on a person's decision (stage/045-needs-decision, the
 //     agent escalation labels, the retired decision labels): a maintainer
 //     holds it, so nobody starts on it until the un-park;
@@ -126,6 +128,9 @@ func (c *Client) IssueClaimBlockReason(ctx context.Context, repo string, number 
 	}
 	if c.isHeld(labels) {
 		return "hold", nil
+	}
+	if hasBlockedLabel(labels) {
+		return blockedClaimReason(issue.GetBody()), nil
 	}
 	if label := c.issueClaimParkLabel(labels); label != "" {
 		return ClaimBlockReasonParkedPrefix + label, nil

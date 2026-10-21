@@ -431,6 +431,23 @@ func (c *Config) StageTrackerCacheTTL() time.Duration {
 	return time.Duration(defaultEvalIntervalS) * time.Second
 }
 
+// WebhookWakeDebounce and WebhookWakeMinGap are the effective
+// governor.webhook_wake_debounce_s / governor.webhook_wake_min_gap_s, with
+// the Load defaults substituted for a zero (or nil-config) value.
+func (c *Config) WebhookWakeDebounce() time.Duration {
+	if c != nil && c.Governor.WebhookWakeDebounceS > 0 {
+		return time.Duration(c.Governor.WebhookWakeDebounceS) * time.Second
+	}
+	return DefaultWebhookWakeDebounceS * time.Second
+}
+
+func (c *Config) WebhookWakeMinGap() time.Duration {
+	if c != nil && c.Governor.WebhookWakeMinGapS > 0 {
+		return time.Duration(c.Governor.WebhookWakeMinGapS) * time.Second
+	}
+	return DefaultWebhookWakeMinGapS * time.Second
+}
+
 // OwnerLogins returns the AuthorizedUsers entries that hold the owner role
 // (the first entry without an explicit role, plus any ":owner" entry), in
 // their raw identity form ("alice", "github:alice"); non-GitHub identities

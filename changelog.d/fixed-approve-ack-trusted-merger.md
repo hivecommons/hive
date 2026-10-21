@@ -1,0 +1,1 @@
+- `/hive approve` on a hive-authored or trusted-author-lane PR is now acknowledged only for trusted mergers; anyone else gets the same "not a trusted merger" reply the contributor lane gives instead of a false acknowledgement (#13093).

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -341,6 +342,52 @@ func TestSweepInProgressIssues_NoMarkerClearsLabel(t *testing.T) {
 	server, removed := sweepServer(t, []string{"just a human comment"})
 	c := newTestClient(t, server, "acme", []string{"widgets"})
 	enableInProgress(c, "hive-a", 2*time.Hour)
+	result := &ActionableResult{Issues: IssueResultFromItems([]Issue{inProgressIssue()})}
+	if withheld := SweepInProgressIssues(context.Background(), c, result, inProgressNow, nil); withheld != 0 {
+		t.Fatalf("withheld = %d, want 0", withheld)
+	}
+	if len(*removed) != 1 {
+		t.Fatalf("expected one label removal, got %v", *removed)
+	}
+}
+
+// A ledger claim whose 🔒 marker comment was never posted (per-issue comment
+// budget, forge write failure) must still withhold the issue: the scheduler
+// already honours the ledger, so the sweep stripping stage/020-claimed here
+// would flip the label to actionable while the kick stays withheld.
+func TestSweepInProgressIssues_LedgerClaimWithoutMarkerWithholds(t *testing.T) {
+	server, removed := sweepServer(t, []string{"just a human comment"})
+	c := newTestClient(t, server, "acme", []string{"widgets"})
+	enableInProgress(c, "hive-a", 2*time.Hour)
+	var asked []string
+	c.SetIssueClaimLedger(func(repo string, number int) (issueclaim.Claim, bool) {
+		asked = append(asked, repo+"#"+strconv.Itoa(number))
+		if repo != "acme/widgets" || number != 7 {
+			return issueclaim.Claim{}, false
+		}
+		return issueclaim.Claim{Identity: "scanner", Kind: "agent", StartedAt: inProgressNow.Add(-time.Minute), ExpiresAt: inProgressNow.Add(time.Hour), Source: issueclaim.SourceLease}, true
+	})
+	result := &ActionableResult{Issues: IssueResultFromItems([]Issue{inProgressIssue()})}
+
+	if withheld := SweepInProgressIssues(context.Background(), c, result, inProgressNow, nil); withheld != 1 {
+		t.Fatalf("withheld = %d, want 1", withheld)
+	}
+	if len(*removed) != 0 {
+		t.Fatalf("ledger-claimed issue must keep its label, removed %v", *removed)
+	}
+	if len(asked) != 1 || asked[0] != "acme/widgets#7" {
+		t.Fatalf("ledger asked with %v, want [acme/widgets#7]", asked)
+	}
+}
+
+// An expired ledger claim is no claim: the sweep clears the label as before.
+func TestSweepInProgressIssues_ExpiredLedgerClaimClearsLabel(t *testing.T) {
+	server, removed := sweepServer(t, []string{"just a human comment"})
+	c := newTestClient(t, server, "acme", []string{"widgets"})
+	enableInProgress(c, "hive-a", 2*time.Hour)
+	c.SetIssueClaimLedger(func(string, int) (issueclaim.Claim, bool) {
+		return issueclaim.Claim{Identity: "scanner", Kind: "agent", ExpiresAt: inProgressNow.Add(-time.Minute)}, true
+	})
 	result := &ActionableResult{Issues: IssueResultFromItems([]Issue{inProgressIssue()})}
 	if withheld := SweepInProgressIssues(context.Background(), c, result, inProgressNow, nil); withheld != 0 {
 		t.Fatalf("withheld = %d, want 0", withheld)

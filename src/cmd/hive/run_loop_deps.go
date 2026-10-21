@@ -43,6 +43,10 @@ type runLoopDeps struct {
 	// newWakeTimer arms the continuous re-kick wake (one-shot). nil disables
 	// the wake, which is what the loop tests want unless they drive it.
 	newWakeTimer func(d time.Duration) loopTicker
+	// newHealthTimer arms the webhook-health re-check (one-shot) that flips
+	// the base tick back to eval_interval_s when webhooks lapse mid-interval.
+	// nil disables it.
+	newHealthTimer func(d time.Duration) loopTicker
 	// now is the wake's clock (nil = time.Now); tests inject it to step past
 	// continuousWakeMinGap and the stall hold without sleeping.
 	now            func() time.Time
@@ -63,8 +67,9 @@ func defaultRunLoopDeps() runLoopDeps {
 				return false
 			}
 		},
-		newTicker:    func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
-		newWakeTimer: func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
+		newTicker:      func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
+		newWakeTimer:   func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
+		newHealthTimer: func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
 		runEval: func(b *boot, restarted []string) {
 			runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores,
 				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, b.logger)

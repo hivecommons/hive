@@ -3,6 +3,8 @@ package claims
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -426,7 +428,7 @@ func TestComments(t *testing.T) {
 		}
 	}
 	got = ReleaseComment(prev, "lease --> revoked")
-	if !strings.Contains(got, "reason=lease_revoked -->") || !strings.Contains(got, "🔓 Claim by @relay-bot released") {
+	if !strings.Contains(got, "reason=lease_revoked at=") || !strings.Contains(got, "🔓 Claim by @relay-bot released") {
 		t.Fatalf("ReleaseComment:\n%s", got)
 	}
 	if PreemptedLabel("relay-bot") != "preempted:relay-bot" {
@@ -575,5 +577,50 @@ func TestLedgerClaimCarriesContributorTier(t *testing.T) {
 	}
 	if res.Claim.Tier != "merger" || !res.Claim.Verified {
 		t.Fatalf("ledger claim lost tier/verified: %+v", res.Claim)
+	}
+}
+
+func TestReleaseAgentClaimsDropsOnlyThatAgentsClaims(t *testing.T) {
+	var released []string
+	l, _ := newTestLedger(t, Hooks{OnReleased: func(c Claim, reason string) { released = append(released, c.Key()+":"+reason) }})
+	for _, req := range []Request{
+		{Repo: "o/r", Issue: 1, Holder: "scanner", HolderID: "scanner", Kind: KindAgent},
+		{Repo: "o/r", Issue: 2, Holder: "scanner", HolderID: "scanner", Kind: KindAgent},
+		{Repo: "o/r", Issue: 3, Holder: "quality", HolderID: "quality", Kind: KindAgent},
+		// A human whose login spells the agent's name is not the agent.
+		{Repo: "o/r", Issue: 4, Holder: "scanner", HolderID: "scanner", Kind: KindHuman},
+	} {
+		if _, err := l.Claim(req); err != nil {
+			t.Fatalf("Claim %d: %v", req.Issue, err)
+		}
+	}
+	out := l.ReleaseAgentClaims(" scanner ", ReasonHolderRelaunched)
+	if len(out) != 2 {
+		t.Fatalf("released %d claims, want 2: %+v", len(out), out)
+	}
+	sort.Strings(released)
+	want := []string{"o/r#1:" + ReasonHolderRelaunched, "o/r#2:" + ReasonHolderRelaunched}
+	if !reflect.DeepEqual(released, want) {
+		t.Fatalf("OnReleased = %v, want %v", released, want)
+	}
+	for issue, wantHeld := range map[int]bool{1: false, 2: false, 3: true, 4: true} {
+		if _, held := l.Lookup("o/r", issue); held != wantHeld {
+			t.Fatalf("issue %d held=%v want %v", issue, held, wantHeld)
+		}
+	}
+	if l.ReleaseAgentClaims("", "x") != nil || l.ReleaseAgentClaims("nobody", "x") != nil {
+		t.Fatal("no-op releases must return nil")
+	}
+	var nilLedger *Ledger
+	if nilLedger.ReleaseAgentClaims("scanner", "x") != nil {
+		t.Fatal("nil ledger must return nil")
+	}
+	// The release comment carries at= so the forge reader can order it.
+	body := releaseCommentAt(out[0], ReasonHolderRelaunched, time.Date(2026, 10, 20, 15, 35, 0, 0, time.UTC))
+	if !strings.Contains(body, "<!-- hive:release who=scanner kind=agent reason=holding_agent_relaunched at=2026-10-20T15:35:00Z -->") {
+		t.Fatalf("release comment marker:\n%s", body)
+	}
+	if !strings.Contains(ReleaseComment(out[0], "x"), " at=") {
+		t.Fatal("ReleaseComment must stamp at=")
 	}
 }

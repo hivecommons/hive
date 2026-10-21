@@ -48,7 +48,7 @@
 ARG RUNNER_BASE_IMAGE=summerwind/actions-runner:v2.337.0-ubuntu-24.04
 FROM ${RUNNER_BASE_IMAGE}
 
-ARG GITHUB_CLI_VERSION=2.102.0
+ARG GITHUB_CLI_VERSION=2.102.1
 ARG GITHUB_CLI_KEYRING_SHA256=6084d5d7bd8e288441e0e94fc6275570895da18e6751f70f057485dc2d1a811b
 
 # The base image runs as uid 1001 (`runner`), which does not own /etc/apt.
@@ -125,6 +125,28 @@ RUN set -eux; \
     command -v gcc; \
     command -v tmux; \
     command -v gh
+
+# CA trust bundle refresh: distrust two Mozilla roots the root programs
+# withdrew on 2026-10-17..20. Older Ubuntu 24.04 ca-certificates builds still
+# ship the emSign entry while newer ones drop it (Comodo_AAA_Services_root is
+# not shipped at all); each entry is rewritten only when present so a package
+# refresh cannot break the build either way, and the final tests prove the
+# roots are absent from the regenerated bundle. curl, git, gh and any Go built
+# in a job read that bundle. Same recipe as src/Dockerfile; drop the block once
+# every base image in use ships a package without the entries.
+RUN set -eux; \
+    for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_root.crt; do \
+      if grep -q "^${cert}" /etc/ca-certificates.conf; then \
+        sed -i -e "s|^${cert}|!&|" /etc/ca-certificates.conf; \
+        grep -q "^!${cert}" /etc/ca-certificates.conf; \
+      fi; \
+    done; \
+    update-ca-certificates --fresh; \
+    ! test -e /etc/ssl/certs/emSign_ECC_Root_CA_-_G3.pem; \
+    ! test -e /etc/ssl/certs/Comodo_AAA_Services_root.pem
+# Node (actions/setup-node, JS actions) keeps its own Mozilla store; point it
+# at the system store fixed above. NODE_EXTRA_CA_CERTS still layers on top.
+ENV NODE_OPTIONS=--use-openssl-ca
 
 # Back to the unprivileged runner user the base image expects. ARC's entrypoint
 # and the runner binary both assume uid 1001; leaving this as root would change

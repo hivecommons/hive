@@ -67,6 +67,8 @@ type InceptionWatcher struct {
 	factGraceStart    time.Time
 	captureSeenAt     time.Time // when watcher first saw this inception in capture phase
 	structureSeenAt   time.Time // when watcher first saw this inception in structure phase
+	lastPhase         knowledge.InceptionPhase
+	onPhaseChange     func()
 
 	pollMu              sync.Mutex
 	plukMu              sync.Mutex
@@ -98,6 +100,30 @@ func NewInceptionWatcher(
 		w.agentMgr = agentMgr
 	}
 	return w
+}
+
+// SetPhaseChangeHook registers fn to run (in its own goroutine) whenever a
+// poll observes a different inception phase. The composition root wires it to
+// a dashboard status refresh so the chat spine's SSE bridge sees `clarify`
+// and posts the questions without waiting for the next eval cycle (#13215).
+func (w *InceptionWatcher) SetPhaseChangeHook(fn func()) {
+	w.pollMu.Lock()
+	defer w.pollMu.Unlock()
+	w.onPhaseChange = fn
+}
+
+func (w *InceptionWatcher) notifyPhaseChangeLocked() {
+	var phase knowledge.InceptionPhase
+	if state := w.inception.GetState(); state != nil {
+		phase = state.Phase
+	}
+	if phase == w.lastPhase {
+		return
+	}
+	w.lastPhase = phase
+	if w.onPhaseChange != nil {
+		go w.onPhaseChange()
+	}
 }
 
 // Run starts the polling loop and event subscriber. Blocks until ctx is cancelled.
@@ -148,6 +174,7 @@ func (w *InceptionWatcher) poll(ctx context.Context) {
 	if w.inception == nil || w.beadStore == nil {
 		return
 	}
+	defer w.notifyPhaseChangeLocked()
 
 	if err := w.beadStore.Reload(); err != nil {
 		w.logger.Warn("inception watcher: bead store reload failed", "error", err)

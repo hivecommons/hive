@@ -108,8 +108,11 @@ type Server struct {
 	stageStore *stagelabels.Store
 	// stageTrackerCache is the last /api/stage-tracker payload built from
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
-	stageTrackerCache      stageTrackerCache
-	stageTrackerCacheMu    sync.Mutex
+	stageTrackerCache   stageTrackerCache
+	stageTrackerCacheMu sync.Mutex
+	// stageTrackerServed flips once /api/stage-tracker has been built; it
+	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
+	stageTrackerServed     bool
 	sidebar                interface{}
 	sidebarMu              sync.RWMutex
 	actionsJWKSMu          sync.Mutex
@@ -222,6 +225,10 @@ type Server struct {
 	// already been told succeeded. Both guarded by statusMu.
 	statusSeq           uint64
 	statusMutationEpoch uint64
+	// statusStaleDrops counts snapshots UpdateStatusIfFresh refused because
+	// a mutation landed mid-build. Published on the payload so a dashboard
+	// whose snapshot stops advancing shows whether the guard is the reason.
+	statusStaleDrops uint64
 
 	// fact/cost histories were migrated to the generic timeSeries store (#2041);
 	// the trend history (#2039) remains a dedicated buffer for now.
@@ -507,7 +514,12 @@ type StatusPayload struct {
 	// Seqs restart at 1 when the spoke restarts; the frontend resets its
 	// guard counters when the instance changes instead of dropping forever.
 	StatusInstance string `json:"statusInstance"`
-	HiveID         string `json:"hiveId"`
+	// StatusStaleDrops is how many full snapshots this process refused to
+	// publish because a state mutation raced their build. A rising count
+	// alongside a static StatusSeq means the guard — not the publisher — is
+	// starving the dashboard.
+	StatusStaleDrops uint64 `json:"statusStaleDrops,omitempty"`
+	HiveID           string `json:"hiveId"`
 	// HiveIDEditable reports whether the Hive ID may be changed from this
 	// dashboard, and HiveIDLockReason explains why not when it may not
 	// (#7247). Computed server-side for the same reason the release-channel
@@ -2620,9 +2632,11 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		// predate the mutation. Drop it — the mutation's own refresh rebuild
 		// (which began after the epoch bump) publishes the fresh state.
 		curEpoch := s.statusMutationEpoch
+		s.statusStaleDrops++
+		drops := s.statusStaleDrops
 		s.statusMu.Unlock()
-		s.logger.Debug("dropping stale status snapshot built before a mutation",
-			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch)
+		s.logger.Warn("dropping stale status snapshot built before a mutation",
+			"buildEpoch", buildEpoch, "mutationEpoch", curEpoch, "staleDrops", drops)
 		return false
 	}
 
@@ -2639,6 +2653,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	s.AttachFleetReport(status, version, commit, !s.FleetReportFilesUpstream())
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
+	status.StatusStaleDrops = s.statusStaleDrops
 	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	if status.TimeZone == "" {
@@ -2651,6 +2666,10 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	if s.contributeHub != nil {
 		s.contributeHub.AutoDispatchStandby(status.Governor.SuppressedLanes)
 	}
+	// A new status is new stage truth: drop the memoised /api/stage-tracker
+	// body so the next GET rebuilds from this payload instead of serving the
+	// previous one for the rest of its TTL.
+	nudgeTracker := s.invalidateStageTrackerCache()
 
 	s.AppendTokenSparkline(status)
 	s.AppendTrendHistory(status)
@@ -2669,6 +2688,9 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+	if nudgeTracker {
+		s.broadcastFrame(stageTrackerSSEFrame(status.StatusSeq))
+	}
 	return true
 }
 
@@ -3619,14 +3641,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	snapshot := s.statusWithOverviewBands(s.status, time.Now().UTC())
 	s.statusMu.RUnlock()
 	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot()}
+	if s.deps != nil && s.deps.EvalLoop != nil {
+		loop := s.deps.EvalLoop()
+		payload.EvalLoopStatus = &loop
+	}
 	statusJSONResponse(w, r, filterStatusPayload(&payload, r.URL.Query().Get("fields"), r.URL.Query().Get("omit")))
 }
 
-// statusWithWebhooks adds the live webhook health block (#11177) to the cached
-// status payload at serve time, so it is never a whole eval cycle stale.
+// statusWithWebhooks adds the live webhook health block (#11177) and the
+// governor loop's pacing (evalMode, lastWakeReason) to the cached status
+// payload at serve time, so neither is a whole eval cycle stale.
 type statusWithWebhooks struct {
 	*StatusPayload
 	Webhooks github.WebhookHealth `json:"webhooks"`
+	*EvalLoopStatus
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {

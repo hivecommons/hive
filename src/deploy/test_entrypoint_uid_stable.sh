@@ -222,6 +222,17 @@ else
   bad "token cache guard did not repair the expected cache ownership" "chown log: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG") output: $(tr '\n' ';' < "$WORK/token-reown.out")"
 fi
 
+# #13123: an agent whose name is a substring of another must not re-own the other's cache
+printf 'token' > "$WORK/tokens/gh-token-code-scanner.cache"
+: > "$HIVE_TEST_CHOWN_LOG"
+PATH="$WORK/bin:$PATH" hive_reown_agent_token_caches_if_needed scanner hive-scanner > "$WORK/token-reown.out"
+if ! grep -q 'code-scanner' "$HIVE_TEST_CHOWN_LOG" "$WORK/token-reown.out"; then
+  ok "token cache guard ignores other agents whose names contain this agent's name"
+else
+  bad "token cache guard touched another agent's cache" "chown log: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG")"
+fi
+rm -f "$WORK/tokens/gh-token-code-scanner.cache"
+
 # ── #9692: incremental, resumable re-own ─────────────────────────────────────
 # The first boot of the per-agent-UID build re-owned each agent home with a
 # synchronous `chown -R`. Large homes outlasted the hosted startup probe, the

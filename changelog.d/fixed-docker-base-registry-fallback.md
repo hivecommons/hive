@@ -1,0 +1,1 @@
+- Image builds now fall back from `mirror.gcr.io` to `docker.io` (via the new `BASE_REGISTRY` build-arg) when the mirror throttles with 429, and the docker freshness guard no longer rejects fresh images when git lengthens the 7-char short hash (#13208, #13226).

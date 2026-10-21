@@ -14,26 +14,29 @@ import (
 
 func newHivesReposCommand(env *commandEnv) *cobra.Command {
 	var selectMode, include, exclude, clear, toggle, forge, host string
-	var reset, yes bool
+	var reset, yes, deselectCurrent, follow bool
 	cmd := &cobra.Command{
 		Use: "repos <hive>", Short: "View or edit a hive's repository selection",
 		Args: cobra.ExactArgs(1),
 		Long: "View saved repository consent, or update it through profiles.yml and the existing relay reload path. Empty means idle, not unrestricted. Scope enforcement requires a compatible Hive and relay.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			writes := 0
-			for _, flag := range []string{"select", "include", "exclude", "clear", "toggle-exclude", "reset"} {
+			for _, flag := range []string{"select", "include", "exclude", "clear", "toggle-exclude", "reset", "deselect-current", "follow-new-repos"} {
 				if cmd.Flags().Changed(flag) {
 					writes++
 				}
 			}
 			if writes > 1 {
-				return fmt.Errorf("choose only one of --select, --include, --exclude, --clear, --toggle-exclude, or --reset")
+				return fmt.Errorf("choose only one of --select, --include, --exclude, --clear, --toggle-exclude, --reset, --deselect-current, or --follow-new-repos")
 			}
 			if reset && !yes {
 				return fmt.Errorf("--reset restores unrestricted participation; pass --yes to confirm")
 			}
 			if cmd.Flags().Changed("reset") && !reset {
 				return fmt.Errorf("use --reset --yes to restore unrestricted participation")
+			}
+			if cmd.Flags().Changed("deselect-current") && !deselectCurrent {
+				return fmt.Errorf("use --deselect-current to clear current membership while retaining follow policy")
 			}
 			if !validOutput(env.options.output) {
 				return fmt.Errorf("invalid output format %q", env.options.output)
@@ -91,6 +94,10 @@ func newHivesReposCommand(env *commandEnv) *cobra.Command {
 				if err == nil {
 					err = set.ClearRepoOverride(p.Name, id)
 				}
+			case cmd.Flags().Changed("follow-new-repos"):
+				_, err = set.SetFollowNewRepositories(p.Name, follow)
+			case deselectCurrent:
+				err = set.DeselectCurrent(p.Name)
 			case reset:
 				err = set.ClearSelection(p.Name)
 			}
@@ -106,13 +113,15 @@ func newHivesReposCommand(env *commandEnv) *cobra.Command {
 			return env.printRepoSelection(cmd, set, p)
 		},
 	}
-	cmd.Flags().StringVar(&selectMode, "select", "", "all-current (snapshot eligible repositories) or none (idle)")
+	cmd.Flags().StringVar(&selectMode, "select", "", "all-current (snapshot eligible repositories) or none (select nothing and stop following)")
 	cmd.Flags().StringVar(&include, "include", "", "personally include owner/name or a canonical repository ID; exclusions still win")
 	cmd.Flags().StringVar(&exclude, "exclude", "", "personally exclude owner/name or a canonical repository ID")
 	cmd.Flags().StringVar(&toggle, "toggle-exclude", "", "toggle a personal exclusion (same as x in the Hives overlay)")
 	cmd.Flags().StringVar(&clear, "clear", "", "clear personal inclusion and exclusion for a repository")
 	cmd.Flags().StringVar(&forge, "forge", "github", "forge for owner/name: github, gitlab, or gitea")
 	cmd.Flags().StringVar(&host, "host", "github.com", "forge host for owner/name")
+	cmd.Flags().BoolVar(&deselectCurrent, "deselect-current", false, "clear current membership and personal inclusions, retaining exclusions and follow policy")
+	cmd.Flags().BoolVar(&follow, "follow-new-repos", false, "follow additions on supported refresh; use =false to stop following without changing membership")
 	cmd.Flags().BoolVar(&reset, "reset", false, "drop the selection and restore legacy unrestricted participation")
 	cmd.Flags().BoolVar(&yes, "yes", false, "confirm unrestricted reset")
 	return cmd

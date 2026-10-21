@@ -870,43 +870,70 @@ func (c *Engine) contributorLaneVerdictFor(fullRepo string, number int, headSHA 
 	return normalizeContributorLaneVerdict(c.contributorLaneVerdict(fullRepo, number, headSHA))
 }
 
-func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
+// contributorLaneEval is what the contributor lane established about one PR
+// before merging it: the fetched PR, its admitted author and head, the
+// reviewer verdict and the effects claim the merge would be recorded under.
+// trySweepContributorLanePR merges from it; the merge-request relay
+// (RelayMergeRefusal) only asks whether it exists.
+type contributorLaneEval struct {
+	pr         *gh.PullRequest
+	author     string
+	headSHA    string
+	claim      contributorClaimMatch
+	verdict    ContributorLaneVerdict
+	method     string
+	mergeClaim effects.Claim
+}
+
+// evaluateContributorLanePR runs every contributor-lane gate except the
+// merge itself and returns the lane's skip reason when one fails ("" when
+// the lane would merge the PR now). The sweep and the merge-request relay
+// share it so the two App merge paths apply ONE policy: tier admission,
+// author association, diff fences, labels, review verdict, CI (with
+// min_head_age), soak and human-merge paths. relay=true is the relay's
+// read-only evaluation: a behind head is reported, not updated, and no
+// effects claim is reconciled, because the relay performs the merge through
+// its own path.
+func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy, relay bool) (contributorLaneEval, string, error) {
 	caller := hgithub.WithRESTCaller(ctx, "hive:contributor_lane_automerge_sweep")
 	pr, _, err := c.gh.PullRequests.Get(caller, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
-			return AutoMergeSweepEvent{}, "gone", nil
+			return contributorLaneEval{}, "gone", nil
 		}
-		return AutoMergeSweepEvent{}, "fetch-pr", err
+		return contributorLaneEval{}, "fetch-pr", err
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		if reason == contributorLaneReasonAppAuthored {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 		}
-		return AutoMergeSweepEvent{}, reason, nil
+		return contributorLaneEval{pr: pr}, reason, nil
 	}
 	if reason := contributorLaneConflictReason(pr); reason != "" {
-		return AutoMergeSweepEvent{}, reason, nil
+		return contributorLaneEval{pr: pr}, reason, nil
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	headSHA := pr.GetHead().GetSHA()
+	eval := contributorLaneEval{pr: pr, author: author, headSHA: headSHA}
 	claim, err := c.admitContributor(ctx, owner, repo, pr, policy)
+	eval.claim = claim
 	if err != nil {
-		return AutoMergeSweepEvent{}, claim.Reason, err
+		return eval, claim.Reason, err
 	}
 	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
 	fullRepo := owner + "/" + repo
 	verdict := c.contributorLaneVerdictFor(fullRepo, number, headSHA)
+	eval.verdict = verdict
 	c.noteStageVerdict(owner, repo, number, verdict)
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
 		// for the author, so GitHub's association is the only evidence left;
 		// an untrusted one outranks the marker-path reason (#12195, #12290).
 		if !contributorLaneAssociationTrusted(pr) {
-			return AutoMergeSweepEvent{}, contributorLaneReasonAuthorAssociation, nil
+			return eval, contributorLaneReasonAuthorAssociation, nil
 		}
-		return AutoMergeSweepEvent{}, claim.Reason, nil
+		return eval, claim.Reason, nil
 	}
 	if claim.admittedByRegistry() {
 		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
@@ -921,60 +948,66 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
 	if err != nil {
-		return AutoMergeSweepEvent{}, contributorLaneReasonFilesEvidence, err
+		return eval, contributorLaneReasonFilesEvidence, err
 	}
 	if reason := contributorLaneDiffReason(files); reason != "" {
-		return AutoMergeSweepEvent{}, reason, nil
+		return eval, reason, nil
 	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
-		return AutoMergeSweepEvent{}, "reporter-trust-check", err
+		return eval, "reporter-trust-check", err
 	} else if held {
-		return AutoMergeSweepEvent{}, contributorLaneReasonReporterTrustHold, nil
+		return eval, contributorLaneReasonReporterTrustHold, nil
 	}
 	if blocked, err := c.hasOutstandingChangesRequested(ctx, owner, repo, number); err != nil {
-		return AutoMergeSweepEvent{}, "review-state-check", err
+		return eval, "review-state-check", err
 	} else if blocked {
-		return AutoMergeSweepEvent{}, contributorLaneReasonChangesRequested, nil
+		return eval, contributorLaneReasonChangesRequested, nil
 	}
 	mergeableState := strings.ToLower(strings.TrimSpace(pr.GetMergeableState()))
 	if mergeableState == "behind" {
-		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind")
+		if relay {
+			return eval, "behind", nil
+		}
+		_, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind")
+		return eval, reason, err
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
-		return AutoMergeSweepEvent{}, "conflicting", nil
+		return eval, "conflicting", nil
 	}
-	method := mergeMethodFor(pr)
-	mergeClaim := effects.Claim{
+	eval.method = mergeMethodFor(pr)
+	eval.mergeClaim = effects.Claim{
 		Repo:   fullRepo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: strconv.Itoa(number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": method, "expect_sha": headSHA, "lane": contributorLaneTier},
+		Inputs: map[string]string{"method": eval.method, "expect_sha": headSHA, "lane": contributorLaneTier},
 	}
-	c.reconcileOpenPRMergeEffect(ctx, mergeClaim, owner, repo, number)
+	if !relay {
+		c.reconcileOpenPRMergeEffect(ctx, eval.mergeClaim, owner, repo, number)
+	}
 	baseBranch := pr.GetBase().GetRef()
 	if held, reason, err := c.releaseHoldActive(ctx, owner, repo, baseBranch); err != nil {
-		return AutoMergeSweepEvent{}, reason, err
+		return eval, reason, err
 	} else if held {
-		return AutoMergeSweepEvent{}, reason, nil
+		return eval, reason, nil
 	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
-		return AutoMergeSweepEvent{}, reason, err
+		return eval, reason, err
 	}
 	if !green {
-		return AutoMergeSweepEvent{}, reason, nil
+		return eval, reason, nil
 	}
 	if !verdict.Configured {
-		return AutoMergeSweepEvent{}, contributorLaneReasonNoReviewer, nil
+		return eval, contributorLaneReasonNoReviewer, nil
 	}
 	if policy.RequireReviewerVerdict && !verdict.Approved {
 		if !humanApproved {
 			if verdictBlocks(stageDetail{Verdict: verdict, VerdictKnown: true}) {
-				return AutoMergeSweepEvent{}, contributorLaneReasonChangesRequested, nil
+				return eval, contributorLaneReasonChangesRequested, nil
 			}
-			return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
+			return eval, contributorLaneReasonNoVerdict, nil
 		}
 		c.info("contributor-lane reviewer verdict cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", headSHA, "approver", approver)
 	}
@@ -986,21 +1019,31 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	firstGreen := c.contributorSoak.observeGreenSince(soakKey, now, greenSince)
 	if soaked := now.Sub(firstGreen); soaked < policy.Soak {
-		return AutoMergeSweepEvent{}, contributorLaneSoakReason(policy.Soak - soaked), nil
+		return eval, contributorLaneSoakReason(policy.Soak - soaked), nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
-		return AutoMergeSweepEvent{}, humanReason, err
+		return eval, humanReason, err
 	}
 	current, _, err := c.gh.PullRequests.Get(caller, owner, repo, number)
 	if err != nil {
 		if isGitHubStatus(err, http.StatusNotFound) {
-			return AutoMergeSweepEvent{}, "gone", nil
+			return eval, "gone", nil
 		}
-		return AutoMergeSweepEvent{}, "fetch-pr-recheck", err
+		return eval, "fetch-pr-recheck", err
 	}
 	if currentHeadSHA := current.GetHead().GetSHA(); currentHeadSHA == "" || currentHeadSHA != headSHA {
-		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
+		return eval, "head-changed-since-eval", nil
 	}
+	return eval, "", nil
+}
+
+func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, owner, repo string, number int, policy ContributorLanePolicy) (AutoMergeSweepEvent, string, error) {
+	eval, reason, err := c.evaluateContributorLanePR(ctx, displayRepo, owner, repo, number, policy, false)
+	if err != nil || reason != "" {
+		return AutoMergeSweepEvent{}, reason, err
+	}
+	author, headSHA, claim, verdict, method, mergeClaim := eval.author, eval.headSHA, eval.claim, eval.verdict, eval.method, eval.mergeClaim
+	fullRepo := owner + "/" + repo
 
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {

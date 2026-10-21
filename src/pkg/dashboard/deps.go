@@ -281,6 +281,26 @@ type Dependencies struct {
 	// ReviewEvents queues webhook-triggered review dispatch
 	// (hivecommons/hive#11091). Nil leaves reviews on the cadence path.
 	ReviewEvents *eventdispatch.Dispatcher
+	// WebhookWake asks the governor loop for an early, debounced eval cycle
+	// after a verified GitHub webhook invalidated cached PR or issue state.
+	// reason names the delivery ("pull_request_review org/repo#12"). Nil
+	// leaves invalidated items waiting for the next cadence tick.
+	WebhookWake func(reason string)
+	// EvalLoop reports the governor loop's live pacing (poll vs webhook mode
+	// and the last early wake) for /api/status. Nil omits the fields.
+	EvalLoop func() EvalLoopStatus
+}
+
+// EvalLoopStatus is the governor loop's pacing block served by /api/status:
+// Mode is "webhook" while healthy GitHub webhooks stretch the base tick to
+// governor.eval_interval_webhook_s and "poll" otherwise; LastWakeReason and
+// LastWakeAt name the most recent webhook-triggered early cycle.
+type EvalLoopStatus struct {
+	Mode           string     `json:"evalMode"`
+	IntervalS      int        `json:"evalIntervalS,omitempty"`
+	LastWakeReason string     `json:"lastWakeReason,omitempty"`
+	LastWakeAt     *time.Time `json:"lastWakeAt,omitempty"`
+	WebhookWakes   int        `json:"webhookWakes,omitempty"`
 }
 
 // NousScopeRepo is the only experiment scope the Experiment Lab supports.

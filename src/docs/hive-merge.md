@@ -147,6 +147,20 @@ sweep lanes whatever the intent tier. If the changed-file list for a configured
 repo cannot be fetched completely, the merge is withheld (fail closed). See
 [operator-reference.md](operator-reference.md).
 
+**Contributor PRs are held to the contributor-lane policy.** A merge request
+for a PR whose author is not the hive App, a configured trusted bot, or a
+trusted-author role is evaluated against the same `auto_merge.contributor_lane`
+gates the sweep applies — verified claim tier within `require_tiers`, the
+contributor `soak`, `min_head_age`, reviewer verdict, control labels (`hold`,
+sentinel alert, parked-on-decision), human-merge paths and head-SHA pinning —
+before `hive-merge` merges it. A refusal is terminal for that request (`.denied`),
+names the failing gate in the result the agent sees (for example
+`contributor-lane:claim-tier-untrusted (author tier "untrusted", require_tiers
+merger, trusted)` or `contributor-lane:soaking(remaining=27m)`), and is audited
+as `merge_request_refused`. An agent cannot use the relay to land a contributor
+PR the lane would not merge; the lane still merges it on its own tick once the
+gates clear. Hive-authored PRs keep the relay's existing checks.
+
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
 not one per PR or retry tick. The alert text names the fix: install/grant the
@@ -169,8 +183,12 @@ the App's own and trusted-bot PRs, and the trusted-author tier for a human's
 (after the head SHA is re-verified) — it reads the swarm review verdict for that
 head from the same `review-verdicts.json` the merge-eligible lane uses and
 classifies it as `no-review-bundle`, `awaiting-review-approval`,
-`changes-requested:<perspectives>` or `approved`
-([#12592](https://github.com/hivecommons/hive/issues/12592)). The mode is
+`changes-requested:<perspectives>`, `requires-human` or `approved`
+([#12592](https://github.com/hivecommons/hive/issues/12592)). The class
+follows the normalized **aggregate** verdict — the same one the contributor
+lane and `stage/085-needs-decision` route on — so a `requires_human` head
+reads as `requires-human` to the merge gate even when one perspective asked
+for changes; the perspective list only names who asked. The mode is
 `governor.review_gate.mode: off | shadow | enforce` (default `shadow`), raised
 to `enforce` by `review.require_approval` and to at least `shadow` by
 `review.shadow`; all three are re-read on every evaluation, so a config reload
@@ -182,11 +200,18 @@ takes effect without a restart.
   `trusted-bot` or `trusted-author`, `would_have_held` and the reason, so the Evidence card's Shadow gates panel can show what the gate
   would have held.
 - **enforce**: anything but `approved` holds the merge with reason
-  `review-gate:<outcome>`; the PR is retried on a later sweep.
+  `review-gate:<outcome>`; the PR is retried on a later sweep. A trusted
+  merger's GitHub **Approve** review on the exact head outranks every
+  non-approved swarm outcome — `requires-human`, `awaiting-review-approval`,
+  `no-review-bundle` and `changes-requested:<perspectives>` alike: the person
+  has read the reviewer's objection and decided the head lands as-is. The
+  outcome becomes `human-approved` and the merge proceeds.
 - **off**: no evaluation.
 
 Each evaluation writes one audit line, action `review_evaluated`, detail
-`lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
+`lane=<self-merge|trusted-bot|trusted-author> would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`,
+plus `human_approver=<login> overrode=<swarm outcome>` when a human's
+approval cleared the gate, so the audit trail records who overrode what.
 The gate covers every sweep lane because the swarm reviews every PR
 regardless of author ([#12974](https://github.com/hivecommons/hive/issues/12974));
 until then it covered the `self-authored` lane only, and a trusted human's PR

@@ -87,7 +87,7 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	switch event {
 	case "installation", "installation_repositories":
 		s.handleInstallationEvent(body)
-	case "pull_request", "pull_request_review", "check_suite", "check_run", "status", "issue_comment", "push":
+	case "pull_request", "pull_request_review", "pull_request_review_comment", "check_suite", "check_run", "status", "issue_comment", "issues", "push":
 		s.relayWebhookToSpoke(event, r.Header, body)
 	default:
 		s.logger.Debug("ignoring webhook event", "event", event)
@@ -97,8 +97,11 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-// spokeWebhookPath is the spoke dashboard's GitHub webhook receiver.
-const spokeWebhookPath = "/api/webhook/github"
+// spokeWebhookPath is the spoke dashboard's GitHub webhook receiver. It is the
+// same constant the hub's auth-check waves through (spokeWebhookRelayPath in
+// saas_auth.go); keep them one value so a relay can never target a path the
+// hosted Ingress gate turns into a login redirect (#13231).
+const spokeWebhookPath = spokeWebhookRelayPath
 
 // spokeWebhookRelayGuard refuses relay targets whose host is or resolves to a
 // private/internal address. DashboardURL is self-reported by the spoke over
@@ -143,50 +146,63 @@ func (s *HubServer) relayWebhookToSpoke(event string, header http.Header, body [
 	if evt.Repository.Name != "" {
 		repos = append(repos, evt.Repository.Name)
 	}
-	hive := s.findHiveByOrgRepos(org, repos)
-	if hive == nil {
+	hives := s.findHivesByOrgRepos(org, repos)
+	if len(hives) == 0 {
 		s.logger.Debug("ignoring webhook for unmanaged repository", "event", event, "repo", evt.Repository.FullName)
 		return
 	}
+	type relayTarget struct{ hiveID, dashboardURL string }
+	targets := make([]relayTarget, 0, len(hives))
+	skipped := 0
 	s.mu.RLock()
-	hiveID, dashboardURL := hive.ID, hive.DashboardURL
-	s.mu.RUnlock()
-	if dashboardURL == "" {
-		s.logger.Debug("ignoring webhook: managing hive has no dashboard URL", "event", event, "hive_id", hiveID)
-		return
+	for _, h := range hives {
+		if h.DashboardURL == "" {
+			skipped++
+			continue
+		}
+		targets = append(targets, relayTarget{h.ID, h.DashboardURL})
 	}
-	spokeURL := strings.TrimRight(dashboardURL, "/") + spokeWebhookPath
+	s.mu.RUnlock()
+	if skipped > 0 {
+		s.logger.Debug("skipping webhook relay to hives without a dashboard URL", "event", event, "skipped", skipped)
+	}
 	forward := http.Header{}
 	for _, h := range []string{"X-GitHub-Event", "X-GitHub-Delivery", "X-GitHub-Hook-ID", "X-Hub-Signature-256", "Content-Type"} {
 		if v := header.Get(h); v != "" {
 			forward.Set(h, v)
 		}
 	}
-	payload := append([]byte(nil), body...)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
-		defer cancel()
-		if spokeWebhookRelayGuard(ctx, dashboardURL) {
-			s.logger.Warn("refusing webhook relay: spoke dashboard URL is private or unresolvable", "hive_id", hiveID, "event", event)
-			return
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, spokeURL, bytes.NewReader(payload))
-		if err != nil {
-			s.logger.Warn("failed to build spoke webhook relay request", "hive_id", hiveID, "error", err)
-			return
-		}
-		req.Header = forward
-		resp, err := spokeWebhookRelayClient.Do(req)
-		if err != nil {
-			s.logger.Warn("spoke webhook relay failed", "hive_id", hiveID, "event", event, "error", err)
-			return
-		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-		if resp.StatusCode >= http.StatusBadRequest {
-			s.logger.Warn("spoke rejected webhook relay", "hive_id", hiveID, "event", event, "status", resp.StatusCode)
-		}
-	}()
+	delivery := header.Get("X-GitHub-Delivery")
+	for _, t := range targets {
+		hiveID, dashboardURL := t.hiveID, t.dashboardURL
+		spokeURL := strings.TrimRight(dashboardURL, "/") + spokeWebhookPath
+		s.logger.Info("relaying webhook to spoke", "hive_id", hiveID, "spoke_url", spokeURL, "event", event, "delivery", delivery)
+		payload := append([]byte(nil), body...)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
+			defer cancel()
+			if spokeWebhookRelayGuard(ctx, dashboardURL) {
+				s.logger.Warn("refusing webhook relay: spoke dashboard URL is private or unresolvable", "hive_id", hiveID, "event", event)
+				return
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, spokeURL, bytes.NewReader(payload))
+			if err != nil {
+				s.logger.Warn("failed to build spoke webhook relay request", "hive_id", hiveID, "error", err)
+				return
+			}
+			req.Header = forward.Clone()
+			resp, err := spokeWebhookRelayClient.Do(req)
+			if err != nil {
+				s.logger.Warn("spoke webhook relay failed", "hive_id", hiveID, "event", event, "error", err)
+				return
+			}
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			_ = resp.Body.Close()
+			if resp.StatusCode >= http.StatusBadRequest {
+				s.logger.Warn("spoke rejected webhook relay", "hive_id", hiveID, "event", event, "status", resp.StatusCode)
+			}
+		}()
+	}
 }
 
 func (s *HubServer) handleInstallationEvent(body []byte) {
@@ -260,6 +276,15 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 }
 
 func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntry {
+	if hives := s.findHivesByOrgRepos(org, repos); len(hives) > 0 {
+		return hives[0]
+	}
+	return nil
+}
+
+// findHivesByOrgRepos returns every hive in org tracking one of repos, in
+// registry order. When repos is empty it falls back to every hive in the org.
+func (s *HubServer) findHivesByOrgRepos(org string, repos []string) []*RegistryEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -268,31 +293,28 @@ func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntr
 		repoSet[strings.ToLower(r)] = true
 	}
 
-	var orgMatch *RegistryEntry
+	var matches, orgMatches []*RegistryEntry
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
 		if !strings.EqualFold(h.Org, org) {
 			continue
 		}
-		// Exact repo match takes priority
+		orgMatches = append(orgMatches, h)
+		if repoSet[strings.ToLower(h.PrimaryRepo)] {
+			matches = append(matches, h)
+			continue
+		}
 		for _, hiveRepo := range h.Repos {
 			if repoSet[strings.ToLower(hiveRepo)] {
-				return h
+				matches = append(matches, h)
+				break
 			}
 		}
-		if repoSet[strings.ToLower(h.PrimaryRepo)] {
-			return h
-		}
-		// Track org-only match as fallback
-		if orgMatch == nil {
-			orgMatch = h
-		}
 	}
-	// Fall back to org-only match when repos list is empty
-	if len(repos) == 0 && orgMatch != nil {
-		return orgMatch
+	if len(repos) == 0 {
+		return orgMatches
 	}
-	return nil
+	return matches
 }
 
 func (s *HubServer) pushGitHubConfigToSpoke(hive *RegistryEntry, appID, installationID int64) {

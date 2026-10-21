@@ -231,7 +231,7 @@ func TestRunHivesWebPrintsTokenizedLoopbackURLAndStopsOnContext(t *testing.T) {
 	}
 }
 
-func TestCommonsWebEmptyStoreAndQueryToken(t *testing.T) {
+func TestCommonsWebAPIRequiresHeaderToken(t *testing.T) {
 	server, _, _ := newCommonsWebHarness(t, nil)
 	defer server.Close()
 
@@ -239,14 +239,12 @@ func TestCommonsWebEmptyStoreAndQueryToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("query-token list status = %d", resp.StatusCode)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query-token list status = %d, want 401", resp.StatusCode)
 	}
-	var list commonsWebListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		t.Fatal(err)
-	}
+
+	_, list := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
 	if list.Strategy != hivectl.CommonsStrategyRanked || len(list.Hives) != 0 {
 		t.Fatalf("empty list = %+v", list)
 	}
@@ -425,5 +423,184 @@ func TestNewHivesWebCommandDefaults(t *testing.T) {
 	flag := cmd.Flags().Lookup("addr")
 	if flag == nil || flag.DefValue != defaultCommonsWebAddr {
 		t.Fatalf("addr flag = %#v", flag)
+	}
+}
+
+func TestCommonsWebRejectsNonLoopbackHost(t *testing.T) {
+	server, _, _ := newCommonsWebHarness(t, twoHives())
+	defer server.Close()
+
+	for _, host := range []string{"evil.example", "evil.example:80", "127.0.0.1", "10.0.0.1:" + strings.TrimPrefix(server.URL[strings.LastIndex(server.URL, ":"):], ":")} {
+		req := commonsReq(t, server, http.MethodGet, "/api/hives", nil)
+		req.Host = host
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("Host %q status = %d, want 403", host, resp.StatusCode)
+		}
+	}
+	for _, host := range []string{"localhost", "127.0.0.2", "[::1]"} {
+		req := commonsReq(t, server, http.MethodGet, "/api/hives", nil)
+		req.Host = host + ":" + server.URL[strings.LastIndex(server.URL, ":")+1:]
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Host %q status = %d, want 200", req.Host, resp.StatusCode)
+		}
+	}
+}
+
+func TestCommonsWebOriginValidation(t *testing.T) {
+	server, _, _ := newCommonsWebHarness(t, twoHives())
+	defer server.Close()
+
+	cases := []struct {
+		name     string
+		origin   string
+		fetch    string
+		want     int
+		pagePath bool
+	}{
+		{"same origin", server.URL, "same-origin", http.StatusOK, false},
+		{"no origin", "", "", http.StatusOK, false},
+		{"cross origin", "http://evil.example", "", http.StatusForbidden, false},
+		{"null origin", "null", "", http.StatusForbidden, false},
+		{"cross site fetch metadata", "", "cross-site", http.StatusForbidden, false},
+		{"cross origin page", "http://evil.example", "", http.StatusForbidden, true},
+		{"same origin page", server.URL, "same-origin", http.StatusOK, true},
+	}
+	for _, tc := range cases {
+		path := "/api/hives"
+		if tc.pagePath {
+			path = "/?token=secret"
+		}
+		req := commonsReq(t, server, http.MethodGet, path, nil)
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		if tc.fetch != "" {
+			req.Header.Set("Sec-Fetch-Site", tc.fetch)
+		}
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Fatalf("%s: status = %d, want %d", tc.name, resp.StatusCode, tc.want)
+		}
+	}
+
+	req := commonsReq(t, server, http.MethodPost, "/api/strategy", commonsStrategyRequest{Strategy: "spread"})
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin POST status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestCommonsWebSetsHardeningHeadersAndDropsLaunchToken(t *testing.T) {
+	server, _, _ := newCommonsWebHarness(t, twoHives())
+	defer server.Close()
+
+	for _, path := range []string{"/?token=secret", "/api/hives", "/missing"} {
+		resp, err := server.Client().Do(commonsReq(t, server, http.MethodGet, path, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("%s Cache-Control = %q", path, got)
+		}
+		if got := resp.Header.Get("Referrer-Policy"); got != "no-referrer" {
+			t.Fatalf("%s Referrer-Policy = %q", path, got)
+		}
+		if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Fatalf("%s X-Content-Type-Options = %q", path, got)
+		}
+	}
+
+	resp, err := server.Client().Get(server.URL + "/?token=secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var page bytes.Buffer
+	if _, err := page.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(page.String(), "history.replaceState(null, '', location.pathname)") {
+		t.Fatalf("page does not strip the launch token from history")
+	}
+}
+
+func TestCommonsWebRejectsAnEditReviewedAgainstAStaleRevision(t *testing.T) {
+	server, store, signals := newCommonsWebHarness(t, twoHives())
+	defer server.Close()
+
+	_, reviewed := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
+	if reviewed.Revision == "" {
+		t.Fatal("listing carries no revision")
+	}
+	// Another surface (CLI/TUI) commits while the page is open.
+	set, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set.SetCommonsStrategy(hivectl.CommonsStrategySpread); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CommitExpecting(set, set.Revision()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := commonsReq(t, server, http.MethodPost, "/api/strategy", commonsStrategyRequest{Strategy: hivectl.CommonsStrategyNeediest})
+	req.Header.Set("If-Match", reviewed.Revision)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := new(bytes.Buffer)
+	_, _ = body.ReadFrom(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(body.String(), "renewed review") {
+		t.Fatalf("stale edit status/body = %d %q, want 409 requiring renewed review", resp.StatusCode, body.String())
+	}
+	after, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) || signals.Load() != 0 {
+		t.Fatalf("stale edit wrote profiles.yml or signalled the relay (signals=%d)", signals.Load())
+	}
+
+	_, fresh := commonsDo(t, server, http.MethodGet, "/api/hives", nil)
+	req = commonsReq(t, server, http.MethodPost, "/api/strategy", commonsStrategyRequest{Strategy: hivectl.CommonsStrategyNeediest})
+	req.Header.Set("If-Match", fresh.Revision)
+	resp, err = server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out commonsWebListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || out.Strategy != hivectl.CommonsStrategyNeediest || out.Revision == fresh.Revision {
+		t.Fatalf("fresh edit status/strategy/revision = %d %s %q", resp.StatusCode, out.Strategy, out.Revision)
 	}
 }

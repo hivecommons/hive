@@ -48,13 +48,17 @@ type bootAgentsDeps struct {
 // with. Kept as a struct so a fake can assert every relay was armed with the
 // manager's own gate rather than a permissive stand-in.
 type requestRelays struct {
-	prOpen     github.PRRequestAuthorizer
-	holdLabel  func(agentName, repo string) bool
-	issueOpen  github.IssueRequestAuthorizer
-	review     github.ReviewRequestAuthorizer
-	merge      github.MergeRequestAuthorizer
-	pushBranch github.PushBranchRequestAuthorizer
-	logger     *slog.Logger
+	prOpen    github.PRRequestAuthorizer
+	holdLabel func(agentName, repo string) bool
+	issueOpen github.IssueRequestAuthorizer
+	review    github.ReviewRequestAuthorizer
+	merge     github.MergeRequestAuthorizer
+	// mergePolicy builds the merge relay's lane-policy gate for the client
+	// the relays run on (the auto-merge engine's RelayMergeRefusal). nil
+	// installs no gate.
+	mergePolicy func(*github.Client) github.MergeRequestPolicyGate
+	pushBranch  github.PushBranchRequestAuthorizer
+	logger      *slog.Logger
 }
 
 func defaultBootAgentsDeps() bootAgentsDeps {
@@ -69,6 +73,9 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			github.StartTokenAccessAuditWatcher(ctx, logger)
 		},
 		startRequestRelays: func(ctx context.Context, c *github.Client, r requestRelays) <-chan struct{} {
+			if r.mergePolicy != nil {
+				c.SetMergeRequestPolicyGate(r.mergePolicy(c))
+			}
 			return joinDone(
 				startRequestWatchers(ctx, requestwatch.New(c, r.prOpen, r.issueOpen, r.holdLabel, nil), r.logger),
 				c.StartReviewRequestWatcher(ctx, r.review, nil),

@@ -1,0 +1,1 @@
+- The stage engine now treats a covering PR closing (040→010/030/020) and claim/start-marker reshuffles (030→020) as expected issue transitions instead of anomalies.

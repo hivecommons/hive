@@ -378,7 +378,9 @@ hive_reown_agent_token_caches_if_needed() {
   _token_group="$2"
   _token_root="${HIVE_AGENT_TOKEN_ROOT:-/var/run/hive-metrics/agent-tokens}"
   _token_expected="$(id -u dev 2>/dev/null || echo 1001):${_token_group}"
-  for _token_path in "$_token_root"/*"${_token_agent}"*; do
+  for _token_path in "$_token_root/gh-token-${_token_agent}.cache" \
+    "$_token_root/gh-token-${_token_agent}.cache".* \
+    "$_token_root/gh-token-${_token_agent}"-[0-9]*.cache; do
     [ -e "$_token_path" ] || continue
     _token_owner="$(stat -c '%u:%G' "$_token_path" 2>/dev/null || echo 0:unknown)"
     if [ "$_token_owner" != "$_token_expected" ]; then
@@ -408,6 +410,69 @@ hive_ensure_agent_user() {
   else
     useradd --system -u "$_agent_uid" -g node -d /data/home -M -s /bin/bash "$_agent_user" 2>/dev/null || true
   fi
+}
+
+# hive_collect_agent_names <config> prints, one per line and sorted, every agent
+# name that needs a per-agent user, private token group and token cache file:
+# the config's agents (map keys or list items), the copies its `replicas:`
+# settings create, and, when HIVE_LEVEL is set, the ACMM pack agents.
+#
+# Replicas (#13166): config.ExpandAgentReplicas derives <agent>-2 ..
+# <agent>-N in memory and MarshalYAML strips them on save, so they never
+# appear as keys here. Without listing them, a replica gets no user, group or
+# pre-created token file: the manager runs it as a bare <uid>:<gid> and the
+# token write creates the cache dev:node 0600, which the replica cannot read,
+# so every gh call is blocked with token_cache_unavailable. The naming and the
+# 2..MaxAgentReplicas (5) bound mirror config.replicaAgentName and
+# ExpandAgentReplicas; an out-of-range count is left for config validation to
+# reject and expands to nothing here.
+hive_collect_agent_names() {
+  HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
+import glob, os, yaml
+
+MAX_REPLICAS = 5  # config.MaxAgentReplicas
+
+def replica_names(name, spec):
+    if not isinstance(spec, dict):
+        return []
+    try:
+        n = int(spec.get('replicas') or 0)
+    except (TypeError, ValueError):
+        return []
+    if n < 2 or n > MAX_REPLICAS:
+        return []
+    return ['%s-%d' % (name, i) for i in range(2, n + 1)]
+
+names = set()
+with open(os.environ['HIVE_COLLECT_CONFIG']) as f:
+    cfg = yaml.safe_load(f) or {}
+agents = cfg.get('agents', {})
+if isinstance(agents, dict):
+    for name, spec in agents.items():
+        names.add(name)
+        names.update(replica_names(name, spec))
+elif isinstance(agents, list):
+    for a in agents:
+        if isinstance(a, dict) and 'name' in a:
+            names.add(a['name'])
+            names.update(replica_names(a['name'], a))
+# Also check pack YAML if HIVE_LEVEL is set
+if os.environ.get('HIVE_LEVEL', ''):
+    for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
+        try:
+            with open(p) as pf:
+                pack = yaml.safe_load(pf) or {}
+            pack_agents = pack.get('agents', [])
+            if isinstance(pack_agents, list):
+                for a in pack_agents:
+                    if isinstance(a, dict) and 'name' in a:
+                        names.add(a['name'])
+            elif isinstance(pack_agents, dict):
+                names.update(pack_agents.keys())
+        except Exception:
+            pass
+print('\n'.join(sorted(names)))
+PY
 }
 
 # hive_harden_runtime_config makes $1 readable by the user that reads it, and
@@ -1756,40 +1821,11 @@ BASHRC
   HIVE_UID_BASE=2001
   PROXY_UID=1001
 
-  # Collect agent names from hive.yaml (map keys) and pack YAML (list items)
+  # Collect agent names from hive.yaml (map keys, plus replica names) and
+  # pack YAML (list items).
   AGENT_NAMES=""
   if [ -f "$HIVE_CONFIG" ]; then
-    AGENT_NAMES=$(python3 -c "
-import yaml, sys, os
-names = set()
-with open('$HIVE_CONFIG') as f:
-    cfg = yaml.safe_load(f) or {}
-agents = cfg.get('agents', {})
-if isinstance(agents, dict):
-    names.update(agents.keys())
-elif isinstance(agents, list):
-    for a in agents:
-        if isinstance(a, dict) and 'name' in a:
-            names.add(a['name'])
-# Also check pack YAML if HIVE_LEVEL is set
-level = os.environ.get('HIVE_LEVEL', '')
-if level:
-    import glob
-    for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
-        try:
-            with open(p) as pf:
-                pack = yaml.safe_load(pf) or {}
-            pack_agents = pack.get('agents', [])
-            if isinstance(pack_agents, list):
-                for a in pack_agents:
-                    if isinstance(a, dict) and 'name' in a:
-                        names.add(a['name'])
-            elif isinstance(pack_agents, dict):
-                names.update(pack_agents.keys())
-        except Exception:
-            pass
-print('\n'.join(sorted(names)))
-" 2>/dev/null) || true
+    AGENT_NAMES=$(hive_collect_agent_names "$HIVE_CONFIG" 2>/dev/null) || true
   fi
 
   # The hub-resident Spektacular executor launches its stage CLI as its own

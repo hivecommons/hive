@@ -11,26 +11,42 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Query   string `json:"query"`
+		Query string `json:"query"`
+		// Message is an alias for Query (#13223); Query wins when both are set.
+		Message string `json:"message"`
 		History []any  `json:"history"`
 	}
-	if err := decodeBody(r, &body); err != nil || strings.TrimSpace(body.Query) == "" {
-		jsonError(w, "message is required", http.StatusBadRequest)
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "query is required", http.StatusBadRequest)
 		return
 	}
 	query := strings.TrimSpace(body.Query)
 	if query == "" {
-		jsonError(w, "message is required", http.StatusBadRequest)
+		query = strings.TrimSpace(body.Message)
+	}
+	if query == "" {
+		jsonError(w, "query is required", http.StatusBadRequest)
 		return
 	}
 	safeQuery, verdict := ioscan.EnforceInput(query)
 	if verdict.Blocked {
 		s.auditFromRequest(r, "chat.dashboard.refused", auditDetail("reason", "ioscan_blocked"), "")
 		jsonError(w, "message refused by safety scanner", http.StatusBadRequest)
+		return
+	}
+
+	// While an inception waits in clarify, an owner's unprefixed reply is the
+	// answer to the next unanswered question: hand it to the chat spine, which
+	// owns that routing, before local intents and the fallback claim it (#13215).
+	if !strings.HasPrefix(safeQuery, "!") && s.inceptionAwaitingAnswers() &&
+		config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleOwner) &&
+		s.deps.DashboardChatSubmit != nil {
+		s.submitDashboardChat(w, r, safeQuery)
 		return
 	}
 
@@ -79,7 +95,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "dashboard chat is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	seq, err := s.deps.DashboardChatSubmit(requestUser(r), r.Header.Get("X-Hive-Role"), safeQuery)
+	s.submitDashboardChat(w, r, safeQuery)
+}
+
+func (s *Server) submitDashboardChat(w http.ResponseWriter, r *http.Request, text string) {
+	seq, err := s.deps.DashboardChatSubmit(requestUser(r), r.Header.Get("X-Hive-Role"), text)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -90,6 +110,24 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		"seq":      seq,
 	})
 	s.auditFromRequest(r, "chat.dashboard.message", auditDetail("seq", strconv.FormatUint(seq, 10)), "")
+}
+
+// inceptionAwaitingAnswers reports whether the inception engine is in clarify
+// with at least one unanswered question.
+func (s *Server) inceptionAwaitingAnswers() bool {
+	if s.deps == nil || s.deps.Inception == nil {
+		return false
+	}
+	state := s.deps.Inception.GetState()
+	if state == nil || state.Phase != knowledge.PhaseClarify {
+		return false
+	}
+	for _, q := range state.Questions {
+		if strings.TrimSpace(state.Answers[q.ID]) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func scrubDashboardChatAnswer(answer string) string {

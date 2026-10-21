@@ -62,3 +62,24 @@ func (m *Manager) notifyKickObserver(agentName, event, detail string) {
 	}
 	go (*fn)(agentName, event, detail)
 }
+
+// SetRelaunchObserver installs (or with nil, removes) the observer told when
+// an agent's CLI is launched afresh; see Manager.relaunchObserver. Safe to
+// leave unset.
+func (m *Manager) SetRelaunchObserver(fn func(agentName string)) {
+	if fn == nil {
+		m.relaunchObserver.Store(nil)
+		return
+	}
+	m.relaunchObserver.Store(&fn)
+}
+
+// notifyRelaunchObserver dispatches one relaunch asynchronously. Callers may
+// hold m.mu; the observer never runs under it.
+func (m *Manager) notifyRelaunchObserver(agentName string) {
+	fn := m.relaunchObserver.Load()
+	if fn == nil {
+		return
+	}
+	go (*fn)(agentName)
+}

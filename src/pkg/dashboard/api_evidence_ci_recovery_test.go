@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
@@ -180,5 +181,121 @@ func TestBuildEvidenceCIRecovery(t *testing.T) {
 	}
 	if x := buildEvidenceCIRecovery(claims, merges, rollup, evidenceWindow{Hours: 1, From: now.Add(-time.Hour), To: now}, "", EvidenceCIPolicy{}); x.N != 0 || x.Gate.MergedN != 0 {
 		t.Errorf("window by open time = %+v", x)
+	}
+}
+
+// TestEvidenceCIGateRequiredChecksPerRepo pins #13225: the gate panel judges a
+// bundle snapshot against the required set the merge gate would use for THAT
+// repo (auto_merge.repos.<repo>.required_checks, else the global default,
+// else nothing), never the global list alone; a repo whose config declares no
+// required checks is not flagged missing_required for the primary repo's gate
+// check; GitHub's trail confirms or clears a suspicion.
+func TestEvidenceCIGateRequiredChecksPerRepo(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	t0 := now.Add(-48 * time.Hour)
+	win := evidenceWindow{Hours: 168, From: now.Add(-168 * time.Hour), To: now}
+	merged := func(repo string, n int, head string, checks []evidence.Check) *evidence.Bundle {
+		b := &evidence.Bundle{Repo: repo, Number: n, HeadSHA: head, Author: evidence.Author{Login: "bot", Kind: evidence.AuthorAgent}, CreatedAt: t0, UpdatedAt: t0, CI: evidence.CI{Checks: checks}}
+		b.Merge = &evidence.MergeEvent{At: t0.Add(time.Hour)}
+		return b
+	}
+	gate := []evidence.Check{{Name: "build-gate", Conclusion: "success"}}
+	lint := []evidence.Check{{Name: "lint", Conclusion: "success"}}
+	bundles := []*evidence.Bundle{
+		merged("o/console", 1, "c1", gate), // primary repo: has the global gate check
+		merged("o/docs", 2, "d1", lint),    // other repo: no build-gate, per-repo says none required
+		merged("o/mkt", 3, "m1", lint),     // other repo: per-repo requires validate, which never ran
+		merged("o/kb", 4, "k1", lint),      // other repo: no per-repo entry → global fallback
+	}
+	prs := evidence.FoldPRs(bundles, "", "")
+	claims := evidenceCIClaims(bundles, prs)
+	merges := evidenceGateMerges(bundles, prs)
+	none := CIRecoveryRollup{PRs: map[string]CIRecoveryTrail{}}
+
+	am := config.AutoMergeConfig{
+		RequiredChecks: []string{"build-gate"},
+		Repos: map[string]config.AutoMergeRepoConfig{
+			"docs":  {RequiredChecks: []string{}},
+			"o/mkt": {RequiredChecks: []string{"validate"}},
+		},
+	}
+	s := &Server{deps: &Dependencies{Config: &config.Config{AutoMerge: am}}}
+	policy := evidenceCIPolicy(s)
+	if len(policy.RequiredChecks) != 1 || policy.RequiredChecks[0] != "build-gate" {
+		t.Fatalf("global required = %v", policy.RequiredChecks)
+	}
+	if len(policy.RepoRequiredChecks) != 2 || policy.RepoRequiredChecks["docs"] == nil || len(policy.RepoRequiredChecks["docs"]) != 0 || policy.RepoRequiredChecks["o/mkt"][0] != "validate" {
+		t.Fatalf("repo required = %#v", policy.RepoRequiredChecks)
+	}
+	if got := policy.requiredChecksFor("o/console"); len(got) != 1 || got[0] != "build-gate" {
+		t.Errorf("console required = %v, want global build-gate", got)
+	}
+	if got := policy.requiredChecksFor("o/docs"); got != nil && len(got) != 0 {
+		t.Errorf("docs required = %v, want explicit none", got)
+	}
+	if got := policy.requiredChecksFor("o/mkt"); len(got) != 1 || got[0] != "validate" {
+		t.Errorf("mkt required = %v, want per-repo validate", got)
+	}
+	if got := policy.requiredChecksFor("o/kb"); len(got) != 1 || got[0] != "build-gate" {
+		t.Errorf("kb required = %v, want global fallback", got)
+	}
+
+	// Global-only legacy policy (no resolver): every repo judged on the
+	// global list, so three of four are suspected — the #13225 artifact.
+	legacy := buildEvidenceCIRecovery(claims, merges, none, win, "", EvidenceCIPolicy{RequiredChecks: []string{"build-gate"}})
+	if legacy.Gate.Suspected != 3 || legacy.Gate.Green != 1 {
+		t.Fatalf("legacy gate = %+v", legacy.Gate)
+	}
+
+	// Per-repo policy: console green (gate ran), docs green (nothing
+	// required), mkt suspected missing validate, kb suspected missing the
+	// global build-gate until GitHub's trail says what the branch requires.
+	got := buildEvidenceCIRecovery(claims, merges, none, win, "", policy)
+	g := got.Gate
+	if g.MergedN != 4 || g.Green != 2 || g.GreenFromBundles != 2 || g.Suspected != 2 || g.Breaches != 0 {
+		t.Fatalf("per-repo gate = %+v", g)
+	}
+	if len(g.SuspectedPRs) != 2 || g.SuspectedPRs[0].Repo != "o/kb" || g.SuspectedPRs[0].Missing[0] != "build-gate" || g.SuspectedPRs[1].Repo != "o/mkt" || g.SuspectedPRs[1].Missing[0] != "validate" || g.SuspectedPRs[1].Source != "bundle" {
+		t.Fatalf("suspected = %+v", g.SuspectedPRs)
+	}
+
+	// No required checks anywhere: nothing can be missing_required.
+	open := evidenceCIPolicy(&Server{deps: &Dependencies{Config: &config.Config{}}})
+	if x := buildEvidenceCIRecovery(claims, merges, none, win, "", open); x.Gate.Suspected != 0 || x.Gate.Green != 4 {
+		t.Errorf("no-required gate = %+v", x.Gate)
+	}
+
+	// Confirmation: the collector queues the two suspected merges (green
+	// snapshots missing a config-required check), not the two clean ones.
+	for _, tc := range []struct {
+		key string
+		due bool
+	}{{"o/console#1", false}, {"o/docs#2", false}, {"o/mkt#3", true}, {"o/kb#4", true}} {
+		if d := ciRecoveryGateDue(merges[tc.key], policy); d != tc.due {
+			t.Errorf("ciRecoveryGateDue(%s) = %v, want %v", tc.key, d, tc.due)
+		}
+	}
+	if ciRecoveryGateDue(&gateMerge{repo: "o/kb", state: evidenceCINone}, policy) != true || ciRecoveryGateDue(&gateMerge{repo: "o/kb", state: evidenceCIRed}, policy) != true || ciRecoveryGateDue(&gateMerge{repo: "o/kb", state: evidenceCIPending}, policy) != false || ciRecoveryGateDue(nil, policy) {
+		t.Error("none/red merges are always due, pending and nil never")
+	}
+
+	// GitHub's trail then rules: kb's branch requires nothing (unprotected,
+	// judged on every check, all green) → green, cleared; mkt's branch does
+	// require validate and it never ran → still suspected missing_required;
+	// a required check red on the merged head → confirmed breach.
+	trail := CIRecoveryRollup{PRs: map[string]CIRecoveryTrail{
+		"o/kb#4":   {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(time.Hour), Heads: []ghpkg.PRCIHead{{SHA: "k1", At: t0, State: "green"}}}},
+		"o/mkt#3":  {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(time.Hour), RequiredKnown: true, RequiredChecks: []string{"validate"}, Heads: []ghpkg.PRCIHead{{SHA: "m1", At: t0, State: "pending", MissingRequired: []string{"validate"}}}}},
+		"o/docs#2": {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(time.Hour), MergedBy: "admin", RequiredKnown: true, RequiredChecks: []string{"lint"}, Heads: []ghpkg.PRCIHead{{SHA: "d1", At: t0, State: "red", RequiredRed: []string{"lint"}}}}},
+	}}
+	conf := buildEvidenceCIRecovery(claims, merges, trail, win, "", policy).Gate
+	if conf.Green != 2 || conf.Suspected != 1 || conf.Breaches != 1 || conf.RequiredUnknown != 1 {
+		t.Fatalf("confirmed gate = %+v", conf)
+	}
+	if conf.SuspectedPRs[0].Repo != "o/mkt" || conf.SuspectedPRs[0].Source != "github" || conf.SuspectedPRs[0].State != "missing_required" {
+		t.Errorf("still suspected = %+v", conf.SuspectedPRs)
+	}
+	if conf.BreachPRs[0].Repo != "o/docs" || conf.BreachPRs[0].Red[0] != "lint" || conf.BreachPRs[0].MergedBy != "admin" {
+		t.Errorf("breach = %+v", conf.BreachPRs)
 	}
 }

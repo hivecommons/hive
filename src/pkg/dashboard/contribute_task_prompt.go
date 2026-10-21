@@ -24,9 +24,10 @@ import (
 // sites and tests. Source-aware callers use buildTaskPromptForRef; live dispatch
 // uses buildTaskPromptForContributor after resolving the contributor's access.
 //
-// Two values come from outside the task itself: the base branch (#5729), which
-// taskBaseBranch derives from the issue title and this hive's build branch, and
-// the access mode (#6654), which selectTask resolves from the connected
+// Two values come from outside the old preview helper: the base branch
+// (#5729/#13146), which live dispatch derives from a validated verdict override,
+// the issue title/body, and this hive's build branch; and the access mode
+// (#6654), which selectTask resolves from the connected
 // contributor's GitHub identity. Neither is a credential, and the rendered
 // result stored on the connection is still the exact prompt sent to the agent.
 func buildTaskPrompt(repoFull string, number int, title string) string {
@@ -71,6 +72,14 @@ func buildTaskPromptForContributor(ref worksource.Ref, title string, canPush boo
 // plus the assigning hive's per-repo hints (hivecommons/hive#13059); live
 // dispatch passes h.taskPromptRepoHints(repo).
 func buildTaskPromptForContributorWithHints(ref worksource.Ref, title string, canPush bool, guide string, hints taskPromptRepoHints) string {
+	return buildTaskPromptForContributorWithIssue(ref, title, "", "", canPush, guide, hints)
+}
+
+// buildTaskPromptForContributorWithIssue carries the issue fields that affect
+// dispatch routing. body supplies an explicit "Target: vN" declaration;
+// branchOverride is a server-validated correction from an earlier wrong_base
+// verdict and therefore wins over stale issue text.
+func buildTaskPromptForContributorWithIssue(ref worksource.Ref, title, body, branchOverride string, canPush bool, guide string, hints taskPromptRepoHints) string {
 	repoFull := ref.Repo
 	issueRef := ref.Key()
 	if issueRef == "" {
@@ -89,7 +98,7 @@ func buildTaskPromptForContributorWithHints(ref worksource.Ref, title string, ca
 	// across tasks and nothing resets it, so the branch on disk answers the
 	// previous task, not this one — and an agent follows the instruction it was
 	// given over the state it finds. That was measured, not assumed: a working
-	// branch reset from v5 onto v4 mid-task, with zero commits and a clean tree,
+	// branch reset from v5 onto v4 mid-task, holding zero commits and a clean tree,
 	// was put back on v5 by the agent, because the plan it had already formed
 	// said v5. Fixing the workspace alone cannot work; the instruction has to
 	// carry the answer.
@@ -103,7 +112,7 @@ func buildTaskPromptForContributorWithHints(ref worksource.Ref, title string, ca
 			ref.Number, repoFull)
 	}
 	return buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceHint,
-		taskBaseBranch(title, repoFull, upstreamBranch()), canPush, guide, hints, readIssue) +
+		taskBaseBranchForIssue(title, body, branchOverride, repoFull, upstreamBranch()), canPush, guide, hints, readIssue) +
 		artifactTrailerPromptInstruction(issueRef)
 }
 
@@ -203,6 +212,19 @@ func sourceLabel(sourceType string) string {
 		return "github"
 	}
 	return sourceType
+}
+
+var targetBranchDeclarationPattern = regexp.MustCompile(`(?im)^[ \t]*(?:\*\*)?target:[ \t]*(v[0-9]+)\.?(?:\*\*)?(?:[ \t]|$)`)
+
+// releaseLineFromBody extracts the scanner's explicit issue-body declaration,
+// including the observed "**Target: v6.**" spelling. Only release-line names
+// are accepted; prose containing "target" is not a routing directive.
+func releaseLineFromBody(body string) string {
+	match := targetBranchDeclarationPattern.FindStringSubmatch(body)
+	if len(match) != 2 {
+		return ""
+	}
+	return strings.ToLower(match[1])
 }
 
 // releaseLineFromTitle extracts a leading release-line tag — "[v5] reviewer
@@ -350,7 +372,17 @@ func isHiveOwnRepo(repoFull string) bool {
 // wording was previously unreachable, because upstreamBranch() can never return
 // empty.
 func taskBaseBranch(title, repoFull, hubBranch string) string {
+	return taskBaseBranchForIssue(title, "", "", repoFull, hubBranch)
+}
+
+func taskBaseBranchForIssue(title, body, branchOverride, repoFull, hubBranch string) string {
+	if line := strings.ToLower(strings.TrimSpace(branchOverride)); isReleaseLine(line) {
+		return line
+	}
 	if line := releaseLineFromTitle(title); line != "" {
+		return line
+	}
+	if line := releaseLineFromBody(body); line != "" {
 		return line
 	}
 	if !isHiveOwnRepo(repoFull) {
@@ -433,11 +465,12 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 		baseHint = fmt.Sprintf(
 			"Base this work on the '%s' branch of %s. The checkout may be left on a "+
 				"DIFFERENT branch by a previous task, so do not use whatever branch you "+
-				"find there: run 'git fetch upstream' and start your work branch from the "+
-				"base with 'git checkout -b <your-branch> upstream/%s'. Open the PR against "+
-				"the same branch with 'gh pr create --base %s', and confirm the PR's base "+
-				"is '%s' before you report done. ",
-			b, repoFull, b, b, b)
+				"find there: run 'git fetch upstream', verify the declared branch exists "+
+				"with 'git show-ref --verify --quiet refs/remotes/upstream/%s', and start "+
+				"your work branch from the base with 'git checkout -b <your-branch> upstream/%s'. "+
+				"Open the PR against the same branch with 'gh pr create --base %s', and confirm "+
+				"the PR's base is '%s' before you report done. ",
+			b, repoFull, b, b, b, b)
 	}
 	repoOwner, _, _ := strings.Cut(repoFull, "/")
 	if repoOwner == "" {
@@ -588,6 +621,15 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"is auto-labelled do-not-merge/work-in-progress and cannot merge. If a PR "+
 			"is already open as a draft, mark it ready for review. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
+			// hivecommons/hive#13146: absence on the assigned base is not
+			// evidence that the issue is already done. Give the relay a distinct
+			// outcome carrying the branch that actually contains the work.
+			"If the declared base branch does not exist after fetch, or the issue's "+
+			"referenced code exists only on another release branch, do not call the "+
+			"issue already done. Verify the correct branch exists, then print "+
+			"'HIVE_VERDICT: wrong_base — <correct-branch>' and stop. Hive validates "+
+			"that branch and re-offers the issue against it; if validation fails, Hive "+
+			"parks the issue at stage/045 with the named branch. "+
 			// #3987: the no_work_needed sentinel. The relay scrapes this exact
 			// marker from the agent's output and reports it as the completion
 			// verdict, so an issue whose remainder is maintainer-gated stops
@@ -690,8 +732,8 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"bots to report before printing the verdict — hive reviews and "+
 			"follows up on open PRs separately, so any wait here only holds the "+
 			"task. "+
-			"If you printed the no_work_needed, decision, or blocked line above, that already "+
-			"counts as your completion — do not print both. "+
+			"If you printed the wrong_base, no_work_needed, decision, or blocked line above, "+
+			"that already counts as your completion — do not print complete too. "+
 			// #7759: the one sanctioned second verdict. A CLI that runs a
 			// passive reviewer (omp's --advisor) posts its notes on the agent's
 			// FINAL turn under the sentinel, after the agent has stopped, so

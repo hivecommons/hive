@@ -126,6 +126,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// ledger is read per call because the client can be configured before
 	// it is built.
 	client.SetRelayContributor(b.relayContributor)
+	// Ledger fallback for the enumeration-time claim read and the
+	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
+	// must still read as a claim (claimswire.go, ledgerClaimLookup).
+	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)

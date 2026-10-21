@@ -614,6 +614,9 @@ func doOwnerDeleteAsUser(s *Server, path, user string) *httptest.ResponseRecorde
 // Revise rewrites a campaign in place (ADR 0020 v6 addendum), so the second
 // row is a second archived campaign rather than a linked revision.
 func TestCampaignDeleteRemovesArchiveOnly(t *testing.T) {
+	// The unfiltered list folds completed runs from the process-wide
+	// lifecycle store in; isolate it so journeys recorded by earlier tests
+	// (e.g. the wavefront completion tests) cannot show up here (#13167).
 	resetLifecycleStore()
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)

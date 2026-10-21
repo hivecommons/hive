@@ -218,8 +218,20 @@ func TestReviewQueueSupersededClose(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
-	if w.Code != http.StatusOK || len(fake.comments) != 1 || fake.closed != 2 {
+	if w.Code != http.StatusNotFound || len(fake.comments) != 1 || fake.closed != 1 {
 		t.Fatalf("repeat close: status %d comments %d closed %d", w.Code, len(fake.comments), fake.closed)
+	}
+}
+
+func TestReviewQueueSupersededCloseRequiresState(t *testing.T) {
+	s, fake := newSupersededActionServer(t)
+	w := httptest.NewRecorder()
+	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("no state: status %d body %s", w.Code, w.Body.String())
+	}
+	if fake.closed != 0 || len(fake.comments) != 0 || len(fake.labels) != 0 {
+		t.Fatalf("no state: closed %d comments %v labels %v", fake.closed, fake.comments, fake.labels)
 	}
 }
 
@@ -285,6 +297,7 @@ func TestReviewQueueSupersededActionGitHubErrors(t *testing.T) {
 		GHClient: ghpkg.NewClient("app-token", "acme", []string{"widget"}, slog.Default(), api.URL),
 		Logger:   slog.Default(),
 	}
+	s.audit.LogRecord("system", supersessionDetectedAuditAction, supersessionGraceDetail("widget", 7, "acme/widget#3", 9), "", "widget", 7)
 	w := httptest.NewRecorder()
 	s.handleReviewQueueSupersededClose(w, supersededActionRequest("acme", "widget", "7", "close", true))
 	if w.Code != http.StatusBadGateway {

@@ -85,10 +85,19 @@ func WebhookHealthSnapshot() WebhookHealth {
 }
 
 // ObserveWebhookHealth reports whether webhooks are healthy and whether this
-// observation is the first one since they went healthy → stale, so callers can
-// WARN exactly once per transition.
-func ObserveWebhookHealth() (healthy, becameStale bool) {
+// observation is the first one since they changed state in either direction
+// (stale → healthy, healthy → stale), so callers can log exactly once per
+// transition.
+func ObserveWebhookHealth() (healthy, becameHealthy, becameStale bool) {
 	return sharedWebhookTracker.observe()
+}
+
+// RecordWebhookEventForTest records a delivery for repo as if a verified
+// webhook had arrived, so tests outside this package can drive webhook health
+// without a GitHub client.
+func RecordWebhookEventForTest(repo string) {
+	key := canonicalPRDetailRepo(repo)
+	sharedWebhookTracker.recordEvent([]string{key})
 }
 
 func (t *webhookTracker) recordEvent(aliases []string) {
@@ -260,13 +269,14 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	return out
 }
 
-func (t *webhookTracker) observe() (healthy, becameStale bool) {
+func (t *webhookTracker) observe() (healthy, becameHealthy, becameStale bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	healthy, _ = t.healthyLocked(t.now())
+	becameHealthy = !t.wasHealthy && healthy
 	becameStale = t.wasHealthy && !healthy
 	t.wasHealthy = healthy
-	return healthy, becameStale
+	return healthy, becameHealthy, becameStale
 }
 
 func pruneWebhookTimes(in []time.Time, now time.Time) []time.Time {
@@ -298,6 +308,13 @@ func ResetWebhookTrackerForTest() func() {
 	return resetWebhookTrackerForTest(nil)
 }
 
+// ResetWebhookTrackerForTestWithClock is ResetWebhookTrackerForTest with an
+// injected clock, so a test can age a recorded delivery past the health
+// window without sleeping.
+func ResetWebhookTrackerForTestWithClock(now func() time.Time) func() {
+	return resetWebhookTrackerForTest(now)
+}
+
 type webhookPRRef struct {
 	Number int `json:"number"`
 }
@@ -309,7 +326,14 @@ type webhookEventPayload struct {
 	Number      int    `json:"number"`
 	Action      string `json:"action"`
 	PullRequest *struct {
-		Number int `json:"number"`
+		Number   int        `json:"number"`
+		Title    string     `json:"title"`
+		Body     string     `json:"body"`
+		Merged   bool       `json:"merged"`
+		MergedAt *time.Time `json:"merged_at"`
+		Head     struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
 	} `json:"pull_request"`
 	Issue *struct {
 		Number      int              `json:"number"`
@@ -363,6 +387,11 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		if hook := issueReopenedHook(); hook != nil {
 			hook(configured, n, sharedWebhookTracker.now())
 		}
+	}
+	if merged, ok := webhookMergedPR(event, p); ok {
+		// A merged revert names the PR it undid; the payload already carries
+		// the title and body, so this costs no GitHub call (#13241).
+		c.RecordReviewEvidenceRevert(merged)
 	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	for _, n := range numbers {
@@ -467,7 +496,7 @@ func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []s
 	}
 
 	switch event {
-	case "pull_request", "pull_request_review":
+	case "pull_request", "pull_request_review", "pull_request_review_comment":
 		if p.PullRequest != nil && p.PullRequest.Number > 0 {
 			add(p.PullRequest.Number)
 		} else {

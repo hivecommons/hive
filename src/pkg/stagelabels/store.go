@@ -1,12 +1,15 @@
 package stagelabels
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -99,6 +102,12 @@ type Record struct {
 	// byte-identical comment (hivecommons/hive#12878).
 	EntryCommentedHead  string `json:"entry_commented_head,omitempty"`
 	EntryCommentedStage Stage  `json:"entry_commented_stage,omitempty"`
+	// EntryCommentedCauses are the cause digests (EntryCause) of every
+	// entry comment posted for EntryCommentedStage/EntryCommentedHead. A
+	// parked PR whose decision cause changes on the same head — sentinel
+	// alert cleared, workflow-path fence now the blocker — gets each distinct
+	// cause explained once, not a byte-identical repost and not silence.
+	EntryCommentedCauses []string `json:"entry_commented_causes,omitempty"`
 	// History is the item's recent stage transitions, oldest first, capped
 	// at HistoryLimit: each entry is the stage entered, when, and the reason
 	// at entry. The dashboard's Hive activity monitor renders it as the
@@ -568,6 +577,14 @@ func IsRegression(from, to Stage) bool {
 		}
 		return to != ReviewPending && to != Reviewed
 	case Fixing, NeedsAuthor, ReturnedToContributor:
+		// 070/071/072 are one "someone must fix this head" state split by
+		// who owes the fix. Moving between them re-attributes the work
+		// (072 → 070 when the hive's own follow-up commit is what broke
+		// the squash sign-off gate, 072 → 071 when the author kind is
+		// learned late); nothing moved backwards for the author.
+		if to == Fixing || to == NeedsAuthor || to == ReturnedToContributor {
+			return false
+		}
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
 		return false
@@ -611,17 +628,58 @@ func (s *Store) MarkRegressionCommentedForHead(key, head string) {
 // MarkEntryCommented records that the entry comment for the current stage
 // visit was posted for the given head.
 func (s *Store) MarkEntryCommented(key, head string) {
+	s.MarkEntryCommentedCause(key, head, "")
+}
+
+// MarkEntryCommentedCause is MarkEntryCommented that also remembers which
+// cause (EntryCause of the comment's reasons) the comment explained. A new
+// head or stage starts the cause list over.
+func (s *Store) MarkEntryCommentedCause(key, head, cause string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || (r.EntryCommented && r.EntryCommentedHead == head && r.EntryCommentedStage == r.Stage) {
+	if !ok {
 		return
+	}
+	sameVisit := r.EntryCommented && r.EntryCommentedHead == head && r.EntryCommentedStage == r.Stage
+	if sameVisit && (cause == "" || slices.Contains(r.EntryCommentedCauses, cause)) {
+		return
+	}
+	if r.EntryCommentedHead != head || r.EntryCommentedStage != r.Stage {
+		r.EntryCommentedCauses = nil
 	}
 	r.EntryCommented = true
 	r.EntryCommentedHead = head
 	r.EntryCommentedStage = r.Stage
+	if cause != "" && !slices.Contains(r.EntryCommentedCauses, cause) {
+		r.EntryCommentedCauses = append(r.EntryCommentedCauses, cause)
+	}
 	s.items[key] = r
 	s.dirty = true
+}
+
+// EntryCause digests an entry comment's reasons (the bullet list, not the
+// evidence summary whose soak clock ticks) so two comments that would tell
+// the maintainer the same thing compare equal.
+func EntryCause(reasons []string) string {
+	if len(reasons) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(strings.Join(reasons, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// EntryCommentExplains reports whether an entry comment already posted for
+// this stage on head covered the given cause (EntryCommented itself may be
+// reset by a flap through another stage). Records written before
+// causes were tracked (empty list) are taken as explained: the cause they
+// posted is unknown, and a repost on every parked PR after an upgrade is
+// worse than one missed refresh.
+func (r Record) EntryCommentExplains(head, cause string) bool {
+	if r.EntryCommentedHead != head || r.EntryCommentedStage != r.Stage {
+		return false
+	}
+	return len(r.EntryCommentedCauses) == 0 || cause == "" || slices.Contains(r.EntryCommentedCauses, cause)
 }
 
 // MarkStallCommented records that the stall note for this stage visit was posted.

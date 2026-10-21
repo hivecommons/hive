@@ -591,7 +591,7 @@ func (s *Scheduler) independentReviewSection(agentName string) string {
 	if !ok || !agentCfg.ReviewModels.Configured() {
 		return ""
 	}
-	return "## Independent review\n\nFor each PR whose list line includes `review_with=<backend>/<model>`, launch a sub-agent (Agent tool) with `model` set to the PR's `review_with` model value. Give the sub-agent the PR URL plus the review checklist, and have it probe author-model failure modes: invented APIs, tests that assert the implementation rather than the requirement, and swallowed errors. Record the sub-agent's verdict and model in the verdict artifact as `review_model`. Never review a PR yourself with the author's model."
+	return review.QueueIndependentReviewSection()
 }
 
 func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {

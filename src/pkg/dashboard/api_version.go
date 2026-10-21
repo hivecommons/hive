@@ -45,6 +45,11 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["last_seen_stdio_at"] = at.Format(time.RFC3339)
 		}
 	}
+	// release is the build-stamped semver (`hive --version`); "version" above
+	// is a legacy constant, so the UI reads this field instead (#13130).
+	if release, _ := fleetReportBuildInfo(); release != "" && release != "unknown" {
+		resp["release"] = release
+	}
 	if channel != "" {
 		resp["channel"] = channel
 	}

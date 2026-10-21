@@ -294,7 +294,10 @@ func TestEnsureFleetReportWithOptionsSkipsSeenCommentInsideGapButStillLabels(t *
 	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
 	opts := selfReportTestOptions()
 	opts.SeenCommentAllowed = false
-	res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-x"), opts)
+	report := selfReportTestReport("fp-x")
+	// #13211: the hive's display name and dashboard URL ride along onto its line.
+	report.HiveName, report.SpokeURL = "kellya", "https://kellya.hive.example.dev"
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +307,7 @@ func TestEnsureFleetReportWithOptionsSkipsSeenCommentInsideGapButStillLabels(t *
 	if len(f.labelsCreated) != 0 {
 		t.Fatalf("existing labels re-created: %v", f.labelsCreated)
 	}
-	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (2):**\n- hosted-aslom (instance inst-aslom) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], `\n- other-hive — owner(s): unknown — seen 1\n`) {
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (2):**\n- kellya (hosted-aslom) (instance inst-aslom) — [open](https://kellya.hive.example.dev) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], `\n- other-hive — owner(s): unknown — seen 1\n`) {
 		t.Fatalf("body patches = %q", f.bodyPatches)
 	}
 }

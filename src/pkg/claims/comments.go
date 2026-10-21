@@ -108,10 +108,16 @@ func TakeoverComment(now, previous Claim) string {
 	return b.String()
 }
 
-// ReleaseComment renders the comment posted when a claim is released.
+// ReleaseComment renders the comment posted when a claim is released. The
+// marker's at= lets a reader (issueclaim.Latest) order the release against
+// the 🔒 marker it ends; the claim comment itself is never edited.
 func ReleaseComment(c Claim, reason string) string {
+	return releaseCommentAt(c, reason, time.Now())
+}
+
+func releaseCommentAt(c Claim, reason string, at time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s reason=%s -->\n", markerRelease, c.Holder, c.Kind, sanitizeReason(reason))
+	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s reason=%s at=%s -->\n", markerRelease, c.Holder, c.Kind, sanitizeReason(reason), at.UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "🔓 Claim by %s released (%s).", mention(c), reason)
 	return b.String()
 }

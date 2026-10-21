@@ -120,6 +120,8 @@ func generalAdvancedSectionResponse(cfg *config.Config) map[string]interface{} {
 
 		"eval_interval_max_s":              cfg.Governor.EvalIntervalMaxS,
 		"eval_interval_webhook_s":          cfg.Governor.EvalIntervalWebhookS,
+		"webhook_wake_debounce_s":          cfg.Governor.WebhookWakeDebounceS,
+		"webhook_wake_min_gap_s":           cfg.Governor.WebhookWakeMinGapS,
 		"conserve_interval_multiplier":     cfg.Governor.ConserveIntervalMultiplier,
 		"optional_sweep_every_n_cycles":    cfg.Governor.OptionalSweepEveryNCycles,
 		"provider_budget_probe_interval_s": cfg.Governor.ProviderBudget.ProbeIntervalS,
@@ -130,6 +132,8 @@ func generalAdvancedSectionResponse(cfg *config.Config) map[string]interface{} {
 		"loop_defaults": map[string]int{
 			"eval_interval_max_s":              config.DefaultEvalIntervalMaxS,
 			"eval_interval_webhook_s":          config.DefaultEvalIntervalWebhookS,
+			"webhook_wake_debounce_s":          config.DefaultWebhookWakeDebounceS,
+			"webhook_wake_min_gap_s":           config.DefaultWebhookWakeMinGapS,
 			"conserve_interval_multiplier":     config.DefaultConserveIntervalMultiplier,
 			"optional_sweep_every_n_cycles":    config.DefaultOptionalSweepEveryNCycles,
 			"provider_budget_probe_interval_s": config.DefaultProviderBudgetProbeIntervalS,
@@ -144,6 +148,8 @@ func generalAdvancedSectionResponse(cfg *config.Config) map[string]interface{} {
 type governorLoopSettings struct {
 	EvalIntervalMaxS             *int `json:"eval_interval_max_s"`
 	EvalIntervalWebhookS         *int `json:"eval_interval_webhook_s"`
+	WebhookWakeDebounceS         *int `json:"webhook_wake_debounce_s"`
+	WebhookWakeMinGapS           *int `json:"webhook_wake_min_gap_s"`
 	ConserveIntervalMultiplier   *int `json:"conserve_interval_multiplier"`
 	OptionalSweepEveryNCycles    *int `json:"optional_sweep_every_n_cycles"`
 	ProviderBudgetProbeIntervalS *int `json:"provider_budget_probe_interval_s"`
@@ -160,6 +166,8 @@ func (b governorLoopSettings) validate(cur config.GovernorConfig, evalIntervalS 
 	}{
 		{b.EvalIntervalMaxS, "eval_interval_max_s", true},
 		{b.EvalIntervalWebhookS, "eval_interval_webhook_s", true},
+		{b.WebhookWakeDebounceS, "webhook_wake_debounce_s", true},
+		{b.WebhookWakeMinGapS, "webhook_wake_min_gap_s", true},
 		{b.ConserveIntervalMultiplier, "conserve_interval_multiplier", false},
 		{b.OptionalSweepEveryNCycles, "optional_sweep_every_n_cycles", false},
 		{b.ProviderBudgetProbeIntervalS, "provider_budget_probe_interval_s", true},
@@ -202,6 +210,8 @@ func (b governorLoopSettings) apply(g *config.GovernorConfig) {
 	}{
 		{b.EvalIntervalMaxS, &g.EvalIntervalMaxS, config.DefaultEvalIntervalMaxS},
 		{b.EvalIntervalWebhookS, &g.EvalIntervalWebhookS, config.DefaultEvalIntervalWebhookS},
+		{b.WebhookWakeDebounceS, &g.WebhookWakeDebounceS, config.DefaultWebhookWakeDebounceS},
+		{b.WebhookWakeMinGapS, &g.WebhookWakeMinGapS, config.DefaultWebhookWakeMinGapS},
 		{b.ConserveIntervalMultiplier, &g.ConserveIntervalMultiplier, config.DefaultConserveIntervalMultiplier},
 		{b.OptionalSweepEveryNCycles, &g.OptionalSweepEveryNCycles, config.DefaultOptionalSweepEveryNCycles},
 	} {

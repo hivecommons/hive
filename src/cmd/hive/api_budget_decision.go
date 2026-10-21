@@ -94,9 +94,16 @@ func webhookAwareEvalInterval(budgetInterval time.Duration, webhookSeconds, maxS
 
 // evalIntervalForConfig is the governor loop's effective eval interval: the
 // API-budget stretch composed with the webhook-healthy interval. It also
-// publishes the webhook health window (2 × eval_interval_s) and WARNs once per
-// healthy → stale transition.
+// publishes the webhook health window (2 × eval_interval_s) and logs once per
+// transition: WARN on healthy → stale, INFO on stale → healthy.
 func evalIntervalForConfig(cfg *config.Config, client *github.Client, logger *slog.Logger) time.Duration {
+	interval, _ := evalIntervalAndModeForConfig(cfg, client, logger)
+	return interval
+}
+
+// evalIntervalAndModeForConfig is evalIntervalForConfig plus the pacing mode
+// /api/status reports ("webhook" while healthy webhooks set the base tick).
+func evalIntervalAndModeForConfig(cfg *config.Config, client *github.Client, logger *slog.Logger) (time.Duration, string) {
 	budget := apiBudgetIntervalForConfig(cfg, client)
 	base, webhookS, maxS := 300, 900, 1800
 	if cfg != nil {
@@ -106,14 +113,20 @@ func evalIntervalForConfig(cfg *config.Config, client *github.Client, logger *sl
 		}
 	}
 	github.SetWebhookHealthWindow(2 * time.Duration(base) * time.Second)
-	healthy, becameStale := github.ObserveWebhookHealth()
-	if becameStale && logger != nil {
+	healthy, becameHealthy, becameStale := github.ObserveWebhookHealth()
+	interval := webhookAwareEvalInterval(budget, webhookS, maxS, healthy)
+	if logger != nil && (becameHealthy || becameStale) {
 		snap := github.WebhookHealthSnapshot()
-		args := []any{"window_seconds", 2 * base, "eval_interval_s", base}
+		args := []any{"window_seconds", 2 * base, "eval_interval_s", base, "eval_interval_webhook_s", webhookS,
+			"effective_interval_s", int(interval.Seconds())}
 		if snap.LastEventAt != nil {
 			args = append(args, "last_event_at", snap.LastEventAt.Format(time.RFC3339))
 		}
-		logger.Warn("github webhooks went stale; falling back to the configured eval interval and TTL-bound PR cache", args...)
+		if becameStale {
+			logger.Warn("github webhooks went stale; eval mode poll: falling back to the configured eval interval and TTL-bound PR cache", args...)
+		} else {
+			logger.Info("github webhooks healthy; eval mode webhook: base tick stretched to eval_interval_webhook_s, webhook wakes drive early cycles", args...)
+		}
 	}
-	return webhookAwareEvalInterval(budget, webhookS, maxS, healthy)
+	return interval, evalModeForInterval(healthy, webhookS)
 }

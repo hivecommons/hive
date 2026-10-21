@@ -705,13 +705,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// (kubestellar/hive#4245). Every exclusion below keys on ref.Key(), so
 		// two zero-numbered external items are distinct work rather than one
 		// shared "repo#0".
-		ref    worksource.Ref
-		title  string
-		url    string
-		stage  string
-		labels []string
-		lane   string
-		isOwn  bool
+		ref          worksource.Ref
+		title        string
+		body         string
+		targetBranch string
+		url          string
+		stage        string
+		labels       []string
+		lane         string
+		isOwn        bool
 		// interestMatch is true when the issue carries a label the contributor has
 		// opted into (#2637). It is a SOFT priority tier below own-work: matching
 		// work is offered first, but a contributor with no match still gets other
@@ -791,6 +793,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// its longer quarantine. This is the primary livelock fix — a failing
 			// issue at the head of the scan is no longer instantly re-admissible.
 			if h.isTaskInFailureCooldownKey(itemKey) {
+				return
+			}
+			// hivecommons/hive#13093: this contributor released the item
+			// without shipping recently; others may take it, not them.
+			if h.inReclaimCooldown(identityOf(c), itemKey) {
 				return
 			}
 			if activeIssues[itemKey] {
@@ -930,6 +937,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			}
 
 			title, _ := issue["title"].(string)
+			body, _ := issue["body"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
 			lane, _ := issue["lane"].(string)
@@ -988,8 +996,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				number:   number,
 				ref:      ref,
 				title:    title,
-				url:      url,
-				stage:    stage,
+				body:     body,
+				targetBranch: h.wrongBaseTargetBranchKey(
+					itemKey, issueUpdatedAtFromMap(issue)),
+				url:   url,
+				stage: stage,
 				// The issue's own labels travel with the candidate so the chosen
 				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
@@ -1193,7 +1204,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	unlock()
 
 	if chosen.extEngine != "" {
-		prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, false, h.writingGuideSection(), h.taskPromptRepoHints(chosen.repoFull))
+		prompt := buildTaskPromptForContributorWithIssue(chosen.ref, chosen.title, chosen.body,
+			chosen.targetBranch, false, h.writingGuideSection(), h.taskPromptRepoHints(chosen.repoFull))
 		if chosen.stage != "" {
 			prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)
 		}
@@ -1310,9 +1322,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// hive's guide on that hive's tasks. Unset renders nothing.
 	guide := h.writingGuideSection()
 	hints := h.taskPromptRepoHints(chosen.repoFull)
-	prompt := buildTaskPromptForContributorWithHints(chosen.ref, chosen.title, canPush, guide, hints)
+	prompt := buildTaskPromptForContributorWithIssue(chosen.ref, chosen.title, chosen.body,
+		chosen.targetBranch, canPush, guide, hints)
 	if requestedRole != "" {
-		prompt = buildRoleTaskPromptForContributorWithHints(chosen.ref, chosen.title, requestedRole, h.roleKickPrompt(requestedRole), canPush, guide, hints)
+		prompt = wrapRoleTaskPrompt(prompt, requestedRole, h.roleKickPrompt(requestedRole))
 	}
 	if chosen.stage != "" {
 		prompt += runStageWorktreePrompt(chosen.repoFull, chosen.ref.Key(), chosen.stage, gen)

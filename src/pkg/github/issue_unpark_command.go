@@ -110,6 +110,11 @@ type IssueUnparkEvent struct {
 
 // IssueUnparkSweepOptions configures SweepIssueUnparkCommands.
 type IssueUnparkSweepOptions struct {
+	// PRApproveReply explains a `/hive approve` reply on a pull request using
+	// the merge engine's policy: what the lane will do with it and why it
+	// cannot use it (hivecommons/hive#13087). It must not merge or change
+	// labels. nil leaves PRs to the 085 decision path alone.
+	PRApproveReply func(context.Context, string, int, *gh.IssueComment) (string, error)
 	// MaxActions caps the issues written to in one pass. Zero means
 	// DefaultIssueUnparkSweepMaxActions.
 	MaxActions int
@@ -182,12 +187,13 @@ type IssueLabelApprovalEvent struct {
 type IssueUnparkSweepResult struct {
 	// Seen counts parked issues examined.
 	Seen int
-	// Skipped counts parked issues that carried no actionable command.
+	// Skipped counts parked issues that carried no actionable command, plus
+	// issues and PRs whose comment read or reply failed in this pass.
 	Skipped int
 	// Unparked lists the issues whose parking labels were cleared.
 	Unparked []IssueUnparkEvent
-	// Replies counts answers posted that did not un-park: `/hive help`, and
-	// the hint left when a maintainer approves in prose.
+	// Replies counts answers posted that did not un-park: `/hive help`, the
+	// hint left when a maintainer approves in prose, and PR approval replies.
 	Replies int
 	// LabelApproved lists the acceptances acted on via a configured approval
 	// label on label-driven repos (hivecommons/hive#11313).
@@ -268,8 +274,29 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			}
 			labels := issueLabelNames(issue.Labels)
 			if issue.IsPullRequest() {
-				// PRs take one command only — `/hive decision` while parked
-				// at 085 (hivecommons/hive#13041) — and never a notice.
+				// `/hive approve` on any PR gets an acknowledgement or an
+				// explanation of why the lane cannot use it
+				// (hivecommons/hive#13087). It never removes labels, so no
+				// parking label is required and the reply is not an action
+				// against the issue path.
+				if opts.PRApproveReply != nil && issue.GetComments() > 0 && !issue.GetUpdatedAt().Time.Before(cutoff) {
+					acted, err := c.replyPRApproveCommand(ctx, repo, owner, repoName, issue, cutoff, opts.PRApproveReply)
+					if err != nil {
+						// One PR's failure must not stop un-parking for the rest of the pass.
+						if c.logger != nil {
+							c.logger.Warn("unpark sweep skipped PR approve reply", "repo", repo, "pr", issue.GetNumber(), "error", err)
+						}
+						result.Skipped++
+						continue
+					}
+					if acted {
+						result.Replies++
+						continue
+					}
+				}
+				// Otherwise PRs take one command only — `/hive decision`
+				// while parked at 085 (hivecommons/hive#13041) — and never a
+				// notice.
 				if !labelPresent(labels, PRNeedsDecisionStageLabel) {
 					continue
 				}

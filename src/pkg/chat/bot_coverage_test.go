@@ -816,7 +816,7 @@ func TestDiffAgents_WorkingToIdleWithLongSummary(t *testing.T) {
 }
 
 func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
-	b := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example"}, discardLogger())
+	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example"}, discardLogger())
 
 	prev := &statusSnapshot{
 		Agents: []agentSnapshot{{Name: "scanner", Busy: "working"}},
@@ -845,7 +845,7 @@ func TestDiffAgents_WorkingToIdleSuppressesChromeSummary(t *testing.T) {
 }
 
 func TestDiffAgents_WorkingToIdleUsesOutcomeWorkDurationAndDetails(t *testing.T) {
-	b := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example/"}, discardLogger())
+	b := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example/"}, discardLogger())
 
 	started := time.Now().Add(-90 * time.Minute).UTC().Format(time.RFC3339)
 	prev := &statusSnapshot{
@@ -912,9 +912,20 @@ func TestAgentCompletionHelpers(t *testing.T) {
 		}
 	}
 
-	svc := NewService(&recordingBackend{}, Config{DashboardURL: "https://hive.example/"}, discardLogger())
+	svc := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002", PublicURL: "https://hive.example/"}, discardLogger())
 	if got := svc.agentDetailsSuffix("agent/name"); got != " — details: https://hive.example/#agent%2Fname" {
 		t.Fatalf("details suffix = %q", got)
+	}
+	local := NewService(&recordingBackend{}, Config{DashboardURL: "http://localhost:3002"}, discardLogger())
+	if got := local.agentDetailsSuffix("agent"); got != "" {
+		t.Fatalf("details suffix without public URL = %q, want empty", got)
+	}
+	got := svc.agentCompletionText(agentSnapshot{Name: "a", Busy: "idle", AuthKnown: true}, agentSnapshot{})
+	if !strings.HasPrefix(got, "Failed — agent CLI could not run (no credential for its backend)") || strings.Contains(got, "Completed") {
+		t.Fatalf("no-credential completion = %q", got)
+	}
+	if got := svc.agentCompletionText(agentSnapshot{Busy: "idle", NeedsLogin: true}, agentSnapshot{}); !strings.Contains(got, "Failed") {
+		t.Fatalf("needs-login completion = %q", got)
 	}
 	if got := svc.agentCompletionText(agentSnapshot{Busy: "idle"}, agentSnapshot{}); !strings.Contains(got, "no new work") {
 		t.Fatalf("fallback completion = %q", got)

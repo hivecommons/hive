@@ -48,6 +48,8 @@ func TestGovernorLoopSettingsParityBatch7RoundTrip(t *testing.T) {
 	rec := doPut(s, generalAdvancedPath, map[string]any{
 		"eval_interval_max_s":              3600,
 		"eval_interval_webhook_s":          600,
+		"webhook_wake_debounce_s":          5,
+		"webhook_wake_min_gap_s":           45,
 		"conserve_interval_multiplier":     3,
 		"optional_sweep_every_n_cycles":    2,
 		"provider_budget_probe_interval_s": 900,
@@ -56,6 +58,7 @@ func TestGovernorLoopSettingsParityBatch7RoundTrip(t *testing.T) {
 		t.Fatalf("general-advanced PUT: %d — %s", rec.Code, rec.Body.String())
 	}
 	if g.EvalIntervalMaxS != 3600 || g.EvalIntervalWebhookS != 600 || g.ConserveIntervalMultiplier != 3 ||
+		g.WebhookWakeDebounceS != 5 || g.WebhookWakeMinGapS != 45 ||
 		g.OptionalSweepEveryNCycles != 2 || g.ProviderBudget.ProbeIntervalS != 900 {
 		t.Fatalf("loop settings not applied: %+v", *g)
 	}
@@ -66,6 +69,8 @@ func TestGovernorLoopSettingsParityBatch7RoundTrip(t *testing.T) {
 	for key, want := range map[string]float64{
 		"eval_interval_max_s":              3600,
 		"eval_interval_webhook_s":          600,
+		"webhook_wake_debounce_s":          5,
+		"webhook_wake_min_gap_s":           45,
 		"conserve_interval_multiplier":     3,
 		"optional_sweep_every_n_cycles":    2,
 		"provider_budget_probe_interval_s": 900,
@@ -87,6 +92,8 @@ func TestGovernorLoopSettingsParityBatch7RoundTrip(t *testing.T) {
 	if rec := doPut(s, generalAdvancedPath, map[string]any{
 		"eval_interval_max_s":              0,
 		"eval_interval_webhook_s":          0,
+		"webhook_wake_debounce_s":          0,
+		"webhook_wake_min_gap_s":           0,
 		"conserve_interval_multiplier":     0,
 		"optional_sweep_every_n_cycles":    0,
 		"provider_budget_probe_interval_s": 0,
@@ -94,6 +101,7 @@ func TestGovernorLoopSettingsParityBatch7RoundTrip(t *testing.T) {
 		t.Fatalf("clearing loop settings: %d — %s", rec.Code, rec.Body.String())
 	}
 	if g.EvalIntervalMaxS != 1800 || g.EvalIntervalWebhookS != 900 || g.ConserveIntervalMultiplier != 2 ||
+		g.WebhookWakeDebounceS != 10 || g.WebhookWakeMinGapS != 30 ||
 		g.OptionalSweepEveryNCycles != 1 || g.ProviderBudget.ProbeIntervalS != 0 {
 		t.Fatalf("cleared loop settings did not restore defaults: %+v", *g)
 	}
@@ -246,6 +254,8 @@ func TestParityBatch7SettingsRenderEveryKey(t *testing.T) {
 	for _, c := range []struct{ yaml, control string }{
 		{"governor.eval_interval_max_s", `num('eval_interval_max_s'`},
 		{"governor.eval_interval_webhook_s", `num('eval_interval_webhook_s'`},
+		{"governor.webhook_wake_debounce_s", `num('webhook_wake_debounce_s'`},
+		{"governor.webhook_wake_min_gap_s", `num('webhook_wake_min_gap_s'`},
 		{"governor.conserve_interval_multiplier", `num('conserve_interval_multiplier'`},
 		{"governor.optional_sweep_every_n_cycles", `num('optional_sweep_every_n_cycles'`},
 		{"governor.provider_budget.probe_interval_s", `num('provider_budget_probe_interval_s'`},

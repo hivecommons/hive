@@ -426,6 +426,22 @@ func bindMergeAuthz(inner func(agent string, fileUID int, repo string) error) gi
 	}
 }
 
+// relayLanePolicyGate builds the merge-request relay's lane-policy gate on
+// the client the relays run on: an auto-merge engine over the same Options
+// (and therefore the same live contributor-lane policy, registry lookup and
+// reviewer verdicts) the sweep uses, asked RelayMergeRefusal per request.
+// Observed live on hivecommons/docs#401: without it, a scanner's merge
+// request landed an untrusted-tier contributor's PR that the contributor
+// lane would have refused on tier and soak alone.
+func relayLanePolicyGate(opts automerge.Options) func(*github.Client) github.MergeRequestPolicyGate {
+	return func(c *github.Client) github.MergeRequestPolicyGate {
+		if c == nil {
+			return nil
+		}
+		return automerge.New(c, opts).RelayMergeRefusal
+	}
+}
+
 // mergeableJSON renders a tri-state mergeability verdict for the
 // merge-eligible.json marker, mapping the unknown zero value to an explicit
 // "unknown" rather than an empty string.
@@ -560,6 +576,14 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	if held {
 		return mergeBucketSkip, blockedOrOutstanding("label:hold"), ""
 	}
+	// A PR parked on a person's decision (stage/085-needs-decision, or the
+	// issue-side stage/045 spelling a hook may have left on it) is a
+	// human's to release, so it is never merge-eligible — the relay must
+	// not land it however green it is. Like the hold it sits after the red
+	// classification: a parked RED PR is still its author's to repair.
+	if parked := needsDecisionParkLabel(pr.Labels); parked != "" {
+		return mergeBucketSkip, blockedOrOutstanding("label:" + parked + " — parked on a human decision"), ""
+	}
 
 	if conflictMergeState(pr) {
 		return mergeBucketConflict, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: notMergeableReason(pr, "")}, ""
@@ -646,6 +670,18 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		reason += " — mergeability not yet fetched; the sweep re-checks it at merge time"
 	}
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
+}
+
+// needsDecisionParkLabel returns the needs-decision parking stage label a PR
+// carries (PR stage 085 or the issue-side 045 spelling), lower-cased, or "".
+func needsDecisionParkLabel(labels []string) string {
+	for _, label := range labels {
+		lower := strings.ToLower(strings.TrimSpace(label))
+		if lower == strings.ToLower(github.PRNeedsDecisionStageLabel) || lower == strings.ToLower(github.NeedsDecisionStageLabel) {
+			return lower
+		}
+	}
+	return ""
 }
 
 // blockLabelNeedsRebase is the automergeBlockLabelReason result for prow's

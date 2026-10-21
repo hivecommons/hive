@@ -227,14 +227,22 @@ func (s *Service) fetchInceptionState(ctx context.Context) (*inceptionStateRespo
 }
 
 func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, content string) {
+	// Same identity rule as commands (router.go, F8): a server-verified
+	// dashboard role stands in only while no allowlist is configured.
+	var role string
+	var ok bool
 	if s.allowedUserCount() == 0 {
-		return
+		role, ok = trustedMessageRole(msg)
+	} else {
+		role, ok = s.allowedUserRole(msg.AuthorID)
 	}
-	role, ok := s.allowedUserRole(msg.AuthorID)
 	if !ok || !config.RoleAtLeast(role, config.RoleOwner) {
 		return
 	}
 	key := s.pendingKey(msg.AuthorID)
+	if msg.TrustedRole != "" {
+		s.seedPendingInterviewFromState(ctx, key)
+	}
 	s.mu.Lock()
 	pending := s.pendingInterviews[key]
 	if pending == nil {
@@ -261,6 +269,35 @@ func (s *Service) handlePendingInterviewReply(ctx context.Context, msg Message, 
 		s.mu.Unlock()
 	}
 	s.enqueue(reply)
+}
+
+// seedPendingInterviewFromState seeds key's interview from the live
+// inception state when none is pending yet. The dashboard only forwards an
+// unprefixed reply (TrustedRole set) while the engine is in clarify, which can
+// be before the next status snapshot reaches diffInception (#13215).
+func (s *Service) seedPendingInterviewFromState(ctx context.Context, key pendingInterviewKey) {
+	s.mu.Lock()
+	_, exists := s.pendingInterviews[key]
+	s.mu.Unlock()
+	if exists {
+		return
+	}
+	state, err := s.fetchInceptionState(ctx)
+	if err != nil || !state.Active || state.State.Phase != "clarify" || len(state.State.Questions) == 0 {
+		return
+	}
+	answers := make(map[string]string, len(state.State.Answers))
+	for k, v := range state.State.Answers {
+		answers[k] = v
+	}
+	s.mu.Lock()
+	if _, exists := s.pendingInterviews[key]; !exists {
+		s.pendingInterviews[key] = &pendingInterview{
+			Questions: append([]inceptionQuestion(nil), state.State.Questions...),
+			Answers:   answers,
+		}
+	}
+	s.mu.Unlock()
 }
 
 func (p *pendingInterview) lowestUnanswered() (inceptionQuestion, bool) {

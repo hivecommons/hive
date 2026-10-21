@@ -22,6 +22,16 @@ const (
 	// tokenRestartCooldownSec and uncapped: it stops firing the moment a
 	// relaunch validates.
 	rateLimitRestartCooldownSec = 300
+	// rateLimitRelaunchFleetSpacing is the minimum gap between rate-limit
+	// relaunches ACROSS agents. The per-agent cooldown alone re-creates the
+	// burst that was limited: every agent that saw the banner during the
+	// boot stagger comes due 300s later in the same tight sequence and all
+	// of them validate against the one exhausted budget again (observed
+	// 2026-10-20 on hosted-available-oke-11: 22 relaunches across 11 agents
+	// after each roll). Spacing the fleet out means one validation per
+	// window, so a budget that has recovered admits the first and the rest
+	// follow one by one instead of re-tripping the limit together.
+	rateLimitRelaunchFleetSpacing = 30 * time.Second
 	// loginPromptTailLines bounds the pane region the login-prompt detector
 	// reads: a prompt the CLI is stuck at sits at the pane bottom, while
 	// echoed kick text and startup flashes live in scrollback (see the poller).

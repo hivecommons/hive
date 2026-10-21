@@ -339,6 +339,9 @@ jobs:
       # layers only). The main build then hits those layers locally and does
       # NO cache export at all. continue-on-error: pure optimization — if the
       # gha cache service hiccups, the main build just recompiles tmux.
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Warm tmux-builder layer cache
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -347,6 +350,8 @@ jobs:
           file: src/Dockerfile
           platforms: ${{ matrix.platform }}
           target: tmux-builder
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
@@ -360,6 +365,7 @@ jobs:
           file: src/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ needs.gate.outputs.sha }}
             GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}
@@ -434,6 +440,7 @@ jobs:
             IMG=hive-freshness-probe:local
             docker buildx build --load \
               -f src/Dockerfile \
+              --build-arg BASE_REGISTRY="$BASE_REGISTRY" \
               --build-arg GIT_HASH="$EXPECTED_SHA" \
               --build-arg GIT_BRANCH="$REF_NAME" \
               --build-arg VERSION="${{ needs.gate.outputs.release_version }}" \
@@ -443,7 +450,7 @@ jobs:
           echo "image reports: $ACTUAL"
           echo "expected commit: ${EXPECTED_SHA::7} (from $EXPECTED_SHA)"
           case "$ACTUAL" in
-            *"commit ${EXPECTED_SHA::7},"*)
+            *"commit ${EXPECTED_SHA::7}"*)
               echo "Freshness OK: embedded commit matches the built SHA"
               ;;
             *)
@@ -474,6 +481,21 @@ jobs:
             IMG=hive-freshness-probe:local
           fi
           bash src/deploy/test_image_suid_inventory.sh --image "$IMG"
+
+      # The runtime stage distrusts two withdrawn Mozilla roots (see "Layer 1b"
+      # in src/Dockerfile). Prove the built image actually rejects chains that
+      # end in them, for every static-bundle client it ships: curl (system
+      # bundle), node (NODE_OPTIONS=--use-openssl-ca → system bundle) and the
+      # control that the bundle still trusts a normal public site.
+      - name: Assert distrusted CA roots are rejected
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.gate.outputs.push }}" = "true" ]; then
+            IMG="ghcr.io/${{ github.repository_owner }}/hive@${{ steps.build.outputs.digest }}"
+          else
+            IMG=hive-freshness-probe:local
+          fi
+          bash src/deploy/test_image_ca_distrust.sh --image "$IMG"
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
@@ -692,25 +714,8 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
-      - name: Resolve contributor base manifests with retry
-        shell: bash
-        env:
-          CONTRIBUTOR_BASE_IMAGES: |
-            mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
-            mirror.gcr.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
-        run: |
-          set -euo pipefail
-          for image in $CONTRIBUTOR_BASE_IMAGES; do
-            for attempt in 1 2 3; do
-              if docker buildx imagetools inspect "$image" >/dev/null; then
-                continue 2
-              fi
-              if [ "$attempt" -lt 3 ]; then
-                sleep 90
-              fi
-            done
-            docker buildx imagetools inspect "$image" >/dev/null
-          done
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
 
       - name: Build and push contributor image by digest
         id: build
@@ -719,6 +724,8 @@ jobs:
           context: .
           file: src/Dockerfile.contributor
           platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
@@ -921,6 +928,9 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      - name: Resolve base image registry (mirror.gcr.io with docker.io fallback)
+        uses: ./.github/actions/docker-base-registry
+
       - name: Build and push hub image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -929,6 +939,7 @@ jobs:
           file: src/Dockerfile.hub
           platforms: ${{ matrix.platform }}
           build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ needs.gate.outputs.sha }}
             GIT_BRANCH=${{ needs.gate.outputs.ref_name }}
             VERSION=${{ needs.gate.outputs.release_version }}

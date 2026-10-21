@@ -39,7 +39,22 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"verdicts_model_unknown",
 		`<details class="ev-panel" data-ev-panel="${key}"`,
 		`n=${Number(n) || 0}`,
-		"What this does not show:",
+		"What this does not show",
+		// #13204: server-computed letter grade pill and plain-English line on
+		// every panel; dense detail text lives in the ⓘ popover, not inline.
+		"function evServerCard(dto, key) {",
+		"const evDetails = {};",
+		"Object.keys(evDetails).forEach((k) => { delete evDetails[k]; });",
+		`<span class="ev-letter ev-band-${band}" title="${escapeHtml(why)}" aria-label="Grade ${escapeHtml(letter)}: ${escapeHtml(why)}">${escapeHtml(letter)}</span>`,
+		"const plain = sc && sc.plain_summary ? `<div class=\"ev-plain\">${escapeHtml(String(sc.plain_summary))}</div>` : '';",
+		"${section('Details', evDetails[key])}${section('What this does not show', note)}${gradeHtml}",
+		".ev-letter.ev-band-a { color:var(--green);",
+		".ev-letter.ev-band-b { color:var(--amber);",
+		".ev-letter.ev-band-c { color:var(--red);",
+		".ev-letter.ev-band-none { color:var(--muted);",
+		".ev-plain { margin-top:var(--sp-2); font-size:var(--fs-xs);",
+		".ev-disclosed { margin:var(--sp-2) 0 var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }",
+		".ev-explainer { position:absolute;",
 		"'Reviewer calibration'",
 		"'Reviewer accuracy × model family'",
 		"row.model === 'unknown' ? 'ev-unknown' : ''",
@@ -54,12 +69,21 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"dto.outcomes_by_author_kind || {}",
 		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),",
 		"const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];",
-		"reverted: Number(o.reverted_14d) || 0",
-		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}${bar('ou', row.unknown, 3)}",
+		"const reverted = Number(o.reverted_14d) || 0, reopened = Number(o.issue_reopened_14d) || 0;",
+		"reverted, reopened, failed: reverted + reopened };",
+		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.failed, 2)}${bar('ou', row.unknown, 3)}",
 		"no PRs with an evidence bundle in this window",
-		"A live bundle records a merge only when this hive merged, and never a close-without-merge, so a PR reviewed here and then merged by someone else, closed by hand or still open has no recorded outcome",
-		"it is shown as unknown and excluded from every rate, not counted as open or as not merged.",
-		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
+		"A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead",
+		"${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open.",
+		"prs_outcome_from_ledger",
+		"merged_elsewhere",
+		"is shown as unknown and excluded from every rate, not counted as open or as not merged.",
+		// #13241: both change-failure signals, with their detection method and
+		// the 14-day window spelled out.
+		"Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit",
+		"re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing",
+		"Change-failure rate = (reverted + re-opened) within 14 days ÷ merged.",
+		"const EV_REOPENS_SINCE = '2026-10-20';",
 		// Unknown-outcome policy (#12514 follow-up): never a denominator, always a count.
 		"prs_outcome_unknown",
 		"unknown: Number(o.unknown) || 0",
@@ -221,8 +245,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -286,10 +310,25 @@ const document = {getElementById() { return card; }};
 renderEvidenceSummary({...dto, all_time: true});
 assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=1/);
 assert.ok(card.innerHTML.indexOf('data-ev-panel="maintainability"') < card.innerHTML.indexOf('data-ev-panel="shadow-gates"'));
-assert.match(card.innerHTML, /Report-only; Go-only cyclomatic complexity. No causal claim/);
+// The "what this does not show" note is handed to the ⓘ explainer (stubbed here), never rendered inline.
+assert.doesNotMatch(card.innerHTML, /Report-only; Go-only cyclomatic complexity. No causal claim/);
 renderEvidenceSummary(null);
 assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=0/);
 assert.match(card.innerHTML, /no monthly complexity snapshots/);
+// No server card: a dashed — pill and no plain line; nothing inline says "What this does not show".
+assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary>/);
+assert.doesNotMatch(card.innerHTML, /ev-plain|What this does not show/);
+// Server cards (#13204): letter pill coloured by band, reason in the title, plain summary right under the header.
+renderEvidenceSummary({...dto, all_time: true, cards: {
+  maintainability: {grade: {letter: 'A', band: 'a', reason: 'median flat & fewer complex <fns>', enough_data: true, rubric: 'r'}, plain_summary: 'Code complexity across 1 repo: median flat, 4 complex functions (was 1).'},
+  'shadow-gates': {grade: {letter: '—', band: 'none', reason: 'needs 20 observed PRs', enough_data: false, rubric: 'r'}, plain_summary: 'No PRs observed by the shadow gates in this window.'}
+}});
+assert.match(card.innerHTML, /<summary>Maintainability trend<span[^>]*>n=1<\/span><span class="ev-letter ev-band-a" title="median flat &amp; fewer complex &lt;fns&gt;" aria-label="Grade A: median flat &amp; fewer complex &lt;fns&gt;">A<\/span><\/summary><div class="ev-plain">Code complexity across 1 repo: median flat, 4 complex functions \(was 1\).<\/div>/);
+assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Not enough data yet: needs 20 observed PRs"[^>]*>—<\/span><\/summary><div class="ev-plain">No PRs observed by the shadow gates in this window.<\/div>/);
+assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><details|<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><div class="ev-(empty|headline)/);
+// A band the client does not know falls back to the neutral pill.
+renderEvidenceSummary({cards: {'work-balance': {grade: {letter: 'Z', band: 'z', reason: 'x', enough_data: true}}}});
+assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="x" aria-label="Grade Z: x">Z<\/span>/);
 `)
 	if out, err := exec.Command(node, "-e", source.String()).CombinedOutput(); err != nil {
 		t.Fatalf("maintainability renderer failed: %v\n%s", err, out)
@@ -326,6 +365,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evWindowQuery",
 		"evExplainerHtml",
 		"toggleEvidenceExplainer",
+		"evServerCard",
 		"evGrade",
 		"evLimitsSentence",
 	} {
@@ -408,7 +448,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"section('What ours shows', x.ours)",
 		"evGradeLine(x.grade, x.reason)",
 		"if (e.key !== 'Escape' || !evExplainOpen.size) return;",
-		"is reported as unknown and left out of every rate, never counted as \"not merged\". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
+		"is reported as unknown and left out of every rate, never counted as \"not merged\". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE}, reverts only since ${EV_REVERTS_SINCE} and issue re-opens only since ${EV_REOPENS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
 		"false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome",
 		"merged ÷ verdicts on PRs with a known outcome",
 		"Gate integrity = (with_checks − breaches) ÷ with_checks",

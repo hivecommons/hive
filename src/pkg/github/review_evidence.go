@@ -18,6 +18,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
@@ -283,6 +284,7 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 
 	changed := b.UpdatedAt.IsZero()
 	for _, v := range u.verdicts {
+		v = stampEvidenceVerdictFamily(v, b.Author)
 		if !containsEvidenceVerdict(b.Verdicts, v) {
 			b.Verdicts = append(b.Verdicts, v)
 			changed = true
@@ -535,6 +537,7 @@ func evidenceVerdict(r review.PerspectiveReport, meta InvocationMeta, now time.T
 		Verdict:     string(r.Verdict),
 		Confidence:  float64(score) / float64(review.ConfidenceMax),
 		RecordedAt:  now,
+		AuthorModel: strings.TrimSpace(r.AuthorModel),
 	}
 	for _, f := range r.Findings {
 		path := strings.TrimSpace(f.File)
@@ -560,10 +563,27 @@ func evidenceVerdict(r review.PerspectiveReport, meta InvocationMeta, now time.T
 // containsEvidenceVerdict reports whether have already holds v. RecordedAt is
 // ignored: the same verdict relayed twice is one verdict, while a changed
 // verdict for the same perspective is new evidence and is kept beside the old.
+// stampEvidenceVerdictFamily sets SameFamily once the bundle's author is
+// known: the report's own author_model when it carried one, else the model
+// the audit log recorded for the PR's agent. Unknown on either side leaves
+// it nil.
+func stampEvidenceVerdictFamily(v evidence.Verdict, author evidence.Author) evidence.Verdict {
+	authorModel := v.AuthorModel
+	if authorModel == "" {
+		authorModel = author.Model
+	}
+	if same, known := modelfamily.SameFamily(v.Model, authorModel); known {
+		v.SameFamily = &same
+	}
+	return v
+}
+
 func containsEvidenceVerdict(have []evidence.Verdict, v evidence.Verdict) bool {
-	v.RecordedAt = time.Time{}
+	// Family stamps are derived, not observed: a verdict recorded before
+	// they existed must still match its re-relayed self.
+	v.RecordedAt, v.AuthorModel, v.SameFamily = time.Time{}, "", nil
 	for _, h := range have {
-		h.RecordedAt = time.Time{}
+		h.RecordedAt, h.AuthorModel, h.SameFamily = time.Time{}, "", nil
 		if reflect.DeepEqual(h, v) {
 			return true
 		}

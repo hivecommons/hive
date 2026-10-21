@@ -53,6 +53,31 @@ type ClaimsConfig struct {
 	// a claim on it as stage/020 or stage/030. Absent → claims.DefaultNeverClaimLabels
 	// (`epic`); an explicit empty list turns the gate off.
 	NeverClaimLabels []string `yaml:"never_claim_labels,omitempty" json:"never_claim_labels,omitempty"`
+	// ReclaimCooldownS is how long, in seconds, the SAME relay contributor
+	// session must wait before it is handed an issue it just released
+	// without shipping (task failed, abandoned, requeued, lease revoked)
+	// (hivecommons/hive#13093). The per-issue failure cooldown is global
+	// and short (10 min) so that a different contributor may retry at
+	// once; without a per-contributor window the one whose environment
+	// cannot run the task takes the same issue back every ten minutes,
+	// flapping its claim. 0 → DefaultReclaimCooldown (6h); negative turns
+	// the window off.
+	ReclaimCooldownS int `yaml:"reclaim_cooldown_s,omitempty" json:"reclaim_cooldown_s,omitempty"`
+}
+
+// DefaultReclaimCooldown is the reclaim_cooldown_s default.
+const DefaultReclaimCooldown = 6 * time.Hour
+
+// EffectiveReclaimCooldown returns reclaim_cooldown_s with the default
+// applied; 0 means the window is off.
+func (c ClaimsConfig) EffectiveReclaimCooldown() time.Duration {
+	switch {
+	case c.ReclaimCooldownS < 0:
+		return 0
+	case c.ReclaimCooldownS == 0:
+		return DefaultReclaimCooldown
+	}
+	return time.Duration(c.ReclaimCooldownS) * time.Second
 }
 
 // EffectiveNeverClaimLabels returns never_claim_labels with the default

@@ -369,6 +369,8 @@ project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 review.backlog.labels[] # TODO #11854
+review.perspective_models.<key>.backend # TODO #13243
+review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
 review.recommendations.labels[] # TODO #11854

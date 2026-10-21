@@ -599,6 +599,12 @@ type Manager struct {
 	idToName map[string]string
 	mu       sync.RWMutex
 
+	// rateLimitRelaunchMu guards lastRateLimitRelaunch, the fleet-wide clock
+	// that spaces rate-limit relaunches (rateLimitRelaunchFleetSpacing). Its
+	// own mutex: the pane pollers that consult it must not take m.mu.
+	rateLimitRelaunchMu   sync.Mutex
+	lastRateLimitRelaunch time.Time
+
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
 	// re-entrancy deadlocks.
@@ -702,6 +708,13 @@ type Manager struct {
 	// this is an injected interface rather than a direct pkg/dashboard import,
 	// and why it is an atomic.Pointer rather than m.mu-guarded state.
 	auditSink atomic.Pointer[AuditSink]
+
+	// relaunchObserver, when set, is told each time a NEW CLI process is
+	// launched for an agent (boot without a surviving pane, restart, backend
+	// or model switch). The previous process's context is gone with it, so
+	// consumers drop what that context held — the issue-claim ledger releases
+	// the agent's claims. Same atomic.Pointer discipline as kickObserver.
+	relaunchObserver atomic.Pointer[func(agentName string)]
 
 	// kickObserver, when set, receives kick lifecycle events ("kick-delivered",
 	// "kick-log-archived") for external progress surfaces — the Linear

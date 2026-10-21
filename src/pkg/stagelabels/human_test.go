@@ -388,3 +388,77 @@ func TestDecisionCommentNamesActionsPerLane(t *testing.T) {
 		t.Fatalf("actions offered when nothing here applies:\n%s", got)
 	}
 }
+
+// TestEntryCommentedCauses: each distinct cause is remembered per
+// stage+head, a new head or stage starts the list over, and a record from
+// before causes were kept counts every cause as explained.
+func TestEntryCommentedCauses(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 250)
+	sentinel := EntryCause([]string{"a sentinel alert is open on this PR"})
+	workflow := EntryCause([]string{"the PR edits CI workflow / action files"})
+	if sentinel == workflow || sentinel == "" || EntryCause(nil) != "" {
+		t.Fatalf("EntryCause digests: %q %q", sentinel, workflow)
+	}
+	st.Observe(key, NeedsDecision, "contributor-lane:sentinel-blocked")
+	rec, _ := st.Get(key)
+	if rec.EntryCommentExplains("h1", sentinel) {
+		t.Fatal("nothing posted yet")
+	}
+	st.MarkEntryCommentedCause(key, "h1", sentinel)
+	rec, _ = st.Get(key)
+	if !rec.EntryCommentExplains("h1", sentinel) || rec.EntryCommentExplains("h1", workflow) || rec.EntryCommentExplains("h2", sentinel) {
+		t.Fatalf("after sentinel: %+v", rec)
+	}
+	st.MarkEntryCommentedCause(key, "h1", workflow)
+	st.MarkEntryCommentedCause(key, "h1", workflow)
+	rec, _ = st.Get(key)
+	if !rec.EntryCommentExplains("h1", workflow) || len(rec.EntryCommentedCauses) != 2 {
+		t.Fatalf("after workflow: %+v", rec)
+	}
+	// Plain MarkEntryCommented keeps the list; a new head resets it.
+	st.MarkEntryCommented(key, "h1")
+	if rec, _ = st.Get(key); len(rec.EntryCommentedCauses) != 2 {
+		t.Fatalf("cause-less mark dropped causes: %+v", rec)
+	}
+	st.MarkEntryCommentedCause(key, "h2", workflow)
+	rec, _ = st.Get(key)
+	if rec.EntryCommentedHead != "h2" || len(rec.EntryCommentedCauses) != 1 || rec.EntryCommentExplains("h2", sentinel) {
+		t.Fatalf("new head kept old causes: %+v", rec)
+	}
+	// Legacy record: commented, no causes → everything counts as explained.
+	legacy := Record{Stage: NeedsDecision, EntryCommented: true, EntryCommentedStage: NeedsDecision, EntryCommentedHead: "h1"}
+	if !legacy.EntryCommentExplains("h1", workflow) || legacy.EntryCommentExplains("h2", workflow) {
+		t.Fatal("legacy record semantics")
+	}
+}
+
+// TestDecisionQuestionPlaceholderMention: a reviewer question addressed to
+// the policy example's `@maintainer` placeholder is flagged in the 085
+// comment, a real login is quoted as-is.
+func TestDecisionQuestionPlaceholderMention(t *testing.T) {
+	for q, want := range map[string]bool{
+		"@maintainer: confirm this CI permissions change may land.":  true,
+		"@maintainers should decide whether to keep the flag.":       true,
+		"@clubanderson should decide whether a release may survive.": false,
+		"@maintainer-bot owns this":                                  false,
+		"the maintainer should decide":                               false,
+	} {
+		if got := decisionQuestionPlaceholderMention(q); got != want {
+			t.Errorf("%q: got %v want %v", q, got, want)
+		}
+	}
+	base := Evidence{Head: "989908e", Verdict: VerdictRequiresHuman, Checks: CheckSummary{Total: 6, Green: 6, Known: true}, DCO: DCOYes, Cause: CauseDecision, SelfAuthored: true}
+	e := base
+	e.DecisionQuestion = "@maintainer: confirm this CI permissions change may land."
+	r := RouteHuman(e)
+	if r.Stage != NeedsDecision || !strings.Contains(strings.Join(r.Reasons, "\n"), "named no specific person") {
+		t.Fatalf("placeholder not flagged: %+v", r)
+	}
+	e = base
+	e.DecisionQuestion = "@clubanderson should decide whether a release may survive."
+	if r := RouteHuman(e); strings.Contains(strings.Join(r.Reasons, "\n"), "named no specific person") {
+		t.Fatalf("real login flagged: %+v", r)
+	}
+}

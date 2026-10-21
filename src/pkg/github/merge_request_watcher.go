@@ -179,6 +179,26 @@ func (c *Client) mergeRequestReviewHoldRefusal(ctx context.Context, req MergeReq
 	return fmt.Sprintf("review verdict %s%s holds this PR for a person; it merges only after a trusted merger approves it on GitHub or replies %q", verdict, on, ReviewHoldReleaseCommand), nil
 }
 
+// MergeRequestPolicyGate answers whether the lane policy lets the relay land
+// repo#number at expectSHA. It returns "" to allow, a refusal naming the
+// gate to deny terminally (the request is set aside as .denied, the reason
+// goes to the result file and the audit trail), and an error when the
+// evidence could not be read — the watcher then fails closed through its
+// bounded retry path. The hive installs the auto-merge engine's
+// RelayMergeRefusal here so an agent's merge request is held to the same
+// contributor-lane policy (tier, soak, min_head_age, review verdict) the
+// sweep enforces; hive-authored PRs pass through unchanged.
+type MergeRequestPolicyGate func(ctx context.Context, repo string, number int, expectSHA string) (refusal string, err error)
+
+// SetMergeRequestPolicyGate installs the lane-policy gate. Call it before
+// StartMergeRequestWatcher; a nil gate restores the ungated behaviour.
+func (c *Client) SetMergeRequestPolicyGate(fn MergeRequestPolicyGate) {
+	if c == nil {
+		return
+	}
+	c.mergePolicyGate = fn
+}
+
 // isRequiredCheckMergeBlocker classifies a merge-attempt error string as
 // "blocked by a failing/pending REQUIRED status check" versus a blocker a fix
 // agent cannot resolve by pushing code (a true merge conflict or a permission
@@ -406,6 +426,28 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	} else if refusal != "" {
 		c.denyMergeRequest(path, req, refusal, nowFn)
 		return
+	}
+
+	// Lane policy: the contributor-lane gates the sweep enforces — tier,
+	// soak, min_head_age, review verdict — apply to a relayed merge too
+	// (hivecommons/docs#401 landed an untrusted-tier PR through this path
+	// with none of them). A refusal is terminal and audited; unreadable
+	// evidence fails closed through the bounded retry path. Checked before
+	// the optional branch-update so a refused PR receives no push.
+	if c.mergePolicyGate != nil {
+		refusal, err := c.mergePolicyGate(ctx, req.Repo, req.Number, req.ExpectSHA)
+		if err != nil {
+			c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
+			return
+		}
+		if refusal != "" {
+			c.recordWriteAudit(AuditActionMergeRequestRefused, InvocationMeta{Agent: req.Agent},
+				WriteTarget{Repo: req.Repo, Number: req.Number},
+				"sha", req.ExpectSHA,
+				"reason", refusal)
+			c.denyMergeRequest(path, req, refusal, nowFn)
+			return
+		}
 	}
 
 	// Merge strategy (#10889), decided from configuration alone before any

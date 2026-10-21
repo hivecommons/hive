@@ -24,6 +24,9 @@ func reviewEvaluatedAuditDetail(e automerge.ReviewGateEvaluation) string {
 	if strings.TrimSpace(e.HumanApprover) != "" {
 		detail += fmt.Sprintf(" human_approver=%s", e.HumanApprover)
 	}
+	if strings.TrimSpace(e.Overrode) != "" {
+		detail += fmt.Sprintf(" overrode=%s", e.Overrode)
+	}
 	return detail
 }
 
@@ -45,8 +48,9 @@ func selfMergeReviewGateVerdictFunc(logger *slog.Logger) automerge.ReviewGateVer
 }
 
 // selfMergeReviewGateVerdictFromArtifact picks the newest aggregate for the
-// head with HasAggregateApproval's matching rules and lists the perspectives
-// that requested changes or rejected it.
+// head with HasAggregateApproval's matching rules, carries its normalized
+// aggregate verdict (the same one contributorLaneVerdictFromArtifact routes
+// on) and lists the perspectives that requested changes or rejected it.
 func selfMergeReviewGateVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string) automerge.ReviewGateVerdict {
 	wantRepo, wantSHA := strings.TrimSpace(repo), strings.TrimSpace(headSHA)
 	var match review.Aggregate
@@ -66,6 +70,7 @@ func selfMergeReviewGateVerdictFromArtifact(artifact review.Artifact, repo strin
 		return v
 	}
 	v.Approved = artifact.HasAggregateApproval(repo, number, headSHA)
+	v.Verdict = string(match.Verdict)
 	for p, verdict := range match.Perspectives {
 		if verdict == review.VerdictChangesRequested || verdict == review.VerdictReject {
 			v.ChangesRequested = append(v.ChangesRequested, string(p))
@@ -102,7 +107,7 @@ func selfMergeReviewGate(cfg *config.Config, logger *slog.Logger, audit func(aut
 		},
 		RecordEvaluation: func(e automerge.ReviewGateEvaluation) {
 			logger.Info("self-merge review gate evaluated", "repo", e.Repo, "number", e.Number, "head", e.HeadSHA,
-				"outcome", e.Outcome, "would_hold", e.WouldHold, "enforce", e.Enforced, "human_approver", e.HumanApprover)
+				"outcome", e.Outcome, "would_hold", e.WouldHold, "enforce", e.Enforced, "human_approver", e.HumanApprover, "overrode", e.Overrode)
 			if audit != nil {
 				audit(e)
 			}

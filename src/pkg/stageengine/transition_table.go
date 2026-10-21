@@ -18,6 +18,10 @@ var diagramEdges = map[Edge]bool{
 	{stagelabels.Claimed, stagelabels.Actionable}:                       true, // claim released or lapsed with no PR
 	{stagelabels.PRInProgress, stagelabels.CoveredByPR}:                 true, // PR opened
 	{stagelabels.PRInProgress, stagelabels.Actionable}:                  true, // PR request failed / start mark lapsed with no PR
+	{stagelabels.PRInProgress, stagelabels.Claimed}:                     true, // PR evidence lapsed while the claim is still held (backward hop, commented)
+	{stagelabels.CoveredByPR, stagelabels.Actionable}:                   true, // covering PR closed unmerged with no live claim or start marker (backward hop, narrated on the PR)
+	{stagelabels.CoveredByPR, stagelabels.PRInProgress}:                 true, // covering PR closed while a PR request / start marker is still live (backward hop, narrated on the PR)
+	{stagelabels.CoveredByPR, stagelabels.Claimed}:                      true, // covering PR closed while the claim is still held (backward hop, narrated on the PR)
 	{stagelabels.CoveredByPR, stagelabels.ReviewPending}:                true, // the PR takes over (issue stays 040; cross-kind)
 	{stagelabels.ReviewPending, stagelabels.Reviewed}:                   true, // swarm approve
 	{stagelabels.Reviewed, stagelabels.AwaitingMergeAdmission}:          true, // CI green, author side done
