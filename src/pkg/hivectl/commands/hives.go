@@ -77,6 +77,8 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives preset adopt https://example.org/preset.yml
   hivectl hives preset refresh
   hivectl hives hub add commons --url https://hub.example.org
+  hivectl hives hub adopt commons --follow current
+  hivectl hives hub refresh commons
   hivectl hives use acme
   hivectl hives export acme --out acme.hive-profile
   hivectl hives import acme.hive-profile --name acme-laptop
@@ -86,6 +88,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
+	cmd.AddCommand(newHivesTreeCommand(env))
 	cmd.AddCommand(newHivesPresetCommand(env))
 	cmd.AddCommand(newHivesHubCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
@@ -361,18 +364,8 @@ func newHivesAddCommand(env *commandEnv) *cobra.Command {
 }
 
 func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAddOptions) error {
-	if err := hivectl.ValidateProfileName(name); err != nil {
+	if err := validateHiveRegistration(name, opts); err != nil {
 		return &usageError{message: err.Error()}
-	}
-	hub := strings.TrimSpace(opts.hub)
-	if hub == "" {
-		return &usageError{message: "--hub is required: the contributor hub URL of the hive, e.g. wss://<hive>/contribute"}
-	}
-	if err := hivectl.ValidateHubURL(hub); err != nil {
-		return &usageError{message: err.Error()}
-	}
-	if opts.contributorID != "" && !opts.tokenStdin {
-		return &usageError{message: "--contributor-id applies only with --token-stdin; without it the hub assigns the id"}
 	}
 	deps, err := e.hivesDeps()
 	if err != nil {
@@ -387,47 +380,10 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 		return &usageError{message: fmt.Sprintf("a hive profile named %q already exists (%s); pick another name, or 'hivectl hives remove %s' first", existing.Name, existing.Hub, existing.Name)}
 	}
 
-	profile := hivectl.Profile{
-		Name:          name,
-		Hub:           hub,
-		Session:       strings.TrimSpace(opts.session),
-		Backend:       strings.TrimSpace(opts.backend),
-		Model:         strings.TrimSpace(opts.model),
-		ContributorID: strings.TrimSpace(opts.contributorID),
-		AddedAt:       deps.now().UTC().Truncate(time.Second),
+	profile, err := e.registerHive(cmd, deps, name, opts)
+	if err != nil {
+		return err
 	}
-
-	if opts.tokenStdin {
-		token, err := readTokenFrom(cmd.InOrStdin())
-		if err != nil {
-			return err
-		}
-		profile.RegistrationToken = token
-	} else {
-		user := strings.TrimSpace(opts.githubUser)
-		if user == "" {
-			user, err = deps.githubUser(cmd.Context())
-			if err != nil {
-				return err
-			}
-		}
-		base, err := hivectl.HubHTTPBase(hub)
-		if err != nil {
-			return &usageError{message: err.Error()}
-		}
-		reg, err := deps.registrar.Register(cmd.Context(), base, user)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(reg.RegistrationToken) == "" {
-			return alreadyRegisteredError(user, base, reg.Message, name, hub)
-		}
-		profile.RegistrationToken = strings.TrimSpace(reg.RegistrationToken)
-		if profile.ContributorID == "" {
-			profile.ContributorID = strings.TrimSpace(reg.ContributorID)
-		}
-	}
-
 	if err := set.Add(profile, opts.activate); err != nil {
 		return err
 	}
@@ -445,6 +401,77 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 	}
 	_, _ = fmt.Fprintf(out, "  saved to %s; %s regenerated\n", deps.store.Path(), deps.store.EnvPath())
 	return reloadHivesAfterEdit(cmd, deps)
+}
+
+func validateHiveRegistration(name string, opts *hivesAddOptions) error {
+	if err := hivectl.ValidateProfileName(name); err != nil {
+		return err
+	}
+	hub := strings.TrimSpace(opts.hub)
+	if hub == "" {
+		return errors.New("--hub is required: the contributor hub URL of the hive, e.g. wss://<hive>/contribute")
+	}
+	if err := hivectl.ValidateHubURL(hub); err != nil {
+		return err
+	}
+	if opts.contributorID != "" && !opts.tokenStdin {
+		return errors.New("--contributor-id applies only with --token-stdin; without it the hub assigns the id")
+	}
+	return nil
+}
+
+// registerHive contains the registration half of `hives add`, without
+// mutating profiles.yml. Hub adoption uses the same endpoint and response
+// handling, so a registry entry cannot accidentally get a more permissive
+// registration path than a directly supplied --hub URL.
+func (e *commandEnv) registerHive(cmd *cobra.Command, deps *hivesDeps, name string, opts *hivesAddOptions) (hivectl.Profile, error) {
+	if err := validateHiveRegistration(name, opts); err != nil {
+		return hivectl.Profile{}, err
+	}
+	hub := strings.TrimSpace(opts.hub)
+	profile := hivectl.Profile{
+		Name:          name,
+		Hub:           hub,
+		Session:       strings.TrimSpace(opts.session),
+		Backend:       strings.TrimSpace(opts.backend),
+		Model:         strings.TrimSpace(opts.model),
+		ContributorID: strings.TrimSpace(opts.contributorID),
+		AddedAt:       deps.now().UTC().Truncate(time.Second),
+	}
+
+	if opts.tokenStdin {
+		token, err := readTokenFrom(cmd.InOrStdin())
+		if err != nil {
+			return hivectl.Profile{}, err
+		}
+		profile.RegistrationToken = token
+		return profile, nil
+	}
+
+	user := strings.TrimSpace(opts.githubUser)
+	var err error
+	if user == "" {
+		user, err = deps.githubUser(cmd.Context())
+		if err != nil {
+			return hivectl.Profile{}, err
+		}
+	}
+	base, err := hivectl.HubHTTPBase(hub)
+	if err != nil {
+		return hivectl.Profile{}, &usageError{message: err.Error()}
+	}
+	reg, err := deps.registrar.Register(cmd.Context(), base, user)
+	if err != nil {
+		return hivectl.Profile{}, err
+	}
+	if strings.TrimSpace(reg.RegistrationToken) == "" {
+		return hivectl.Profile{}, alreadyRegisteredError(user, base, reg.Message, name, hub)
+	}
+	profile.RegistrationToken = strings.TrimSpace(reg.RegistrationToken)
+	if profile.ContributorID == "" {
+		profile.ContributorID = strings.TrimSpace(reg.ContributorID)
+	}
+	return profile, nil
 }
 
 // alreadyRegisteredError turns the hub's "already registered, no token for

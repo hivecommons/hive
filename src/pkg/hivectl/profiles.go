@@ -109,8 +109,9 @@ type ProfileSet struct {
 	revision string
 }
 
-// Hub follow policies. Only HubFollowOff has behavior today: tracking a hub is
-// discovery only and never enrolls, registers or changes membership.
+// Hub follow policies. Off requires confirmation for new Hives; current
+// snapshots their repositories, and current-and-future-repos also records
+// future repository following for newly enrolled Hives.
 const (
 	HubFollowOff                   = "off"
 	HubFollowCurrent               = "current"
@@ -119,11 +120,13 @@ const (
 
 // HubEntry is a tracked hub: a federation endpoint whose advertised Hives can
 // be discovered. It stores no credentials; each Hive still needs its own
-// profile to contribute.
+// profile to contribute. Reviewed is the last normalized Hive set the
+// contributor accepted as the hub's current advertisement.
 type HubEntry struct {
-	Name   string `yaml:"name" json:"name"`
-	URL    string `yaml:"url" json:"url"`
-	Follow string `yaml:"follow,omitempty" json:"follow"`
+	Name     string   `yaml:"name" json:"name"`
+	URL      string   `yaml:"url" json:"url"`
+	Follow   string   `yaml:"follow,omitempty" json:"follow"`
+	Reviewed []string `yaml:"reviewed,omitempty" json:"reviewed,omitempty"`
 }
 
 // EffectiveFollow reports the follow policy, treating an unset value as off.
@@ -203,6 +206,17 @@ func validateHubEntry(entry HubEntry) error {
 	}
 	if err := ValidateHubFollow(entry.Follow); err != nil {
 		return fmt.Errorf("hub %q: %w", entry.Name, err)
+	}
+	reviewed := map[string]struct{}{}
+	for _, id := range entry.Reviewed {
+		normalized, err := NormalizeHiveID(id)
+		if err != nil {
+			return fmt.Errorf("hub %q reviewed Hive %q: %w", entry.Name, id, err)
+		}
+		if _, duplicate := reviewed[normalized]; duplicate {
+			return fmt.Errorf("hub %q reviews Hive %q more than once", entry.Name, normalized)
+		}
+		reviewed[normalized] = struct{}{}
 	}
 	return nil
 }
@@ -629,6 +643,16 @@ func (s *ProfileStore) Save(set *ProfileSet) error {
 	}
 	set.revision = profilesRevision(content)
 	return nil
+}
+
+// LoadForReview reads profiles or legacy configuration without writing either
+// file. Consent-gated onboarding must not migrate credentials before approval.
+func (s *ProfileStore) LoadForReview() (*ProfileSet, error) {
+	set, err := s.Load()
+	if err != nil || set != nil {
+		return set, err
+	}
+	return s.migrateFromEnv()
 }
 
 // LoadOrMigrate returns the profile set, migrating a legacy positional

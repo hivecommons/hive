@@ -34,17 +34,22 @@ func newHivesHubCommand(env *commandEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "hub",
 		Example: `  hivectl hives hub add commons --url https://hub.example.org
+  hivectl hives hub adopt commons --follow current
+  hivectl hives hub follow commons --mode current-and-future-repos
+  hivectl hives hub refresh commons
   hivectl hives hub list -o json
   hivectl hives hub show commons
   hivectl hives hub remove commons`,
-		Short: "Track hubs and discover the Hives they advertise",
-		Long: "Track a hub in profiles.yml (hubs:) and read its federation registry (GET /api/hives) to see " +
-			"which Hives it advertises and which of them you have already onboarded. Tracking a hub is discovery " +
-			"only: it stores no credentials, registers with nothing, and changes no membership. Onboard a Hive with " +
-			"'hivectl hives add'.",
+		Short: "Track, enroll from, and refresh hubs",
+		Long: "Track a hub in profiles.yml (hubs:), review and enroll the Hives it advertises, and " +
+			"refresh that review later. Discovery never sends credentials; each new Hive registration " +
+			"uses the same unauthenticated registration path as 'hivectl hives add'.",
 	}
 	cmd.AddCommand(newHivesHubAddCommand(env))
+	cmd.AddCommand(newHivesHubAdoptCommand(env))
+	cmd.AddCommand(newHivesHubFollowCommand(env))
 	cmd.AddCommand(newHivesHubListCommand(env))
+	cmd.AddCommand(newHivesHubRefreshCommand(env))
 	cmd.AddCommand(newHivesHubShowCommand(env))
 	cmd.AddCommand(newHivesHubRemoveCommand(env))
 	return cmd

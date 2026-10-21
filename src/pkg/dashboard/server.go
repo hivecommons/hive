@@ -111,6 +111,10 @@ type Server struct {
 	// stageTrackerServed flips once /api/stage-tracker has been built; it
 	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
 	stageTrackerServed bool
+	// webhookRefresh re-reads the PR or issue a GitHub webhook named and
+	// patches its tracker row (webhook_tracker_refresh.go); built lazily.
+	webhookRefresh     *webhookTrackerRefresher
+	webhookRefreshOnce sync.Once
 	sidebar            interface{}
 	sidebarMu          sync.RWMutex
 

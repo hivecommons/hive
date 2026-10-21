@@ -446,7 +446,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// the verdict: fixPushAllowed and the merge lanes, not this loop.
 		revisiting := false
 		var delivered map[Perspective]Verdict
-		if req := pr.HumanChangeRequest; req != nil && strings.TrimSpace(req.HeadSHA) == strings.TrimSpace(pr.HeadSHA) {
+		if req := pr.HumanChangeRequest; req != nil && SameHeadSHA(req.HeadSHA, pr.HeadSHA) {
 			// A trusted maintainer answered this head — a changes_requested
 			// review or `/hive decision <text>` — so whatever the swarm said
 			// about it is superseded (hivecommons/hive#13041). Hand the
@@ -1158,7 +1158,7 @@ func (a Artifact) AggregateForBody(repo string, number int, headSHA, bodyDigest 
 	var haveFallback bool
 	for _, item := range a.Items {
 		item = item.Normalize()
-		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || !SameHeadSHA(item.HeadSHA, wantSHA) {
 			continue
 		}
 		if wantBody != "" && strings.TrimSpace(item.BodyDigest) == wantBody {
@@ -1369,7 +1369,7 @@ func isAgentAuthored(author, aiAuthor string) bool {
 }
 
 func samePRHead(repo string, number int, sha string, wantRepo string, wantNumber int, wantSHA string) bool {
-	return number == wantNumber && strings.TrimSpace(repo) == strings.TrimSpace(wantRepo) && strings.TrimSpace(sha) == strings.TrimSpace(wantSHA)
+	return number == wantNumber && strings.TrimSpace(repo) == strings.TrimSpace(wantRepo) && SameHeadSHA(sha, wantSHA)
 }
 
 func fixIndex(fixes []PendingFix, repo string, number int, headSHA string) int {

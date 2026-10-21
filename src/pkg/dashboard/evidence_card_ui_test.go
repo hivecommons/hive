@@ -245,8 +245,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -326,6 +326,24 @@ renderEvidenceSummary({...dto, all_time: true, cards: {
 assert.match(card.innerHTML, /<summary>Maintainability trend<span[^>]*>n=1<\/span><span class="ev-letter ev-band-a" title="median flat &amp; fewer complex &lt;fns&gt;" aria-label="Grade A: median flat &amp; fewer complex &lt;fns&gt;">A<\/span><\/summary><div class="ev-plain">Code complexity across 1 repo: median flat, 4 complex functions \(was 1\).<\/div>/);
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Not enough data yet: needs 20 observed PRs"[^>]*>—<\/span><\/summary><div class="ev-plain">No PRs observed by the shadow gates in this window.<\/div>/);
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><details|<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary><div class="ev-(empty|headline)/);
+// Switching series updates the selected n, chart and server grade together.
+const selfRows = [{perspective: 'security', n: 8, buckets: [{bucket: '0.55', n: 8, merged: 4, unknown: 0}]}];
+const derivedRows = [{perspective: 'security', n: 3, buckets: [{bucket: '0.85', n: 3, merged: 2, unknown: 0}]}];
+renderEvidenceSummary({reviewer_calibration: selfRows, reviewer_calibration_derived: derivedRows, cards: {
+  calibration: {grade: {letter: 'A', band: 'a', reason: 'self', enough_data: true}, plain_summary: 'comparison'},
+  'calibration-derived': {grade: {letter: 'C', band: 'c', reason: 'derived', enough_data: true}, plain_summary: 'comparison'}
+}});
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=8/);
+assert.match(card.innerHTML, /aria-pressed="true" data-action="evSelectConfidence" data-arg0="self-reported"/);
+evSelectConfidence('derived');
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=3/);
+assert.match(card.innerHTML, /aria-label="Grade C: derived"/);
+assert.match(card.innerHTML, /aria-pressed="true" data-action="evSelectConfidence" data-arg0="derived"/);
+assert.match(card.innerHTML, /0.85/);
+renderEvidenceSummary({reviewer_calibration: selfRows});
+assert.match(card.innerHTML, /<summary>Reviewer calibration<span[^>]*>n=0/);
+assert.match(card.innerHTML, /no reviewer verdicts with a confidence/);
+evSelectConfidence('self-reported');
 // A band the client does not know falls back to the neutral pill.
 renderEvidenceSummary({cards: {'work-balance': {grade: {letter: 'Z', band: 'z', reason: 'x', enough_data: true}}}});
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="x" aria-label="Grade Z: x">Z<\/span>/);
@@ -456,7 +474,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"First-pass share = green on pass 1 ÷ PRs that went green: a neutral line (the RFC’s C1 number), not graded",
 		"Denominator = hive-mediated writes",
 		"Ratios: issues closed ÷ issues opened and PRs merged ÷ PRs opened over the whole window",
-		"A well-calibrated reviewer would be near 90–100% in the top bucket.",
+		"Merged share measures association with merges, not correctness.",
 		".ev-explainer[hidden] { display:none; }",
 		".ev-grade.weak",
 	} {

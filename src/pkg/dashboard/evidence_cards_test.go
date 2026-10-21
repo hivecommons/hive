@@ -13,7 +13,7 @@ import (
 )
 
 var evidenceCardKeys = []string{
-	evidenceCardOutcome, evidenceCardCalibration, evidenceCardAccuracy, evidenceCardMaintainability,
+	evidenceCardOutcome, evidenceCardCalibration, evidenceCardCalibrationDerived, evidenceCardAccuracy, evidenceCardMaintainability,
 	evidenceCardBoundary, evidenceCardCIGate, evidenceCardWorkBalance, evidenceCardShadow,
 }
 
@@ -56,8 +56,8 @@ func TestEvidenceCardsFromSummaryFields(t *testing.T) {
 			"human": {N: 2, Merged: 2},
 		},
 		Calibration: []EvidencePerspectiveCalib{
-			{Perspective: "security", Buckets: []EvidenceCalibBucket{{Bucket: "0.0-0.5", N: 6, Merged: 2, Unknown: 1}, {Bucket: "0.5-0.7"}, {Bucket: "0.7-0.9"}, {Bucket: "0.9-1.0", N: 12, Merged: 11}}},
-			{Perspective: "quality", Buckets: []EvidenceCalibBucket{{Bucket: "0.0-0.5"}, {Bucket: "0.5-0.7"}, {Bucket: "0.7-0.9"}, {Bucket: "0.9-1.0", N: 10, Merged: 9, Unknown: 1}}},
+			{Perspective: "security", Buckets: []EvidenceCalibBucket{{Bucket: "0.55", N: 6, Merged: 2, Unknown: 1}, {Bucket: "0.65"}, {Bucket: "0.75"}, {Bucket: "0.85"}, {Bucket: "0.95", N: 12, Merged: 11}}},
+			{Perspective: "quality", Buckets: []EvidenceCalibBucket{{Bucket: "0.55"}, {Bucket: "0.65"}, {Bucket: "0.75"}, {Bucket: "0.85"}, {Bucket: "0.95", N: 10, Merged: 9, Unknown: 1}}},
 		},
 		ReviewerModels: []EvidenceModelAccuracy{{Model: "m1", N: 30}},
 		ReviewerAccuracy: &review.ReviewerAccuracySummary{Samples: 40, ReviewerModels: []review.ReviewerAccuracyGroup{
@@ -84,7 +84,7 @@ func TestEvidenceCardsFromSummaryFields(t *testing.T) {
 
 	want := map[string]struct{ letter, summary string }{
 		evidenceCardOutcome:         {"B-", "Agents: 17 merged, 1 reverted, 0 re-opened (5.9%). Humans: 2 merged, 0 undone. 3 outcomes not recorded yet."},
-		evidenceCardCalibration:     {"A", "When reviewers were most sure (0.9-1.0), 95% of 21 PRs merged."},
+		evidenceCardCalibration:     {"A", "Not enough data to compare slopes: each series needs two bins with at least five known outcomes."},
 		evidenceCardAccuracy:        {"A", "Reviewers wrongly approved 3% and wrongly blocked 0% of 40 PRs with a known result."},
 		evidenceCardMaintainability: {"A", "Code complexity across 1 repo: median flat, 12 complex functions (was 14)."},
 		evidenceCardBoundary:        {"A+", "4210 agent writes to GitHub; 3 were refused by the proxy (0.07%). 1 sentinel hit."},

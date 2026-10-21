@@ -72,12 +72,12 @@ func TestStageTrackerNeedsAuthorAndReturnedWords(t *testing.T) {
 		if got := stageTrackerBranchFrom(tc.stage.Number()); got != trackerNumberReviewPending {
 			t.Errorf("%v: branches from %d, want %d", tc.stage, got, trackerNumberReviewPending)
 		}
-		caption, _ := stageTrackerCaption(tc.stage, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0)
+		caption, _ := stageTrackerCaption(tc.stage, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0, "")
 		if !strings.HasPrefix(caption, tc.captionHead) {
 			t.Errorf("%v: caption = %q", tc.stage, caption)
 		}
 	}
-	caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0)
+	caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0, "")
 	if caption != "Needs @sam — CI is red (check-failing:unit) — @sam must act" || actor != "sam" {
 		t.Errorf("071 caption = %q actor = %q", caption, actor)
 	}
@@ -504,9 +504,20 @@ func TestStageTrackerAdoptedCaptionNamesTheWork(t *testing.T) {
 		"":                                   "Hive adopted this PR",
 	}
 	for reason, want := range cases {
-		caption, actor := stageTrackerCaption(stagelabels.AdoptedByHive, reason, "arteeh", "pr", false, stagelabels.Record{}, false, 0)
+		caption, actor := stageTrackerCaption(stagelabels.AdoptedByHive, reason, "arteeh", "pr", false, stagelabels.Record{}, false, 0, "")
 		if caption != want || actor != "hive" {
 			t.Errorf("074 reason %q: caption = %q actor = %q, want %q / hive", reason, caption, actor, want)
 		}
+	}
+}
+
+func TestStageTrackerCaptionNamesHeadAwaitingVerdict(t *testing.T) {
+	caption, actor := stageTrackerCaption(stagelabels.ReviewPending, "contributor-lane:no-verdict", "mendezr", "pr", false, stagelabels.Record{}, false, 0, "98489e7ba141fc60c30c9aaf47774dc42f9b1c76")
+	if !strings.HasSuffix(caption, "awaiting review of head 98489e7") || actor != "review swarm" {
+		t.Fatalf("caption = %q actor = %q", caption, actor)
+	}
+	caption, _ = stageTrackerCaption(stagelabels.ReviewPending, "contributor-lane:no-verdict", "mendezr", "pr", false, stagelabels.Record{}, false, 0, "")
+	if !strings.HasSuffix(caption, "no review verdict yet") {
+		t.Fatalf("caption without head = %q", caption)
 	}
 }

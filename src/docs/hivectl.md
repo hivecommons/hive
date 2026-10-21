@@ -815,8 +815,12 @@ hivectl hives enable acme                                     # resume without r
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
-hivectl hives hub add commons --url https://hub.example.org   # track a hub (discovery only)
-hivectl hives hub show commons                                # its Hives, onboarded or not
+hivectl hives hub add commons --url https://hub.example.org   # track a hub
+hivectl hives hub show commons                                # advertised Hives, onboarded or not
+hivectl hives hub adopt commons --follow current --yes         # review and enroll its Hives
+hivectl hives hub follow commons --mode current-and-future-repos # future enrollment policy only
+hivectl hives hub refresh commons --yes                        # refresh additions/removals
+hivectl hives hub remove commons                              # keep enrolled Hive profiles
 ```
 
 `hives` is the one command group that does **not** talk to a dashboard API:
@@ -852,6 +856,7 @@ hubs:                          # optional: tracked hubs, no credentials
     - name: commons
       url: https://hub.example.org
       follow: "off"            # off | current | current-and-future-repos
+      reviewed: []              # normalized Hive origins from the last review
 ```
 
 Repository identities are lower-case `<forge>/<host>/<owner>/<name>` (forge:
@@ -863,6 +868,28 @@ empty selection means **no repositories**, not unrestricted. Future following
 is off by default; recording it does not itself discover or accept new members.
 Selection and review history stay in the local store, not profile bundles or
 printed profile exports. Schema version remains 1.
+
+`hivectl hives hub show NAME` is read-only discovery from `GET HUB/api/hives`.
+`hub adopt NAME` reviews every advertised Hive, reuses matching profiles by
+normalized HTTP origin, and registers only new Hives after confirmation. Use
+`--hive URL` more than once to narrow the review; a narrowed adoption merges
+the selected Hives into `hubs[].reviewed` and keeps every Hive reviewed by an
+earlier run, so a later `hub refresh` never re-enrolls a Hive you reviewed and
+then removed with `hives remove`. `--follow off` leaves a new
+profile without a repository selection; `--follow current` snapshots
+`GET /api/contribute/repositories`; `--follow current-and-future-repos` also
+records permission to follow future repository additions. Without `--yes`,
+enrollment requires a terminal and an explicit `y`/`yes`; EOF, a pipe, or any
+other answer saves nothing and makes no registration request.
+
+`hub follow NAME --mode MODE` changes only the saved policy. It never changes
+current repository membership. `hub refresh [NAME]` compares the current
+advertisement with `hubs[].reviewed`, reports newly advertised and
+`no longer advertised` Hives, and retains removed profiles. Follow policies
+other than `off` enroll new Hives automatically; `off` requires confirmation.
+Successful registrations are committed even when another Hive is unavailable
+or its registration fails, so a later adopt or refresh retries only what is
+still missing.
 
 Discovery/onboarding helpers resolve Hive identity by the HTTP origin of its
 hub URL: `wss` maps to `https`, `ws` to `http`, hosts are lower-case, default
@@ -906,8 +933,8 @@ requires the companion relay/Hive acknowledgement and admission work in
 [#12570](https://github.com/hivecommons/hive/issues/12570). Operator admission,
 trust and quota gates remain authoritative.
 
-The first `hivectl hives` command on a machine that still has the old
-positional `contributor.env` migrates it: entries are named after their hub
+The first `hivectl hives` command (except the strictly read-only `hives tree`)
+on a machine that still has the old positional `contributor.env` migrates it: entries are named after their hub
 host, and the first hub in the legacy list stays active, so a running relay is
 unaffected. Migration alone does not rewrite `contributor.env` — the
 projection is written only when a command actually changes your hives. A
@@ -915,6 +942,33 @@ legacy file whose three lists disagree in length is **refused** rather than
 guessed at, because pairing a token with the wrong hub points a live
 credential at the wrong hive; fix the file (or re-run
 `just contribute-setup`) and try again.
+
+### Inspecting the contribution tree (read-only)
+
+```bash
+hivectl hives tree
+hivectl hives tree -o json
+hivectl hives tree -o yaml
+```
+
+Reads saved `profiles.yml` without migration, network requests, registration,
+projection writes, or relay signals. Subscriptions currently appear under
+**Direct Hives**: wiring persisted hub discovery into this command follows the
+hub-entry work in #13174 / #13189. The shared `BuildContributionTree` read model
+already accepts hub and repository discovery snapshots for TUI/Web adapters;
+shared hub appearances reference one subscription and rollups count it once.
+Separate profiles at one origin are never merged.
+
+Selection, follow policy, readiness, and activity are separate. Without current
+discovery the tree says **Membership incomplete**, never **All current**.
+Absent repository selections are **Unrestricted — legacy**, not selected empty
+snapshots. Explicitly empty consent remains off. Cross-profile repository
+exclusions list their source subscription names and do not narrow legacy
+profiles. Disabled subscriptions retain saved selections and follow policy.
+Runtime readiness is unknown (or disabled); activity is unavailable, not zero.
+No credentials or contributor identities are included in JSON/YAML output.
+Selection source IDs are selection-level provenance, not repository ownership.
+Profile-name keys identify the current snapshot only, not durable history.
 
 ### Editing repository selections
 
@@ -1191,12 +1245,13 @@ nothing. It refuses:
 ```bash
 hivectl hives preset adopt https://bluefin.example/hive-preset.yml   # review, then confirm
 hivectl hives preset adopt ./preset.yml --hive acme --follow-new-repos --yes
+hivectl hives preset adopt ./preset.yml --onboard  # review destinations, then enroll missing Hives
 hivectl hives preset refresh                     # re-fetch recorded presets and review changes
 hivectl hives preset refresh --yes               # accept new recommendations
 hivectl hives preset refresh --accept-removals   # also drop what the preset no longer recommends
 ```
 
-`adopt` matches each preset Hive to an existing profile by normalized origin. It
+Without `--onboard`, `adopt` matches each preset Hive to an existing profile by normalized origin. It
 never registers or copies credentials: a Hive without a profile is reported as
 `not onboarded, skipped` (onboard it with `hives add` and adopt again). For each
 matched Hive it shows the review diff against your saved selection:
@@ -1215,7 +1270,40 @@ as `hives repos`. The reviewed revision is the publisher's `revision` plus a
 digest of the document. Re-adopting a revision with nothing new is a no-op and
 does not advance the scope generation. A recommendation of no repositories
 saves an explicit empty selection, which idles that Hive; it never becomes
-unrestricted. Hub entries are listed but not adopted.
+unrestricted. Without `--onboard`, hub entries are listed but not adopted.
+
+**One-flow enrollment.** `adopt --onboard` also works before any profiles exist.
+It fetches preset hubs' public `GET /api/hives` registries and snapshots the
+selected advertised Hives (`hives: all-current` or an explicit list). It does
+not recursively discover hubs. Duplicate origins share one profile and one
+registration; an explicit direct Hive recommendation takes precedence over a
+hub's whole-Hive recommendation. Existing credentials, disabled state, personal
+exclusions, backend/provider authentication and quota settings are preserved.
+
+Before registration, it shows the preset source, hub sources, effective Hive
+URLs, repository diff and follow policy. Confirmation is mandatory (`--yes`
+cannot be combined with `--onboard`); declining or reaching EOF without approval
+leaves both profile files and registration state unchanged, including legacy
+configuration. Browse/discovery requests may already have occurred. Missing
+profiles receive unique generated names and reuse `hives add`'s registration
+flow, using the current `gh` login or `--github-user LOGIN`. New profiles use
+WebSocket contributor URLs; saved credentials never go to the preset or hub
+publisher. Discovery refuses redirects and malformed/oversized hub responses.
+
+An unavailable Hive or one without repository-scope discovery is not enrolled.
+Registration failures are reported as pending and cause a nonzero exit; ready
+profiles and accepted scope are saved, so retrying the same command does not
+repeat successful registrations. Failed targets are not projected into the
+relay; rerun `adopt --onboard` to resolve them. An existing remote registration
+that returns no token still requires the supported `hives reissue` or import
+flow—onboarding never retrieves credentials from a directory hub.
+
+Hub membership is a current snapshot, not permission to enroll future Hives.
+`refresh` can review repository changes at already-adopted hub members, but
+never enrolls newly advertised Hives. Run `adopt --onboard` again to review those.
+`--follow-new-repos` affects only reviewed Hive repository selections, not hub
+membership. The command reloads an existing relay once after saving; it does
+not start another relay or launch contribution work itself.
 
 `refresh` re-fetches every recorded preset (or only `--hive <name>`) and diffs
 it against the saved selection:
@@ -1228,6 +1316,14 @@ it against the saved selection:
 - **Outages**: if the preset cannot be fetched or a Hive's discovery fails, that
   Hive is reported as `discovery unavailable`, its saved selection is left
   untouched, nothing is broadened, and the command exits non-zero.
+- **Hubs**: for every recorded preset that lists hubs, including presets adopted
+  without `--onboard`, `refresh` re-reads each hub's public `GET /api/hives`
+  registry to review repository changes at hub members you already have
+  profiles for. This is a network call to the hub with no credentials attached.
+  An unreachable or malformed hub registry is reported as
+  `hub discovery unavailable`; the refresh is then incomplete, the reviewed
+  revision does not advance, and the command exits non-zero. Hub members
+  without a profile are never enrolled by `refresh`.
 
 The reviewed revision only advances when every Hive of the preset was reviewed
 and nothing is left pending.

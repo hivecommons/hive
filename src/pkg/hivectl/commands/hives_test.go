@@ -19,13 +19,17 @@ import (
 )
 
 type fakeRegistrar struct {
-	calls  []string
-	result hubRegistration
-	err    error
+	calls        []string
+	result       hubRegistration
+	err          error
+	errorsByBase map[string]error
 }
 
 func (f *fakeRegistrar) Register(_ context.Context, base, user string) (hubRegistration, error) {
 	f.calls = append(f.calls, base+" "+user)
+	if err := f.errorsByBase[base]; err != nil {
+		return hubRegistration{}, err
+	}
 	return f.result, f.err
 }
 

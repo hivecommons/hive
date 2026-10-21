@@ -443,6 +443,10 @@
     .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade { --oc-version-bee-lane: 56px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw); border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 11%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade[hidden] { display: none; }
+    /* `.nav-chip { display: inline-flex }` (components.css) outranks the UA
+       `[hidden] { display: none }`, so a hidden status chip otherwise paints
+       as an empty outlined pill (#oc-providers when every provider is usable). */
+    .oc-providers-chip[hidden] { display: none; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
@@ -6211,7 +6215,7 @@
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
-      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" hidden></span>
+      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -23507,6 +23511,19 @@ function burnAreaChart() {
     // nothing here changes merge behaviour.
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
+    let evConfidenceSeries = 'self-reported';
+
+    function evCalibrationSeries(dto) {
+      const rows = evConfidenceSeries === 'derived' ? dto.reviewer_calibration_derived : dto.reviewer_calibration;
+      return Array.isArray(rows) ? rows : [];
+    }
+    function evSelectConfidence(series) {
+      evConfidenceSeries = series === 'derived' ? 'derived' : 'self-reported';
+      if (evLast) renderEvidenceSummary(evLast);
+    }
+    function evCalibrationControls() {
+      return `<div class="lc-window" role="group" aria-label="Confidence series">${['self-reported', 'derived'].map((series) => `<button type="button" class="${evConfidenceSeries === series ? 'active' : ''}" aria-pressed="${evConfidenceSeries === series}" data-action="evSelectConfidence" data-arg0="${series}" data-stop="1">${series === 'derived' ? 'Derived' : 'Self-reported'}</button>`).join('')}</div>`;
+    }
 
     // Evidence window (#12062): 24h · 7d · 30d · custom from/to, independent of
     // the throughput pills and remembered per browser. The repo filter is
@@ -23585,6 +23602,7 @@ function burnAreaChart() {
       const range = `<div id="ev-custom-range" class="ev-custom-range" role="group" aria-label="Custom evidence date range" data-stop="1"${evCustomOpen ? '' : ' hidden'}><label>from <input type="date" name="from" value="${escapeHtml(evWindow.from || '')}" max="${today}"></label><label>to <input type="date" name="to" value="${escapeHtml(evWindow.to || '')}" max="${today}"></label><button type="button" data-action="applyEvidenceCustomRange" data-arg-types="t" data-stop="1">Apply</button>${evCustomError ? `<span class="ev-range-err" role="alert">${escapeHtml(evCustomError)}</span>` : ''}</div>`;
       return `<div class="gov-pr-models-toggle window-pills-toolbar ev-window-controls" data-stop="1">${pills}</div>${range}`;
     }
+    window.evSelectConfidence = evSelectConfidence;
     window.setEvidenceWindow = setEvidenceWindow;
     window.toggleEvidenceCustomRange = toggleEvidenceCustomRange;
     window.applyEvidenceCustomRange = applyEvidenceCustomRange;
@@ -23724,7 +23742,7 @@ function burnAreaChart() {
         };
       },
       calibration: (dto) => {
-        const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+        const calib = evCalibrationSeries(dto);
         let topN = 0, topMerged = 0, lowN = 0, lowMerged = 0, topName = '', unknown = 0;
         calib.forEach((p) => (p && p.buckets || []).forEach((b, i, arr) => {
           if (!b) return;
@@ -23737,10 +23755,10 @@ function burnAreaChart() {
         const grade = evGrade(topRate, topN, EV_CALIB_STRONG, EV_CALIB_FAIR, true);
         return {
           matters: 'Humans decide how much to trust a review by its confidence. If 90%-sure verdicts are wrong as often as 50%-sure ones, the number is noise and should not be shown to people.',
-          measured: 'Whether the AI reviewers\u2019 confidence means anything. Each review verdict comes with a confidence number from 0 to 1. "Calibration" asks: when a reviewer says it is 90% sure, is it right about 90% of the time?',
-          how: `Verdicts are grouped into confidence buckets (0.0–0.5, 0.5–0.7, 0.7–0.9, 0.9–1.0). For each bucket we plot how often the PR ended up merged (filled dot; merged ÷ verdicts on PRs with a known outcome) and how often the verdict was a block (hollow circle; blocks ÷ all verdicts in the bucket). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective. A bucket with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts is drawn dashed and not joined to the line: one or two PRs cannot show a trend.`,
-          good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.9–1.0'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
-          ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} verdicts with a known outcome merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome and are not in these rates.` : ''} A well-calibrated reviewer would be near 90–100% in the top bucket. ${evLimitsSentence()}`,
+          measured: 'Whether self-reported certainty or evidence strength better predicts merges. Self-reports use a fixed verification rubric; derived scores use finding anchors, test changes, diff size, known CI and same-head perspective agreement. Neither series is a probability of correctness.',
+          how: `Verdicts are grouped into confidence buckets (0.55, 0.65, 0.75, 0.85, 0.95; nearest bin, with midpoints rounded up). For each bucket we plot how often the PR ended up merged (filled dot; merged ÷ verdicts on PRs with a known outcome) and how often the verdict was a block (hollow circle; blocks ÷ all verdicts in the bucket). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective. A bucket with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts is drawn dashed and not joined to the line: one or two PRs cannot show a trend.`,
+          good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.95'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
+          ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} verdicts with a known outcome merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome and are not in these rates.` : ''} Merged share measures association with merges, not correctness. ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} known-outcome verdicts in the top bucket${evWindowHint(dto)}` : `${evPct(topRate)} merged at ${topName} confidence`,
         };
       },
@@ -23911,6 +23929,7 @@ function burnAreaChart() {
     // Letter grade (A+ … C-, or — for not enough data) computed by the server
     // in pkg/evidence/grade.go and shipped as /api/evidence/summary cards[key].
     function evServerCard(dto, key) {
+      if (key === 'calibration' && evConfidenceSeries === 'derived') key = 'calibration-derived';
       const c = dto && dto.cards && typeof dto.cards === 'object' ? dto.cards[key] : null;
       return c && typeof c === 'object' ? c : null;
     }
@@ -24462,7 +24481,7 @@ function burnAreaChart() {
       dto = dto || {};
       evLast = dto;
       Object.keys(evDetails).forEach((k) => { delete evDetails[k]; });
-      const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+      const calib = evCalibrationSeries(dto);
       const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
       const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
@@ -24498,8 +24517,8 @@ function burnAreaChart() {
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
-        + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
-          `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
+        + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
+          `The self-reported series includes ${Number(dto.reviewer_calibration_legacy) || 0} legacy verdict(s) using the old verdict-based confidence. The derived series excludes verdicts without a recorded derived score; n counts only the selected series. Slopes pool perspectives and compare the endpoint rise per bin across bins with at least five known outcomes, using each series’ available records. Later CI results never rewrite a recorded derived score. This calibration panel plots merge and block rates. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
           `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here but never resolved by the review-outcome ledger or a backfill) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('maintainability', 'Maintainability trend', complexityN, evMaintainabilitySvg(complexity, dto.acmm_changes),
@@ -31533,7 +31552,8 @@ function burnAreaChart() {
       if (!bad.length) {
         el.hidden = true;
         el.textContent = '';
-        el.title = '';
+        el.title = 'AI providers: all usable';
+        el.setAttribute('aria-label', 'AI providers: all usable');
         return;
       }
       const severe = bad.some(p => p.auth_state === 'needs-login' || p.auth_state === 'store-inaccessible' ||
@@ -31543,6 +31563,7 @@ function burnAreaChart() {
         escapeHtml(bad.map(p => p.provider).join(', ')) + '</span>';
       el.title = bad.map(p => p.provider + ': auth ' + p.auth_state + ', availability ' + p.availability_state +
         (p.next_action ? ' — ' + p.next_action : '')).join('\n');
+      el.setAttribute('aria-label', 'AI providers needing attention: ' + bad.map(p => p.provider).join(', '));
       el.hidden = false;
     }
 

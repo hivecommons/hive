@@ -310,6 +310,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   process.env.HIVE_HEADLESS_STATUS_FILE = headlessStatusFile;
   process.env.HIVE_TASK_FILE = path.join(tmpDir, 'contributor-task.json');
   process.env.HIVE_GH_TOKEN_CACHE = path.join(tmpDir, 'gh-token.cache');
+  process.env.HIVE_RELAY_STATUS_FILE = path.join(tmpDir, 'relay-status.json');
   if (env) Object.assign(process.env, env);
 
   // The cache must be cleared on every load so each test gets a fresh module
@@ -3475,6 +3476,71 @@ function scopeAuth(relay, hub, capabilities = ['repo_scope_v1']) {
 function scopeAck(relay, hub, version = hub.scopeVersion, accepted = true) {
   relay.handleMessage(JSON.stringify({ type: 'repo_scope_ack', scope_version: version, accepted }), hub);
 }
+
+test('relay status records adoption, acknowledgement, draining and idle without secrets', () => {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(scratchRoot, 'relay-status-'));
+  const envFile = path.join(dir, 'contributor.env');
+  const relay = loadRelay({ env: {
+    HIVE_HUB: 'wss://hub-a.example/contribute', HIVE_REGISTRATION_TOKEN: 'secret-registration-token',
+    HIVE_REPO_SCOPE: 'github/github.com/org/a', HIVE_REPO_SCOPE_VERSION: '7',
+    HIVE_CONTRIBUTOR_ENV: envFile,
+  } });
+  const read = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+  try {
+    const hub = relay.getHubs()[0];
+    relay.writeRelayStatus();
+    assert.strictEqual(read().adopted_scope_version, 7);
+    assert.strictEqual(read().subscriptions[0].readiness, 'discovery-unavailable');
+    scopeAuth(relay, hub);
+    assert.strictEqual(read().subscriptions[0].readiness, 'scope-pending');
+    scopeAck(relay, hub);
+    assert.strictEqual(read().subscriptions[0].acknowledged_scope_version, 7);
+    assert.strictEqual(read().subscriptions[0].readiness, 'connected');
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'task-1', kind: 'issue',
+      forge: 'github', host: 'github.com', repo: 'org/a', number: 42,
+      title: 'private task title', prompt: 'private task prompt' }), hub);
+    assert.strictEqual(read().current_task.repository, 'github/github.com/org/a');
+    assert.strictEqual(read().current_task.draining, false);
+    fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-a.example/contribute\nHIVE_REGISTRATION_TOKEN=secret-registration-token\nHIVE_REPO_SCOPE=\nHIVE_REPO_SCOPE_VERSION=8\n');
+    assert.strictEqual(read().adopted_scope_version, 7, 'saving alone does not acknowledge adoption');
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(read().adopted_scope_version, 8);
+    assert.strictEqual(read().current_task.draining, true);
+    assert.strictEqual(read().idle_reason, 'no-repositories-selected');
+    assert.ok(!fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8').includes('secret-registration-token'));
+    assert.ok(!fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8').includes('private task'));
+    assert.strictEqual(fs.statSync(relay.RELAY_STATUS_FILE).mode & 0o777, 0o600);
+    relay.setCurrentTask(null);
+    relay.writeRelayStatus();
+    assert.strictEqual(read().current_task, null);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'not-leased', kind: 'issue',
+      forge: 'github', host: 'github.com', repo: 'org/a', number: 43 }), hub);
+    assert.strictEqual(relay.getCurrentTask(), null, 'deselected target must not be leased again');
+    fs.writeFileSync(envFile, 'HIVE_HUB=wss://hub-a.example/contribute\nHIVE_REGISTRATION_TOKEN=secret-registration-token\nHIVE_HUB_DISABLED=true\nHIVE_REPO_SCOPE=\nHIVE_REPO_SCOPE_VERSION=9\n');
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(read().idle_reason, 'all-subscriptions-disabled');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('relay status distinguishes unsupported scope, quota hold and disabled subscription', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV,
+    HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b',
+    HIVE_HUB_DISABLED: 'false,true' } });
+  const read = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+  try {
+    relay.writeRelayStatus();
+    assert.deepStrictEqual(read().subscriptions.map(s => s.readiness), ['discovery-unavailable', 'disabled']);
+    const first = relay.getHubs()[0];
+    scopeAuth(relay, first, []);
+    assert.strictEqual(read().subscriptions[0].readiness, 'scope-unsupported');
+    relay.setContributorQuotaPaused(true);
+    relay.writeRelayStatus();
+    assert.strictEqual(read().subscriptions[0].readiness, 'quota-held');
+    assert.strictEqual(read().subscriptions[1].readiness, 'disabled');
+  } finally { teardown(relay); }
+});
 
 test('scope projection preserves legacy, empty and per-hub selections', () => {
   const relay = loadRelay();

@@ -11,14 +11,15 @@ import (
 
 // Evidence card keys match the dashboard's data-ev-panel attributes.
 const (
-	evidenceCardOutcome         = "outcome-by-author"
-	evidenceCardCalibration     = "calibration"
-	evidenceCardAccuracy        = "accuracy-by-model"
-	evidenceCardMaintainability = "maintainability"
-	evidenceCardBoundary        = "boundary-enforcement"
-	evidenceCardCIGate          = "claim-vs-verdict"
-	evidenceCardWorkBalance     = "work-balance"
-	evidenceCardShadow          = "shadow-gates"
+	evidenceCardOutcome            = "outcome-by-author"
+	evidenceCardCalibration        = "calibration"
+	evidenceCardCalibrationDerived = "calibration-derived"
+	evidenceCardAccuracy           = "accuracy-by-model"
+	evidenceCardMaintainability    = "maintainability"
+	evidenceCardBoundary           = "boundary-enforcement"
+	evidenceCardCIGate             = "claim-vs-verdict"
+	evidenceCardWorkBalance        = "work-balance"
+	evidenceCardShadow             = "shadow-gates"
 )
 
 // evidenceCards derives the per-card letter grade and plain-English summary
@@ -43,23 +44,11 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 	}
 	cards[evidenceCardOutcome] = evidence.Card{Grade: evidence.GradeOutcome(outcomes), PlainSummary: evidence.SummarizeOutcome(outcomes)}
 
-	buckets := make([]evidence.CalibrationBucket, len(evidenceSummaryBuckets))
-	for i, b := range evidenceSummaryBuckets {
-		buckets[i].Bucket = b.name
-	}
-	for _, p := range resp.Calibration {
-		for i, b := range p.Buckets {
-			if i >= len(buckets) {
-				break
-			}
-			buckets[i].Known += b.N - b.Unknown
-			buckets[i].Merged += b.Merged
-		}
-	}
-	if len(resp.Calibration) == 0 {
-		buckets = nil
-	}
-	cards[evidenceCardCalibration] = evidence.Card{Grade: evidence.GradeCalibration(buckets), PlainSummary: evidence.SummarizeCalibration(buckets)}
+	self := calibrationCardBuckets(resp.Calibration)
+	derived := calibrationCardBuckets(resp.CalibrationDerived)
+	comparison := evidence.SummarizeCalibrationComparison(self, derived)
+	cards[evidenceCardCalibration] = evidence.Card{Grade: evidence.GradeCalibration(self), PlainSummary: comparison}
+	cards[evidenceCardCalibrationDerived] = evidence.Card{Grade: evidence.GradeCalibration(derived), PlainSummary: comparison}
 
 	acc := evidence.AccuracyStats{}
 	for _, m := range resp.ReviewerModels {
@@ -195,4 +184,24 @@ func accuracyRates(groups []review.ReviewerAccuracyGroup) (falseApprove, falseBl
 
 func familyAccuracy(g review.ReviewerAccuracyGroup) evidence.FamilyAccuracy {
 	return evidence.FamilyAccuracy{Name: g.Name, Samples: g.Samples, FalseApproveRate: g.FalseApproveRate, FalseBlockRate: g.FalseBlockRate}
+}
+
+func calibrationCardBuckets(series []EvidencePerspectiveCalib) []evidence.CalibrationBucket {
+	if len(series) == 0 {
+		return nil
+	}
+	buckets := make([]evidence.CalibrationBucket, len(evidenceSummaryBuckets))
+	for i, b := range evidenceSummaryBuckets {
+		buckets[i].Bucket = b.name
+	}
+	for _, p := range series {
+		for i, b := range p.Buckets {
+			if i >= len(buckets) {
+				break
+			}
+			buckets[i].Known += b.N - b.Unknown
+			buckets[i].Merged += b.Merged
+		}
+	}
+	return buckets
 }

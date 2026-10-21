@@ -40,6 +40,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const { randomUUID } = require('crypto');
 const DEFAULT_NEEDS_DECISION_LABEL = 'needs-decision';
 const {
   parsePiModelSelection,
@@ -165,6 +166,9 @@ const CONTRIBUTOR_CONFIG_DIR = process.env.HIVE_CONTRIBUTOR_CONFIG_DIR || path.j
 const CONTRIBUTOR_ENV_FILE = process.env.HIVE_CONTRIBUTOR_ENV || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor.env');
 const RELAY_PID_FILE = process.env.HIVE_RELAY_PID_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'contributor-relay.pid');
 const HUBS_SEEN_FILE = process.env.HIVE_HUBS_SEEN_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'hubs-seen.json');
+const RELAY_STATUS_FILE = process.env.HIVE_RELAY_STATUS_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-status.json');
+const relaySession = randomUUID();
+const relayStartedAt = new Date().toISOString();
 const HUBS_SEEN_MIN_WRITE_MS = 60000;
 let hubsSeenWriteTimer = null;
 let hubsSeenDirty = false;
@@ -1052,6 +1056,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
       // assignment -- it must never silently become a standing spend authority.
       if (quotaOverrideApplies(override, window, reading)) {
         contributorQuotaPaused = false;
+        writeRelayStatus();
         return { admit: true, reason: `override_${override.directive}`, override: override.directive, window_id: window.id || kind, remaining_pct: remaining, required_reserve_pct: required, complexity };
       }
       // Same refusal either way -- only the label differs, so an operator can
@@ -1074,6 +1079,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     return { admit: false, wait: true, reason: 'pool_reserved' };
   }
   contributorQuotaPaused = false;
+  writeRelayStatus();
   return usedBankedReset ? { admit: true, reason: 'banked_reset_available' } : { admit: true };
 }
 
@@ -1105,6 +1111,7 @@ function retryContributorQuota() {
   const decision = evaluateContributorQuota(null, readContributorQuotaReading(), { baseReserveOnly: true });
   if (!decision.admit) { armContributorQuotaRetry(); return; }
   contributorQuotaPaused = false;
+  writeRelayStatus();
   console.log('Contributor quota guard released — a fresh reading clears every effective reserve. Asking for work again.');
   if (!currentTask && !cliReadyFailed && !quotaHoldActive()) {
     requestWork(hubs[activeHubIndex], 'quota_guard_released');
@@ -1113,6 +1120,7 @@ function retryContributorQuota() {
 
 function logContributorQuotaDecision(task, decision) {
   contributorQuotaPaused = true;
+  writeRelayStatus();
   // Nothing else will restart the loop once `ready` is being suppressed
   // (kubestellar/hive#6951).
   armContributorQuotaRetry();
@@ -1424,6 +1432,7 @@ function negotiateRepoScope(hub) {
       mode: hub.repoScope === null ? 'all' : 'selected', repositories: hub.repoScope || [] });
   }
   recordHubSeen(hub);
+  writeRelayStatus();
 }
 
 function logRepoScopeIdle() {
@@ -1504,6 +1513,89 @@ let commonsSpreadCursor = 0;
 
 let seq = 0;
 let currentTask = null;
+let adoptedScopeVersion = initialScopeVersion;
+let adoptedAt = relayStartedAt;
+let currentTaskStartedAt = null;
+
+function canonicalHiveID(url) {
+  const parsed = new URL(url);
+  const scheme = parsed.protocol === 'wss:' ? 'https:' : parsed.protocol === 'ws:' ? 'http:' : parsed.protocol;
+  return `${scheme}//${parsed.host.toLowerCase()}`;
+}
+
+function currentTaskRepository(task) {
+  if (!task) return null;
+  if (task.forge && task.host) return canonicalRepositoryID(`${task.forge}/${task.host}/${task.repo}`);
+  try {
+    const url = new URL(task.url);
+    if (url.protocol === 'https:' && url.host === 'github.com') {
+      return canonicalRepositoryID(`github/github.com/${task.repo}`);
+    }
+  } catch (_) {}
+  return null;
+}
+
+function relayIdleReason() {
+  if (hubs.every(hub => hub.disabled)) return 'all-subscriptions-disabled';
+  if (hubs.every(hub => hub.disabled || (hub.repoScope !== null && hub.repoScope.length === 0))) return 'no-repositories-selected';
+  return null;
+}
+
+function relayReadiness(hub) {
+  if (hub.disabled) return 'disabled';
+  if (contributorQuotaPaused || quotaHoldActive()) return 'quota-held';
+  if (!hub.authenticated || hub.authFailed) return 'discovery-unavailable';
+  if (hub.scopeUnsupported) return 'scope-unsupported';
+  if (hub.scopePending) return 'scope-pending';
+  return 'connected';
+}
+
+function writeRelayStatus() {
+  let temporary;
+  try {
+    const now = new Date().toISOString();
+    const taskHub = currentTask && currentTask._hub;
+    const repository = currentTaskRepository(currentTask);
+    const draining = !!currentTask && !!taskHub &&
+      (!hubs.includes(taskHub) || taskHub.disabled ||
+        (taskHub.repoScope !== null && (!repository || !taskHub.repoScope.includes(repository))));
+    const status = {
+      pid: process.pid, started_at: relayStartedAt, session: relaySession,
+      adopted_scope_version: adoptedScopeVersion, adopted_at: adoptedAt,
+      subscriptions: hubs.map(hub => {
+        const readiness = relayReadiness(hub);
+        if (hub.statusReadiness !== readiness || hub.statusAckVersion !== hub.scopeAckVersion ||
+            hub.statusScopeVersion !== hub.scopeVersion) {
+          hub.statusObservedAt = now;
+          hub.statusReadiness = readiness;
+          hub.statusAckVersion = hub.scopeAckVersion;
+          hub.statusScopeVersion = hub.scopeVersion;
+        }
+        return {
+          hive: canonicalHiveID(hub.sourceURL), readiness,
+          acknowledged_scope_version: hub.scopeAckVersion,
+          observed_at: hub.statusObservedAt,
+        };
+      }),
+      current_task: currentTask && !currentTask.synthetic ? {
+        hive: taskHub ? canonicalHiveID(taskHub.sourceURL) : null,
+        repository, task_id: typeof currentTask.task_id === 'string' &&
+          currentTask.task_id.length <= 256 && !/\s/.test(currentTask.task_id) ? currentTask.task_id : null,
+        issue: Number.isSafeInteger(currentTask.number) ? currentTask.number : null,
+        started_at: currentTaskStartedAt || now, draining,
+      } : null,
+      idle_reason: relayIdleReason(),
+    };
+    fs.mkdirSync(path.dirname(RELAY_STATUS_FILE), { recursive: true, mode: 0o700 });
+    temporary = `${RELAY_STATUS_FILE}.${process.pid}.${randomUUID()}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(status, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(temporary, RELAY_STATUS_FILE);
+  } catch (e) {
+    if (temporary) { try { fs.unlinkSync(temporary); } catch (_) {} }
+    console.error(`WARNING: could not write relay status file ${RELAY_STATUS_FILE}: ${e.message}`);
+  }
+}
+
 let progressInterval = null;
 let verdictWatchInterval = null;
 let verdictFastPathLine = null;
@@ -1634,6 +1726,7 @@ function enterQuotaHold(hint) {
   if (until <= quotaHoldUntil) return;
 
   quotaHoldUntil = until;
+  writeRelayStatus();
   quotaRecoveryRequired = requiresRecovery;
   quotaExhaustedAt = Date.now();
   quotaHoldReason = (hint && hint.line) || 'provider quota exhausted';
@@ -1710,6 +1803,7 @@ function releaseQuotaHold(why, { skipReady = false } = {}) {
   if (!quotaHoldUntil) return;
   const was = quotaHoldReason;
   quotaHoldUntil = 0;
+  writeRelayStatus();
   quotaHoldReason = '';
   quotaRecoveryRequired = false;
   quotaExhaustedAt = 0;
@@ -2329,6 +2423,7 @@ function stopHub(hub, reason) {
   hub.authenticated = false;
   hub.readyOutstanding = false;
   hub.connectGeneration++;
+  writeRelayStatus();
 }
 
 function maybeAskActiveHubForWork() {
@@ -2395,10 +2490,13 @@ function reloadHubsFromProjection() {
   });
   for (const removed of remaining) stopHub(removed, 'removed from contributor.env');
   hubs.splice(0, hubs.length, ...next);
+  adoptedScopeVersion = repoScopeVersionFromEnv(projection, entries.map(entry => entry.repoScope));
+  adoptedAt = new Date().toISOString();
   activeHubIndex = hubs.findIndex(hubHasSelectedWork);
   if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
   logRepoScopeIdle();
   hubs.forEach(refreshHubStatus);
+  writeRelayStatus();
   console.log(`Reloaded ${hubs.length} hive profile(s) from ${CONTRIBUTOR_ENV_FILE}; active hive is ${hubs[activeHubIndex] ? hubs[activeHubIndex].sourceURL : '(none)'}`);
   maybeAskActiveHubForWork();
   return hubs.length;
@@ -2415,6 +2513,7 @@ function handleProfileSwitchSignal() {
       invalidateReadyRetry(hub, 'invalid repository projection');
     }
     logRepoScopeIdle();
+    writeRelayStatus();
     console.error(`Failed to reload hive profiles from ${CONTRIBUTOR_ENV_FILE}: ${e.message}`);
   }
 }
@@ -2424,7 +2523,8 @@ function writeRelayPidFile() {
     fs.mkdirSync(path.dirname(RELAY_PID_FILE), { recursive: true, mode: 0o700 });
     const record = {
       pid: process.pid,
-      started_at: new Date().toISOString(),
+      started_at: relayStartedAt,
+      session: relaySession,
       env_file: CONTRIBUTOR_ENV_FILE,
       container_runtime: (process.env.HIVE_CONTAINER_RUNTIME || '').trim() || undefined,
       container_name: (process.env.HIVE_CONTAINER_NAME || '').trim() || undefined,
@@ -4110,6 +4210,8 @@ function runHeadlessTask(task) {
       stopAgentForTaskExit();
       send({ type: 'task_complete', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, result: 'completed', summary: 'Headless one-shot invocation exited 0', tmux_output: outTail, pr_url: prURL, ...verdictWireFields(noWork), ...effectiveSelectionFields() });
       currentTask = null;
+      currentTaskStartedAt = null;
+      writeRelayStatus();
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       tasksCompletedCount++;
@@ -7020,6 +7122,8 @@ function failCurrentTask(reason, opts) {
   // relaunched CLI after the task has been handed back.
   discardPendingTask('the task failed');
   currentTask = null;
+  currentTaskStartedAt = null;
+  writeRelayStatus();
   releaseQuotaPoolReservation();
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -7246,6 +7350,8 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   // the review-cycle prompt queued below is for the NEXT task and is unaffected.)
   discardPendingTask('the task completed');
   currentTask = null;
+  currentTaskStartedAt = null;
+  writeRelayStatus();
   releaseQuotaPoolReservation();
   taskAssignedAt = 0;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -7283,6 +7389,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
     // scoped to it.
     const reviewRepo = shippedRepos[shippedRepos.length - 1] || completedRepo;
     currentTask = { task_id: `${LOCAL_TASK_ID_PREFIX}${Date.now()}`, kind: 'review', repo: reviewRepo, number: 0, title: 'Review open PRs for comments', synthetic: true };
+    writeRelayStatus();
     taskAssignedAt = Date.now();
     tmuxSendKeys(reviewPrompt);
     startProgressReporting();
@@ -8494,6 +8601,7 @@ function handleMessage(data, hub) {
       if (msg.accepted !== true) {
         console.log(`Hive ${hub.sourceURL} rejected repository selection — withholding work`);
         hub.scopeUnsupported = true;
+        writeRelayStatus();
         recordHubSeen(hub);
         if (!currentTask && hub === hubs[activeHubIndex]) chooseHubForNextTask('scope_rejected');
         maybeAskActiveHubForWork();
@@ -8502,6 +8610,7 @@ function handleMessage(data, hub) {
       hub.scopeUnsupported = false;
       hub.scopeAckVersion = msg.scope_version;
       hub.scopePending = false;
+      writeRelayStatus();
       recordHubSeen(hub);
       if (!currentTask && !hubHasSelectedWork(hubs[activeHubIndex])) chooseHubForNextTask('scope_ack');
       maybeAskActiveHubForWork();
@@ -8518,6 +8627,7 @@ function handleMessage(data, hub) {
       // another — only abort the whole process when every configured hub has
       // failed auth (or there is only one, matching the prior behaviour).
       hub.authFailed = true;
+      writeRelayStatus();
       if (hubs.every(h => h.authFailed)) {
         process.exit(1);
       } else {
@@ -8622,6 +8732,7 @@ function handleMessage(data, hub) {
       }
       invalidateAllReadyRetries('task assigned');
       currentTask = msg;
+      currentTaskStartedAt = new Date().toISOString();
       // #6908: assignment is where a hub grants authority over a repo, so this
       // is where the review cycle's scope is earned. Recorded before anything
       // below can fail, and never cleared, so a PR opened during this task
@@ -8641,6 +8752,7 @@ function handleMessage(data, hub) {
       // (TypeError: Converting circular structure to JSON), which crashed the
       // process, on the very first task after adding multi-hub support.
       Object.defineProperty(currentTask, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+      writeRelayStatus();
       activeHubIndex = hubs.indexOf(hub);
       console.log(`Task assigned: ${sanitizeHubText(msg.kind)} ${sanitizeHubText(msg.repo)}#${msg.number} — ${sanitizeHubText(msg.title)} (from ${hub.url})`);
       if (msg.github_token) {
@@ -8772,6 +8884,8 @@ function handleMessage(data, hub) {
       // currentTask before stopping the agent.
       const revokedTask = currentTask;
       currentTask = null;
+      currentTaskStartedAt = null;
+      writeRelayStatus();
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -8960,6 +9074,10 @@ function connectHub(hub) {
     // #7732: a `ready` in flight on this socket died with it; the auth_ok of
     // the reconnect asks afresh.
     hub.readyOutstanding = false;
+    hub.authenticated = false;
+    hub.scopeAckVersion = null;
+    hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
+    writeRelayStatus();
     invalidateReadyRetry(hub, 'socket closed');
     hub.reconnectTimer = setTimeout(() => connectHub(hub), hub.reconnectDelay);
     hub.reconnectDelay = Math.min(hub.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -8982,6 +9100,7 @@ function cleanup() {
   if (hubsSeenWriteTimer) { clearTimeout(hubsSeenWriteTimer); hubsSeenWriteTimer = null; }
   writeHubsSeenNow();
   removeRelayPidFile();
+  try { fs.unlinkSync(RELAY_STATUS_FILE); } catch (_) {}
   hubs.forEach(hub => {
     if (hub.heartbeatInterval) { clearInterval(hub.heartbeatInterval); hub.heartbeatInterval = null; }
   });
@@ -9440,6 +9559,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     hubs,
     HUBS_SEEN_FILE,
     RELAY_PID_FILE,
+    RELAY_STATUS_FILE,
+    writeRelayStatus,
     // Test hook: mark a task key given-up at a chosen timestamp so isGivenUp's
     // expiry pruning can be exercised without waiting an hour.
     __setGivenUp: (key, at) => { givenUpTasks.set(key, at); },
@@ -9460,5 +9581,6 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   // already absorbed field-by-field, so this cannot stop the relay starting.
   detectCapabilities();
   writeRelayPidFile();
+  writeRelayStatus();
   connect();
 }

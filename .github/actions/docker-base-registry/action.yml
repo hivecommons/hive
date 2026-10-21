@@ -2,7 +2,12 @@ name: Resolve Docker base registry
 description: >-
   Probes the default base-image registry (mirror.gcr.io) for the digest-pinned
   base images used by src/Dockerfile*, retrying briefly, and exports
-  BASE_REGISTRY=docker.io/library when the mirror throttles (429) or fails.
+  BASE_REGISTRY=docker.io/library when the mirror throttles (429), fails, or
+  no longer serves one of the image's layer blobs. A pull-through mirror can
+  answer the manifest while a layer behind it is missing (GC'd or not yet
+  cached), which fails the build with "could not fetch content descriptor
+  ... not found" (#13300) — so the probe checks every linux/amd64 and
+  linux/arm64 layer blob, not just the manifest list.
   The manifest-list digests are identical on both registries. Pass the result
   to builds as --build-arg BASE_REGISTRY=$BASE_REGISTRY.
 runs:
@@ -16,22 +21,66 @@ runs:
           node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4
           debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
           alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+        PROBE_PLATFORMS: linux/amd64 linux/arm64
       run: |
         set -uo pipefail
         primary=mirror.gcr.io/library
+        primary_host=mirror.gcr.io
         fallback=docker.io/library
         selected="$primary"
+
+        # The blob probe needs jq and curl in addition to docker buildx; say so
+        # loudly rather than silently falling back to docker.io's pull limits.
+        for tool in docker jq curl; do
+          if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "::warning::$tool not found on runner; cannot probe $primary, falling back to $fallback"
+            echo "BASE_REGISTRY=$fallback" >> "$GITHUB_ENV"
+            echo "Base image registry: $fallback"
+            exit 0
+          fi
+        done
+
+        # Every blob (config + layers) of each platform manifest must answer
+        # HEAD on the mirror; a 404 here is the exact failure the build would
+        # otherwise hit at its first FROM.
+        probe_blobs() {
+          local image="$1" repo platform mdigest raw pm blob code
+          repo="${image%%:*}"
+          raw="$(docker buildx imagetools inspect --raw "$primary/$image" 2>/dev/null)" || return 1
+          for platform in $PROBE_PLATFORMS; do
+            mdigest="$(printf '%s' "$raw" | jq -r --arg os "${platform%%/*}" --arg arch "${platform##*/}" \
+              '.manifests[]? | select(.platform.os == $os and .platform.architecture == $arch) | .digest' | head -n1)"
+            if [ -z "$mdigest" ]; then
+              echo "::warning::$primary/$image has no $platform manifest"
+              return 1
+            fi
+            pm="$(docker buildx imagetools inspect --raw "$primary/$repo@$mdigest" 2>/dev/null)" || return 1
+            for blob in $(printf '%s' "$pm" | jq -r '[.config.digest] + [.layers[].digest] | .[]'); do
+              code="$(curl -sS -o /dev/null -w '%{http_code}' -I --max-time 20 \
+                "https://$primary_host/v2/library/$repo/blobs/$blob")"
+              case "$code" in
+                2*) ;;
+                *)
+                  echo "::warning::$primary/$image $platform blob $blob -> HTTP $code"
+                  return 1
+                  ;;
+              esac
+            done
+          done
+          return 0
+        }
+
         for image in $PROBE_IMAGES; do
           ok=false
           for attempt in 1 2 3; do
-            if docker buildx imagetools inspect "$primary/$image" >/dev/null 2>&1; then
+            if probe_blobs "$image"; then
               ok=true
               break
             fi
             [ "$attempt" -lt 3 ] && sleep $((attempt * 10))
           done
           if [ "$ok" != true ]; then
-            echo "::warning::$primary/$image unavailable (429 or error); falling back to $fallback"
+            echo "::warning::$primary/$image unavailable or incomplete (429, error, or missing layer); falling back to $fallback"
             selected="$fallback"
             break
           fi

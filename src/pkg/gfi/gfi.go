@@ -298,6 +298,12 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 			return skip(d, "excluded-label:"+l)
 		}
 	}
+	if why, ok := OpsTrackingReason(c.Title, c.Body); ok {
+		return skip(d, SkipOpsTracking+":"+why)
+	}
+	if _, ok := ParseRecheckAfter(c.Body); ok {
+		return skip(d, SkipTimeGated)
+	}
 	title := NormalizeTitle(c.Title)
 	for _, prefix := range epicTitlePrefixes {
 		if strings.HasPrefix(title, prefix) {
@@ -429,6 +435,15 @@ type Forge interface {
 	UpsertIssueMarkerComment(ctx context.Context, repo string, number int, marker, body string, create bool) (MarkerComment, error)
 }
 
+// LabelReader is the optional half of Forge the sweep uses to re-read an
+// issue's labels immediately before advertising it. Candidates come from
+// the last enumeration, which can be many minutes old; hivecommons/hive
+// #13267 picked up `blocked` (and lost its claim labels) between the
+// enumeration and the sweep, and the stale snapshot was what got labelled.
+type LabelReader interface {
+	IssueLabels(ctx context.Context, repo string, number int) ([]string, error)
+}
+
 // MarkerComment is what UpsertIssueMarkerComment found before it wrote.
 type MarkerComment struct {
 	// Found is true when a comment containing the marker already existed.
@@ -470,6 +485,10 @@ type Stats struct {
 	Released  int `json:"released"`
 	Converted int `json:"converted"`
 	Labelled  int `json:"labelled"`
+	// Withdrawn counts advertisements taken back from issues that turned
+	// out to be blocked, held, parked on a person, ops tracking or
+	// time-gated while labelled.
+	Withdrawn int `json:"withdrawn"`
 }
 
 // Sweeper owns the in-process memory a sweep needs: which issues the hive
@@ -529,7 +548,7 @@ type SweepOptions struct {
 
 // Event is one sweep action for the audit log.
 type Event struct {
-	Action  string // "select" | "release" | "convert"
+	Action  string // "select" | "release" | "convert" | "withdraw"
 	Repo    string
 	Number  int
 	Reasons []string
@@ -540,8 +559,11 @@ type Event struct {
 type Result struct {
 	Scanned  int
 	Selected []string
-	Skipped  map[string]int
-	Errors   int
+	// Withdrawn lists the labelled issues whose advertisement this pass
+	// took back (see Withdrawable).
+	Withdrawn []string
+	Skipped   map[string]int
+	Errors    int
 }
 
 // Sweep scores candidates, selects up to MaxPerSweep per repo (and MaxPerRepo
@@ -593,6 +615,15 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 		if !d.Eligible {
 			res.Skipped[d.Skip]++
 			logger.Debug("gfi skip", "issue", c.Key(), "reason", d.Skip)
+			if d.AlreadyLabelled && Withdrawable(d.Skip) {
+				if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
+					if err := s.Withdraw(ctx, forge, c, d.Skip, opts); err != nil {
+						res.Errors++
+					} else {
+						res.Withdrawn = append(res.Withdrawn, c.Key())
+					}
+				}
+			}
 			continue
 		}
 		perRepo[c.Repo] = append(perRepo[c.Repo], scored{c, d})
@@ -621,6 +652,11 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			if !sc.d.AlreadyLabelled && labelledPerRepo[repo] >= p.MaxPerRepo {
 				res.Skipped["repo-cap"]++
 				logger.Info("gfi skip", "issue", sc.c.Key(), "reason", "repo-cap", "labelled", labelledPerRepo[repo], "max", p.MaxPerRepo)
+				continue
+			}
+			if stale, reason := s.staleSkip(ctx, forge, &sc.c, opts, p, now); stale {
+				res.Skipped["stale:"+reason]++
+				logger.Info("gfi skip", "issue", sc.c.Key(), "reason", "stale:"+reason)
 				continue
 			}
 			agentsMD := ""
@@ -663,6 +699,124 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 }
 
 var errSuperseded = errors.New("gfi: issue was released earlier; welcome comment is superseded")
+
+// staleSkip re-reads the issue's labels when the forge can, and re-scores
+// with them. It reports true, with the fresh skip reason, when the live
+// labels disqualify an issue the enumeration snapshot had admitted. On
+// success the candidate's labels are replaced so apply sees the truth. A
+// failed read skips with "label-read": advertising on a snapshot the hive
+// could not confirm is the failure mode this guard exists to stop.
+func (s *Sweeper) staleSkip(ctx context.Context, forge Forge, c *Candidate, opts SweepOptions, p Policy, now time.Time) (bool, string) {
+	lr, ok := forge.(LabelReader)
+	if !ok {
+		return false, ""
+	}
+	fresh, err := lr.IssueLabels(ctx, c.Repo, c.Number)
+	if err != nil {
+		return true, "label-read"
+	}
+	live := *c
+	live.Labels = fresh
+	if d := Score(live, p, now); !d.Eligible {
+		if d.AlreadyLabelled && Withdrawable(d.Skip) {
+			if _, released := s.releasedUntil(c.Key(), p.ReselectCooldown); !released {
+				_ = s.Withdraw(ctx, forge, live, d.Skip, opts)
+			}
+		}
+		return true, d.Skip
+	}
+	c.Labels = fresh
+	return false, ""
+}
+
+// WithdrawnComment is the correction left on an issue whose advertisement
+// was withdrawn: the hive explains why the issue is not newcomer work and
+// where other issues are. It carries SupersededMarker so the issue is never
+// re-advertised.
+func WithdrawnComment(c Candidate, reason string, l Links, at time.Time) string {
+	hive := strings.TrimSpace(l.HiveID)
+	if hive == "" {
+		hive = "this hive"
+	}
+	var why string
+	switch {
+	case strings.HasPrefix(reason, SkipOpsTracking):
+		why = "it is a maintainer's operations checklist, not a code change"
+	case reason == SkipTimeGated:
+		why = "its checklist cannot be completed until a deadline has passed"
+	case strings.HasPrefix(reason, "hard-suppress:"):
+		why = "it is waiting on a person (`" + strings.TrimPrefix(reason, "hard-suppress:") + "`)"
+	case strings.HasPrefix(reason, "excluded-label:"):
+		why = "it carries the `" + strings.TrimPrefix(reason, "excluded-label:") + "` label, so it cannot be worked right now"
+	default:
+		why = reason
+	}
+	var b strings.Builder
+	b.WriteString(SupersededMarker + "\n")
+	fmt.Fprintf(&b, "~~Good first issue~~ — **withdrawn** by %s: this issue is not open to new contributors — %s. The `%s` and `%s` labels have been removed (%s). Sorry for the noise!",
+		hive, why, Label, HelpWantedLabel, at.UTC().Format(time.RFC3339))
+	if origin := strings.TrimRight(strings.TrimSpace(l.Origin), "/"); origin != "" {
+		fmt.Fprintf(&b, " Issues open to new contributors are listed on the relay page: %s/contribute", origin)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// Withdraw takes the advertisement back from an issue that is not newcomer
+// work (see Withdrawable): both labels come off whoever applied them, and
+// the welcome comment is edited in place to a correction — or, when the
+// labels arrived without a welcome comment, one short correction is
+// posted. Idempotent: an issue already carrying the superseded note gets no
+// second comment, and the release is remembered so the reselect cooldown
+// keeps the sweep from re-advertising it.
+func (s *Sweeper) Withdraw(ctx context.Context, forge Forge, c Candidate, reason string, opts SweepOptions) error {
+	if forge == nil {
+		return nil
+	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	have := lowerSet(c.Labels)
+	var removed []string
+	var firstErr error
+	for _, l := range []string{Label, HelpWantedLabel} {
+		if !have[l] {
+			continue
+		}
+		if err := forge.RemoveLabel(ctx, c.Repo, c.Number, l); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("remove label %q: %w", l, err)
+			}
+			continue
+		}
+		removed = append(removed, l)
+	}
+	peek, err := forge.UpsertIssueMarkerComment(ctx, c.Repo, c.Number, SupersededMarker, "", false)
+	if err != nil && firstErr == nil {
+		firstErr = fmt.Errorf("withdraw comment lookup: %w", err)
+	}
+	if err == nil && !peek.Found {
+		body := WithdrawnComment(c, reason, opts.Links, now)
+		if _, err := forge.UpsertIssueMarkerComment(ctx, c.Repo, c.Number, Marker, body, true); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("withdraw comment: %w", err)
+		}
+	}
+	s.mu.Lock()
+	delete(s.selected, c.Key())
+	s.released[c.Key()] = now
+	s.stats.Withdrawn++
+	s.mu.Unlock()
+	logger.Info("gfi withdraw", "issue", c.Key(), "reason", reason, "labels_removed", strings.Join(removed, ","), "error", firstErr)
+	if opts.Audit != nil {
+		opts.Audit(Event{Action: "withdraw", Repo: c.Repo, Number: c.Number, Reason: reason})
+	}
+	return firstErr
+}
 
 // apply ensures the labels and the comment on one issue. It returns the
 // labels it added (those the issue lacked).
