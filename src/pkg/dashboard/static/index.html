@@ -1318,7 +1318,7 @@
     .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
     .ham-input:focus { border-color: var(--line-strong); }
     .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
-    /* Merge sound toggle: a speaker chip at the toolbar's far end; pressed = on. */
+    /* Sound toggle (merge zap + new-item buzz): a speaker chip at the toolbar's far end; pressed = on. */
     .ham-sound { margin-left: auto; padding: var(--sp-1) var(--sp-2); min-width: 2em; line-height: 1; }
     .ham-sound[aria-pressed="true"] { color: var(--green); border-color: var(--green); }
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
@@ -6612,7 +6612,7 @@
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
-        <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Merge sound off — turn on (plays a test zap)" title="Merge sound off — turn on (plays a test zap)">🔇</button>
+        <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
@@ -13309,7 +13309,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderStageTracker(data) {
-      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); }
+      if (data && typeof data === 'object') { _stageTracker = data; stageTrackerNoteMerges(data); stageTrackerNoteOpened(data); }
       const el = document.getElementById('activity-monitor-panel');
       if (!el) return;
       const d = _stageTracker;
@@ -13377,22 +13377,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } catch (e) { /* keep the previous render */ }
     }
 
-    /* ---- Activity monitor merge sound (#13275) ----------------------------
-       Opt-in "bug zapper" when a PR the tab was already watching merges.
-       The detector is pure (stageTrackerMergeState + stageTrackerNewlyMerged,
-       run under node by stage_tracker_merge_sound_test.go): a PR counts as
-       newly merged when the previous payload listed it open and the next
-       one lists it merged — a stage at/after the terminal cap, or its key
-       in recently_merged (the audit log's pr_merged entries, which is how
-       a PR that simply dropped out of the open list is told apart from one
-       closed unmerged). First load has no previous payload, so it never
-       fires; issues never fire; a per-PR "zapped" set stops replays; N
-       merges in one refresh play at most STAGE_TRACKER_SOUND_MAX_PLAYS
-       zaps. The sound is synthesised with the Web Audio API (no asset, no
-       URL — the CSP allows neither): a short burst of crackling white
-       noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a low
-       sine "thunk" at onset, all under one master gain. The AudioContext
-       is created lazily on a user gesture and resumed when suspended. */
+    /* ---- Activity monitor sounds (#13275) ---------------------------------
+       Opt-in "bug zapper" when a PR the tab was already watching merges,
+       and a short bee-like buzz when an issue or PR first appears.
+       The merge detector is pure (stageTrackerMergeState +
+       stageTrackerCarryOpen + stageTrackerNewlyMerged, run under node by
+       stage_tracker_merge_sound_test.go): a PR counts as newly merged when
+       an earlier payload listed it open and a later one lists it merged —
+       a stage at/after the terminal cap, or its key in recently_merged
+       (the audit log's pr_merged entries, which is how a PR that simply
+       dropped out of the open list is told apart from one closed
+       unmerged). The open list and the audit entry do not always land in
+       the same payload — a webhook-patched snapshot can drop the PR a poll
+       before the poller records the merge — so a PR seen open is carried
+       as "still open" after it vanishes until recently_merged settles it.
+       recently_merged may name the repo by its short name; it is matched
+       against the owner/name the items carry. First load has no previous
+       payload, so it never fires; issues never fire; a per-PR "zapped" set
+       stops replays; N merges in one refresh play at most
+       STAGE_TRACKER_SOUND_MAX_PLAYS zaps. The new-item detector
+       (stageTrackerOpenKeys + stageTrackerNewlyOpened) works the same way
+       on every item's key with a per-key "buzzed" set and the same cap.
+       Both sounds are synthesised with the Web Audio API (no asset, no
+       URL — the CSP allows neither). Zap: a short burst of crackling
+       white noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a
+       low sine "thunk" at onset. Buzz: a sawtooth near 120 Hz with a ~30 Hz
+       amplitude tremolo through a lowpass, quieter than the zap. The
+       AudioContext is created lazily on a user gesture and resumed when
+       suspended; a context the autoplay policy still holds suspended at
+       play time re-arms the gesture listeners instead of queueing stale
+       voices. */
     const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
     const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
     const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
@@ -13406,25 +13420,56 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_THUNK_HZ = 90;
     const STAGE_TRACKER_THUNK_S = 0.14;
     const STAGE_TRACKER_GAIN_FLOOR = 0.0001;
+    const STAGE_TRACKER_BUZZ_S = 0.18;
+    const STAGE_TRACKER_BUZZ_MASTER_GAIN = 0.2;
+    const STAGE_TRACKER_BUZZ_HZ = 120;
+    const STAGE_TRACKER_BUZZ_DRIFT_HZ = 14;
+    const STAGE_TRACKER_BUZZ_TREMOLO_HZ = 30;
+    const STAGE_TRACKER_BUZZ_TREMOLO_DEPTH = 0.45;
+    const STAGE_TRACKER_BUZZ_LOWPASS_HZ = 900;
+    const STAGE_TRACKER_BUZZ_ATTACK_S = 0.015;
     var _stageTrackerMergeState = null;
     var _stageTrackerZapped = {};
+    var _stageTrackerOpenState = null;
+    var _stageTrackerBuzzed = {};
     var _stageTrackerAudioCtx = null;
     var _stageTrackerSoundOn = false;
     var _stageTrackerSoundPrimed = false;
 
     function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
+    function stageTrackerItemKey(it) { return (it.repo || '') + '/' + (it.kind || '') + '#' + (Number(it.number) || 0); }
 
-    // Pure: PR key → merged? for one payload. Issues are not tracked.
+    // Pure: PR key → merged? for one payload. Issues are not tracked. A
+    // recently_merged repo given by its short name is resolved against the
+    // owner/name of the items when exactly one item repo matches.
     function stageTrackerMergeState(d) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
+      const byShort = {};
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
         if (!it || it.kind !== 'pr') continue;
         out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        const repo = String(it.repo || '');
+        const slash = repo.lastIndexOf('/');
+        if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
       }
       for (const m of (Array.isArray(d.recently_merged) ? d.recently_merged : [])) {
-        if (m && m.repo && m.number) out[stageTrackerPRKey(m.repo, m.number)] = true;
+        if (!m || !m.repo || !m.number) continue;
+        const repo = String(m.repo);
+        const full = repo.indexOf('/') < 0 && byShort[repo] ? byShort[repo] : repo;
+        out[stageTrackerPRKey(full, m.number)] = true;
       }
+      return out;
+    }
+
+    // Pure: next plus every PR prev listed open that next no longer lists at
+    // all, kept as open. A PR the snapshot dropped before the audit log
+    // recorded its merge stays comparable until recently_merged settles it
+    // (or, when it was closed unmerged, for the life of the tab — a few keys).
+    function stageTrackerCarryOpen(prev, next) {
+      const out = Object.assign({}, next || {});
+      if (!prev) return out;
+      for (const k of Object.keys(prev)) if (prev[k] === false && !(k in out)) out[k] = false;
       return out;
     }
 
@@ -13435,12 +13480,37 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function stageTrackerNoteMerges(d) {
-      const next = stageTrackerMergeState(d);
+      const next = stageTrackerCarryOpen(_stageTrackerMergeState, stageTrackerMergeState(d));
       const fresh = stageTrackerNewlyMerged(_stageTrackerMergeState, next).filter(k => !_stageTrackerZapped[k]);
       _stageTrackerMergeState = next;
       if (!fresh.length) return;
       fresh.forEach(k => { _stageTrackerZapped[k] = true; });
       if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayZap(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
+    }
+
+    // Pure: item key → true for every issue and PR one payload lists.
+    function stageTrackerOpenKeys(d) {
+      const out = {};
+      if (!d || typeof d !== 'object' || !Array.isArray(d.items)) return out;
+      for (const it of d.items) if (it && it.kind && Number(it.number) > 0) out[stageTrackerItemKey(it)] = true;
+      return out;
+    }
+
+    // Pure: keys listed in next that prev did not list, sorted. No prev, or
+    // an empty prev (first populated payload), → none: a page load never
+    // buzzes for everything already open.
+    function stageTrackerNewlyOpened(prev, next) {
+      if (!prev || !next || !Object.keys(prev).length) return [];
+      return Object.keys(next).filter(k => !(k in prev)).sort();
+    }
+
+    function stageTrackerNoteOpened(d) {
+      const next = stageTrackerOpenKeys(d);
+      const fresh = stageTrackerNewlyOpened(_stageTrackerOpenState, next).filter(k => !_stageTrackerBuzzed[k]);
+      _stageTrackerOpenState = next;
+      if (!fresh.length) return;
+      fresh.forEach(k => { _stageTrackerBuzzed[k] = true; });
+      if (_stageTrackerSoundOn && !document.hidden) stageTrackerPlayBuzz(Math.min(fresh.length, STAGE_TRACKER_SOUND_MAX_PLAYS));
     }
 
     function stageTrackerAudioContext() {
@@ -13453,11 +13523,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Prime the context on the first gesture after load when sound was left
     // on in a previous visit, so a merge that lands before the user clicks
-    // anything in the tracker can still play (autoplay policy).
+    // anything in the tracker can still play (autoplay policy). Re-armed
+    // whenever a play finds the context still suspended: the gesture that
+    // created it may have been consumed, or it was created outside one.
     function stageTrackerSoundPrime() {
       if (_stageTrackerSoundPrimed) return;
       _stageTrackerSoundPrimed = true;
-      const prime = () => { if (_stageTrackerSoundOn) stageTrackerAudioContext(); };
+      const prime = () => { _stageTrackerSoundPrimed = false; if (_stageTrackerSoundOn) stageTrackerAudioContext(); };
       document.addEventListener('pointerdown', prime, { once: true, passive: true });
       document.addEventListener('keydown', prime, { once: true, passive: true });
     }
@@ -13496,17 +13568,59 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       osc.start(at); osc.stop(at + STAGE_TRACKER_THUNK_S);
     }
 
-    function stageTrackerPlayZap(count) {
+    // A bee passing by: a sawtooth that drifts down a few Hz, chopped by a
+    // ~30 Hz tremolo on its gain, rounded off through a lowpass.
+    function stageTrackerBuzzVoice(ctx, out, at) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(STAGE_TRACKER_BUZZ_HZ + STAGE_TRACKER_BUZZ_DRIFT_HZ, at);
+      osc.frequency.linearRampToValueAtTime(STAGE_TRACKER_BUZZ_HZ, at + STAGE_TRACKER_BUZZ_S);
+      const low = ctx.createBiquadFilter();
+      low.type = 'lowpass';
+      low.frequency.value = STAGE_TRACKER_BUZZ_LOWPASS_HZ;
+      const trem = ctx.createGain();
+      trem.gain.value = 1 - STAGE_TRACKER_BUZZ_TREMOLO_DEPTH;
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = STAGE_TRACKER_BUZZ_TREMOLO_HZ;
+      const depth = ctx.createGain();
+      depth.gain.value = STAGE_TRACKER_BUZZ_TREMOLO_DEPTH;
+      lfo.connect(depth); depth.connect(trem.gain);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at);
+      env.gain.exponentialRampToValueAtTime(1, at + STAGE_TRACKER_BUZZ_ATTACK_S);
+      env.gain.setValueAtTime(1, at + STAGE_TRACKER_BUZZ_S * 0.6);
+      env.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_BUZZ_S);
+      osc.connect(low); low.connect(trem); trem.connect(env); env.connect(out);
+      osc.start(at); lfo.start(at);
+      osc.stop(at + STAGE_TRACKER_BUZZ_S); lfo.stop(at + STAGE_TRACKER_BUZZ_S);
+    }
+
+    // Schedules count voices (capped) from startOffsetS under one master
+    // gain. A context the autoplay policy still holds suspended gets no
+    // voices — they would all burst out together on the next gesture — and
+    // re-arms the gesture priming instead.
+    function stageTrackerPlayVoices(voice, count, gain, startOffsetS) {
       const ctx = stageTrackerAudioContext();
       if (!ctx) return false;
+      if (ctx.state === 'suspended') { stageTrackerSoundPrime(); return false; }
       try {
         const master = ctx.createGain();
-        master.gain.value = STAGE_TRACKER_SOUND_MASTER_GAIN;
+        master.gain.value = gain;
         master.connect(ctx.destination);
         const n = Math.max(1, Math.min(Number(count) || 1, STAGE_TRACKER_SOUND_MAX_PLAYS));
-        for (let i = 0; i < n; i++) stageTrackerZapVoice(ctx, master, ctx.currentTime + i * STAGE_TRACKER_SOUND_OFFSET_S);
+        const at = ctx.currentTime + (Number(startOffsetS) || 0);
+        for (let i = 0; i < n; i++) voice(ctx, master, at + i * STAGE_TRACKER_SOUND_OFFSET_S);
         return true;
       } catch { return false; }
+    }
+
+    function stageTrackerPlayZap(count, startOffsetS) {
+      return stageTrackerPlayVoices(stageTrackerZapVoice, count, STAGE_TRACKER_SOUND_MASTER_GAIN, startOffsetS);
+    }
+
+    function stageTrackerPlayBuzz(count, startOffsetS) {
+      return stageTrackerPlayVoices(stageTrackerBuzzVoice, count, STAGE_TRACKER_BUZZ_MASTER_GAIN, startOffsetS);
     }
 
     function stageTrackerSoundSyncButton() {
@@ -13515,7 +13629,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const on = _stageTrackerSoundOn;
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
       b.textContent = on ? '🔊' : '🔇';
-      const label = on ? 'Merge sound on — turn off' : 'Merge sound off — turn on (plays a test zap)';
+      const label = on ? 'Sound on (merge zap + new-item buzz) — turn off' : 'Sound off — turn on (merge zap + new-item buzz; plays a test of each)';
       b.setAttribute('aria-label', label);
       b.setAttribute('title', label);
     }
@@ -13527,12 +13641,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Toolbar speaker chip: flips the preference, persists it, and plays one
-    // test zap when turning on so the user hears what they opted into.
+    // test zap then one buzz when turning on so the user hears both sounds
+    // they opted into.
     function hamSoundToggle() {
       _stageTrackerSoundOn = !_stageTrackerSoundOn;
       try { localStorage.setItem(STAGE_TRACKER_SOUND_KEY, _stageTrackerSoundOn ? '1' : '0'); } catch {}
       stageTrackerSoundSyncButton();
-      if (_stageTrackerSoundOn) { stageTrackerSoundPrime(); stageTrackerPlayZap(1); }
+      if (_stageTrackerSoundOn) { stageTrackerPlayZap(1); stageTrackerPlayBuzz(1, STAGE_TRACKER_ZAP_S + STAGE_TRACKER_SOUND_OFFSET_S); }
     }
 
     function parseCadenceMinutes(cadence) {
