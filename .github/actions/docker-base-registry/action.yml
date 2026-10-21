@@ -29,11 +29,22 @@ runs:
         fallback=docker.io/library
         selected="$primary"
 
+        # The blob probe needs jq and curl in addition to docker buildx; say so
+        # loudly rather than silently falling back to docker.io's pull limits.
+        for tool in docker jq curl; do
+          if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "::warning::$tool not found on runner; cannot probe $primary, falling back to $fallback"
+            echo "BASE_REGISTRY=$fallback" >> "$GITHUB_ENV"
+            echo "Base image registry: $fallback"
+            exit 0
+          fi
+        done
+
         # Every blob (config + layers) of each platform manifest must answer
         # HEAD on the mirror; a 404 here is the exact failure the build would
         # otherwise hit at its first FROM.
         probe_blobs() {
-          local image="$1" repo platform mdigest raw
+          local image="$1" repo platform mdigest raw pm blob code
           repo="${image%%:*}"
           raw="$(docker buildx imagetools inspect --raw "$primary/$image" 2>/dev/null)" || return 1
           for platform in $PROBE_PLATFORMS; do
@@ -43,7 +54,6 @@ runs:
               echo "::warning::$primary/$image has no $platform manifest"
               return 1
             fi
-            local pm blob code
             pm="$(docker buildx imagetools inspect --raw "$primary/$repo@$mdigest" 2>/dev/null)" || return 1
             for blob in $(printf '%s' "$pm" | jq -r '[.config.digest] + [.layers[].digest] | .[]'); do
               code="$(curl -sS -o /dev/null -w '%{http_code}' -I --max-time 20 \
