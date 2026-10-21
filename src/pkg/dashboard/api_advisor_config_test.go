@@ -243,7 +243,7 @@ func TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged(t *testing.T) {
 	}{
 		{"fleet", "/api/config/advisor", `{"enabled":true,"daily_budget_tokens":5000}`},
 		{"roles", "/api/config/advisor/roles", `{"model_roles":{"advisor":{"backend":"claude","model":"claude-haiku-4.5"}}}`},
-		{"agent", "/api/config/advisor/agent/scanner", `{"override":{"enabled":false,"max_consecutive_blocks":9}}`},
+		{"agent", "/api/config/advisor/agent/scanner", `{"override":{"enabled":false,"max_consecutive_blocks":3}}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
