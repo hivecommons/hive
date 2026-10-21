@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -458,24 +459,34 @@ func TestRunTranscriptActivityRefreshScansOnTickAndStopsOnCancel(t *testing.T) {
 	first := time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)
 	writeEventsFile(t, home, "s1", first)
 
-	clock := first
+	// The fake clock is read by the refresher goroutine and advanced by the
+	// test, so it lives behind an atomic.
+	var clock atomic.Int64
+	clock.Store(first.UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 	ticks := make(chan time.Time)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		m.runTranscriptActivityRefresh(ctx, ticks, func() time.Time { return clock })
+		m.runTranscriptActivityRefresh(ctx, ticks, now)
 	}()
 
 	// The initial scan runs before the loop waits for its first tick, so a
 	// tick send is only accepted once it has finished.
-	clock = first.Add(transcriptLivenessScanInterval)
 	later := first.Add(time.Hour)
 	writeEventsFile(t, home, "s2", later)
-	ticks <- clock
-	// A second tick send proves the previous pass completed.
-	clock = clock.Add(transcriptLivenessScanInterval)
-	ticks <- clock
+	tick := first.Add(transcriptLivenessScanInterval)
+	clock.Store(tick.UnixNano())
+	ticks <- tick
+	// Each further tick send proves the previous pass completed; two more
+	// guarantee a pass that both started after s2 was written and finished
+	// before the read below, whatever the initial scan observed.
+	for range 2 {
+		tick = tick.Add(transcriptLivenessScanInterval)
+		clock.Store(tick.UnixNano())
+		ticks <- tick
+	}
 	if got := m.AllStatuses()["scanner"].LastTranscriptActivity; !got.Equal(later) {
 		t.Fatalf("LastTranscriptActivity after tick = %v, want %v", got, later)
 	}
@@ -522,6 +533,16 @@ func TestNewestCopilotTranscriptActivityCachedSkipsColdSessions(t *testing.T) {
 	got, _ = newestCopilotTranscriptActivityCached(home, cache, now.Add(2*transcriptLivenessScanInterval))
 	if !got.Equal(hotter) {
 		t.Fatalf("partial scan missed the hot session update: %v, want %v", got, hotter)
+	}
+
+	// A session directory that had no events.jsonl is re-stat'd on a partial
+	// pass too, so a just-started session is seen as soon as its first event
+	// lands rather than at the next full rescan.
+	started := now.Add(3 * time.Second)
+	writeEventsFile(t, home, "no-events", started)
+	got, _ = newestCopilotTranscriptActivityCached(home, cache, now.Add(3*transcriptLivenessScanInterval))
+	if !got.Equal(started) {
+		t.Fatalf("partial scan missed the new session's first event: %v, want %v", got, started)
 	}
 
 	// The full rescan picks the resumed cold session up and drops a removed one.

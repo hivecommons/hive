@@ -70,9 +70,12 @@ func newestCopilotTranscriptActivity(home string) (time.Time, bool) {
 
 // newestCopilotTranscriptActivityCached is newestCopilotTranscriptActivity
 // with a per-agent cache: between full rescans, a session whose cached mtime
-// is older than transcriptHotSessionAge is trusted rather than stat'd.
-// Sessions that disappeared from the directory are dropped from the cache.
-// A nil cache stats everything.
+// is older than transcriptHotSessionAge is trusted rather than stat'd. A
+// session with no events.jsonl yet (zero cached mtime) is always re-stat'd:
+// the CLI creates the directory a moment before the first event lands, and
+// trusting that empty read would hide a brand-new session until the next
+// full rescan. Sessions that disappeared from the directory are dropped from
+// the cache. A nil cache stats everything.
 func newestCopilotTranscriptActivityCached(home string, cache *transcriptSessionCache, now time.Time) (time.Time, bool) {
 	root := filepath.Join(home, ".copilot", "session-state")
 	entries, err := os.ReadDir(root)
@@ -95,7 +98,7 @@ func newestCopilotTranscriptActivityCached(home string, cache *transcriptSession
 		name := entry.Name()
 		if cache != nil {
 			seen[name] = true
-			if prev, ok := cache.sessions[name]; ok && !full && now.Sub(prev) > transcriptHotSessionAge {
+			if prev, ok := cache.sessions[name]; ok && !full && !prev.IsZero() && now.Sub(prev) > transcriptHotSessionAge {
 				if prev.After(newest) {
 					newest = prev
 				}
