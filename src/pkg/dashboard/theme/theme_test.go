@@ -171,6 +171,50 @@ func TestCSSCanonicalTokenWinsOverLegacyToken(t *testing.T) {
 	}
 }
 
+func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
+	th := Theme{
+		ID:   "operator-css",
+		Dark: true,
+		Tokens: map[string]string{
+			"--accent":    "#58a6ff",
+			"--surface-0": "#0d1117",
+			"--surface-1": "#161b22",
+			"--surface-2": "#21262d",
+			"--surface-3": "#30363d",
+			"--text":      "#f0f6fc",
+		},
+		CustomCSS: `#oc-topbar{display:flex!important}.repo-name{text-align:center!important}`,
+	}
+	css, err := CSS(th)
+	if err != nil {
+		t.Fatalf("CSS custom layout guard: %v", err)
+	}
+	customIdx := strings.Index(css, `#oc-topbar{display:flex!important}`)
+	guardIdx := strings.Index(css, `body #oc-topbar.oc-topbar{--topbar-grid-columns:auto minmax(0,1fr) auto!important;position:fixed!important;`)
+	if customIdx < 0 || guardIdx < 0 {
+		t.Fatalf("theme CSS missing custom override or layout guard:\n%s", css)
+	}
+	if guardIdx < customIdx {
+		t.Fatalf("layout guard must be emitted after custom CSS so it wins cascade:\n%s", css)
+	}
+	for _, want := range []string{
+		`display:grid!important`,
+		`--topbar-grid-columns:auto minmax(0,1fr) auto!important`,
+		`grid-template-columns:var(--topbar-grid-columns)!important`,
+		`>.oc-topbar-center{justify-self:stretch!important;`,
+		`>.oc-topbar-right{justify-self:end!important;`,
+		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
+		`body #repos.repo-grid .repo-card .repo-name{display:flex!important;`,
+		`justify-content:flex-start!important;`,
+		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 12rem!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;white-space:normal!important;overflow-wrap:anywhere!important;`,
+		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin:0 0 0 auto!important;`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("layout guard missing %q:\n%s", want, css)
+		}
+	}
+}
+
 // The sidebar becomes an off-canvas drawer below 1025px (index.html), so the
 // guard must release the topbar from the --sidebar-w offset across the whole
 // drawer range, not only at phone-portrait widths; otherwise landscape phones

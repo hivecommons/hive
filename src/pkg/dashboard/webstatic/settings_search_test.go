@@ -36,14 +36,15 @@ type settingsSearchScroll struct {
 // move focus to it — not drop the user at the top of a long tab.
 func TestSettingsSearchOpenTabRevealsRow(t *testing.T) {
 	var got struct {
-		Error         string              `json:"error"`
-		Groups        []string            `json:"groups"`
-		Hits          []map[string]string `json:"hits"`
-		ActiveTab     string              `json:"activeTab"`
-		RowFound      bool                `json:"rowFound"`
-		RowClass      string              `json:"rowClass"`
-		Focused       string              `json:"focused"`
-		SearchCleared bool                `json:"searchCleared"`
+		Error         string                 `json:"error"`
+		Groups        []string               `json:"groups"`
+		Hits          []map[string]string    `json:"hits"`
+		ActiveTab     string                 `json:"activeTab"`
+		RowFound      bool                   `json:"rowFound"`
+		RowClass      string                 `json:"rowClass"`
+		Scrolled      []settingsSearchScroll `json:"scrolled"`
+		Focused       string                 `json:"focused"`
+		SearchCleared bool                   `json:"searchCleared"`
 	}
 	settingsSearchScenario(t, "openTab", &got)
 	if got.Error != "" {
@@ -66,6 +67,9 @@ func TestSettingsSearchOpenTabRevealsRow(t *testing.T) {
 	if !strings.Contains(" "+got.RowClass+" ", " cfg-row-flash ") {
 		t.Errorf("target row class = %q, want cfg-row-flash", got.RowClass)
 	}
+	if len(got.Scrolled) != 1 || got.Scrolled[0].Key != "dashboard.experiment_lab" || got.Scrolled[0].Block != "center" {
+		t.Errorf("scrollIntoView calls = %+v, want one on the row with block:center", got.Scrolled)
+	}
 	if !strings.Contains(got.Focused, "dashboard.experiment_lab") {
 		t.Errorf("focus = %q, want the setting row/control", got.Focused)
 	}
@@ -78,8 +82,9 @@ func TestSettingsSearchOpenTabRevealsRow(t *testing.T) {
 // land on the setting.
 func TestSettingsSearchRowClickAndEnter(t *testing.T) {
 	type landing struct {
-		Tab string `json:"tab"`
-		Key string `json:"key"`
+		Tab      string `json:"tab"`
+		Key      string `json:"key"`
+		Scrolled int    `json:"scrolled"`
 	}
 	var got struct {
 		Error  string  `json:"error"`
@@ -90,10 +95,10 @@ func TestSettingsSearchRowClickAndEnter(t *testing.T) {
 	if got.Error != "" {
 		t.Fatal(got.Error)
 	}
-	if got.First != (landing{"Logging", "logging.kick_log_source"}) {
+	if got.First != (landing{"Logging", "logging.kick_log_source", 1}) {
 		t.Errorf("row click landed on %+v", got.First)
 	}
-	if got.Second != (landing{"Dashboard", "dashboard.experiment_lab"}) {
+	if got.Second != (landing{"Dashboard", "dashboard.experiment_lab", 1}) {
 		t.Errorf("Enter landed on %+v", got.Second)
 	}
 }
@@ -136,9 +141,10 @@ func TestSettingsSearchRevealRetriesLazyRows(t *testing.T) {
 	var got struct {
 		FlashedBefore bool   `json:"flashedBefore"`
 		Key           string `json:"key"`
+		Scrolled      int    `json:"scrolled"`
 	}
 	settingsSearchScenario(t, "lazyRow", &got)
-	if got.FlashedBefore || got.Key != "lazy.key" {
+	if got.FlashedBefore || got.Key != "lazy.key" || got.Scrolled != 1 {
 		t.Errorf("lazy row reveal: %+v", got)
 	}
 }
