@@ -376,7 +376,7 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 110, kind: 'pr', title
 assert.strictEqual(lead(row), '#9 Ordering drifts', 'issue slot names the issue: ' + lead(row));
 assert.ok(/<a class="ham-ref" href="https:\/\/x\/9"[^>]*>#9<\/a>/.test(row) && !/<a class="ham-ref"[^>]*title=/.test(row), 'issue link, no tooltip on it: ' + row);
 assert.ok(prCol(row)[0].includes('<span class="ham-pr-num">#110</span>') && prCol(row)[0].includes('<span class="ham-pr-title">Fix sort</span>'), prCol(row)[0]);
-assert.ok(/<a class="ham-pr-ref"[^>]*title="Fix sort · Review pending/.test(row), 'row tooltip rides the PR link: ' + row);
+assert.ok(/<a class="ham-pr-ref"[^>]*title="Fix sort · Waiting for review/.test(row), 'row tooltip rides the PR link: ' + row);
 assert.strictEqual(titles(row, 'Fix sort'), 1);
 // A PR whose only linked issue GitHub reports closed: placeholder names it.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
