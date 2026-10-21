@@ -257,6 +257,31 @@ func scannerPackBackend(t *testing.T) string {
 	return ""
 }
 
+// assertStampedOnly checks an agent whose only change was a persisted
+// backend_owner stamp: skipped, not updated, and the stamp is in the overlay.
+func assertStampedOnly(t *testing.T, srv *Server, res *ApplyPackResult, wantOwner string) {
+	t.Helper()
+	for _, n := range res.Updated {
+		if n == "scanner" {
+			t.Errorf("scanner in Updated for an ownership-only change: %v", res.Updated)
+		}
+	}
+	skipped := false
+	for _, n := range res.Skipped {
+		skipped = skipped || n == "scanner"
+	}
+	if !skipped {
+		t.Errorf("scanner missing from Skipped: %v", res.Skipped)
+	}
+	overlays, err := config.LoadAgentOverrides(srv.deps.Config.Data.AgentsDir)
+	if err != nil {
+		t.Fatalf("load agent overlays: %v", err)
+	}
+	if got := overlays["scanner"].BackendOwner; got != wantOwner {
+		t.Errorf("persisted backend owner = %q, want %q", got, wantOwner)
+	}
+}
+
 // TestApplyPackAdoptsUnownedBackendMatchingPack verifies an unowned backend
 // equal to the pack default is adopted as pack-owned and is not reported as
 // preserved (#13221).
@@ -283,6 +308,7 @@ func TestApplyPackAdoptsUnownedBackendMatchingPack(t *testing.T) {
 			t.Error("scanner reported preserved for a pack-matching backend")
 		}
 	}
+	assertStampedOnly(t, srv, res, config.FieldOwnerPack)
 }
 
 // TestApplyPackPreservesUnownedBackendDifferingFromPack verifies a hand-set
@@ -319,6 +345,37 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("scanner missing from Preserved: %v", res.Preserved)
+	}
+	assertStampedOnly(t, srv, res, config.FieldOwnerOperator)
+}
+
+// TestApplyPackKeepsModelForPreservedNonPackBackend verifies the pack model is
+// not seeded onto an agent whose kept hand-set backend differs from the pack's
+// (#13288).
+func TestApplyPackKeepsModelForPreservedNonPackBackend(t *testing.T) {
+	srv := newFullServer(t)
+	srv.deps.Config.Data.AgentsDir = t.TempDir()
+	packBackend := scannerPackBackend(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "codex"
+	if packBackend == "codex" {
+		scanner.Backend = "claude"
+	}
+	scanner.BackendOwner = ""
+	scanner.Model = "hand-set-model"
+	scanner.ModelOwner = ""
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != scanner.Backend {
+		t.Errorf("hand-set backend replaced: got %q, want %q", got.Backend, scanner.Backend)
+	}
+	if got.Model != "hand-set-model" {
+		t.Errorf("model = %q, want it left as hand-set-model", got.Model)
 	}
 }
 
