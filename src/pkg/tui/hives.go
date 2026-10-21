@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -67,6 +68,11 @@ type hivesEnv struct {
 	login       func(ctx context.Context) (string, error)
 	register    func(ctx context.Context, hubHTTPBase, githubUser string) (hivectl.Registration, error)
 	signalRelay func(ctx context.Context) (hivectl.RelaySwitchResult, error)
+	// The contribution tree's discovery reads and its guarded Apply. Nil
+	// discovery renders the branch "unavailable" rather than empty.
+	discoverHubHives     func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error)
+	discoverRepositories func(ctx context.Context, hub string) ([]string, error)
+	applyStaged          func(ctx context.Context, edits *hivectl.StagedEdits) (hivectl.ApplyReceipt, error)
 }
 
 // defaultHivesEnv wires the production implementations.
@@ -85,11 +91,20 @@ func defaultHivesEnv() hivesEnv {
 		register: func(ctx context.Context, base, user string) (hivectl.Registration, error) {
 			return hivectl.Register(ctx, base, user, 0)
 		},
+		discoverHubHives: func(ctx context.Context, hubURL string) ([]hivectl.HubHive, error) {
+			return hivectl.DiscoverHubHives(ctx, &http.Client{Timeout: hivesTreeDiscoveryTimeout}, hubURL)
+		},
+		discoverRepositories: func(ctx context.Context, hub string) ([]string, error) {
+			return hivectl.DiscoverHubRepositories(ctx, &http.Client{Timeout: hivesTreeDiscoveryTimeout}, hub)
+		},
 	}
 	if store, err := hivectl.DefaultProfileStore(); err == nil {
 		env.store = store
 		env.signalRelay = func(ctx context.Context) (hivectl.RelaySwitchResult, error) {
 			return hivectl.SignalRunningRelay(ctx, store)
+		}
+		env.applyStaged = func(ctx context.Context, edits *hivectl.StagedEdits) (hivectl.ApplyReceipt, error) {
+			return edits.Apply(ctx, store)
 		}
 	}
 	return env
@@ -161,6 +176,9 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// hide a result that has already happened).
 		return m, nil
 	}
+	if m.hives.InTree() {
+		return m.updateHivesTree(msg)
+	}
 
 	// While a form is composing, ordinary letters are TEXT. This is checked
 	// before the bindings below so `a`, `d` and `r` are typeable inside a hive
@@ -221,6 +239,8 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		next, _ := m.hives.BeginRepo()
 		m.hives = &next
 		return m, nil
+	case "t":
+		return m.openHivesTree()
 	case "r":
 		next, _ := m.hives.BeginRename()
 		m.hives = &next

@@ -1027,7 +1027,7 @@ func (o HivesOverlay) footer() string {
 	case o.loading:
 		keys = closeHint
 	case o.loaded && len(o.rows) > 0:
-		keys = "j/k move  [/] rank  s strategy  e toggle  x repo  enter use  a/d/r edit  " + closeHint
+		keys = "j/k move  [/] rank  s strategy  e toggle  x repo  t tree  enter use  a/d/r edit  " + closeHint
 	default:
 		keys = "a add  " + closeHint
 	}

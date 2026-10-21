@@ -54,6 +54,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/hivecommons/hive/pkg/hivectl"
 	"github.com/hivecommons/hive/pkg/tui/client"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 	"github.com/hivecommons/hive/pkg/tui/theme"
@@ -343,6 +344,12 @@ type model struct {
 	// is registered. It is the TUI's one non-dashboard data source; see
 	// hives.go for why it goes through pkg/hivectl rather than the API client.
 	hivesEnv hivesEnv
+	// hivesStage is the contribution tree's staged-edit session while the
+	// tree screen is up; hivesTreeDiscovery carries its per-branch discovery
+	// reasons and hivesTreeNote a receipt to show after the session reopens.
+	hivesStage         *hivectl.StagedEdits
+	hivesTreeDiscovery map[string]string
+	hivesTreeNote      string
 
 	// actionSeq identifies each confirmed HTTP call. Agent and verb alone are
 	// not enough: an operator can dismiss an in-flight request and open the
@@ -713,6 +720,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleHivesProbe(msg)
 	case hivesActionMsg:
 		return m.handleHivesAction(msg)
+	case hivesTreeOpenedMsg:
+		return m.handleHivesTreeOpened(msg)
+	case hivesTreeAppliedMsg:
+		return m.handleHivesTreeApplied(msg)
 	case attachReadyMsg:
 		if msg.err != nil {
 			m.attachPending = false
@@ -915,6 +926,10 @@ func (m model) updateHivesOnly(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleHivesProbe(msg)
 	case hivesActionMsg:
 		return m.handleHivesAction(msg)
+	case hivesTreeOpenedMsg:
+		return m.handleHivesTreeOpened(msg)
+	case hivesTreeAppliedMsg:
+		return m.handleHivesTreeApplied(msg)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
