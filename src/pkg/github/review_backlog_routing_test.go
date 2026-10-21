@@ -673,3 +673,91 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 		t.Fatalf("ledger record = %+v ok=%v, want the twin #41", rec, ok)
 	}
 }
+
+// hivecommons/hive#13364: a finding whose evidence file exists only on the
+// reviewed PR is filed `blocked`, but when it folds into an already-open
+// same-titled twin the body (and its blocked-on marker) is discarded. The
+// twin's own state governs: `blocked` is not applied to it.
+func TestReviewBacklogGitHubSinkReusedTwinDoesNotInheritBlocked(t *testing.T) {
+	withReviewBacklogState(t)
+	var created int
+	var twinLabels [][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			if r.URL.Query().Get("state") != "open" {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			_, _ = io.WriteString(w, `[{"number":41,"title":"Review backlog (correctness): nit","body":"pkg/new.go:3 earlier evidence, on the base branch","state":"open","html_url":"https://github.example/o/r/issues/41","labels":[{"name":"nit"},{"name":"help wanted"}],"user":{"login":"`+testBot+`"}}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/5":
+			_, _ = io.WriteString(w, `{"number":5,"state":"open","base":{"ref":"v5"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/contents/pkg/new.go":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"message":"not found"}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/41/labels":
+			var payload []string
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			twinLabels = append(twinLabels, payload)
+			_, _ = io.WriteString(w, `[{"name":"nit"}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			created++
+			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{
+			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit", "help wanted"}},
+		}
+	})
+	recs := captureAudit(c)
+	finding := nit("nit", "low", "pkg/new.go", 3, "introduced by the PR")
+	if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: routingReport(t, 5, "abc", finding)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if created != 0 {
+		t.Fatalf("created %d issues, want 0 (folded into the open twin)", created)
+	}
+	if len(twinLabels) != 1 {
+		t.Fatalf("label calls on #41 = %v, want exactly one", twinLabels)
+	}
+	for _, l := range twinLabels[0] {
+		if strings.EqualFold(l, BlockedLabel) {
+			t.Fatalf("reused twin #41 got labels %v; `blocked` must not propagate to an open twin", twinLabels[0])
+		}
+	}
+	if strings.Join(twinLabels[0], ",") != "nit" {
+		t.Fatalf("reused twin labels = %v, want nit", twinLabels[0])
+	}
+	var sawReusedBlocked bool
+	for _, r := range *recs {
+		if r.Action == AuditActionReviewBacklogIssueFiled && strings.Contains(r.Detail, "reused=true") && strings.Contains(r.Detail, "blocked=true") {
+			sawReusedBlocked = true
+		}
+	}
+	if !sawReusedBlocked {
+		t.Fatal("no review_backlog_issue_filed audit with reused=true blocked=true: the finding was not filed blocked, so the test exercised nothing")
+	}
+}
+
+func TestReusedTwinLabels(t *testing.T) {
+	got := reusedTwinLabels([]string{"nit", "Blocked", "agent/reviewer"})
+	if strings.Join(got, ",") != "nit,agent/reviewer" {
+		t.Fatalf("reusedTwinLabels = %v", got)
+	}
+	if got := reusedTwinLabels(nil); len(got) != 0 {
+		t.Fatalf("reusedTwinLabels(nil) = %v", got)
+	}
+}

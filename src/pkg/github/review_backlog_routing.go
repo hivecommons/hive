@@ -103,7 +103,11 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 		return ReviewBacklogRef{}, nil
 	}
 	if res.AlreadyExisted {
-		if err := s.c.ensureReviewBacklogLabels(ctx, item.Repo, res.Number, item.Labels); err != nil {
+		// hivecommons/hive#13364: the twin's own state governs. A blocked
+		// filing folded into an open twin keeps its labels but loses its
+		// body, so propagating `blocked` would park the twin with no
+		// blocked-on marker and nothing would ever lift it.
+		if err := s.c.ensureReviewBacklogLabels(ctx, item.Repo, res.Number, reusedTwinLabels(item.Labels)); err != nil {
 			return ReviewBacklogRef{}, err
 		}
 	}
@@ -161,6 +165,21 @@ func (c *Client) reviewBacklogTarget(r ReviewBacklogRouting) (ReviewBacklogSink,
 		labels = appendLabelOnce(labels, reviewBacklogLabel)
 	}
 	return sink, labels
+}
+
+// reusedTwinLabels is the label set applied to an already-open twin a
+// filing folds into: the filing's labels minus `blocked`. The marker that
+// names the blocking PR lives in the discarded body, and the twin's earlier
+// evidence stands on its own (hivecommons/hive#13364).
+func reusedTwinLabels(labels []string) []string {
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), BlockedLabel) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func appendLabelOnce(labels []string, label string) []string {

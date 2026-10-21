@@ -260,8 +260,10 @@ type blockedIssueTarget struct {
 // deadline has passed loses `blocked` with a one-line note (once per
 // deadline) so the next enumeration re-triages it; an ops-tracking row on the
 // hive's own project gets soak evidence instead (runRecheckSoak) and keeps
-// `blocked`, other ops-tracking rows are left alone. Lookup failures are
-// counted and skipped.
+// `blocked`, other ops-tracking rows are left alone. A row with no marker,
+// no deadline and no ops-tracking whose `blocked` the hive itself applied is
+// lifted as a defect (liftBlockedMarkerless, hivecommons/hive#13364). Lookup
+// failures are counted and skipped.
 func ReconcileBlockedIssues(ctx context.Context, client *Client, result *ActionableResult, logger *slog.Logger) BlockedIssueResult {
 	var res BlockedIssueResult
 	if client == nil || client.client == nil || result == nil {
@@ -292,10 +294,14 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 		}
 		res.Items++
 		prRepo, prNumber, ok := parseBlockedOnReason(t.reason)
+		// scanned: the comments were read without error and hold no marker,
+		// so a marker-less lift may trust that nothing names a PR.
+		scanned := false
 		if !ok && lookups < blockedSweepCommentLookups {
 			lookups++
 			scan, err := client.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
 			prRepo, prNumber, ok = scan.prRepo, scan.pr, scan.ok
+			scanned = err == nil
 			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
 					// hivecommons/hive#13311: a maintainer's soak checklist
@@ -308,9 +314,17 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 			}
 		}
 		if !ok {
-			// No tracked PR (a blocked verdict from a contributor relay, or
-			// a maintainer's label, as on hivecommons/hive#13267): nothing
-			// to lift, but the issue still must not advertise itself.
+			// No tracked PR, no deadline, no ops-tracking: a block the hive
+			// applied itself with no marker is always a bug (a blocked
+			// filing folded into an open twin, hivecommons/hive#13364), so
+			// lift it. A maintainer's or a relay's marker-less label
+			// (hivecommons/hive#13267) is left alone: nothing to lift, but
+			// the issue still must not advertise itself.
+			if scanned && t.recheckAfter.IsZero() && !t.opsTracking {
+				if liftBlockedMarkerless(ctx, client, t, &res, logger) {
+					continue
+				}
+			}
 			stripBlockedHelpWanted(ctx, client, t, &res, logger)
 			continue
 		}
@@ -351,6 +365,64 @@ func stripBlockedHelpWanted(ctx context.Context, client *Client, t blockedIssueT
 		return
 	}
 	res.Stripped++
+}
+
+// liftBlockedMarkerless lifts `blocked` from an issue with no blocked-on
+// marker, no recheck-after deadline and no ops-tracking marker when the
+// label's most recent application was by this hive (hivecommons/hive#13364):
+// nothing the hive writes applies `blocked` without a marker, so such a block
+// is a defect and would otherwise never lift. Reports whether the label came
+// off. A human-applied label, an unreadable timeline, or a client with no
+// hive identity configured leaves the issue alone, the last with one WARN so
+// the stuck block is at least visible.
+func liftBlockedMarkerless(ctx context.Context, client *Client, t blockedIssueTarget, res *BlockedIssueResult, logger *slog.Logger) bool {
+	actor, found, err := client.blockedLabelActor(ctx, t.repo, t.number)
+	if err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: timeline lookup failed; marker-less block left alone", "repo", t.repo, "issue", t.number, "error", err)
+		return false
+	}
+	if !found {
+		return false
+	}
+	if !client.isOwnBotLogin(actor) && !client.IsHiveAuthorLogin(actor) {
+		if len(client.hiveBotLogins()) == 0 {
+			logger.Warn("blocked sweep: marker-less blocked label with no hive identity to compare against; left alone", "repo", t.repo, "issue", t.number, "actor", actor)
+		}
+		return false
+	}
+	if err := client.RemoveLabel(ctx, t.repo, t.number, BlockedLabel); err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: unblock failed", "repo", t.repo, "issue", t.number, "error", err)
+		return false
+	}
+	if err := client.CreateIssueCommentBudgeted(ctx, t.repo, t.number, blockedMarkerlessNote); err != nil {
+		logger.Warn("blocked sweep: unblock note not posted", "repo", t.repo, "issue", t.number, "error", err)
+	}
+	res.Unblocked++
+	logger.Info("blocked sweep: hive-applied marker-less block lifted", "repo", t.repo, "issue", t.number, "actor", actor)
+	return true
+}
+
+// blockedMarkerlessNote is the note posted when the sweep lifts a
+// hive-applied block that named no PR.
+const blockedMarkerlessNote = blockedUnblockedMarker + "\nUnblocked: the `blocked` label was applied by the hive without a blocked-on marker, so nothing could lift it. This issue is actionable again."
+
+// blockedLabelActor returns the login that most recently applied `blocked`
+// to the issue, per its timeline; found is false when no labeled event
+// names the label.
+func (c *Client) blockedLabelActor(ctx context.Context, repo string, number int) (actor string, found bool, err error) {
+	events, err := c.IssueTimelineSince(ctx, repo, number, time.Time{})
+	if err != nil {
+		return "", false, err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Event == "labeled" && strings.EqualFold(ev.Label, BlockedLabel) {
+			return ev.Actor, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // parseBlockedOnReason reads "blocked on owner/repo#N" back into its parts.
