@@ -47,7 +47,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
   issues, requesting help, confirming fixes, reopening issues, and using label
   or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
-- [Security model](security-model.md)
+- [Security model](security-model.md) — how hive keeps autonomous agents from doing damage: threat model, the full control inventory with code/ADR citations, known gaps, and how to audit a running hive
 - [Data collection and telemetry](telemetry.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)
