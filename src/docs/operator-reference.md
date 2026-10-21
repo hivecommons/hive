@@ -1087,7 +1087,30 @@ delivery trigger a full re-list:
 | **Webhook patch** | one delivery naming an issue/PR | one `GET` per item, debounced and coalesced | Upserts, moves or removes that single item in both the activity-monitor row and the governor's cached snapshot. Counted in `/api/status.webhookPatches`. |
 | **Cached cycle** | webhook wake, review wake, continuous-agent wake | dirty-PR detail refreshes only | Runs the governor's decision pass (kicks, automerge, stage moves) from the patched snapshot without listing. `source=cached` in the wake log; counted in `/api/status.cachedCycles`. Before the first reconcile has produced a snapshot a wake enumerates instead. |
 
-Cadence ticks reconcile; webhooks keep the picture current in between.
+Cadence ticks reconcile; webhooks keep the picture current in between. The
+priority order is accuracy of issue/PR state, then latency, then API thrift,
+which fixes four rules for the patch path:
+
+- **The payload is a hint, never state.** A delivery only names the item;
+  the GET decides what the row says. A `closed` delivery whose re-read finds
+  the item open leaves it open.
+- **Upserts are monotonic.** A re-read whose `updated_at` is older than the
+  copy already held (two deliveries' GETs landing out of order) is dropped.
+  Each applied read is recorded in the snapshot's `item_patches` (fetch time,
+  `updated_at`, head SHA, `X-GitHub-Delivery` id) for audit.
+- **Closed/merged removes at once; reopened re-adds** — both after the
+  confirming GET.
+- **Irreversible actions are freshness-bounded.** Before an issue close or a
+  PR merge planned from the snapshot (stage sync, close-on-merge, automerge
+  sweep), the governor refuses outright while that repo's share is stale and
+  otherwise re-reads the item once if its copy is older than 60 s
+  (`DecisionFreshnessBound`), proceeding only if it is still open. Refused
+  actions log `irreversible action deferred` and retry next pass.
+
+Startup runs a full enumeration before the first decision pass; a cold cache
+whose GitHub share failed is published stale, never as "0 items".
+`/api/status.staleSince` (and per-repo `countsStaleSince`) carries the
+stale-as-of time and the Overview shows a `stale · as of HH:MM` badge.
 Raising `eval_interval_webhook_s` lowers list-call volume further at the cost
 of a longer window before a missed delivery is corrected by reconciliation.
 

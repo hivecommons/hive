@@ -6813,7 +6813,28 @@ func actionableAfterGitHubEnumerate(cfg *config.Config, actionable *github.Actio
 	if actionable == nil {
 		actionable = &github.ActionableResult{GeneratedAt: time.Now()}
 	}
+	// The GitHub share of this result is missing, not zero: every configured
+	// repo is marked stale so the dashboard shows the gap as stale rather
+	// than as an empty hive (a cold cache has no last-good to fall back on).
+	markConfiguredReposStale(actionable, cfg.Project.Repos)
 	return actionable, true
+}
+
+// markConfiguredReposStale flags every configured repo the result does not
+// already cover as stale, with a zero count entry so the repo still appears.
+func markConfiguredReposStale(actionable *github.ActionableResult, repos []string) {
+	if actionable == nil {
+		return
+	}
+	if actionable.TotalByRepo == nil {
+		actionable.TotalByRepo = map[string]github.RepoCounts{}
+	}
+	for _, repo := range repos {
+		if _, ok := actionable.TotalByRepo[repo]; !ok {
+			actionable.TotalByRepo[repo] = github.RepoCounts{}
+		}
+	}
+	actionable.MarkAllStale()
 }
 
 func tokensForBackend(summary *tokens.AggregateSummary, backend string) int64 {
@@ -6922,7 +6943,9 @@ func runEvalCycle(
 		var ok bool
 		actionable, ok = actionableAfterGitHubEnumerate(cfg, fresh, err, logger)
 		if !ok {
-			keepLastGoodAfterFailedEnumerate(lastActionable, logger)
+			if kept := keepLastGoodAfterFailedEnumerate(lastActionable, logger); kept != nil && dashSrv != nil {
+				dashSrv.MarkStatusStale(kept.StaleSince)
+			}
 			return
 		}
 
@@ -9622,7 +9645,9 @@ func applyDuplicatePRGuard(
 		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "soak_triaged", br.SoakTriaged, "errors", br.Errors)
 	}
 	blockedCancel()
-	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
+	// Closing an issue is irreversible: refuse while the snapshot is stale and
+	// re-read an item whose copy is older than DecisionFreshnessBound.
+	runCloseOnMergeSweep(github.WithIrreversibleGuard(ctx, ghClient.SnapshotFreshnessGuard(actionable, time.Now)), cfg, ghClient, ledger, logger)
 }
 
 // inProgressSetting resolves the pr-in-progress stage label setting from config.

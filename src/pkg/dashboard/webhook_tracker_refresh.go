@@ -33,8 +33,10 @@ type trackerRefreshTimer interface {
 }
 
 type webhookTrackerRefresher struct {
-	mu       sync.Mutex
-	pending  map[trackerRefreshKey]struct{}
+	mu sync.Mutex
+	// pending maps each queued item to the X-GitHub-Delivery id of the
+	// newest delivery that asked for it (audit only; never state).
+	pending  map[trackerRefreshKey]string
 	timer    trackerRefreshTimer
 	debounce func() time.Duration
 	// newTimer arms a one-shot timer that calls f after d; time.AfterFunc in
@@ -50,7 +52,7 @@ type webhookTrackerRefresher struct {
 
 func newWebhookTrackerRefresher() *webhookTrackerRefresher {
 	return &webhookTrackerRefresher{
-		pending: map[trackerRefreshKey]struct{}{},
+		pending: map[trackerRefreshKey]string{},
 		newTimer: func(d time.Duration, f func()) trackerRefreshTimer {
 			return time.AfterFunc(d, f)
 		},
@@ -58,10 +60,11 @@ func newWebhookTrackerRefresher() *webhookTrackerRefresher {
 	}
 }
 
-// enqueue schedules a re-read of each key. Keys already waiting are
-// coalesced; the first key of an idle refresher arms the debounce timer and
-// later keys ride the same window.
-func (r *webhookTrackerRefresher) enqueue(keys []trackerRefreshKey) (armed bool) {
+// enqueue schedules a re-read of each key on behalf of deliveryID. Keys
+// already waiting are coalesced (the newest delivery id wins); the first key
+// of an idle refresher arms the debounce timer and later keys ride the same
+// window.
+func (r *webhookTrackerRefresher) enqueue(keys []trackerRefreshKey, deliveryID string) (armed bool) {
 	if r == nil || len(keys) == 0 {
 		return false
 	}
@@ -71,7 +74,7 @@ func (r *webhookTrackerRefresher) enqueue(keys []trackerRefreshKey) (armed bool)
 		if k.number <= 0 || k.repo == "" {
 			continue
 		}
-		r.pending[k] = struct{}{}
+		r.pending[k] = deliveryID
 	}
 	if len(r.pending) == 0 || r.timer != nil {
 		return false
@@ -110,10 +113,12 @@ func (r *webhookTrackerRefresher) flushNow() {
 func (r *webhookTrackerRefresher) flush() {
 	r.mu.Lock()
 	keys := make([]trackerRefreshKey, 0, len(r.pending))
-	for k := range r.pending {
+	deliveries := make(map[trackerRefreshKey]string, len(r.pending))
+	for k, id := range r.pending {
 		keys = append(keys, k)
+		deliveries[k] = id
 	}
-	r.pending = map[trackerRefreshKey]struct{}{}
+	r.pending = map[trackerRefreshKey]string{}
 	r.timer = nil
 	r.flushes++
 	fetch, apply, onFetch, ctxFn := r.fetch, r.apply, r.onFetch, r.ctx
@@ -138,6 +143,7 @@ func (r *webhookTrackerRefresher) flush() {
 		if err != nil {
 			continue
 		}
+		snap.DeliveryID = deliveries[k]
 		snaps = append(snaps, snap)
 	}
 	if onFetch != nil {
@@ -232,9 +238,11 @@ func (s *Server) trackerRefresher() *webhookTrackerRefresher {
 
 // scheduleWebhookTrackerRefresh is the receiver's hook: it drops the
 // memoised tracker payload so the next GET sees any stage-store change the
-// delivery reflects, and queues the named items for a targeted re-read.
-// It reports how many items were queued.
-func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult) int {
+// delivery reflects, and queues the named items for a targeted re-read
+// tagged with the delivery id. The payload's own fields are never applied:
+// the delivery is a hint to re-read, and the GET is the state. It reports
+// how many items were queued.
+func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, deliveryID string) int {
 	if !s.webhookTrackerRefreshEnabled() {
 		return 0
 	}
@@ -243,7 +251,7 @@ func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult) in
 		return 0
 	}
 	s.invalidateStageTrackerForWebhook()
-	s.trackerRefresher().enqueue(keys)
+	s.trackerRefresher().enqueue(keys, deliveryID)
 	return len(keys)
 }
 
@@ -508,4 +516,35 @@ func patchWorkIssueAny(raw any, snap github.WebhookItemSnapshot) (any, bool) {
 		return &w, true
 	}
 	return w, true
+}
+
+// MarkStatusStale republishes the current status snapshot flagged as
+// last-good data as of since: the governor calls it when a whole reconcile
+// pass fails so the overview shows "stale · as of" instead of either zeros
+// or figures that look fresh. Repos already flagged keep their marker.
+func (s *Server) MarkStatusStale(since time.Time) {
+	if s == nil {
+		return
+	}
+	marker := ""
+	if !since.IsZero() {
+		marker = since.UTC().Format(time.RFC3339)
+	}
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	cur := s.status
+	if cur == nil || (cur.StaleSince == marker && cur.OverviewKPIIncomplete) {
+		return
+	}
+	next := *cur
+	next.StaleSince = marker
+	next.OverviewKPIIncomplete = true
+	next.Repos = append([]FrontendRepo(nil), cur.Repos...)
+	for i := range next.Repos {
+		if !next.Repos[i].CountsStale {
+			next.Repos[i].CountsStale = true
+			next.Repos[i].CountsStaleSince = marker
+		}
+	}
+	s.status = &next
 }

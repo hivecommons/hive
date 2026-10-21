@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // cliStartupDelay is how long runLoop waits after boot for the agent CLIs to
@@ -81,7 +82,10 @@ func defaultRunLoopDeps() runLoopDeps {
 			runRotationCheck(b.ctx, b.cfg, b.rotationMgr, b.gov, b.agentMgr, b.logger)
 		},
 		runSweeps: func(b *boot) {
-			runAutoMergeSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastAutoMergeSweep, b.logger)
+			// Merges are irreversible: bound them to the snapshot the cycle
+			// planned from (refused while it is stale, re-read when old).
+			sweepCtx := github.WithIrreversibleGuard(b.ctx, b.ghClient.SnapshotFreshnessGuard(b.lastActionable.Load(), time.Now))
+			runAutoMergeSweepIfDue(sweepCtx, b.ghClient, b.cfg, b.dashSrv, &b.lastAutoMergeSweep, b.logger)
 			decision := decideEvalBudgetWork(apiBudgetModeForClient(b.ghClient), b.cfg.Governor.OptionalSweepEveryNCycles, b.evalCycles)
 			if len(decision.SkippedSteps) > 0 {
 				b.ghClient.RecordAPIBudgetSkippedSteps(decision.SkippedSteps)

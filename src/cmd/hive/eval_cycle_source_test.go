@@ -183,16 +183,18 @@ func TestEvalCycleSourceCachedSkipsListingAndReconcileOverwrites(t *testing.T) {
 	if ok || got != nil {
 		t.Fatalf("failed enumeration must not publish: %+v ok=%v err=%v", got, ok, err)
 	}
-	if !keepLastGoodAfterFailedEnumerate(&last, logger) {
-		t.Fatal("expected the previous snapshot to be kept")
+	kept := keepLastGoodAfterFailedEnumerate(&last, logger)
+	if kept == nil || kept != last.Load() {
+		t.Fatal("expected the previous snapshot to be kept and published")
 	}
-	kept := last.Load()
 	if kept.Issues.Count != 2 || !kept.Stale() || len(kept.StaleRepos) != 1 {
 		t.Fatalf("failed reconcile kept %+v stale=%v", kept.Issues, kept.StaleRepos)
 	}
+	if kept.StaleSince.IsZero() || !kept.StaleSince.Equal(kept.GeneratedAt) {
+		t.Fatalf("stale-since marker = %v, want the kept snapshot's generation time %v", kept.StaleSince, kept.GeneratedAt)
+	}
 	// Idempotent: a second failure does not republish.
-	keepLastGoodAfterFailedEnumerate(&last, logger)
-	if last.Load() != kept {
+	if again := keepLastGoodAfterFailedEnumerate(&last, logger); again != kept || last.Load() != kept {
 		t.Fatal("already-stale snapshot must not be republished")
 	}
 	// A later successful pass clears the stale mark.

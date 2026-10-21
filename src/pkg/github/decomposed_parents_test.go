@@ -94,7 +94,7 @@ func TestSyncIssueStageLabels_ClosesParentWhenAllChildrenClosed(t *testing.T) {
 
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 2, Completed: 2}, stagelabels.Actionable.Label(), stagelabels.StalledLabel, "enhancement")})
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 
 	if res.ParentsClosed != 1 || res.ParentsAwaitingChildren != 0 {
 		t.Fatalf("result = %+v", res)
@@ -132,7 +132,7 @@ func TestSyncIssueStageLabels_ParentWithOpenChildNeverStalls(t *testing.T) {
 
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 2, Completed: 1}, stagelabels.Actionable.Label(), stagelabels.StalledLabel)})
-	res := syncSeeded(fake, c, result, store, now)
+	res := syncSeeded(t, fake, c, result, store, now)
 
 	if res.ParentsClosed != 0 || res.ParentsAwaitingChildren != 1 {
 		t.Fatalf("result = %+v", res)
@@ -166,7 +166,7 @@ func TestSyncIssueStageLabels_ParentSnapshotLagsOpenChild(t *testing.T) {
 
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 2, Completed: 2}, stagelabels.Actionable.Label())})
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.ParentsClosed != 0 || res.ParentsAwaitingChildren != 1 {
 		t.Fatalf("result = %+v", res)
 	}
@@ -200,7 +200,7 @@ func TestSyncIssueStageLabels_ParentLedgerFallbackClose(t *testing.T) {
 
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{parentInput(&IssueChildren{Total: 2, Completed: 2}, stagelabels.Actionable.Label())})
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.ParentsClosed != 1 {
 		t.Fatalf("result = %+v", res)
 	}
@@ -221,7 +221,7 @@ func TestSyncIssueStageLabels_NoChildrenUnchanged(t *testing.T) {
 
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{parentInput(nil, stagelabels.Actionable.Label())})
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	writes := fake.writes()
 	fake.mu.Lock()
 	defer fake.mu.Unlock()

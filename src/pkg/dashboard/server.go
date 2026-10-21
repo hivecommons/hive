@@ -445,9 +445,13 @@ type StatusPayload struct {
 	// OverviewKPIIncomplete means at least one configured repo did not produce
 	// forge totals for this status snapshot, so Overview KPI history must not
 	// record it as a real point.
-	OverviewKPIIncomplete bool   `json:"overviewKPIIncomplete"`
-	Timestamp             string `json:"timestamp"`
-	TimeZone              string `json:"timeZone,omitempty"`
+	OverviewKPIIncomplete bool `json:"overviewKPIIncomplete"`
+	// StaleSince (RFC 3339) is set when any repo's counts and items are the
+	// last-good enumeration kept after GitHub refused the fetch: the figures
+	// are current as of this time, not zero. Empty when everything is fresh.
+	StaleSince string `json:"staleSince,omitempty"`
+	Timestamp  string `json:"timestamp"`
+	TimeZone   string `json:"timeZone,omitempty"`
 	// StatusSeq is a monotonic publish sequence (#4348): the frontend drops
 	// any status payload whose seq is older than the last one it rendered,
 	// so a stale in-flight poll/SSE response can never repaint over a newer
@@ -978,9 +982,12 @@ type FrontendRepo struct {
 	// CountsStale means this repo's counts and items come from the previous
 	// successful enumeration because GitHub refused this pass's fetch
 	// transiently (rate limit, 5xx); see github.ActionableResult.StaleRepos.
-	CountsStale   bool                      `json:"countsStale,omitempty"`
-	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
-	SLA           *timeline.SLARepoReport   `json:"sla,omitempty"`
+	CountsStale bool `json:"countsStale,omitempty"`
+	// CountsStaleSince (RFC 3339) is when the stale figures were last read
+	// for real; set with CountsStale.
+	CountsStaleSince string                    `json:"countsStaleSince,omitempty"`
+	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA              *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the

@@ -43,6 +43,16 @@ type WebhookItemSnapshot struct {
 	URL            string    `json:"url,omitempty"`
 	AppAuthored    bool      `json:"app_authored,omitempty"`
 	HiveAttributed bool      `json:"hive_attributed,omitempty"`
+	// HeadSHA is the PR's head commit at the time of the read (PRs only).
+	HeadSHA string `json:"head_sha,omitempty"`
+	// FetchedAt is when the GET returned; ApplyWebhookItem records it so an
+	// irreversible action can bound how old its view of the item is.
+	FetchedAt time.Time `json:"fetched_at,omitzero"`
+	// DeliveryID is the X-GitHub-Delivery header of the delivery that asked
+	// for the re-read, kept on the patched item for audit. The delivery's
+	// payload itself is never copied into the snapshot: the event is a hint
+	// to re-read, and this GET is the state.
+	DeliveryID string `json:"delivery_id,omitempty"`
 	// Patch is the governor-side classification of the same read
 	// (webhook_item_patch.go) so the actionable snapshot can be upserted
 	// without re-listing the repository.
@@ -73,7 +83,7 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 	owner, repoName := c.splitRepo(repo)
 	ctx = WithRESTCaller(ctx, webhookRefreshRESTCaller)
 	now := time.Now()
-	snap := WebhookItemSnapshot{Repo: repo, Number: number, IsPR: isPR}
+	snap := WebhookItemSnapshot{Repo: repo, Number: number, IsPR: isPR, FetchedAt: now}
 	if isPR {
 		pr, _, err := c.client.PullRequests.Get(ctx, owner, repoName, number)
 		if err != nil {
@@ -91,6 +101,7 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 		snap.Merged = pr.GetMerged() || !pr.GetMergedAt().IsZero()
 		snap.UpdatedAt = pr.GetUpdatedAt().Time
 		snap.URL = pr.GetHTMLURL()
+		snap.HeadSHA = prHeadSHA(pr)
 		snap.AppAuthored = c.appBotLogin != "" && strings.EqualFold(author, c.appBotLogin)
 		snap.HiveAttributed = hasAttr
 		if snap.Open() && !snap.Merged {

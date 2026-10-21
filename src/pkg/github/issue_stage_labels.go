@@ -427,6 +427,10 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	}
 	reconciler, legacy := client.StageReconciler(store, engine, logger)
 	ctx = WithRESTCaller(ctx, issueStageRESTCaller)
+	// The closes this pass may perform (decomposed parent, merged full-fix
+	// PR) are irreversible; bound them to a fresh, non-stale view of the
+	// issue (decision_freshness.go).
+	ctx = WithIrreversibleGuard(ctx, client.SnapshotFreshnessGuard(result, func() time.Time { return now }))
 	prStage := func(repo string, number int) stagelabels.Stage {
 		owner, name := client.splitRepo(repo)
 		rec, ok := store.Get(stagelabels.Key(owner+"/"+name, number))

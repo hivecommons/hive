@@ -218,6 +218,12 @@ func (r *ActionableResult) Clone() *ActionableResult {
 	out.PRs.Attributed = append([]PullRequest(nil), r.PRs.Attributed...)
 	out.Hold.Items = append([]HoldItem(nil), r.Hold.Items...)
 	out.StaleRepos = append([]string(nil), r.StaleRepos...)
+	if r.ItemPatches != nil {
+		out.ItemPatches = make(map[string]ItemPatchMeta, len(r.ItemPatches))
+		for k, v := range r.ItemPatches {
+			out.ItemPatches[k] = v
+		}
+	}
 	if r.TotalByRepo != nil {
 		out.TotalByRepo = make(map[string]RepoCounts, len(r.TotalByRepo))
 		for k, v := range r.TotalByRepo {
@@ -256,6 +262,9 @@ func (r *ActionableResult) MarkAllStale() {
 	}
 	sort.Strings(repos)
 	r.StaleRepos = repos
+	if r.StaleSince.IsZero() {
+		r.StaleSince = r.GeneratedAt
+	}
 }
 
 // ApplyWebhookItem upserts one re-read item into the result and reports
@@ -270,13 +279,75 @@ func (r *ActionableResult) MarkAllStale() {
 //   - An open item the snapshot never listed is appended to the set its
 //     bucket names and counted as new open work for its repo. An item of
 //     unknown bucket is left for the reconcile pass.
+//   - The upsert is monotonic: a read whose updated_at is older than the
+//     copy already held (two deliveries' re-reads landing out of order) is
+//     dropped, so the snapshot never moves backwards.
 //
-// Counts (Issues.Count, PRs.Count, Hold.*, SLA violations) are recomputed
-// from the lists; ordering follows the enumeration's sort rules.
+// Each applied read is recorded in ItemPatches (fetch time, updated_at,
+// head SHA, delivery id) for staleness bounds and audit. Counts
+// (Issues.Count, PRs.Count, Hold.*, SLA violations) are recomputed from the
+// lists; ordering follows the enumeration's sort rules.
 func (r *ActionableResult) ApplyWebhookItem(snap WebhookItemSnapshot) bool {
 	if r == nil || snap.Number <= 0 || snap.Repo == "" {
 		return false
 	}
+	if r.olderThanHeld(snap) {
+		return false
+	}
+	applied := r.applyWebhookItem(snap)
+	if applied {
+		r.recordItemPatch(snap)
+	}
+	return applied
+}
+
+// olderThanHeld reports whether the read is older than the copy the result
+// already holds for the same item, by GitHub's updated_at.
+func (r *ActionableResult) olderThanHeld(snap WebhookItemSnapshot) bool {
+	if snap.UpdatedAt.IsZero() {
+		return false
+	}
+	key := ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)
+	if meta, ok := r.ItemPatches[key]; ok && !meta.UpdatedAt.IsZero() {
+		return meta.UpdatedAt.After(snap.UpdatedAt)
+	}
+	held := r.heldUpdatedAt(snap.Repo, snap.Number, snap.IsPR)
+	return !held.IsZero() && held.After(snap.UpdatedAt)
+}
+
+// heldUpdatedAt is the updated_at of the listed copy of an item, zero when
+// the item is not listed or the list has no timestamp for it.
+func (r *ActionableResult) heldUpdatedAt(repo string, number int, isPR bool) time.Time {
+	if isPR {
+		for _, list := range [][]PullRequest{r.PRs.Items, r.PRs.Held} {
+			for _, pr := range list {
+				if sameItem(pr.Repo, pr.Number, repo, number) {
+					return pr.UpdatedAt
+				}
+			}
+		}
+		return time.Time{}
+	}
+	for _, issue := range r.Issues.Items {
+		if sameItem(issue.Repo, issue.Number, repo, number) {
+			return issue.UpdatedAt
+		}
+	}
+	return time.Time{}
+}
+
+func (r *ActionableResult) recordItemPatch(snap WebhookItemSnapshot) {
+	if r.ItemPatches == nil {
+		r.ItemPatches = map[string]ItemPatchMeta{}
+	}
+	// A removed item keeps the record too: it is the audit trail of which
+	// delivery took the row out, and the monotonic check for a late read.
+	r.ItemPatches[ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)] = ItemPatchMeta{
+		FetchedAt: snap.FetchedAt, UpdatedAt: snap.UpdatedAt, DeliveryID: snap.DeliveryID, HeadSHA: snap.HeadSHA,
+	}
+}
+
+func (r *ActionableResult) applyWebhookItem(snap WebhookItemSnapshot) bool {
 	repoKey := r.repoKeyFor(snap.Repo)
 	prev, wasListed := r.removeItem(snap.Repo, snap.Number, snap.IsPR)
 	if !snap.Open() {

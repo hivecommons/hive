@@ -20,6 +20,7 @@ func TestActionableAfterGitHubEnumerate_NonGitHubWorkSourceContinues(t *testing.
 	for _, wsType := range []string{"linear", "jira"} {
 		cfg := &config.Config{}
 		cfg.Governor.WorkSource.Type = wsType
+		cfg.Project.Repos = []string{"acme/console"}
 		got, ok := actionableAfterGitHubEnumerate(cfg, nil, enumErr, logger)
 		if !ok {
 			t.Fatalf("work_source=%s: cycle aborted on GitHub enumeration failure; work source never consulted", wsType)
@@ -29,6 +30,14 @@ func TestActionableAfterGitHubEnumerate_NonGitHubWorkSourceContinues(t *testing.
 		}
 		if n := len(got.Issues.Items); n != 0 {
 			t.Fatalf("work_source=%s: expected no GitHub issues, got %d", wsType, n)
+		}
+		// The empty GitHub share is a gap, not zero work: every configured
+		// repo is marked stale so a cold cache never publishes as "0 items".
+		if !got.Stale() || !got.RepoStale("acme/console") || got.StaleSince.IsZero() {
+			t.Fatalf("work_source=%s: empty result published as fresh zero: stale=%v since=%v", wsType, got.StaleRepos, got.StaleSince)
+		}
+		if _, listed := got.TotalByRepo["acme/console"]; !listed {
+			t.Fatalf("work_source=%s: configured repo missing from the stale result", wsType)
 		}
 	}
 

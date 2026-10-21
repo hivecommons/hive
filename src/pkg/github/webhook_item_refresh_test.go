@@ -67,7 +67,10 @@ func TestFetchWebhookItemSnapshotReadsOnePRAndOneIssue(t *testing.T) {
 	if pr.Patch.Bucket != WebhookBucketSidelined {
 		t.Fatalf("draft PR bucket = %q, want sidelined", pr.Patch.Bucket)
 	}
-	pr.Patch = WebhookItemPatch{}
+	if pr.HeadSHA != "abc" || pr.FetchedAt.IsZero() {
+		t.Fatalf("pr snapshot must carry head SHA and fetch time: %+v", pr)
+	}
+	pr.Patch, pr.HeadSHA, pr.FetchedAt = WebhookItemPatch{}, "", time.Time{}
 	if !reflect.DeepEqual(pr, want) {
 		t.Fatalf("pr snapshot = %+v, want %+v", pr, want)
 	}

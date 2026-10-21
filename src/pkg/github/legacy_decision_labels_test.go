@@ -23,7 +23,7 @@ func TestSyncIssueStageLabels_MigratesLegacyDecisionLabels(t *testing.T) {
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 2, Labels: []string{"needs-decision", stagelabels.NeedsDecision.Label()}}, "filtered", "needs-decision")
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 3, Labels: []string{"needs-human"}}, "filtered", "needs-human")
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.LegacyDecisionMigrated != 2 {
 		t.Fatalf("migrated = %d, want 2 (%+v)", res.LegacyDecisionMigrated, res)
 	}
@@ -65,7 +65,7 @@ func TestSyncIssueStageLabels_RetiresLegacyDefinitionsOnlyWhenUncarried(t *testi
 	fake.mu.Unlock()
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 1, Labels: []string{"needs-direction"}}, "filtered", "needs-direction")
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.LegacyDecisionDefinitionsDeleted != 0 {
 		t.Fatalf("definitions deleted on a cycle that saw a carrier: %+v", res)
 	}
@@ -81,7 +81,7 @@ func TestSyncIssueStageLabels_RetiresLegacyDefinitionsOnlyWhenUncarried(t *testi
 	fake.mu.Unlock()
 	clean := &ActionableResult{}
 	appendRepoWorkIssueDetail(clean, Issue{Repo: "acme/widgets", Number: 1, Labels: []string{stagelabels.NeedsDecision.Label()}}, "filtered", NeedsDecisionStageLabel)
-	res = syncSeeded(fake, c, clean, store, stageNow())
+	res = syncSeeded(t, fake, c, clean, store, stageNow())
 	if res.LegacyDecisionDefinitionsDeleted != 2 {
 		t.Fatalf("definitions deleted = %d, want 2 (%+v)", res.LegacyDecisionDefinitionsDeleted, res)
 	}
@@ -93,7 +93,7 @@ func TestSyncIssueStageLabels_RetiresLegacyDefinitionsOnlyWhenUncarried(t *testi
 	}
 
 	// Third cycle: once per process.
-	res = syncSeeded(fake, c, clean, store, stageNow())
+	res = syncSeeded(t, fake, c, clean, store, stageNow())
 	if res.LegacyDecisionDefinitionsDeleted != 0 {
 		t.Fatalf("definition retirement re-ran: %+v", res)
 	}

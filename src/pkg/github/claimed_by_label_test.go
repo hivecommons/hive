@@ -162,7 +162,7 @@ func TestSyncIssueStageLabels_HealsBackendClaimedBy(t *testing.T) {
 				Labels: []string{"hive/claimed-by-scanner", stagelabels.PRInProgress.Label()}},
 		}}},
 	}
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.ClaimedByHealed != 3 {
 		t.Fatalf("ClaimedByHealed = %d, want 3", res.ClaimedByHealed)
 	}

@@ -48,17 +48,17 @@ func cachedSnapshotFor(source evalCycleSource, last *atomic.Pointer[github.Actio
 // keepLastGoodAfterFailedEnumerate is the reconcile pass's failure rule:
 // the snapshot the governor already holds (including any webhook patches)
 // stays published, marked stale for every repo, until a later pass
-// succeeds. Reports whether a snapshot was kept.
-func keepLastGoodAfterFailedEnumerate(last *atomic.Pointer[github.ActionableResult], logger *slog.Logger) bool {
+// succeeds. Returns the kept snapshot, nil when there was none.
+func keepLastGoodAfterFailedEnumerate(last *atomic.Pointer[github.ActionableResult], logger *slog.Logger) *github.ActionableResult {
 	if last == nil {
-		return false
+		return nil
 	}
 	prev := last.Load()
 	if prev == nil {
-		return false
+		return nil
 	}
 	if prev.Stale() && len(prev.StaleRepos) == len(prev.TotalByRepo) {
-		return true
+		return prev
 	}
 	next := prev.Clone()
 	next.MarkAllStale()
@@ -68,7 +68,7 @@ func keepLastGoodAfterFailedEnumerate(last *atomic.Pointer[github.ActionableResu
 			"snapshot_age", time.Since(next.GeneratedAt).Round(time.Second).String(),
 			"issues", next.Issues.Count, "prs", next.PRs.Count, "repos", len(next.StaleRepos))
 	}
-	return true
+	return next
 }
 
 // cachedSnapshotSkippedStep is reported alongside the API-budget step names

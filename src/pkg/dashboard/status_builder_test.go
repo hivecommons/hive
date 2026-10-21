@@ -1515,10 +1515,17 @@ func TestBuildRepos_StaleRepoKeepsCountsAndMarksKPIIncomplete(t *testing.T) {
 			"repo2": {Issues: 1, PRs: 0},
 		},
 		StaleRepos: []string{"repo1"},
+		StaleSince: time.Date(2026, 10, 21, 14, 7, 0, 0, time.UTC),
 	}
 	repos := buildRepos(cfg, actionable, governor.State{})
 	if len(repos) != 2 {
 		t.Fatalf("repos len = %d, want 2", len(repos))
+	}
+	if repos[0].CountsStaleSince != "2026-10-21T14:07:00Z" || repos[1].CountsStaleSince != "" {
+		t.Fatalf("stale-since markers = %q / %q", repos[0].CountsStaleSince, repos[1].CountsStaleSince)
+	}
+	if got := staleSinceRFC3339(actionable); got != "2026-10-21T14:07:00Z" {
+		t.Fatalf("staleSinceRFC3339 = %q", got)
 	}
 	if repos[0].Issues != 19 || repos[0].PRs != 2 {
 		t.Fatalf("stale repo counts = %d/%d, want last-good 19/2", repos[0].Issues, repos[0].PRs)
@@ -1535,5 +1542,35 @@ func TestBuildRepos_StaleRepoKeepsCountsAndMarksKPIIncomplete(t *testing.T) {
 	actionable.StaleRepos = nil
 	if overviewKPIIncomplete(cfg, actionable) {
 		t.Fatal("a fully fresh snapshot must be KPI-complete")
+	}
+	if staleSinceRFC3339(actionable) != "" {
+		t.Fatal("fresh snapshot must carry no stale-since marker")
+	}
+}
+
+// A whole-pass failure republishes the current status as stale-as-of
+// instead of leaving figures that look fresh (or dropping to zero).
+func TestMarkStatusStaleRepublishesLastGoodWithMarker(t *testing.T) {
+	s := &Server{}
+	s.MarkStatusStale(time.Now()) // no status yet: no-op
+	s.status = &StatusPayload{Repos: []FrontendRepo{
+		{Name: "repo1", Issues: 19, PRs: 2},
+		{Name: "repo2", Issues: 1, CountsStale: true, CountsStaleSince: "2026-10-21T13:00:00Z"},
+	}}
+	since := time.Date(2026, 10, 21, 14, 7, 0, 0, time.UTC)
+	s.MarkStatusStale(since)
+	got := s.status
+	if got.StaleSince != "2026-10-21T14:07:00Z" || !got.OverviewKPIIncomplete {
+		t.Fatalf("status = since:%q incomplete:%v", got.StaleSince, got.OverviewKPIIncomplete)
+	}
+	if got.Repos[0].Issues != 19 || !got.Repos[0].CountsStale || got.Repos[0].CountsStaleSince != got.StaleSince {
+		t.Fatalf("repo1 = %+v, want last-good counts marked stale", got.Repos[0])
+	}
+	if got.Repos[1].CountsStaleSince != "2026-10-21T13:00:00Z" {
+		t.Fatal("an already-stale repo keeps its own, earlier marker")
+	}
+	s.MarkStatusStale(since)
+	if s.status != got {
+		t.Fatal("same marker must not republish")
 	}
 }

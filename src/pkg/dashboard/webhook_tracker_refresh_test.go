@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -91,16 +93,16 @@ func TestWebhookTrackerRefresherCoalescesBurstIntoOneFetchPerItem(t *testing.T) 
 	r.onFetch = func(n int) { mu.Lock(); counted = append(counted, n); mu.Unlock() }
 
 	key := trackerRefreshKey{repo: "acme/console", number: 101, pr: true}
-	if armed := r.enqueue([]trackerRefreshKey{key}); !armed {
+	if armed := r.enqueue([]trackerRefreshKey{key}, ""); !armed {
 		t.Fatal("first key must arm the debounce timer")
 	}
 	for i := 0; i < 11; i++ {
-		if armed := r.enqueue([]trackerRefreshKey{key}); armed {
+		if armed := r.enqueue([]trackerRefreshKey{key}, ""); armed {
 			t.Fatal("a burst inside the window must not re-arm")
 		}
 	}
-	r.enqueue([]trackerRefreshKey{{repo: "acme/console", number: 7, pr: false}, {repo: "acme/console", number: 99, pr: true}})
-	r.enqueue([]trackerRefreshKey{{repo: "", number: 5}, {repo: "acme/console", number: 0}})
+	r.enqueue([]trackerRefreshKey{{repo: "acme/console", number: 7, pr: false}, {repo: "acme/console", number: 99, pr: true}}, "")
+	r.enqueue([]trackerRefreshKey{{repo: "", number: 5}, {repo: "acme/console", number: 0}}, "")
 	if timers.count() != 1 || timers.last().d != 1500*time.Millisecond {
 		t.Fatalf("timers = %d (last %v), want one armed for the configured debounce", timers.count(), timers.last().d)
 	}
@@ -137,7 +139,7 @@ func TestWebhookTrackerRefresherCoalescesBurstIntoOneFetchPerItem(t *testing.T) 
 		t.Fatal("flush must clear the pending set")
 	}
 
-	if armed := r.enqueue([]trackerRefreshKey{key}); !armed || timers.count() != 2 {
+	if armed := r.enqueue([]trackerRefreshKey{key}, ""); !armed || timers.count() != 2 {
 		t.Fatalf("after a flush the next event arms a new window: armed=%v timers=%d", armed, timers.count())
 	}
 	timers.last().fire()
@@ -150,12 +152,12 @@ func TestWebhookTrackerRefresherCoalescesBurstIntoOneFetchPerItem(t *testing.T) 
 
 func TestWebhookTrackerRefresherNilAndEmptySafe(t *testing.T) {
 	var r *webhookTrackerRefresher
-	if r.enqueue([]trackerRefreshKey{{repo: "a", number: 1}}) {
+	if r.enqueue([]trackerRefreshKey{{repo: "a", number: 1}}, "") {
 		t.Fatal("nil refresher must be a no-op")
 	}
 	r = newWebhookTrackerRefresher()
 	r.newTimer = (&fakeTimers{}).newTimer
-	if r.enqueue(nil) {
+	if r.enqueue(nil, "") {
 		t.Fatal("no keys must not arm")
 	}
 	r.flush()
@@ -529,7 +531,7 @@ func TestWebhookRefreshHandsItemsToGovernorAndFlushesOnDemand(t *testing.T) {
 	s.webhookRefresh.newTimer = timers.newTimer
 
 	s.FlushWebhookTrackerRefresh() // nothing pending: no-op, no fetch
-	if n := s.scheduleWebhookTrackerRefresh(github.WebhookEventResult{KnownRepo: true, Repo: "acme/console", TouchedIssues: []int{8}}); n != 1 {
+	if n := s.scheduleWebhookTrackerRefresh(github.WebhookEventResult{KnownRepo: true, Repo: "acme/console", TouchedIssues: []int{8}}, ""); n != 1 {
 		t.Fatalf("queued %d, want 1", n)
 	}
 	if timers.count() != 1 {
@@ -563,5 +565,76 @@ func TestWebhookRefreshHandsItemsToGovernorAndFlushesOnDemand(t *testing.T) {
 	defer ghMu.Unlock()
 	if len(ghCalls) != 1 {
 		t.Fatalf("stopped timer refetched: %v", ghCalls)
+	}
+}
+
+// The delivery payload is a hint, never state: an `issues` "closed" delivery
+// whose confirming GET says the issue is open leaves the row open, and the
+// delivery id rides on the re-read for audit.
+func TestWebhookRefreshIgnoresPayloadStateAndTagsDelivery(t *testing.T) {
+	const secret = "s3cr3t"
+	t.Setenv(githubWebhookSecretEnvVar, secret)
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return now }))
+	s, _ := stageTrackerFixture(t, now)
+	var gets atomic.Int32
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gets.Add(1)
+		if r.URL.Path != "/repos/acme/console/issues/8" {
+			t.Errorf("unexpected GitHub call %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "title": "Flaky test (still open)", "state": "open",
+			"user": map[string]any{"login": "karibhou"}, "labels": []map[string]any{{"name": "kind/bug"}}})
+	}))
+	t.Cleanup(ghSrv.Close)
+	var handed []github.WebhookItemSnapshot
+	s.deps = &Dependencies{
+		GHClient: github.NewClientForTest(ghSrv.URL, "acme", []string{"console"}, s.logger),
+		Ctx:      context.Background(),
+		Logger:   s.logger,
+		Config:   &config.Config{},
+		ApplyWebhookItems: func(snaps []github.WebhookItemSnapshot) {
+			handed = append(handed, snaps...)
+		},
+	}
+	timers := &fakeTimers{}
+	s.webhookRefresh = newWebhookTrackerRefresher()
+	s.webhookRefresh.newTimer = timers.newTimer
+
+	// The payload claims the issue closed with a bogus title.
+	body := []byte(`{"action":"closed","issue":{"number":8,"state":"closed","title":"PAYLOAD LIES"},"repository":{"full_name":"acme/console"}}`)
+	req := httptest.NewRequest(http.MethodPost, githubWebhookPath, bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "issues")
+	req.Header.Set("X-Hub-Signature-256", signGitHubWebhookForTest(secret, body))
+	req.Header.Set("X-GitHub-Delivery", "delivery-123")
+	rec := httptest.NewRecorder()
+	s.handleGitHubWebhook(rec, req)
+	if !strings.Contains(rec.Body.String(), `"tracker_refresh":1`) {
+		t.Fatalf("delivery not queued: %s", rec.Body.String())
+	}
+	// Nothing applied before the confirming GET.
+	if gets.Load() != 0 || len(handed) != 0 {
+		t.Fatal("payload applied before re-read")
+	}
+	timers.last().fire()
+	if gets.Load() != 1 {
+		t.Fatalf("GETs = %d, want the one confirming read", gets.Load())
+	}
+	if len(handed) != 1 || !handed[0].Open() || handed[0].Title != "Flaky test (still open)" || handed[0].DeliveryID != "delivery-123" {
+		t.Fatalf("governor received %+v, want the GET's state tagged with the delivery id", handed)
+	}
+	found := false
+	for _, it := range s.buildStageTracker(s.status, s.stageStore, now).Items {
+		if it.Kind == "issue" && it.Number == 8 {
+			found = true
+			if strings.Contains(it.Title, "PAYLOAD") {
+				t.Fatalf("payload title leaked into the row: %+v", it)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("open issue removed on the strength of the payload alone")
 	}
 }

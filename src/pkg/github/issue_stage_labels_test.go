@@ -274,8 +274,14 @@ func (s *issueStageServer) writes() int {
 }
 
 // syncSeeded runs the reconciler against a payload the fresh read agrees with.
-func syncSeeded(fake *issueStageServer, c *Client, result *ActionableResult, store *stagelabels.Store, now time.Time) IssueStageResult {
+func syncSeeded(t *testing.T, fake *issueStageServer, c *Client, result *ActionableResult, store *stagelabels.Store, now time.Time) IssueStageResult {
+	t.Helper()
 	fake.seed(result)
+	// The freshness guard's confirming GET honours the process-global
+	// slow-start caution window and REST budget; clear any left by earlier
+	// tests so a close is not deferred by another test's rate-limit replay.
+	ResetRateLimitPacingForTest()
+	resetRESTAccountingForTest(t, now)
 	return SyncIssueStageLabels(context.Background(), c, result, store, now, testLogger())
 }
 
@@ -453,7 +459,7 @@ func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
 		Labels: []string{issueNeedsHumanLabel, stagelabels.NeedsDecision.Label()},
 	}, workBucketFiltered, issueNeedsHumanLabel)
 
-	res := syncSeeded(fake, c, result, stagelabels.NewStore("", stageNow), stageNow())
+	res := syncSeeded(t, fake, c, result, stagelabels.NewStore("", stageNow), stageNow())
 	if res.Items != 1 {
 		t.Fatalf("items = %d, want 1", res.Items)
 	}
@@ -501,7 +507,7 @@ func TestSyncIssueStageLabels_HeldIssueLeaves045(t *testing.T) {
 		}
 	}
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.Items != 3 {
 		t.Fatalf("items = %d, want 3", res.Items)
 	}
@@ -541,7 +547,7 @@ func TestSyncIssueStageLabels_MapsBucketsAndRetiresLegacy(t *testing.T) {
 	store := stagelabels.NewStore("", stageNow)
 	store.Observe(stagelabels.Key("acme/widgets", 40), stagelabels.ReviewPending, "contributor-lane:no-verdict")
 
-	res := syncSeeded(fake, c, issueStageResult(), store, stageNow())
+	res := syncSeeded(t, fake, c, issueStageResult(), store, stageNow())
 	if res.Items != 5 {
 		t.Fatalf("items = %d, want 5", res.Items)
 	}
@@ -579,7 +585,7 @@ func TestSyncIssueStageLabels_IdempotentAndDisabled(t *testing.T) {
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 
 	c := issueStageTestClient(t, fake.srv, true)
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.Writes != 0 || fake.writes() != 0 {
 		t.Fatalf("unchanged state produced %d writes (%v / %v)", fake.writes(), fake.added, fake.removed)
 	}
@@ -607,7 +613,7 @@ func TestSyncIssueStageLabels_CoveredIssueStaysAt040(t *testing.T) {
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.Actionable.Label(), stagelabels.CoveredByPR.Label(), stagelabels.ReviewPending.Label(), stagelabels.StalledLabel}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 
-	syncSeeded(fake, c, result, store, stageNow())
+	syncSeeded(t, fake, c, result, store, stageNow())
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if got := fake.added[4]; len(got) != 0 {
@@ -633,7 +639,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	// Cycle 1: an agent claim with a PR under way → 030.
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent), ClaimPRStarted: true}, workBucketClaimed, "live claim")
-	syncSeeded(fake, c, result, store, clock)
+	syncSeeded(t, fake, c, result, store, clock)
 	if rec, ok := store.Get(key); !ok || rec.Stage != stagelabels.PRInProgress {
 		t.Fatalf("record after cycle 1 = %+v", rec)
 	}
@@ -645,7 +651,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	clock = now.Add(2 * time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.PRInProgress.Label()}}})
-	syncSeeded(fake, c, result, store, clock)
+	syncSeeded(t, fake, c, result, store, clock)
 	fake.mu.Lock()
 	if got := fake.added[7]; strings.Join(got, ",") != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label() {
 		t.Fatalf("adds = %v", got)
@@ -664,7 +670,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	clock = now.Add(2*time.Hour + 25*time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.RegressedLabel}}})
-	syncSeeded(fake, c, result, store, clock)
+	syncSeeded(t, fake, c, result, store, clock)
 	fake.mu.Lock()
 	if fake.comments[7] != 1 {
 		t.Fatalf("regression comment must not repeat, got %d", fake.comments[7])
@@ -681,7 +687,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	// every owned label off, record forgotten.
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.StalledLabel, LikelyDoneLabel}, ClaimContext: &IssueClaimContext{PRNumber: 70, MergedPR: true}}})
-	syncSeeded(fake, c, result, store, clock)
+	syncSeeded(t, fake, c, result, store, clock)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if got := strings.Join(fake.removed[7], ","); got != stagelabels.PRInProgress.Label()+","+stagelabels.RegressedLabel+","+stagelabels.Actionable.Label()+","+stagelabels.StalledLabel {
@@ -800,7 +806,7 @@ func TestSyncIssueStageLabels_EditsHivePRBodyForDefaultBranchLink(t *testing.T) 
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 41, PRURL: "https://x/pr/41"}}, workBucketClaimedByPR, "open PR")
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.PRBodiesEdited != 1 {
 		t.Fatalf("PRBodiesEdited = %d, want 1", res.PRBodiesEdited)
 	}
@@ -825,7 +831,7 @@ func TestSyncIssueStageLabels_CommentsForPartialPRLinkLimitation(t *testing.T) {
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 42, PRURL: "https://x/pr/42", Reference: true}}, workBucketClaimedByPR, "open PR")
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.Comments != 1 || res.PRBodiesEdited != 0 {
 		t.Fatalf("result = %+v, want one issue comment and no PR edit", res)
 	}
@@ -847,7 +853,7 @@ func TestSyncIssueStageLabels_MergedReferencePRMovesIssueBackToActionable(t *tes
 	result := &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.PRInProgress.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Reference: true, MergedPR: true}}})
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	if res.Comments != 1 || res.MergedPRIssuesClosed != 0 {
 		t.Fatalf("result = %+v, want one partial comment and no close", res)
 	}
@@ -893,7 +899,7 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 			result := &ActionableResult{}
 			result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 64, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 67, PRURL: "https://x/pr/67", Closing: true, MergedPR: true}}})
 
-			res := syncSeeded(fake, c, result, store, stageNow())
+			res := syncSeeded(t, fake, c, result, store, stageNow())
 			if res.MergedPRIssuesClosed != tt.wantClosed || res.Comments != tt.wantComments {
 				t.Fatalf("result = %+v, want closed=%d comments=%d", res, tt.wantClosed, tt.wantComments)
 			}
@@ -944,7 +950,7 @@ func TestSyncIssueStageLabels_WritesCoveredStageHiddenBySyntheticLabel(t *testin
 		t.Fatalf("stage = %s, want 040", stage)
 	}
 
-	res := syncSeeded(fake, c, result, store, stageNow())
+	res := syncSeeded(t, fake, c, result, store, stageNow())
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if got := strings.Join(fake.added[13221], ","); got != CoveredByPRLabel {
@@ -968,7 +974,7 @@ func TestSyncIssueStageLabels_RealCoveredLabelIsNotStripped(t *testing.T) {
 	}
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, issue, workBucketClaimedByPR, "open PR")
-	if res := syncSeeded(fake, c, result, store, stageNow()); res.Writes != 0 || fake.writes() != 0 {
+	if res := syncSeeded(t, fake, c, result, store, stageNow()); res.Writes != 0 || fake.writes() != 0 {
 		t.Fatalf("unchanged covered issue produced writes: %+v (%v / %v)", res, fake.added, fake.removed)
 	}
 }

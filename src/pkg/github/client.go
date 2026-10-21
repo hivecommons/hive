@@ -1012,6 +1012,56 @@ type ActionableResult struct {
 	// successful enumeration instead (enumerate_lastgood.go). Consumers must
 	// treat the snapshot as stale, not as a drop in work.
 	StaleRepos []string `json:"stale_repos,omitempty"`
+	// StaleSince is the time the stale share of the result was last fetched
+	// for real: the data is current as of then. Zero when nothing is stale.
+	StaleSince time.Time `json:"stale_since,omitzero"`
+	// ItemPatches records, per item the webhook path upserted since the last
+	// reconcile (webhook_item_patch.go), when it was re-read and from which
+	// delivery, so an irreversible action can bound its staleness and an
+	// operator can audit which delivery moved a row. Keyed by ItemPatchKey.
+	ItemPatches map[string]ItemPatchMeta `json:"item_patches,omitempty"`
+}
+
+// ItemPatchMeta is the audit record of one webhook-driven upsert.
+type ItemPatchMeta struct {
+	FetchedAt  time.Time `json:"fetched_at"`
+	UpdatedAt  time.Time `json:"updated_at,omitzero"`
+	DeliveryID string    `json:"delivery_id,omitempty"`
+	HeadSHA    string    `json:"head_sha,omitempty"`
+}
+
+// RepoStale reports whether repo's share of the result is last-good data.
+func (r *ActionableResult) RepoStale(repo string) bool {
+	if r == nil {
+		return false
+	}
+	for _, s := range r.StaleRepos {
+		if strings.EqualFold(s, repo) {
+			return true
+		}
+	}
+	return false
+}
+
+// ItemFetchedAt is when the result's copy of an item was last read from
+// GitHub: the webhook re-read that patched it, else the enumeration pass.
+func (r *ActionableResult) ItemFetchedAt(repo string, number int, isPR bool) time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+	if meta, ok := r.ItemPatches[ItemPatchKey(repo, number, isPR)]; ok && !meta.FetchedAt.IsZero() {
+		return meta.FetchedAt
+	}
+	return r.GeneratedAt
+}
+
+// ItemPatchKey is the ItemPatches key for one issue or PR.
+func ItemPatchKey(repo string, number int, isPR bool) string {
+	kind := "issue"
+	if isPR {
+		kind = "pr"
+	}
+	return strings.ToLower(repo) + "#" + strconv.Itoa(number) + ":" + kind
 }
 
 // Stale reports whether any repo's share of the result was served from the
@@ -1304,6 +1354,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	failedRepos := 0
 	var lastFetchErr error
 	var staleRepos []string
+	var staleSince time.Time
 	// appendRepo folds one repo's enumeration into the aggregate; shared by
 	// the fresh path and the last-good substitution path so both produce the
 	// same shape.
@@ -1330,6 +1381,9 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		}
 		appendRepo(repo, enum)
 		staleRepos = append(staleRepos, repo)
+		if staleSince.IsZero() || enum.fetchedAt.Before(staleSince) {
+			staleSince = enum.fetchedAt
+		}
 		c.logger.Warn("GitHub refused repo enumeration transiently; serving last-good snapshot for this repo (marked stale)",
 			"repo", repo, "side", side, "last_good_at", enum.fetchedAt.UTC().Format(time.RFC3339), "error", err)
 		return true
@@ -1420,6 +1474,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	result.WorkBreakdownByRepo = workBreakdownByRepo
 	result.WorkDetailsByRepo = workDetailsByRepo
 	result.StaleRepos = staleRepos
+	result.StaleSince = staleSince
 
 	return result, nil
 }

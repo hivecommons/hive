@@ -393,6 +393,7 @@ func BuildFrontendStatus(
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
 		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable),
+		StaleSince:            staleSinceRFC3339(actionable),
 		Beads:                 BuildBeadsFromConfig(beadStores, cfg),
 		Planning:              BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
 		Health:                health,
@@ -445,6 +446,22 @@ func buildProviderStatus(agents []FrontendAgent, cfg *config.Config) []agent.Pro
 		evidence = append(evidence, e)
 	}
 	return agent.RollUpProviderStatus(evidence)
+}
+
+// staleSinceRFC3339 renders the snapshot's stale-since marker; the
+// generation time stands in for an older snapshot that has no marker.
+func staleSinceRFC3339(actionable *github.ActionableResult) string {
+	if !actionable.Stale() {
+		return ""
+	}
+	since := actionable.StaleSince
+	if since.IsZero() {
+		since = actionable.GeneratedAt
+	}
+	if since.IsZero() {
+		return ""
+	}
+	return since.UTC().Format(time.RFC3339)
 }
 
 func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResult) bool {
@@ -2312,6 +2329,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		if actionable != nil && slices.Contains(actionable.StaleRepos, repoName) {
 			r.CountsStale = true
+			r.CountsStaleSince = staleSinceRFC3339(actionable)
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}

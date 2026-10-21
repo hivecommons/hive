@@ -282,6 +282,9 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if number <= 0 {
 		return MergePRResult{}, fmt.Errorf("MergePR: pr number is required")
 	}
+	if err := CheckIrreversible(ctx, owner+"/"+repo, number, true); err != nil {
+		return MergePRResult{}, fmt.Errorf("MergePR: %w", err)
+	}
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
 	}

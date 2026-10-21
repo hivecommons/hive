@@ -55,6 +55,9 @@ func (c *Client) closeIssue(ctx context.Context, repo string, number int, opts I
 	if number <= 0 {
 		return false, fmt.Errorf("CloseIssue: issue number is required")
 	}
+	if err := CheckIrreversible(ctx, owner+"/"+repoName, number, false); err != nil {
+		return false, fmt.Errorf("CloseIssue: %w", err)
+	}
 
 	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
 	if err != nil {

@@ -72,7 +72,7 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated}
-	if n := s.scheduleWebhookTrackerRefresh(res); n > 0 {
+	if n := s.scheduleWebhookTrackerRefresh(res, r.Header.Get("X-GitHub-Delivery")); n > 0 {
 		resp["tracker_refresh"] = n
 	}
 	if outcome := s.enqueueReviewEvent(event, body); outcome != "" {
