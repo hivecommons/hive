@@ -53,6 +53,10 @@ type WebhookEventResult struct {
 	// WokeReviewWatcher is set when the delivery woke the review-request
 	// watcher (hivecommons/hive#13378).
 	WokeReviewWatcher bool `json:"woke_review_watcher,omitempty"`
+	// HeadSHA is the commit a check_suite, check_run or status event
+	// reported on; a reader with its own PR set (forgestate) resolves it to
+	// a PR the detail cache may not hold (hivecommons/hive#13377).
+	HeadSHA string `json:"head_sha,omitempty"`
 }
 
 // webhookTracker records webhook liveness per repository and the set of PRs a
@@ -459,6 +463,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		// the title and body, so this costs no GitHub call (#13241).
 		c.RecordReviewEvidenceRevert(merged)
 	}
+	res.HeadSHA = webhookHeadSHA(event, p)
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
@@ -548,6 +553,24 @@ func issueReopenedHook() IssueReopenedHook {
 	issueReopenedHookMu.RLock()
 	defer issueReopenedHookMu.RUnlock()
 	return issueReopenedHookFn
+}
+
+// webhookHeadSHA returns the head commit a check_suite, check_run or status
+// event concerns; "" for every other event.
+func webhookHeadSHA(event string, p webhookEventPayload) string {
+	switch event {
+	case "check_suite":
+		if p.CheckSuite != nil {
+			return strings.TrimSpace(p.CheckSuite.HeadSHA)
+		}
+	case "check_run":
+		if p.CheckRun != nil {
+			return strings.TrimSpace(p.CheckRun.HeadSHA)
+		}
+	case "status":
+		return strings.TrimSpace(p.SHA)
+	}
+	return ""
 }
 
 func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []string) []int {

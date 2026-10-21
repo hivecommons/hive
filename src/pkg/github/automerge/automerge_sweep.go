@@ -141,6 +141,17 @@ type Options struct {
 	// RateLimitCautious reports whether GitHub is pacing the hive after a
 	// rate-limit refusal; nil reads the shared slow-start state.
 	RateLimitCautious func() bool
+	// OpenPRs is the forgestate cache the self-authored, trusted-author and
+	// contributor lanes read instead of listing /pulls per tick
+	// (hivecommons/hive#13377). With it set the lanes run event-driven: a
+	// SweepTrigger notification evaluates the named PRs and a periodic floor
+	// pass covers lost deliveries; the merge step reads the PR through with
+	// a freshness bound and never acts on a stale snapshot. nil keeps the
+	// listing ticker.
+	OpenPRs OpenPRSource
+	// SweepTrigger is the trigger webhook deliveries notify; nil with OpenPRs
+	// set builds one, reachable through Engine.Trigger.
+	SweepTrigger *SweepTrigger
 }
 
 // Engine owns the automerge sweep policy state.
@@ -208,6 +219,11 @@ type Engine struct {
 	contributorNudge  ContributorNudgeSink
 	checkSummary      CheckSummarizer
 	rateLimitCautious func() bool
+
+	openPRs      OpenPRSource
+	sweepTrigger *SweepTrigger
+	// sweepFloor overrides automergeSweepFloorInterval (tests only).
+	sweepFloor time.Duration
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -251,6 +267,8 @@ func New(transport Transport, opts Options) *Engine {
 		stageEngine:                       opts.StageEngine,
 		contributorNudge:                  opts.ContributorNudge,
 		checkSummary:                      opts.CheckSummary,
+		openPRs:                           opts.OpenPRs,
+		sweepTrigger:                      opts.SweepTrigger,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -262,6 +280,9 @@ func New(transport Transport, opts Options) *Engine {
 	}
 	if e.headFirstSeen == nil {
 		e.headFirstSeen = sharedHeadFirstSeen
+	}
+	if e.sweepTrigger == nil && e.openPRs != nil {
+		e.sweepTrigger = NewSweepTrigger(e.openPRs)
 	}
 
 	if e.mutation == nil {
@@ -496,6 +517,9 @@ type AutoMergeSweepOptions struct {
 	// trusted-author tier evaluates them as before, so a bot an operator
 	// granted the required role still has a sweep that can merge it.
 	SelfAuthoredLaneActive bool
+	// Targets narrows an event-driven pass to the PRs a webhook named
+	// (hivecommons/hive#13377); nil evaluates every PR of every repo.
+	Targets SweepTargets
 }
 
 type TrustedAuthorPolicy struct {
@@ -897,14 +921,21 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		if len(result.Merged) >= maxMerges {
 			break
 		}
+		owner, repoName := c.transport.SplitRepo(repo)
+		if !opts.Targets.selectsRepo(owner + "/" + repoName) {
+			continue
+		}
 		if !c.repoAutoMergeAllowed(repo) {
 			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled")
 			continue
 		}
-		owner, repoName := c.transport.SplitRepo(repo)
-		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
+		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
 		if err != nil {
 			return result, err
+		}
+		if skipReason != "" {
+			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", skipReason)
+			continue
 		}
 		repoSeen := 0
 		repoSkipped := 0
@@ -1080,17 +1111,21 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 		if len(result.Merged) >= maxMerges {
 			break
 		}
-		if !policy.repoAllowed(displayRepo) {
+		owner, repoName := c.transport.SplitRepo(displayRepo)
+		if !policy.repoAllowed(displayRepo) || !opts.Targets.selectsRepo(owner+"/"+repoName) {
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
 			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled")
 			continue
 		}
-		owner, repoName := c.transport.SplitRepo(displayRepo)
-		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
+		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
 		if err != nil {
 			return result, err
+		}
+		if skipReason != "" {
+			c.info("trusted-author automerge sweep skipped repo", "repo", displayRepo, "reason", skipReason)
+			continue
 		}
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -1283,6 +1318,17 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		close(done)
 		return done
 	}
+	if c.openPRs != nil {
+		go func() {
+			defer close(done)
+			c.runEventDrivenSweep(ctx, maxMerges, acmmAllowed)
+		}()
+		c.info("automerge lanes started event-driven on the forgestate cache",
+			"floor_interval", automergeSweepFloorInterval,
+			"merge_freshness_bound", automergeMergeFreshnessBound,
+			"repos", len(c.transport.Repositories()))
+		return done
+	}
 	repos := len(c.transport.Repositories())
 	interval := selfAuthoredSweepInterval(repos)
 	ctx = lowPriority(ctx)
@@ -1306,65 +1352,9 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 				if gate.skip {
 					continue
 				}
-				result := &AutoMergeSweepResult{}
-				if acmmAllowed {
-					var err error
-					result, err = c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges})
-					if err != nil {
-						c.warn("self-authored automerge sweep failed", "error", err)
-						// A rate-limit refusal may be go-github's cached verdict
-						// from a token that has since rotated. Re-read the real
-						// limits (free, and it updates that cache) so the next tick
-						// is decided on current truth instead of repeating a stale
-						// refusal for the rest of the window.
-						if isRateLimited(err) {
-							c.refreshRateLimitCache(ctx)
-						}
-						continue
-					}
-				}
-				remaining := maxMerges
-				if remaining <= 0 {
-					remaining = DefaultAutoMergeSweepMaxMerges
-				}
-				remaining -= len(result.Merged)
-				if remaining > 0 && c.currentTrustedAuthorPolicy().Enabled {
-					trustedResult, trustedErr := c.SweepTrustedAuthorAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, SelfAuthoredLaneActive: acmmAllowed})
-					if trustedErr != nil {
-						c.warn("trusted-author automerge sweep failed", "error", trustedErr)
-						if isRateLimited(trustedErr) {
-							c.refreshRateLimitCache(ctx)
-						}
-					} else {
-						result.Seen += trustedResult.Seen
-						result.Skipped += trustedResult.Skipped
-						result.Candidates += trustedResult.Candidates
-						result.Merged = append(result.Merged, trustedResult.Merged...)
-					}
-				}
-				remaining = maxMerges
-				if remaining <= 0 {
-					remaining = DefaultAutoMergeSweepMaxMerges
-				}
-				remaining -= len(result.Merged)
-				if remaining > 0 && c.currentContributorLanePolicy().Enabled {
-					laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining})
-					if laneErr != nil {
-						c.warn("contributor-lane automerge sweep failed", "error", laneErr)
-						if isRateLimited(laneErr) {
-							c.refreshRateLimitCache(ctx)
-						}
-					} else {
-						result.Seen += laneResult.Seen
-						result.Skipped += laneResult.Skipped
-						result.Candidates += laneResult.Candidates
-						result.Merged = append(result.Merged, laneResult.Merged...)
-					}
-				}
-				if stageResult, stageErr := c.ApplyStageLabels(ctx); stageErr != nil {
-					c.warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
-				} else if stageResult.Writes+stageResult.Comments > 0 {
-					c.info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
+				result := c.sweepPass(ctx, maxMerges, acmmAllowed, nil, "tick")
+				if result == nil {
+					continue
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
@@ -1385,6 +1375,75 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	}()
 	c.info("self-authored automerge sweep started", "interval", interval, "repos", len(c.transport.Repositories()))
 	return done
+}
+
+// sweepPass runs the three lanes once, in order, sharing one merge budget,
+// then reconciles stage labels. targets narrows an event-driven pass to the
+// PRs a webhook named (nil: everything); cause names what started the pass
+// for the log. It returns nil when the self-authored lane failed outright
+// (its callers then keep the current cadence).
+func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool, targets SweepTargets, cause string) *AutoMergeSweepResult {
+	result := &AutoMergeSweepResult{}
+	if acmmAllowed {
+		var err error
+		result, err = c.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: maxMerges, Targets: targets})
+		if err != nil {
+			c.warn("self-authored automerge sweep failed", "error", err, "cause", cause)
+			// A rate-limit refusal may be go-github's cached verdict
+			// from a token that has since rotated. Re-read the real
+			// limits (free, and it updates that cache) so the next tick
+			// is decided on current truth instead of repeating a stale
+			// refusal for the rest of the window.
+			if isRateLimited(err) {
+				c.refreshRateLimitCache(ctx)
+			}
+			return nil
+		}
+	}
+	remaining := maxMerges
+	if remaining <= 0 {
+		remaining = DefaultAutoMergeSweepMaxMerges
+	}
+	remaining -= len(result.Merged)
+	if remaining > 0 && c.currentTrustedAuthorPolicy().Enabled {
+		trustedResult, trustedErr := c.SweepTrustedAuthorAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, SelfAuthoredLaneActive: acmmAllowed, Targets: targets})
+		if trustedErr != nil {
+			c.warn("trusted-author automerge sweep failed", "error", trustedErr, "cause", cause)
+			if isRateLimited(trustedErr) {
+				c.refreshRateLimitCache(ctx)
+			}
+		} else {
+			result.Seen += trustedResult.Seen
+			result.Skipped += trustedResult.Skipped
+			result.Candidates += trustedResult.Candidates
+			result.Merged = append(result.Merged, trustedResult.Merged...)
+		}
+	}
+	remaining = maxMerges
+	if remaining <= 0 {
+		remaining = DefaultAutoMergeSweepMaxMerges
+	}
+	remaining -= len(result.Merged)
+	if remaining > 0 && c.currentContributorLanePolicy().Enabled {
+		laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, Targets: targets})
+		if laneErr != nil {
+			c.warn("contributor-lane automerge sweep failed", "error", laneErr, "cause", cause)
+			if isRateLimited(laneErr) {
+				c.refreshRateLimitCache(ctx)
+			}
+		} else {
+			result.Seen += laneResult.Seen
+			result.Skipped += laneResult.Skipped
+			result.Candidates += laneResult.Candidates
+			result.Merged = append(result.Merged, laneResult.Merged...)
+		}
+	}
+	if stageResult, stageErr := c.ApplyStageLabels(ctx); stageErr != nil {
+		c.warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+	} else if stageResult.Writes+stageResult.Comments > 0 {
+		c.info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
+	}
+	return result
 }
 
 // listOpenAppAuthoredPullRequests returns every open PR in owner/repo. Uses the
@@ -1603,6 +1662,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, deskReason, nil
 	}
 
+	// Freshness-bounded read-through of the cached PR (hivecommons/hive#13377):
+	// refuses on a stale or not-ready snapshot, a closed PR, or a moved head.
+	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, evaluatedHeadSHA); gateReason != "" || err != nil {
+		return AutoMergeSweepEvent{}, gateReason, err
+	}
 	// Re-verify the head SHA immediately before merging: a push landing
 	// between the green-check above and the merge call below must never be
 	// squashed without having gone through commitGreen itself.
@@ -1977,6 +2041,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
+	}
+	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
+		return AutoMergeSweepEvent{}, gateReason, err
 	}
 	current, _, err := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:trusted_author_automerge_sweep"), owner, repo, number)
 	if err != nil {

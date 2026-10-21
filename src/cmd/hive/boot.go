@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -241,6 +242,10 @@ type boot struct {
 	// sentinelEvents serializes the per-PR sentinel evaluations that
 	// `pull_request` webhooks request (#13379).
 	sentinelEvents *sentinelEventQueue
+	// forgeView is the owner/name view over forgeState the automerge lanes
+	// read and sweepTrigger their webhook trigger over it (#13377).
+	forgeView    *github.ForgeStateView
+	sweepTrigger *automerge.SweepTrigger
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

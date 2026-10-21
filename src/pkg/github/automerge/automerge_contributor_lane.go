@@ -385,17 +385,21 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 		if len(result.Merged) >= maxMerges {
 			break
 		}
-		if !policy.repoAllowed(displayRepo) {
+		owner, repoName := c.transport.SplitRepo(displayRepo)
+		if !policy.repoAllowed(displayRepo) || !opts.Targets.selectsRepo(owner+"/"+repoName) {
 			continue
 		}
 		if !c.repoAutoMergeAllowed(displayRepo) {
 			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled")
 			continue
 		}
-		owner, repoName := c.transport.SplitRepo(displayRepo)
-		prs, err := c.listOpenPullRequests(ctx, owner, repoName)
+		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
 		if err != nil {
 			return result, err
+		}
+		if skipReason != "" {
+			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", skipReason)
+			continue
 		}
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -1020,6 +1024,9 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return eval, humanReason, err
+	}
+	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
+		return eval, gateReason, err
 	}
 	current, _, err := c.gh.PullRequests.Get(caller, owner, repo, number)
 	if err != nil {

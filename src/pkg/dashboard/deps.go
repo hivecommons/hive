@@ -248,6 +248,11 @@ type Dependencies struct {
 	// then plans from the patched snapshot without re-listing. Nil leaves
 	// the governor's snapshot to the reconcile pass.
 	ApplyWebhookItems func(snaps []ghpkg.WebhookItemSnapshot)
+	// WebhookDelivery receives every verified GitHub delivery for a managed
+	// repo after the PR caches applied it: the forgestate cache patches the
+	// named item and the automerge lanes schedule a pass for the affected
+	// PRs (hivecommons/hive#13377). nil installs no receiver.
+	WebhookDelivery func(event, deliveryID string, payload []byte, res ghpkg.WebhookEventResult)
 	// EvalLoop reports the governor loop's live pacing (poll vs webhook mode
 	// and the last early wake) for /api/status. Nil omits the fields.
 	EvalLoop func() EvalLoopStatus

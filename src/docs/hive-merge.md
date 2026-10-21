@@ -259,6 +259,27 @@ underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
 response carries `bot_authors: [{login, source: known|discovered|custom,
 trusted}]`.
 
+### Event-driven sweeps on the ForgeState cache
+
+With `forgestate.enabled: true` the three sweep lanes (self-authored,
+trusted-author, contributor lane) stop listing `/pulls` per repo on the 10 s
+ticker. They read one shared open-PR set from the ForgeState cache
+(`pkg/forgestate`, [#13373](https://github.com/hivecommons/hive/issues/13373))
+and run when a `check_suite`, `check_run`, `status`, `pull_request_review` or
+`pull_request` webhook arrives for a PR: that delivery patches the cache and
+triggers a pass that evaluates only the affected PR(s). A periodic floor pass
+over the whole cached set runs every 5 minutes as the fallback when no events
+arrive (`automergeSweepFloorInterval`). Before any merge the lane re-reads the
+PR through the cache with a 60 s freshness bound
+(`automergeMergeFreshnessBound`): an item older than that is refreshed once
+from GitHub; a repo whose snapshot is marked stale is skipped at enumeration
+and its PRs are never merged (`forgestate-stale`); a head SHA that moved since
+evaluation defers the PR to the next pass. The review gate, required checks,
+hold/exempt labels, intent tier and the existing head-SHA re-verify at merge
+time are unchanged ([#13377](https://github.com/hivecommons/hive/issues/13377)).
+With `forgestate.enabled` off (the default) the lanes list `/pulls` on the
+ticker as before.
+
 ### github-actions[bot] PR takeover
 
 A PR that `github-actions[bot]` opens with a workflow `GITHUB_TOKEN` never

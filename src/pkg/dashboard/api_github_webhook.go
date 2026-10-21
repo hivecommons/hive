@@ -112,6 +112,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		s.deps.SentinelPREvent(res.ConfiguredRepo, n)
 		resp["sentinel"] = n
 	}
+	if s.deps.WebhookDelivery != nil {
+		s.deps.WebhookDelivery(event, r.Header.Get("X-GitHub-Delivery"), body, res)
+	}
 	jsonResponse(w, resp)
 }
 

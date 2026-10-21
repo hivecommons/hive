@@ -144,6 +144,11 @@ func issueItem(is *gh.Issue) Item {
 		UpdatedAt: is.GetUpdatedAt().Time,
 		Draft:     is.GetDraft(),
 		Closed:    strings.EqualFold(is.GetState(), "closed"),
+		Author:    is.GetUser().GetLogin(),
+		Title:     is.GetTitle(),
+		Body:      is.GetBody(),
+		HTMLURL:   is.GetHTMLURL(),
+		CreatedAt: is.GetCreatedAt().Time,
 	}
 }
 
@@ -157,7 +162,15 @@ func prItem(pr *gh.PullRequest) Item {
 		UpdatedAt:      pr.GetUpdatedAt().Time,
 		Draft:          pr.GetDraft(),
 		Closed:         strings.EqualFold(pr.GetState(), "closed"),
+		Author:         pr.GetUser().GetLogin(),
+		Title:          pr.GetTitle(),
+		Body:           pr.GetBody(),
+		HTMLURL:        pr.GetHTMLURL(),
+		CreatedAt:      pr.GetCreatedAt().Time,
 		HeadSHA:        pr.GetHead().GetSHA(),
+		HeadRef:        pr.GetHead().GetRef(),
+		HeadRepo:       pr.GetHead().GetRepo().GetFullName(),
+		BaseRef:        pr.GetBase().GetRef(),
 		Merged:         pr.GetMerged() || !pr.GetMergedAt().Time.IsZero(),
 		MergeableState: pr.GetMergeableState(),
 	}
