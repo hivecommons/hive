@@ -432,13 +432,23 @@ assert.ok(head.includes('<span class="ham-since">since</span>'));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 1, kind: 'issue', stage: 0 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 
-// Every PR stage identifies whose move it is, independent of the responsive
-// caption and decorative chevron markup.
-for (const [st, actor] of [[50, 'hive'], [60, 'hive'], [70, 'clanker'], [71, 'clanker'], [72, 'clanker'], [74, 'hive'], [80, 'hive'], [85, 'human'], [90, 'human'], [100, 'hive']]) {
+// Every PR stage has an active word and an actor on its segment; the word
+// is what the chevron says, the actor is whose move it is. The active
+// chevron now leads with its stage icon, so the regex skips that svg.
+const prWords = {};
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
-  const actors = Array.from(r.matchAll(/aria-label="Next move: ([a-z]+)"/g), m => m[1]);
-  assert.deepStrictEqual([...new Set(actors)], [actor], 'next mover for stage ' + st);
+  const m = /aria-current="step"><svg class="ham-ico ham-active-ico"[^>]*>[\s\S]*?<\/svg><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*aria-label="Next move: ([a-z]+)"[^>]*>/.exec(r);
+  assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);
+  assert.deepStrictEqual([m[1], m[2]], [word, actor === 'author' ? 'clanker' : actor], 'stage ' + st);
+  prWords[st] = m[1];
 }
+// The responsive caption names the column, the detour word when there is one,
+// and the next mover for the strip's active segment; it stays empty when no
+// active segment is in range.
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages), '<p class="ham-current-stage">CI / Review · Fixing · Next move: clanker</p>');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 560, kind: 'pr', stage: 60 }, stages), '<p class="ham-current-stage">Ready for auto merge · Next move: hive</p>', 'no detour → column word only');
+assert.strictEqual(stageTrackerCurrentStageHtml({ repo: 'acme/console', number: 570, kind: 'pr', stage: 70, author_kind: 'clanker' }, stages, { from: 500 }), '', 'no caption when the active segment is out of range');
 assert.strictEqual(STAGE_TRACKER_ACTOR[70], 'author', '070 fixing is the author\'s move');
 // Filters.
 const items = [

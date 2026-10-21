@@ -4,8 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Repository card widths persist per hive and are clamped to usable bounds.
@@ -176,3 +179,31 @@ _store.delete(REPO_CARD_WIDTH_KEY_PREFIX + 'hive-bold-hawk');
 if (fails) { console.log(fails + ' failure(s)'); process.exit(1); }
 console.log('ok');
 `
+
+func TestRepoCardNameThemeCSSDoesNotRecenterHeader(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
+		".repo-name a { flex: 1 1 12rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; white-space: normal; overflow-wrap: anywhere; }",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("index.html base repo-name rule is missing %q", snippet)
+		}
+	}
+
+	repoNameBlockRE := regexp.MustCompile(`(?s)([^{}]*\.repo-name[^{}]*)\{([^{}]*)\}`)
+	centeringRE := regexp.MustCompile(`(?i)(text-align\s*:\s*center|justify-content\s*:\s*center|margin\s*:\s*0\s+auto)`)
+	for _, th := range config.DashboardThemeCatalog() {
+		css, err := config.DashboardThemeCSS(th)
+		if err != nil {
+			t.Fatalf("theme %s CSS: %v", th.ID, err)
+		}
+		for _, match := range repoNameBlockRE.FindAllStringSubmatch(css, -1) {
+			selector := strings.TrimSpace(match[1])
+			body := strings.TrimSpace(match[2])
+			if centeringRE.MatchString(body) {
+				t.Fatalf("built-in theme %s recenters repo card name in selector %q: %s", th.ID, selector, body)
+			}
+		}
+	}
+}
