@@ -68,7 +68,7 @@ func TestReporterTrustUpstreamAcceptance(t *testing.T) {
 				}
 				return tc.source, nil
 			})
-			got := c.EvaluateReporterTrust(context.Background(), "o/r", "Port", "Closes #1\nPorted from https://github.com/up/source/pull/613", nil)
+			got := c.EvaluateReporterTrust(context.Background(), "o/r", "Port", "Closes #1\nRefs up/source#613", nil)
 			if got.Held != tc.wantHeld {
 				t.Fatalf("Held=%v, want %v: %+v", got.Held, tc.wantHeld, got)
 			}
