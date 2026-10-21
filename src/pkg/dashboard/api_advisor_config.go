@@ -50,8 +50,13 @@ func advisorSettingsSection(cfg *config.Config) advisorSettingsResponse {
 	for name, role := range cfg.ModelRoles {
 		roles[name] = role
 	}
+	// Report the effective boolean so an unset enabled key reads as off
+	// (the lane is opt-in) instead of being omitted from the JSON.
+	fleet := cfg.Advisor
+	fleetEnabled := fleet.IsEnabled()
+	fleet.Enabled = &fleetEnabled
 	resp := advisorSettingsResponse{
-		Fleet:      cfg.Advisor,
+		Fleet:      fleet,
 		ModelRoles: roles,
 		Defaults: advisorSettingsDefaults{
 			TimeoutS:             config.DefaultAdvisorTimeoutS,

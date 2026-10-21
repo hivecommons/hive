@@ -51436,7 +51436,7 @@ function burnAreaChart() {
       const d = st.defaults || {};
       const roles = st.model_roles || {};
       const agents = Array.isArray(st.agents) ? st.agents : [];
-      const fleetOn = f.enabled !== false;
+      const fleetOn = f.enabled === true;
       const roleNames = Object.keys(roles).sort();
       const roleRows = roleNames.map(n => {
         const r = roles[n] || {};
@@ -51514,7 +51514,7 @@ function burnAreaChart() {
     function saveAdvisorFleet() {
       const enabledEl = document.getElementById('adv-f-enabled');
       return putAdvisorSettings('/api/config/advisor', {
-        enabled: !enabledEl || enabledEl.value === 'on',
+        enabled: !!enabledEl && enabledEl.value === 'on',
         model: advisorTextField('adv-f-model'),
         instructions: advisorTextField('adv-f-instructions'),
         daily_budget_tokens: advisorIntField('adv-f-budget') || 0,

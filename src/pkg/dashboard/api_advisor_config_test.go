@@ -66,6 +66,28 @@ func TestAdvisorSettingsOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestAdvisorSettingsUnsetFleetEnabledReportsFalse(t *testing.T) {
+	s := newFullServer(t)
+	s.deps.Config.Advisor.Enabled = nil
+
+	rec := advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var raw struct {
+		Fleet map[string]any `json:"fleet"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if v, ok := raw.Fleet["enabled"]; !ok || v != false {
+		t.Errorf("unset fleet enabled must be reported as false, got %v (present=%v)", v, ok)
+	}
+	if s.deps.Config.Advisor.Enabled != nil {
+		t.Errorf("GET must not mutate the live config: %+v", s.deps.Config.Advisor)
+	}
+}
+
 func TestAdvisorSettingsFleetEditAndEffectiveView(t *testing.T) {
 	s := newFullServer(t)
 	cfg := s.deps.Config
