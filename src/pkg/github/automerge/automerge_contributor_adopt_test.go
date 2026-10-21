@@ -1336,30 +1336,33 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 	}
 }
 
-// Adoption applies the contributor lane's diff fences first
-// (hivecommons/hive#12850): a body-marker clanker PR that touches CI
-// workflows, deletes tests or whose file list cannot be read is never
-// re-homed into an App PR; it stays at 072 and the attempt is not recorded,
-// so a later sweep (or a new head) is judged afresh. The fence reads the PR
-// itself: a head that moved since the lane recorded it is not judged by the
-// new head's diff, and a file list shorter than changed_files fails closed.
-func TestAdoptionRefusedByDiffFence(t *testing.T) {
+// Adoption is not a merge (hivecommons/hive#13212): a body-marker clanker PR
+// that touches CI workflows or deletes tests is adopted all the same, and
+// the fence travels with it — the record carries it, the superseding App
+// PR's body carries the marker the App merge lanes refuse on, and the
+// comment on the original says the merge stays manual. Only a verdict the
+// fence could not reach defers adoption: a head that moved since the lane
+// recorded it is not judged by the new head's diff, and a file list that is
+// unreadable or shorter than changed_files waits for the next sweep, with
+// no attempt recorded.
+func TestAdoptionCarriesDiffFence(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		files        []map[string]any
 		failFiles    bool
 		liveHead     string
 		changedFiles int
-		wantAdopt    bool
+		wantFence    string
+		wantDefer    bool
 	}{
-		{name: "plain diff adopts", files: []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}, wantAdopt: true},
-		{name: "workflow path", files: []map[string]any{{"filename": "src/widget.go", "status": "modified"}, {"filename": ".github/workflows/ci.yml", "status": "modified"}}},
-		{name: "action definition", files: []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}},
-		{name: "test file removed", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}},
-		{name: "tests gutted", files: []map[string]any{{"filename": "src/widget_test.go", "status": "modified", "additions": 1, "deletions": 40}}},
-		{name: "file list unavailable", failFiles: true},
-		{name: "head moved since observed", liveHead: "bbb"},
-		{name: "file list incomplete", changedFiles: 3001},
+		{name: "plain diff adopts", files: []map[string]any{{"filename": "src/widget.go", "status": "modified", "additions": 3, "deletions": 1}}},
+		{name: "workflow path", files: []map[string]any{{"filename": "src/widget.go", "status": "modified"}, {"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "action definition", files: []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "test file removed", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "tests gutted", files: []map[string]any{{"filename": "src/widget_test.go", "status": "modified", "additions": 1, "deletions": 40}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "file list unavailable", failFiles: true, wantDefer: true},
+		{name: "head moved since observed", liveHead: "bbb", wantDefer: true},
+		{name: "file list incomplete", changedFiles: 3001, wantDefer: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := adoptPolicy()
@@ -1377,55 +1380,137 @@ func TestAdoptionRefusedByDiffFence(t *testing.T) {
 			h.api.reset()
 			h.clock.advance(time.Hour)
 			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
-			adopted := len(h.adopt.pulls) == 1 && len(adoptionComments(h.api)) == 1
-			if adopted != tc.wantAdopt {
-				t.Fatalf("adopted = %v, want %v: pulls=%d comments=%v", adopted, tc.wantAdopt, len(h.adopt.pulls), h.api.comments)
-			}
-			if tc.wantAdopt {
+			key := stageKey("acme", "widget", 7)
+			if tc.wantDefer {
+				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+					t.Fatalf("deferred adoption went ahead: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
+				}
+				if added := strings.Join(h.addedLabels(), " "); strings.Contains(added, "stage/074") {
+					t.Fatalf("deferred adoption moved to 074: %v", h.api.added)
+				}
+				if rec, ok := h.e.stageStoreOrShared().Get(key); ok && rec.Adopted("aaa") {
+					t.Fatal("deferred adoption was recorded as an attempt")
+				}
+				// Not sticky: once the fence can read the head, the same
+				// head is adopted on the next sweep.
+				h.adopt.prFiles, h.adopt.failPRFiles = nil, false
+				h.adopt.liveHead, h.adopt.changedFiles = "", 0
+				h.api.reset()
+				h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+				if len(h.adopt.pulls) != 1 {
+					t.Fatalf("readable diff not adopted after deferral: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+				}
 				return
 			}
-			if len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
-				t.Fatalf("refused adoption pushed a branch: %v", h.adopt.refs)
+			comments := adoptionComments(h.api)
+			if len(h.adopt.pulls) != 1 || len(comments) != 1 {
+				t.Fatalf("not adopted: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
 			}
-			if added := strings.Join(h.addedLabels(), " "); strings.Contains(added, "stage/074") {
-				t.Fatalf("refused adoption moved to 074: %v", h.api.added)
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if rec.AdoptDiffFence != tc.wantFence {
+				t.Fatalf("record fence = %q, want %q", rec.AdoptDiffFence, tc.wantFence)
 			}
-			if rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); ok && rec.Adopted("aaa") {
-				t.Fatal("refused adoption was recorded as an attempt")
+			body, _ := h.adopt.pulls[0]["body"].(string)
+			if got := carriedFenceReason(body); got != tc.wantFence {
+				t.Fatalf("superseding PR body carries fence %q, want %q:\n%s", got, tc.wantFence, body)
 			}
-			// The refusal is not sticky: once the diff reads clean the
-			// same head is adopted on the next sweep.
-			h.adopt.prFiles, h.adopt.failPRFiles = nil, false
-			h.adopt.liveHead, h.adopt.changedFiles = "", 0
-			h.api.reset()
-			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
-			if len(h.adopt.pulls) != 1 {
-				t.Fatalf("clean diff not adopted after refusal: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+			if tc.wantFence == "" {
+				if strings.Contains(comments[0], "merge stays manual") || strings.Contains(body, "Merge stays manual") {
+					t.Fatalf("clean diff announced a manual merge: comment=%q body=%q", comments[0], body)
+				}
+				return
+			}
+			if !strings.Contains(comments[0], "merge stays manual") || !strings.Contains(comments[0], decisionCause(tc.wantFence)) {
+				t.Fatalf("adoption comment does not say the merge stays manual for %s: %q", tc.wantFence, comments[0])
+			}
+			if !strings.Contains(body, "**Merge stays manual**") || !strings.Contains(body, "#7") {
+				t.Fatalf("superseding PR body does not carry the manual-merge rule:\n%s", body)
 			}
 		})
 	}
 }
 
-// The dco-rehome takeover of an in-place adoption goes through the same
-// fence (hivecommons/hive#12850). A fenced diff releases the adoption: no App
-// PR, no closed original, and the PR drops back to 072, where the fence keeps
-// holding it. A head that moved since the lane observed it, or a transient
-// files-API failure, is only deferred: the adoption stays and the next sweep
-// re-reads.
-func TestAlreadyAdoptedInPlaceDCORehomeRefusedByDiffFence(t *testing.T) {
+// In place, the fence is carried on the record and the adoption comment:
+// the PR stays contributor-authored, the fix lane repairs CI on its branch
+// and the contributor lane's own diff fence routes the green head to 085.
+func TestAdoptionInPlaceCarriesDiffFence(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	p.AdoptAfterUnregistered = 30 * time.Minute
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{}
+	h.adopt.allowMaintainerEdits(7, true)
+	h.adopt.prFiles = []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 40}}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker", "needs-rebase"}
+	h.api.reset()
+	h.clock.advance(time.Hour)
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonTestsRemoved)
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("in-place adoption superseded: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || !strings.Contains(comments[0], "mode=in-place") {
+		t.Fatalf("in-place adoption comment missing: %v", h.api.comments)
+	}
+	if !strings.Contains(comments[0], "merge stays manual") || !strings.Contains(comments[0], decisionCause(contributorLaneReasonTestsRemoved)) {
+		t.Fatalf("in-place adoption comment does not say the merge stays manual: %q", comments[0])
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptDiffFence != contributorLaneReasonTestsRemoved {
+		t.Fatalf("record = %+v, want in-place adoption carrying %s", rec, contributorLaneReasonTestsRemoved)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonTestsRemoved)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/074-adopted-by-hive") {
+		t.Fatalf("fenced in-place adoption not at 074: %v", h.api.added)
+	}
+	// The hive's fixer rebases and repairs CI; the contributor lane still
+	// reads the fenced diff on the green head, so the PR is a person's to
+	// merge (085) — never the lane's — and the adoption record holds.
+	adopted := []string{"stage/074-adopted-by-hive", "role/contributor", "author/clanker"}
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), contributorLaneReasonTestsRemoved)
+	if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/085-needs-decision") {
+		t.Fatalf("green fenced head not handed to a person: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" || rec.AdoptDiffFence != contributorLaneReasonTestsRemoved {
+		t.Fatalf("adoption did not follow the hive's head with its fence: %+v", rec)
+	}
+	// The contributor pushes again: the yield forgets the fence with the
+	// adoption, so a fresh head is judged afresh.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.observe(adoptPR(7, "ccc", "stage/085-needs-decision", "role/contributor", "author/clanker"), "check-failing:unit")
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.AdoptedInPlace() || rec.AdoptDiffFence != "" {
+		t.Fatalf("yield kept the fence: %+v", rec)
+	}
+}
+
+// The dco-rehome takeover of an in-place adoption carries the fence too:
+// the App PR is opened with the marker and the original closed, exactly as
+// a clean re-home, instead of releasing the adoption back to 072 where the
+// fence used to hold it (hivecommons/hive#12850). A head that moved since
+// the lane observed it, an incomplete list or a transient files-API failure
+// is only deferred: the adoption stays and the next sweep re-reads.
+func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		files        []map[string]any
 		changedFiles int
 		liveHead     string
 		failFiles    bool
-		wantReleased bool
+		wantFence    string
+		wantDefer    bool
 	}{
-		{name: "workflow path releases", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantReleased: true},
-		{name: "test file removed releases", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantReleased: true},
-		{name: "incomplete file list releases", changedFiles: 3001, wantReleased: true},
-		{name: "head moved defers", liveHead: "bbb"},
-		{name: "files API failure defers", failFiles: true},
+		{name: "workflow path carries", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "test file removed carries", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantFence: contributorLaneReasonTestsRemoved},
+		{name: "incomplete file list defers", changedFiles: 3001, wantDefer: true},
+		{name: "head moved defers", liveHead: "bbb", wantDefer: true},
+		{name: "files API failure defers", failFiles: true, wantDefer: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := adoptPolicy()
@@ -1446,32 +1531,28 @@ func TestAlreadyAdoptedInPlaceDCORehomeRefusedByDiffFence(t *testing.T) {
 			h.api.reset()
 			h.clock.advance(time.Minute)
 			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
-			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
-				t.Fatalf("fenced re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
-			}
 			rec, _ := h.e.stageStoreOrShared().Get(key)
-			if !tc.wantReleased {
-				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome {
+			if tc.wantDefer {
+				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
+					t.Fatalf("deferred re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+				}
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != "" {
 					t.Fatalf("deferred re-home changed the adoption: %+v", rec)
 				}
 				return
 			}
-			if rec.AdoptedInPlace() || rec.Adopted("aaa") || rec.AdoptedBy != 0 {
-				t.Fatalf("refused re-home kept the adoption: %+v", rec)
+			if len(h.adopt.pulls) != 1 || len(h.adopt.prEdits) != 1 || len(adoptionComments(h.api)) != 1 {
+				t.Fatalf("fenced re-home did not go ahead: pulls=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.prEdits, h.api.comments)
 			}
-			// Released: the next pass puts the PR back at 072 and the
-			// adoption fence still holds it there.
-			h.api.reset()
-			h.clock.advance(time.Hour)
-			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
-			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
-				t.Fatalf("released PR not back at 072: %v", h.api.added)
+			if rec.AdoptedInPlace() || !rec.Adopted("aaa") || rec.AdoptedBy == 0 || rec.AdoptReason != AdoptReasonDCORehome || rec.AdoptDiffFence != tc.wantFence {
+				t.Fatalf("re-homed record = %+v, want supersession carrying %s", rec, tc.wantFence)
 			}
-			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.prEdits) != 0 {
-				t.Fatalf("released PR adopted again past the fence: pulls=%v refs=%v edits=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits)
+			body, _ := h.adopt.pulls[0]["body"].(string)
+			if got := carriedFenceReason(body); got != tc.wantFence {
+				t.Fatalf("superseding PR body carries fence %q, want %q:\n%s", got, tc.wantFence, body)
 			}
-			if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptedInPlace() || rec.Adopted("aaa") {
-				t.Fatalf("released PR re-adopted: %+v", rec)
+			if c := adoptionComments(h.api)[0]; !strings.Contains(c, "reason="+AdoptReasonDCORehome) || !strings.Contains(c, "merge stays manual") {
+				t.Fatalf("re-home comment = %q, want dco-rehome marker and the manual-merge note", c)
 			}
 		})
 	}

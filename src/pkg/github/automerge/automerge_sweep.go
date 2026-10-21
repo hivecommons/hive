@@ -1575,7 +1575,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Human-merge paths (#11038) come first and do not depend on intent: the
 	// App self-merge contract authorizes Tier 2/3 without a person, so a path
 	// the operator reserved for a person must be refused before
-	// EvaluateForAppSelfMerge is ever asked.
+	// EvaluateForAppSelfMerge is ever asked. A diff fence carried from an
+	// adopted contributor PR (automerge_adoption_fence.go) is refused the
+	// same way: the App PR carries the fenced diff, so a person merges it.
+	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+		return AutoMergeSweepEvent{}, fence, nil
+	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
 	}
@@ -1975,6 +1980,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
+	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+		return AutoMergeSweepEvent{}, fence, nil
+	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
 	}
@@ -2262,6 +2270,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 
 	// Human-merge paths (#11038): a merger queuing the PR is not the same as
 	// a person merging it, so the queued lane honors the list too.
+	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+		return AutoMergeSweepEvent{}, fence, nil
+	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
 	}

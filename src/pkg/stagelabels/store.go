@@ -122,6 +122,13 @@ type Record struct {
 	// AdoptReason is why the hive adopted ("contributor-offline",
 	// "contributor-unregistered", "grace-elapsed").
 	AdoptReason string `json:"adopt_reason,omitempty"`
+	// AdoptDiffFence is the contributor lane's diff-fence reason
+	// ("contributor-lane:tests-removed", "contributor-lane:workflow-path")
+	// the adopted head tripped when the hive took it over. Adoption is not
+	// a merge, so the fence does not refuse it; it is carried on the record
+	// (and into the superseding PR's body) so the merge stays a person's
+	// whichever lane evaluates the head. Empty when the diff read clean.
+	AdoptDiffFence string `json:"adopt_diff_fence,omitempty"`
 	// YieldedHead is the contributor head the hive yielded an in-place
 	// adoption on (the author pushed again); the yield note is posted once
 	// per head.
@@ -922,7 +929,7 @@ func (s *Store) MarkYielded(key, head string) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
-	r.AdoptMode, r.AdoptReason = "", ""
+	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.YieldedHead = head
 	s.items[key] = r
@@ -1010,8 +1017,22 @@ func (s *Store) ClearAdoption(key string) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
-	r.AdoptMode, r.AdoptReason = "", ""
+	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteAdoptDiffFence records the diff-fence reason the adopted head tripped
+// ("" when the diff read clean) on an existing record.
+func (s *Store) NoteAdoptDiffFence(key, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptDiffFence == reason {
+		return
+	}
+	r.AdoptDiffFence = reason
 	s.items[key] = r
 	s.dirty = true
 }
