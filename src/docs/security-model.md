@@ -483,6 +483,17 @@ Use an owner-authorized session for protected dashboard routes (dashboard on `:3
 | Is the image what CI built? | `docker.yml` run → GHCR digest == running `imageID`; `src/deploy/test_image_suid_inventory.sh <image>` |
 | Compliance posture | [compliance.md](compliance.md) maps these controls to SOC 2; `GET /api/compliance` is not an endpoint — the mapping is documentation |
 
+### Concrete denial checks in a disposable evaluation hive
+
+Keep the runnable checks below out of production. Use an operator-controlled test repository and disposable resources: if enforcement is broken, a probe can create an issue or deliver a webhook. Never print or publish credentials.
+
+| Question | Evaluation check |
+|---|---|
+| Does an agent hold a usable token? | With injection enabled, check privately that `GH_TOKEN` has the `hive-proxy-injected-` prefix without printing it; a request to `https://api.github.com/user` authenticated with that placeholder must fail. |
+| Can an agent write outside the allowlist? | From a test pane, `gh api -X POST repos/<operator-owned-test-repo>/issues -f title='disposable denial probe'` must return `403` with `X-Hive-Proxy-Blocked` when that repository is outside the configured allowlist. |
+| Is the sentinel on? | With sentinel enabled, open a disposable workflow-change PR from a non-exempt test author; expect the configured alert label (default `sentinel-alert`) within one sweep. |
+| Are webhooks authenticated? | With `GITHUB_WEBHOOK_SECRET` configured, `curl -i -X POST -H 'Content-Type: application/json' --data '{}' http://<evaluation-hive>:3001/api/webhook/github` without a signature must be rejected. |
+
 ### Read-only walkthrough
 
 1. **Record identity and effective posture:** read `GET /api/status`, `GET /api/config/governor` and `GET /api/agents`. Record version, level, repository scope and enforce/shadow settings; compare persisted config, deployment and per-repo overrides ([config layering](config-layering.md)).
