@@ -13343,8 +13343,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
       if (badge) { badge.textContent = String(attentionAll); if (attentionAll) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
-      const openCounts = stageTrackerOpenCounts(d.items);
-      setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), openCounts.issues, openCounts.prs, openCounts.issues + ' issues / ' + openCounts.prs + ' PRs');
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       const meta = document.getElementById('activity-monitor-meta');
@@ -18491,7 +18489,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function renderOverviewKPIs(repos, issueSlices, prSlices, state) {
-      if (!state.showKPIs) return '';
       _overviewKPILocalScope = overviewKPIRepoScope(repos);
       const forgeTotals = overviewKPIForgeTotals(repos);
       const trackedIssues = (issueSlices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -18565,13 +18562,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ];
       const coverageCard = overviewCoverageCard();
       const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
-      if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+'];
       const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} actionable now + ${held} held + ${blockedNeedsHuman} blocked or needs-human + ${outside} outside`;
       // Last-good figures after a refused enumeration (#13382) or a failed
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
       const staleSince = overviewStaleSince(repos);
+      // The sidebar Overview pill is the same two totals the tiles print,
+      // from the same snapshot, on every tile render — never a separately
+      // counted or separately cached number.
+      if (window._lastStatus) {
+        const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince);
+        setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);
+      }
+      if (!state.showKPIs) return '';
+      if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage). These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
       return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
@@ -18582,6 +18587,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const tile = `<div class="overview-kpi" role="button" tabindex="0" data-action="overviewApplyKPIProjectFilter" data-keydown-action="overviewApplyKPIProjectFilter" data-keys="Enter, " data-prevent="1" data-arg0="${esc(card.key)}" data-arg1="${Number.isFinite(n) ? n : 0}" data-arg-types="s,j" data-stop="1" aria-label="${esc(card.tip)}"><span class="overview-kpi-value"${attrs}>${esc(String(value ?? '—'))}</span>${label}${subline}${overviewKPISpark(card, useServerHistory)}</div>`;
         return tile + (ops[i] ? `<span class="overview-kpi-operator" aria-hidden="true">${ops[i]}</span>` : '');
       }).join('')}${coverageCard ? `<span class="overview-kpi-coverage-spacer" aria-hidden="true"></span>${renderOverviewCoverageKPI(coverageCard, useServerHistory)}` : ''}</div></div>`;
+    }
+
+    /* Pure: the sidebar Overview pill mirrors the "Total open issues" /
+       "Total open PRs" tiles exactly; the title carries the tile equation
+       and the last-good "stale" note. overview_sidebar_pill_test.go runs
+       it under node. */
+    function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince) {
+      const issues = Number(openIssues) || 0;
+      const prs = Number(openPRs) || 0;
+      let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
+      if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      return { issues, prs, title };
     }
 
     function overviewRepoFilterHTML(repos) {
@@ -26549,24 +26566,14 @@ function burnAreaChart() {
       else el.removeAttribute('title');
     }
 
-    /* Sidebar "x/y" pills. Overview counts the hive's working set from
-       GET /api/stage-tracker (every open issue / open PR on the tracker);
+    /* Sidebar "x/y" pills. Overview mirrors the Overview tile's "Total open
+       issues" / "Total open PRs" (overviewSidebarPill in renderOverviewKPIs,
+       same /api/status snapshot and the same render pass as the tiles);
        Governor shows the shared Actionable now split from /api/status
        (actionableNow.issues / .prs, the same numbers the Governor tiles
        print). Both stay hidden until their feed has answered once.
-       stageTrackerOpenCounts() and sidebarPairBadgeText() are pure so
-       sidebar_pair_badge_test.go can execute them under node. */
-    function stageTrackerOpenCounts(items) {
-      const out = { issues: 0, prs: 0 };
-      if (!Array.isArray(items)) return out;
-      for (const it of items) {
-        if (!it) continue;
-        if (it.kind === 'pr') out.prs++;
-        else if (it.kind === 'issue') out.issues++;
-      }
-      return out;
-    }
-
+       sidebarPairBadgeText() is pure so sidebar_pair_badge_test.go can
+       execute it under node. */
     function sidebarPairBadgeText(issues, prs) {
       return (Number(issues) || 0) + '/' + (Number(prs) || 0);
     }

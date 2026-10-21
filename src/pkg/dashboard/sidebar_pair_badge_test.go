@@ -8,37 +8,48 @@ import (
 
 // TestSidebarPairBadgeWiring pins the Overview and Governor "x/y" sidebar
 // pills: same .badge-count/.oc-nav-count recipe as the other nav counts,
-// hidden until their feed has answered, Overview fed by the stage tracker
-// and Governor by the shared actionableNow split on /api/status.
+// hidden until their feed has answered, Overview mirroring the Overview
+// tile totals (renderOverviewKPIs) and Governor the shared actionableNow
+// split on /api/status.
 func TestSidebarPairBadgeWiring(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`<span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
 		`<span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
 		`.oc-nav-count[hidden] { display: none; }`,
-		`function stageTrackerOpenCounts(items)`,
+		`function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince)`,
 		`function sidebarPairBadgeText(issues, prs)`,
 		`function setSidebarPairBadge(el, issues, prs, title)`,
-		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), openCounts.issues, openCounts.prs, openCounts.issues + ' issues / ' + openCounts.prs + ' PRs')`,
+		`const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince);`,
+		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);`,
 		`if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs')`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing sidebar x/y pill wiring %q", want)
 		}
 	}
-	// The Overview pill must be written inside renderStageTracker AFTER the
-	// "waiting for first scan" early return, so it never shows 0/0 before data.
-	render := jsFunc(t, html, "renderStageTracker")
-	waiting := strings.Index(render, "Waiting for the first scan")
-	pill := strings.Index(render, "overview-sidebar-badge")
-	if waiting < 0 || pill < 0 || pill < waiting {
-		t.Fatalf("overview-sidebar-badge must be set after the initializing early return in renderStageTracker")
+	// The Overview pill is no longer fed by the stage tracker (that counted
+	// only tracked items and drifted from the tile's "total open" figures).
+	if strings.Contains(jsFunc(t, html, "renderStageTracker"), "overview-sidebar-badge") {
+		t.Fatalf("renderStageTracker must not write overview-sidebar-badge; the pill mirrors renderOverviewKPIs")
+	}
+	if strings.Contains(html, "stageTrackerOpenCounts") {
+		t.Fatalf("stageTrackerOpenCounts must be gone: the Overview pill has a single source of truth")
+	}
+	// The pill is written inside renderOverviewKPIs from the same openIssues /
+	// openPRs the tiles print, only once /api/status has answered, and before
+	// the showKPIs early return so hiding the KPI strip keeps the pill live.
+	render := jsFunc(t, html, "renderOverviewKPIs")
+	pill := strings.Index(render, "overviewSidebarPill(openIssues, openPRs")
+	guard := strings.Index(render, "if (window._lastStatus) {")
+	hide := strings.Index(render, "if (!state.showKPIs) return '';")
+	if pill < 0 || guard < 0 || hide < 0 || guard > pill || pill > hide {
+		t.Fatalf("overview-sidebar-badge must be set in renderOverviewKPIs after the _lastStatus guard and before the showKPIs return")
 	}
 }
 
-// TestSidebarPairBadgeCounts executes the pure helpers under node: the
-// Overview pill counts every open issue and open PR on the tracker
-// regardless of stage, and the text is always "issues/prs".
+// TestSidebarPairBadgeCounts executes the pure text helper under node:
+// the text is always "issues/prs" with non-numbers read as zero.
 func TestSidebarPairBadgeCounts(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -46,14 +57,8 @@ func TestSidebarPairBadgeCounts(t *testing.T) {
 	}
 	html := indexHTML(t)
 	script := strings.Join([]string{
-		jsFunc(t, html, "stageTrackerOpenCounts"),
 		jsFunc(t, html, "sidebarPairBadgeText"),
-		`const items = [
-		  { kind: 'issue', stage: 0 }, { kind: 'issue', stage: 10 }, { kind: 'issue', stage: 40, mirrored: true },
-		  { kind: 'pr', stage: 30 }, { kind: 'pr', stage: 95 }, null, { kind: 'other' },
-		];
-		const c = stageTrackerOpenCounts(items);
-		const out = [sidebarPairBadgeText(c.issues, c.prs), sidebarPairBadgeText(stageTrackerOpenCounts(null).issues, stageTrackerOpenCounts(undefined).prs), sidebarPairBadgeText('7', NaN)];
+		`const out = [sidebarPairBadgeText(3, 2), sidebarPairBadgeText(undefined, null), sidebarPairBadgeText('7', NaN)];
 		process.stdout.write(out.join('|'));`,
 	}, "\n")
 	out, err := exec.Command(node, "-e", script).CombinedOutput()

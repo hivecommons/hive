@@ -7,13 +7,12 @@ import (
 	"testing"
 )
 
-func TestOverviewKPIValuesRenderFromRepoTotalsOrChartSlices10139(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node unavailable: Overview KPI render rule was not executed")
-	}
-	html := indexHTML(t)
-	script := `const assert = require('node:assert/strict');
+// overviewKPIRenderPrelude is the node harness that lets renderOverviewKPIs
+// run outside the browser: constants, state, a localStorage/document stub and
+// every helper the KPI strip (and the sidebar Overview pill it writes) calls.
+func overviewKPIRenderPrelude(t *testing.T, html string) string {
+	t.Helper()
+	return `const assert = require('node:assert/strict');
 const OVERVIEW_KPI_LOCAL_PREFIX = 'hive.overviewKPI.local.';
 const OVERVIEW_KPI_LOCAL_MAX = 2016;
 const OVERVIEW_KPI_MIN_SAMPLE_MS = 5 * 60 * 1000;
@@ -66,6 +65,7 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewOutsideBreakdownText") + `
 ` + jsFunc(t, html, "overviewStaleSince") + `
 ` + jsFunc(t, html, "fmtOverviewStaleSince") + `
+` + jsFunc(t, html, "relativeTimeShort") + `
 ` + jsFunc(t, html, "renderOverviewTotalPartitionSubline") + `
 ` + jsFunc(t, html, "renderOverviewSplitSubline") + `
 ` + jsFunc(t, html, "overviewKPIEquation") + `
@@ -101,6 +101,20 @@ const OVERVIEW_PR_BREAKDOWN_LABELS = { hold: 'held', draft: 'draft', filtered: '
 ` + jsFunc(t, html, "overviewProjectFilterRepoMatches") + `
 ` + jsFunc(t, html, "overviewProjectFilterSummary") + `
 ` + jsFunc(t, html, "renderOverviewKPIs") + `
+const document = { _els: {}, getElementById(id) { if (!this._els[id]) this._els[id] = { id, hidden: true, textContent: '0/0', title: '', attrs: { 'data-zero': '' }, setAttribute(k, v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; } }; return this._els[id]; } };
+` + jsFunc(t, html, "overviewSidebarPill") + `
+` + jsFunc(t, html, "sidebarPairBadgeText") + `
+` + jsFunc(t, html, "setSidebarPairBadge") + `
+`
+}
+
+func TestOverviewKPIValuesRenderFromRepoTotalsOrChartSlices10139(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: Overview KPI render rule was not executed")
+	}
+	html := indexHTML(t)
+	script := overviewKPIRenderPrelude(t, html) + `
 const state = { showKPIs: true };
 const repos = [{ issues: 100, prs: 7, heldIssues: [{ number: 501 }], heldPrs: [] }];
 _overviewLastRepos = repos;

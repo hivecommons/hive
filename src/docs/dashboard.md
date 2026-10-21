@@ -258,7 +258,14 @@ partition used by the Governor actionable issue/PR subtitles. **Total open
 issues** and **Total open PRs** are forge totals for the selected configured
 repositories from the existing scanner tick: open GitHub issues exclude pull
 requests, while open GitHub pull requests include drafts. Their subtitles show
-the per-kind terms without repeating the headline total. **Actionable now** is
+the per-kind terms without repeating the headline total. The left-nav
+**Overview** `issues/PRs` pill is those same two tile values, written by the
+same KPI render from the same `/api/status` snapshot (never a separately
+counted or separately cached number, and not the Hive activity monitor's
+tracked-row count); its tooltip carries the full equation and, after a refused
+GitHub enumeration, the same last-good "stale · as of" note the KPI strip
+shows. It stays hidden until the status feed has answered and keeps updating
+when the KPI strip is switched off. **Actionable now** is
 the shared server-side count used by the Overview KPI and the Governor collapsed
 split: open enumerated issues plus open enumerated PRs after hold/exempt
 filters, excluding items in the waiting, done, draft, or blocked Overview
