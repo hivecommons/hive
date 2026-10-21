@@ -76,6 +76,9 @@ func TestHivesTreeBeginIsRefusedOffTheIdleList(t *testing.T) {
 	if _, ok := list.BeginTreeConfirm(); ok {
 		t.Error("confirmation opened off the tree")
 	}
+	if !strings.Contains(list.View(100), "t tree") {
+		t.Errorf("list footer does not advertise the tree:\n%s", list.View(100))
+	}
 }
 
 func TestHivesTreeVisibilityCollapseFilterAndSearchKeepAncestry(t *testing.T) {
@@ -284,7 +287,7 @@ func TestHivesTreeLeaveWarnsOnceWhenStaged(t *testing.T) {
 	if !ok || left.InTree() {
 		t.Fatal("clean leave refused")
 	}
-	if !strings.Contains(left.View(100), "enter use") {
+	if !strings.Contains(left.View(100), "t tree") {
 		t.Errorf("did not return to the list:\n%s", left.View(100))
 	}
 	o = o.SetTree(treeFixtureRows(), panes.HiveTreeSummary{Staged: true, Lines: []string{"x"}})
