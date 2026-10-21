@@ -17,10 +17,10 @@ func TestSidebarPairBadgeWiring(t *testing.T) {
 		`<span class="oc-nav-text">Overview</span><span id="overview-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
 		`<span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>`,
 		`.oc-nav-count[hidden] { display: none; }`,
-		`function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince)`,
+		`function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted)`,
 		`function sidebarPairBadgeText(issues, prs)`,
 		`function setSidebarPairBadge(el, issues, prs, title)`,
-		`const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince);`,
+		`const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);`,
 		`setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);`,
 		`if (data && data.actionableNow) setSidebarPairBadge(document.getElementById('governor-sidebar-badge'), issueCount, prCount, 'actionable: ' + issueCount + ' issues / ' + prCount + ' PRs')`,
 	} {
@@ -33,8 +33,10 @@ func TestSidebarPairBadgeWiring(t *testing.T) {
 	if strings.Contains(jsFunc(t, html, "renderStageTracker"), "overview-sidebar-badge") {
 		t.Fatalf("renderStageTracker must not write overview-sidebar-badge; the pill mirrors renderOverviewKPIs")
 	}
-	if strings.Contains(html, "stageTrackerOpenCounts") {
-		t.Fatalf("stageTrackerOpenCounts must be gone: the Overview pill has a single source of truth")
+	// The tracker's own open counts feed only its section header; the pill
+	// never reads them.
+	if strings.Contains(jsFunc(t, html, "renderOverviewKPIs"), "stageTrackerOpenCounts") {
+		t.Fatalf("renderOverviewKPIs must not read stageTrackerOpenCounts: the Overview pill has a single source of truth")
 	}
 	// The pill is written inside renderOverviewKPIs from the same openIssues /
 	// openPRs the tiles print, only once /api/status has answered, and before

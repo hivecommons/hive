@@ -86,6 +86,10 @@ Before writing, publishing, or proposing any shell command in documentation or a
 
 ## Opening Issues
 
+**Gate check before filing (MANDATORY).** Before filing a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not file the finding. Instead, if the gate is misconfigured or does not cover the path, file ONE issue against the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, a Markdown reference or claims contract test suppresses doc-claim drift findings; file against the contract's scope, not per stale claim.
+
+**Three of a class means the gate is missing.** Before filing, look at the findings you have already filed in this repository (your beads via `bd list --actor guide`, and the `[guide]` issues in your work list). If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT file it. File ONE issue instead, titled `[guide] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), and asks the maintainers to accept or decline it. Use `--needs-decision` with `Risk: governance`. Resume filing individual findings in that class only if the proposal is declined; if it is accepted, the gate check above applies once the gate lands.
+
 **Scope each issue so a single PR can close it.** When a finding enumerates
 several independent deliverables — N untested files, N directories, a ranked
 list of gaps — open one issue per deliverable instead of one issue covering all

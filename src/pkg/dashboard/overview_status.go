@@ -116,6 +116,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		}
 	}
 	out.ActionableNow = overviewActionableNow(&out, meta)
+	out.OpenItems = openItemsSummary(&out)
 	out.LabelPresets = labelPresets(fullCfg, status.HiveID)
 	s.attachSLA(&out, now)
 	return &out

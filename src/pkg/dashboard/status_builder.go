@@ -2198,6 +2198,7 @@ func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
 // cache's open issue / PR totals per repo (hivecommons/hive#13376).
 type forgeOpenCounter interface {
 	Open(repo string) (forgestate.OpenCounts, bool)
+	OpenItems(repo string) (forgestate.Snapshot, bool)
 }
 
 // overviewStaleSince is the earliest countsStaleSince over repos, or "" when
@@ -2416,7 +2417,14 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			if open, ok := forge.Open(full); ok {
 				applyForgeOpenCounts(&r, open)
 			}
+			if snap, ok := forge.OpenItems(full); ok {
+				seedOpenItemsFromForge(&r, full, snap)
+			}
 		}
+		// The item lists are the one source the tile, the sidebar pill and
+		// the activity monitor count from; TotalByRepo and the cache's
+		// totals only contribute the "unlisted" remainder (open_items.go).
+		reconcileRepoOpenItems(&r)
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}

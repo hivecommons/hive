@@ -40,6 +40,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
 - [Architecture](architecture.md)
 - [Getting started](getting-started.md)
 - [Operator reference](operator-reference.md)
+- [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — polling fallback, webhook patch and reconcile, and the state-accuracy guarantees.
 - [Dashboard sections explained](dashboard-sections.md) — what each dashboard section shows and what to do about it.
 - [Hive on your iPhone Home Screen](ios-widget.md) — a Home Screen widget with issue/PR counts and sparklines (Scriptable, no server change).
 - [Dashboard settings explained](settings.md) — what each Settings tab controls and where each setting is documented.
@@ -47,7 +48,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
   issues, requesting help, confirming fixes, reopening issues, and using label
   or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
-- [Security model](security-model.md) — how hive keeps autonomous agents from doing damage: threat model, the full control inventory with code/ADR citations, known gaps, and how to audit a running hive
+- [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
 - [Data collection and telemetry](telemetry.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)

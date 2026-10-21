@@ -881,11 +881,15 @@ func TestBuildRepos_WithActionable(t *testing.T) {
 	if len(repos) != 1 {
 		t.Fatalf("len = %d", len(repos))
 	}
-	if repos[0].Issues != 5 {
-		t.Errorf("issues = %d, want 5", repos[0].Issues)
+	// The card counts the items it can list (the canonical open-items set
+	// the tile, pill and activity monitor share); what TotalByRepo reported
+	// beyond them is kept apart as unlisted, never folded into the total
+	// (hivecommons/hive#13373).
+	if repos[0].Issues != 1 || repos[0].UnlistedIssues != 4 {
+		t.Errorf("issues = %d unlisted %d, want 1 listed + 4 unlisted", repos[0].Issues, repos[0].UnlistedIssues)
 	}
-	if repos[0].PRs != 3 {
-		t.Errorf("prs = %d, want 3", repos[0].PRs)
+	if repos[0].PRs != 1 || repos[0].UnlistedPRs != 2 {
+		t.Errorf("prs = %d unlisted %d, want 1 listed + 2 unlisted", repos[0].PRs, repos[0].UnlistedPRs)
 	}
 }
 
@@ -1509,10 +1513,26 @@ func TestBuildRepos_StaleRepoKeepsCountsAndMarksKPIIncomplete(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1", "repo2"}},
 	}
+	// The last-good substitution keeps the repo's whole enumeration — its
+	// work-detail rows included — so the items are there to count.
+	details := func(repo string, issues, prs int) github.RepoWorkDetails {
+		var d github.RepoWorkDetails
+		for n := 1; n <= issues; n++ {
+			d.Issues = append(d.Issues, github.RepoWorkIssue{Repo: repo, Number: n, Bucket: "filtered"})
+		}
+		for n := 1; n <= prs; n++ {
+			d.PRs = append(d.PRs, github.RepoWorkPR{Repo: repo, Number: 100 + n, Bucket: "draft", Draft: true})
+		}
+		return d
+	}
 	actionable := &github.ActionableResult{
 		TotalByRepo: map[string]github.RepoCounts{
 			"repo1": {Issues: 19, PRs: 2},
 			"repo2": {Issues: 1, PRs: 0},
+		},
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{
+			"repo1": details("repo1", 19, 2),
+			"repo2": details("repo2", 1, 0),
 		},
 		StaleRepos: []string{"repo1"},
 		StaleSince: time.Date(2026, 10, 21, 14, 7, 0, 0, time.UTC),

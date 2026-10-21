@@ -49,6 +49,12 @@ type StageTrackerResponse struct {
 	HiveID          string              `json:"hive_id,omitempty"`
 	Stages          []StageTrackerStage `json:"stages"`
 	Items           []StageTrackerItem  `json:"items"`
+	// OpenIssues and OpenPRs count Items by kind. Items is the canonical
+	// open-items set (open_items.go), so these equal the Overview tile's
+	// total open issues and PRs; the SPA prints them in the section header
+	// and the node-driven tests pin the equality.
+	OpenIssues int `json:"open_issues"`
+	OpenPRs    int `json:"open_prs"`
 	// AuthorKindLabels is true when at least one item carried an explicit
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
@@ -262,22 +268,28 @@ type StageTrackerItem struct {
 	// named in the stage reason first) with everything the tracker needs
 	// to draw each as a sub-row nested under the issue.
 	LinkedPRs []StageTrackerLinkedPR `json:"linked_prs,omitempty"`
-	// LinkedIssues carries same-repo closing references from the PR side.
-	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
 	// NestedUnder is, on a PR, the issue in the same repo whose row nests
 	// it (0 when the PR has no listed issue and stands on its own).
-	NestedUnder int               `json:"nested_under,omitempty"`
-	History     []StageTrackerHop `json:"history"`
+	NestedUnder int `json:"nested_under,omitempty"`
+	// LinkedIssues lists, on a PR, the issues GitHub says it closes
+	// (closingIssuesReferences, i.e. the PR body's Fixes/Closes/Resolves
+	// keywords) in the same repo, so a PR whose issue is not listed —
+	// already closed, or outside the snapshot — can still name it in the
+	// issue slot of its row instead of standing there itself.
+	LinkedIssues []StageTrackerLinkedIssue `json:"linked_issues,omitempty"`
+	History      []StageTrackerHop         `json:"history"`
 }
 
-// StageTrackerLinkedIssue is a PR's same-repo closing reference.
-// Listed means the open issue has its own row in this response.
+// StageTrackerLinkedIssue is one issue a PR closes, as its row's issue
+// slot needs it. State is "open" / "closed" when known, "" otherwise.
 type StageTrackerLinkedIssue struct {
 	Number int    `json:"number"`
-	State  string `json:"state"`
-	URL    string `json:"url"`
-	Title  string `json:"title"`
-	Listed bool   `json:"listed"`
+	Title  string `json:"title,omitempty"`
+	URL    string `json:"url,omitempty"`
+	State  string `json:"state,omitempty"`
+	// Listed is true when the issue has its own row in this response; the
+	// PR is then nested under it and never drawn as a top-level row.
+	Listed bool `json:"listed,omitempty"`
 }
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
@@ -953,15 +965,6 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
-		seenIssue := map[int]bool{}
-		for _, li := range pr.LinkedIssues {
-			if li.Number <= 0 || li.Number == pr.Number || seenIssue[li.Number] || (li.Repo != "" && !strings.EqualFold(li.Repo, repoName)) {
-				continue
-			}
-			seenIssue[li.Number] = true
-			it.LinkedIssues = append(it.LinkedIssues, StageTrackerLinkedIssue{Number: li.Number, Title: li.Title, State: strings.ToLower(li.State),
-				URL: overviewItemURL(li.URL, repoName, li.Number, "issue", status.GitHubBaseURL)})
-		}
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
@@ -975,55 +978,35 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Lane = laneHive
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
+		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, status.GitHubBaseURL)
 		add(it)
 	}
 	for _, repo := range status.Repos {
 		repoName := overviewRepoName(repo)
-		// GitHub's issues feed also returns pull requests. A PR is never an
-		// issue in the tracker: when a number is in the repo's PR set, the PR
-		// record wins and the issue-feed copy is dropped, otherwise the PR
-		// would pair with itself and render as its own parent issue.
-		prNumbers := map[int]bool{}
-		for _, held := range []bool{false, true} {
-			for _, fp := range frontendRepoPRs(repo, held) {
-				prNumbers[fp.pr.Number] = true
-			}
-		}
-		for _, raw := range repo.NonActionablePrs {
-			if w, ok := repoWorkPR(raw); ok {
-				prNumbers[w.Number] = true
-			}
-		}
-		for _, held := range []bool{false, true} {
-			for _, issue := range frontendRepoIssues(repo, held) {
-				if prNumbers[issue.Number] || strings.Contains(issue.URL, "/pull/") {
-					continue
-				}
-				addIssue(repoName, issue, "", "")
-			}
-			for _, fp := range frontendRepoPRs(repo, held) {
-				addPR(repoName, fp.pr, fp.verdict, "", "")
-			}
-		}
-		// The enumeration's sidelined items: issues it parked in a
-		// work-detail bucket and the drafts / exempt PRs it dropped. They
-		// are the open items the first tracker never showed.
-		for _, raw := range repo.NonActionableIssues {
-			if w, ok := repoWorkIssue(raw); ok {
-				if prNumbers[w.Number] || strings.Contains(w.URL, "/pull/") {
-					continue
-				}
+		// The repo's canonical open-items set (open_items.go): the same
+		// items, deduplicated the same way, that the Overview tile and its
+		// sidebar pill count, so the tracker's unfiltered total is the
+		// tile's issues + PRs by construction.
+		for _, it := range repoOpenItems(repo) {
+			switch {
+			case it.Kind == "issue" && !it.Sidelined:
+				addIssue(repoName, it.Issue, "", "")
+			case it.Kind == "pr" && !it.Sidelined:
+				addPR(repoName, it.PR.pr, it.PR.verdict, "", "")
+			case it.Kind == "issue":
+				// The enumeration's sidelined issues: parked in a work-detail
+				// bucket, the open items the first tracker never showed.
+				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
 					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext}, w.Bucket, w.Reason)
-			}
-		}
-		for _, raw := range repo.NonActionablePrs {
-			if w, ok := repoWorkPR(raw); ok {
+			default:
+				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
 					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, LinkedIssues: w.LinkedIssues}, nil, w.Bucket, w.Reason)
 			}
 		}
 	}
+	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, func(i, j int) bool {
 		a, b := resp.Items[i], resp.Items[j]
@@ -1076,6 +1059,18 @@ func (s *Server) stageTrackerClaimantKind(repo string, number int) string {
 		return authorKindClanker
 	}
 	return ""
+}
+
+// stageTrackerOpenCounts counts the tracker's items by kind.
+func stageTrackerOpenCounts(items []StageTrackerItem) (issues, prs int) {
+	for _, it := range items {
+		if it.Kind == "pr" {
+			prs++
+		} else {
+			issues++
+		}
+	}
+	return issues, prs
 }
 
 func repoWorkIssue(raw any) (github.RepoWorkIssue, bool) {
@@ -1209,25 +1204,48 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// stageTrackerResolveLinkedPRs first pairs from the PR side (each PR's open,
-// same-repo closing reference that has its own row is marked Listed and
-// appended to that issue's LinkedPRs), then fills each issue's linked PR
-// entries from the PR items in the same response (title, author, stage,
-// since, modifiers), puts the PR the stage reason names first, drops
-// duplicates and marks each such PR as nested under the lowest-numbered
-// issue that lists it.
+// stageTrackerPRLinkedIssues projects the issues GitHub says pr closes onto
+// the tracker: same-repo references only (a bare `Fixes #N`, or an explicit
+// owner/repo#N naming the PR's own repo), never the PR's own number, each
+// once.
+func stageTrackerPRLinkedIssues(pr github.PullRequest, baseURL string) []StageTrackerLinkedIssue {
+	var out []StageTrackerLinkedIssue
+	seen := map[int]bool{}
+	for _, li := range pr.LinkedIssues {
+		if li.Number <= 0 || li.Number == pr.Number || seen[li.Number] {
+			continue
+		}
+		if li.Repo != "" && !strings.EqualFold(li.Repo, pr.Repo) {
+			continue
+		}
+		seen[li.Number] = true
+		out = append(out, StageTrackerLinkedIssue{
+			Number: li.Number, Title: li.Title, State: strings.ToLower(strings.TrimSpace(li.State)),
+			URL: overviewItemURL(li.URL, pr.Repo, li.Number, "issue", baseURL),
+		})
+	}
+	return out
+}
+
+// stageTrackerResolveLinkedPRs fills each issue's linked PR entries from the
+// PR items in the same response (title, author, stage, since, modifiers),
+// puts the PR the stage reason names first, drops duplicates and marks each
+// such PR as nested under the lowest-numbered issue that lists it. The PR
+// side is read too: a PR whose closing references name an open issue in
+// the response is nested under that issue even when the issue's own claim
+// evidence has not caught up with it, so the pair draws as one row.
 func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
 	issues := map[string]*StageTrackerItem{}
 	for i := range items {
 		key := items[i].Repo + "#" + strconv.Itoa(items[i].Number)
-		if items[i].Kind == "pr" {
+		switch items[i].Kind {
+		case "pr":
 			prs[key] = &items[i]
-		} else if items[i].Kind == "issue" {
+		case "issue":
 			issues[key] = &items[i]
 		}
 	}
-	// Iterate the response, not the map, so PR-side links have stable order.
 	for i := range items {
 		pr := &items[i]
 		if pr.Kind != "pr" {
@@ -1235,12 +1253,15 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 		}
 		for j := range pr.LinkedIssues {
 			li := &pr.LinkedIssues[j]
-			li.Listed = false
-			if li.Number <= 0 || li.Number == pr.Number || strings.EqualFold(li.State, "closed") {
+			issue := issues[pr.Repo+"#"+strconv.Itoa(li.Number)]
+			if issue == nil {
 				continue
 			}
-			if issue := issues[pr.Repo+"#"+strconv.Itoa(li.Number)]; issue != nil {
-				li.Listed, li.State, li.Title, li.URL = true, "open", issue.Title, issue.URL
+			li.Listed, li.State, li.Title = true, "open", issue.Title
+			if li.URL == "" {
+				li.URL = issue.URL
+			}
+			if issue.LinkedPR != pr.Number && !slices.ContainsFunc(issue.LinkedPRs, func(lp StageTrackerLinkedPR) bool { return lp.Number == pr.Number }) {
 				issue.LinkedPRs = append(issue.LinkedPRs, StageTrackerLinkedPR{Number: pr.Number, URL: pr.URL})
 			}
 		}
@@ -1270,6 +1291,12 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				}
 				if pr.NestedUnder == 0 || it.Number < pr.NestedUnder {
 					pr.NestedUnder = it.Number
+				}
+				// The PR's issue slot names the issue that nests it.
+				if k := slices.IndexFunc(pr.LinkedIssues, func(li StageTrackerLinkedIssue) bool { return li.Number == it.Number }); k >= 0 {
+					pr.LinkedIssues[k].Listed, pr.LinkedIssues[k].State, pr.LinkedIssues[k].Title = true, "open", it.Title
+				} else {
+					pr.LinkedIssues = append(pr.LinkedIssues, StageTrackerLinkedIssue{Number: it.Number, Title: it.Title, URL: it.URL, State: "open", Listed: true})
 				}
 			}
 			out = append(out, lp)

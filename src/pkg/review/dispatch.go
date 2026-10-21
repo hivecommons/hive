@@ -539,7 +539,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		// however many perspectives it covers. Applying it anyway would drop
 		// perspectives to buy quiet that has already been bought.
 		if opts.CombinedPerspectives {
-			reviewer := prReviewers[0]
+			reviewer := leastLoadedReviewer(prReviewers, plan.State.Pending)
 			agent := reviewer.Name
 			// One kick covers several perspectives, so a per-perspective
 			// override can only apply when it is the only perspective.
@@ -656,6 +656,29 @@ func noIndependentModelReason(authorModel string) string {
 		reason += " for author model " + m
 	}
 	return reason
+}
+
+// leastLoadedReviewer picks the reviewer for a combined kick: the one with the
+// fewest PR heads still pending on it (dispatched and not yet answered),
+// counting this cycle's kicks too, ties going to the first in name order.
+// Always taking reviewers[0] queued every combined review on one agent, so
+// extra reviewers and replicas sat idle and max_parallel_reviews could not
+// parallelise anything: each kick waited for the previous one to finish.
+func leastLoadedReviewer(reviewers []AgentCapability, pending []PendingReview) AgentCapability {
+	heads := map[string]map[string]bool{}
+	for _, p := range pending {
+		if heads[p.Agent] == nil {
+			heads[p.Agent] = map[string]bool{}
+		}
+		heads[p.Agent][fmt.Sprintf("%s#%d@%s", p.Repo, p.Number, p.HeadSHA)] = true
+	}
+	best := reviewers[0]
+	for _, r := range reviewers[1:] {
+		if len(heads[r.Name]) < len(heads[best.Name]) {
+			best = r
+		}
+	}
+	return best
 }
 
 func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapability {

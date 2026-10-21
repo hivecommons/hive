@@ -3121,6 +3121,11 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	if data, err := deps.readLastActionable(); err == nil {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
+			// A restored snapshot is a previous process's read: GitHub may
+			// have moved since. Serve it as last-good with the stale badge
+			// so the Overview never shows pre-restart totals as current
+			// (hivecommons/hive#13373); the first enumeration replaces it.
+			cached.MarkAllStale()
 			b.lastActionable.Store(&cached)
 			if b.sched != nil {
 				b.sched.SetLastActionable(&cached)
@@ -7015,11 +7020,11 @@ func runEvalCycle(
 	// review/link signals only — no mergeability or check-run fetches, a
 	// draft is not a merge candidate (hivecommons/hive#8968).
 	if !budgetDecision.SkipOptional {
-		ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
 		// Sidelined PRs (drafts, exempt labels) sit in the same column and
 		// need their closing references to pair with the issue they fix
-		// (hivecommons/hive#13421); same one-query-per-repo budget.
-		ghClient.EnrichWorkPRLinkedIssues(ctx, actionable.WorkDetailsByRepo)
+		// (hivecommons/hive#13421); one shared collector keeps the budget at
+		// one query per repo for both.
+		ghClient.EnrichReviewSignalsAndWorkPRs(ctx, actionable.PRs.StaleDrafts, actionable.WorkDetailsByRepo)
 	}
 
 	// Publish the human-facing "what should I merge next?" digest. This reads

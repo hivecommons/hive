@@ -66,6 +66,8 @@ func TestWebhookAwareEvalIntervalComposesWithBudgetStretch(t *testing.T) {
 		want    time.Duration
 	}{
 		{"stale webhooks keep the budget interval", normal, 900, 1800, false, 300 * time.Second},
+		{"outage preserves conserve backoff", conserve, 900, 1800, false, 1200 * time.Second},
+		{"outage preserves critical backoff", critical, 900, 1800, false, 1200 * time.Second},
 		{"healthy webhooks raise the base interval", normal, 900, 1800, true, 900 * time.Second},
 		{"budget stretch above the webhook interval wins", conserve, 900, 1800, true, 1200 * time.Second},
 		{"webhook interval above the budget stretch wins", critical, 1500, 1800, true, 1500 * time.Second},

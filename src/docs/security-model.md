@@ -4,6 +4,8 @@ This page is for the maintainer or security reviewer at another organisation ask
 
 Hive's design rule applies doubly to safety: *if a human would give the same answer every time, it belongs in infrastructure, not in a prompt.* The controls below are enforced by Go, shell and kernel mechanisms — authentication middleware, a policy proxy, scoped tokens, file permissions, iptables, deterministic merge gates — not by asking an LLM to behave. Everything described is verifiable on branch `v5`.
 
+This is an inventory, not a promise that every running hive has enabled every control. Check effective configuration, deployment and repository rules before relying on a gate. Deterministic authorization, model-based detection, advisory signals and proposed controls have different guarantees; an enabled dashboard toggle alone is not evidence of enforcement.
+
 Companion pages: [security-threat-model.md](security-threat-model.md) is the attacker-oriented view (assets, trust boundaries, actors, residual risk); [security.md](security.md) covers log scrubbing and secret redaction; [securing-your-hive.md](securing-your-hive.md) is the first-time operator's decision guide to ACMM level, reporter trust and repo scope; [security-self-assessment.md](security-self-assessment.md) is the CNCF TAG-Security artifact. This page is the map of the mechanisms.
 
 ## 1. Threat model
@@ -68,12 +70,14 @@ What hive defends against, in the order a reviewer usually asks:
 
 ### Bounded, context-reset runs
 
-Hive never gives an agent a long-lived conversation to accumulate instructions in. Work arrives as discrete **kicks** from the governor, and each kick is bounded:
+Work arrives as discrete **kicks** from the governor. Context reset defaults on but can be overridden per agent; fresh bounded prompts are not a hard wall-clock kill switch:
 
 - **Fresh context per kick.** `clear_on_kick` (`src/pkg/config/config.go`, default `true`; [supervisor.md](supervisor.md)) sends the backend's `/clear` before the kick prompt is pasted (`src/pkg/agent/manager_kick.go`), so the agent starts from the kick text, its `AGENTS.md`, and the bounded knowledge primer — not from whatever the previous issue's author wrote. Headless backends get a brand-new conversation instead of `/clear`. The deliberate exception is a resumed PR session (`src/pkg/agent/pr_session_resume.go`), which keeps the context of the PR it is already fixing. **Scope, honestly:** the backend CLI *process* in the tmux pane is long-lived; what is reset is the model context, not the OS process. A restart (watchdog or manual) drops the pane and its buffer (`src/pkg/agent/manager_tmux.go`).
 - **Turn ceilings.** `continuous_turn_ceiling` (`src/pkg/config/config.go`, consumed in `src/pkg/governor/kick_outcome.go`) bounds how long the governor waits on a continuous-mode turn before treating it as finished; detached restarts carry a hard timeout so a wedged tmux path can never block the governor tick.
 - **Watchdog.** On every governor tick the watchdog classifies each pane (`ready`, `shell-prompt`, `auth-required`, `stuck-overlay`, `no-output`, `no-session`), restarts dead panes with exponential backoff (`1m…16m`), and after `crash_loop_after` (default 5) consecutive failed restarts **pauses** the agent with trigger `watchdog-crashloop`, raises a banner alert, and stops — no more restarts until a human or the resume API intervenes. A login prompt is never restarted into (that was the 1042-restart loop). Backoff state persists in the hive state file so a pod restart does not reset an escalated agent into a storm. `HIVE_WATCHDOG_PAUSE=true` downgrades every hive to observe-only and can only ever reduce authority. `src/pkg/agent/watchdog_fleet.go`, `src/pkg/watchdog`, [agent-watchdog.md](agent-watchdog.md).
 - **No fleet-wide shared context.** Each agent has its own tmux server on its own socket, its own `$HOME` layout under its own UID (per-agent settings seeds and 0600 session files are what the watchdog's credential probe reads), and the hive-owned `/var/run/hive-metrics` directory that agents cannot write to. Agents coordinate through the beads ledger and GitHub, never by reading each other's transcripts.
+
+Agent `max_turn_duration` is **visibility-only**: zero disables it and exceeding it does not interrupt a turn (`AgentConfig` in `src/pkg/config/config.go`). Confirm effective budgets and provider limits rather than assuming usage charts enforce a runtime or spending ceiling.
 
 ### Agent sandboxing
 
@@ -200,6 +204,8 @@ Registered hives send periodic heartbeats to the hub:
 ## 6. Code admission: review, CI and merge gates
 
 "CI is green" is necessary and nowhere near sufficient. Between a green check and a merged PR hive runs a chain of deterministic gates; every one is independent of the agent's own claims.
+
+Check the enforcing mode for the actual merge lane. `intent.enforce: true` enables intent blocking; report-only and `intent.shadow` do not block, and optional alignment-model errors fail open. `governor.labels.stage.engine.mode` supports off/shadow/enforce; shadow is not enforcement. The App self-merge review gate has its own `governor.review_gate.mode` (off/shadow/enforce), distinct from `review.require_approval`. Models can miss defects; missing review capacity is not approval (`src/pkg/intent`, `src/pkg/stageengine/mode.go`, `src/pkg/github/automerge/automerge_review_gate.go`).
 
 | Gate | What it refuses | Where |
 |---|---|---|
@@ -456,26 +462,46 @@ Further gaps a reviewer should know about:
 
 ## 12. How to audit a running hive
 
-Concrete checks a reviewer can run against a live spoke (dashboard on `:3001` by default; `hivectl` reads `HIVE_DASHBOARD_TOKEN`).
+Use an owner-authorized session for protected dashboard routes (dashboard on `:3001` by default; `hivectl` reads `HIVE_DASHBOARD_TOKEN`). Keep production inspection read-only. Do not paste tokens, process environments or Secret contents into issue reports; inspect deployment YAML privately and redact literal environment values before sharing. Do not grant agents new privileges just to run an audit.
 
 | Question | Check |
 |---|---|
 | Is the egress gate enforcing? | Pod log at boot: no `HIVE_PROXY_ADVISORY_OK` WARN; container did not exit `77`; `iptables -t nat -L HIVE_PROXY` inside the pod lists the `:443` REDIRECT |
 | Are agents separated? | `cat /var/run/hive/uid-map.json`; `ls -l /usr/local/bin/su-exec` → `-rwsr-x--- root hive-launch`; `find / -perm /6000 -type f` lists only `su-exec` |
-| Does an agent hold a usable token? | `GET /api/config/governor` → `security.credentialInjection`; in a pane, `echo $GH_TOKEN` is `hive-proxy-injected-<agent>` when injection is on; `curl -H "Authorization: Bearer <that>" https://api.github.com/user` fails |
-| Can an agent write outside the allowlist? | From a pane: `gh api -X POST repos/<other>/issues` → `403` with `X-Hive-Proxy-Blocked` |
+| Does an agent hold a usable token? | `GET /api/config/governor` → `security.credentialInjection` and `security.credentialWarnings`; compare the boot receipt without printing agent tokens |
+| Can an agent write outside the allowlist? | Inspect configured repositories and existing proxy-denial receipts; test writes only in a disposable evaluation hive |
 | Is ioscan on and in which fail mode? | `GET /api/config/governor` → `security.ioscanEnabled`, `ioscanFailMode`, `ioscanCanaries` |
 | Is trajectory review on? | `GET /api/config/governor` → `trajectory`; Prometheus `hive_trajectory_reviews_total` (needs `HIVE_METRICS_ENABLED` + token) |
-| Is the sentinel on? | `hive.yaml` has no `sentinel.enabled: false`; dashboard Security tab lists the eight behaviours; a PR touching `.github/workflows/` gets `sentinel-alert` within one sweep |
+| Is the sentinel on? | Inspect `sentinel` config and recent findings/comments with the configured alert label; verify actual sweep execution, including trusted-author exceptions |
 | Who merged what, and why? | `GET /api/audit` (newest 200; `?sensitive=1` for the 24 h sensitive window); `hivectl evidence export --repo <o/r> --since <date>`; `GET /api/evidence/summary` |
 | Who ran a token-bearing command? | `/var/run/hive-metrics/token-access.jsonl` |
 | What is the merge posture per repo? | `hive.yaml` → `acmm_level`, `project.repo_policies[].auto_merge`, `auto_merge.trusted_authors`, `review.require_approval`, `project.paused_repos` |
 | Is the watchdog healing or observing? | `GET /api/agents` → `conditions[]`; `HIVE_WATCHDOG_PAUSE` on the Deployment |
-| Are webhooks authenticated? | `GITHUB_WEBHOOK_SECRET` set on the Deployment; an unsigned `POST /api/webhook/github` is rejected |
+| Are webhooks authenticated? | Confirm `GITHUB_WEBHOOK_SECRET` is configured without printing its value; test unsigned-request rejection only in a disposable evaluation hive |
 | Hub key state | `GET /api/saas/admin/key-generations`, `GET /api/saas/admin/auth-rollout` (hub admin) |
 | Dashboard headers | `curl -sI https://<hive>/ \| grep -i 'content-security-policy\|x-frame-options'` |
 | Is the image what CI built? | `docker.yml` run → GHCR digest == running `imageID`; `src/deploy/test_image_suid_inventory.sh <image>` |
 | Compliance posture | [compliance.md](compliance.md) maps these controls to SOC 2; `GET /api/compliance` is not an endpoint — the mapping is documentation |
+
+### Concrete denial checks in a disposable evaluation hive
+
+Keep the runnable checks below out of production. Use an operator-controlled test repository and disposable resources: if enforcement is broken, a probe can create an issue or deliver a webhook. Never print or publish credentials.
+
+| Question | Evaluation check |
+|---|---|
+| Does an agent hold a usable token? | With injection enabled, check privately that `GH_TOKEN` has the `hive-proxy-injected-` prefix without printing it; a request to `https://api.github.com/user` authenticated with that placeholder must fail. |
+| Can an agent write outside the allowlist? | From a test pane, `gh api -X POST repos/<operator-owned-test-repo>/issues -f title='disposable denial probe'` must return `403` with `X-Hive-Proxy-Blocked` when that repository is outside the configured allowlist. |
+| Is the sentinel on? | With sentinel enabled, open a disposable workflow-change PR from a non-exempt test author; expect the configured alert label (default `sentinel-alert`) within one sweep. |
+| Are webhooks authenticated? | With `GITHUB_WEBHOOK_SECRET` configured, `curl -i -X POST -H 'Content-Type: application/json' --data '{}' http://<evaluation-hive>:3001/api/webhook/github` without a signature must be rejected. |
+
+### Read-only walkthrough
+
+1. **Record identity and effective posture:** read `GET /api/status`, `GET /api/config/governor` and `GET /api/agents`. Record version, level, repository scope and enforce/shadow settings; compare persisted config, deployment and per-repo overrides ([config layering](config-layering.md)).
+2. **Inspect deployment boundaries:** from an authorized operator shell inspect namespace RBAC, process UIDs, launcher/key permissions and the `HIVE_PROXY` iptables chain together. For non-Kubernetes installs inspect the equivalent container spec and startup logs.
+3. **Trace one real PR:** compare the current head, native reviews/checks, holds and stage with the private merge-eligibility, review and intent records under `/var/run/hive-metrics`. Retrieve the matching [review evidence bundle](review-evidence.md), verify hashes and configured signatures, and distinguish live from backfilled records. Absence is not a pass.
+4. **Check detection receipts:** read `GET /api/audit` and `GET /api/watchdog/activity?days=30`. Distinguish observed from acted watchdog events; check recent trajectory reviews, sentinel findings and scan blocks. A toggle without recent execution is not evidence of detection.
+5. **Check external enforcement:** inspect repository rulesets, App installation scope, required CI/DCO/code-owner reviews and network policy. Check hub key rollout separately: a healthy spoke does not prove fleet convergence.
+6. **Test denial only in a disposable evaluation hive:** verify read-role and out-of-scope writes are rejected and changed heads invalidate approvals as documented. Never probe production with destructive operations or by relaxing gates. Keep sanitized receipts with the version and policy snapshot.
 
 ## Compliance frameworks
 

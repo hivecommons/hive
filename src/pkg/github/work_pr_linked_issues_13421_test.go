@@ -41,3 +41,29 @@ func TestEnrichWorkPRLinkedIssues_StampsSidelinedPRs(t *testing.T) {
 	var nilClient *Client
 	nilClient.EnrichWorkPRLinkedIssues(context.Background(), details)
 }
+
+// The cycle calls one entry point for stale drafts and sidelined PRs; a repo
+// present in both must still cost a single review-signals query.
+func TestEnrichReviewSignalsAndWorkPRs_SharesOneQueryPerRepo(t *testing.T) {
+	p := &protectionServer{
+		closingIssues: []map[string]any{
+			{"number": 12, "state": "OPEN", "repository": map[string]any{"nameWithOwner": "org/repo"}},
+		},
+	}
+	srv := p.start(t)
+	c := newTestClient(t, srv, "org", []string{"repo"})
+	drafts := []PullRequest{{Repo: "org/repo", Number: 1, Draft: true}}
+	details := map[string]RepoWorkDetails{
+		"org/repo": {PRs: []RepoWorkPR{{Repo: "org/repo", Number: 1, Draft: true, Bucket: "draft"}}},
+	}
+	c.EnrichReviewSignalsAndWorkPRs(context.Background(), drafts, details)
+	if len(drafts[0].LinkedIssues) != 1 || len(details["org/repo"].PRs[0].LinkedIssues) != 1 {
+		t.Fatalf("draft = %+v, work PR = %+v; want both stamped", drafts[0].LinkedIssues, details["org/repo"].PRs[0].LinkedIssues)
+	}
+	p.mu.Lock()
+	calls := p.graphQLCalls
+	p.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("graphQL calls = %d, want 1 shared query for the repo", calls)
+	}
+}

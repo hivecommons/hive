@@ -195,10 +195,10 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 Some documents describe planned or design-only work rather than live features. Those pages are marked at the top, for example [Credly badges](credly-badges.md). The longer-form design records under [`design/`](design/README.md) are a whole directory of these: each entry in that index carries a status, because those pages are the reference record of a decision and are deliberately not rewritten as later stages ship.
 
-## Security (v4)
+## Security (v5)
 
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md) — decision-oriented walkthrough of ACMM level, reporter trust, and repo scope: starting postures, the #9758/#9762 real-world walk-through, Q&A, a pre-L6 checklist, and a glossary.
-- [Security model](security-model.md) — how hive keeps autonomous agents from doing damage: threat model, a control-inventory table (control → threat → file/ADR → how to verify), per-layer sections (agent runtime, context and memory, network and credentials, code admission, contributor trust, detection and response, platform and supply chain, human-in-the-loop), the honest gaps list, and an audit checklist for a running hive. Keeps the operator detail on Ed25519 sessions/SSO, per-hive keys, master key rotation, forced proxy egress and the privilege model.
+- [Security model — agent safety inventory](security-model.md) — threat/control/verification table; runtime, context, credential, code-admission, contributor, detection, platform and human-control layers; residual gaps and running-hive audit steps.
 - [Compliance controls](compliance.md) — the control registry: framework profiles (SOC 2 Type II, FedRAMP Moderate subset, ISO 27001 Annex A) mapping controls to Hive settings, `GET /api/compliance/status` with meets/deviates/off/not_covered per control, the generated per-framework mapping tables, posture checks, exports and attestations as designed, and the gaps Hive does not cover. Not a certification.
 - [Security threat model](security-threat-model.md) — actors, boundaries, layered defenses, known gaps, and reporting.
 - [OSS Scanner threat model](../../.oss-scanner/threat_model.md) — the scanner-facing companion kept at the repository root with [its Dockerfile](../../.oss-scanner/Dockerfile): where untrusted input enters, which packages matter most, how to exercise a hive offline, and the severity rubric used to triage findings from [Anthropic's OSS Scanner](https://red.anthropic.com/oss-scanner/).

@@ -1364,7 +1364,6 @@
     .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; }
     .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
     .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
-    .ham-no-issue { color: var(--muted); }
     .ham-head-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; white-space: nowrap; }
     .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); white-space: nowrap; }
     .ham-pr-ref:hover { color: var(--text); }
@@ -1384,6 +1383,9 @@
     .ham-ref { color: var(--muted); text-decoration: none; white-space: nowrap; }
     .ham-ref:hover { text-decoration: underline; color: var(--text); }
     .ham-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* Issue slot of a PR row that has no open issue: muted placeholder. */
+    .ham-no-issue .ham-kind-ico { opacity: 0.55; }
+    .ham-no-issue-t { color: var(--text-faint); font-style: italic; }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
@@ -13158,15 +13160,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the item's own number + title, the PR cell (PR in progress..Merge gate)
     // the given refs, and the since column the time on the current step
     // (the chip sits in the cap cell, to its left).
-    // The issue named in a row's left slot: its own row, or the open
-    // closing-reference issue a PR row stands under.
-    function stageTrackerIssueLead(number, url, title, tip) {
-      return `<div class="ham-head-main">
-        ${stageTrackerIcon('issue', 'ham-kind-ico')}
-        <a class="ham-ref" href="${esc(url || '#')}" target="_blank" rel="noopener"${tip ? ` title="${esc(tip)}"` : ''}>#${Number(number) || 0}</a>
-        <span class="ham-title" title="${esc(title || '')}">${esc(title || '')}</span>
-      </div>`;
-    }
     function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
       const wide = !(prRefs && prRefs.length);
       return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead${wide ? ' ham-head-wide' : ''}">${leadHtml || ''}</li>${wide ? '' : `<li class="ham-seg ham-head-pr">${prRefs.join('')}</li>`}<li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
@@ -13214,13 +13207,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
     // chevrons carry only a grey icon; the active one carries words.
-    // Everything else is in the tooltip on the item's #N link (the row
-    // container, kind/author icons, chips and the since cell carry none).
+    // Everything else is in the tooltip on the row's own #N link: the issue
+    // ref on the left for an issue row, the ham-pr-ref in the PR column for a
+    // PR row (the row container, kind/author icons, chips, the since cell and
+    // a PR row's issue slot carry none).
     // An issue with no PR yet, or exactly one covering PR, is a single entry
     // (the PR's stage drives the strip and its "[icon] #N title" sits in the
     // PR column). With two or more covering PRs the issue strip stops at
-    // Claimed and one sub-row per PR continues it. A PR without an issue
-    // owns the whole strip.
+    // Claimed and one sub-row per PR continues it. A PR drawn on its own
+    // row owns the whole strip; its issue slot names the issue it closes or
+    // the "no linked issue" placeholder, never the PR itself.
     function stageTrackerRowHtml(item, stages, ctx) {
       ctx = ctx || {};
       const nowMs = Number(ctx.nowMs) || Date.now();
@@ -13242,14 +13238,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
         }
       }
-      // The left slot is always an issue, even in the PR-only view. Closed
-      // closing references do not stand in for an open issue.
-      const linkedIssue = !isIssue && (Array.isArray(item.linked_issues) ? item.linked_issues : [])
-        .find(li => li && Number(li.number) > 0 && Number(li.number) !== Number(item.number) && li.state === 'open');
-      if (!isIssue) prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || 'hive', item.author, title, stageTrackerTooltip(item, nowMs))];
-      const leadHtml = isIssue ? stageTrackerIssueLead(item.number, item.url, title, stageTrackerTooltip(shown, nowMs))
-        : linkedIssue ? stageTrackerIssueLead(linkedIssue.number, linkedIssue.url, linkedIssue.title)
-        : '<span class="ham-no-issue">no linked issue</span>';
+      // Invariant (owner): the issue slot on the left never holds a PR. A
+      // PR whose issue is listed is nested under it; a PR seen on its own
+      // (no issue, a closed issue, or the Pull requests view) puts the issue
+      // it closes — or a muted "no linked issue" placeholder — on the left
+      // and names itself in the PR column, exactly where a covering PR sits
+      // on an issue row.
+      let leadHtml;
+      if (isIssue) {
+        leadHtml = `<div class="ham-head-main">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
+            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+          </div>`;
+      } else {
+        const li = stageTrackerPRIssueSlot(item);
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
+        leadHtml = li.number
+          ? `<div class="ham-head-main">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
+            <span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>
+          </div>`
+          : `<div class="ham-head-main ham-no-issue">
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
+          </div>`;
+      }
       return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
@@ -13259,6 +13274,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="ham-since"></span>
         </div>${subs}
       </div>`;
+    }
+
+    // What a PR row's issue slot shows: the open issue the PR closes (number,
+    // title, url) when one is known, else { text } for the placeholder —
+    // "linked issue #N closed" when GitHub links it to an issue that is no
+    // longer open, "no linked issue" when its body names none.
+    function stageTrackerPRIssueSlot(item) {
+      const linked = (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0);
+      const open = linked.find(li => Number(li.number) === Number(item.nested_under)) || linked.find(li => li.listed || (li.state || '') === 'open');
+      if (open) return { number: Number(open.number), title: open.title || '', url: open.url || '' };
+      const closed = linked.filter(li => (li.state || '') === 'closed');
+      if (closed.length) return { number: 0, text: 'linked issue ' + closed.map(li => '#' + Number(li.number)).join(', ') + ' closed' };
+      if (linked.length) return { number: Number(linked[0].number), title: linked[0].title || '', url: linked[0].url || '' };
+      return { number: 0, text: 'no linked issue' };
     }
 
     function stageTrackerNeedsAttention(item) {
@@ -13317,7 +13346,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const byNumber = /^\d+$/.test(num) && String(item.number) === num;
         const byTitle = String(item.title || '').toLowerCase().indexOf(q) >= 0;
         const byLinked = (Array.isArray(item.linked_prs) ? item.linked_prs : []).some(lp => (/^\d+$/.test(num) && String(lp.number) === num) || String(lp.title || '').toLowerCase().indexOf(q) >= 0);
-        if (!byNumber && !byTitle && !byLinked) return false;
+        const byIssue = (Array.isArray(item.linked_issues) ? item.linked_issues : []).some(li => (/^\d+$/.test(num) && String(li.number) === num) || String(li.title || '').toLowerCase().indexOf(q) >= 0);
+        if (!byNumber && !byTitle && !byLinked && !byIssue) return false;
       }
       if (f.labels.length) {
         const have = new Set((Array.isArray(item.labels) ? item.labels : []).map(l => String(l).toLowerCase()));
@@ -13397,10 +13427,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
-    function stageTrackerCountsText(page, allCount, attention) {
+    // With `open` ({issues, prs} — the payload's open_issues/open_prs, i.e. the
+    // canonical open-items set the Overview tile and its sidebar pill count) the
+    // header leads with "N items (I issues / P PRs)" so the three agree on the
+    // same number; the filtered row count follows when a filter is active.
+    function stageTrackerCountsText(page, allCount, attention, open) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
-      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention'}` };
+      const attn = attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
+      if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
+        const issues = Number(open.issues), prs = Number(open.prs), total = issues + prs;
+        const lead = `${total} ${total === 1 ? 'item' : 'items'} (${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'})`;
+        return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}` };
+      }
+      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}` };
+    }
+
+    // The tracker's open issue / PR counts: the payload's open_issues/open_prs
+    // when present, else counted from the items. Items is the canonical
+    // open-items set, so this equals the Overview tile's totals.
+    function stageTrackerOpenCounts(d) {
+      if (d && Number.isFinite(Number(d.open_issues)) && Number.isFinite(Number(d.open_prs))) return { issues: Number(d.open_issues), prs: Number(d.open_prs) };
+      const items = Array.isArray(d?.items) ? d.items : [];
+      return { issues: items.filter(it => it && it.kind !== 'pr').length, prs: items.filter(it => it && it.kind === 'pr').length };
     }
 
     function stageTrackerLoadFilter() {
@@ -13530,7 +13579,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // "N filtered out" counts against the unfiltered row list, so nesting
       // a PR under its issue is not reported as a filter.
       const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
-      const counts = stageTrackerCountsText(page, allRows, attention);
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
@@ -13589,9 +13638,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        (stageTrackerOpenKeys + stageTrackerNewlyOpened) works the same way
        on every item's key with a per-key "buzzed" set and the same cap.
        Both sounds are synthesised with the Web Audio API (no asset, no
-       URL — the CSP allows neither). Zap: a short burst of crackling
-       white noise through a bandpass sweeping ~3.6 kHz → 1.2 kHz, plus a
-       low sine "thunk" at onset. Buzz: a sawtooth near 120 Hz with a ~30 Hz
+       URL — the CSP allows neither). Zap: a bug-zapper arc baked into one
+       buffer — a ~4 ms broadband "snap", then a sizzle of bright noise
+       and a 240 Hz square chopped by a 120 Hz rectified mains pulse
+       train, with a random sputter gate (the arc drops out and
+       re-strikes), under a fast-attack / ~80 ms-sustain / decaying
+       envelope, high-passed at 700 Hz. Buzz: a sawtooth near 120 Hz with a ~30 Hz
        amplitude tremolo through a lowpass, quieter than the zap. The
        AudioContext is created lazily on a user gesture and resumed when
        suspended; a context the autoplay policy still holds suspended at
@@ -13600,15 +13652,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_SOUND_KEY = 'hive.tracker.sound';
     const STAGE_TRACKER_SOUND_MAX_PLAYS = 2;
     const STAGE_TRACKER_SOUND_OFFSET_S = 0.26;
-    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.3;
-    const STAGE_TRACKER_ZAP_S = 0.34;
-    const STAGE_TRACKER_ZAP_BAND_FROM_HZ = 3600;
-    const STAGE_TRACKER_ZAP_BAND_TO_HZ = 1200;
-    const STAGE_TRACKER_ZAP_BAND_Q = 5;
-    const STAGE_TRACKER_ZAP_CRACKLE_FLIP = 0.006;
-    const STAGE_TRACKER_ZAP_CRACKLE_FLOOR = 0.12;
-    const STAGE_TRACKER_THUNK_HZ = 90;
-    const STAGE_TRACKER_THUNK_S = 0.14;
+    const STAGE_TRACKER_SOUND_MASTER_GAIN = 0.5;
+    const STAGE_TRACKER_ZAP_S = 0.45;
+    const STAGE_TRACKER_ZAP_SNAP_DECAY = 900;
+    const STAGE_TRACKER_ZAP_MAINS_HZ = 120;
+    const STAGE_TRACKER_ZAP_PULSE_POW = 6;
+    const STAGE_TRACKER_ZAP_SQUARE_HZ = 240;
+    const STAGE_TRACKER_ZAP_NOISE_MIX = 0.75;
+    const STAGE_TRACKER_ZAP_SQUARE_MIX = 0.25;
+    const STAGE_TRACKER_ZAP_SPUTTER_P = 0.02;
+    const STAGE_TRACKER_ZAP_RESTRIKE_P = 0.25;
+    const STAGE_TRACKER_ZAP_ATTACK_S = 0.004;
+    const STAGE_TRACKER_ZAP_SUSTAIN_S = 0.08;
+    const STAGE_TRACKER_ZAP_DECAY = 7;
+    const STAGE_TRACKER_ZAP_HIGHPASS_HZ = 700;
     const STAGE_TRACKER_GAIN_FLOOR = 0.0001;
     const STAGE_TRACKER_BUZZ_S = 0.18;
     const STAGE_TRACKER_BUZZ_MASTER_GAIN = 0.2;
@@ -13631,17 +13688,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
-    // owner/name of the items when exactly one item repo matches.
+    // owner/name of the items (any kind, any repo) when exactly one matches.
     function stageTrackerMergeState(d) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
-        if (!it || it.kind !== 'pr') continue;
-        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        if (!it) continue;
+        // Every item of every repo (issues too) teaches the short → full
+        // map, so a repo whose last open PR just merged still resolves.
         const repo = String(it.repo || '');
         const slash = repo.lastIndexOf('/');
         if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+        if (it.kind !== 'pr') continue;
+        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
       }
       for (const m of (Array.isArray(d.recently_merged) ? d.recently_merged : [])) {
         if (!m || !m.repo || !m.number) continue;
@@ -13724,38 +13784,33 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.addEventListener('keydown', prime, { once: true, passive: true });
     }
 
+    // Baked sample by sample like the reference render: the snap is a raw
+    // noise impulse; the sizzle (noise + square under the rectified mains
+    // pulse train, through the sputter gate) rides the envelope.
     function stageTrackerZapVoice(ctx, out, at) {
       const sr = ctx.sampleRate;
       const buf = ctx.createBuffer(1, Math.ceil(sr * STAGE_TRACKER_ZAP_S), sr);
       const data = buf.getChannelData(0);
-      let gate = 1;
+      let arcOn = 1;
       for (let i = 0; i < data.length; i++) {
-        if (Math.random() < STAGE_TRACKER_ZAP_CRACKLE_FLIP) gate = gate ? 0 : 1;
-        data[i] = (Math.random() * 2 - 1) * (gate ? 1 : STAGE_TRACKER_ZAP_CRACKLE_FLOOR);
+        const t = i / sr;
+        const snap = (Math.random() * 2 - 1) * Math.exp(-t * STAGE_TRACKER_ZAP_SNAP_DECAY);
+        const pulse = Math.pow(Math.max(0, Math.sin(2 * Math.PI * STAGE_TRACKER_ZAP_MAINS_HZ * t)), STAGE_TRACKER_ZAP_PULSE_POW);
+        const square = Math.sin(2 * Math.PI * STAGE_TRACKER_ZAP_SQUARE_HZ * t) > 0 ? 1 : -1;
+        if (Math.random() < STAGE_TRACKER_ZAP_SPUTTER_P) arcOn = arcOn ? 0 : 1;
+        if (!arcOn && Math.random() < STAGE_TRACKER_ZAP_RESTRIKE_P) arcOn = 1;
+        const noise = Math.random() * 2 - 1;
+        const sizzle = (STAGE_TRACKER_ZAP_NOISE_MIX * noise + STAGE_TRACKER_ZAP_SQUARE_MIX * square) * pulse * arcOn;
+        const env = Math.min(1, t / STAGE_TRACKER_ZAP_ATTACK_S) * Math.exp(-Math.max(0, t - STAGE_TRACKER_ZAP_SUSTAIN_S) * STAGE_TRACKER_ZAP_DECAY);
+        data[i] = snap + sizzle * env;
       }
       const src = ctx.createBufferSource();
       src.buffer = buf;
-      const band = ctx.createBiquadFilter();
-      band.type = 'bandpass';
-      band.Q.value = STAGE_TRACKER_ZAP_BAND_Q;
-      band.frequency.setValueAtTime(STAGE_TRACKER_ZAP_BAND_FROM_HZ, at);
-      band.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_ZAP_BAND_TO_HZ, at + STAGE_TRACKER_ZAP_S);
-      const env = ctx.createGain();
-      env.gain.setValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at);
-      env.gain.exponentialRampToValueAtTime(1, at + 0.012);
-      env.gain.exponentialRampToValueAtTime(0.6, at + STAGE_TRACKER_ZAP_S * 0.5);
-      env.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_ZAP_S);
-      src.connect(band); band.connect(env); env.connect(out);
+      const high = ctx.createBiquadFilter();
+      high.type = 'highpass';
+      high.frequency.value = STAGE_TRACKER_ZAP_HIGHPASS_HZ;
+      src.connect(high); high.connect(out);
       src.start(at); src.stop(at + STAGE_TRACKER_ZAP_S);
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(STAGE_TRACKER_THUNK_HZ, at);
-      osc.frequency.exponentialRampToValueAtTime(STAGE_TRACKER_THUNK_HZ / 2, at + STAGE_TRACKER_THUNK_S);
-      const thunk = ctx.createGain();
-      thunk.gain.setValueAtTime(0.7, at);
-      thunk.gain.exponentialRampToValueAtTime(STAGE_TRACKER_GAIN_FLOOR, at + STAGE_TRACKER_THUNK_S);
-      osc.connect(thunk); thunk.connect(out);
-      osc.start(at); osc.stop(at + STAGE_TRACKER_THUNK_S);
     }
 
     // A bee passing by: a sawtooth that drifts down a few Hz, chopped by a
@@ -18760,17 +18815,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
       const staleSince = overviewStaleSince(repos);
+      // Open items a source reported in its totals but could not list are
+      // not in the counts (the tile, pill and activity monitor count the
+      // listed items — open_items.go); they are named beside them instead.
+      const unlisted = overviewUnlistedCounts(repos);
       // The sidebar Overview pill is the same two totals the tiles print,
       // from the same snapshot, on every tile render — never a separately
       // counted or separately cached number.
       if (window._lastStatus) {
-        const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince);
+        const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);
         setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);
       }
       if (!state.showKPIs) return '';
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
-      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage). These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
+      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage), or this is the snapshot restored at startup. These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the next enumeration or hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
+      const unlistedBadge = unlisted.issues + unlisted.prs > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewUnlistedNote(unlisted))}">+${unlisted.issues + unlisted.prs} not yet listed</span>` : '';
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
@@ -18785,12 +18845,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        "Total open PRs" tiles exactly; the title carries the tile equation
        and the last-good "stale" note. overview_sidebar_pill_test.go runs
        it under node. */
-    function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince) {
+    function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted) {
       const issues = Number(openIssues) || 0;
       const prs = Number(openPRs) || 0;
       let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
       if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      const note = overviewUnlistedNote(unlisted);
+      if (note) title += ` · ${note}`;
       return { issues, prs, title };
+    }
+
+    /* Pure: open items the enumeration or forgestate cache reported in its
+       totals without an item row behind them (repos[].unlistedIssues /
+       unlistedPrs). Counted beside the totals, never inside them. */
+    function overviewUnlistedCounts(repos) {
+      const out = { issues: 0, prs: 0 };
+      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); });
+      return out;
+    }
+    function overviewUnlistedNote(unlisted) {
+      const issues = Number(unlisted?.issues || 0), prs = Number(unlisted?.prs || 0);
+      if (issues + prs <= 0) return '';
+      return `${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'} reported open but not yet listed by the scanner`;
     }
 
     function overviewRepoFilterHTML(repos) {

@@ -203,14 +203,22 @@ func TestBootCollectorsWithRestoresCachedActionable(t *testing.T) {
 		MergedAt:       cached.GeneratedAt.Add(time.Minute),
 	}}
 	cached.Hold.Total = 1
+	cached.TotalByRepo = map[string]github.RepoCounts{"widgets": {Issues: 7, PRs: 3}}
 	f.actionable, _ = json.Marshal(cached)
 	f.actionableErr = nil
 
 	spark0 := len(b.dashSrv.TokenSparklineHistory())
 	b.bootCollectorsWith(f.deps)
 
-	if got := b.lastActionable.Load(); got == nil || got.Issues.Count != 7 {
+	got := b.lastActionable.Load()
+	if got == nil || got.Issues.Count != 7 {
 		t.Fatalf("lastActionable = %+v", got)
+	}
+	// A previous process's snapshot is served as last-good, never as a
+	// current read: every repo is stale from its GeneratedAt until the first
+	// enumeration replaces it (hivecommons/hive#13373).
+	if len(got.StaleRepos) != 1 || got.StaleRepos[0] != "widgets" || !got.StaleSince.Equal(cached.GeneratedAt) {
+		t.Fatalf("restored snapshot not marked stale: repos=%v since=%v want since=%v", got.StaleRepos, got.StaleSince, cached.GeneratedAt)
 	}
 	if got := b.sched.GetLastActionable(); got == nil || len(got.PRs.Attributed) != 1 || got.PRs.Attributed[0].HiveModel != "gpt-5.4" {
 		t.Fatalf("scheduler cache = %+v, want restored attributed PR", got)

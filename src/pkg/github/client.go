@@ -2222,13 +2222,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 // EnrichCIStatus deliberately never touches: a draft is not a merge
 // candidate, so its mergeability and check runs are never fetched.
 func (c *Client) EnrichReviewSignals(ctx context.Context, prs []PullRequest) {
-	if c == nil {
-		return
-	}
-	facts := newProtectionCollector(c)
-	for i := range prs {
-		facts.attach(ctx, &prs[i], nil)
-	}
+	c.EnrichReviewSignalsAndWorkPRs(ctx, prs, nil)
 }
 
 // EnrichWorkPRLinkedIssues stamps GitHub's closing-issue references onto the
@@ -2239,10 +2233,22 @@ func (c *Client) EnrichReviewSignals(ctx context.Context, prs []PullRequest) {
 // the PR batch already answered it, and no per-PR REST calls. The slices are
 // updated in place.
 func (c *Client) EnrichWorkPRLinkedIssues(ctx context.Context, details map[string]RepoWorkDetails) {
+	c.EnrichReviewSignalsAndWorkPRs(ctx, nil, details)
+}
+
+// EnrichReviewSignalsAndWorkPRs is EnrichReviewSignals and
+// EnrichWorkPRLinkedIssues over one shared per-cycle collector: a repo's
+// review-signals query runs at most once per call even when it has both
+// stale drafts and sidelined PRs, instead of once per method. The cycle's
+// call sites use this form.
+func (c *Client) EnrichReviewSignalsAndWorkPRs(ctx context.Context, prs []PullRequest, details map[string]RepoWorkDetails) {
 	if c == nil {
 		return
 	}
 	facts := newProtectionCollector(c)
+	for i := range prs {
+		facts.attach(ctx, &prs[i], nil)
+	}
 	for repo, d := range details {
 		for i := range d.PRs {
 			pr := &d.PRs[i]

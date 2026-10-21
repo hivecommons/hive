@@ -430,9 +430,12 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	OverviewBands    *OverviewBands            `json:"overview_bands,omitempty"`
-	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
-	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
+	OverviewBands  *OverviewBands         `json:"overview_bands,omitempty"`
+	OverviewTotals FrontendOverviewTotals `json:"overviewTotals"`
+	ActionableNow  FrontendActionableNow  `json:"actionableNow"`
+	// OpenItems is the canonical open-items set the Overview tile, its
+	// sidebar pill and the Hive activity monitor all count (open_items.go).
+	OpenItems        FrontendOpenItems         `json:"openItems"`
 	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
 	// LabelPresets are the built-in label-filter presets the Projects cards'
 	// faceted filter offers (hivecommons/hive#12172). Served rather than
@@ -993,9 +996,15 @@ type FrontendRepo struct {
 	CountsStale bool `json:"countsStale,omitempty"`
 	// CountsStaleSince (RFC 3339) is when the stale figures were last read
 	// for real; set with CountsStale.
-	CountsStaleSince string                    `json:"countsStaleSince,omitempty"`
-	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
-	SLA              *timeline.SLARepoReport   `json:"sla,omitempty"`
+	CountsStaleSince string `json:"countsStaleSince,omitempty"`
+	// UnlistedIssues / UnlistedPRs are open items the enumeration or the
+	// forgestate cache reported in its totals but could not list as item
+	// rows. Issues/PRs count only listed items (the canonical open-items set,
+	// open_items.go), so these are shown beside the total, not inside it.
+	UnlistedIssues int                       `json:"unlistedIssues,omitempty"`
+	UnlistedPRs    int                       `json:"unlistedPrs,omitempty"`
+	WorkBreakdown  *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA            *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the

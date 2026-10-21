@@ -20,11 +20,28 @@ import (
 )
 
 // fakeForgeOpen scripts the cache's open totals per repo for buildRepos.
+// Like the real cache its totals are the size of its item set, so OpenItems
+// returns a snapshot holding Issues/PRs numbered 1..n.
 type fakeForgeOpen map[string]forgestate.OpenCounts
 
 func (f fakeForgeOpen) Open(repo string) (forgestate.OpenCounts, bool) {
 	c, ok := f[strings.ToLower(repo)]
 	return c, ok
+}
+
+func (f fakeForgeOpen) OpenItems(repo string) (forgestate.Snapshot, bool) {
+	c, ok := f[strings.ToLower(repo)]
+	if !ok {
+		return forgestate.Snapshot{}, false
+	}
+	snap := forgestate.Snapshot{Repo: repo, Issues: map[int]forgestate.Item{}, PRs: map[int]forgestate.Item{}, Ready: c.Ready, Stale: c.Stale, StaleSince: c.StaleSince}
+	for n := 1; n <= c.Issues; n++ {
+		snap.Issues[n] = forgestate.Item{Kind: forgestate.KindIssue, Number: n, State: "open", Title: "cached issue"}
+	}
+	for n := 1; n <= c.PRs; n++ {
+		snap.PRs[100+n] = forgestate.Item{Kind: forgestate.KindPR, Number: 100 + n, State: "open", Title: "cached pr"}
+	}
+	return snap, true
 }
 
 func forgeCountsCfg() *config.Config {
@@ -33,13 +50,24 @@ func forgeCountsCfg() *config.Config {
 
 func TestBuildReposOverviewCountsComeFromForgeCache(t *testing.T) {
 	cfg := forgeCountsCfg()
+	cDetails := github.RepoWorkDetails{}
+	for n := 1; n <= 7; n++ {
+		cDetails.Issues = append(cDetails.Issues, github.RepoWorkIssue{Repo: "c", Number: n, Bucket: "filtered"})
+	}
+	for n := 1; n <= 3; n++ {
+		cDetails.PRs = append(cDetails.PRs, github.RepoWorkPR{Repo: "c", Number: 100 + n, Bucket: "draft", Draft: true})
+	}
 	actionable := &github.ActionableResult{
 		// The enumeration's own listing: refused for o/a (no totals), and
 		// x/b classified 2 of what the cache says are 5 open issues.
+		Issues:      github.IssueResult{Items: []github.Issue{{Repo: "x/b", Number: 1}}},
+		PRs:         github.PRResult{Items: []github.PullRequest{{Repo: "x/b", Number: 101}}},
+		Hold:        github.HoldResult{Items: []github.HoldItem{{Repo: "x/b", Number: 2, Type: "issue"}}},
 		TotalByRepo: map[string]github.RepoCounts{"x/b": {Issues: 2, PRs: 1}, "c": {Issues: 7, PRs: 3}},
 		WorkBreakdownByRepo: map[string]github.RepoWorkBreakdown{
 			"x/b": {Issues: github.RepoIssueBreakdown{Actionable: 1, Hold: 1}, PRs: github.RepoPRBreakdown{Actionable: 1}},
 		},
+		WorkDetailsByRepo: map[string]github.RepoWorkDetails{"c": cDetails},
 	}
 	staleAt := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 	forge := fakeForgeOpen{
@@ -59,14 +87,21 @@ func TestBuildReposOverviewCountsComeFromForgeCache(t *testing.T) {
 		t.Fatalf("a = issues %d prs %d incomplete %v stale %v, want 4/2 from cache", a.Issues, a.PRs, a.CountsIncomplete, a.CountsStale)
 	}
 	// x/b: cache totals win; the 3 issues the enumeration did not classify
-	// land in Other so the partition still sums to the total; stale carries
-	// its since mark.
+	// land in Other so the partition still sums to the total — and each is
+	// an item row (seeded from the cache's own snapshot) so the activity
+	// monitor can list what the tile counts; stale carries its since mark.
 	b := byName["x/b"]
 	if b.Issues != 5 || b.PRs != 1 {
 		t.Fatalf("x/b = %d/%d, want cache 5/1", b.Issues, b.PRs)
 	}
 	if b.WorkBreakdown == nil || b.WorkBreakdown.Issues.Total() != 5 || b.WorkBreakdown.Issues.Other != 3 || b.WorkBreakdown.Issues.Actionable != 1 {
 		t.Fatalf("x/b breakdown = %+v, want total 5 with other 3", b.WorkBreakdown)
+	}
+	if got := countOpenItems(repoOpenItems(b)); got.Issues != 5 || got.PRs != 1 || b.UnlistedIssues != 0 {
+		t.Fatalf("x/b open items = %+v unlisted %d, want every counted issue listed", got, b.UnlistedIssues)
+	}
+	if len(b.NonActionableIssues) != 3 {
+		t.Fatalf("x/b seeded rows = %d, want the cache's 3 unclassified issues", len(b.NonActionableIssues))
 	}
 	if b.WorkBreakdown.PRs.Total() != 1 || b.WorkBreakdown.PRs.Other != 0 {
 		t.Fatalf("x/b PR breakdown = %+v, want unchanged total 1", b.WorkBreakdown.PRs)

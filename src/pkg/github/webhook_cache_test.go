@@ -371,6 +371,27 @@ func TestGraphQLPRBatchSkipsCleanRepoWhileWebhooksHealthy(t *testing.T) {
 	if err == nil && info.GraphQLPRBatch.WebhookSkips != 2 {
 		t.Fatalf("webhook_skips = %d, want 2", info.GraphQLPRBatch.WebhookSkips)
 	}
+
+	// At the health-window boundary a clean repo must resume API reads;
+	// restoring only the governor ticker would leave its cached batch stale.
+	// The last delivery was already one second old when the batch ran.
+	clock.now = clock.now.Add(10*time.Minute - time.Second)
+	c.prefetchOpenPRDetailsGraphQL(context.Background(), "org", "repo", "repo")
+	if got := gqlCalls.Load(); got != 4 {
+		t.Fatalf("webhook outage must refresh even a clean batch: calls = %d, want 4", got)
+	}
+	c.prefetchOpenPRDetailsGraphQL(context.Background(), "org", "repo", "repo")
+	if got := gqlCalls.Load(); got != 5 {
+		t.Fatalf("ongoing outage must keep polling: calls = %d, want 5", got)
+	}
+
+	if _, err := c.HandleWebhookEvent("ping", []byte(`{"repository":{"full_name":"org/repo"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	c.prefetchOpenPRDetailsGraphQL(context.Background(), "org", "repo", "repo")
+	if got := gqlCalls.Load(); got != 5 {
+		t.Fatalf("recovered webhooks should reuse the refreshed batch: calls = %d, want 5", got)
+	}
 }
 
 func TestWebhookDirtyMarkSurvivesInFlightFetch(t *testing.T) {

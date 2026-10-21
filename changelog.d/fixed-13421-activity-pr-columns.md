@@ -1,1 +1,1 @@
-- Activity monitor rows keep issues on the left and PRs in the PR column, show a muted placeholder for PRs without an open linked issue, and pair listed issues using PR-side closing references.
+- Activity monitor: sidelined PRs (drafts, exempt labels) now carry GitHub's closing references too, so a draft with a valid `Fixes #N` pairs with its issue instead of showing "no linked issue"; linked issues keep their title on both the batch and per-repo GraphQL paths.
