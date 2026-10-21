@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
+	"github.com/hivecommons/hive/pkg/hivectltest"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
@@ -51,7 +52,7 @@ func TestHivesTreeExcludeFollowEnableMatchSharedLayer(t *testing.T) {
 	h.send(t, key("l"))
 	h.send(t, key("j"))
 	h.send(t, key("x"))
-	if err := ref.SetExcluded("alpha", hivectl.ContributionFixtureRepoA, true); err != nil {
+	if err := ref.SetExcluded("alpha", hivectltest.ContributionFixtureRepoA, true); err != nil {
 		t.Fatal(err)
 	}
 	n := h.treeFocus(t)

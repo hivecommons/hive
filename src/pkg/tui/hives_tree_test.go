@@ -11,11 +11,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
+	"github.com/hivecommons/hive/pkg/hivectltest"
 	"github.com/hivecommons/hive/pkg/tui/panes"
 )
 
 // The contribution tree's app-side tests (#13291). They start from the shared
-// state-transition fixture of #13289 (hivectl.ContributionStageFixture) and
+// state-transition fixture of #13289 (hivectltest.ContributionStageFixture) and
 // compare every diff and receipt with the shared staging layer driven directly,
 // which is also what the Web tree's tests compare against — so the two surfaces
 // produce identical diffs and receipts for the same edits.
@@ -29,13 +30,13 @@ var (
 
 // treeDiscovery returns fresh fixture snapshots on every call.
 func treeDiscovery(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot) {
-	_, hubs, repos := hivectl.ContributionStageFixture()
+	_, hubs, repos := hivectltest.ContributionStageFixture()
 	return hubs, repos
 }
 
 func treeHarness(t *testing.T, edit func(*hivectl.ProfileSet)) *hivesHarness {
 	t.Helper()
-	set, _, _ := hivectl.ContributionStageFixture()
+	set, _, _ := hivectltest.ContributionStageFixture()
 	if edit != nil {
 		edit(set)
 	}
@@ -58,7 +59,7 @@ func (h *hivesHarness) openTree(t *testing.T) {
 // as a second surface would.
 func treeReference(t *testing.T, edit func(*hivectl.ProfileSet)) (*hivectl.StagedEdits, *hivectl.ProfileStore) {
 	t.Helper()
-	set, hubs, repos := hivectl.ContributionStageFixture()
+	set, hubs, repos := hivectltest.ContributionStageFixture()
 	if edit != nil {
 		edit(set)
 	}
@@ -104,7 +105,7 @@ func (h *hivesHarness) focusRepoA(t *testing.T) {
 	}
 	h.send(t, key("l"))
 	h.send(t, key("j"))
-	if n := h.treeFocus(t); n.Repository != hivectl.ContributionFixtureRepoA {
+	if n := h.treeFocus(t); n.Repository != hivectltest.ContributionFixtureRepoA {
 		t.Fatalf("focus = %+v, want repository a", n)
 	}
 }
@@ -153,7 +154,7 @@ func TestHivesTreeStagesWithoutWritingThenAppliesLikeTheSharedLayer(t *testing.T
 	if got := h.model.hives.TreeStaged(); got != 1 {
 		t.Fatalf("staged = %d, want 1:\n%s", got, h.view())
 	}
-	if n := h.treeFocus(t); n.Selection != "x" || n.Repository != hivectl.ContributionFixtureRepoA {
+	if n := h.treeFocus(t); n.Selection != "x" || n.Repository != hivectltest.ContributionFixtureRepoA {
 		t.Fatalf("focus after staging = %+v", n)
 	}
 	if !bytes.Equal(profiles, readFile(t, h.store.Path())) || !bytes.Equal(env, readFile(t, h.store.EnvPath())) {
@@ -161,7 +162,7 @@ func TestHivesTreeStagesWithoutWritingThenAppliesLikeTheSharedLayer(t *testing.T
 	}
 
 	ref, refStore := treeReference(t, nil)
-	if err := ref.SelectRepository("alpha", hivectl.ContributionFixtureRepoA, true); err != nil {
+	if err := ref.SelectRepository("alpha", hivectltest.ContributionFixtureRepoA, true); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := h.model.hivesTree.edits.Diff(), ref.Diff(); !reflect.DeepEqual(got, want) {
@@ -314,7 +315,7 @@ func TestHivesTreeEditsBlockedWhileRefreshOutstanding(t *testing.T) {
 	if h.model.hives.TreeLoading() {
 		t.Fatal("refresh left the tree loading")
 	}
-	if n := h.treeFocus(t); n.Repository != hivectl.ContributionFixtureRepoA {
+	if n := h.treeFocus(t); n.Repository != hivectltest.ContributionFixtureRepoA {
 		t.Fatalf("focus = %+v, want repository a after refresh", n)
 	}
 	h.send(t, treeSpace)
