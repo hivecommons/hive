@@ -1253,6 +1253,14 @@ it against the saved selection:
 - **Outages**: if the preset cannot be fetched or a Hive's discovery fails, that
   Hive is reported as `discovery unavailable`, its saved selection is left
   untouched, nothing is broadened, and the command exits non-zero.
+- **Hubs**: for every recorded preset that lists hubs, including presets adopted
+  without `--onboard`, `refresh` re-reads each hub's public `GET /api/hives`
+  registry to review repository changes at hub members you already have
+  profiles for. This is a network call to the hub with no credentials attached.
+  An unreachable or malformed hub registry is reported as
+  `hub discovery unavailable`; the refresh is then incomplete, the reviewed
+  revision does not advance, and the command exits non-zero. Hub members
+  without a profile are never enrolled by `refresh`.
 
 The reviewed revision only advances when every Hive of the preset was reviewed
 and nothing is left pending.

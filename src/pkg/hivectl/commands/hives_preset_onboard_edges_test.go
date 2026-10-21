@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,21 +15,20 @@ import (
 )
 
 func TestPresetHubMembersRejectsRegistryLimits(t *testing.T) {
-	entries := make([]map[string]string, hivectl.MaxPresetEntries+1)
-	for i := range entries {
-		entries[i] = map[string]string{"hub_url": "https://hive.example"}
-	}
-	tooMany, err := json.Marshal(map[string]any{"hives": entries})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct{ name, body, want string }{
-		{"oversized", strings.Repeat(" ", (4<<20)+1), "exceeds 4 MiB"},
-		{"too many", string(tooMany), "too many hub Hives"},
-		{"invalid origin", `{"hives":[{"hub_url":"not a URL"}]}`, ""},
+	for _, tc := range []struct {
+		name, body, want string
+		status           int
+	}{
+		{name: "oversized", body: strings.Repeat(" ", (4<<20)+1), want: "malformed registry"},
+		{name: "redirect", body: `{"hives":[]}`, status: http.StatusFound, want: "HTTP 302"},
+		{name: "unsafe origin", body: `{"hives":[{"hub_url":"http://hive.example"}]}`, want: "must use https://"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tc.status != 0 {
+					w.Header().Set("Location", "/elsewhere")
+					w.WriteHeader(tc.status)
+				}
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer hub.Close()
@@ -42,6 +40,20 @@ func TestPresetHubMembersRejectsRegistryLimits(t *testing.T) {
 				t.Fatalf("members=%v err=%v; want rejection containing %q", members, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestPresetHubMembersSkipsUnusableOriginsAndDeduplicates(t *testing.T) {
+	hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"hives":[{"hub_url":"not a URL"},{"hub_url":"https://hive.example"},{"hub_url":"wss://hive.example/contribute"}]}`))
+	}))
+	defer hub.Close()
+	e := &commandEnv{options: &rootOptions{timeout: time.Second}}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	members, err := e.presetHubMembers(cmd, hub.URL)
+	if err != nil || len(members) != 1 || members[0] != "https://hive.example" {
+		t.Fatalf("members=%v err=%v; want the single usable origin", members, err)
 	}
 }
 

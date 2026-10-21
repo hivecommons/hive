@@ -160,7 +160,7 @@ func TestPresetOnboardUnavailableScopeNeverRegisters(t *testing.T) {
 }
 
 func TestPresetOnboardHubFailuresDoNotBroadenScope(t *testing.T) {
-	for _, body := range []string{`{}`, `{"hives":null}`, `not json`, `{"hives":[{"hub_url":"http://insecure.example"}]}`, `{"hives":[]} trailing`} {
+	for _, body := range []string{`{}`, `not json`, `{"hives":[{"hub_url":"http://insecure.example"}]}`, `{"hives":[]} trailing`} {
 		t.Run(body, func(t *testing.T) {
 			h := newHivesHarness(t)
 			hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
@@ -171,6 +171,23 @@ func TestPresetOnboardHubFailuresDoNotBroadenScope(t *testing.T) {
 			}
 			if len(h.reg.calls) != 0 || h.signalCalls != 0 || !strings.Contains(h.out.String(), "hub discovery unavailable") {
 				t.Fatal("bad hub enrolled or concealed outage")
+			}
+		})
+	}
+}
+
+// An empty registry (including a JSON null, per hivectl.DiscoverHubHives) is a
+// hub that advertises nothing: not an outage, and nothing is enrolled.
+func TestPresetOnboardEmptyHubRegistryEnrollsNothing(t *testing.T) {
+	for _, body := range []string{`{"hives":[]}`, `{"hives":null}`} {
+		t.Run(body, func(t *testing.T) {
+			h := newHivesHarness(t)
+			hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body)) }))
+			defer hub.Close()
+			path := writePreset(t, "version: 1\nname: empty hub\nhives: []\nhubs:\n  - url: "+hub.URL+"\n    hives: all-current\n")
+			_ = h.run(t, "y\n", "hives", "preset", "adopt", path, "--onboard")
+			if len(h.reg.calls) != 0 || h.signalCalls != 0 || strings.Contains(h.out.String(), "hub discovery unavailable") {
+				t.Fatalf("empty hub enrolled something or was reported as an outage:\n%s", h.out.String())
 			}
 		})
 	}

@@ -2,10 +2,8 @@ package commands
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -251,60 +249,24 @@ func (e *commandEnv) expandPresetOnboard(cmd *cobra.Command, preset *hivectl.Pre
 	return &expanded, reports
 }
 
-// The federation registry contract is GET /api/hives. Do not attach saved
-// credentials, follow redirects, or interpret malformed/oversized data as empty.
+// presetHubMembers reads a hub's federation registry through the shared
+// hivectl.DiscoverHubHives reader (GET /api/hives, no redirects, capped body,
+// no credentials) and adds the preset-specific URL safety pass: HTTPS, or
+// loopback HTTP for local development, and no embedded credentials. One
+// unsafe advertised origin rejects the whole hub rather than silently
+// narrowing its membership.
 func (e *commandEnv) presetHubMembers(cmd *cobra.Command, hub string) ([]string, error) {
-	base, err := hivectl.HubHTTPBase(hub)
+	hives, err := hivectl.DiscoverHubHives(cmd.Context(), &http.Client{Timeout: e.options.timeout}, hub)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, base+"/api/hives", nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{Timeout: e.options.timeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > 4<<20 {
-		return nil, errors.New("hub registry exceeds 4 MiB")
-	}
-	var registry struct {
-		Hives *[]struct {
-			HubURL string `json:"hub_url"`
-		} `json:"hives"`
-	}
-	if err := json.Unmarshal(data, &registry); err != nil {
-		return nil, err
-	}
-	if registry.Hives == nil {
-		return nil, errors.New("registry omitted hives")
-	}
-	if len(*registry.Hives) > hivectl.MaxPresetEntries {
-		return nil, errors.New("too many hub Hives")
-	}
-	members := make([]string, 0, len(*registry.Hives))
-	for _, hive := range *registry.Hives {
-		origin, err := hivectl.NormalizeHiveID(hive.HubURL)
-		if err != nil {
-			return nil, err
-		}
-		// Discovery must not bypass preset URL safety (HTTPS, or loopback
-		// HTTP for local development; no embedded credentials).
-		candidate := &hivectl.Preset{Version: hivectl.PresetVersion, Name: "hub discovery", Hives: []hivectl.PresetHive{{URL: origin, Repositories: hivectl.PresetRepoSelector{AllCurrent: true}}}}
+	members := make([]string, 0, len(hives))
+	for _, hive := range hives {
+		candidate := &hivectl.Preset{Version: hivectl.PresetVersion, Name: "hub discovery", Hives: []hivectl.PresetHive{{URL: hive.ID, Repositories: hivectl.PresetRepoSelector{AllCurrent: true}}}}
 		if err := candidate.Validate(); err != nil {
 			return nil, err
 		}
-		members = append(members, origin)
+		members = append(members, hive.ID)
 	}
 	return members, nil
 }
