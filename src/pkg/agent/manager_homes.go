@@ -208,8 +208,9 @@ func isMissingFileReadError(err error) bool {
 // Only when the chown itself fails do we fall back to a rebuild, and that
 // rebuild shells out to `rm -rf` (via su-exec, the same idiom the rest of
 // setupCodexHome uses) rather than os.RemoveAll, for the same NFSv3 reason.
-// Hive never writes config.toml, so any content is operator-authored: the
-// rebuild path salvages it when the manager can read it and returns the bytes
+// Hive never writes config.toml from Go; its content is operator-authored,
+// plus the advisor's hook-trust entry that Codex itself writes at hive's
+// request, as the agent (trustCodexAdvisorHook). The rebuild path salvages it when the manager can read it and returns the bytes
 // for setupCodexHome to write back as the agent after the re-mkdir. A dir that
 // can be neither chowned nor removed is left alone with an Error log naming
 // the owner and the manual fix.

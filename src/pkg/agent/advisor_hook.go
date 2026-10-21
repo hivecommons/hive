@@ -1,12 +1,17 @@
 package agent
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/config"
@@ -84,7 +89,9 @@ func claudeAdvisorSettings() string {
 // hooks directory under the COPILOT_HOME hive points at the agent's own
 // per-agent .copilot directory. codexHooksFileName is Codex's hooks.json in
 // the per-agent CODEX_HOME hive provisions. Neither is a file the operator
-// maintains: config.json and config.toml are never written for the advisor.
+// maintains. Hive never writes config.json or config.toml itself; the one
+// config.toml change is Codex's own hook-trust entry, which Codex writes at
+// hive's request, as the agent (see trustCodexAdvisorHook).
 const (
 	copilotAdvisorHooksFileName = "hive-advisor.json"
 	codexHooksFileName          = "hooks.json"
@@ -210,7 +217,232 @@ func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
 	}
 	if err := writeFileAsUser(user, path, content); err != nil {
 		m.logger.Warn("failed to write advisor hook file; agent launches without the advisor", "agent", agent.Name, "path", path, "error", err)
+		return
 	}
+	if strings.EqualFold(strings.TrimSpace(backend), config.AdvisorCodexBackend) {
+		if err := m.trustCodexAdvisorHook(user, path); err != nil {
+			m.logger.Warn("failed to trust the advisor's Codex Stop hook; agent launches but Codex may skip the advisor",
+				"agent", agent.Name, "path", path, "reason", err)
+		}
+	}
+}
+
+const (
+	// codexHookTrustTimeout bounds the whole app-server spawn and JSON-RPC
+	// exchange that trusts the advisor's Codex hook.
+	codexHookTrustTimeout = 15 * time.Second
+	// codexHookTrustMaxLineBytes caps one scanned app-server protocol line.
+	codexHookTrustMaxLineBytes  = 1 << 20
+	codexHookTrustStatusTrusted = "trusted"
+	codexHookStopEvent          = "stop"
+)
+
+// codexHookTrustMessage is one newline-delimited app-server message.
+type codexHookTrustMessage struct {
+	ID     *int64          `json:"id,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+}
+
+// codexHookListEntry is one hook reported by the app-server's hooks/list.
+type codexHookListEntry struct {
+	Key         string `json:"key"`
+	EventName   string `json:"eventName"`
+	SourcePath  string `json:"sourcePath"`
+	TrustStatus string `json:"trustStatus"`
+	CurrentHash string `json:"currentHash"`
+}
+
+// trustCodexAdvisorHook asks Codex to trust the advisor's Stop hook in the
+// hooks.json at hooksPath (hivecommons/hive#13368). Codex skips untrusted
+// hooks and nobody can approve one in hive's unattended pane, so without this
+// the advisor never runs on Codex. It drives `codex app-server` the same way
+// Codex's own TUI trusts a hook: hooks/list, then config/batchWrite of the
+// hook's current hash. Codex computes the hash and writes config.toml itself;
+// it runs as the agent so config.toml stays agent-owned
+// (healForeignCodexConfig removes a foreign-owned one). Only hive's own hook
+// is trusted — never a blanket bypass that would also run project hooks.
+func (m *Manager) trustCodexAdvisorHook(userSpec, hooksPath string) error {
+	binary, err := m.backendBinary(codexBackend)
+	if err != nil {
+		return err
+	}
+	home := filepath.Dir(hooksPath)
+	ctx, cancel := context.WithTimeout(context.Background(), codexHookTrustTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "su-exec", userSpec, "env", "CODEX_HOME="+home,
+		binary, "app-server", "--listen", "stdio://")
+	cmd.WaitDelay = time.Second
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("app-server stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("app-server stdout: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("spawn codex app-server: %w", err)
+	}
+	defer func() {
+		_ = stdin.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	if err := codexHookTrustExchange(stdin, stdout, hooksPath); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("codex app-server timed out after %s: %w", codexHookTrustTimeout, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// codexHookTrustExchange runs the JSON-RPC sequence over the app-server's
+// stdio. Factored over io.Writer/io.Reader so the protocol is independent of
+// the process plumbing.
+func codexHookTrustExchange(in io.Writer, out io.Reader, hooksPath string) error {
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 0, 4096), codexHookTrustMaxLineBytes)
+
+	if err := writeCodexHookTrustRPC(in, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"clientInfo": map[string]any{"name": "hive", "version": hiveClientVersion()},
+		},
+	}); err != nil {
+		return fmt.Errorf("send initialize: %w", err)
+	}
+	if _, err := awaitCodexHookTrustResponse(sc, 1, "initialize"); err != nil {
+		return err
+	}
+	if err := writeCodexHookTrustRPC(in, map[string]any{"jsonrpc": "2.0", "method": "initialized"}); err != nil {
+		return fmt.Errorf("send initialized: %w", err)
+	}
+
+	if err := writeCodexHookTrustRPC(in, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "hooks/list",
+		"params":  map[string]any{},
+	}); err != nil {
+		return fmt.Errorf("send hooks/list: %w", err)
+	}
+	result, err := awaitCodexHookTrustResponse(sc, 2, "hooks/list")
+	if err != nil {
+		return err
+	}
+	var list struct {
+		Data []struct {
+			Hooks []codexHookListEntry `json:"hooks"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(result, &list); err != nil {
+		return fmt.Errorf("parse hooks/list result: %w", err)
+	}
+	var hook *codexHookListEntry
+	for i := range list.Data {
+		for j := range list.Data[i].Hooks {
+			h := &list.Data[i].Hooks[j]
+			if filepath.Clean(h.SourcePath) == filepath.Clean(hooksPath) && strings.EqualFold(h.EventName, codexHookStopEvent) {
+				hook = h
+				break
+			}
+		}
+		if hook != nil {
+			break
+		}
+	}
+	if hook == nil {
+		return fmt.Errorf("hooks/list reported no Stop hook from %s", hooksPath)
+	}
+	if hook.TrustStatus == codexHookTrustStatusTrusted {
+		return nil
+	}
+	if hook.Key == "" || hook.CurrentHash == "" {
+		return fmt.Errorf("hooks/list Stop hook from %s has no key or currentHash", hooksPath)
+	}
+
+	if err := writeCodexHookTrustRPC(in, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "config/batchWrite",
+		"params": map[string]any{
+			"edits": []map[string]any{{
+				"keyPath":       "hooks.state",
+				"value":         map[string]any{hook.Key: map[string]any{"trusted_hash": hook.CurrentHash}},
+				"mergeStrategy": "upsert",
+			}},
+			"filePath":         nil,
+			"expectedVersion":  nil,
+			"reloadUserConfig": true,
+		},
+	}); err != nil {
+		return fmt.Errorf("send config/batchWrite: %w", err)
+	}
+	result, err = awaitCodexHookTrustResponse(sc, 3, "config/batchWrite")
+	if err != nil {
+		return err
+	}
+	var write struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(result, &write); err != nil {
+		return fmt.Errorf("parse config/batchWrite result: %w", err)
+	}
+	if write.Status != "ok" {
+		return fmt.Errorf("config/batchWrite status %q, want \"ok\"", write.Status)
+	}
+	return nil
+}
+
+func writeCodexHookTrustRPC(in io.Writer, msg map[string]any) error {
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	_, err = in.Write(append(b, '\n'))
+	return err
+}
+
+// awaitCodexHookTrustResponse reads until the response to request id arrives,
+// skipping server notifications, and returns its result.
+func awaitCodexHookTrustResponse(sc *bufio.Scanner, id int64, method string) (json.RawMessage, error) {
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var msg codexHookTrustMessage
+		if err := json.Unmarshal(line, &msg); err != nil {
+			return nil, fmt.Errorf("%s: malformed app-server line: %w", method, err)
+		}
+		if msg.ID == nil || *msg.ID != id {
+			continue
+		}
+		if len(msg.Error) != 0 {
+			return nil, fmt.Errorf("%s rejected: %s", method, truncateStr(string(msg.Error), 300))
+		}
+		return msg.Result, nil
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", method, err)
+	}
+	return nil, fmt.Errorf("%s: codex app-server exited before answering (codex may be too old): %w", method, io.ErrUnexpectedEOF)
+}
+
+// hiveClientVersion is the version hive reports in the app-server
+// initialize clientInfo. Informational to Codex but required by the protocol.
+func hiveClientVersion() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "dev"
 }
 
 // advisorLaunchFlag returns the launch-command suffix that projects the
