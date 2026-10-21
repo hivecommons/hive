@@ -156,6 +156,18 @@ func (c *Counts) Open(repo string) (OpenCounts, bool) {
 	}, true
 }
 
+// OpenItems returns the cache's open items for repo — the same snapshot
+// Open counts — so a reader that must list what it counts (the dashboard's
+// canonical open-items set, hivecommons/hive#13373) reads items and totals
+// from one place. ok is false when no open source is attached or the repo
+// is unknown to it.
+func (c *Counts) OpenItems(repo string) (Snapshot, bool) {
+	if c == nil || c.opts.Open == nil {
+		return Snapshot{}, false
+	}
+	return c.opts.Open.Snapshot(repo)
+}
+
 // Outcomes aggregates the outcome counters over repos (every configured repo
 // when none is given). The aggregate is Ready only when every repo is, Stale
 // when any is, and StaleSince is the earliest stale mark.

@@ -13425,10 +13425,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
-    function stageTrackerCountsText(page, allCount, attention) {
+    // With `open` ({issues, prs} — the payload's open_issues/open_prs, i.e. the
+    // canonical open-items set the Overview tile and its sidebar pill count) the
+    // header leads with "N items (I issues / P PRs)" so the three agree on the
+    // same number; the filtered row count follows when a filter is active.
+    function stageTrackerCountsText(page, allCount, attention, open) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
-      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention'}` };
+      const attn = attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
+      if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
+        const issues = Number(open.issues), prs = Number(open.prs), total = issues + prs;
+        const lead = `${total} ${total === 1 ? 'item' : 'items'} (${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'})`;
+        return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}` };
+      }
+      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}` };
+    }
+
+    // The tracker's open issue / PR counts: the payload's open_issues/open_prs
+    // when present, else counted from the items. Items is the canonical
+    // open-items set, so this equals the Overview tile's totals.
+    function stageTrackerOpenCounts(d) {
+      if (d && Number.isFinite(Number(d.open_issues)) && Number.isFinite(Number(d.open_prs))) return { issues: Number(d.open_issues), prs: Number(d.open_prs) };
+      const items = Array.isArray(d?.items) ? d.items : [];
+      return { issues: items.filter(it => it && it.kind !== 'pr').length, prs: items.filter(it => it && it.kind === 'pr').length };
     }
 
     function stageTrackerLoadFilter() {
@@ -13558,7 +13577,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // "N filtered out" counts against the unfiltered row list, so nesting
       // a PR under its issue is not reported as a filter.
       const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
-      const counts = stageTrackerCountsText(page, allRows, attention);
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d));
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
@@ -18794,17 +18813,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
       const staleSince = overviewStaleSince(repos);
+      // Open items a source reported in its totals but could not list are
+      // not in the counts (the tile, pill and activity monitor count the
+      // listed items — open_items.go); they are named beside them instead.
+      const unlisted = overviewUnlistedCounts(repos);
       // The sidebar Overview pill is the same two totals the tiles print,
       // from the same snapshot, on every tile render — never a separately
       // counted or separately cached number.
       if (window._lastStatus) {
-        const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince);
+        const pill = overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted);
         setSidebarPairBadge(document.getElementById('overview-sidebar-badge'), pill.issues, pill.prs, pill.title);
       }
       if (!state.showKPIs) return '';
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
-      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage). These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
+      const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage), or this is the snapshot restored at startup. These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the next enumeration or hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
+      const unlistedBadge = unlisted.issues + unlisted.prs > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewUnlistedNote(unlisted))}">+${unlisted.issues + unlisted.prs} not yet listed</span>` : '';
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
@@ -18819,12 +18843,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        "Total open PRs" tiles exactly; the title carries the tile equation
        and the last-good "stale" note. overview_sidebar_pill_test.go runs
        it under node. */
-    function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince) {
+    function overviewSidebarPill(openIssues, openPRs, equationLabel, staleSince, unlisted) {
       const issues = Number(openIssues) || 0;
       const prs = Number(openPRs) || 0;
       let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
       if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      const note = overviewUnlistedNote(unlisted);
+      if (note) title += ` · ${note}`;
       return { issues, prs, title };
+    }
+
+    /* Pure: open items the enumeration or forgestate cache reported in its
+       totals without an item row behind them (repos[].unlistedIssues /
+       unlistedPrs). Counted beside the totals, never inside them. */
+    function overviewUnlistedCounts(repos) {
+      const out = { issues: 0, prs: 0 };
+      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); });
+      return out;
+    }
+    function overviewUnlistedNote(unlisted) {
+      const issues = Number(unlisted?.issues || 0), prs = Number(unlisted?.prs || 0);
+      if (issues + prs <= 0) return '';
+      return `${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'} reported open but not yet listed by the scanner`;
     }
 
     function overviewRepoFilterHTML(repos) {

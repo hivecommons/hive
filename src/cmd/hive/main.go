@@ -3121,6 +3121,11 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	if data, err := deps.readLastActionable(); err == nil {
 		var cached github.ActionableResult
 		if err := json.Unmarshal(data, &cached); err == nil {
+			// A restored snapshot is a previous process's read: GitHub may
+			// have moved since. Serve it as last-good with the stale badge
+			// so the Overview never shows pre-restart totals as current
+			// (hivecommons/hive#13373); the first enumeration replaces it.
+			cached.MarkAllStale()
 			b.lastActionable.Store(&cached)
 			if b.sched != nil {
 				b.sched.SetLastActionable(&cached)

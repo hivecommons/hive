@@ -49,6 +49,12 @@ type StageTrackerResponse struct {
 	HiveID          string              `json:"hive_id,omitempty"`
 	Stages          []StageTrackerStage `json:"stages"`
 	Items           []StageTrackerItem  `json:"items"`
+	// OpenIssues and OpenPRs count Items by kind. Items is the canonical
+	// open-items set (open_items.go), so these equal the Overview tile's
+	// total open issues and PRs; the SPA prints them in the section header
+	// and the node-driven tests pin the equality.
+	OpenIssues int `json:"open_issues"`
+	OpenPRs    int `json:"open_prs"`
 	// AuthorKindLabels is true when at least one item carried an explicit
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
@@ -977,51 +983,30 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	for _, repo := range status.Repos {
 		repoName := overviewRepoName(repo)
-		// GitHub's issues feed also returns pull requests. A PR is never an
-		// issue in the tracker: when a number is in the repo's PR set, the PR
-		// record wins and the issue-feed copy is dropped, otherwise the PR
-		// would pair with itself and render as its own parent issue.
-		prNumbers := map[int]bool{}
-		for _, held := range []bool{false, true} {
-			for _, fp := range frontendRepoPRs(repo, held) {
-				prNumbers[fp.pr.Number] = true
-			}
-		}
-		for _, raw := range repo.NonActionablePrs {
-			if w, ok := repoWorkPR(raw); ok {
-				prNumbers[w.Number] = true
-			}
-		}
-		for _, held := range []bool{false, true} {
-			for _, issue := range frontendRepoIssues(repo, held) {
-				if prNumbers[issue.Number] || strings.Contains(issue.URL, "/pull/") {
-					continue
-				}
-				addIssue(repoName, issue, "", "")
-			}
-			for _, fp := range frontendRepoPRs(repo, held) {
-				addPR(repoName, fp.pr, fp.verdict, "", "")
-			}
-		}
-		// The enumeration's sidelined items: issues it parked in a
-		// work-detail bucket and the drafts / exempt PRs it dropped. They
-		// are the open items the first tracker never showed.
-		for _, raw := range repo.NonActionableIssues {
-			if w, ok := repoWorkIssue(raw); ok {
-				if prNumbers[w.Number] || strings.Contains(w.URL, "/pull/") {
-					continue
-				}
+		// The repo's canonical open-items set (open_items.go): the same
+		// items, deduplicated the same way, that the Overview tile and its
+		// sidebar pill count, so the tracker's unfiltered total is the
+		// tile's issues + PRs by construction.
+		for _, it := range repoOpenItems(repo) {
+			switch {
+			case it.Kind == "issue" && !it.Sidelined:
+				addIssue(repoName, it.Issue, "", "")
+			case it.Kind == "pr" && !it.Sidelined:
+				addPR(repoName, it.PR.pr, it.PR.verdict, "", "")
+			case it.Kind == "issue":
+				// The enumeration's sidelined issues: parked in a work-detail
+				// bucket, the open items the first tracker never showed.
+				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
 					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext}, w.Bucket, w.Reason)
-			}
-		}
-		for _, raw := range repo.NonActionablePrs {
-			if w, ok := repoWorkPR(raw); ok {
+			default:
+				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
 					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL}, nil, w.Bucket, w.Reason)
 			}
 		}
 	}
+	resp.OpenIssues, resp.OpenPRs = stageTrackerOpenCounts(resp.Items)
 	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, func(i, j int) bool {
 		a, b := resp.Items[i], resp.Items[j]
@@ -1074,6 +1059,18 @@ func (s *Server) stageTrackerClaimantKind(repo string, number int) string {
 		return authorKindClanker
 	}
 	return ""
+}
+
+// stageTrackerOpenCounts counts the tracker's items by kind.
+func stageTrackerOpenCounts(items []StageTrackerItem) (issues, prs int) {
+	for _, it := range items {
+		if it.Kind == "pr" {
+			prs++
+		} else {
+			issues++
+		}
+	}
+	return issues, prs
 }
 
 func repoWorkIssue(raw any) (github.RepoWorkIssue, bool) {
