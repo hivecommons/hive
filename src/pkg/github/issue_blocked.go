@@ -248,15 +248,16 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 		}
 		res.Items++
 		prRepo, prNumber, ok := parseBlockedOnReason(t.reason)
-		if !ok {
-			if lookups >= blockedSweepCommentLookups {
-				continue
-			}
+		if !ok && lookups < blockedSweepCommentLookups {
 			lookups++
 			prRepo, prNumber, ok = client.blockedOnFromComments(ctx, t.repo, t.number)
-			if !ok {
-				continue
-			}
+		}
+		if !ok {
+			// No tracked PR (a blocked verdict from a contributor relay, or
+			// a maintainer's label, as on hivecommons/hive#13267): nothing
+			// to lift, but the issue still must not advertise itself.
+			stripBlockedHelpWanted(ctx, client, t, &res, logger)
+			continue
 		}
 		closed, err := client.pullRequestSettled(ctx, prRepo, prNumber)
 		if err != nil {
@@ -278,16 +279,23 @@ func ReconcileBlockedIssues(ctx context.Context, client *Client, result *Actiona
 			logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber))
 			continue
 		}
-		if issueHasLabel(t.labels, helpWantedLabel) {
-			if err := client.RemoveLabel(ctx, t.repo, t.number, helpWantedLabel); err != nil {
-				res.Errors++
-				logger.Warn("blocked sweep: help wanted not stripped", "repo", t.repo, "issue", t.number, "error", err)
-				continue
-			}
-			res.Stripped++
-		}
+		stripBlockedHelpWanted(ctx, client, t, &res, logger)
 	}
 	return res
+}
+
+// stripBlockedHelpWanted removes `help wanted` from a blocked issue that
+// wears it, counting the strip or the failure on res.
+func stripBlockedHelpWanted(ctx context.Context, client *Client, t blockedIssueTarget, res *BlockedIssueResult, logger *slog.Logger) {
+	if !issueHasLabel(t.labels, helpWantedLabel) {
+		return
+	}
+	if err := client.RemoveLabel(ctx, t.repo, t.number, helpWantedLabel); err != nil {
+		res.Errors++
+		logger.Warn("blocked sweep: help wanted not stripped", "repo", t.repo, "issue", t.number, "error", err)
+		return
+	}
+	res.Stripped++
 }
 
 // parseBlockedOnReason reads "blocked on owner/repo#N" back into its parts.

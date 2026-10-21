@@ -443,6 +443,10 @@
     .oc-version-chip.is-upgrading { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade { --oc-version-bee-lane: 56px; flex: 0 1 min(260px, 24vw); min-width: 0; max-width: min(260px, 24vw); border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); background: color-mix(in srgb, var(--accent) 11%, var(--panel)); overflow: visible; }
     .oc-navbar-upgrade[hidden] { display: none; }
+    /* `.nav-chip { display: inline-flex }` (components.css) outranks the UA
+       `[hidden] { display: none }`, so a hidden status chip otherwise paints
+       as an empty outlined pill (#oc-providers when every provider is usable). */
+    .oc-providers-chip[hidden] { display: none; }
     .oc-version-navbar-upgrade { --oc-version-bee-lane: 56px; position: relative; display: flex; align-items: center; min-width: 0; max-width: 100%; flex: 1 1 auto; overflow: visible; }
     .oc-version-navbar-upgrade .oc-version-hive { position: absolute; left: 0; top: 50%; transform: translateY(-50%); }
     .oc-version-navbar-upgrade .oc-version-honey-dot { width: 4px; height: 4px; }
@@ -6211,7 +6215,7 @@
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
-      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" hidden></span>
+      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -31548,7 +31552,8 @@ function burnAreaChart() {
       if (!bad.length) {
         el.hidden = true;
         el.textContent = '';
-        el.title = '';
+        el.title = 'AI providers: all usable';
+        el.setAttribute('aria-label', 'AI providers: all usable');
         return;
       }
       const severe = bad.some(p => p.auth_state === 'needs-login' || p.auth_state === 'store-inaccessible' ||
@@ -31558,6 +31563,7 @@ function burnAreaChart() {
         escapeHtml(bad.map(p => p.provider).join(', ')) + '</span>';
       el.title = bad.map(p => p.provider + ': auth ' + p.auth_state + ', availability ' + p.availability_state +
         (p.next_action ? ' — ' + p.next_action : '')).join('\n');
+      el.setAttribute('aria-label', 'AI providers needing attention: ' + bad.map(p => p.provider).join(', '));
       el.hidden = false;
     }
 

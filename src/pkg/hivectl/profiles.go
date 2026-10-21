@@ -645,6 +645,16 @@ func (s *ProfileStore) Save(set *ProfileSet) error {
 	return nil
 }
 
+// LoadForReview reads profiles or legacy configuration without writing either
+// file. Consent-gated onboarding must not migrate credentials before approval.
+func (s *ProfileStore) LoadForReview() (*ProfileSet, error) {
+	set, err := s.Load()
+	if err != nil || set != nil {
+		return set, err
+	}
+	return s.migrateFromEnv()
+}
+
 // LoadOrMigrate returns the profile set, migrating a legacy positional
 // contributor.env the first time it is called on a machine that has one.
 //

@@ -1,0 +1,1 @@
+- `hivectl hives preset adopt --onboard` reviews and enrolls missing Hives and preset hub snapshots in one confirmed flow, reusing existing credentials and retaining successful enrollments on partial failure.

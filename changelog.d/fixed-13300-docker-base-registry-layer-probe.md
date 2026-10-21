@@ -1,0 +1,1 @@
+- CI's base-image registry probe now verifies every linux/amd64 and linux/arm64 layer blob on mirror.gcr.io, not just the manifest list, and falls back to docker.io when a layer is missing — the pull-through mirror intermittently 404s a layer behind a manifest it still serves, which failed Docker builds across PRs with "could not fetch content descriptor ... not found". (#13300)

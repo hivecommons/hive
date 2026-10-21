@@ -22,6 +22,12 @@ type WebhookHealth struct {
 	LastEventAt     *time.Time `json:"last_event_at"`
 	Events1h        int        `json:"events_1h"`
 	Invalidations1h int        `json:"invalidations_1h"`
+	// TargetedRefreshes1h counts the single-item GitHub reads the dashboard
+	// made because a webhook named that PR or issue (stage tracker refresh);
+	// TrackerInvalidations1h counts the /api/stage-tracker cache drops those
+	// deliveries and refreshes caused.
+	TargetedRefreshes1h    int `json:"targeted_refreshes_1h"`
+	TrackerInvalidations1h int `json:"tracker_invalidations_1h"`
 }
 
 // WebhookEventResult reports what one delivered GitHub webhook did.
@@ -35,6 +41,12 @@ type WebhookEventResult struct {
 	DirtyIssues []int `json:"dirty_issues,omitempty"`
 	// ReopenedIssue is the issue an `issues` reopened event named, if any.
 	ReopenedIssue int `json:"reopened_issue,omitempty"`
+	// TouchedIssues lists the non-PR issues an `issues` or `issue_comment`
+	// event named, whatever the action: the stage tracker re-reads them.
+	TouchedIssues []int `json:"touched_issues,omitempty"`
+	// ConfiguredRepo is the repo as this hive configured it (the name the
+	// status snapshot uses), which may differ in case from Repo.
+	ConfiguredRepo string `json:"configured_repo,omitempty"`
 }
 
 // webhookTracker records webhook liveness per repository and the set of PRs a
@@ -51,6 +63,8 @@ type webhookTracker struct {
 	dirtyIssues   map[string]map[int]time.Time
 	events        []time.Time
 	invalidations []time.Time
+	refreshes     []time.Time
+	trackerDrops  []time.Time
 	wasHealthy    bool
 }
 
@@ -121,6 +135,33 @@ func (t *webhookTracker) recordInvalidations(n int) {
 	t.invalidations = pruneWebhookTimes(t.invalidations, now)
 	for i := 0; i < n; i++ {
 		t.invalidations = append(t.invalidations, now)
+	}
+}
+
+// RecordWebhookTargetedRefreshes counts n single-item GitHub reads made on
+// behalf of webhook deliveries (/api/status webhooks.targeted_refreshes_1h).
+func RecordWebhookTargetedRefreshes(n int) {
+	t := sharedWebhookTracker
+	t.recordStamped(&t.refreshes, n)
+}
+
+// RecordWebhookTrackerInvalidations counts n stage-tracker cache drops caused
+// by webhook deliveries (/api/status webhooks.tracker_invalidations_1h).
+func RecordWebhookTrackerInvalidations(n int) {
+	t := sharedWebhookTracker
+	t.recordStamped(&t.trackerDrops, n)
+}
+
+func (t *webhookTracker) recordStamped(dst *[]time.Time, n int) {
+	if n <= 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.now()
+	*dst = pruneWebhookTimes(*dst, now)
+	for i := 0; i < n; i++ {
+		*dst = append(*dst, now)
 	}
 }
 
@@ -260,8 +301,11 @@ func (t *webhookTracker) snapshot() WebhookHealth {
 	now := t.now()
 	t.events = pruneWebhookTimes(t.events, now)
 	t.invalidations = pruneWebhookTimes(t.invalidations, now)
+	t.refreshes = pruneWebhookTimes(t.refreshes, now)
+	t.trackerDrops = pruneWebhookTimes(t.trackerDrops, now)
 	healthy, latest := t.healthyLocked(now)
-	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations)}
+	out := WebhookHealth{Healthy: healthy, Events1h: len(t.events), Invalidations1h: len(t.invalidations),
+		TargetedRefreshes1h: len(t.refreshes), TrackerInvalidations1h: len(t.trackerDrops)}
 	if !latest.IsZero() {
 		at := latest.UTC()
 		out.LastEventAt = &at
@@ -375,8 +419,13 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 		return res, nil
 	}
 	res.KnownRepo = true
+	res.ConfiguredRepo = configured
 	aliases := webhookRepoAliases(configured, p.Repository.FullName)
 	sharedWebhookTracker.recordEvent(aliases)
+
+	if n, ok := webhookTouchedIssue(event, p); ok {
+		res.TouchedIssues = []int{n}
+	}
 
 	if n, ok := webhookIssueLabelTarget(event, p); ok {
 		sharedWebhookTracker.markIssueDirty(aliases, n)
@@ -436,6 +485,18 @@ func webhookIssueLabelTarget(event string, p webhookEventPayload) (int, bool) {
 		return p.Issue.Number, true
 	}
 	return 0, false
+}
+
+// webhookTouchedIssue returns the number of the non-PR issue an `issues` or
+// `issue_comment` event concerns, whatever the action.
+func webhookTouchedIssue(event string, p webhookEventPayload) (int, bool) {
+	if event != "issues" && event != "issue_comment" {
+		return 0, false
+	}
+	if p.Issue == nil || p.Issue.PullRequest != nil || p.Issue.Number <= 0 {
+		return 0, false
+	}
+	return p.Issue.Number, true
 }
 
 // webhookIssueReopenedTarget returns the issue number of an `issues` event

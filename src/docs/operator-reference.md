@@ -1047,9 +1047,28 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   cache and sends a `stage-tracker` event on `/api/events`, so the dashboard's
   activity monitor refetches at once instead of waiting out
   `dashboard.stage_tracker.cache_ttl_s` plus its poll.
+- **The activity monitor row moves without waiting for a cycle.** A delivery
+  that names a PR or issue this hive tracks (`pull_request*`,
+  `check_suite`/`check_run`, `status`, `push` to a PR branch, `issue_comment`,
+  `issues` — any action) also drops the `/api/stage-tracker` cache at once
+  and queues a **targeted re-read of just that item**: one `GET` of the PR
+  or issue, debounced by `dashboard.stage_tracker.webhook_refresh_debounce_ms`
+  (default `2000`) and coalesced per item, so a check fan-out of twenty
+  `check_run` deliveries costs one request. The re-read patches that row of
+  the status snapshot in place — labels, title, draft flag, last activity;
+  a closed or merged item leaves — then drops the tracker cache again and
+  sends the `stage-tracker` SSE nudge. No repository is re-enumerated: an
+  item the snapshot never listed (a PR opened a moment ago) waits for the
+  wake cycle above. The read goes through the paced REST transport and is
+  skipped outright while the API budget is `critical`; it refreshes the PR
+  detail cache, so the following cycle does not pay for it again.
+  `dashboard.stage_tracker.webhook_refresh: false` turns the re-read off
+  (deliveries then still invalidate caches and wake the loop).
 
 `/api/status` and `/api/gh-rate-limits` expose
-`webhooks: {healthy, last_event_at, events_1h, invalidations_1h}`;
+`webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
+targeted_refreshes_1h, tracker_invalidations_1h}` (the last two count the
+single-item re-reads and the tracker cache drops webhooks caused);
 `/api/status` adds `evalMode` (`webhook` | `poll`), `evalIntervalS`,
 `lastWakeReason`, `lastWakeAt` and `webhookWakes`;
 `graphql_pr_batch.webhook_skips` counts batch queries skipped because nothing
@@ -1061,6 +1080,10 @@ governor:
   eval_interval_webhook_s: 900
   webhook_wake_debounce_s: 10
   webhook_wake_min_gap_s: 30
+dashboard:
+  stage_tracker:
+    webhook_refresh: true          # re-read the PR/issue a delivery names
+    webhook_refresh_debounce_ms: 2000
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

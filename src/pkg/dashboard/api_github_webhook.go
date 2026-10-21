@@ -32,8 +32,10 @@ func (s *Server) registerGitHubWebhookRoutes() {
 // handleGitHubWebhook applies GitHub App webhook deliveries to the PR caches
 // (hivecommons/hive#11177): PR, review, check, status, PR-comment and push
 // events invalidate the matching cached PR state and mark it dirty for the
-// next eval cycle, and every delivery for a managed repo refreshes webhook
-// health. Deliveries for repositories this hive does not manage are ignored.
+// next eval cycle, queue a targeted re-read of the named PR or issue for the
+// activity monitor (webhook_tracker_refresh.go), and every delivery for a
+// managed repo refreshes webhook health. Deliveries for repositories this
+// hive does not manage are ignored.
 func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	event := r.Header.Get("X-GitHub-Event")
 	if event == "" {
@@ -70,6 +72,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{"status": "ok", "event": event, "repo": res.Repo, "invalidated": res.Invalidated}
+	if n := s.scheduleWebhookTrackerRefresh(res); n > 0 {
+		resp["tracker_refresh"] = n
+	}
 	if outcome := s.enqueueReviewEvent(event, body); outcome != "" {
 		resp["review_dispatch"] = outcome
 	}

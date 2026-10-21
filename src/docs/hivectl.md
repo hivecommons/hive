@@ -1124,6 +1124,69 @@ Notes:
 - **`remove` discards a token the hub cannot reprint**, so it asks you to type
   the hive name unless `--yes` is given.
 
+#### Staged contribution edits and Apply receipts
+
+`pkg/hivectl.NewStagedEdits` is the shared staging layer for the contribution
+tree surfaces. It freezes the loaded profile revision and the hub/repository
+discovery snapshots used by `BuildContributionTree`. Opening a session, editing
+its tree, reviewing `Diff()`, and discarding unsaved edits perform no writes or
+relay signals. The TUI and Web tree adapters must use this layer's diff and
+receipt; adding those controls to the surfaces is separate integration work.
+
+Repository selection, exclusions, following, and subscription enablement are
+separate operations:
+
+- **Select current / Deselect current** affects the entire named Hive or hub
+  branch, regardless of search filters. Selection retains saved targets absent
+  from discovery and the approved refresh-source mode. Deselect current preserves
+  follow policy and exclusions; **Select none and stop following** remains the distinct CLI
+  `--select none` operation. Inclusion requires complete discovery. Saved
+  selections remain individually editable during an outage.
+- **Exclude / Clear exclusion** changes only the personal veto. Clearing one
+  preserves saved personal inclusions and does not approve an unselected target.
+  Parent selection and enable/disable operations never erase exclusions.
+- **Hive on/off** retains credentials, saved membership, and following. **Hub
+  off** disables its shared subscriptions and turns off that hub's future-Hive
+  enrollment. Re-enabling the hub does not resume future enrollment implicitly.
+- **Review and restrict** explicitly converts a legacy unrestricted profile to
+  the complete discovered snapshot, with following off. Failed discovery leaves
+  it unchanged. Ordinary repository and branch-selection actions cannot convert
+  legacy scope; disabling a legacy subscription does not convert it either.
+
+`Diff()` names selected/deselected subscription–repository pairs and counts them
+once per subscription, even when the subscription appears under multiple hubs.
+It separately records exclusions, follow policies, enablement, legacy
+conversions, and the linked hub appearances. Selection changes masked by a veto
+remain visible as saved-membership changes. Exclusion effects list the remaining
+veto sources, every scoped subscription with affected saved membership
+(including disabled ones), and enabled legacy unrestricted profiles that can
+still receive the repository. This reflects the existing cross-profile exclusion
+union in `ProfileSet.RepositoryScopes()`; it does not change its semantics.
+
+Apply uses `ProfileStore.CommitExpecting` followed by `SignalRunningRelay` and
+returns three independent status fields, plus the saved scope generation:
+
+| Field | Meaning |
+| --- | --- |
+| `Saved` | `profiles-and-projection-saved`, `profiles-saved/projection-failed`, `not-saved`, or `unchanged` for an empty diff. |
+| `RelayReload` | `notified`, `pending-failed`, `no-managed-relay-found — saved for next start`, or `not-requested` when no complete save occurred. |
+| `Acknowledged` | `pending` after a complete save; otherwise `unknown`. Notification alone never proves adoption. |
+
+An empty diff writes and signals nothing. A projection failure reports that
+profiles were already saved, keeps the reviewed diff, and allows an explicit
+Apply retry against that saved revision. Further edits and Discard are refused
+until projection repair completes: Discard cannot undo a save that happened.
+A concurrent edit causes `ErrStaleRevision`, marks the diff stale, and requires
+reloading profiles and reviewing a new session; neither retry nor Discard can
+silently merge or approve the old edits. Successful persistence consumes the diff
+even when notification fails; the saved selection governs the next relay start.
+
+No managed PID record is not proof that no relay exists. Until matching relay
+status evidence is available, show **Change saved — relay adoption pending**;
+do not claim that leasing stopped or an in-flight task was cancelled. Diffs and
+receipts contain no registration tokens, provider/GitHub credentials, raw relay
+command output, or credential-bearing endpoint queries.
+
 #### Contribution presets
 
 A contribution preset is a plain, credential-free document a project publishes
@@ -1182,12 +1245,13 @@ nothing. It refuses:
 ```bash
 hivectl hives preset adopt https://bluefin.example/hive-preset.yml   # review, then confirm
 hivectl hives preset adopt ./preset.yml --hive acme --follow-new-repos --yes
+hivectl hives preset adopt ./preset.yml --onboard  # review destinations, then enroll missing Hives
 hivectl hives preset refresh                     # re-fetch recorded presets and review changes
 hivectl hives preset refresh --yes               # accept new recommendations
 hivectl hives preset refresh --accept-removals   # also drop what the preset no longer recommends
 ```
 
-`adopt` matches each preset Hive to an existing profile by normalized origin. It
+Without `--onboard`, `adopt` matches each preset Hive to an existing profile by normalized origin. It
 never registers or copies credentials: a Hive without a profile is reported as
 `not onboarded, skipped` (onboard it with `hives add` and adopt again). For each
 matched Hive it shows the review diff against your saved selection:
@@ -1206,7 +1270,40 @@ as `hives repos`. The reviewed revision is the publisher's `revision` plus a
 digest of the document. Re-adopting a revision with nothing new is a no-op and
 does not advance the scope generation. A recommendation of no repositories
 saves an explicit empty selection, which idles that Hive; it never becomes
-unrestricted. Hub entries are listed but not adopted.
+unrestricted. Without `--onboard`, hub entries are listed but not adopted.
+
+**One-flow enrollment.** `adopt --onboard` also works before any profiles exist.
+It fetches preset hubs' public `GET /api/hives` registries and snapshots the
+selected advertised Hives (`hives: all-current` or an explicit list). It does
+not recursively discover hubs. Duplicate origins share one profile and one
+registration; an explicit direct Hive recommendation takes precedence over a
+hub's whole-Hive recommendation. Existing credentials, disabled state, personal
+exclusions, backend/provider authentication and quota settings are preserved.
+
+Before registration, it shows the preset source, hub sources, effective Hive
+URLs, repository diff and follow policy. Confirmation is mandatory (`--yes`
+cannot be combined with `--onboard`); declining or reaching EOF without approval
+leaves both profile files and registration state unchanged, including legacy
+configuration. Browse/discovery requests may already have occurred. Missing
+profiles receive unique generated names and reuse `hives add`'s registration
+flow, using the current `gh` login or `--github-user LOGIN`. New profiles use
+WebSocket contributor URLs; saved credentials never go to the preset or hub
+publisher. Discovery refuses redirects and malformed/oversized hub responses.
+
+An unavailable Hive or one without repository-scope discovery is not enrolled.
+Registration failures are reported as pending and cause a nonzero exit; ready
+profiles and accepted scope are saved, so retrying the same command does not
+repeat successful registrations. Failed targets are not projected into the
+relay; rerun `adopt --onboard` to resolve them. An existing remote registration
+that returns no token still requires the supported `hives reissue` or import
+flow—onboarding never retrieves credentials from a directory hub.
+
+Hub membership is a current snapshot, not permission to enroll future Hives.
+`refresh` can review repository changes at already-adopted hub members, but
+never enrolls newly advertised Hives. Run `adopt --onboard` again to review those.
+`--follow-new-repos` affects only reviewed Hive repository selections, not hub
+membership. The command reloads an existing relay once after saving; it does
+not start another relay or launch contribution work itself.
 
 `refresh` re-fetches every recorded preset (or only `--hive <name>`) and diffs
 it against the saved selection:
@@ -1219,6 +1316,14 @@ it against the saved selection:
 - **Outages**: if the preset cannot be fetched or a Hive's discovery fails, that
   Hive is reported as `discovery unavailable`, its saved selection is left
   untouched, nothing is broadened, and the command exits non-zero.
+- **Hubs**: for every recorded preset that lists hubs, including presets adopted
+  without `--onboard`, `refresh` re-reads each hub's public `GET /api/hives`
+  registry to review repository changes at hub members you already have
+  profiles for. This is a network call to the hub with no credentials attached.
+  An unreachable or malformed hub registry is reported as
+  `hub discovery unavailable`; the refresh is then incomplete, the reviewed
+  revision does not advance, and the command exits non-zero. Hub members
+  without a profile are never enrolled by `refresh`.
 
 The reviewed revision only advances when every Hive of the preset was reviewed
 and nothing is left pending.
