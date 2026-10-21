@@ -266,3 +266,20 @@ func TestRunHookCopilotAndCodexFormats(t *testing.T) {
 		t.Errorf("codex: exit=%d stdout=%q", code, stdout)
 	}
 }
+
+func TestRunHookForwardsStopHookActive(t *testing.T) {
+	var gotReq Request
+	srv := fakeAdviseServer(t, Response{Severity: SeverityAside, Delivery: DeliveryNonInterrupting}, &gotReq)
+	defer srv.Close()
+
+	data, err := json.Marshal(claudeStopInput{SessionID: "sess-1", TranscriptPath: writeTranscript(t, "turn text"), StopHookActive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _ := runHook(t, []string{"--endpoint", srv.URL}, string(data)); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if !gotReq.StopHookActive {
+		t.Errorf("request = %+v, want StopHookActive", gotReq)
+	}
+}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // AdvisePort is the loopback port the turn-end hook reaches the advisor
@@ -55,6 +56,9 @@ type Request struct {
 	Turn string `json:"turn,omitempty"`
 	// Transcript is the turn's transcript tail.
 	Transcript string `json:"transcript"`
+	// StopHookActive is true when the backend is already continuing because
+	// of a Stop hook.
+	StopHookActive bool `json:"stop_hook_active,omitempty"`
 }
 
 // Response is the verdict the hook renders into its backend's dialect.
@@ -98,8 +102,9 @@ type Server struct {
 	// newEvaluator is a test seam; nil uses NewEvaluator.
 	newEvaluator func(Config) (*Evaluator, error)
 
-	mu    sync.Mutex
-	state map[string]*agentState
+	mu       sync.Mutex
+	state    map[string]*agentState
+	agentMus map[string]*sync.Mutex
 }
 
 // agentState tracks the per-agent counters the design bounds reviews with:
@@ -199,6 +204,13 @@ func (s *Server) review(ctx context.Context, agent string, rt Runtime, req Reque
 		return s.skip(agent, base, SkipInputBlocked)
 	}
 
+	if rt.DailyBudgetTokens > 0 {
+		// Serialize the check and the spend so overlapping reviews for one
+		// agent cannot all pass the budget check.
+		am := s.agentMu(agent)
+		am.Lock()
+		defer am.Unlock()
+	}
 	if rt.DailyBudgetTokens > 0 && s.spentToday(agent) >= rt.DailyBudgetTokens {
 		return s.skip(agent, base, SkipBudgetExhausted)
 	}
@@ -224,6 +236,8 @@ func (s *Server) review(ctx context.Context, agent string, rt Runtime, req Reque
 	v, usage, err := eval.Review(ctx, agent, transcript)
 	base.InputTokens = usage.InputTokens
 	base.OutputTokens = usage.OutputTokens
+	base.UsageEstimated = usage.Estimated
+	base.CostUSD, _ = tokens.EstimateCostUSD(rt.Model, int64(usage.InputTokens), int64(usage.OutputTokens), 0, 0)
 	s.recordSpend(agent, rt.Model, usage)
 	if err != nil {
 		reason := SkipUnreachable
@@ -249,6 +263,12 @@ func (s *Server) review(ctx context.Context, agent string, rt Runtime, req Reque
 	// unrelied-on above it.
 	downgraded := false
 	if v.Severity == SeverityBlocker && s.blockDelivered(agent, rt.MaxConsecutiveBlocks) {
+		v.Severity = SeverityAside
+		downgraded = true
+	}
+	// A concern holds the turn at most once in a row: when the backend is
+	// already continuing because of a hook, it is delivered as an aside.
+	if v.Severity == SeverityConcern && req.StopHookActive {
 		v.Severity = SeverityAside
 		downgraded = true
 	}
@@ -309,8 +329,25 @@ func (s *Server) stateFor(agent string) *agentState {
 	if st.day != day {
 		st.day = day
 		st.spentTokens = 0
+		if s.Store != nil {
+			st.spentTokens = s.Store.TokensOn(agent, day)
+		}
 	}
 	return st
+}
+
+func (s *Server) agentMu(agent string) *sync.Mutex {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.agentMus == nil {
+		s.agentMus = make(map[string]*sync.Mutex)
+	}
+	m, ok := s.agentMus[agent]
+	if !ok {
+		m = &sync.Mutex{}
+		s.agentMus[agent] = m
+	}
+	return m
 }
 
 func (s *Server) spentToday(agent string) int {

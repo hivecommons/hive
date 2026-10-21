@@ -51,11 +51,15 @@ type Record struct {
 	Interjected bool   `json:"interjected"`
 	Delivery    string `json:"delivery,omitempty"`
 	// Downgraded marks a blocker delivered as an aside because the
-	// consecutive-block limit was reached.
+	// consecutive-block limit was reached, or a concern delivered as an aside
+	// because the agent was already continuing because of a hook.
 	Downgraded   bool    `json:"downgraded,omitempty"`
 	InputTokens  int     `json:"input_tokens,omitempty"`
 	OutputTokens int     `json:"output_tokens,omitempty"`
 	CostUSD      float64 `json:"cost_usd,omitempty"`
+	// UsageEstimated marks token counts estimated from text length because
+	// the endpoint reported no usage.
+	UsageEstimated bool `json:"usage_estimated,omitempty"`
 	// Skipped carries the skip reason when the review did not happen.
 	Skipped string `json:"skipped,omitempty"`
 	Heeded  string `json:"heeded,omitempty"`
@@ -80,13 +84,16 @@ type Store struct {
 	mu     sync.Mutex
 	writer *lumberjack.Logger
 	ring   []Record
+	// tokensByDay holds per-agent token totals for the current and previous
+	// UTC day, rebuilt from disk on start so the daily budget survives restarts.
+	tokensByDay map[string]map[string]int
 }
 
 // NewStore opens (or creates) the record store at path. When the parent
 // directory does not exist the store is memory-only — the same degradation
 // the audit log applies on hosts without /data.
 func NewStore(path string) *Store {
-	s := &Store{ring: make([]Record, 0, recordRingCap)}
+	s := &Store{ring: make([]Record, 0, recordRingCap), tokensByDay: make(map[string]map[string]int)}
 	if path == "" {
 		return s
 	}
@@ -123,7 +130,39 @@ func (s *Store) loadFromDisk(path string) {
 			continue
 		}
 		s.appendToRing(rec)
+		s.addTokens(rec)
 	}
+}
+
+// addTokens adds a record's tokens to its UTC day's per-agent total and drops
+// days older than yesterday.
+func (s *Store) addTokens(rec Record) {
+	n := rec.InputTokens + rec.OutputTokens
+	if n == 0 || len(rec.Timestamp) < len("2006-01-02") {
+		return
+	}
+	day := rec.Timestamp[:len("2006-01-02")]
+	if ts, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
+		day = ts.UTC().Format("2006-01-02")
+	}
+	if s.tokensByDay[day] == nil {
+		s.tokensByDay[day] = make(map[string]int)
+	}
+	s.tokensByDay[day][rec.Agent] += n
+	oldest := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	for d := range s.tokensByDay {
+		if d < oldest {
+			delete(s.tokensByDay, d)
+		}
+	}
+}
+
+// TokensOn returns the tokens the agent's reviews used on the given UTC day
+// (YYYY-MM-DD). Only the current and previous day are retained.
+func (s *Store) TokensOn(agent, day string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tokensByDay[day][agent]
 }
 
 func (s *Store) appendToRing(rec Record) {
@@ -142,6 +181,7 @@ func (s *Store) Append(rec Record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.appendToRing(rec)
+	s.addTokens(rec)
 	if s.writer != nil {
 		if data, err := json.Marshal(rec); err == nil {
 			_, _ = s.writer.Write(append(data, '\n'))

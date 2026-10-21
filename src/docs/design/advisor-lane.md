@@ -166,6 +166,9 @@ Concerns and blockers are *interrupting* deliveries; an aside is *non-interrupti
 delivery mode is part of the record, so an operator can tell an advisor that talks a lot from one
 that interrupts a lot.
 
+A concern is delivered at most once in a row: if the agent is already continuing because of a
+hook (`stop_hook_active`), the concern is recorded as a downgraded aside.
+
 A blocker can, in principle, hold an agent turn after turn. Two bounds prevent that. Hive's own
 **consecutive-block limit** is operator-set, fleet-wide and per agent; once reached for an agent,
 further blockers are downgraded to asides and a record says so. And the limit must stay below

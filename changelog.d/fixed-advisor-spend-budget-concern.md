@@ -1,0 +1,1 @@
+- Advisor reviews now report a dollar cost, `daily_budget_tokens` survives restarts, applies when the endpoint reports no usage and holds under overlapping reviews, and a `concern` verdict no longer keeps an agent from ending its turn repeatedly.
