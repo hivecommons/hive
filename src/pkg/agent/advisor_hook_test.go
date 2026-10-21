@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/advisor"
 	"github.com/hivecommons/hive/pkg/config"
@@ -230,7 +231,7 @@ func codexTrustFake(t *testing.T, body string) (*Manager, *AgentProcess, *bytes.
 	}
 	rec := filepath.Join(root, "codex-stdin.log")
 	hooks := filepath.Join(codexHomePath("scout"), codexHooksFileName)
-	script := fmt.Sprintf("#!/bin/sh\nREC=%q\nHOOKS=%q\nprintf '%%s\\n' \"$*\" > \"$REC.args\"\nprintf '%%s\\n' \"$CODEX_HOME\" > \"$REC.home\"\n%s", rec, hooks, body)
+	script := fmt.Sprintf("#!/bin/sh\nREC=%q\nHOOKS=%q\nprintf '%%s\\n' \"$*\" > \"$REC.args\"\nprintf '%%s\\n' \"$CODEX_HOME\" > \"$REC.home\"\nenv > \"$REC.env\"\n%s", rec, hooks, body)
 	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +289,7 @@ func codexTrustMethods(msgs []map[string]any) []string {
 
 func TestCodexAdvisorHookTrustRPC(t *testing.T) {
 	t.Run("untrusted hook is trusted via config/batchWrite", func(t *testing.T) {
+		t.Setenv("HIVE_TRUST_CANARY", "canary-secret")
 		m, agent, logs, rec := codexTrustFake(t, codexTrustFakeServer("untrusted"))
 		m.provisionAdvisorHooks(agent, config.AdvisorCodexBackend)
 
@@ -300,6 +302,15 @@ func TestCodexAdvisorHookTrustRPC(t *testing.T) {
 		}
 		if home, _ := os.ReadFile(rec + ".home"); strings.TrimSpace(string(home)) != codexHomePath("scout") {
 			t.Errorf("CODEX_HOME = %q, want %q", home, codexHomePath("scout"))
+		}
+		// The app-server runs as the agent UID: the manager's environment
+		// (hub secrets) must not reach it; PATH must, so codex resolves.
+		env, _ := os.ReadFile(rec + ".env")
+		if strings.Contains(string(env), "HIVE_TRUST_CANARY=") || strings.Contains(string(env), "canary-secret") {
+			t.Errorf("manager env leaked into codex app-server: %s", env)
+		}
+		if !strings.Contains(string(env), "PATH=") {
+			t.Errorf("codex app-server env lacks PATH: %s", env)
 		}
 		msgs := codexTrustSent(t, rec)
 		want := []string{"initialize", "initialized", "hooks/list", "config/batchWrite"}
@@ -343,6 +354,44 @@ func TestCodexAdvisorHookTrustRPC(t *testing.T) {
 		}
 		if strings.Contains(logs.String(), "level=WARN") {
 			t.Errorf("unexpected warning: %s", logs.String())
+		}
+	})
+
+	t.Run("server request with a colliding id is skipped", func(t *testing.T) {
+		// A server->client request (has a method) that reuses id 1 must not
+		// be mistaken for the initialize response.
+		body := strings.Replace(codexTrustFakeServer("untrusted"),
+			`*'"method":"initialize"'*) printf '%s\n' '{"id":1,"result":{"userAgent":"fake"}}' ;;`,
+			`*'"method":"initialize"'*) printf '%s\n' '{"id":1,"method":"item/tool/requestUserInput","params":{}}' '{"id":1,"result":{"userAgent":"fake"}}' ;;`, 1)
+		if body == codexTrustFakeServer("untrusted") {
+			t.Fatal("fake server script did not match; update the test")
+		}
+		m, agent, logs, rec := codexTrustFake(t, body)
+		m.provisionAdvisorHooks(agent, config.AdvisorCodexBackend)
+
+		if got := codexTrustMethods(codexTrustSent(t, rec)); strings.Join(got, ",") != "initialize,initialized,hooks/list,config/batchWrite" {
+			t.Errorf("methods = %v", got)
+		}
+		if strings.Contains(logs.String(), "level=WARN") {
+			t.Errorf("unexpected warning: %s", logs.String())
+		}
+	})
+
+	t.Run("timeout is honoured when a descendant keeps stdout open", func(t *testing.T) {
+		orig := codexHookTrustTimeout
+		codexHookTrustTimeout = 300 * time.Millisecond
+		t.Cleanup(func() { codexHookTrustTimeout = orig })
+		// The fake never answers and leaves a background child holding the
+		// stdout pipe; killing codex alone would not close it.
+		m, agent, logs, _ := codexTrustFake(t, "sleep 20 &\nwhile IFS= read -r line; do :; done\n")
+		start := time.Now()
+		m.provisionAdvisorHooks(agent, config.AdvisorCodexBackend)
+		if took := time.Since(start); took > 5*time.Second {
+			t.Fatalf("trust exchange took %s; timeout not honoured", took)
+		}
+		out := logs.String()
+		if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "timed out after") {
+			t.Errorf("want a timeout warning, got: %s", out)
 		}
 	})
 

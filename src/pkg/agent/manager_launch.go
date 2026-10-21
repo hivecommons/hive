@@ -458,7 +458,15 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = agentDir
 	npmCache := cavemanNpmCachePath(agentDir, agent.UID)
-	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
+	// Under su-exec the installer is an agent-UID process: give it the minimal
+	// helper environment, not the manager's (which holds hub-only secrets).
+	// Without su-exec (UID 0, shared-home setups) it runs as hive itself and
+	// keeps the full environment as before.
+	if userSpec != "" {
+		cmd.Env = agentSubprocessEnv("HOME="+home, "npm_config_cache="+npmCache)
+	} else {
+		cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
 	}

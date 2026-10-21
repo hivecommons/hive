@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisor"
@@ -227,10 +228,11 @@ func (m *Manager) provisionAdvisorHooks(agent *AgentProcess, backend string) {
 	}
 }
 
+// codexHookTrustTimeout bounds the whole app-server spawn and JSON-RPC
+// exchange that trusts the advisor's Codex hook. A var so tests can shrink it.
+var codexHookTrustTimeout = 15 * time.Second
+
 const (
-	// codexHookTrustTimeout bounds the whole app-server spawn and JSON-RPC
-	// exchange that trusts the advisor's Codex hook.
-	codexHookTrustTimeout = 15 * time.Second
 	// codexHookTrustMaxLineBytes caps one scanned app-server protocol line.
 	codexHookTrustMaxLineBytes  = 1 << 20
 	codexHookTrustStatusTrusted = "trusted"
@@ -274,6 +276,12 @@ func (m *Manager) trustCodexAdvisorHook(userSpec, hooksPath string) error {
 
 	cmd := exec.CommandContext(ctx, "su-exec", userSpec, "env", "CODEX_HOME="+home,
 		binary, "app-server", "--listen", "stdio://")
+	// Never the manager's own environment: it carries hub-only secrets
+	// (HIVE_GITHUB_TOKEN, HIVE_HUB_SECRET, ...) and this process runs as the
+	// agent UID, readable via /proc/<pid>/environ and inherited by anything
+	// Codex spawns from the agent-writable config.toml. su-exec sets HOME and
+	// USER; CODEX_HOME rides the env(1) argv above.
+	cmd.Env = agentSubprocessEnv()
 	cmd.WaitDelay = time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -286,19 +294,63 @@ func (m *Manager) trustCodexAdvisorHook(userSpec, hooksPath string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("spawn codex app-server: %w", err)
 	}
-	defer func() {
-		_ = stdin.Close()
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
+	// reap kills the app-server and closes hive's ends of both pipes. The
+	// stdout close is what unblocks a reader still parked in Scan: cmd.Wait
+	// closes it once the process is gone, or after WaitDelay when a Codex
+	// descendant inherited the write end and would otherwise hold it open.
+	var reapOnce sync.Once
+	reap := func() {
+		reapOnce.Do(func() {
+			_ = stdin.Close()
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			_ = stdout.Close()
+		})
+	}
+	defer reap()
 
-	if err := codexHookTrustExchange(stdin, stdout, hooksPath); err != nil {
-		if ctx.Err() != nil {
+	done := make(chan error, 1)
+	go func() { done <- codexHookTrustExchange(stdin, stdout, hooksPath) }()
+	select {
+	case err := <-done:
+		if err != nil && ctx.Err() != nil {
 			return fmt.Errorf("codex app-server timed out after %s: %w", codexHookTrustTimeout, err)
 		}
 		return err
+	case <-ctx.Done():
+		// The scanner read is not context-aware; tear the process and pipes
+		// down so the exchange goroutine returns within WaitDelay rather than
+		// outliving the timeout behind a descendant that kept stdout.
+		reap()
+		err := <-done
+		if err == nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf("codex app-server timed out after %s: %w", codexHookTrustTimeout, err)
 	}
-	return nil
+}
+
+// agentSubprocessEnv is the minimal environment for a short-lived helper hive
+// runs as the agent user: PATH so the backend binary and its tools resolve,
+// the egress/TLS knobs a network-using helper needs, and nothing from the
+// manager's own environment that an agent-UID process must not see. extra
+// entries are appended verbatim.
+func agentSubprocessEnv(extra ...string) []string {
+	env := make([]string, 0, len(agentSubprocessEnvPassthrough)+len(extra))
+	for _, key := range agentSubprocessEnvPassthrough {
+		if v, ok := os.LookupEnv(key); ok {
+			env = append(env, key+"="+v)
+		}
+	}
+	return append(env, extra...)
+}
+
+// agentSubprocessEnvPassthrough lists the manager variables agentSubprocessEnv
+// forwards. Deliberately no HIVE_*, token, or secret variable.
+var agentSubprocessEnvPassthrough = []string{
+	"PATH", "TERM", "LANG", "LC_ALL", "TZ",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
 }
 
 // codexHookTrustExchange runs the JSON-RPC sequence over the app-server's
@@ -411,7 +463,8 @@ func writeCodexHookTrustRPC(in io.Writer, msg map[string]any) error {
 }
 
 // awaitCodexHookTrustResponse reads until the response to request id arrives,
-// skipping server notifications, and returns its result.
+// skipping server notifications and server-initiated requests, and returns
+// its result.
 func awaitCodexHookTrustResponse(sc *bufio.Scanner, id int64, method string) (json.RawMessage, error) {
 	for sc.Scan() {
 		line := sc.Bytes()
@@ -422,7 +475,9 @@ func awaitCodexHookTrustResponse(sc *bufio.Scanner, id int64, method string) (js
 		if err := json.Unmarshal(line, &msg); err != nil {
 			return nil, fmt.Errorf("%s: malformed app-server line: %w", method, err)
 		}
-		if msg.ID == nil || *msg.ID != id {
+		// A server->client request carries a method and its own id space;
+		// skip it even when its id collides with ours.
+		if msg.ID == nil || *msg.ID != id || msg.Method != "" {
 			continue
 		}
 		if len(msg.Error) != 0 {
