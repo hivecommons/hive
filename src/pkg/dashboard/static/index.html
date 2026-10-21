@@ -17888,18 +17888,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<span class="repo-pill-actions">${filled.map(repoPillActionSlot).join('')}</span>`;
     }
 
-    // repoCardLayoutWidth is the width an UNSIZED card gets from the grid's
-    // --repo-cols rule (a quarter of the row at desktop widths). The title
-    // budget is scaled from it, so capping the row at four cards actually
-    // buys longer titles instead of the same 50 characters in more space.
-    function repoCardLayoutWidth(grid) {
-      if (!grid || !grid.clientWidth) return REPO_CARD_DEFAULT_W;
-      const cs = getComputedStyle(grid);
-      const cols = parseInt(cs.getPropertyValue('--repo-cols'), 10) || 4;
-      const gap = parseInt(cs.getPropertyValue('--repo-gap'), 10) || 8;
-      return Math.max(REPO_CARD_DEFAULT_W, Math.floor((grid.clientWidth - (cols - 1) * gap) / cols));
-    }
-
     function repoOrderName(full) { return String(full || '').trim().toLowerCase(); }
     function repoOrderDefault(repos) { return (repos || []).map(r => repoOrderName(r && (r.full || r.name))).filter(Boolean); }
     function repoOrderRead() {
@@ -20593,7 +20581,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const showPlan = planningAllowed();
       const showDesign = showPlan && dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
       const planLinks = planIssueLinks();
-      const layoutW = repoCardLayoutWidth(el);
       const status = window._lastStatus || {};
       const pillFilter = repoPillFilterState();
       const pillFilterIsActive = repoPillFilterActive(pillFilter);

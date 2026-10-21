@@ -221,6 +221,20 @@ assert.equal(seen.size, headerTotal);
 	}
 }
 
+func TestRepoCardPillColumnsScrollLongLists(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		".repo-pill-col { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; container: repo-pill-column / inline-size; overflow-x: hidden; overflow-y: auto;",
+		"max-height: min(42rem, 62vh);",
+		"scrollbar-gutter: stable;",
+		"overscroll-behavior: contain;",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("repo-card scroll CSS missing %q", want)
+		}
+	}
+}
+
 func TestConfigEndpointExposesIssueBandTaxonomy(t *testing.T) {
 	s := covApiServer(t)
 	s.deps.Config.Dashboard.IssueBands.WaitingLabels = []string{"blocked", "needs-decision"}

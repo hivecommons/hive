@@ -11,7 +11,22 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// Repository card widths persist per hive and are clamped to usable bounds.
+// hivecommons/hive#8000: every Repositories card was exactly as wide as every
+// other one, because `.repo-grid` was a CSS grid with
+// `repeat(auto-fit, minmax(240px, 1fr))` and grid sizes TRACKS, not items. On
+// a hive watching six repos with ~30 pills on a card, a pill column read
+// `#192 Pa…`, `FIX #1109 fix…`, `TESTS #106…`, and the only way to learn what
+// one was was to hover it, one at a time.
+//
+// The fix gives each card a drag handle on its right edge, stores the width
+// per repo in localStorage and reapplies it on every repaint (the grid HTML is
+// rebuilt each governor cycle, so a width set once on the node would not
+// survive the minute). Pill titles now wrap inside the card instead of being
+// clipped to a character budget, so the width alone decides how much of a
+// title is readable.
+//
+// These tests pin the layout switch and the markup; TestRepoCardWidthStore
+// executes the width rules themselves.
 
 // repoCardConstLine returns the whole `const NAME = ...;` line from
 // index.html, so the node-executed tests below run against the real constants
@@ -28,6 +43,104 @@ func repoCardConstLine(t *testing.T, html, name string) string {
 		t.Fatalf("unterminated %s declaration in index.html", name)
 	}
 	return strings.TrimSpace(html[start : start+end])
+}
+
+// The container is a flex-wrap layout, not a grid: per-card width is the whole
+// point and a grid cannot express it.
+func TestRepoGridSizesItemsNotTracks(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".repo-grid { --repo-cols: 4; --repo-gap: var(--sp-4); display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }",
+		// The default basis is a quarter of the row: at most four cards
+		// across, so pill rows are readable instead of squashed six-wide.
+		"flex: 1 1 calc((100% - (var(--repo-cols) - 1) * var(--repo-gap)) / var(--repo-cols));",
+		"@media (max-width: 1400px) { .repo-grid { --repo-cols: 3; } }",
+		"@media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }",
+		// A sized card keeps its width instead of sharing the row's slack.
+		".repo-card.repo-card-sized { flex-grow: 0; }",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+	// The track-sizing rules are gone. Either one left behind would pin every
+	// card to the same width again and the drag would do nothing visible.
+	for _, gone := range []string{
+		".repo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--sp-4); }",
+		"body.light-mode .repo-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }",
+		"flex: 1 1 240px;",
+		"body.light-mode .repo-card { flex-basis: 200px; }",
+	} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still sizes repo cards by grid track: %q", gone)
+		}
+	}
+}
+
+func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		// hivecommons/hive#10968: the header wraps instead of letting the
+		// auto-merge toggle and swarm chip overlap a long repo name.
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
+		".repo-name a { flex: 1 1 12rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; white-space: normal; overflow-wrap: anywhere; }",
+		".repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }",
+		`<div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+
+	for _, gone := range []string{
+		"display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto;",
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: grid;",
+		".repo-name a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+	} {
+		if strings.Contains(html, gone) {
+			t.Errorf("repo card name can still be centred/clipped by the old header layout: %q", gone)
+		}
+	}
+}
+
+// The handle: on every card, focusable, reporting the width it controls, and
+// hidden on the phone layout where there is no width to trade.
+func TestRepoCardResizeHandleMarkup(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`<div class="repo-card-resize" role="separator" aria-orientation="vertical" tabindex="0" data-repo="${esc(cardRepo)}"`,
+		`aria-valuemin="${REPO_CARD_MIN_W}" aria-valuemax="${REPO_CARD_MAX_W}" aria-valuenow="${cardW || REPO_CARD_DEFAULT_W}"`,
+		// The handle is rendered inside the card it resizes.
+		"${resizeHandle}",
+		"cursor: col-resize; touch-action: none;",
+		// Keyboard focus has to be visible for a focusable control.
+		".repo-card-resize:focus-visible {",
+		// Hidden in the phone layout, like the sidebar splitter next door.
+		".repo-card-resize { display: none; }",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+	// The width reaches the card as an inline flex-basis emitted WITH the
+	// card HTML, so the governor's repaint reapplies it from the stored map
+	// instead of throwing it away.
+	if !strings.Contains(html, "<div class=\"repo-card${cardW ? ' repo-card-sized' : ''}\" data-repo-order-key=\"${esc(cardRepoKey)}\"${cardW ? ` style=\"flex-basis:${cardW}px\"` : ''}>") {
+		t.Error("the repo card does not carry its stored width in the rendered HTML")
+	}
+	if !strings.Contains(html, "const cardW = repoCardWidth(cardRepo);") {
+		t.Error("renderRepos does not read the stored width for the card it is drawing")
+	}
+	// Titles wrap to the card width; a fixed character clip would make a
+	// wider card gain nothing, which is the bug this issue is about.
+	if strings.Contains(html, "const MAX_PILL_TITLE_LEN = 50;") {
+		t.Error("the fixed 50-character pill title clip is still in place")
+	}
+	// A repaint landing mid-drag would replace the node under the pointer and
+	// drop the pointer capture with it.
+	if !strings.Contains(html, "      if (_repoResizeDrag || _repoOrderDrag) return;") {
+		t.Error("renderRepos does not hold its repaint while a card is being dragged")
+	}
 }
 
 // Drag, double-click reset, reset-all and the keyboard nudge are all wired,
