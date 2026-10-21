@@ -74,6 +74,7 @@ func rescanRepos(
 	// rescan produces the same red-held-PR view (hivecommons/hive#7438).
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
 	ghClient.EnrichReviewSignals(ctx, actionable.PRs.StaleDrafts)
+	ghClient.EnrichWorkPRLinkedIssues(ctx, actionable.WorkDetailsByRepo)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
 	lastActionable.Store(actionable)

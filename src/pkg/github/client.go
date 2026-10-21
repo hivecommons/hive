@@ -2231,6 +2231,28 @@ func (c *Client) EnrichReviewSignals(ctx context.Context, prs []PullRequest) {
 	}
 }
 
+// EnrichWorkPRLinkedIssues stamps GitHub's closing-issue references onto the
+// sidelined PRs (drafts, exempt-labelled) in details, so the activity
+// monitor can pair them with the issue they close just as it does for
+// actionable PRs (hivecommons/hive#13421). Same cost model as
+// EnrichReviewSignals: at most one GraphQL query per repository, none when
+// the PR batch already answered it, and no per-PR REST calls. The slices are
+// updated in place.
+func (c *Client) EnrichWorkPRLinkedIssues(ctx context.Context, details map[string]RepoWorkDetails) {
+	if c == nil {
+		return
+	}
+	facts := newProtectionCollector(c)
+	for repo, d := range details {
+		for i := range d.PRs {
+			pr := &d.PRs[i]
+			if rs, ok := facts.reviewState(ctx, repo, pr.Number); ok {
+				pr.LinkedIssues = rs.linkedIssues
+			}
+		}
+	}
+}
+
 // enrichPRCI is EnrichCIStatus's per-PR body. It returns the names of every
 // check run observed on the PR's head SHA — meta checks included, because a
 // required status-check context may well be one of them — or nil when no
@@ -4033,6 +4055,10 @@ type RepoWorkPR struct {
 	URL            string    `json:"url,omitempty"`
 	Bucket         string    `json:"bucket"`
 	Reason         string    `json:"reason,omitempty"`
+	// LinkedIssues mirrors PullRequest.LinkedIssues so a sidelined PR can
+	// still stand under the issue its `Fixes #N` names in the activity
+	// monitor. Stamped by EnrichWorkPRLinkedIssues, not by the enumeration.
+	LinkedIssues []PRLinkedIssue `json:"linked_issues,omitempty"`
 }
 
 // Work-detail buckets for sidelined PRs (RepoPRBreakdown field names).

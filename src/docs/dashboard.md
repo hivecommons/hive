@@ -491,7 +491,11 @@ decision the merge-block wording depends on is never lost to a display
 field. Stale drafts, which `EnrichCIStatus` never touches, receive these
 signals through `EnrichReviewSignals` — the same per-repository query and no
 per-PR mergeability or check-run fetch, since a draft is not a merge
-candidate.
+candidate. The sidelined PRs the enumeration parks in a work-detail bucket
+(drafts, exempt labels — the activity monitor's draft and filtered rows)
+get only `linked_issues`, through `EnrichWorkPRLinkedIssues`, so a draft
+whose body says `Fixes #N` still stands under issue `#N` in the tracker; at
+most one per-repository query, and none when the PR batch already answered.
 
 
 ### Settings → Labels → Reporter trust: clanker-requested
