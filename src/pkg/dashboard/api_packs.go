@@ -207,7 +207,10 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			packBackend, backendReplaced := s.packAgentBackend(pa)
 			onForeignGateway := s.agentOnForeignGatewayBackend(existing.Backend, packBackend)
 			packModel := pa.Model
-			if backendReplaced || onForeignGateway {
+			// A kept backend other than the pack's (a hand-set CLI such as
+			// codex) does not understand the pack's model id either.
+			onOtherBackend := existing.Backend != "" && !strings.EqualFold(existing.Backend, packBackend)
+			if backendReplaced || onForeignGateway || onOtherBackend {
 				packModel = ""
 			}
 			if packModel != "" && existing.Model != packModel && !existing.ModelIsOperatorOwned() {
