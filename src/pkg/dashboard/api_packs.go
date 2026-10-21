@@ -286,24 +286,28 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice. The spoke's backends
-			// allow/deny list (#11310) replaces a denied pack backend, and moves
-			// a stamped pack-owned agent off a backend that has since been denied; an
-			// unstamped (hand-set) one is kept and warned about (#13221).
-			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
+			// allow/deny list (#11310) replaces a denied pack backend and moves
+			// any agent — stamped pack-owned or unstamped (hand-set) — off a
+			// backend that has since been denied; an unstamped allowed backend
+			// that differs from the pack is kept and stamped operator (#13221).
+			//
+			// moveToPackBackend is the shared fill/deny path: put the agent on
+			// the pack backend as pack-owned and drop a non-operator model so
+			// the new backend uses its own default (unless the caller says the
+			// pack model still applies, i.e. the pack backend itself was kept).
+			moveToPackBackend := func(clearModel bool) {
 				existing.Backend = packBackend
 				existing.BackendOwner = config.FieldOwnerPack
-				if backendReplaced && !existing.ModelIsOperatorOwned() {
+				if clearModel && !existing.ModelIsOperatorOwned() {
 					existing.Model = ""
 				}
 				changed = true
+			}
+			if existing.Backend == "" && packBackend != "" && !existing.BackendIsOperatorOwned() {
+				moveToPackBackend(backendReplaced)
 			} else if existing.Backend != "" && existing.BackendOwner != "" && !existing.BackendIsOperatorOwned() && !s.deps.Config.BackendAllowed(existing.Backend) {
 				s.logger.Info("moving pack-owned agent off backend denied by spoke backends config", "agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
-				existing.Backend = packBackend
-				existing.BackendOwner = config.FieldOwnerPack
-				if !existing.ModelIsOperatorOwned() {
-					existing.Model = ""
-				}
-				changed = true
+				moveToPackBackend(true)
 			} else if existing.Backend != "" && existing.BackendOwner == "" {
 				// A backend with no owner stamp predates ownership tracking or
 				// was written by hand in hive.yaml. A denied one is moved to the
@@ -316,12 +320,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 				case !s.deps.Config.BackendAllowed(existing.Backend):
 					s.logger.Warn("moving hand-set agent backend off backend denied by spoke backends config",
 						"agent", pa.Name, "backend", existing.Backend, "replacement", packBackend)
-					existing.Backend = packBackend
-					existing.BackendOwner = config.FieldOwnerPack
-					if !existing.ModelIsOperatorOwned() {
-						existing.Model = ""
-					}
-					changed = true
+					moveToPackBackend(true)
 				case strings.EqualFold(existing.Backend, packBackend) || strings.EqualFold(existing.Backend, pa.Backend):
 					existing.BackendOwner = config.FieldOwnerPack
 				default:

@@ -38,13 +38,14 @@ rotations.
 | 3 | `dashboard-overlay` | `/data/hive.yaml.dashboard` | **spoke (`Config.Save`) and hub (heartbeat)** |
 | 4 (loses) | `configmap-seed` | ConfigMap `hive-config`, key `hive.yaml` | **nobody** |
 
-Three documented exceptions where a lower layer affects the result:
+Four documented exceptions where a lower layer affects the result:
 
 | # | Field | Behaviour |
 |---|---|---|
 | A | `hub.is_public` | The seed's value is applied over the overlay's. The **only** unconditional seed-wins assignment in the merge. |
 | B | `acmm_level` | The seed is a **fallback only**, used when the overlay has no level at all (issue #1856). |
 | C | `github.*` | The seed wins only as an **anti-wipe ratchet**: when the seed holds real App credentials and the overlay's look like a placeholder. A safety catch, not precedence. |
+| D | agent `backend` | A base-layer `backend:` with **no** `backend_owner:` line beats a `backend_owner: pack` value in `agent-overlay` or `dashboard-overlay` when the two differ and the base backend passes the Governor allow/deny check (issue #13221). It is treated as a hand edit: the merged entry keeps an empty owner so the next pack apply stamps it `operator` instead of reconciling it. A base entry that carries any `backend_owner:` line (`pack`, or `operator` once `Config.Save` has written the stamp back) gets no exception — delete the owner line along with the `backend:` edit. |
 
 Everything else: the highest layer that sets the field wins.
 
@@ -97,7 +98,7 @@ rational response to having one road, not duplicated effort.
 | `github.api_url` / `base_url` | spoke; hub pushes via forge latch | `handleSwitchForge` |
 | `github_host` | spoke reports, hub adopts | `handleSwitchForge` |
 | agent list | union of seed + overlay + agent-configs | see caveat below |
-| agent `model` / `backend` | dashboard-overlay | dashboard (ownership-guarded, #2340) |
+| agent `model` / `backend` | dashboard-overlay | dashboard (ownership-guarded, #2340); `backend` only: an unowned base `backend:` wins over a pack-owned overlay value — exception D |
 | governor thresholds | dashboard-overlay | dashboard |
 | `governor.labels.stage.engine.mode` (`off` / `shadow` / `enforce`, default `shadow`) | dashboard-overlay | Settings → Labels, or `hive.yaml`; the sweeps re-read it before each pass, no restart |
 | `hub.is_public` | **configmap-seed** | hub (the seed is not writable) |
