@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/hivectl"
 )
 
@@ -128,13 +129,9 @@ func TestWatchContainerLogFollowerUsesRecordedRuntimeAndReaps(t *testing.T) {
 			tail := &watchTail{}
 			stop := followWatchLog(context.Background(), hivectl.ContributorRelay{ContainerRuntime: runtime, ContainerName: "hive-contributor-test"}, tail)
 			defer stop()
-			deadline := time.Now().Add(3 * time.Second)
-			for !strings.Contains(tail.text(), "relay update") && time.Now().Before(deadline) {
-				time.Sleep(time.Millisecond)
-			}
-			if !strings.Contains(tail.text(), "relay update") {
-				t.Fatal("container log was not followed")
-			}
+			testutil.Eventually(t, 3*time.Second, func() bool {
+				return strings.Contains(tail.text(), "relay update")
+			}, "container log was not followed")
 			args, err := os.ReadFile(argsFile)
 			if err != nil {
 				t.Fatal(err)
@@ -173,17 +170,10 @@ func TestWatchSourceMissingRecordAndShutdown(t *testing.T) {
 	done := make(chan struct{})
 	store := hivectl.NewProfileStore(t.TempDir())
 	go func() { defer close(done); source.run(ctx, store) }()
-	deadline := time.After(3 * time.Second)
-	for !strings.Contains(source.get().session, "No contributor running") {
-		select {
-		case <-deadline:
-			cancel()
-			<-done
-			t.Fatal("missing record not displayed")
-		default:
-			time.Sleep(time.Millisecond)
-		}
-	}
+	t.Cleanup(func() { cancel(); <-done })
+	testutil.Eventually(t, 3*time.Second, func() bool {
+		return strings.Contains(source.get().session, "No contributor running")
+	}, "missing record not displayed")
 	cancel()
 	select {
 	case <-done:
