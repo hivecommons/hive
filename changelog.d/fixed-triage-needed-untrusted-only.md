@@ -1,0 +1,1 @@
+- Stage engine: `stage/015-triage-needed` is now derived only for issues the reporter-trust gate is holding (`needs-triage` label or the `reporter_triage` bucket); issues filed by hive agents or trusted humans are triaged by construction and stay `010-actionable` instead of being demoted to 015.

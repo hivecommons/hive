@@ -205,6 +205,17 @@ jobs:
           REASON: ${{ env.EMERGENCY_EXCEPTION_REASON }}
           DIGEST: ${{ steps.native.outputs.candidate_digest }}
           SHA: ${{ steps.native.outputs.candidate_sha }}
+          SOAK_HOURS: ${{ env.SOAK_HOURS }}
         run: |
           set -euo pipefail
-          unset GITHUB_TOKEN && gh issue comment "$FOLLOWUP" --body "Emergency stable promotion exception used for ${SHA} (${DIGEST}): ${REASON}"
+          unset GITHUB_TOKEN
+          gh issue comment "$FOLLOWUP" --body "Emergency stable promotion exception used for ${SHA} (${DIGEST}): ${REASON}"
+          # Stamp the follow-up as an ops-tracking issue with the soak
+          # deadline so the hive's good-first-issue picker and contributor
+          # lane leave it to the maintainer and the hive knows when the
+          # checklist becomes checkable (hivecommons/hive#13267).
+          recheck_at=$(date -u -d "+${SOAK_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
+          body=$(gh issue view "$FOLLOWUP" --json body --jq .body)
+          if ! grep -q 'hive:ops-tracking' <<<"$body"; then
+            printf '%s\n\n<!-- hive:ops-tracking -->\n<!-- hive:recheck-after %s -->\n' "$body" "$recheck_at" | gh issue edit "$FOLLOWUP" --body-file -
+          fi

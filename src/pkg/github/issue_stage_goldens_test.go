@@ -353,8 +353,8 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 		}
 	}
 	add("triage.json", issueStageGoldenCase{
-		Name:  "triage/13262-hive-filed-review-backlog-derives-015",
-		Note:  "hivecommons/hive#13262 (a hive-filed 'Review backlog (security)' issue) sat at 010 with no maintainer having looked at it; it is 015-triage-needed.",
+		Name:  "triage/13262-hive-filed-review-backlog-stays-010",
+		Note:  "hivecommons/hive#13262 (a hive-filed 'Review backlog (security)' issue): hive agents do not need triage, so who filed it never derives 015; it is 010.",
 		Input: issueStageGoldenInput{Repo: repo, Number: 13262, Labels: []string{"kind/review-backlog", stagelabels.Actionable.Label()}, AuthorKind: string(authorkind.Hive)},
 	})
 	add("triage.json", issueStageGoldenCase{

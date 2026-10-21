@@ -815,8 +815,12 @@ hivectl hives enable acme                                     # resume without r
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
-hivectl hives hub add commons --url https://hub.example.org   # track a hub (discovery only)
-hivectl hives hub show commons                                # its Hives, onboarded or not
+hivectl hives hub add commons --url https://hub.example.org   # track a hub
+hivectl hives hub show commons                                # advertised Hives, onboarded or not
+hivectl hives hub adopt commons --follow current --yes         # review and enroll its Hives
+hivectl hives hub follow commons --mode current-and-future-repos # future enrollment policy only
+hivectl hives hub refresh commons --yes                        # refresh additions/removals
+hivectl hives hub remove commons                              # keep enrolled Hive profiles
 ```
 
 `hives` is the one command group that does **not** talk to a dashboard API:
@@ -852,6 +856,7 @@ hubs:                          # optional: tracked hubs, no credentials
     - name: commons
       url: https://hub.example.org
       follow: "off"            # off | current | current-and-future-repos
+      reviewed: []              # normalized Hive origins from the last review
 ```
 
 Repository identities are lower-case `<forge>/<host>/<owner>/<name>` (forge:
@@ -863,6 +868,28 @@ empty selection means **no repositories**, not unrestricted. Future following
 is off by default; recording it does not itself discover or accept new members.
 Selection and review history stay in the local store, not profile bundles or
 printed profile exports. Schema version remains 1.
+
+`hivectl hives hub show NAME` is read-only discovery from `GET HUB/api/hives`.
+`hub adopt NAME` reviews every advertised Hive, reuses matching profiles by
+normalized HTTP origin, and registers only new Hives after confirmation. Use
+`--hive URL` more than once to narrow the review; a narrowed adoption merges
+the selected Hives into `hubs[].reviewed` and keeps every Hive reviewed by an
+earlier run, so a later `hub refresh` never re-enrolls a Hive you reviewed and
+then removed with `hives remove`. `--follow off` leaves a new
+profile without a repository selection; `--follow current` snapshots
+`GET /api/contribute/repositories`; `--follow current-and-future-repos` also
+records permission to follow future repository additions. Without `--yes`,
+enrollment requires a terminal and an explicit `y`/`yes`; EOF, a pipe, or any
+other answer saves nothing and makes no registration request.
+
+`hub follow NAME --mode MODE` changes only the saved policy. It never changes
+current repository membership. `hub refresh [NAME]` compares the current
+advertisement with `hubs[].reviewed`, reports newly advertised and
+`no longer advertised` Hives, and retains removed profiles. Follow policies
+other than `off` enroll new Hives automatically; `off` requires confirmation.
+Successful registrations are committed even when another Hive is unavailable
+or its registration fails, so a later adopt or refresh retries only what is
+still missing.
 
 Discovery/onboarding helpers resolve Hive identity by the HTTP origin of its
 hub URL: `wss` maps to `https`, `ws` to `http`, hosts are lower-case, default

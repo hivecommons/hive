@@ -208,7 +208,7 @@ referenced it) a lone `stage/050-review-pending`
 | Label | Applies to | Meaning | Expected dwell (then `stage/stalled`) |
 |---|---|---|---|
 | `stage/010-actionable` | issue | triaged; eligible for the hive to pick up. A human-filed issue without `needs-triage` counts as triaged by its trusted reporter | 24h |
-| `stage/015-triage-needed` | issue | actionable, but no maintainer has looked at it yet. Derived instead of 010 when the issue is **untriaged**: it carries the reporter-trust awaiting label `needs-triage` (`reporter_trust.awaiting_label` default, including issues the #9665 gate holds in the `reporter_triage` bucket), **or** the hive / an agent filed it (the author is not a human: the App bot, a `[bot]` login or a hive identity) and it carries none of the "a maintainer looked at it" labels — `triage/accepted` (`reporter_trust.untrusted_require_labels` default), `hive/verified-open` or `approved-direction`. A **display and tracking state, not a gate**: the scanner and relay claim a 015 issue exactly as a 010 one (the reporter-trust gate withholds `needs-triage` issues separately, and that is unchanged), and 015 lights the activity monitor's *Actionable* column as "Triage needed". `015 → 010` (a maintainer triages) is never a regression; `010 → 015` is a reclassification. The Open column is untouched: an issue with no stage stays "Open" | 24h |
+| `stage/015-triage-needed` | issue | actionable, but no maintainer has looked at it yet. Derived instead of 010 only when the reporter-trust gate is holding the issue: it carries the awaiting label `needs-triage` (`reporter_trust.awaiting_label` default) or sits in the #9665 gate's `reporter_triage` bucket. Who filed it is never consulted — issues from hive agents and from trusted humans are triaged by construction and stay 010. A **display and tracking state, not a gate**: the scanner and relay claim a 015 issue exactly as a 010 one (the reporter-trust gate withholds `needs-triage` issues separately, and that is unchanged), and 015 lights the activity monitor's *Actionable* column as "Triage needed". `015 → 010` (a maintainer triages) is never a regression; `010 → 015` is a reclassification. The Open column is untouched: an issue with no stage stays "Open" | 24h |
 | `stage/020-claimed` | issue | a live claim by anyone — a human, a relay contributor or a hive agent's `hive-open-issue claim` / start mark — with no PR evidence yet (replaces `claimed`, `hive/in-progress`) | 2h |
 | `stage/030-pr-in-progress` | issue | the claimant has a PR under way: its `hive-open-pr --issues` request named the issue or its start marker named a branch / PR (`pr_started=true` on the `hive:claim` marker). A claim or start mark without that evidence — the scanner's bare `hive-open-issue claim` included — stays at 020 ([#13069](https://github.com/hivecommons/hive/issues/13069)). If the in-progress evidence includes an open Hive-authored PR, the issue-stage lane applies the same PR-link safeguard described for 040: default-branch PRs that fully address the issue get a `Fixes #N` trailer when missing, while partial or non-default-branch PRs get an issue stage-entry comment linking the PR and explaining GitHub's icon limitation. If the claiming PR has already merged, the issue leaves 030: full-fix claims close it with one `<!-- hive:closed-by-merged-pr pr=N -->` comment (checked before posting, so a close that fails after the comment is retried without a duplicate), while `Refs` / `Part of` claims move back to 010 with a partial-landed note. | 90m |
 | `stage/040-covered-by-pr` | issue | an open PR covers it (replaces `🐝 covered by PR`); the issue stays here while the PR is open — the PR's own stage is named in the issue's stage reason, never written as its label ([#12451](https://github.com/hivecommons/hive/issues/12451)). For Hive-authored PRs on the repository default branch, the stage and claim-label sweeps append `Fixes #N` to the PR body when the PR appears to fully address the issue but lacks a closing keyword, so GitHub can show the Development sidebar link and issue-list PR icon. They also retrofit older Hive-authored default-branch PRs whose only claim line is `Refs #N` by rewriting that one keyword to `Fixes #N` once and stamping `<!-- hive:issue-link-fixed -->`; human-authored PR bodies are never edited. `Part of` / leave-open partial work and non-default-branch PRs get one issue stage-entry comment with the PR link and GitHub limitation instead. Merged full-fix claims close the issue; merged reference claims remove stale 040/030 and return the issue to 010 with a partial-landed note. | n/a (the PR carries health) |
@@ -234,7 +234,7 @@ Labels tab.
 stateDiagram-v2
     direction LR
     [*] --> s010: issue triaged
-    [*] --> s015: issue filed by the hive / an agent, or by an untrusted reporter (needs-triage)
+    [*] --> s015: issue from an untrusted reporter (needs-triage / reporter_triage)
     s010: 010 actionable
     s015: 015 triage-needed
     s020: 020 claimed
@@ -254,7 +254,7 @@ stateDiagram-v2
     s100: 100 merge-queue
     s010 --> s020: scanner / relay claim
     s010 --> s045: needs-human / park label (agent escalates)
-    s010 --> s015: needs-triage added, or a hive-filed issue staged 010 before 015 existed (reclassification)
+    s010 --> s015: needs-triage added (reclassification)
     s015 --> s010: maintainer triages: triage/accepted, hive/verified-open or approved-direction added, or needs-triage removed (not a regression)
     s015 --> s020: scanner / relay claim (015 is not a gate)
     s015 --> s045: needs-human / park label (agent escalates)
@@ -325,7 +325,7 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 |---|---|
 | carries `hive/likely-done` (a PR merged, awaiting confirmation) | no stage — every hive-owned label removed, timing forgotten |
 | actionable (no claim, no PR) | `010-actionable` |
-| actionable but untriaged (needs-triage, or hive-filed with no triage/accepted / hive/verified-open / approved-direction) | `015-triage-needed` |
+| actionable but held by the reporter-trust gate (needs-triage, or the reporter_triage bucket) | `015-triage-needed` |
 | live claim (`<!-- hive:claim … -->` marker / ledger) by anyone — a human, a relay contributor, or one of the hive's own agents (`hive-open-issue claim`, the in-progress start mark) — with **no PR evidence** | `020-claimed` |
 | live claim whose marker carries `pr_started=true` — the holder's `hive-open-pr --issues` request named the issue, or its start comment's `<!-- hive:start branch=<name> -->` / `pr=<n>` marker named where the PR lives (`claims.Claim.PRStarted` / `stageengine.ClaimFact.PRStarted`) | `030-pr-in-progress` — the label promises a PR, so a bare agent claim never wears it ([#13069](https://github.com/hivecommons/hive/issues/13069)) |
 | covered by an open PR, PR not yet staged by the automerge sweep | `040-covered-by-pr` |

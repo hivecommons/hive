@@ -80,6 +80,8 @@ first failure is the `gfi skip reason=…` logged:
 | Hard-suppress label (`needs-human`, `stage/045-needs-decision`, a pre-045 `stage/085-needs-decision`, `needs-spec`, or the retired `needs-direction` / `needs-decision`) — always excluded, whatever `exclude_labels` says; `needs-human` next to `approved-direction` still excludes ([#12680](https://github.com/hivecommons/hive/issues/12680)) | `hard-suppress:<label>` |
 | Any `hive/claimed-by-*` label (always excluded) | `excluded-label:<label>` |
 | Excluded label (`kind/epic`, `epic`, `meta`, `meta-tracker`, `tracker`, `roadmap`, `security`, `blocked`, `hold`, `wontfix`, `duplicate`, `hive/in-progress`, `hive/claimed-by-*`, the hive's own `hive/advisory` / `hive/selfreport` / `hive/sentinel` / `hive/fleet` reports, …) | `excluded-label:<label>` |
+| Operations tracking issue — the body carries `<!-- hive:ops-tracking -->` (the promote-stable workflow stamps its emergency follow-up issue with it), or the title/body uses soak-checklist phrasing ("24h after promotion", "post-hoc soak", "promote-stable") — a maintainer's checklist, not a code change ([#13267](https://github.com/hivecommons/hive/issues/13267)) | `ops-tracking:marker`, `ops-tracking:soak-checklist` |
+| Time-gated — the body carries `<!-- hive:recheck-after <RFC3339> -->`, so nothing on it can be completed before the deadline | `time-gated` |
 | Title starts with `Epic`, `Tracking`, `RFC`, `Proposal`, `Umbrella`, `Hive Advisory Report`, … after leading emoji, `[tags]` and punctuation are stripped, or contains the word `epic`, `rfc`, `umbrella` or `meta` | `title:<word>` |
 | Title mentions security work (`security`, `vulnerability`, `CVE-…`, `exploit`, `XSS`, `CSRF`, `RCE`, `injection`) even without a security label | `title:security` |
 | Younger than `min_age` (default 1h) | `too-fresh` |
@@ -96,6 +98,13 @@ reason ("hive picked this issue because: …"):
 - has clear steps or acceptance criteria (two or more headings/bullets/checkboxes, or phrases like "acceptance criteria", "steps to reproduce")
 - scoped to one or two packages (paths mentioned in the body)
 - short, focused description (body at most half of `max_body_chars`)
+
+Candidates come from the last enumeration, which can be many minutes old,
+so immediately before labelling the sweep re-reads the issue's labels from
+GitHub and scores again; an issue that picked up `blocked`, a claim or a
+park label in between is skipped as `stale:<reason>` (a failed read skips
+as `stale:label-read`). #13267 was labelled from a snapshot taken before a
+contributor's agent had returned "blocked" on it.
 
 Per pass, each repository gets at most `max_per_sweep` (2) new selections, and
 never more than `max_per_repo` (5) issues wearing the label at once — counting
@@ -162,14 +171,35 @@ A superseded marker is also how the sweep recognises, after a restart, an
 issue it must not re-advertise; `reselect_cooldown` (7d) covers the same
 within a process.
 
+### Withdraw when the issue was never newcomer work
+
+A labelled issue the scorer now rejects for a *waiting* reason — a
+hard-suppress label, `blocked`, `hold`, an ops-tracking checklist or a
+`recheck-after` deadline — has its advertisement withdrawn on the next
+sweep whoever applied the labels: both `good first issue` and `help wanted`
+come off, and the welcome comment is edited in place (or, when the labels
+arrived without one, a single correction is posted):
+
+```markdown
+<!-- hive:gfi superseded=true -->
+~~Good first issue~~ — **withdrawn** by <hive>: this issue is not open to new contributors — it carries the `blocked` label, so it cannot be worked right now. The `good first issue` and `help wanted` labels have been removed (<RFC3339>). Sorry for the noise! Issues open to new contributors are listed on the relay page: <public_url>/contribute
+```
+
+Softer rejections (too fresh, low score, an epic a maintainer labelled by
+hand) leave a hand-applied label alone. Issues the enumeration filtered out
+(blocked, held, parked) that still wear the label are included in the pass
+for this purpose only. The event logs as `gfi withdraw issue=… reason=…`
+and audits as `gfi-withdraw`.
+
 ## Metrics
 
 Structured logs: `gfi select issue=… score=… reasons=… claim_url=…`,
 `gfi skip issue=… reason=…` (debug), `gfi release issue=… reason=claimed-by-hive`,
 `gfi converted issue=… contributor=… kind=contributor|human` (a claim through
 the relay on a labelled issue), and a per-pass `gfi sweep scanned=… selected=…`.
-The same events land on the audit log as `gfi-select`, `gfi-release` and
-`gfi-convert`. Since-start counters (selected, released, converted) appear on
+The same events land on the audit log as `gfi-select`, `gfi-release`,
+`gfi-withdraw` and `gfi-convert`. Since-start counters (selected, released,
+converted, withdrawn) appear on
 **Settings → Features → Good first issue curation** and in the Features GET as
 `goodFirstIssueStats`. The dashboard marks labelled issues with a 🌱 pill in
 the project card listing.

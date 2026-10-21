@@ -6206,6 +6206,37 @@ type DashboardStageTrackerConfig struct {
 	// endpoint never calls GitHub either way; the TTL only bounds how often
 	// the in-memory snapshot is re-read. 0 means governor.eval_interval_s.
 	CacheTTLS int `yaml:"cache_ttl_s,omitempty" json:"cache_ttl_s,omitempty"`
+	// WebhookRefresh lets a verified GitHub webhook delivery re-read just the
+	// PR or issue it named (one GET) and patch that row of the activity
+	// monitor at once, instead of waiting for the next eval cycle to
+	// re-enumerate the repository. Default true.
+	WebhookRefresh *bool `yaml:"webhook_refresh,omitempty" json:"webhook_refresh,omitempty"`
+	// WebhookRefreshDebounceMS is how long, in milliseconds, deliveries for
+	// the same item are coalesced before that one read is made, so a check
+	// fan-out costs one GET. 0 means the default (2000).
+	WebhookRefreshDebounceMS int `yaml:"webhook_refresh_debounce_ms,omitempty" json:"webhook_refresh_debounce_ms,omitempty"`
+}
+
+// defaultStageTrackerWebhookRefreshDebounce is the default
+// dashboard.stage_tracker.webhook_refresh_debounce_ms.
+const defaultStageTrackerWebhookRefreshDebounce = 2000 * time.Millisecond
+
+// StageTrackerWebhookRefresh is the effective
+// dashboard.stage_tracker.webhook_refresh (default true).
+func (c *Config) StageTrackerWebhookRefresh() bool {
+	if c == nil || c.Dashboard.StageTracker.WebhookRefresh == nil {
+		return true
+	}
+	return *c.Dashboard.StageTracker.WebhookRefresh
+}
+
+// StageTrackerWebhookRefreshDebounce is the effective
+// dashboard.stage_tracker.webhook_refresh_debounce_ms as a duration.
+func (c *Config) StageTrackerWebhookRefreshDebounce() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.WebhookRefreshDebounceMS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshDebounceMS) * time.Millisecond
+	}
+	return defaultStageTrackerWebhookRefreshDebounce
 }
 
 // StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:

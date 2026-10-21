@@ -1,0 +1,1 @@
+- Contributor relays now publish local scope adoption, subscription readiness, and draining task status for truthful contribution UI acknowledgements ([#13290](https://github.com/hivecommons/hive/issues/13290)).
