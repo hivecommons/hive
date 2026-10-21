@@ -665,6 +665,12 @@ assert.deepStrictEqual([pg.page, pg.pages, pg.from, pg.to, pg.total], [1, 1, 0, 
 let c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7);
 assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)');
 assert.strictEqual(c.header, '120 of 150 items · 7 need attention');
+assert.strictEqual(c.badge, 150, 'without open counts the pill is every item');
+assert.strictEqual(c.badgeTitle, '150 items open · 7 need attention');
+c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7, { issues: 100, prs: 50 }, 9);
+assert.strictEqual(c.header, '150 items (100 issues / 50 PRs) · 120 match filters · 7 need attention');
+assert.strictEqual(c.badge, 150);
+assert.strictEqual(c.badgeTitle, '150 items (100 issues / 50 PRs) open · 9 need attention', 'pill tooltip counts attention over every item');
 c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 1), F()), 1, 1);
 assert.strictEqual(c.showing, 'showing 1–1 of 1');
 assert.strictEqual(c.header, '1 item · 1 needs attention');

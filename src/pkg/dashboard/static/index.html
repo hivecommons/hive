@@ -13429,16 +13429,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // canonical open-items set the Overview tile and its sidebar pill count) the
     // header leads with "N items (I issues / P PRs)" so the three agree on the
     // same number; the filtered row count follows when a filter is active.
-    function stageTrackerCountsText(page, allCount, attention, open) {
+    function stageTrackerCountsText(page, allCount, attention, open, attentionAll) {
       const filteredOut = Math.max(0, allCount - page.total);
       const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
-      const attn = attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
+      const attnText = n => n ? n + ' need' + (n === 1 ? 's' : '') + ' attention' : 'nothing needs attention';
+      const attn = attnText(attention);
+      const attnAll = attnText(Number.isFinite(Number(attentionAll)) ? Number(attentionAll) : attention);
       if (open && Number.isFinite(Number(open.issues)) && Number.isFinite(Number(open.prs))) {
         const issues = Number(open.issues), prs = Number(open.prs), total = issues + prs;
         const lead = `${total} ${total === 1 ? 'item' : 'items'} (${issues} ${issues === 1 ? 'issue' : 'issues'} / ${prs} ${prs === 1 ? 'PR' : 'PRs'})`;
-        return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}` };
+        // Rows nest covering PRs under their issue, so the row count can be
+        // below the item count without any filter; say so rather than let
+        // "of N" look like a different total.
+        const nested = !filteredOut && allCount < total ? ` (${total - allCount} nested under ${total - allCount === 1 ? 'its issue' : 'their issues'})` : '';
+        return {
+          showing: showing + nested + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
+          header: lead + (filteredOut ? ` · ${page.total} match filters` : '') + ` · ${attn}`,
+          badge: total,
+          badgeTitle: `${lead} open · ${attnAll}`,
+        };
       }
-      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}` };
+      return {
+        showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''),
+        header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attn}`,
+        badge: allCount,
+        badgeTitle: `${allCount} ${allCount === 1 ? 'item' : 'items'} open · ${attnAll}`,
+      };
     }
 
     // The tracker's open issue / PR counts: the payload's open_issues/open_prs
@@ -13577,11 +13593,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // "N filtered out" counts against the unfiltered row list, so nesting
       // a PR under its issue is not reported as a filter.
       const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
-      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d));
+      // The sidebar pill, the header lead and the "of N" line come out of
+      // one stageTrackerCountsText call per render, so they cannot
+      // disagree: the pill is the total open items (= the Overview tile's
+      // issues + PRs); needs-attention is the warn-coloured header suffix
+      // and the pill's tooltip, counted over every item regardless of filter.
+      const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
+      const counts = stageTrackerCountsText(page, allRows, attention, stageTrackerOpenCounts(d), attentionAll);
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
-      const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
-      if (badge) { badge.textContent = String(attentionAll); if (attentionAll) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
       const labelsEl = document.getElementById('activity-monitor-labels');
       if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
       const meta = document.getElementById('activity-monitor-meta');
