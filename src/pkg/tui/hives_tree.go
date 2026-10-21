@@ -455,7 +455,7 @@ func (m model) updateHivesTree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.editHivesTree(func(edits *hivectl.StagedEdits, _ panes.HiveTreeRow) (string, error) {
 			return "staged edits discarded", edits.Discard()
 		})
-	case " ", "f", "x", "e", "R":
+	case " ", "f", "F", "x", "e", "R":
 		return m.editHivesTree(hivesTreeEditFor(msg.String()))
 	}
 	return m, nil
@@ -532,6 +532,21 @@ func hivesTreeEditFor(key string) hivesTreeEdit {
 				return "staged: stop following new repositories at " + row.ID, nil
 			}
 			return "staged: follow new repositories at " + row.ID, nil
+		}
+	case "F":
+		// Explicit stop: never turns following on, so it is safe to press
+		// without reading the badge first.
+		return func(edits *hivectl.StagedEdits, row panes.HiveTreeRow) (string, error) {
+			if row.Kind != panes.HiveTreeHive {
+				return "", errHivesTreeRowNotEditable
+			}
+			if !row.Following {
+				return "not following new repositories at " + row.ID + "; nothing staged", nil
+			}
+			if err := edits.SetFollow(row.ID, false); err != nil {
+				return "", err
+			}
+			return "staged: stop following new repositories at " + row.ID, nil
 		}
 	case "x":
 		return func(edits *hivectl.StagedEdits, row panes.HiveTreeRow) (string, error) {

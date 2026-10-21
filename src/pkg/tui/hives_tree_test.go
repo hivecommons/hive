@@ -238,6 +238,20 @@ func TestTreeBranchActionsAndHubEnable(t *testing.T) {
 	if !strings.Contains(h.view(), "following stays on") {
 		t.Fatalf("deselect-current note missing:\n%s", h.view())
 	}
+	// F is the explicit stop: it turns following off and never on.
+	h.press(t, "F")
+	if alpha, _ = h.model.hives.TreeSelected(); alpha.Following {
+		t.Fatalf("F left following on: %+v", alpha)
+	}
+	h.press(t, "F")
+	if alpha, _ = h.model.hives.TreeSelected(); alpha.Following || !strings.Contains(h.view(), "nothing staged") {
+		t.Fatalf("second F should be a no-op: %+v\n%s", alpha, h.view())
+	}
+	h.moveTo(t, treeBetaKey+"/repo:"+treeRepoB)
+	h.press(t, "F")
+	if !strings.Contains(h.view(), "does not apply to the selected row") {
+		t.Fatalf("F on a repository should be refused:\n%s", h.view())
+	}
 	// Exclude a repository at beta; the exclusion is distinct from deselection.
 	h.moveTo(t, treeBetaKey+"/repo:"+treeRepoB)
 	h.press(t, "x")

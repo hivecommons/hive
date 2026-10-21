@@ -945,6 +945,10 @@ credential at the wrong hive; fix the file (or re-run
 
 ### Inspecting the contribution tree (read-only)
 
+The tree, its staging model and the invariants shared by the CLI, TUI and Web
+surfaces are recorded in
+[`design/contribution-ui.md`](design/contribution-ui.md).
+
 ```bash
 hivectl hives tree
 hivectl hives tree -o json

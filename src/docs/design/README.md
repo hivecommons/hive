@@ -20,6 +20,15 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [Contribution UI](contribution-ui.md) — **partly shipped (v5).** Design record
+  and acceptance checklist for RFC #13153: one `ContributionTree` read model and
+  one `StagedEdits` staging model behind `hivectl hives tree`, the `tui --hives`
+  overlay and the loopback `hives web` page; lock + expected-revision commit,
+  the three-part apply receipt, live relay and durable activity overlays, and the
+  invariants (no vacuous checked state, exclusion ≠ deselection, no silent legacy
+  migration). Pending: the local activity store (#13297) and the exclusion-union
+  decision.
+
 - [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
 - [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
