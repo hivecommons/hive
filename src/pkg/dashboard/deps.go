@@ -242,6 +242,12 @@ type Dependencies struct {
 	// reason names the delivery ("pull_request_review org/repo#12"). Nil
 	// leaves invalidated items waiting for the next cadence tick.
 	WebhookWake func(reason string)
+	// ApplyWebhookItems hands the targeted re-reads a webhook delivery
+	// caused (webhook_tracker_refresh.go) to the governor so its cached
+	// actionable snapshot is patched for those items only; the wake cycle
+	// then plans from the patched snapshot without re-listing. Nil leaves
+	// the governor's snapshot to the reconcile pass.
+	ApplyWebhookItems func(snaps []ghpkg.WebhookItemSnapshot)
 	// EvalLoop reports the governor loop's live pacing (poll vs webhook mode
 	// and the last early wake) for /api/status. Nil omits the fields.
 	EvalLoop func() EvalLoopStatus
@@ -257,6 +263,11 @@ type EvalLoopStatus struct {
 	LastWakeReason string     `json:"lastWakeReason,omitempty"`
 	LastWakeAt     *time.Time `json:"lastWakeAt,omitempty"`
 	WebhookWakes   int        `json:"webhookWakes,omitempty"`
+	// CachedCycles counts eval cycles that planned from the cached snapshot
+	// (webhook and re-kick wakes) instead of re-listing; WebhookPatches
+	// counts items webhook re-reads upserted into that snapshot.
+	CachedCycles   int `json:"cachedCycles,omitempty"`
+	WebhookPatches int `json:"webhookPatches,omitempty"`
 }
 
 // NousScopeRepo is the only experiment scope the Experiment Lab supports.

@@ -124,6 +124,8 @@ type evalLoopState struct {
 	lastWakeReason string
 	lastWakeAt     time.Time
 	webhookWakes   int
+	cachedCycles   int
+	webhookPatches int
 }
 
 const (
@@ -146,10 +148,31 @@ func (s *evalLoopState) noteWake(b webhookWakeBatch, at time.Time) {
 	s.mu.Unlock()
 }
 
+// noteCycle counts an eval cycle by its snapshot source.
+func (s *evalLoopState) noteCycle(source evalCycleSource) {
+	if s == nil || source != evalSourceCached {
+		return
+	}
+	s.mu.Lock()
+	s.cachedCycles++
+	s.mu.Unlock()
+}
+
+// notePatch counts items a webhook re-read upserted into the snapshot.
+func (s *evalLoopState) notePatch(n int) {
+	if s == nil || n <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.webhookPatches += n
+	s.mu.Unlock()
+}
+
 func (s *evalLoopState) snapshot() dashboard.EvalLoopStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := dashboard.EvalLoopStatus{Mode: s.mode, IntervalS: s.intervalS, LastWakeReason: s.lastWakeReason, WebhookWakes: s.webhookWakes}
+	out := dashboard.EvalLoopStatus{Mode: s.mode, IntervalS: s.intervalS, LastWakeReason: s.lastWakeReason, WebhookWakes: s.webhookWakes,
+		CachedCycles: s.cachedCycles, WebhookPatches: s.webhookPatches}
 	if out.Mode == "" {
 		out.Mode = evalModePoll
 	}

@@ -63,6 +63,11 @@ func TestFetchWebhookItemSnapshotReadsOnePRAndOneIssue(t *testing.T) {
 	}
 	want := WebhookItemSnapshot{Repo: "repo", Number: 42, IsPR: true, Title: "Relabelled", Author: "mina",
 		Labels: []string{"stage/050-review-pending", "kind/bug"}, Draft: true, State: "open", UpdatedAt: updated, URL: "https://github.com/org/repo/pull/42"}
+	// The governor-side classification is covered by webhook_item_patch_test.
+	if pr.Patch.Bucket != WebhookBucketSidelined {
+		t.Fatalf("draft PR bucket = %q, want sidelined", pr.Patch.Bucket)
+	}
+	pr.Patch = WebhookItemPatch{}
 	if !reflect.DeepEqual(pr, want) {
 		t.Fatalf("pr snapshot = %+v, want %+v", pr, want)
 	}

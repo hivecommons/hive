@@ -226,6 +226,9 @@ type boot struct {
 	// eval cycles and evalLoop is the pacing block /api/status reports.
 	webhookWaker *webhookWaker
 	evalLoop     *evalLoopState
+	// snapshotPatch applies webhook re-reads to lastActionable so wake
+	// cycles plan from a patched snapshot instead of re-listing.
+	snapshotPatch *snapshotPatcher
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

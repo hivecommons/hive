@@ -41,7 +41,7 @@ func evalCycleTestLogger() (*slog.Logger, func() string) {
 // guard returns first; if that guard is ever removed this panics, which is the
 // point.
 func callEvalCycleWithoutCredentials(ctx context.Context, cfg *config.Config, logger *slog.Logger) {
-	runEvalCycle(ctx, cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, logger)
+	runEvalCycle(ctx, cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, evalSourceEnumerate, logger)
 }
 
 func TestRunEvalCycleWithoutCredentialsReturnsBeforeEnumerating(t *testing.T) {

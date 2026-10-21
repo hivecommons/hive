@@ -50,7 +50,7 @@ type runLoopDeps struct {
 	// now is the wake's clock (nil = time.Now); tests inject it to step past
 	// continuousWakeMinGap and the stall hold without sleeping.
 	now            func() time.Time
-	runEval        func(b *boot, restarted []string)
+	runEval        func(b *boot, restarted []string, source evalCycleSource)
 	runRotation    func(b *boot)
 	runSweeps      func(b *boot)
 	persist        func(b *boot)
@@ -70,9 +70,12 @@ func defaultRunLoopDeps() runLoopDeps {
 		newTicker:      func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
 		newWakeTimer:   func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
 		newHealthTimer: func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
-		runEval: func(b *boot, restarted []string) {
+		runEval: func(b *boot, restarted []string, source evalCycleSource) {
+			if b.evalLoop != nil {
+				b.evalLoop.noteCycle(source)
+			}
 			runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores,
-				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, b.logger)
+				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, source, b.logger)
 		},
 		runRotation: func(b *boot) {
 			runRotationCheck(b.ctx, b.cfg, b.rotationMgr, b.gov, b.agentMgr, b.logger)

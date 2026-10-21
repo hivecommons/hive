@@ -1446,6 +1446,7 @@ func (b *boot) wireBootClosures() {
 			StageEngineStatus:    func() stageengine.Status { return stageEngineStatus(b.cfg, b.ghClient, b.logger) },
 			ReviewEvents:         b.reviewEvents,
 			WebhookWake:          b.webhookWakeFunc(),
+			ApplyWebhookItems:    b.applyWebhookItemsFunc(),
 			EvalLoop:             b.evalLoopStatusFunc(),
 			GHAppAuth:            b.appAuth,
 			GHTokenScopes:        b.ghAuth.TokenScopes,
@@ -1627,7 +1628,7 @@ func (b *boot) wireBootClosures() {
 				installReviewBots(b.ghClient, b.cfg, b.logger)
 			},
 			EnumerateFunc: func() {
-				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
+				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, evalSourceEnumerate, b.logger)
 			},
 			// The REPOSITORIES "Rescan" button. Unlike EnumerateFunc above — which
 			// runs the WHOLE eval cycle, kicks included — this only refreshes what
@@ -6006,7 +6007,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		}
 	}
 	b.evalCycles++
-	deps.runEval(b, nil)
+	deps.runEval(b, nil, evalSourceEnumerate)
 	deps.runRotation(b)
 	if b.wd != nil {
 		b.wd.Tick(b.ctx)
@@ -6014,10 +6015,13 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	deps.runSweeps(b)
 	deps.persist(b)
 
-	// tick is one governor pass. The cadence ticker runs it, and so does a
-	// review webhook wake (hivecommons/hive#11091) so a pushed PR is planned
-	// now instead of at the next cadence, under exactly the same gates.
-	tick := func() {
+	// tick is one governor pass. The cadence ticker runs it with
+	// evalSourceEnumerate (the reconcile pass that re-lists every repo). The
+	// review webhook wake (hivecommons/hive#11091), the GitHub webhook wake
+	// and the continuous re-kick wake run it with evalSourceCached: the same
+	// gates, planning from the stored snapshot — already patched by the
+	// delivery's targeted re-read — so a wake costs no listing.
+	tick := func(source evalCycleSource) {
 		b.cfgReloadMu.Lock()
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
@@ -6077,7 +6081,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			}
 		}
 		b.evalCycles++
-		deps.runEval(b, restarted)
+		deps.runEval(b, restarted, source)
 		deps.runRotation(b)
 		deps.runSweeps(b)
 		// Trajectory review runs after the eval cycle (so kicks/intents are
@@ -6211,23 +6215,33 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			deps.persist(b)
 			return
 		case <-ticker.Chan():
-			tick()
+			tick(evalSourceEnumerate)
 			armContinuousWake()
 			armWebhookHealthRecheck()
 		case <-b.reviewWake:
-			b.logger.Info("review webhook wake: running an early eval cycle")
-			tick()
+			b.logger.Info("review webhook wake: running an early eval cycle from the cached snapshot")
+			tick(evalSourceCached)
 			armContinuousWake()
 			armWebhookHealthRecheck()
 		case batch := <-b.webhookWakeChan():
 			now := healthNow()
+			// Apply the delivery's targeted re-reads first so this cycle
+			// sees the patched item rather than the row as it was. With the
+			// re-read disabled nothing patches the snapshot, so the wake
+			// has to enumerate as it did before.
+			source := evalSourceCached
+			if b.cfg != nil && !b.cfg.StageTrackerWebhookRefresh() {
+				source = evalSourceEnumerate
+			} else if b.dashSrv != nil {
+				b.dashSrv.FlushWebhookTrackerRefresh()
+			}
 			b.logger.Info("github webhook wake: running an early eval cycle",
 				"reason", batch.Reason, "last_reason", batch.LastRe, "deliveries", batch.Count,
-				"coalesced", batch.Coalesced.Round(time.Millisecond).String())
+				"coalesced", batch.Coalesced.Round(time.Millisecond).String(), "source", source.String())
 			if b.evalLoop != nil {
 				b.evalLoop.noteWake(batch, now)
 			}
-			tick()
+			tick(source)
 			armContinuousWake()
 			armWebhookHealthRecheck()
 		case <-healthCh:
@@ -6256,7 +6270,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
 					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
 				lastWake = now
-				tick()
+				tick(evalSourceCached)
 				after, afterWho := b.gov.NextContinuousKickAt()
 				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
 					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
@@ -6833,6 +6847,7 @@ func runEvalCycle(
 	advisoryIssues map[string]int,
 	restartedAgents []string,
 	approvalDesk *toolapprove.Desk,
+	source evalCycleSource,
 	logger *slog.Logger,
 ) {
 	// Governor eval-cycle span. When tracing is disabled (the default) this is
@@ -6853,6 +6868,19 @@ func runEvalCycle(
 
 	budgetMode, _ := ghClient.APIBudgetMode()
 	budgetDecision := decideEvalBudgetWork(budgetMode, cfg.Governor.OptionalSweepEveryNCycles, evalAPIBudgetCycle.Add(1))
+
+	// A cached cycle (webhook or re-kick wake) plans from the stored
+	// snapshot: no listing, and none of the enrichment or unstick sweeps
+	// that walk every item — those belong to the reconcile pass. The first
+	// cycle has no snapshot yet and enumerates regardless of source.
+	cachedSnapshot := cachedSnapshotFor(source, lastActionable)
+	if cachedSnapshot != nil {
+		budgetDecision.SkipOptional = true
+		budgetDecision.SkipUnstick = true
+		budgetDecision.SkippedSteps = append(budgetDecision.SkippedSteps, cachedSnapshotSkippedStep)
+	} else if source == evalSourceCached {
+		logger.Info("eval cycle: no cached snapshot yet; enumerating")
+	}
 	ghClient.RecordAPIBudgetSkippedSteps(budgetDecision.SkippedSteps)
 
 	// Re-ensure the pinned advisory issue whenever it is still unresolved, not
@@ -6880,18 +6908,30 @@ func runEvalCycle(
 			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
 	}
 
-	enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
-	actionable, err := ghClient.EnumerateActionable(enumCtx)
-	enumSpan.End()
-	actionable, ok := actionableAfterGitHubEnumerate(cfg, actionable, err, logger)
-	if !ok {
-		return
-	}
+	var actionable *github.ActionableResult
+	if cachedSnapshot != nil {
+		actionable = cachedSnapshot
+		logger.Info("eval cycle planning from cached snapshot",
+			"snapshot_age", time.Since(actionable.GeneratedAt).Round(time.Second).String(),
+			"issues", actionable.Issues.Count, "prs", actionable.PRs.Count, "hold", actionable.Hold.Total,
+			"stale", actionable.Stale())
+	} else {
+		enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
+		fresh, err := ghClient.EnumerateActionable(enumCtx)
+		enumSpan.End()
+		var ok bool
+		actionable, ok = actionableAfterGitHubEnumerate(cfg, fresh, err, logger)
+		if !ok {
+			keepLastGoodAfterFailedEnumerate(lastActionable, logger)
+			return
+		}
 
-	// If a non-default or additive work source is configured, overlay its
-	// issues onto the actionable result. PRs always come from GitHub.
-	if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
-		actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		// If a non-default or additive work source is configured, overlay its
+		// issues onto the actionable result. PRs always come from GitHub. A
+		// cached cycle keeps the overlay the reconcile pass already applied.
+		if workSourceOverlayEnabled(cfg.Governor.WorkSource) {
+			actionable.Issues = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
+		}
 	}
 	if swarmRepo := dashSrv.ActiveSwarmRepo(); swarmRepo != "" {
 		github.BoostActionableRepoPriority(actionable.Issues.Items, swarmRepo)
@@ -6945,11 +6985,16 @@ func runEvalCycle(
 	// nothing that gates work reads the stamp.
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
-	lastActionable.Store(actionable)
-	publishStageSharedCIIncidents(actionable)
-	if data, err := json.Marshal(actionable); err == nil {
-		atomicWrite(lastActionablePath, data)
+	// Only the reconcile pass publishes the snapshot: a cached cycle works
+	// on a copy, and storing it back would overwrite a webhook patch that
+	// landed while the cycle ran.
+	if cachedSnapshot == nil {
+		lastActionable.Store(actionable)
+		if data, err := json.Marshal(actionable); err == nil {
+			atomicWrite(lastActionablePath, data)
+		}
 	}
+	publishStageSharedCIIncidents(actionable)
 
 	// Record enumerated issues into the lifecycle timeline so the dashboard's
 	// lifecycle view has real data. Cheap and fully guarded: a nil dashboard or

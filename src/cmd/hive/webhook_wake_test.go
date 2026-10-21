@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -150,7 +151,11 @@ func TestRunLoopWithRunsAnEarlyCycleOnWebhookWake(t *testing.T) {
 	if len(h.evals) != 3 {
 		t.Fatalf("evals = %d, want first + webhook wake + cadence", len(h.evals))
 	}
-	if !strings.Contains(log.String(), "github webhook wake: running an early eval cycle") {
+	// The wake plans from the cached snapshot; only the cadence tick lists.
+	if want := []evalCycleSource{evalSourceEnumerate, evalSourceCached, evalSourceEnumerate}; !reflect.DeepEqual(h.sources, want) {
+		t.Fatalf("eval sources = %v, want %v", h.sources, want)
+	}
+	if !strings.Contains(log.String(), "github webhook wake: running an early eval cycle") || !strings.Contains(log.String(), "source=cached") {
 		t.Fatalf("log = %s", log.String())
 	}
 	snap := b.evalLoop.snapshot()

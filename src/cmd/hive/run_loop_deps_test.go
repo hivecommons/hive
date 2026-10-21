@@ -36,6 +36,7 @@ type loopHarness struct {
 	pending   []*fakeTicker
 	tickers   []*fakeTicker
 	evals     [][]string
+	sources   []evalCycleSource
 	rotations int
 	sweeps    int
 	persists  int
@@ -54,7 +55,10 @@ func (h *loopHarness) deps() runLoopDeps {
 			h.tickers = append(h.tickers, t)
 			return t
 		},
-		runEval:     func(_ *boot, restarted []string) { h.evals = append(h.evals, restarted) },
+		runEval: func(_ *boot, restarted []string, source evalCycleSource) {
+			h.evals = append(h.evals, restarted)
+			h.sources = append(h.sources, source)
+		},
 		runRotation: func(*boot) { h.rotations++ },
 		runSweeps:   func(*boot) { h.sweeps++ },
 		persist: func(*boot) {

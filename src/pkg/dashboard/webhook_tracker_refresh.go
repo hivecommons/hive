@@ -86,6 +86,25 @@ func (r *webhookTrackerRefresher) enqueue(keys []trackerRefreshKey) (armed bool)
 
 const defaultWebhookRefreshDebounce = 2 * time.Second
 
+// flushNow runs a pending window immediately instead of waiting out the
+// debounce, so a governor wake can plan from the patched snapshot. A
+// refresher with nothing pending is a no-op.
+func (r *webhookTrackerRefresher) flushNow() {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if len(r.pending) == 0 {
+		r.mu.Unlock()
+		return
+	}
+	if r.timer != nil {
+		r.timer.Stop()
+	}
+	r.mu.Unlock()
+	r.flush()
+}
+
 // flush takes every pending key, fetches each once and applies the results.
 // Keys enqueued while the fetches run start a new window.
 func (r *webhookTrackerRefresher) flush() {
@@ -241,14 +260,28 @@ func (s *Server) invalidateStageTrackerForWebhook() {
 	}
 }
 
-// applyWebhookItemSnapshots patches the current status snapshot with the
-// re-read items and republishes it (copy-on-write: readers holding the old
-// pointer are unaffected). An item that closed or merged leaves its list; an
-// item the snapshot never listed is left for the next cycle. The tracker
-// cache is dropped when anything changed.
+// FlushWebhookTrackerRefresh applies any targeted re-reads still waiting
+// out their debounce, synchronously. The governor loop calls it before a
+// webhook-wake cycle so the cycle plans from the patched snapshot.
+func (s *Server) FlushWebhookTrackerRefresh() {
+	if s == nil || s.webhookRefresh == nil {
+		return
+	}
+	s.trackerRefresher().flushNow()
+}
+
+// applyWebhookItemSnapshots hands the re-read items to the governor's
+// snapshot (Dependencies.ApplyWebhookItems), then patches the current status
+// snapshot with them and republishes it (copy-on-write: readers holding the
+// old pointer are unaffected). An item that closed or merged leaves its
+// list; an item the status snapshot never listed is left for the next
+// cycle. The tracker cache is dropped when anything changed.
 func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 	if len(snaps) == 0 {
 		return
+	}
+	if s.deps != nil && s.deps.ApplyWebhookItems != nil {
+		s.deps.ApplyWebhookItems(snaps)
 	}
 	s.statusMu.Lock()
 	cur := s.status

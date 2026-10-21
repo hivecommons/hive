@@ -489,3 +489,79 @@ func TestStageTrackerWebhookRefreshConfigDefaults(t *testing.T) {
 		t.Fatal("server reads the switch")
 	}
 }
+
+// A webhook re-read reaches the governor's snapshot through
+// Dependencies.ApplyWebhookItems before the status rows are patched, and
+// FlushWebhookTrackerRefresh runs a pending debounce window at once so a
+// wake cycle plans from the patched snapshot. No list call is made: the
+// only GitHub request is the single-item GET.
+func TestWebhookRefreshHandsItemsToGovernorAndFlushesOnDemand(t *testing.T) {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return now }))
+	s, _ := stageTrackerFixture(t, now)
+	var ghCalls []string
+	var ghMu sync.Mutex
+	ghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ghMu.Lock()
+		ghCalls = append(ghCalls, r.URL.Path)
+		ghMu.Unlock()
+		if r.URL.Path != "/repos/acme/console/issues/8" {
+			t.Errorf("unexpected GitHub call %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "title": "Flaky test (closed)", "state": "closed",
+			"user": map[string]any{"login": "karibhou"}})
+	}))
+	t.Cleanup(ghSrv.Close)
+	var handed []github.WebhookItemSnapshot
+	s.deps = &Dependencies{
+		GHClient: github.NewClientForTest(ghSrv.URL, "acme", []string{"console"}, s.logger),
+		Ctx:      context.Background(),
+		Logger:   s.logger,
+		Config:   &config.Config{},
+		ApplyWebhookItems: func(snaps []github.WebhookItemSnapshot) {
+			handed = append(handed, snaps...)
+		},
+	}
+	timers := &fakeTimers{}
+	s.webhookRefresh = newWebhookTrackerRefresher()
+	s.webhookRefresh.newTimer = timers.newTimer
+
+	s.FlushWebhookTrackerRefresh() // nothing pending: no-op, no fetch
+	if n := s.scheduleWebhookTrackerRefresh(github.WebhookEventResult{KnownRepo: true, Repo: "acme/console", TouchedIssues: []int{8}}); n != 1 {
+		t.Fatalf("queued %d, want 1", n)
+	}
+	if timers.count() != 1 {
+		t.Fatalf("debounce timer not armed")
+	}
+	s.FlushWebhookTrackerRefresh()
+	if !timers.last().stopped {
+		t.Fatal("flush must stop the pending debounce timer")
+	}
+	if s.webhookRefresh.pendingCount() != 0 {
+		t.Fatal("flush left keys pending")
+	}
+	ghMu.Lock()
+	calls := append([]string(nil), ghCalls...)
+	ghMu.Unlock()
+	if len(calls) != 1 {
+		t.Fatalf("GitHub calls = %v, want the single issue GET", calls)
+	}
+	if len(handed) != 1 || handed[0].Number != 8 || handed[0].Open() {
+		t.Fatalf("governor hook received %+v", handed)
+	}
+	// The status row left too (the item closed).
+	for _, it := range s.buildStageTracker(s.status, s.stageStore, now).Items {
+		if it.Kind == "issue" && it.Number == 8 {
+			t.Fatalf("closed issue still in tracker: %+v", it)
+		}
+	}
+	// Firing the stopped timer later must not fetch again.
+	timers.last().fire()
+	ghMu.Lock()
+	defer ghMu.Unlock()
+	if len(ghCalls) != 1 {
+		t.Fatalf("stopped timer refetched: %v", ghCalls)
+	}
+}
