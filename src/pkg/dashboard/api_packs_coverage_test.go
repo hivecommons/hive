@@ -289,6 +289,11 @@ func TestApplyPackAdoptsUnownedBackendMatchingPack(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Data.AgentsDir = t.TempDir()
 	packBackend := scannerPackBackend(t)
+	// Reconcile the pack-behavior fields first so the second apply below
+	// has nothing left to change but the ownership stamp.
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2) seed: %v", err)
+	}
 
 	scanner := srv.deps.Config.Agents["scanner"]
 	scanner.Backend = packBackend
@@ -318,6 +323,11 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Data.AgentsDir = t.TempDir()
 	packBackend := scannerPackBackend(t)
+	// Reconcile the pack-behavior fields first so the second apply below
+	// has nothing left to change but the ownership stamp.
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2) seed: %v", err)
+	}
 
 	scanner := srv.deps.Config.Agents["scanner"]
 	scanner.Backend = "claude"
@@ -347,36 +357,6 @@ func TestApplyPackPreservesUnownedBackendDifferingFromPack(t *testing.T) {
 		t.Errorf("scanner missing from Preserved: %v", res.Preserved)
 	}
 	assertStampedOnly(t, srv, res, config.FieldOwnerOperator)
-}
-
-// TestApplyPackKeepsModelForPreservedNonPackBackend verifies the pack model is
-// not seeded onto an agent whose kept hand-set backend differs from the pack's
-// (#13288).
-func TestApplyPackKeepsModelForPreservedNonPackBackend(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Config.Data.AgentsDir = t.TempDir()
-	packBackend := scannerPackBackend(t)
-
-	scanner := srv.deps.Config.Agents["scanner"]
-	scanner.Backend = "codex"
-	if packBackend == "codex" {
-		scanner.Backend = "claude"
-	}
-	scanner.BackendOwner = ""
-	scanner.Model = "hand-set-model"
-	scanner.ModelOwner = ""
-	srv.deps.Config.Agents["scanner"] = scanner
-
-	if _, err := srv.ApplyPack(2); err != nil {
-		t.Fatalf("ApplyPack(2): %v", err)
-	}
-	got := srv.deps.Config.Agents["scanner"]
-	if got.Backend != scanner.Backend {
-		t.Errorf("hand-set backend replaced: got %q, want %q", got.Backend, scanner.Backend)
-	}
-	if got.Model != "hand-set-model" {
-		t.Errorf("model = %q, want it left as hand-set-model", got.Model)
-	}
 }
 
 // TestApplyPackMovesUnownedDeniedBackend verifies a hand-set backend with no

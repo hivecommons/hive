@@ -220,17 +220,10 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// entitled to — and deleting the `model:` line by hand did not
 			// stick. A pack-owned model is cleared there instead, so the
 			// gateway default applies.
-			// A kept hand-set backend (operator-owned, or unowned and allowed)
-			// that differs from the pack backend also does not receive the
-			// pack model: it names a model of the pack's backend, not that
-			// one (#13288). The agent's model is left untouched.
 			packBackend, backendReplaced := s.packAgentBackend(pa)
 			onForeignGateway := s.agentOnForeignGatewayBackend(existing.Backend, packBackend)
 			packModel := pa.Model
-			keptHandSetBackend := existing.Backend != "" &&
-				!strings.EqualFold(existing.Backend, packBackend) && !strings.EqualFold(existing.Backend, pa.Backend) &&
-				(existing.BackendIsOperatorOwned() || (existing.BackendOwner == "" && s.deps.Config.BackendAllowed(existing.Backend)))
-			if backendReplaced || onForeignGateway || keptHandSetBackend {
+			if backendReplaced || onForeignGateway {
 				packModel = ""
 			}
 			if packModel != "" && existing.Model != packModel && !existing.ModelIsOperatorOwned() {
