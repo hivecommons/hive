@@ -385,6 +385,11 @@ runs.spektacular.recheck.sources[].name # TODO #11854
 runs.spektacular.recheck.sources[].url # TODO #11854
 runs.triage.fix_labels[] # TODO #11854
 runs.triage.spec_labels[] # TODO #11854
+forgestate.drift_threshold # yaml-only until readers migrate (#13373)
+forgestate.enabled # yaml-only until readers migrate (#13373)
+forgestate.freshness_bound_s # yaml-only until readers migrate (#13373)
+forgestate.reconcile_interval_s # yaml-only until readers migrate (#13373)
+forgestate.search_budget # yaml-only until readers migrate (#13373)
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854

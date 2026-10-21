@@ -989,6 +989,21 @@ dashboard:
 #     mode: background   # the only mode that runs
 #     interval_s: 300
 
+# ForgeState — per-repo GitHub issue/PR state cache (#13373). Default off.
+# Three writers keep it current: a slow ETag-conditional full reconcile
+# (authoritative; on failure the last good snapshot is kept and marked
+# stale instead of going empty), webhook patches that re-fetch only the
+# named item, and write-through of the hive's own label/comment/merge/close/
+# claim mutations. Irreversible actions re-read items older than
+# freshness_bound_s and never act on a stale snapshot. Readers are migrated
+# onto it separately; enabling it alone changes no behaviour.
+# forgestate:
+#   enabled: false
+#   reconcile_interval_s: 900   # full list per repo; shortened while drift is high
+#   freshness_bound_s: 60       # max item age before merge/close/claim/kick re-reads
+#   drift_threshold: 0.05       # fraction of items a reconcile may find wrong in the cache
+#   search_budget: 20           # GitHub search calls per minute (GitHub allows 30)
+
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)
 # Facts are primed into agent kicks automatically — agents never query the wiki.
 # Personal layer stays on your machine; project layer lives in the repo.

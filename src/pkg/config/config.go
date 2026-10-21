@@ -196,6 +196,9 @@ type Config struct {
 	// SelfExperiments gates the background-only Hive-self experiment
 	// scheduler (hivecommons/hive#12397). Default off → no tick runs.
 	SelfExperiments SelfExperimentsConfig `yaml:"self_experiments,omitempty" json:"self_experiments,omitempty"`
+	// ForgeState configures the per-repo GitHub state cache
+	// (hivecommons/hive#13373). Default off → nothing constructs it.
+	ForgeState ForgeStateConfig `yaml:"forgestate,omitempty" json:"forgestate,omitempty"`
 	// Classification mirrors the Go-consumed subset of hive-project.yaml's
 	// `classification:` block (currently review_bots, hivecommons/hive#7360).
 	// Default empty → the review-thread reconciler is off.
