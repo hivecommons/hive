@@ -240,6 +240,7 @@ type Client struct {
 	// respectively, so an unwired client never holds.
 	reporterTrustEscalation  func(string, int, string) bool
 	reporterTrustMu          sync.RWMutex
+	reporterTrustUpstream    func(context.Context, string) (string, error)
 	reporterTrustHoldEnabled func(repo string) bool
 	reporterTrusted          func(login, association string) bool
 	otherNeedsHumanReason    func(repo string, number int) bool

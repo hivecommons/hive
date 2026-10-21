@@ -73,6 +73,34 @@ func (c *Client) SetReporterTrusted(fn func(login, association string) bool) {
 	c.reporterTrusted = fn
 }
 
+// SetReporterTrustUpstream installs the live upstream_watch resolver. An empty
+// result disables upstream acceptance for this repo. Only a verified merged PR
+// in this upstream supplies acceptance; prose and port markers are not proof.
+func (c *Client) SetReporterTrustUpstream(fn func(context.Context, string) (string, error)) {
+	c.reporterTrustMu.Lock()
+	defer c.reporterTrustMu.Unlock()
+	c.reporterTrustUpstream = fn
+}
+
+func (c *Client) reporterMergedUpstreamAccepted(ctx context.Context, repo, source string, issue *gh.Issue) bool {
+	if !issue.IsPullRequest() {
+		return false
+	}
+	c.reporterTrustMu.RLock()
+	resolve := c.reporterTrustUpstream
+	c.reporterTrustMu.RUnlock()
+	if resolve == nil {
+		return false
+	}
+	upstream, err := resolve(ctx, repo)
+	if err != nil || upstream == "" || !strings.EqualFold(upstream, source) {
+		return false
+	}
+	owner, name := splitRepoRef(source, c.org)
+	pr, _, err := c.client.PullRequests.Get(ctx, owner, name, issue.GetNumber())
+	return err == nil && pr.GetMerged() && !pr.GetMergedAt().IsZero()
+}
+
 func (c *Client) reporterTrustHoldActive(repo string) bool {
 	if c == nil {
 		return false
@@ -136,7 +164,16 @@ func (c *Client) EvaluateReporterTrust(ctx context.Context, repo, title, body st
 		}
 		login := strings.TrimSpace(issue.GetUser().GetLogin())
 		association := strings.TrimSpace(issue.GetAuthorAssociation())
-		if c.reporterIsTrusted(login, association) || c.reporterIssueAccepted(issue) {
+		localOwner, localName := splitRepoRef(repo, c.org)
+		local := strings.EqualFold(owner+"/"+name, localOwner+"/"+localName)
+		trustedAssociation := association
+		if !local {
+			// GitHub associations describe the cited repository, not this hive.
+			trustedAssociation = ""
+		}
+		if c.reporterIsTrusted(login, trustedAssociation) ||
+			(local && c.reporterIssueAccepted(issue)) ||
+			(!local && c.reporterMergedUpstreamAccepted(ctx, repo, owner+"/"+name, issue)) {
 			continue
 		}
 		return ReporterTrust{

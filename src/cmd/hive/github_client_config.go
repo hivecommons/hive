@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/mergelane"
+	"github.com/hivecommons/hive/pkg/upstreamwatch"
 )
 
 // configureGitHubClient installs EVERY hook, policy gate and setting the hive
@@ -326,6 +327,22 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 	// (project.issue_filter.reporter_trust), so the two halves cannot drift.
 	client.SetReporterTrustHoldEnabled(b.reporterTrustHoldEnabled)
 	client.SetReporterTrusted(b.reporterTrusted)
+	client.SetReporterTrustUpstream(func(ctx context.Context, repo string) (string, error) {
+		if !b.cfg.UpstreamWatch.Enabled {
+			return "", nil
+		}
+		owner, name, ok := upstreamWatchFork(b.cfg.Project.Org, repo)
+		if !ok {
+			return "", nil
+		}
+		for key, rc := range b.cfg.UpstreamWatch.Repos {
+			forkOwner, forkName, valid := upstreamWatchFork(b.cfg.Project.Org, key)
+			if valid && strings.EqualFold(owner+"/"+name, forkOwner+"/"+forkName) {
+				return upstreamwatch.NewGitHubSource(client.GoGitHub(), owner, name, rc).Upstream(ctx)
+			}
+		}
+		return "", nil
+	})
 	client.SetOtherNeedsHumanReason(func(repo string, number int) bool {
 		return getEscalationStore().IsEscalated(repo, number)
 	})
