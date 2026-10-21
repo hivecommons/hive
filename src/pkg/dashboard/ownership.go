@@ -149,6 +149,10 @@ const (
 	repoWorkBucketFiltered       = "filtered"
 	repoWorkBucketReporterTriage = "reporter_triage"
 	repoWorkBucketClaimedByPR    = "claimed_by_pr"
+	// Standing meta issues stay open on purpose; they are counted in the
+	// overview breakdown but are not pipeline work.
+	repoWorkBucketHiveAdvisory        = "hive_advisory"
+	repoWorkBucketDependencyDashboard = "dependency_dashboard"
 )
 
 // Ownership is the server's your-turn decision for one issue or pull
