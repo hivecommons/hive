@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
@@ -48,10 +49,13 @@ func TestCostDivisorsRetainLastGoodCounts(t *testing.T) {
 			defer srv.Close()
 
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			now := time.Now()
 			mc := &MetricsCollector{
 				ghClient: ghpkg.NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, logger),
 				repo:     "hive", aiAuthor: "hive-bot[bot]", logger: logger,
-				prIssueCachePath: filepath.Join(t.TempDir(), "counts.json"),
+				prIssueCachePath:  filepath.Join(t.TempDir(), "counts.json"),
+				now:               func() time.Time { return now },
+				rateLimitCautious: func() bool { return false },
 			}
 			mc.collectPRIssueCounts(context.Background())
 			want := mc.GetPRIssueCounts()
@@ -64,6 +68,8 @@ func TestCostDivisorsRetainLastGoodCounts(t *testing.T) {
 			}
 
 			failing.Store(true)
+			// Past the cache TTL so the collector re-asks GitHub.
+			now = now.Add(forgeCountCacheTTLDefault + time.Minute)
 			mc.collectPRIssueCounts(context.Background())
 			if got := mc.GetPRIssueCounts(); got == nil || got.MergedPRs != want.MergedPRs || got.ClosedIssues != want.ClosedIssues || got.Author != want.Author || got.Basis != want.Basis || !got.Stale {
 				t.Fatalf("failed refresh did not retain stale last-good counts: got %+v, want counts %+v", got, want)

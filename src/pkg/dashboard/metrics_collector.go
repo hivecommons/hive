@@ -23,7 +23,30 @@ const (
 	metricsCacheFile       = "/data/metrics/agent-metrics-cache.json"
 	mttrCacheFile          = "/data/metrics/issue-to-merge.json"
 	prIssueCountsCacheFile = "/data/metrics/pr-issue-counts.json"
+
+	// forgeCountCacheTTLEnv overrides forgeCountCacheTTLDefault (Go duration,
+	// e.g. "30m"): how long the Search-API count queries (hive-attributed
+	// merged PRs / closed issues per repo, outreach PR counts) are reused
+	// before being re-asked. They move slowly, and every refresh is two
+	// Search calls per repo against a ~30 req/min secondary limit shared
+	// with everything else the hive does; re-asking on every collect tripped
+	// that limit on the hosted hive (2026-10-21) and darkened the sweeps.
+	forgeCountCacheTTLEnv     = "HIVE_FORGE_COUNT_CACHE_TTL"
+	forgeCountCacheTTLDefault = 20 * time.Minute
+	// forgeCountRetryBackoff is how long a FAILED count refresh waits before
+	// the next attempt; the last-good value is served meanwhile. Shorter than
+	// the TTL so a brief refusal recovers within a couple of collects, long
+	// enough not to hammer a tripped secondary limit.
+	forgeCountRetryBackoff = 10 * time.Minute
+	// forgeCountErrorLogInterval bounds the WARN for a failing count refresh;
+	// repeats inside the window log at DEBUG.
+	forgeCountErrorLogInterval = 15 * time.Minute
 )
+
+// forgeCountCacheTTL is the configured reuse window for Search-API counts.
+func forgeCountCacheTTL() time.Duration {
+	return durationFromEnv(forgeCountCacheTTLEnv, forgeCountCacheTTLDefault)
+}
 
 type MetricsCollector struct {
 	ghClient *ghpkg.Client
@@ -46,6 +69,18 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+	// prIssueRefresh gates how often the PR/issue count searches run and
+	// rate-limits the failure log; see forgeCountCacheTTL.
+	prIssueRefresh forgeCountRefreshGate
+	// outreachCounts caches the two outreach PR searches the same way.
+	outreachMu         sync.Mutex
+	outreachOpen       int
+	outreachMerged     int
+	outreachHaveCounts bool
+	outreachRefresh    forgeCountRefreshGate
+	forgeCountTTL      func() time.Duration
+	rateLimitCautious  func() bool
+	now                func() time.Time
 
 	// coverageTargetFn supplies the configured coverage goal on every collect so
 	// an edit from the hub applies without a restart; nil means the default.
@@ -261,18 +296,44 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 		return
 	}
 
+	now := mc.clock()
+	mc.prIssueMu.Lock()
+	haveCached := prIssueCountsTotal(mc.prIssueCounts) > 0
+	due := mc.prIssueRefresh.due(now)
+	mc.prIssueMu.Unlock()
+	// Inside the TTL after a success, or the backoff after a failure, the
+	// cached counts (fresh or stale) keep serving without a Search call.
+	if !due {
+		return
+	}
+	// Optional housekeeping stands down while GitHub is pacing us after a
+	// rate-limit refusal, as long as there is something cached to serve.
+	if haveCached && mc.cautious() {
+		mc.logger.Debug("PR/issue count refresh deferred while rate-limit caution window is engaged")
+		return
+	}
+
 	var since time.Time
 	if mc.prIssueWindowStart != nil {
 		since = mc.prIssueWindowStart()
 	}
 	result, err := gh.ComputePRIssueCountsForReposSince(ctx, repos, mc.countAuthor(), since)
 	if err != nil {
-		mc.logger.Warn("failed to compute PR/issue counts", "error", err)
+		mc.prIssueMu.Lock()
+		logNow := mc.prIssueRefresh.failed(now)
+		mc.prIssueMu.Unlock()
+		if logNow {
+			mc.logger.Warn("failed to compute PR/issue counts; serving last-good counts until the next retry",
+				"error", err, "retry_in", forgeCountRetryBackoff.String())
+		} else {
+			mc.logger.Debug("failed to compute PR/issue counts (repeat)", "error", err)
+		}
 		mc.markPRIssueCountsStale(err)
 		return
 	}
 
 	mc.prIssueMu.Lock()
+	mc.prIssueRefresh.succeeded(now, mc.effectiveForgeCountTTL())
 	if prIssueCountsTotal(result) == 0 && prIssueCountsTotal(mc.prIssueCounts) > 0 {
 		mc.prIssueCounts.Stale = true
 		mc.prIssueCounts.Status = "stale: zero response ignored"
@@ -552,6 +613,10 @@ func (mc *MetricsCollector) countACMM(ctx context.Context, owner, repo string) i
 	return count
 }
 
+// countOutreachPRs returns the open and merged outreach PR counts. The two
+// Search queries behind them run at most once per forgeCountCacheTTL; a
+// failed refresh serves the last-good pair and logs at most once per
+// forgeCountErrorLogInterval.
 func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged int) {
 	gh := mc.client()
 	org, _, author := mc.projectScope()
@@ -559,17 +624,103 @@ func (mc *MetricsCollector) countOutreachPRs(ctx context.Context) (open, merged 
 		return 0, 0
 	}
 
-	openCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "open")
-	if err != nil {
-		mc.logger.Warn("failed to count open outreach PRs", "error", err)
+	now := mc.clock()
+	mc.outreachMu.Lock()
+	cachedOpen, cachedMerged, haveCached := mc.outreachOpen, mc.outreachMerged, mc.outreachHaveCounts
+	due := mc.outreachRefresh.due(now)
+	mc.outreachMu.Unlock()
+	// Inside the TTL, or the backoff after a failure, the cached pair (zero
+	// if nothing has ever succeeded) serves without a Search call.
+	if !due {
+		return cachedOpen, cachedMerged
+	}
+	if haveCached && mc.cautious() {
+		mc.logger.Debug("outreach PR count refresh deferred while rate-limit caution window is engaged")
+		return cachedOpen, cachedMerged
 	}
 
-	mergedCount, err := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "merged")
-	if err != nil {
-		mc.logger.Warn("failed to count merged outreach PRs", "error", err)
+	openCount, openErr := gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "open")
+	var mergedCount int
+	var mergedErr error
+	if openErr == nil {
+		mergedCount, mergedErr = gh.SearchOutreachPRCount(ctx, author, org, mc.projectName, "merged")
+	}
+	if openErr != nil || mergedErr != nil {
+		which, err := "merged", mergedErr
+		if openErr != nil {
+			which, err = "open", openErr
+		}
+		mc.outreachMu.Lock()
+		logNow := mc.outreachRefresh.failed(now)
+		mc.outreachMu.Unlock()
+		if logNow {
+			mc.logger.Warn("failed to count "+which+" outreach PRs; serving last-good counts until the next retry",
+				"error", err, "retry_in", forgeCountRetryBackoff.String())
+		} else {
+			mc.logger.Debug("failed to count "+which+" outreach PRs (repeat)", "error", err)
+		}
+		return cachedOpen, cachedMerged
 	}
 
+	mc.outreachMu.Lock()
+	mc.outreachOpen, mc.outreachMerged, mc.outreachHaveCounts = openCount, mergedCount, true
+	mc.outreachRefresh.succeeded(now, mc.effectiveForgeCountTTL())
+	mc.outreachMu.Unlock()
 	return openCount, mergedCount
+}
+
+// clock is the collector's time source; tests inject one.
+func (mc *MetricsCollector) clock() time.Time {
+	if mc != nil && mc.now != nil {
+		return mc.now()
+	}
+	return time.Now()
+}
+
+// cautious reports whether the GitHub client is in its slow-start caution
+// window; tests inject the predicate.
+func (mc *MetricsCollector) cautious() bool {
+	if mc != nil && mc.rateLimitCautious != nil {
+		return mc.rateLimitCautious()
+	}
+	return ghpkg.RateLimitCautionEngaged()
+}
+
+func (mc *MetricsCollector) effectiveForgeCountTTL() time.Duration {
+	if mc != nil && mc.forgeCountTTL != nil {
+		if ttl := mc.forgeCountTTL(); ttl > 0 {
+			return ttl
+		}
+	}
+	return forgeCountCacheTTL()
+}
+
+// forgeCountRefreshGate decides when a cached Search-API count is re-asked
+// and when a failure is worth a WARN. Callers hold their own lock.
+type forgeCountRefreshGate struct {
+	nextRefresh time.Time
+	lastErrLog  time.Time
+}
+
+// due reports whether a refresh should be attempted at now. A zero gate
+// (nothing fetched yet) is always due.
+func (g *forgeCountRefreshGate) due(now time.Time) bool {
+	return g.nextRefresh.IsZero() || !now.Before(g.nextRefresh)
+}
+
+func (g *forgeCountRefreshGate) succeeded(now time.Time, ttl time.Duration) {
+	g.nextRefresh = now.Add(ttl)
+}
+
+// failed schedules the retry and reports whether this failure should be
+// logged at WARN (the first in each forgeCountErrorLogInterval).
+func (g *forgeCountRefreshGate) failed(now time.Time) (logNow bool) {
+	g.nextRefresh = now.Add(forgeCountRetryBackoff)
+	if g.lastErrLog.IsZero() || now.Sub(g.lastErrLog) >= forgeCountErrorLogInterval {
+		g.lastErrLog = now
+		return true
+	}
+	return false
 }
 
 func (mc *MetricsCollector) loadFromDisk() {

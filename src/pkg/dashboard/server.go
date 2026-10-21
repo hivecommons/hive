@@ -969,14 +969,18 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name             string                    `json:"name"`
-	Full             string                    `json:"full"`
-	Issues           int                       `json:"issues"`
-	PRs              int                       `json:"prs"`
-	Mode             string                    `json:"mode,omitempty"`
-	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
-	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
-	SLA              *timeline.SLARepoReport   `json:"sla,omitempty"`
+	Name             string `json:"name"`
+	Full             string `json:"full"`
+	Issues           int    `json:"issues"`
+	PRs              int    `json:"prs"`
+	Mode             string `json:"mode,omitempty"`
+	CountsIncomplete bool   `json:"countsIncomplete,omitempty"`
+	// CountsStale means this repo's counts and items come from the previous
+	// successful enumeration because GitHub refused this pass's fetch
+	// transiently (rate limit, 5xx); see github.ActionableResult.StaleRepos.
+	CountsStale   bool                      `json:"countsStale,omitempty"`
+	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA           *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the

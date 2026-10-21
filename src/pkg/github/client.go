@@ -45,7 +45,11 @@ type Client struct {
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
-	rateLimits             rateLimitTracker
+	rateLimits rateLimitTracker
+	// lastGoodEnum keeps each repo's newest successful enumeration so a
+	// transiently refused fetch does not publish the repo as empty
+	// (enumerate_lastgood.go). Zero value is ready to use.
+	lastGoodEnum           lastGoodEnumeration
 	prDetailTTL            func() time.Duration
 	graphQLPRBatchEnabled  func() bool
 	graphQLPRBatchPageSize func() int
@@ -1003,6 +1007,17 @@ type ActionableResult struct {
 	TotalByRepo         map[string]RepoCounts        `json:"total_by_repo,omitempty"`
 	WorkBreakdownByRepo map[string]RepoWorkBreakdown `json:"work_breakdown_by_repo,omitempty"`
 	WorkDetailsByRepo   map[string]RepoWorkDetails   `json:"work_details_by_repo,omitempty"`
+	// StaleRepos lists repos whose fetch GitHub refused transiently this pass
+	// (rate limit, 429, 5xx) and whose share of the result is the previous
+	// successful enumeration instead (enumerate_lastgood.go). Consumers must
+	// treat the snapshot as stale, not as a drop in work.
+	StaleRepos []string `json:"stale_repos,omitempty"`
+}
+
+// Stale reports whether any repo's share of the result was served from the
+// last-good enumeration rather than fetched this pass.
+func (r *ActionableResult) Stale() bool {
+	return r != nil && len(r.StaleRepos) > 0
 }
 
 type RepoCounts struct {
@@ -1288,34 +1303,76 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	clankerRequestedBudget := newClankerRequestedBudget()
 	failedRepos := 0
 	var lastFetchErr error
+	var staleRepos []string
+	// appendRepo folds one repo's enumeration into the aggregate; shared by
+	// the fresh path and the last-good substitution path so both produce the
+	// same shape.
+	appendRepo := func(repo string, enum repoEnumeration) {
+		allIssues = append(allIssues, enum.issues...)
+		holdItems = append(holdItems, enum.held...)
+		allPRs = append(allPRs, enum.prs...)
+		allAttributedPRs = append(allAttributedPRs, enum.attributed...)
+		allHeldPRs = append(allHeldPRs, enum.heldPRs...)
+		allStaleDrafts = append(allStaleDrafts, enum.staleDrafts...)
+		totalByRepo[repo] = enum.counts
+		workBreakdownByRepo[repo] = enum.breakdown
+		workDetailsByRepo[repo] = enum.details
+	}
+	// serveLastGood substitutes the repo's previous successful enumeration
+	// after a transient refusal. Reports whether one was available.
+	serveLastGood := func(repo, side string, err error) bool {
+		if !isTransientEnumerationError(err) {
+			return false
+		}
+		enum, ok := c.lastGoodEnum.get(repo)
+		if !ok {
+			return false
+		}
+		appendRepo(repo, enum)
+		staleRepos = append(staleRepos, repo)
+		c.logger.Warn("GitHub refused repo enumeration transiently; serving last-good snapshot for this repo (marked stale)",
+			"repo", repo, "side", side, "last_good_at", enum.fetchedAt.UTC().Format(time.RFC3339), "error", err)
+		return true
+	}
 	for _, repo := range repos {
 		issues, held, issueTotal, issueBreakdown, issueDetails, err := c.fetchIssues(ctx, repo, now, reporterTrustWaitBudget)
 		if err != nil {
-			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
 			failedRepos++
 			lastFetchErr = err
+			if !serveLastGood(repo, "issues", err) {
+				c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
+			}
 			continue
 		}
-		allIssues = append(allIssues, issues...)
-		holdItems = append(holdItems, held...)
 
 		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, sidelinedPRs, err := c.fetchPRsWithDetails(ctx, repo, clankerRequestedBudget)
 		if err != nil {
-			// Issues for this repo were already collected; a PR-only failure
-			// is partial and must not count toward the all-repos-failed guard,
-			// which would discard real issue data and report an outage.
+			// A PR-only failure is partial and must not count toward the
+			// all-repos-failed guard, which would discard real issue data and
+			// report an outage. With a last-good enumeration the whole repo
+			// is served from it (its PR side is the newest known); without
+			// one the fresh issues are kept, as before.
+			if serveLastGood(repo, "prs", err) {
+				continue
+			}
 			c.logger.Warn("failed to fetch PRs", "repo", repo, "error", err)
+			allIssues = append(allIssues, issues...)
+			holdItems = append(holdItems, held...)
 			continue
 		}
-		allPRs = append(allPRs, prs...)
-		allAttributedPRs = append(allAttributedPRs, attributedPRs...)
-		holdItems = append(holdItems, heldItems...)
-		allHeldPRs = append(allHeldPRs, heldPRs...)
-		allStaleDrafts = append(allStaleDrafts, staleDrafts...)
-
-		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
-		workBreakdownByRepo[repo] = RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown}
-		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs}
+		enum := repoEnumeration{
+			issues:      issues,
+			held:        append(append([]HoldItem(nil), held...), heldItems...),
+			prs:         prs,
+			heldPRs:     heldPRs,
+			staleDrafts: staleDrafts,
+			attributed:  attributedPRs,
+			counts:      RepoCounts{Issues: issueTotal, PRs: prTotal},
+			breakdown:   RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown},
+			details:     RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs},
+		}
+		appendRepo(repo, enum)
+		c.lastGoodEnum.store(repo, enum)
 	}
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a
@@ -1362,6 +1419,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	result.TotalByRepo = totalByRepo
 	result.WorkBreakdownByRepo = workBreakdownByRepo
 	result.WorkDetailsByRepo = workDetailsByRepo
+	result.StaleRepos = staleRepos
 
 	return result, nil
 }

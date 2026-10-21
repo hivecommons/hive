@@ -1501,3 +1501,39 @@ func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
 		t.Fatalf("lastError/pausedReason should remain populated: %q / %q", agents[0].LastError, agents[0].PausedReason)
 	}
 }
+
+// A repo served from its last-good enumeration after a transient GitHub
+// refusal keeps its counts on the card, is flagged stale, and keeps the
+// Overview KPI snapshot out of history (hosted hive, 2026-10-21).
+func TestBuildRepos_StaleRepoKeepsCountsAndMarksKPIIncomplete(t *testing.T) {
+	cfg := &config.Config{
+		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1", "repo2"}},
+	}
+	actionable := &github.ActionableResult{
+		TotalByRepo: map[string]github.RepoCounts{
+			"repo1": {Issues: 19, PRs: 2},
+			"repo2": {Issues: 1, PRs: 0},
+		},
+		StaleRepos: []string{"repo1"},
+	}
+	repos := buildRepos(cfg, actionable, governor.State{})
+	if len(repos) != 2 {
+		t.Fatalf("repos len = %d, want 2", len(repos))
+	}
+	if repos[0].Issues != 19 || repos[0].PRs != 2 {
+		t.Fatalf("stale repo counts = %d/%d, want last-good 19/2", repos[0].Issues, repos[0].PRs)
+	}
+	if !repos[0].CountsStale || repos[0].CountsIncomplete {
+		t.Fatalf("repo1 stale=%v incomplete=%v, want stale only", repos[0].CountsStale, repos[0].CountsIncomplete)
+	}
+	if repos[1].CountsStale {
+		t.Fatal("fresh repo2 must not be marked stale")
+	}
+	if !overviewKPIIncomplete(cfg, actionable) {
+		t.Fatal("a snapshot with a stale repo must be KPI-incomplete so history skips it")
+	}
+	actionable.StaleRepos = nil
+	if overviewKPIIncomplete(cfg, actionable) {
+		t.Fatal("a fully fresh snapshot must be KPI-complete")
+	}
+}

@@ -17,6 +17,12 @@ const webhookRefreshRESTCaller = "dashboard:webhook-tracker-refresh"
 // refresh a display fall back to the next eval cycle.
 var ErrAPIBudgetCritical = errors.New("github api budget critical: discretionary read skipped")
 
+// ErrRateLimitCaution is returned when a discretionary read is refused
+// because the slow-start caution window is engaged after a rate-limit
+// refusal: the next eval cycle re-enumerates the item anyway, so the
+// targeted GET would only compete with that for paced slots.
+var ErrRateLimitCaution = errors.New("github rate-limit caution window engaged: discretionary read skipped")
+
 // WebhookItemSnapshot is the display-only state of one PR or issue re-read
 // after a webhook named it. It carries exactly the fields the Hive activity
 // monitor renders from the status snapshot (title, labels, draft flag,
@@ -45,7 +51,8 @@ func (w WebhookItemSnapshot) Open() bool {
 
 // FetchWebhookItemSnapshot re-reads one PR (isPR) or issue with a single
 // GET. It goes through the paced REST transport like every other read and
-// refuses to spend when the core budget is critical. A fetched PR also
+// refuses to spend when the core budget is critical or GitHub is pacing the
+// hive after a rate-limit refusal. A fetched PR also
 // refreshes the PR detail cache so the next eval cycle's enrichment starts
 // from it.
 func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, number int, isPR bool) (WebhookItemSnapshot, error) {
@@ -54,6 +61,9 @@ func (c *Client) FetchWebhookItemSnapshot(ctx context.Context, repo string, numb
 	}
 	if mode, _ := c.APIBudgetMode(); mode == APIBudgetCritical {
 		return WebhookItemSnapshot{}, ErrAPIBudgetCritical
+	}
+	if RateLimitCautionEngaged() {
+		return WebhookItemSnapshot{}, ErrRateLimitCaution
 	}
 	owner, repoName := c.splitRepo(repo)
 	ctx = WithRESTCaller(ctx, webhookRefreshRESTCaller)

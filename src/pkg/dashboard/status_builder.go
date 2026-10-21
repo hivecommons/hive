@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -451,6 +452,12 @@ func overviewKPIIncomplete(cfg *config.Config, actionable *github.ActionableResu
 		return false
 	}
 	if actionable == nil {
+		return true
+	}
+	// A repo served from its last-good enumeration after a transient GitHub
+	// refusal has counts, but they are not this snapshot's observation; KPI
+	// history must not record them as a fresh point.
+	if actionable.Stale() {
 		return true
 	}
 	for _, repoName := range cfg.Project.Repos {
@@ -2302,6 +2309,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		}
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true
+		}
+		if actionable != nil && slices.Contains(actionable.StaleRepos, repoName) {
+			r.CountsStale = true
 		}
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
