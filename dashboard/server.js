@@ -2908,10 +2908,10 @@ app.get('/contribute/register', (_req, res) => {
       <h2>Hive Contributor Registration</h2>
       <p>GitHub OAuth is not configured on this hub.</p>
       <p>Use the API endpoint instead:</p>
-      <pre style="background:#161b22;padding:16px;border-radius:8px">curl -X POST ${_req.protocol}://${_req.get('host')}/api/contribute/register \\
+      <pre style="background:#161b22;padding:16px;border-radius:8px">curl -X POST ${esc(`${_req.protocol}://${_req.get('host')}`)}/api/contribute/register \\
   -H "Content-Type: application/json" \\
   -d '{"github_username": "your-github-username"}'</pre>
-      <p>Or run: <code>just contribute-register</code></p>
+      <p>Or run: <code>just contribute-setup</code></p>
     </body></html>`);
   }
   const state = crypto.randomBytes(16).toString('hex');

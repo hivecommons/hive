@@ -34,6 +34,8 @@ For a homelab service with accounts independent of the host, use the
 It keeps GitHub, Codex, Hive configuration and work in a named volume and
 requires no host GitHub or provider CLI installation.
 
+### From source
+
 From a checkout of this repository:
 
 ```bash
@@ -90,6 +92,69 @@ rather than reusing another stage's tree. Reclaiming or completing a stage
 removes its worktree.
 
 Use `just contribute-check <backend>` before registering to catch missing CLIs or obvious auth gaps.
+
+### Homebrew
+
+Homebrew is an additional way to install the relay without cloning this
+repository:
+
+```bash
+brew install hivecommons/hive/contribute
+```
+
+The formula installs `hive-contribute`, a wrapper around a pinned contributor
+image. Linux uses Apptainer; macOS requires a configured Docker, Podman, or
+Lima runtime. See the [tap README's platform notes](https://github.com/hivecommons/homebrew-hive#platform-reality)
+and [credential inputs](https://github.com/hivecommons/homebrew-hive#runtime-inputs-passed-through)
+for runtime prerequisites and authentication for your chosen CLI backend.
+Installing the formula does not register you with a hive.
+
+For a new registration, choose a hive from the [Hive Hub](https://hive.hivecommons.dev)
+and open its `/contribute` page to identify its dashboard URL. Replace
+`hive.example.com` with that dashboard's host and `YOUR_GITHUB_USERNAME` with
+your GitHub username:
+
+```bash
+curl --fail --show-error --silent --max-time 15 \
+  -X POST https://hive.example.com/api/contribute/register \
+  -H 'Content-Type: application/json' \
+  -d '{"github_username":"YOUR_GITHUB_USERNAME"}'
+```
+
+This is the same registration endpoint used by `just contribute-setup`; it
+does not need a GitHub token or an Authorization header. Save the returned
+`registration_token` privately: it is shown only once. If the response says
+"Already registered", it will not contain a token. Reuse your existing
+`contributor.env` from that hive, or follow
+[Moving the relay to another machine](#moving-the-relay-to-another-machine)
+to recover access.
+
+Create a private config file (these commands preserve an existing file):
+
+```bash
+mkdir -p "$HOME/.config/hive"
+(umask 077; touch "$HOME/.config/hive/contributor.env")
+chmod 600 "$HOME/.config/hive/contributor.env"
+```
+
+Edit `~/.config/hive/contributor.env` to contain the following, replacing the
+host and token with the values for the **same hive** and choosing an
+authenticated backend. If you already use multiple hive profiles, keep
+their existing hub/token pairs instead of replacing them with this single-hive
+example.
+
+```sh
+HIVE_HUB=wss://hive.example.com/contribute
+HIVE_REGISTRATION_TOKEN=YOUR_REGISTRATION_TOKEN
+AGENT_BACKEND=claude
+```
+
+The wrapper mounts this directory and the image entrypoint reads the file.
+Start the relay from the directory you want to use as its workspace:
+
+```bash
+hive-contribute
+```
 
 ## Docker Compose workflow
 

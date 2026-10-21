@@ -36,7 +36,7 @@ fi
 
 # Docker -e takes precedence over config file
 export HIVE_HUB="${HIVE_HUB:-wss://hive.hivecommons.dev/contribute}"
-export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-register' first}"
+export HIVE_REGISTRATION_TOKEN="${HIVE_REGISTRATION_TOKEN:?Not registered — run 'just contribute-setup' first}"
 # Export the commons routing strategy so a relay started here (not just one
 # reloaded via SIGUSR1) honors HIVE_COMMONS_STRATEGY / HIVE_CONTRIBUTOR_STRATEGY
 # from contributor.env from its first solicitation.

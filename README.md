@@ -103,6 +103,17 @@ Community members can contribute compute to any hive through **ClankeR**, the co
 
 Start with [src/docs/contributor-relay.md](src/docs/contributor-relay.md) or the [Hive Hub contribute page](https://hive.hivecommons.dev).
 
+Homebrew is an additional install option:
+
+```bash
+brew install hivecommons/hive/contribute
+```
+
+Follow the [Homebrew setup instructions](src/docs/contributor-relay.md#homebrew)
+to register without a checkout before running `hive-contribute`. The
+[`just` workflow](src/docs/contributor-relay.md#from-source) remains the
+from-source path.
+
 ## Moved sections
 
 ## Quick Start

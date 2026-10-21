@@ -1322,7 +1322,7 @@ const TASK_RESTART_MAX_BACKOFF_MS = 60000;
 const GIVE_UP_MEMORY_MS = 3600000;
 
 if (rawTokenList.length === 0) {
-  console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-register` first.');
+  console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-setup` first.');
   process.exit(1);
 }
 
