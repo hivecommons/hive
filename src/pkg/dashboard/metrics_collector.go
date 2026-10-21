@@ -227,6 +227,9 @@ func (mc *MetricsCollector) SetProjectScope(org, primaryRepo string, repos []str
 }
 
 func (mc *MetricsCollector) collect(ctx context.Context) {
+	// Dashboard metrics are housekeeping against the pacer: they stand down
+	// for the governor's enumeration while a caution window is engaged.
+	ctx = ghpkg.WithPacingClass(ctx, ghpkg.PacingLow)
 	metrics := make(map[string]any)
 
 	outreach := mc.collectOutreach(ctx)

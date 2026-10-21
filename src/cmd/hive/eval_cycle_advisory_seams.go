@@ -46,6 +46,10 @@ func pinDigestSnapshot(
 	if opts == nil || deps.latestCommit == nil || org == "" || repoName == "" {
 		return false
 	}
+	// Digest pinning and its ref/path lookups are housekeeping: under a
+	// rate-limit caution window they yield their pacing slots to the
+	// governor's enumeration and the digest builds unpinned this cycle.
+	ctx = github.WithPacingClass(ctx, github.PacingLow)
 	if branch == "" && deps.defaultBranch != nil {
 		b, err := deps.defaultBranch(ctx, org, repoName)
 		if err != nil {

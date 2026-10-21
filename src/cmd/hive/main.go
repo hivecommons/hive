@@ -8923,6 +8923,10 @@ func unparkEscalatedPR(ctx context.Context, writer forge.IssueWriter, o escalati
 // hammering the GitHub API on short eval intervals.
 const autoMergeSweepInterval = time.Minute
 
+// autoMergeSweepTickBudget is how long the queued automerge sweep may wait
+// for its first pacing slot before the sweep is shed to the next cycle.
+const autoMergeSweepTickBudget = 5 * time.Second
+
 // taskListSweepInterval is the minimum spacing between task-list sweeps. The
 // sweep enumerates every open issue in every repo — much heavier than the
 // auto-merge sweep's label-scoped query — and "done" moves at PR-merge cadence,
@@ -9033,9 +9037,16 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < autoMergeSweepInterval {
 		return
 	}
+	// Housekeeping against the pacer: while a caution window has the pacing
+	// queue deeper than this sweep could wait, skip the sweep (it is due
+	// again next cycle) rather than queue behind the enumeration.
+	if github.ShedLowPriorityTick("automerge:queued-sweep", autoMergeSweepTickBudget) {
+		return
+	}
 	if lastRun != nil {
 		*lastRun = now
 	}
+	ctx = github.WithPacingClass(ctx, github.PacingLow)
 	opts := automerge.Options{
 		Logger:                  logger,
 		MergerAuthorizer:        trustedMergerFunc(cfg),

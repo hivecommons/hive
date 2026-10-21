@@ -130,7 +130,17 @@ func etagCacheWrap(inner http.RoundTripper) http.RoundTripper {
 // conditional request is free against the PRIMARY quota but is still a
 // request as far as the secondary (burst) limiter is concerned.
 func githubTransportChain(inner http.RoundTripper) http.RoundTripper {
-	return slowStartWrap(etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner))))
+	return slowStartWrap(githubUnpacedTransportChain(inner))
+}
+
+// githubUnpacedTransportChain is githubTransportChain without the slow-start
+// pacer. It is for the App-JWT endpoints (installation-token mint, app
+// discovery): they are a separate rate-limit bucket from the installation's
+// REST quota, and a mint that queues behind paced traffic fails every
+// request that needed the token — observed live 2026-10-21 ("creating
+// installation token: ... slot would miss request deadline").
+func githubUnpacedTransportChain(inner http.RoundTripper) http.RoundTripper {
+	return etagCacheWrap(rest404NegativeCacheWrap(restAccountingWrap(inner)))
 }
 
 // externalSlowStartState paces requests made through NewHTTPTransport. It is

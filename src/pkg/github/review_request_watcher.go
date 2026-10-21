@@ -39,6 +39,10 @@ func reviewRequestDir() string {
 // latency-critical. A var so tests can drive the ticker quickly.
 var reviewRequestPollInterval = 10 * time.Second
 
+// reviewRequestTickBudget is how long one watcher tick may wait for its
+// first pacing slot before the tick is shed to the next one.
+const reviewRequestTickBudget = 5 * time.Second
+
 // ReviewRequest is the JSON an agent writes to ReviewRequestDir. Event selects
 // the review type: "approve" | "request_changes" | "comment" |
 // "resolve_thread". Body is required for request_changes/comment (GitHub
@@ -174,7 +178,13 @@ func (c *Client) StartReviewRequestWatcher(ctx context.Context, authz ReviewRequ
 				if ctx.Err() != nil {
 					return
 				}
-				c.processReviewRequests(ctx, nowFn)
+				// Housekeeping cadence against the pacer: a tick whose
+				// requests would queue behind the governor's enumeration
+				// during a caution window waits for the next tick instead.
+				if ShedLowPriorityTick("review-request-watcher", reviewRequestTickBudget) {
+					continue
+				}
+				c.processReviewRequests(WithPacingClass(ctx, PacingLow), nowFn)
 			}
 		}
 	}()

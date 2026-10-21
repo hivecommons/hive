@@ -1114,6 +1114,30 @@ stale-as-of time and the Overview shows a `stale · as of HH:MM` badge.
 Raising `eval_interval_webhook_s` lowers list-call volume further at the cost
 of a longer window before a missed delivery is corrected by reconciliation.
 
+##### Rate-limit pacing priority
+
+After a GitHub rate-limit refusal (a secondary-limit 403 or a primary-limit
+reset) the shared transport enters a slow-start caution window and paces
+requests about 2s apart. Pacing is prioritised so periodic housekeeping cannot
+starve the governor:
+
+- the reconcile pass (`EnumerateActionable`) runs **high** priority and is
+  bounded only by its own deadline;
+- ordinary requests may queue at most 30s ahead;
+- housekeeping (self-authored and queued automerge sweeps, the review-request
+  watcher, advisory digest lookups, the dashboard metrics and fleet-stats
+  collectors) runs **low** priority: a request that would queue more than 5s
+  ahead is refused immediately (`github pacing: request shed`) instead of
+  taking a slot, and a tick whose first slot is already further out than the
+  tick could wait is skipped outright (`low-priority work shed`, logged at
+  most once a minute per caller) and retried on its next tick;
+- the self-authored automerge sweep backs its tick off to at least 60s while
+  the window is engaged and resumes its adaptive interval when it ends;
+- GitHub App installation-token mints (and the other App-JWT endpoints) do
+  not go through the pacer at all: they are a separate rate-limit bucket, and
+  a mint that queued behind paced traffic failed every request that needed
+  the token.
+
 `/api/status` and `/api/gh-rate-limits` expose
 `webhooks: {healthy, last_event_at, events_1h, invalidations_1h,
 targeted_refreshes_1h, tracker_invalidations_1h}` (the last two count the

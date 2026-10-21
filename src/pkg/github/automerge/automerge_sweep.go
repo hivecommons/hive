@@ -138,6 +138,9 @@ type Options struct {
 	// CheckSummary reads a head's check digest for human-stage routing
 	// (hivecommons/hive#12528); nil uses the GitHub client.
 	CheckSummary CheckSummarizer
+	// RateLimitCautious reports whether GitHub is pacing the hive after a
+	// rate-limit refusal; nil reads the shared slow-start state.
+	RateLimitCautious func() bool
 }
 
 // Engine owns the automerge sweep policy state.
@@ -198,12 +201,13 @@ type Engine struct {
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
 
-	stageLabelPolicy func() StageLabelPolicy
-	stageTracker     *StageTracker
-	stageStore       *stagelabels.Store
-	stageEngine      *stageengine.Options
-	contributorNudge ContributorNudgeSink
-	checkSummary     CheckSummarizer
+	stageLabelPolicy  func() StageLabelPolicy
+	stageTracker      *StageTracker
+	stageStore        *stagelabels.Store
+	stageEngine       *stageengine.Options
+	contributorNudge  ContributorNudgeSink
+	checkSummary      CheckSummarizer
+	rateLimitCautious func() bool
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -229,6 +233,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
@@ -337,6 +342,36 @@ const releaseInProgressMaxAge = 10 * time.Minute
 // merges are latency-sensitive (an eligible PR should land quickly) but a
 // tight loop risks GitHub secondary rate limits across every managed repo.
 const selfAuthoredAutoMergeSweepInterval = 10 * time.Second
+
+// selfAuthoredSweepCautionInterval is the floor the self-authored sweep tick
+// backs off to while the GitHub slow-start caution window is engaged. The
+// sweep is housekeeping: after a rate-limit refusal its 10s cadence was the
+// largest single feeder of the pacing queue the governor's enumeration was
+// starved behind (2026-10-21). The adaptive interval resumes when caution
+// ends.
+const selfAuthoredSweepCautionInterval = time.Minute
+
+// selfAuthoredSweepTickBudget is how long one sweep tick may reasonably wait
+// for its first pacing slot; a deeper queue sheds the tick.
+const selfAuthoredSweepTickBudget = 5 * time.Second
+
+// cautionSweepInterval returns the tick to use while cautious: the adaptive
+// interval, floored at selfAuthoredSweepCautionInterval.
+func cautionSweepInterval(interval time.Duration) time.Duration {
+	if interval < selfAuthoredSweepCautionInterval {
+		return selfAuthoredSweepCautionInterval
+	}
+	return interval
+}
+
+// lowPriority tags ctx as housekeeping for the slow-start pacer unless the
+// caller already chose a class.
+func lowPriority(ctx context.Context) context.Context {
+	if hgithub.PacingClassOf(ctx) != hgithub.PacingNormal {
+		return ctx
+	}
+	return hgithub.WithPacingClass(ctx, hgithub.PacingLow)
+}
 
 // selfAuthoredSweepBudgetShare caps the fraction of the App's hourly REST
 // budget this sweep alone may consume. The sweep is a background nicety; the
@@ -838,6 +873,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 	if !c.ready() {
 		return nil, hgithub.ErrNoGitHubClient
 	}
+	ctx = lowPriority(ctx)
 	maxMerges := opts.MaxMerges
 	if maxMerges <= 0 {
 		maxMerges = DefaultAutoMergeSweepMaxMerges
@@ -1028,6 +1064,7 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 	if !c.ready() {
 		return nil, hgithub.ErrNoGitHubClient
 	}
+	ctx = lowPriority(ctx)
 	policy := c.currentTrustedAuthorPolicy()
 	result := &AutoMergeSweepResult{}
 	if !policy.Enabled {
@@ -1167,6 +1204,55 @@ func (c *Engine) refreshRateLimitCache(ctx context.Context) {
 
 // isRateLimited reports whether err is a primary/secondary rate-limit error,
 // including go-github's pre-emptive synthetic one.
+// sweepTickDecision is what one self-authored sweep tick does about the
+// GitHub pacer before any request is made.
+type sweepTickDecision struct {
+	// tick is the ticker period to run at from now; reset says it changed.
+	tick  time.Duration
+	reset bool
+	// cautionTick is non-zero while running at the caution floor.
+	cautionTick time.Duration
+	// skip sheds this tick: the pacing queue is deeper than it could wait.
+	skip bool
+}
+
+// sweepTickGate backs the tick off to the caution floor while GitHub is
+// pacing the hive after a rate-limit refusal, sheds the tick outright when
+// the pacing queue is already deeper than selfAuthoredSweepTickBudget, and
+// resumes the adaptive interval once the window ends. shed is
+// hgithub.ShedLowPriorityTick (injected by tests).
+func (c *Engine) sweepTickGate(interval, cautionTick time.Duration, shed func(string, time.Duration) bool) sweepTickDecision {
+	d := sweepTickDecision{tick: interval, cautionTick: cautionTick}
+	if !c.cautionEngaged() {
+		if cautionTick != 0 {
+			d.cautionTick = 0
+			d.reset = true
+		}
+		return d
+	}
+	if want := cautionSweepInterval(interval); cautionTick != want {
+		d.cautionTick = want
+		d.tick = want
+		d.reset = true
+		c.info("self-authored automerge sweep backing off while rate-limit caution window is engaged", "interval", want)
+	} else {
+		d.tick = want
+	}
+	if shed != nil && shed("automerge:self-authored-sweep", selfAuthoredSweepTickBudget) {
+		d.skip = true
+	}
+	return d
+}
+
+// cautionEngaged reports whether the slow-start caution window is engaged;
+// tests inject the predicate through Options.
+func (c *Engine) cautionEngaged() bool {
+	if c.rateLimitCautious != nil {
+		return c.rateLimitCautious()
+	}
+	return hgithub.RateLimitCautionEngaged()
+}
+
 func isRateLimited(err error) bool {
 	var rl *gh.RateLimitError
 	if errors.As(err, &rl) {
@@ -1199,15 +1285,27 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	}
 	repos := len(c.transport.Repositories())
 	interval := selfAuthoredSweepInterval(repos)
+	ctx = lowPriority(ctx)
 	go func() {
 		defer close(done)
 		t := time.NewTicker(interval)
 		defer t.Stop()
+		// cautionTick is non-zero while the ticker is running at the caution
+		// floor instead of the adaptive interval.
+		var cautionTick time.Duration
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				gate := c.sweepTickGate(interval, cautionTick, hgithub.ShedLowPriorityTick)
+				if gate.reset {
+					t.Reset(gate.tick)
+				}
+				cautionTick = gate.cautionTick
+				if gate.skip {
+					continue
+				}
 				result := &AutoMergeSweepResult{}
 				if acmmAllowed {
 					var err error
@@ -1277,6 +1375,10 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 						"candidates", result.Candidates,
 						"default_candidate_allowance", selfAuthoredSweepCandidateAllowance)
 					interval = next
+					if cautionTick != 0 {
+						cautionTick = cautionSweepInterval(interval)
+						t.Reset(cautionTick)
+					}
 				}
 			}
 		}

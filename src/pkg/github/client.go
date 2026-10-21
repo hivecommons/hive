@@ -1329,6 +1329,9 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	if c == nil {
 		return nil, ErrNoGitHubClient
 	}
+	// The reconcile pass is what every decision and dashboard row depends
+	// on; under caution it takes precedence over periodic housekeeping.
+	ctx = WithPacingClass(ctx, PacingHigh)
 	now := time.Now()
 	result := &ActionableResult{
 		GeneratedAt: now,

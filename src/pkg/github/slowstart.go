@@ -124,6 +124,7 @@ func ResetRateLimitPacingForTest() {
 		st.lastCautionLog = time.Time{}
 		st.mu.Unlock()
 	}
+	resetPacingShedLogForTest()
 }
 
 func (st *slowStartState) claimSlotLocked(now time.Time) (time.Time, bool) {
@@ -190,6 +191,18 @@ func (t *slowStartTransport) RoundTrip(req *http.Request) (*http.Response, error
 		gap := st.gap + time.Duration(rand.Int63n(int64(st.jitter)+1))
 		var fromAbandoned bool
 		slot, fromAbandoned = st.claimSlotLocked(now)
+		// Priority ladder (pacing_priority.go): a request whose class may
+		// not queue this deep is shed without taking a slot, so periodic
+		// housekeeping cannot push the governor's enumeration past its
+		// deadline.
+		class := PacingClassOf(req.Context())
+		if limit, bounded := class.maxQueue(); bounded {
+			if eta := slot.Sub(now); eta > limit {
+				st.mu.Unlock()
+				logPacingShedOnce("transport:"+class.String(), now, "path", req.URL.Path, "queue_eta", eta.Round(time.Millisecond), "limit", limit)
+				return nil, pacingShedError(class, eta, limit)
+			}
+		}
 		deadlineMargin := st.deadlineMargin
 		if deadlineMargin == 0 {
 			deadlineMargin = slowStartDeadlineMargin

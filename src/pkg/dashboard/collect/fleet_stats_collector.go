@@ -74,6 +74,9 @@ type FleetStatsCollector struct {
 	// PVC so a restart resumes from the last-known counts instead of nil. Empty
 	// disables persistence (the collector is purely in-memory). See #2329.
 	persistPath string
+
+	// shedTickFn overrides the pacer's shed decision in tests.
+	shedTickFn func() bool
 }
 
 // persistedFleetStats is the on-disk shape written to persistPath. It carries
@@ -232,6 +235,11 @@ func (fc *FleetStatsCollector) Start(ctx context.Context) {
 		case <-time.After(d):
 		}
 	}
+	// Fleet totals are housekeeping against the GitHub pacer: low priority,
+	// and a tick is skipped while a caution window has the pacing queue
+	// deeper than a Search call could wait, as long as a previous collect
+	// is there to serve.
+	ctx = ghpkg.WithPacingClass(ctx, ghpkg.PacingLow)
 	fc.collect(ctx)
 	ticker := time.NewTicker(fleetStatsCollectInterval)
 	defer ticker.Stop()
@@ -240,9 +248,29 @@ func (fc *FleetStatsCollector) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if fc.hasCollected() && fc.shedTick() {
+				continue
+			}
 			fc.collect(ctx)
 		}
 	}
+}
+
+// fleetStatsTickBudget is how long a collect tick may wait for its first
+// pacing slot before it is shed to the next tick.
+const fleetStatsTickBudget = 5 * time.Second
+
+func (fc *FleetStatsCollector) hasCollected() bool {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return fc.ready
+}
+
+func (fc *FleetStatsCollector) shedTick() bool {
+	if fc.shedTickFn != nil {
+		return fc.shedTickFn()
+	}
+	return ghpkg.ShedLowPriorityTick("fleet-stats-collector", fleetStatsTickBudget)
 }
 
 // startupDelay returns a random delay in [0, fleetStatsStartupJitterMax) used

@@ -370,6 +370,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 	if !c.ready() {
 		return nil, hgithub.ErrNoGitHubClient
 	}
+	ctx = lowPriority(ctx)
 	policy := c.currentContributorLanePolicy()
 	result := &AutoMergeSweepResult{}
 	if !policy.Enabled {
