@@ -145,6 +145,11 @@ const building = {hash:'aaa1111', short:'aaa1111', stableV4ImageReady:false, tar
 if (versionStatusSummary(building, 'bbb2222') !== 'queued (v6 building)') throw new Error('building status changed: '+versionStatusSummary(building, 'bbb2222'));
 const stuck = versionStatusSummary(Object.assign({}, building, {deployment:{runtime:'unknown', upgradeSupported:false}}), 'bbb2222');
 if (stuck !== 'manual update required (unknown); v6 building') throw new Error('unsupported deployment must not report only the build: '+stuck);
+// a superseded success must not read as a plain "succeeded · 2h ago".
+const sup = versionLastUpgradeText({releaseStatus:{attempt:{state:'succeeded', superseded:true, rolledExternally:true, runningCommit:'2a9e3f5', target:'54e5c90', completedAt:'2026-10-20T15:00:00Z'}}});
+if (sup.text !== 'Last upgrade: superseded (rolled externally, now 2a9e3f5) · 2h ago') throw new Error('superseded last-upgrade text: '+sup.text);
+const ok = versionLastUpgradeText({releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-20T15:00:00Z'}}});
+if (ok.text !== 'Last upgrade: succeeded · 2h ago') throw new Error('plain last-upgrade text changed: '+ok.text);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

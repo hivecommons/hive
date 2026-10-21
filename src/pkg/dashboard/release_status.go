@@ -109,6 +109,15 @@ type UpgradeAttemptStatus struct {
 	// RunningCommit is the commit the hive is running now, for the superseded
 	// case, so the reader can see both.
 	RunningCommit string `json:"runningCommit,omitempty"`
+	// RunningSince is the RFC3339 time the currently running build came up
+	// (process start). Set only for the superseded case so the dashboard can
+	// age the RUNNING build rather than the stale upgrade it superseded:
+	// At/CompletedAt describe the superseded attempt, not what runs.
+	RunningSince string `json:"runningSince,omitempty"`
+	// RolledExternally is true when the running build was not put there by the
+	// spoke upgrader — the operator or hub rolled the Deployment directly (an
+	// image bump, `kubectl rollout restart`, a floating-tag pull).
+	RolledExternally bool `json:"rolledExternally,omitempty"`
 	// Detail always explains the state and, for a failure, WHY.
 	Detail string `json:"detail"`
 }
@@ -218,10 +227,11 @@ func buildUpgradeAttemptStatus(outcome *upgradeOutcome, marker map[string]any, r
 		// checked against the commit actually running, not assumed.
 		if runningSHA != "" && outcome.TargetSHA != "" && !sameCommitDashboard(runningSHA, outcome.TargetSHA) {
 			st.Superseded = true
+			st.RolledExternally = true
 			st.RunningCommit = shortSHADashboard(runningSHA)
 			// Lead with the running commit so this line cannot be read as a
 			// second, conflicting "current version" next to the version menu.
-			st.Detail = fmt.Sprintf("The hive is running %s. The last spoke-side upgrade (to %s%s) has since been superseded — the hive was rolled by the hub or a floating image tag, not by a spoke-side upgrade.",
+			st.Detail = fmt.Sprintf("The hive is running %s. The last spoke-side upgrade (to %s%s) has since been superseded — the hive was rolled externally (by the hub, an operator, or a floating image tag), not by a spoke-side upgrade.",
 				st.RunningCommit, orUnknownSHA(outcome.TargetSHA), landed)
 			return st
 		}
@@ -278,8 +288,23 @@ func enforceRunningCommitInvariant(at UpgradeAttemptStatus, runningSHA string) U
 		return at
 	}
 	at.Superseded = true
+	at.RolledExternally = true
 	at.RunningCommit = shortSHADashboard(runningSHA)
-	at.Detail = fmt.Sprintf("The hive is running %s. The last recorded upgrade (to %s) has since been superseded — the hive was rolled by the hub or a floating image tag.",
+	at.Detail = fmt.Sprintf("The hive is running %s. The last recorded upgrade (to %s) has since been superseded — the hive was rolled externally (by the hub, an operator, or a floating image tag).",
 		at.RunningCommit, orUnknownSHA(at.Target))
+	return at
+}
+
+// stampRunningSince records when the running build came up on a superseded
+// attempt, so the Channel card ages the build that is actually running instead
+// of the upgrade it superseded. A superseded note older than the
+// running build is history and is left for the secondary line; it is never
+// promoted back to the headline. No-op for every other state: there the
+// attempt's own timestamps already describe what is running.
+func stampRunningSince(at UpgradeAttemptStatus, startedAt time.Time) UpgradeAttemptStatus {
+	if !at.Superseded || startedAt.IsZero() {
+		return at
+	}
+	at.RunningSince = startedAt.UTC().Format(time.RFC3339)
 	return at
 }

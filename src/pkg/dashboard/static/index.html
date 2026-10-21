@@ -35052,7 +35052,12 @@ function burnAreaChart() {
       const at = rs && rs.attempt ? rs.attempt : null;
       if (at && at.state && at.state !== 'never') {
         const when = at.completedAt || at.at || '';
-        const label = at.state.replace('_', ' ');
+        let label = at.state.replace('_', ' ');
+        // A superseded success is history: say so, and name the running build
+        // so "succeeded · 1d ago" is not read as the age of what runs.
+        if (at.superseded && at.state === 'succeeded') {
+          label = 'superseded' + (at.rolledExternally ? ' (rolled externally' + (at.runningCommit ? ', now ' + at.runningCommit : '') + ')' : '');
+        }
         return { text: 'Last upgrade: ' + label + (when ? ' · ' + relativeAge(when) : ''), title: when || label };
       }
       const mu = v && v.manualUpgrade;
@@ -35698,16 +35703,20 @@ function burnAreaChart() {
       var at = rs.attempt || {};
       var aTone = 'muted', aIcon = 'ⓘ', aLabel = '';
       var hideAttemptRow = false;
+      var supersededNote = '';
       var targetShort = at.target ? versionShortSHA(at.target) : '';
       switch (at.state) {
         case 'succeeded':
           if (at.superseded && at.runningCommit) {
             // The recorded upgrade landed but the hive has since been rolled to
             // another commit: headline the running commit (the one the version
-            // menu shows) so the old target is not read as the current version.
+            // menu shows) and age the RUNNING build, not the superseded
+            // attempt. The superseded note moves to the secondary line with
+            // its own timestamp so the two ages are never conflated.
             aTone = 'muted'; aIcon = '↷';
             aLabel = 'Running <strong>' + escapeHtml(at.runningCommit) + '</strong>' +
-              (targetShort ? ' <span class="text-muted">(last spoke-side upgrade to ' + escapeHtml(targetShort) + ' superseded)</span>' : '');
+              (at.rolledExternally ? ' <span class="text-muted">(rolled externally)</span>' : '');
+            supersededNote = targetShort ? 'Last spoke-side upgrade to ' + targetShort + ' superseded' : '';
             break;
           }
           aTone = 'success'; aIcon = '✅';
@@ -35736,15 +35745,34 @@ function burnAreaChart() {
           hideAttemptRow = true;
           break;
       }
-      // Timestamp — relative at a glance, absolute in the tooltip.
-      var when = at.completedAt || at.at || '';
+      // Timestamp — relative at a glance, absolute in the tooltip. For a
+      // superseded attempt the headline names the running build, so its age
+      // must be the running build's (runningSince), never the superseded
+      // attempt's completedAt — that is what made a build rolled hours ago
+      // read "1d ago".
+      var attemptWhen = at.completedAt || at.at || '';
+      var when = attemptWhen;
+      var whenTitle = '';
+      if (supersededNote) {
+        when = at.runningSince || '';
+        if (when) whenTitle = 'running since ' + when;
+      }
       var whenHtml = '';
       if (when) {
-        whenHtml = ' · <span class="text-muted" title="' + escapeHtml(when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
+        whenHtml = ' · <span class="text-muted" title="' + escapeHtml(whenTitle || when) + '">' + escapeHtml(relativeAge(when)) + '</span>';
       }
       var detail = at.detail || '';
       if (targetShort && /hive is running/i.test(detail) && detail.toLowerCase().indexOf(targetShort.toLowerCase()) >= 0) detail = '';
       var detailHtml = detail ? '<div class="release-status-detail">' + escapeHtml(detail) + '</div>' : '';
+      if (supersededNote) {
+        // Secondary line: what the spoke upgrader last did, with its own age.
+        // Once that attempt predates the running build it is plain history.
+        var noteAge = attemptWhen ? relativeAge(attemptWhen) : '';
+        var noteOld = attemptWhen && when && Date.parse(attemptWhen) < Date.parse(when);
+        detailHtml = '<div class="release-status-detail' + (noteOld ? ' text-muted' : '') + '" title="' + escapeHtml(at.detail || '') + '">' +
+          escapeHtml(supersededNote) + (noteAge ? ' · <span title="' + escapeHtml(attemptWhen) + '">' + escapeHtml(noteAge) + '</span>' : '') +
+          '</div>';
+      }
 
       // --- Staleness warning: never present stale data as current truth. ---
       var staleHtml = '';

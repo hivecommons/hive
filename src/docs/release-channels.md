@@ -99,6 +99,8 @@ Hosted spoke dashboards that are already following a release-channel tag show a 
 
 The spoke UI keeps reported state and intent separate: after a selection it continues to show the channel observed from the Deployment image, plus a pending "switch requested" note, until the rollout/heartbeat lands on the requested tag. Spokes that are self-hosted, pinned, branch-tracking, missing hub credentials, or otherwise unresolved show an honest "selection unavailable" explanation rather than a dead control.
 
+The panel's second row reports the last upgrade attempt (`releaseStatus.attempt` on `GET /api/version`). When the last spoke-side upgrade landed but the hive has since been rolled to a different commit outside the spoke upgrader — a `kubectl rollout restart`, a direct image bump, or a floating-tag pull — the row headlines the running commit as `↷ Running <sha> (rolled externally) · <age>`, where the age is the running build's start time (`runningSince`), not the superseded upgrade's. The superseded attempt moves to a secondary line, `Last spoke-side upgrade to <sha> superseded · <age>`, carrying its own timestamp; it is dimmed once it predates the running build. The two ages are never conflated: a hive restarted an hour ago reads "1h ago" even if its last spoke-side upgrade was a day earlier.
+
 For self-hosted Podman Quadlet spokes the selector is intentionally unavailable even when `HIVE_SELF_IMAGE` resolves a channel, because there is no hub-managed Deployment image to patch. The panel says to change `Image=` in `hive.container`; after editing, reload/restart through the Podman lifecycle so `hive.env` carries the updated `HIVE_SELF_IMAGE` and tracking mode.
 
 ## What happens to your hive after `stable` moves

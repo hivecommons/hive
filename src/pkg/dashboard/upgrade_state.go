@@ -167,6 +167,7 @@ func selectUpgradeAttempt(base UpgradeAttemptStatus, manual *dashboardUpgradeSta
 			return base
 		}
 		at.Superseded = true
+		at.RolledExternally = true
 		at.RunningCommit = shortSHADashboard(runningSHA)
 		at.Detail = "The hive is running " + at.RunningCommit + ". The last dashboard-requested upgrade (to " +
 			shortSHADashboard(manual.Target) + ") has since been superseded — the hive was rolled by the hub or a floating image tag, not by this dashboard."

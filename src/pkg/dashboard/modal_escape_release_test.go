@@ -181,6 +181,9 @@ assert.match(releaseEl.innerHTML, /hub has not been reached/);
 
 // #11194: a recorded spoke-side success that a later hub roll superseded must
 // headline the running commit, not render the old target as "✅ Last upgrade".
+// the headline age must be the RUNNING build's (runningSince), and the
+// superseded note moves to a secondary line carrying its own age, so a build
+// rolled an hour ago never reads "1d ago" because the upgrade it superseded is.
 func TestRenderReleaseStatusSupersededSuccessShowsRunningCommit(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -191,17 +194,34 @@ func TestRenderReleaseStatusSupersededSuccessShowsRunningCommit(t *testing.T) {
 let releaseEl = { hidden: true, innerHTML: '' };
 global.document = { getElementById(id) { return id === 'release-status' ? releaseEl : null; } };
 function escapeHtml(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-function relativeAge() { return '3d ago'; }
+function relativeAge(ts) { return ts === '2026-10-04T09:00:00Z' ? '1h ago' : '3d ago'; }
 function versionShortSHA(v) { return String(v || '').slice(0, 7); }
 ` + jsFunc(t, html, "renderReleaseStatus") + `
 renderReleaseStatus({
   channel: { resolved: true, channel: 'stable' },
-  attempt: { state: 'succeeded', target: '9994f13abcdef', superseded: true, runningCommit: 'dc4f955', completedAt: '2026-10-01T10:00:00Z',
+  attempt: { state: 'succeeded', target: '9994f13abcdef', superseded: true, rolledExternally: true, runningCommit: 'dc4f955',
+    completedAt: '2026-10-01T10:00:00Z', runningSince: '2026-10-04T09:00:00Z',
     detail: 'The hive is running dc4f955. The last spoke-side upgrade (to 9994f13) has since been superseded.' }
 });
-assert.match(releaseEl.innerHTML, /↷ Running <strong>dc4f955<\/strong>[\s\S]*last spoke-side upgrade to 9994f13 superseded/);
-assert.doesNotMatch(releaseEl.innerHTML, /✅/);
-assert.doesNotMatch(releaseEl.innerHTML, /Last upgrade <strong>9994f13/);
+const rows = releaseEl.innerHTML.split('<div class="release-status-detail');
+// Headline: running commit, flagged as an external roll, aged by runningSince.
+assert.match(rows[0], /↷ Running <strong>dc4f955<\/strong>[\s\S]*rolled externally[\s\S]*title="running since 2026-10-04T09:00:00Z">1h ago</);
+assert.doesNotMatch(rows[0], /3d ago|superseded|✅|Last upgrade <strong>9994f13/);
+// Secondary line: the superseded attempt with its own age, flagged as history
+// because it predates the running build.
+assert.equal(rows.length, 2);
+assert.match(rows[1], /text-muted[\s\S]*Last spoke-side upgrade to 9994f13 superseded · <span title="2026-10-01T10:00:00Z">3d ago</);
+assert.doesNotMatch(rows[1], /1h ago/);
+
+// Older spoke payload without runningSince: no fabricated age on the headline,
+// the superseded note still carries its own.
+renderReleaseStatus({
+  channel: { resolved: true, channel: 'stable' },
+  attempt: { state: 'succeeded', target: '9994f13abcdef', superseded: true, runningCommit: 'dc4f955', completedAt: '2026-10-01T10:00:00Z' }
+});
+assert.match(releaseEl.innerHTML, /↷ Running <strong>dc4f955<\/strong><\/div>/);
+assert.match(releaseEl.innerHTML, /Last spoke-side upgrade to 9994f13 superseded · <span title="2026-10-01T10:00:00Z">3d ago</);
+assert.doesNotMatch(releaseEl.innerHTML, /rolled externally/);
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("node release status rendering failed: %v\n%s", err, strings.TrimSpace(string(out)))

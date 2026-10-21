@@ -225,6 +225,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		releaseStatus.Attempt = selectUpgradeAttempt(releaseStatus.Attempt, manualUpgrade, upgradeOutcomeRec, versionHash)
 	}
 	releaseStatus.Attempt = enforceRunningCommitInvariant(releaseStatus.Attempt, versionHash)
+	releaseStatus.Attempt = stampRunningSince(releaseStatus.Attempt, s.startedAt)
 	if imageSource != spoke.SelfImageSourcePodmanEnv && s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
 		releaseStatus.Channel.SelectorEnabled = true
 		releaseStatus.Channel.SelectorDetail = "Choose stable, candidate, or edge. The hub records your intent and the current channel changes only after the Deployment image lands."
@@ -1019,6 +1020,7 @@ func (s *Server) handleReleaseChannelSwitch(w http.ResponseWriter, r *http.Reque
 	s.auditFromRequest(r, "release_channel_switch", channel, current.Channel)
 	rs := buildSpokeReleaseStatus(selfDeploymentImageForDashboard(), "", readUpgradeOutcome(), readUpgradeMarker(), versionHash, time.Time{}, false, dashboardHeartbeatStaleAfter)
 	rs.Attempt = enforceRunningCommitInvariant(rs.Attempt, versionHash)
+	rs.Attempt = stampRunningSince(rs.Attempt, s.startedAt)
 	rs.Channel.SelectorEnabled = true
 	rs.Channel.SelectorDetail = "Switch requested. The hub has recorded intent; the current channel remains the observed Deployment image until the next heartbeat/rollout lands."
 	if rs.Channel.Channel != channel {
