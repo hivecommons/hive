@@ -301,3 +301,137 @@ assert.deepStrictEqual(plays, [STAGE_TRACKER_SOUND_MAX_PLAYS, 1, 2, 1]);
 		t.Fatalf("node new-item buzz detector fixture failed: %v\n%s", err, out)
 	}
 }
+
+// TestStageTrackerRepoQualifierEveryRepo pins that recently_merged repo
+// qualification is computed over every configured repo, not a primary one:
+// each short name maps onto its own owner/name; a short name two owners
+// share is left alone (the poller records such repos fully qualified, since
+// they can only be configured as owner/name); qualified and unknown names
+// pass through.
+func TestStageTrackerRepoQualifierEveryRepo(t *testing.T) {
+	status := &StatusPayload{Repos: []FrontendRepo{
+		{Name: "hive", Full: "hivecommons/hive"},
+		{Name: "pluk", Full: "hivecommons/pluk"},
+		{Name: "homebrew-hive", Full: "hivecommons/homebrew-hive"},
+		{Name: "hivecommons.github.io", Full: "hivecommons/hivecommons.github.io"},
+		{Name: "rationguard", Full: "other/rationguard"},
+		{Name: "hive", Full: "fork/hive"},
+	}}
+	qualify := stageTrackerRepoQualifier(status)
+	for in, want := range map[string]string{
+		"pluk":                  "hivecommons/pluk",
+		"homebrew-hive":         "hivecommons/homebrew-hive",
+		"hivecommons.github.io": "hivecommons/hivecommons.github.io",
+		"rationguard":           "other/rationguard",
+		"hive":                  "hive", // two owners share it
+		"hivecommons/hive":      "hivecommons/hive",
+		"fork/hive":             "fork/hive",
+		"unconfigured":          "unconfigured",
+	} {
+		if got := qualify(in); got != want {
+			t.Errorf("qualify(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := stageTrackerRepoQualifier(nil)("pluk"); got != "pluk" {
+		t.Errorf("nil status must pass through, got %q", got)
+	}
+}
+
+// TestStageTrackerSoundsEveryRepo runs both detectors under node over a
+// payload spanning three repos — two of them sharing a short name under
+// different owners — and asserts the zap fires for a merge in each repo
+// (whether recently_merged names the repo fully or by an unambiguous short
+// name) and the buzz fires for a new item in each. Nothing in the detectors
+// is keyed on a primary repo: they work on the union of every repo's items.
+func TestStageTrackerSoundsEveryRepo(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — multi-repo sound detectors were NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		"const window = {}; const document = { hidden: false };",
+		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_MAX_PLAYS"),
+		jsFunc(t, html, "stageTrackerPRKey"),
+		jsFunc(t, html, "stageTrackerItemKey"),
+		jsFunc(t, html, "stageTrackerMergeState"),
+		jsFunc(t, html, "stageTrackerCarryOpen"),
+		jsFunc(t, html, "stageTrackerNewlyMerged"),
+		jsFunc(t, html, "stageTrackerNoteMerges"),
+		jsFunc(t, html, "stageTrackerOpenKeys"),
+		jsFunc(t, html, "stageTrackerNewlyOpened"),
+		jsFunc(t, html, "stageTrackerNoteOpened"),
+		"var _stageTrackerMergeState = null; var _stageTrackerZapped = {}; var _stageTrackerSoundOn = true;",
+		"var _stageTrackerOpenState = null; var _stageTrackerBuzzed = {};",
+		"const zaps = []; function stageTrackerPlayZap(n) { zaps.push(n); return true; }",
+		"const buzzes = []; function stageTrackerPlayBuzz(n) { buzzes.push(n); return true; }",
+		"function note(d) { stageTrackerNoteMerges(d); stageTrackerNoteOpened(d); }",
+	}, "\n") + `
+const REPOS = ['hivecommons/hive', 'hivecommons/pluk', 'fork/hive'];
+const P = (repo, n, stage) => ({ kind: 'pr', repo, number: n, stage: stage || 50 });
+const I = (repo, n) => ({ kind: 'issue', repo, number: n, stage: 20 });
+// Seed: one open PR and one open issue per repo. First payload is silent.
+let items = [];
+for (const r of REPOS) items.push(P(r, 1), I(r, 2));
+note({ items });
+assert.deepStrictEqual(zaps, []); assert.deepStrictEqual(buzzes, []);
+
+// Merge PR #1 in each repo, one refresh at a time. hivecommons/pluk is
+// reported by its short name (unambiguous → resolves); the two "hive"
+// repos share a short name, so the poller names them fully.
+const merged = [
+  { repo: 'hivecommons/hive', entry: { repo: 'hivecommons/hive', number: 1 } },
+  { repo: 'hivecommons/pluk', entry: { repo: 'pluk', number: 1 } },
+  { repo: 'fork/hive', entry: { repo: 'fork/hive', number: 1 } },
+];
+const recently_merged = [];
+for (const m of merged) {
+  items = items.filter(it => !(it.repo === m.repo && it.kind === 'pr' && it.number === 1));
+  recently_merged.push(m.entry);
+  const before = zaps.length;
+  note({ items, recently_merged });
+  assert.strictEqual(zaps.length, before + 1, 'merge in ' + m.repo + ' must zap');
+  assert.ok(_stageTrackerZapped[m.repo + '/pr#1'], 'zapped key is the merged repo\'s own: ' + m.repo);
+}
+assert.deepStrictEqual(zaps, [1, 1, 1]);
+assert.deepStrictEqual(buzzes, [], 'merges never buzz');
+// Same number in another repo is never confused: fork/hive#1 merged did not
+// touch hivecommons/hive#1's state and vice versa.
+assert.strictEqual(_stageTrackerMergeState['hivecommons/hive/pr#1'], true);
+assert.strictEqual(_stageTrackerMergeState['fork/hive/pr#1'], true);
+
+// Open a new item in each repo (PR or issue), one refresh at a time: one
+// buzz each, keyed on that repo.
+let n = 10;
+for (const r of REPOS) {
+  items.push(n % 2 ? P(r, n) : I(r, n));
+  const before = buzzes.length;
+  note({ items, recently_merged });
+  assert.strictEqual(buzzes.length, before + 1, 'new item in ' + r + ' must buzz');
+  assert.ok(_stageTrackerBuzzed[r + '/' + (n % 2 ? 'pr' : 'issue') + '#' + n]);
+  n++;
+}
+assert.deepStrictEqual(buzzes, [1, 1, 1]);
+assert.deepStrictEqual(zaps, [1, 1, 1], 'new items never zap');
+
+// One refresh that opens an item in every repo at once coalesces into one
+// capped call — the cap is per refresh, not per repo.
+for (const r of REPOS) items.push(I(r, 99));
+note({ items, recently_merged });
+assert.deepStrictEqual(buzzes, [1, 1, 1, STAGE_TRACKER_SOUND_MAX_PLAYS]);
+// A PR carried as open after vanishing is tracked per repo too: drop
+// hivecommons/pluk#13 and fork/hive#12 (the new PRs/issue above) …
+items = items.filter(it => !(it.kind === 'pr' && it.number === 11 && it.repo === 'hivecommons/pluk'));
+note({ items, recently_merged });
+assert.strictEqual(_stageTrackerMergeState['hivecommons/pluk/pr#11'], false, 'carried as open');
+recently_merged.push({ repo: 'pluk', number: 11 });
+note({ items, recently_merged });
+assert.deepStrictEqual(zaps, [1, 1, 1, 1], 'late short-name entry for a non-primary repo zaps');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node multi-repo sound fixture failed: %v\n%s", err, out)
+	}
+}

@@ -13630,17 +13630,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Pure: PR key → merged? for one payload. Issues are not tracked. A
     // recently_merged repo given by its short name is resolved against the
-    // owner/name of the items when exactly one item repo matches.
+    // owner/name of the items (any kind, any repo) when exactly one matches.
     function stageTrackerMergeState(d) {
       const out = {};
       if (!d || typeof d !== 'object') return out;
       const byShort = {};
       for (const it of (Array.isArray(d.items) ? d.items : [])) {
-        if (!it || it.kind !== 'pr') continue;
-        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
+        if (!it) continue;
+        // Every item of every repo (issues too) teaches the short → full
+        // map, so a repo whose last open PR just merged still resolves.
         const repo = String(it.repo || '');
         const slash = repo.lastIndexOf('/');
         if (slash > 0) { const short = repo.slice(slash + 1); byShort[short] = (short in byShort && byShort[short] !== repo) ? '' : repo; }
+        if (it.kind !== 'pr') continue;
+        out[stageTrackerPRKey(it.repo, it.number)] = (Number(it.stage) || 0) >= STAGE_TRACKER_TERMINAL;
       }
       for (const m of (Array.isArray(d.recently_merged) ? d.recently_merged : [])) {
         if (!m || !m.repo || !m.number) continue;
