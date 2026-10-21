@@ -596,7 +596,7 @@ func (o HivesOverlay) treeConfirmBody() string {
 const hiveTreeHelp = `Contribution tree keys
   ↑/↓ j/k   move          ←/→ h/l   collapse / expand (→ on open branch enters it)
   g/G       first / last  space     select / deselect current repositories at this row
-  f         follow / stop following new repositories (hive)
+  f / F     toggle following new repositories / stop following (hive)
   x         exclude / clear exclusion (repository)
   e         enable / disable (hive or hub)
   R         review and restrict a legacy unrestricted hive

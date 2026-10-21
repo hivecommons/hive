@@ -88,7 +88,9 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [hivectl](hivectl.md) — command-line client for the dashboard API, including
   [`hivectl tui`](hivectl.md#tui--live-terminal-dashboard), the full-screen
   terminal dashboard: keybindings, pane cadence, and v1 boundaries. See
-  [the design record](design/tui.md) for the reasoning behind it.
+  [the design record](design/tui.md) for the reasoning behind it. The
+  contribution tree shared by `hives tree`, `tui --hives` and `hives web` is
+  recorded in [`design/contribution-ui.md`](design/contribution-ui.md).
 - [`bd` beads CLI](beads-cli.md) — work-ledger and knowledge command reference for operators and contributors.
 - [Backup and restore](backup-restore.md) — `hive-backup`, Kubernetes CronJob, spoke backup scope, and setting the backup encryption key from Governor Config (hosted flow). Host-level backup, restore, and `docker compose down -v` are given per runtime: Docker Compose, and Podman/Quadlet with the executed backup → wipe → restore cycle in both root modes, the rootless mapped-UID trap that makes a host-shell `tar` skip the GitHub App key, and the Docker→Podman migration (the two volume stores are never shared). Also covers restoring a `pkg/spokebackup` archive: the archive-path → container-path mapping, and the executed `hive-backup restore` path that applies it — including the identity guard that refuses to splice one hive's config and GitHub App keys onto another's ([#6529](https://github.com/hivecommons/hive/issues/6529)).
 - [Hub disaster recovery](../../docs/HUB_DISASTER_RECOVERY.md) — the hub-level runbook that goes beyond per-hive backup: hub backup and key escrow, spoke fleet recovery, Slack blast, and the full rebuild-from-zero procedure after a catastrophic loss.
