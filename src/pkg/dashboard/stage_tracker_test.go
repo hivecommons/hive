@@ -488,3 +488,40 @@ func TestStageTrackerHeldIssueIsOpenOnHold(t *testing.T) {
 		t.Errorf("held PR = stage %d mods %v, want 085 + hold (PR path untouched)", it.Stage, it.Modifiers)
 	}
 }
+
+// hivecommons/hive#13257: standing meta issues are not pipeline work, but a
+// renovate PR is.
+func TestStageTrackerSkipsStandingMetaIssues(t *testing.T) {
+	now := time.Date(2026, 10, 20, 17, 0, 0, 0, time.UTC)
+	s := newTestServer()
+	store := stagelabels.NewStore("", func() time.Time { return now })
+	s.stageStore = store
+
+	status := minimalPayload()
+	status.HiveID = "hv-test"
+	status.Repos = []FrontendRepo{{
+		Name: "console", Full: "acme/console",
+		ActionableIssues: []any{
+			github.Issue{Number: 12, Title: "Plain issue", Author: "pat", AuthorIsHuman: true, Labels: []string{"help wanted"}},
+		},
+		NonActionableIssues: []any{
+			github.RepoWorkIssue{Repo: "acme/console", Number: 20, Title: "Dependency Dashboard", Bucket: repoWorkBucketDependencyDashboard},
+			github.RepoWorkIssue{Repo: "acme/console", Number: 21, Title: "Hive Advisory Report", Bucket: repoWorkBucketHiveAdvisory},
+		},
+		OpenPrs: []any{
+			FrontendPR{PullRequest: github.PullRequest{Number: 30, Title: "Update dependency foo", Author: "renovate[bot]", AppAuthored: true}},
+		},
+	}}
+	s.UpdateStatus(status)
+	resp := s.buildStageTracker(s.status, store, now)
+	for _, it := range resp.Items {
+		if it.Kind == "issue" && (it.Number == 20 || it.Number == 21) {
+			t.Fatalf("standing meta issue #%d listed on the monitor: %+v", it.Number, it)
+		}
+	}
+	trackerItem(t, resp, "issue", 12)
+	trackerItem(t, resp, "pr", 30)
+	if len(resp.Items) != 2 {
+		t.Fatalf("want 2 items, got %d: %+v", len(resp.Items), resp.Items)
+	}
+}
