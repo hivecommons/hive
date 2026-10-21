@@ -98,6 +98,9 @@ func discoverHivesTree(ctx context.Context, env hivesEnv, set *hivectl.ProfileSe
 	repos := make(map[string]hivectl.TreeRepositorySnapshot, len(set.Profiles))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	// Build every snapshot before any goroutine starts so the slice header
+	// and the discovery map are only written concurrently under mu.
+	hubIDs := make([]string, 0, len(set.Hubs))
 	for _, h := range set.Hubs {
 		id, err := hivectl.NormalizeHiveID(h.URL)
 		if err != nil {
@@ -105,9 +108,22 @@ func discoverHivesTree(ctx context.Context, env hivesEnv, set *hivectl.ProfileSe
 			continue
 		}
 		hubs = append(hubs, hivectl.TreeHubSnapshot{Name: h.Name, URL: h.URL, Follow: h.EffectiveFollow(), Discovery: hivectl.TreeUnavailable})
-		if env.discoverHubHives == nil {
+		hubIDs = append(hubIDs, id)
+	}
+	if env.discoverHubHives == nil {
+		for _, id := range hubIDs {
 			discovery[id] = "hub discovery not configured"
-			continue
+		}
+	}
+	if env.discoverRepositories == nil {
+		for _, p := range set.Profiles {
+			repos[p.Name] = hivectl.TreeRepositorySnapshot{Discovery: hivectl.TreeUnavailable}
+			discovery[p.Name] = "repository discovery not configured"
+		}
+	}
+	for i := range hubs {
+		if env.discoverHubHives == nil {
+			break
 		}
 		wg.Add(1)
 		go func(i int, id, url string) {
@@ -123,13 +139,11 @@ func discoverHivesTree(ctx context.Context, env hivesEnv, set *hivectl.ProfileSe
 			for _, hive := range hives {
 				hubs[i].HiveOrigins = append(hubs[i].HiveOrigins, hive.HubURL)
 			}
-		}(len(hubs)-1, id, h.URL)
+		}(i, hubIDs[i], hubs[i].URL)
 	}
 	for _, p := range set.Profiles {
 		if env.discoverRepositories == nil {
-			repos[p.Name] = hivectl.TreeRepositorySnapshot{Discovery: hivectl.TreeUnavailable}
-			discovery[p.Name] = "repository discovery not configured"
-			continue
+			break
 		}
 		wg.Add(1)
 		go func(name, hub string) {
