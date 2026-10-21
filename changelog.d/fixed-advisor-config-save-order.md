@@ -1,0 +1,1 @@
+- Fixed the dashboard applying advisor settings when the `hive.yaml` save failed: the fleet, model-roles and per-agent advisor edits now roll back on a failed save, so the live config and `GET /api/config/advisor` stay unchanged ([#13371](https://github.com/hivecommons/hive/issues/13371)).

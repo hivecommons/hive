@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -227,5 +228,21 @@ func TestAdvisorSettingsPersistsToHiveYAML(t *testing.T) {
 	}
 	if loaded.Advisor.Model != "persisted-model" || !loaded.Advisor.IsEnabled() {
 		t.Errorf("advisor block must be written to hive.yaml: %+v", loaded.Advisor)
+	}
+}
+
+func TestAdvisorSettingsFailedSaveLeavesLiveConfigUnchanged(t *testing.T) {
+	s := newFullServer(t)
+	before := advisorSettingsSection(s.deps.Config)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "missing-dir", "hive.yaml")
+
+	rec := advisorSettingsRequest(t, s, http.MethodPut, "/api/config/advisor",
+		`{"enabled":true,"daily_budget_tokens":5000}`, true)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
+	}
+	after := decodeAdvisorSettings(t, advisorSettingsRequest(t, s, http.MethodGet, "/api/config/advisor", "", true))
+	if after.Fleet.IsEnabled() != before.Fleet.IsEnabled() || after.Fleet.DailyBudgetTokens != before.Fleet.DailyBudgetTokens {
+		t.Errorf("failed save leaked into live config: before=%+v after=%+v", before.Fleet, after.Fleet)
 	}
 }
