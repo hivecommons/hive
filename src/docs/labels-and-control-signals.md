@@ -1088,7 +1088,7 @@ every open item it writes a stage for, so open items lose
 `claimed` / `hive/in-progress` / `🐝 covered by PR` and gain their stage label;
 the repo-level labels can be deleted afterwards. The legacy writers are gone:
 the claim relay and ledger mirror write `stage/020-claimed` /
-`stage/030-pr-in-progress`, the PR-claim sync writes `stage/040-covered-by-pr`,
+`stage/030-pr-in-progress`, the issue stage reconciler writes `stage/040-covered-by-pr` (planning against the labels GitHub returned, not the in-memory covered annotation — [#13316](https://github.com/hivecommons/hive/issues/13316)),
 and the in-progress sweep still recognises `hive/in-progress` as a trigger for
 one migration cycle so a lapsed mark from an older spoke is cleared rather
 than orphaned. `hive/claimed-by-<who>` is kept as the grey "who" modifier.
