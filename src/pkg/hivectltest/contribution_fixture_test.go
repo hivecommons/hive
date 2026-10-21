@@ -14,7 +14,7 @@ func TestContributionStageFixtureShape(t *testing.T) {
 		t.Fatal("profile set is nil")
 	}
 	if set.Version != hivectl.ProfilesVersion {
-		t.Errorf("version = %q, want %q", set.Version, hivectl.ProfilesVersion)
+		t.Errorf("version = %d, want %d", set.Version, hivectl.ProfilesVersion)
 	}
 	if set.Active != "alpha" {
 		t.Errorf("active = %q, want alpha", set.Active)
