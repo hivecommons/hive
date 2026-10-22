@@ -33,7 +33,9 @@ In priority order, all regenerable:
 
 1. **Stale agent-CLI session-state dirs.** `src/pkg/sessionprune` already
    prunes these automatically (every 6h, 7-day retention by default — see
-   `cmd/hive/main.go`'s `runSessionPrune`), but a spoke that has been
+   `cmd/hive/main.go`'s `runSessionPrune`; per-agent
+   `/data/home/agents/<agent>/.copilot/session-state` trees are pruned the same
+   way), but a spoke that has been
    crash-looping may not have had a clean tick to run it. Safe to clear by
    hand if still over budget:
    ```bash

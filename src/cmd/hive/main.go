@@ -1750,6 +1750,7 @@ func (b *boot) wireBootClosures() {
 			// Run once at startup rather than waiting a full interval. A spoke that
 			// restarts more often than the interval would otherwise never prune.
 			runSessionPrune(b.logger, dir, maxAge)
+			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
@@ -1760,6 +1761,8 @@ func (b *boot) wireBootClosures() {
 					return
 				case <-ticker.C:
 					runSessionPrune(b.logger, dir, maxAge)
+					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
+			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 				}
 			}

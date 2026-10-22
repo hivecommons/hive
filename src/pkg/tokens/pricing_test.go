@@ -256,7 +256,7 @@ func TestIssue9804DropdownModelsPriced(t *testing.T) {
 		name   string
 		models []string
 	}{
-		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}},
+		{"claude 5.x", []string{"claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-fable-5", "claude-fable-5.1"}},
 		{"codex gpt-6", []string{"gpt-6-astra", "gpt-6-sol", "gpt-6-luna"}},
 		{"gemini 3 previews", []string{"gemini-3-pro-preview", "gemini-3-flash-preview"}},
 		{"copilot fallback", []string{"gpt-4.1", "gpt-4o", "o3", "o4-mini", "gemini-2.5-pro"}},
@@ -330,5 +330,16 @@ func TestEstimateFromSummary_DropsRoutingAliases(t *testing.T) {
 		if m == "auto" || m == "default" {
 			t.Errorf("routing alias %q leaked into UnpricedModels", m)
 		}
+	}
+}
+
+func TestFable51PricedAtFable5ListRate(t *testing.T) {
+	p, priced := LookupPrice("claude-fable-5.1")
+	if !priced {
+		t.Fatal("claude-fable-5.1 must have an exact price, not a tier fallback")
+	}
+	want, _ := LookupPrice("claude-fable-5")
+	if p != want {
+		t.Errorf("claude-fable-5.1 = %+v, want fable-5 rates %+v", p, want)
 	}
 }
