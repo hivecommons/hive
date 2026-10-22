@@ -26,6 +26,10 @@ type ReviewHead struct {
 	Replicas int `yaml:"replicas,omitempty" json:"replicas,omitempty"`
 }
 
+// maxAgentNameLen is the longest agent name whose Unix user and private token
+// group "hive-<name>" fit groupadd's 32-character group-name limit.
+const maxAgentNameLen = 32 - len("hive-")
+
 // reviewHeadSlug lowercases s and turns every run of characters outside
 // [a-z0-9] into one '-', trimming dashes at either end. The entrypoint's
 // hive_collect_agent_names mirrors this exactly so it provisions the same
@@ -108,6 +112,9 @@ func reviewHeadAgentNames(baseAgents map[string]AgentConfig) (map[string]string,
 			}
 			for n := 1; n <= replicas; n++ {
 				name := ReviewHeadAgentName(base, h, n)
+				if len(name) > maxAgentNameLen {
+					return nil, fmt.Errorf("agent %s: review_heads[%d]: derived agent name %q is %d characters; hive-<name> must fit the 32-character group limit (max %d), set a shorter alias", base, i, name, len(name), maxAgentNameLen)
+				}
 				if other, ok := out[name]; ok {
 					return nil, fmt.Errorf("agent %s: review_heads would create %s, which agent %s's review_heads also create", base, name, other)
 				}

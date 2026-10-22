@@ -13,7 +13,7 @@ func reviewHeadsBase() AgentConfig {
 		LaunchCmd: "claude --model claude-sonnet-5-5", ReasoningEffort: "high",
 		ReviewModels: ReviewModelsConfig{Pool: []ReviewModelPoolEntry{{Backend: "claude", Model: "claude-sonnet-5-5"}}},
 		ReviewHeads: []ReviewHead{
-			{Backend: "claude", Model: "claude-sonnet-5-5", Replicas: 2},
+			{Backend: "claude", Model: "claude-sonnet-5-5", Alias: "sonnet", Replicas: 2},
 			{Backend: "codex", Model: "gpt-6-sol", Alias: "sol"},
 		},
 	}
@@ -40,7 +40,7 @@ func TestExpandAgentReplicasMaterializesReviewHeads(t *testing.T) {
 	if err := cfg.ExpandAgentReplicas(); err != nil {
 		t.Fatalf("ExpandAgentReplicas() error = %v", err)
 	}
-	want := []string{"code-reviewer", "code-reviewer-claude-sonnet-5-5-1", "code-reviewer-claude-sonnet-5-5-2", "code-reviewer-sol-1"}
+	want := []string{"code-reviewer", "code-reviewer-sonnet-1", "code-reviewer-sonnet-2", "code-reviewer-sol-1"}
 	if len(cfg.Agents) != len(want) {
 		t.Fatalf("agents = %v, want %v", keys(cfg.Agents), want)
 	}
@@ -49,8 +49,8 @@ func TestExpandAgentReplicasMaterializesReviewHeads(t *testing.T) {
 			t.Fatalf("missing agent %s in %v", name, keys(cfg.Agents))
 		}
 	}
-	sonnet2 := cfg.Agents["code-reviewer-claude-sonnet-5-5-2"]
-	if sonnet2.ReplicaOf != "code-reviewer" || sonnet2.ReviewHead != "code-reviewer-claude-sonnet-5-5" || sonnet2.ReplicaIndex != 2 || sonnet2.ReplicaCount != 2 {
+	sonnet2 := cfg.Agents["code-reviewer-sonnet-2"]
+	if sonnet2.ReplicaOf != "code-reviewer" || sonnet2.ReviewHead != "code-reviewer-sonnet" || sonnet2.ReplicaIndex != 2 || sonnet2.ReplicaCount != 2 {
 		t.Fatalf("sonnet-2 metadata = %+v", sonnet2)
 	}
 	if sonnet2.LaunchCmd == "" || sonnet2.ReasoningEffort != "high" {
@@ -89,7 +89,7 @@ func TestReviewHeadsAreStrippedOnSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(out)
-	if strings.Contains(text, "code-reviewer-sol-1") || strings.Contains(text, "code-reviewer-claude-sonnet-5-5-1") {
+	if strings.Contains(text, "code-reviewer-sol-1") || strings.Contains(text, "code-reviewer-sonnet-1") {
 		t.Fatalf("derived heads persisted:\n%s", text)
 	}
 	if !strings.Contains(text, "review_heads:") || !strings.Contains(text, "alias: sol") {
@@ -107,6 +107,8 @@ func TestReviewHeadsValidation(t *testing.T) {
 		{"missing model", []ReviewHead{{Backend: "codex"}}, nil, "backend and model are required"},
 		{"duplicate alias", []ReviewHead{{Backend: "codex", Model: "a", Alias: "x"}, {Backend: "claude", Model: "b", Alias: "x"}}, nil, "used twice"},
 		{"replica cap", []ReviewHead{{Backend: "codex", Model: "a", Replicas: MaxAgentReplicas + 1}}, nil, "replicas must be between"},
+		{"default name too long for the group limit", []ReviewHead{{Backend: "claude", Model: "claude-sonnet-5-5"}}, nil, "set a shorter alias"},
+		{"explicit alias too long", []ReviewHead{{Backend: "codex", Model: "a", Alias: "a-very-long-head-alias"}}, nil, "32-character group limit"},
 		{"collides with declared", []ReviewHead{{Backend: "codex", Model: "a", Alias: "x"}}, map[string]AgentConfig{"code-reviewer-x-1": {}}, "already exists"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,7 +163,7 @@ func TestExpectedReviewHeadsFollowReviewerAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(cfg.ExpectedReviewHeads(), ",")
-	if got != "code-reviewer-claude-sonnet-5-5,code-reviewer-sol" {
+	if got != "code-reviewer-sonnet,code-reviewer-sol" {
 		t.Fatalf("expected heads = %q; heads of a base reviewer_agents does not name must not be waited on", got)
 	}
 	cfg.Review.ReviewerAgents = nil
