@@ -765,6 +765,16 @@ type WSMessage struct {
 	Repositories []string `json:"repositories,omitempty"`
 	Accepted     *bool    `json:"accepted,omitempty"`
 	Unknown      []string `json:"unknown,omitempty"`
+	// AuditShareRequested is the relay audit level this hive asks contributors
+	// to share (hub.contribute_audit_share_request, hivecommons/hive#13458),
+	// advertised on auth_ok so a contributor sees it before opting in. Empty
+	// requests nothing. A request only: admission never depends on it.
+	AuditShareRequested string `json:"audit_share_requested,omitempty"`
+	// AuditShare carries the contributor's OPT-IN audit attestation on
+	// task_complete / task_failed (#13458): the local audit rows for the task,
+	// up to the level the contributor consented to share. Additive: old hubs
+	// ignore it and relays without consent never send it.
+	AuditShare *RelayAuditShare `json:"audit_share,omitempty"`
 }
 
 type VerdictEvidence struct {
@@ -2902,6 +2912,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		Announcement:                 announcement,
 		ContributeNeedsDecisionLabel: &needsDecisionLabel,
 		HelpLinks:                    h.server.contributeHelpLinks(),
+		AuditShareRequested:          h.server.contributeAuditShareRequest(),
 	}); err != nil {
 		h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 		return true
@@ -4006,6 +4017,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskCompleted, completedTask,
 				"pr_url", verifiedPR, "verdict", verdict, "duration_s", int(runRec.DurationS),
 				"model", auditRelayText(s.contributor.model))
+			h.attestRelayAudit(s.contributor, completedTask, msg.AuditShare)
 			h.appendTaskRun(runRec)
 			// #6450: a genuine completion proves the runtime works — clear
 			// the contributor's fast-failure streak.
@@ -4236,6 +4248,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			}
 			h.auditRelay(s.contributor, agentaudit.AuditRelayTaskFailed, failedTask,
 				"class", failureKind, "duration_s", int(runRec.DurationS))
+			h.attestRelayAudit(s.contributor, failedTask, msg.AuditShare)
 			h.appendTaskRun(runRec)
 			// #6450: book this failure against the CONTRIBUTOR's fast-failure
 			// streak (hub-measured duration; an unknown/adopted-task duration

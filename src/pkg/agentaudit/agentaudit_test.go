@@ -82,6 +82,7 @@ func TestRelayAuditActionVocabulary(t *testing.T) {
 		{"task failed", AuditRelayTaskFailed, "relay_task_failed"},
 		{"task revoked", AuditRelayTaskRevoked, "relay_task_revoked"},
 		{"task abandoned", AuditRelayTaskAbandoned, "relay_task_abandoned"},
+		{"task attested", AuditRelayTaskAttested, "relay_task_attested"},
 	}
 	seen := make(map[string]bool, len(tests))
 	for _, tt := range tests {

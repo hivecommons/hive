@@ -29,6 +29,19 @@ is offered only to relays that declare the `run-stage` relay capability, so an
 old relay can continue normal work but is not silently handed a staged run it
 does not understand.
 
+### Audit attestation is voluntary
+
+A hive can *ask* contributors to share their relay's local audit record
+(`hub.contribute_audit_share_request`, shown on `/contribute` before setup and
+advertised on `auth_ok`). Sharing is opt-in, per hive, with
+`hivectl hives set <name> --share-audit <lifecycle|commands|reasoning>`, and
+never above the relay's capture level. Trust tier, role grants and admission do
+**not** depend on it: a contributor who shares nothing is admitted exactly as
+before. Making a minimum share level an admission condition is an open
+governance question ([#13441](https://github.com/hivecommons/hive/issues/13441))
+and is not implemented. See
+[contributor-relay.md](contributor-relay.md#sharing-your-audit-record-with-a-hive---share-audit).
+
 ## Merger capability and setup
 
 Operators grant merger from the hosted hive's **Manage Access** UI. The role sits between `read-write` and `owner` for dashboard access:

@@ -80,6 +80,7 @@ func TestMain(m *testing.M) {
 		panic("dashboard TestMain: cannot create temp data dir: " + err.Error())
 	}
 	auditLogPath = filepath.Join(testDataDir, "audit.jsonl")
+	contribAuditDirPath = filepath.Join(testDataDir, "contrib-audit")
 	// Prompt save/bake/import all persist templates through this one seam. Keep
 	// the production default in api.go, but point package tests at this run's
 	// private directory before any test can construct a dashboard server.

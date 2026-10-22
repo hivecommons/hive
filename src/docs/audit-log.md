@@ -128,6 +128,7 @@ task's `repo` and issue/PR `target`.
 | `relay_task_failed` | `task_failed` was accepted for the held task | `task`, `class` (the normalised failure kind: `environment`, `task` or `unspecified`), `duration_s` |
 | `relay_task_revoked` | The hub took a task back: operator requeue or yank, or a resume refused by the admission gate | `task`, `reason` |
 | `relay_task_abandoned` | The task ended with no terminal frame: lease expired, or the socket dropped and the task was not re-adopted within the disconnect grace | `task`, `last_progress_at` (lease expiry only) |
+| `relay_task_attested` | The terminal frame carried the contributor's **opt-in** audit attestation (`hivectl hives set <name> --share-audit`, [#13458](https://github.com/hivecommons/hive/issues/13458)); never written without that consent | `task`, `level` (shared level, after clamping), `capture_level`, `local_ref` (the contributor's local record key), `rows` (rows accepted), `commands` (command rows stored), `stored` (`<login>/<task>.jsonl` under `/data/contrib-audit/`, only at `commands`+), `dropped` (rows above the shared level or malformed), `clamped` (share exceeded capture) |
 
 Things to know when you query them:
 
@@ -148,6 +149,17 @@ Things to know when you query them:
 - **Volume.** Expect roughly 6–10 rows per contributor task, plus one
   `relay_token_minted` per mid-task refresh on tasks that run past the token
   refresh period.
+- **Shared command rows live outside this file.** When a contributor shares
+  at `commands` or `reasoning`, the hub writes one `relay_task_attested` row
+  here. The command rows themselves go to
+  `/data/contrib-audit/<login>/<task>.jsonl` (file 0600, directory 0700; login
+  and task id lowercased, with anything outside `[a-z0-9._-]` replaced), so a
+  chatty task cannot evict operator actions from the 500-entry ring.
+  `reason`/`reason_source` are kept only at `reasoning`. Each file is bounded by
+  the relay's 64 KiB frame limit, and a repeated attestation for the same task
+  replaces it. Retention uses this log's max-age knob (90 days, see below):
+  older per-task files are pruned when the next attestation is stored, at most
+  once an hour.
 
 ## Rotation and retention
 

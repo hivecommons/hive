@@ -941,6 +941,11 @@ dashboard:
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
+#   # Relay audit level this hive ASKS contributors to share (lifecycle |
+#   # commands | reasoning), shown on auth_ok and /contribute. A request only:
+#   # nothing is uploaded without the contributor's `--share-audit` opt-in, and
+#   # admission never depends on it. Empty (default) requests nothing.
+#   contribute_audit_share_request: ""
 #   # Contributor queue: "already done" no_work_needed verdicts are commented
 #   # and labeled so the issue stays out of re-offer until a maintainer removes
 #   # the label. Verified merged-PR evidence runs the normal completed close path.

@@ -42,6 +42,7 @@ func TestRelayAudit_SensitiveVocabulary(t *testing.T) {
 		{agentaudit.AuditRelayTaskFailed, false},
 		{agentaudit.AuditRelayTaskRevoked, true},
 		{agentaudit.AuditRelayTaskAbandoned, false},
+		{agentaudit.AuditRelayTaskAttested, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.action, func(t *testing.T) {

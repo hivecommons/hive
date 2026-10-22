@@ -95,6 +95,10 @@ const (
 	AuditRelayTaskFailed      = "relay_task_failed"
 	AuditRelayTaskRevoked     = "relay_task_revoked"
 	AuditRelayTaskAbandoned   = "relay_task_abandoned"
+	// AuditRelayTaskAttested records audit rows a contributor CHOSE to share
+	// with a terminal frame (hivecommons/hive#13458). Opt-in only: a relay
+	// without `--share-audit` never sends any, and this row is never written.
+	AuditRelayTaskAttested = "relay_task_attested"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.

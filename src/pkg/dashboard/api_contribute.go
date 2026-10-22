@@ -634,6 +634,9 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"served_sha":      versionShort,
 		"announcement":    s.activeContributeAnnouncement(),
 		"help_links":      s.contributeHelpLinks(),
+		// #13458: the relay audit level this hive asks contributors to share,
+		// shown on /contribute before setup. "" requests nothing.
+		"audit_share_requested": s.contributeAuditShareRequest(),
 	})
 }
 

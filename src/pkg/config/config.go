@@ -5730,6 +5730,14 @@ type HubConfig struct {
 	// needs-decision label; an explicit empty string disables relay labelling and
 	// does not add a decision label to the skip set.
 	ContributeNeedsDecisionLabel *string `yaml:"contribute_needs_decision_label,omitempty"`
+	// ContributeAuditShareRequest is the relay audit level this hive ASKS
+	// contributors to share with it (hivecommons/hive#13458): "lifecycle",
+	// "commands" or "reasoning". It is advertised on auth_ok and on the
+	// /contribute page so a contributor sees it before deciding; it is a
+	// request only — nothing is uploaded unless the contributor opts in with
+	// `hivectl hives set <name> --share-audit`, and a contributor who does not
+	// is admitted exactly as before. Empty (the default) requests nothing.
+	ContributeAuditShareRequest string `yaml:"contribute_audit_share_request,omitempty"`
 	// ContributeSkipLabels is the hive-wide "not contributor work" label set.
 	// Matching is case-insensitive and uses path.Match-style glob patterns (not
 	// substring matching), so "discussion" matches that label and
@@ -6004,6 +6012,30 @@ func (h HubConfig) ContributeNeedsDecisionLabelOrDefault() string {
 		return defaultNeedsDecisionLabel
 	}
 	return strings.TrimSpace(*h.ContributeNeedsDecisionLabel)
+}
+
+// RelayAuditShareLevels are the relay audit levels a contributor may share
+// with a hive, lowest first (hivecommons/hive#13458). Each is a strict superset
+// of the one before it; they mirror the relay's local capture levels minus
+// "off", which shares nothing.
+var RelayAuditShareLevels = []string{"lifecycle", "commands", "reasoning"}
+
+// NormalizeRelayAuditShareLevel returns the canonical spelling of a relay audit
+// share level, or "" when v is empty or not one of RelayAuditShareLevels.
+func NormalizeRelayAuditShareLevel(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	for _, l := range RelayAuditShareLevels {
+		if v == l {
+			return l
+		}
+	}
+	return ""
+}
+
+// ContributeAuditShareRequestOrNone resolves the share level this hive requests
+// from contributors. An unset or unrecognised value requests nothing ("").
+func (h HubConfig) ContributeAuditShareRequestOrNone() string {
+	return NormalizeRelayAuditShareLevel(h.ContributeAuditShareRequest)
 }
 
 // ContributeSkipLabelPatterns resolves the effective hive-wide "not contributor
