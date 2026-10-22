@@ -168,7 +168,13 @@ concurrency:
 #              run on such a PR; v2-ci.yml still builds and vets the whole
 #              tree, and the push/scheduled full runs are the behavioural net.
 #   none       no change touches the set: the agent slices report success
-#              without testing; everything else follows the selection.
+#              without testing and pkg/agent is dropped from the selection
+#              EVEN IF the dependency analysis selected it (a PR that only
+#              edits a non-Crux package pkg/agent imports, e.g. pkg/github,
+#              does not run pkg/agent tests on the PR). This is the mirror of
+#              the crux-only trade: the boundary is tested from inside the
+#              set, and the push/scheduled full runs are the net. Everything
+#              else follows the selection.
 #   mixed      both sides changed: the selection is used unchanged.
 #   full       a fail-safe path changed — src/go.mod, src/go.sum,
 #              src/internal/**, src/pkg/config/**, .github/workflows/**,
