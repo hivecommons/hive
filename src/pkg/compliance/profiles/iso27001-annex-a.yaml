@@ -229,7 +229,7 @@ controls:
     rationale: >-
       Audit retention is fixed at 90 days in code today; the configurable floor
       is tracked by hivecommons/hive#11077, so this reports a deviation until it
-      lands. Delegated relay work is covered by the relay_* rows in the audit log and the relay-audit-coverage posture check.
+      lands. Delegated relay work is covered by the relay_* rows in the audit log and the relay_audit_coverage posture check.
     mappings:
       - setting_path: audit.retention_days
         recommended: '365'

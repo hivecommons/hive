@@ -19,13 +19,13 @@ func (h *ContributeWSHub) ActiveCount() int {
 	return len(seen)
 }
 
-// relayConnectedSince reports whether a relay is connected now or finished
-// authenticating at or after since.
+// relayConnectedSince reports whether a relay finished authenticating at or
+// after since. Only the timestamp counts: a relay that connected before the
+// window and merely stayed up wrote no relay_* row in it, so counting it
+// would make the relay_audit_coverage check fail for an idle connection.
+// Relays connected after a hub restart re-authenticate and refresh the stamp.
 func (h *ContributeWSHub) relayConnectedSince(since time.Time) bool {
-	if h.lastRelayConnectNanos.Load() >= since.UnixNano() {
-		return true
-	}
-	return h.ActiveCount() > 0
+	return h.lastRelayConnectNanos.Load() >= since.UnixNano()
 }
 
 func (h *ContributeWSHub) ActiveSessionCount() int {

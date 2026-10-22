@@ -465,7 +465,7 @@ repository writes:
    toggle (`attribution.go:290-295`). This is the accountability substrate an
    operator or incident responder uses to answer "which agent/backend/model
    produced this." Delegated contributor-relay work is covered too: the hub
-   writes `relay_*` rows to the same log, and the `relay-audit-coverage`
+   writes `relay_*` rows to the same log, and the `relay_audit_coverage`
    compliance posture check fails if relays connected in the last 24h without
    any being written.
 

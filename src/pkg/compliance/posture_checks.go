@@ -23,7 +23,7 @@ const (
 	CheckNoConfigSecrets    = "no_secrets_in_config"
 	CheckDashboardAuth      = "dashboard_auth"
 	CheckHoldLabels         = "hold_labels_exist"
-	CheckRelayAuditCoverage = "relay-audit-coverage"
+	CheckRelayAuditCoverage = "relay_audit_coverage"
 	relayAuditWindow        = 24 * time.Hour
 	settingAuditRetention   = "audit.retention_days"
 	evidenceAuditRetention  = "docs/audit-log.md#rotation-and-retention"

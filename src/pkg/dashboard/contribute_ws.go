@@ -934,7 +934,7 @@ type ContributeWSHub struct {
 	// re-enter h.mu.
 	pendingConns atomic.Int64
 	// lastRelayConnectNanos is when a relay last completed authentication;
-	// the relay-audit-coverage posture check reads it.
+	// the relay_audit_coverage posture check reads it.
 	lastRelayConnectNanos atomic.Int64
 	// handlers tracks live HandleWS invocations so a caller (in practice:
 	// tests) can wait for hijacked websocket handlers to fully unwind.

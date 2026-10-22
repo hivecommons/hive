@@ -96,7 +96,7 @@ controls:
     citation: NIST SP 800-53 Rev 5 AU-2
     domain: Logging & monitoring
     rationale: >-
-      Delegated relay work is covered by the relay_* rows in the audit log and the relay-audit-coverage posture check.
+      Delegated relay work is covered by the relay_* rows in the audit log and the relay_audit_coverage posture check.
     mappings:
       - setting_path: review.post_comments
         recommended: 'true'
