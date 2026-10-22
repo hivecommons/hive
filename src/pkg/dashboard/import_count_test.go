@@ -47,8 +47,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// webhook.event_to_patch_ms latency sample once the cache patch lands
 	// (hivecommons/hive#13380) and so the Overview totals and the
 	// merged/closed cost counters read the ForgeState cache instead of
-	// issuing /search/issues on every cycle (hivecommons/hive#13376).
-	const maxDashboardInternalImports = 54
+	// issuing /search/issues on every cycle (hivecommons/hive#13376), plus
+	// pkg/agentaudit so the contribute hub writes the relay_* lifecycle rows
+	// into the one /data/audit.jsonl stream instead of a second audit store
+	// (hivecommons/hive#13453).
+	const maxDashboardInternalImports = 55
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
