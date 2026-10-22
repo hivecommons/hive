@@ -343,8 +343,8 @@ func TestScanCopilotSessions_WithSessions(t *testing.T) {
 	if agg.SessionCount != 1 {
 		t.Fatalf("expected 1 session, got %d", agg.SessionCount)
 	}
-	if agg.TotalInput != 500 {
-		t.Errorf("TotalInput = %d, want 500", agg.TotalInput)
+	if agg.TotalInput != 350 {
+		t.Errorf("TotalInput = %d, want 350 (500 minus the 100+50 cache buckets)", agg.TotalInput)
 	}
 	if agg.TotalOutput != 200 {
 		t.Errorf("TotalOutput = %d, want 200", agg.TotalOutput)
@@ -380,8 +380,8 @@ func TestScanCopilotSessions_PreCaptureSessionStillCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
-	if agg.TotalInput != 500 || agg.TotalOutput != 200 {
-		t.Fatalf("pre-capture session tokens were dropped: input=%d output=%d, want 500/200 (the $18k->$394 regression)", agg.TotalInput, agg.TotalOutput)
+	if agg.TotalInput != 350 || agg.TotalOutput != 200 {
+		t.Fatalf("pre-capture session tokens were dropped: input=%d output=%d, want 350/200 (the $18k->$394 regression)", agg.TotalInput, agg.TotalOutput)
 	}
 }
 
@@ -427,7 +427,7 @@ func TestScanCopilotSessions_LiveCaptureSkipsTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
-	if agg2.TotalInput != 500 || agg2.TotalOutput != 200 {
+	if agg2.TotalInput != 350 || agg2.TotalOutput != 200 {
 		t.Errorf("non-live capture should accrue tokens; got in=%d out=%d", agg2.TotalInput, agg2.TotalOutput)
 	}
 }
