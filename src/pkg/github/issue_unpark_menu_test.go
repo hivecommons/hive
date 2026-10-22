@@ -395,7 +395,7 @@ func TestUnparkNoticeLinksOptionComment(t *testing.T) {
 	second.HTMLURL = gh.Ptr("https://example.com/c2")
 
 	notice := renderUnparkNotice(c.unparkMenuFor("no options here", menuTestHiveUser, []*gh.IssueComment{first}))
-	for _, want := range []string{"The options are in [this comment](https://example.com/c1).\n- `/hive approve`", "option A: first a", "option B: first b"} {
+	for _, want := range []string{"The options are in [this comment](https://example.com/c1).\n- `/hive approve`", "(option A): first a", "option B: first b"} {
 		if !strings.Contains(notice, want) {
 			t.Fatalf("notice missing %q:\n%s", want, notice)
 		}
