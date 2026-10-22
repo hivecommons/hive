@@ -399,7 +399,7 @@ assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, st
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 4 }, { number: 5, state: 'closed', title: 'C', url: 'u' }] }), { number: 5, title: 'C', url: 'u', closed: true, placeholder: '' }, 'a known-closed issue beats one of unknown state');
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, state: 'closed' }] }), { number: 5, title: '', url: '', closed: true, placeholder: STAGE_TRACKER_CLOSED_ISSUE_TITLE });
 assert.deepStrictEqual(stageTrackerPRIssueSlot({}), { number: 0, text: 'no linked issue' });
-// Soft links (hivecommons/hive#13544): a `Refs #N` / `(#N, part 1)` reference fills the issue slot under a "refs" chip; a closing link never wears one.
+// Soft links (hivecommons/hive#13544): a Refs #N / (#N, part 1) reference fills the issue slot under a "refs" chip; a closing link never wears one.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 13544, kind: 'pr', title: 'Model heads (#13542, part 1)', stage: 50, nested_under: 13542, linked_issues: [{ number: 13542, title: 'Split the reviewer', url: 'https://x/13542', state: 'open', listed: true, via: 'refs' }] }, stages, ctx);
 assert.strictEqual(lead(row), '#13542 Split the reviewer refs', lead(row));
 assert.ok(row.includes('<span class="ham-badge ham-issue-refs-chip" title="' + STAGE_TRACKER_SOFT_LINK_TIP + '">refs</span>'), 'refs chip: ' + row);
