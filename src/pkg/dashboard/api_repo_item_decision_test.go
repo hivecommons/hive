@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // repoItemDecisionMock is the slice of GitHub the decision endpoint touches:
@@ -24,6 +25,8 @@ type repoItemDecisionMock struct {
 	removed     []string
 	comments    []string
 	edits       []map[string]any
+	// prForeign makes PR #8 look like a human opened it.
+	prForeign bool
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -46,6 +49,12 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/issues/8"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "pull_request": map[string]any{"url": "x"}, "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8"):
+			author := map[string]any{"login": "hive[bot]", "type": "Bot"}
+			if m.prForeign {
+				author = map[string]any{"login": "someone", "type": "User"}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "user": author, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):
@@ -81,6 +90,11 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 	srv := newFullServer(t)
 	srv.deps.Config.HiveID = "h1"
 	srv.deps.GHClient = github.NewClient("token", "testorg", []string{"testrepo"}, slog.Default(), ghSrv.URL)
+	srv.deps.GHClient.SetAppBotLogin("hive[bot]")
+	store := review.NewHumanChangeRequests("")
+	prev := repoItemDecisionChangeRequests
+	repoItemDecisionChangeRequests = func() review.HumanChangeRequestStore { return store }
+	t.Cleanup(func() { repoItemDecisionChangeRequests = prev })
 	return srv
 }
 
@@ -157,8 +171,10 @@ func TestRepoItemDecisionDirectionRequiresTextAndParkedIssue(t *testing.T) {
 	if w := postRepoItemDecision(t, srv, 7, "writer", `{"decision":"approve"}`); w.Code != http.StatusConflict {
 		t.Fatalf("approve on un-parked issue: code=%d want 409 body=%s", w.Code, w.Body.String())
 	}
-	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"approve","type":"pr"}`); w.Code != http.StatusBadRequest {
-		t.Fatalf("approve on PR: code=%d want 400 body=%s", w.Code, w.Body.String())
+	// A PR sent as an issue is told to resend as type "pr" rather than
+	// being run through the issue un-park.
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"approve"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("approve on PR typed as issue: code=%d want 400 body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -217,5 +233,102 @@ func TestRepoItemDecisionAuthorizationAndValidation(t *testing.T) {
 	}
 	if len(mock.added)+len(mock.comments)+len(mock.edits) != 0 {
 		t.Fatalf("refused requests must write nothing: added=%v comments=%v edits=%v", mock.added, mock.comments, mock.edits)
+	}
+}
+
+func TestRepoItemDecisionApprovePRPostsLgtmAndApproveComments(t *testing.T) {
+	mock := &repoItemDecisionMock{}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"approve","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("approve PR: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Status != "approval-commented" {
+		t.Fatalf("status = %q", resp.Status)
+	}
+	if len(mock.comments) != 2 || !strings.HasPrefix(mock.comments[0], "/lgtm\n") || !strings.HasPrefix(mock.comments[1], "/approve\n") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	if !strings.Contains(mock.comments[0], "@writer") {
+		t.Fatalf("command comment must name the operator: %q", mock.comments[0])
+	}
+	if len(mock.added)+len(mock.edits) != 0 {
+		t.Fatalf("approval must not label or edit the PR (no merge): added=%v edits=%v", mock.added, mock.edits)
+	}
+	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionApprove {
+		t.Fatalf("audit = %v", actions)
+	}
+}
+
+func TestRepoItemDecisionDirectionPRRecordsChangeRequest(t *testing.T) {
+	mock := &repoItemDecisionMock{}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"direction","type":"pr","comment":"drop the retry loop"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("direction PR: code=%d body=%s", w.Code, w.Body.String())
+	}
+	req, ok := repoItemDecisionChangeRequests().For("testorg/testrepo", 8, "feedfacefeedfacefeedfacefeedfacefeedface")
+	if !ok || req.Body != "drop the retry loop" || req.Actor != "writer" {
+		t.Fatalf("stored request = %+v ok=%v", req, ok)
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "Decision recorded by @writer") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	if actions := decisionAuditActions(srv); len(actions) == 0 || actions[0] != auditRepoItemDecisionDirection {
+		t.Fatalf("audit = %v", actions)
+	}
+
+	mock.prForeign = true
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"direction","type":"pr","comment":"x"}`); w.Code != http.StatusConflict {
+		t.Fatalf("foreign PR direction: code=%d want 409 body=%s", w.Code, w.Body.String())
+	}
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"direction","type":"pr"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("direction without text: code=%d want 400", w.Code)
+	}
+}
+
+func TestRepoItemDecisionCloseSupersededByNamesTheWinner(t *testing.T) {
+	mock := &repoItemDecisionMock{}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"close-superseded","type":"pr","superseded_by":"#458"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("close superseded by: code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(mock.comments) != 1 || !strings.Contains(mock.comments[0], "superseded by testorg/testrepo#458 by @writer") {
+		t.Fatalf("comments = %q", mock.comments)
+	}
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"close-superseded","type":"pr","superseded_by":"#8"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("self supersession: code=%d want 400", w.Code)
+	}
+	if w := postRepoItemDecision(t, srv, 8, "writer", `{"decision":"close-superseded","type":"pr","superseded_by":"nope"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("garbage ref: code=%d want 400", w.Code)
+	}
+}
+
+func TestParseRepoItemSupersededBy(t *testing.T) {
+	cases := map[string]string{
+		"":                "",
+		"458":             "o/r#458",
+		" #458 ":          "o/r#458",
+		"acme/console#12": "acme/console#12",
+		"https://github.com/acme/console/pull/12":     "acme/console#12",
+		"https://github.com/acme/console/issues/12/":  "acme/console#12",
+		"https://ghe.example.com/acme/console/pull/3": "acme/console#3",
+	}
+	for in, want := range cases {
+		got, err := parseRepoItemSupersededBy(in, "o/r")
+		if err != nil || got != want {
+			t.Errorf("parse(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"x", "#0", "r#4", "https://github.com/acme/console", "a/b/c#4"} {
+		if _, err := parseRepoItemSupersededBy(bad, "o/r"); err == nil {
+			t.Errorf("parse(%q) must fail", bad)
+		}
 	}
 }

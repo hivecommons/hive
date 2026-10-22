@@ -14939,8 +14939,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MENU_MARGIN = 4;
     const STAGE_TRACKER_MENU_FAIL_LINES = 3;
     const STAGE_TRACKER_ACTION_LABELS = {
-      'decide:approve': 'Approve direction', 'decide:direction': 'Send back to the hive',
-      'decide:close-superseded': 'Close as superseded', 'decide:close-wontfix': "Close as won't-fix",
+      'decide:approve': 'Approve', 'decide:direction': 'Give direction',
+      'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
@@ -15031,17 +15031,43 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
       return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger') };
     }
-    // Pure: the decision choices for one item. Approve / direction act on a
-    // parked issue (045); a PR at 085 can only be closed.
+    // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
+    // "Needs human decision" pill on the Merge gate column) decides itself;
+    // an issue row decides a nested PR parked at 085 when it has one (its
+    // own stage is only mirrored from that PR), else itself when parked at
+    // 045. null when nothing on the row is waiting on a person.
+    function stageTrackerDecisionTarget(item) {
+      if (!item) return null;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const parked = it => (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0;
+      if (item.kind === 'pr') return parked(item) ? item : null;
+      for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
+        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], author: lp.author || '' };
+        if (parked(pr)) return pr;
+      }
+      if (item.mirrored) return null;
+      return (mods.indexOf('needs-decision') >= 0 || (Number(item.stage) || 0) === 45) ? item : null;
+    }
+    // Pure: the decision choices for one decision target. On an issue
+    // parked at 045 the verbs are /hive approve and /hive decision. On a PR
+    // parked at 085, Approve posts the /lgtm + /approve commands as the
+    // operator (the merge gate decides from there — nothing merges here),
+    // Close as superseded names the PR that won, and Give direction is the
+    // /hive decision fix lane.
     function stageTrackerDecideOptions(item, ctx) {
       const enabled = ctx.canHold !== false && !!ctx.user;
       const why = enabled ? '' : STAGE_TRACKER_WHY_WRITE;
       const out = [];
-      if (item.kind === 'issue') {
-        out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
-        out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
+      if (item.kind === 'pr') {
+        out.push({ id: 'decide:approve', label: 'Approve (/lgtm + /approve)', enabled, why });
+        out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
+        out.push({ id: 'decide:close-wontfix', label: "Won't fix…", enabled, why, danger: true });
+        out.push({ id: 'decide:direction', label: 'Give direction…', enabled, why });
+        return out;
       }
-      out.push({ id: 'decide:close-superseded', label: 'Close as superseded…', enabled, why, danger: true });
+      out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
+      out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
+      out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
     }
@@ -15052,8 +15078,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const has = m => mods.indexOf(m) >= 0;
       const write = ctx.canHold !== false;
       const out = [];
-      if (has('needs-decision') || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(item.stage) || 0) >= 0) {
-        out.push({ id: 'decide', label: 'Decide…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(item, ctx) });
+      const target = stageTrackerDecisionTarget(item);
+      if (target) {
+        const on = target === item ? '' : ' PR #' + (Number(target.number) || 0);
+        out.push({ id: 'decide', label: 'Decide' + on + '…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(target, ctx), target });
       }
       out.push(has('hold')
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
@@ -15087,6 +15115,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       };
       const decideIds = ['decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
       const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
+      const targets = items.map(stageTrackerDecisionTarget).filter(Boolean);
+      if (targets.length === items.length && items.length) {
+        const kinds = {};
+        for (const t of targets) kinds[t.kind] = true;
+        if (kinds.pr && kinds.issue) {
+          for (const sm of submenu) if (sm.enabled) Object.assign(sm, { enabled: false, why: 'Selection mixes issues and pull requests waiting on a decision' });
+        }
+      }
       const out = [Object.assign({ id: 'decide', label: 'Decide…', submenu }, submenu.some(s => s.enabled) ? { enabled: true, why: '' } : { enabled: false, why: submenu[0].why })];
       for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
       return out;
@@ -15303,7 +15339,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
       }
-      if (id.indexOf('decide:') === 0) return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: id.slice('decide:'.length), comment: payload.comment || '', type } };
+      if (id.indexOf('decide:') === 0) {
+        const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
+        if (payload.supersededBy) body.superseded_by = payload.supersededBy;
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body };
+      }
       return null;
     }
     // Pure: one line for the result toast.
@@ -15366,17 +15406,60 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     // What an action needs from the operator first (in-app dialogs only);
     // null = cancelled.
+    // Pure: the other open PRs in the same repos as items, newest first, as
+    // datalist options for the "superseded by" picker.
+    function stageTrackerSupersederOptions(d, items) {
+      const repos = {};
+      const skip = {};
+      for (const it of items) { repos[it.repo] = true; skip[stageTrackerItemKey(it)] = true; }
+      const out = [];
+      const seen = {};
+      const add = pr => {
+        const k = stageTrackerItemKey(pr);
+        if (skip[k] || seen[k] || !repos[pr.repo]) return;
+        seen[k] = true;
+        out.push({ value: pr.repo + '#' + pr.number, label: (pr.title || '').slice(0, 80) });
+      };
+      for (const it of ((d && d.items) || [])) {
+        if (it.kind === 'pr') add(it);
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) add({ repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '' });
+      }
+      return out.sort((a, b) => Number(b.value.split('#')[1]) - Number(a.value.split('#')[1]));
+    }
+    // Pure: validates a "superseded by" reference; "" is allowed (no winner named).
+    function stageTrackerSupersederValid(s, items) {
+      s = String(s || '').trim();
+      if (!s) return true;
+      const m = s.match(/^(?:https?:\/\/[^\/]+\/([^\/#]+\/[^\/#]+)\/(?:pull|issues)\/(\d+)\/?|(?:([^\/#\s]+\/[^\/#\s]+))?#?(\d+))$/);
+      if (!m) return 'Enter a PR number, owner/repo#number or a GitHub PR URL';
+      const repo = m[1] || m[3] || (items[0] && items[0].repo) || '';
+      const n = Number(m[2] || m[4]);
+      for (const it of items) if (it.repo === repo && Number(it.number) === n) return 'A pull request cannot supersede itself';
+      return true;
+    }
     async function stageTrackerActionPayload(items, id) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
+      const prs = items.length > 0 && items.every(it => it.kind === 'pr');
       switch (id) {
         case 'decide:approve':
+          if (prs) {
+            return (await hiveConfirm({ title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve' })) ? {} : null;
+          }
           return (await hiveConfirm({ title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:direction': {
-          const v = await hivePrompt({ title: 'Send back to the hive', label: 'Direction for the hive on ' + refs + ' (recorded as "/hive decision …")', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' });
+          const v = await hivePrompt(prs
+            ? { title: 'Give direction', label: 'What should the hive change on ' + refs + '? (recorded as "/hive decision …"; the author agent pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' }
+            : { title: 'Send back to the hive', label: 'Direction for the hive on ' + refs + ' (recorded as "/hive decision …")', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' });
           return v == null ? null : { comment: v };
         }
-        case 'decide:close-superseded':
+        case 'decide:close-superseded': {
+          const options = stageTrackerSupersederOptions(_stageTracker, items);
+          const by = await hivePrompt({ title: 'Close as superseded by', label: 'Which pull request supersedes ' + refs + '? (#number, owner/repo#number or URL; leave empty if none)', placeholder: options.length ? options[0].value : '#123', options, validate: s => stageTrackerSupersederValid(s, items) });
+          if (by == null) return null;
+          const v = await hivePrompt({ title: 'Close as superseded', label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
+          return v == null ? null : { comment: v, supersededBy: by };
+        }
         case 'decide:close-wontfix': {
           const v = await hivePrompt({ title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
           return v == null ? null : { comment: v };
@@ -15402,6 +15485,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           showToast(items.length > 1 ? 'Copied ' + items.length + ' links' : 'Link copied', 'success');
         } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
         return;
+      }
+      if (id.indexOf('decide:') === 0) {
+        // A row decides its parked PR when it has one (the issue's stage is
+        // only mirrored from it); dedupe when the PR row is selected too.
+        const seen = {};
+        items = items.map(stageTrackerDecisionTarget).filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
+        if (!items.length) return;
       }
       const payload = await stageTrackerActionPayload(items, id);
       if (payload == null) return;
@@ -35420,7 +35510,8 @@ function burnAreaChart() {
         overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="${id}-title">
           <div id="${id}-title" class="hive-dialog-title">${hiveDialogEscape(cfg.title || 'Input')}</div>
           <label for="${id}" class="hive-dialog-label">${hiveDialogEscape(cfg.label || cfg.message || cfg.title || '')}</label>
-          <input id="${id}" class="hive-dialog-input" type="text" value="${hiveDialogEscape(cfg.defaultValue || '')}" placeholder="${hiveDialogEscape(cfg.placeholder || '')}" autocomplete="off" aria-describedby="${errId}" data-initial-focus>
+          <input id="${id}" class="hive-dialog-input" type="text" value="${hiveDialogEscape(cfg.defaultValue || '')}" placeholder="${hiveDialogEscape(cfg.placeholder || '')}" autocomplete="off"${Array.isArray(cfg.options) && cfg.options.length ? ' list="' + id + '-list"' : ''} aria-describedby="${errId}" data-initial-focus>
+          ${Array.isArray(cfg.options) && cfg.options.length ? '<datalist id="' + id + '-list">' + cfg.options.map(o => '<option value="' + hiveDialogEscape(o.value) + '">' + hiveDialogEscape(o.label || '') + '</option>').join('') + '</datalist>' : ''}
           <div id="${errId}" class="hive-dialog-error" role="alert"></div>
           <div class="hive-dialog-buttons">
             <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>

@@ -35,7 +35,10 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerRowKeys"),
 		jsFunc(t, html, "stageTrackerItemByKey"),
 		jsFunc(t, html, "stageTrackerItemsForKeys"),
+		jsFunc(t, html, "stageTrackerDecisionTarget"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
+		jsFunc(t, html, "stageTrackerSupersederOptions"),
+		jsFunc(t, html, "stageTrackerSupersederValid"),
 		jsFunc(t, html, "stageTrackerRowActions"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
@@ -134,10 +137,53 @@ const held = { repo: 'o/r', kind: 'pr', number: 3, url: 'u', stage: 60, modifier
 as = stageTrackerRowActions(held, ctx);
 assert.deepStrictEqual(ids(as), ['release', 'retry', 'open', 'copy'], 'held row offers Release, needs-human already set is hidden');
 
-const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: [] };
+// The primary case: a PR parked at 085 ("Needs human decision" on the
+// Merge gate column) — Approve posts /lgtm + /approve, Close as superseded
+// by… names the winner, Won't fix, Give direction.
+const pr85 = { repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, modifiers: ['needs-decision'] };
 as = stageTrackerRowActions(pr85, ctx);
-assert.strictEqual(as[0].id, 'decide');
-assert.deepStrictEqual(ids(as[0].submenu), ['decide:close-superseded', 'decide:close-wontfix'], 'a PR can only be closed from Decide');
+assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide…');
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction'], 'a PR at 085 gets the full decision set');
+assert.strictEqual(as[0].submenu[0].label, 'Approve (/lgtm + /approve)');
+assert.strictEqual(as[0].submenu[1].label, 'Close as superseded by…');
+assert.ok(as[0].submenu.every(o => o.enabled));
+// The pill alone (no stage) is enough; a PR at 085 without the pill too.
+const pilled = { ...pr85, stage: 70 };
+assert.strictEqual(stageTrackerDecisionTarget(pilled), pilled, 'the needs-decision pill alone parks a PR');
+assert.ok(stageTrackerDecisionTarget({ ...pr85, modifiers: [] }), '085 alone parks a PR');
+assert.strictEqual(stageTrackerDecisionTarget({ ...pr85, stage: 70, modifiers: [] }), null);
+
+// An issue row whose nested PR is parked at 085 decides THAT PR (its own
+// stage is only mirrored), not itself; a mirrored issue at 85 with no such
+// PR is not a decision target at all.
+const issueWithPR = { repo: 'o/r', kind: 'issue', number: 5, url: 'u', stage: 85, mirrored: true, modifiers: [],
+  linked_prs: [{ number: 457, title: 'dibs A', url: 'pu', stage: 60, modifiers: [] }, { number: 458, title: 'dibs B', url: 'pu2', stage: 85, modifiers: ['needs-decision'] }] };
+const tgt = stageTrackerDecisionTarget(issueWithPR);
+assert.strictEqual(tgt.kind, 'pr'); assert.strictEqual(tgt.number, 458);
+as = stageTrackerRowActions(issueWithPR, ctx);
+assert.strictEqual(as[0].id, 'decide'); assert.strictEqual(as[0].label, 'Decide PR #458…');
+assert.strictEqual(as[0].target.number, 458);
+assert.deepStrictEqual(ids(as[0].submenu), ['decide:approve', 'decide:close-superseded', 'decide:close-wontfix', 'decide:direction']);
+assert.strictEqual(stageTrackerDecisionTarget({ ...issueWithPR, linked_prs: [issueWithPR.linked_prs[0]] }), null, 'mirrored 85 with no parked PR is not decidable');
+assert.strictEqual(stageTrackerDecisionTarget(parked), parked, 'a 045 issue decides itself');
+
+// The decision request carries type pr and the superseding PR.
+const req = stageTrackerActionRequest(tgt, 'decide:close-superseded', { comment: 'B won', supersededBy: 'o/r#457' });
+assert.strictEqual(req.url, '/api/repos/o/r/items/458/decision');
+assert.deepStrictEqual(req.body, { decision: 'close-superseded', comment: 'B won', type: 'pr', superseded_by: 'o/r#457' });
+assert.deepStrictEqual(stageTrackerActionRequest(tgt, 'decide:approve', {}).body, { decision: 'approve', comment: '', type: 'pr' });
+
+// Superseder picker: the other PRs in the same repo, newest first, never
+// the PR being closed; validation accepts #N / owner/repo#N / URL.
+const opts = stageTrackerSupersederOptions({ items: [issueWithPR, pr85, { repo: 'x/y', kind: 'pr', number: 9, title: 'other repo' }] }, [tgt]);
+assert.deepStrictEqual(opts.map(o => o.value), ['o/r#457', 'o/r#4']);
+assert.strictEqual(opts[0].label, 'dibs A');
+assert.strictEqual(stageTrackerSupersederValid('', [tgt]), true);
+assert.strictEqual(stageTrackerSupersederValid('#457', [tgt]), true);
+assert.strictEqual(stageTrackerSupersederValid('o/r#457', [tgt]), true);
+assert.strictEqual(stageTrackerSupersederValid('https://github.com/o/r/pull/457', [tgt]), true);
+assert.strictEqual(typeof stageTrackerSupersederValid('458', [tgt]), 'string', 'self-supersession is refused');
+assert.strictEqual(typeof stageTrackerSupersederValid('nope', [tgt]), 'string');
 
 // A reader: hold/decide disabled with the reason; needs-human needs merger.
 as = stageTrackerRowActions(parked, { user: false, canHold: false, canHuman: false });
@@ -180,6 +226,12 @@ assert.strictEqual(sby['needs-human'].enabled, false, 'one row already has needs
 assert.strictEqual(sby.decide.enabled, false, 'neither row needs a decision');
 const sel2 = stageTrackerSelectionActions([parked, { ...parked, number: 9 }], () => ctx);
 assert.strictEqual(sel2[0].enabled, true); assert.ok(sel2[0].submenu.find(s => s.id === 'decide:approve').enabled);
+const sel3 = stageTrackerSelectionActions([pr85, issueWithPR], () => ctx);
+assert.strictEqual(sel3[0].enabled, true, 'two rows that both decide PRs share the PR decision set');
+assert.ok(sel3[0].submenu.every(s => s.enabled));
+const sel4 = stageTrackerSelectionActions([pr85, parked], () => ctx);
+assert.strictEqual(sel4[0].enabled, false, 'mixing a parked issue and a parked PR disables Decide');
+assert.ok(sel4[0].why.includes('mixes'));
 const bar = stageTrackerSelBarHtml([plain, held], sel);
 assert.ok(bar.startsWith('<span class="ham-sel-count">2 selected</span><button type="button" class="ham-chip" data-action="hamSelClear">Clear</button>'));
 assert.ok(bar.includes('data-arg0="hold" data-arg-types="s,t" aria-disabled="true" title="Not applicable to o/r#3"'), 'disabled bar buttons keep a tooltip');

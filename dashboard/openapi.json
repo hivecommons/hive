@@ -28156,7 +28156,7 @@
           "Status"
         ],
         "summary": "Record an operator decision on one parked issue or pull request from the activity monitor",
-        "description": "Backs the activity monitor's row context menu / selection bar Decide actions. approve and direction act on an issue parked at 045 (needs-human-decision) and do exactly what a maintainer's `/hive approve` or `/hive decision <text>` comment does: the parking labels are removed, approved-direction is applied, the stage engine records the Unparked fact and a reply comment names the operator. close-superseded and close-wontfix post a comment naming the operator and close the item as not planned (a superseded PR is closed through the sweep's labelled path). Nothing is merged. Same authorisation as the hold toggle plus a signed-in GitHub user; every decision is written to the audit log as repo_item_decision_approve|direction|close.",
+        "description": "Backs the activity monitor's row context menu / selection bar Decide actions. On an issue parked at 045 (needs-human-decision), approve and direction do exactly what a maintainer's `/hive approve` or `/hive decision <text>` comment does: the parking labels are removed, approved-direction is applied, the stage engine records the Unparked fact and a reply comment names the operator. On a pull request (type pr, parked at 085), approve posts the `/lgtm` and `/approve` commands as two comments attributed to the operator — the merge gate decides from there; nothing is reviewed, labelled or merged — and direction records the text as a human change request against the head (the `/hive decision` fix lane: the author agent is kicked with it) on a hive-authored PR only (409 otherwise). close-superseded and close-wontfix post a comment naming the operator — and, when superseded_by is given, the superseding pull request — and close the item as not planned (a superseded PR is closed through the sweep's labelled path). Nothing is merged. Same authorisation as the hold toggle plus a signed-in GitHub user; every decision is written to the audit log as repo_item_decision_approve|direction|close.",
         "parameters": [
           {
             "name": "owner",
@@ -28205,6 +28205,10 @@
                   "comment": {
                     "type": "string",
                     "description": "Required for direction (the text recorded as the decision); optional context for the close variants"
+                  },
+                  "superseded_by": {
+                    "type": "string",
+                    "description": "close-superseded only: the pull request that replaces this item as `458`, `#458`, `owner/repo#458` or a GitHub PR URL (a bare number is read in the item's own repository). Optional; an item cannot name itself."
                   },
                   "type": {
                     "type": "string",
