@@ -370,10 +370,12 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			}
 		}},
 		{name: "posture csv", query: "kind=posture&format=csv", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
-			assertComplianceCSVManifest(t, body, "posture", 2)
+			assertComplianceCSVManifest(t, body, "posture", 2, 1)
 		}},
 		{name: "posture csv empty range", query: "kind=posture&format=csv&since=2020-01-01&until=2020-01-02", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
-			assertComplianceCSVManifest(t, body, "posture", 0)
+			// Attesters are scoped to the export window, and no attestation
+			// falls inside the 2020 range.
+			assertComplianceCSVManifest(t, body, "posture", 0, 0)
 		}},
 		{name: "audit json", query: "kind=audit&since=1h", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got struct {
@@ -408,7 +410,7 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			}
 		}},
 		{name: "attestations csv", query: "kind=attestations&format=csv", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
-			assertComplianceCSVManifest(t, body, "attestations", 1)
+			assertComplianceCSVManifest(t, body, "attestations", 1, 1)
 		}},
 		{name: "bundle", query: "kind=bundle", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got map[string]json.RawMessage
@@ -551,7 +553,7 @@ func assertComplianceJSONManifest(t *testing.T, body []byte) {
 	}
 }
 
-func assertComplianceCSVManifest(t *testing.T, body []byte, kind string, evidenceRows int) {
+func assertComplianceCSVManifest(t *testing.T, body []byte, kind string, evidenceRows, attesters int) {
 	t.Helper()
 	rows, err := csv.NewReader(bytes.NewReader(body)).ReadAll()
 	if err != nil {
@@ -563,7 +565,7 @@ func assertComplianceCSVManifest(t *testing.T, body []byte, kind string, evidenc
 	const metadataColumns = 12
 	var meta complianceExportMeta
 	mustDecodeComplianceJSON(t, []byte(rows[1][10]), &meta)
-	if meta.HiveID != "hive-a" || meta.SourceSystem != "Hive" || meta.GeneratedBy != "alice" || len(meta.Profiles) != 1 || len(meta.Attesters) != 1 {
+	if meta.HiveID != "hive-a" || meta.SourceSystem != "Hive" || meta.GeneratedBy != "alice" || len(meta.Profiles) != 1 || len(meta.Attesters) != attesters {
 		t.Fatalf("CSV metadata = %+v", meta)
 	}
 	var manifest complianceExportManifest
