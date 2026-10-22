@@ -17,6 +17,7 @@ type EvidenceControl struct {
 	ByRepo     []EvidenceControlRepo `json:"by_repo"`
 }
 
+// EvidenceControlRepo holds one repository's on/off arm comparison; repositories are never pooled.
 type EvidenceControlRepo struct {
 	Repo string             `json:"repo"`
 	On   EvidenceControlArm `json:"on"`
@@ -26,11 +27,13 @@ type EvidenceControlRepo struct {
 	Delta map[string]*float64 `json:"delta"`
 }
 
+// EvidenceControlArm holds outcome counts and per-metric rates for one control-window arm.
 type EvidenceControlArm struct {
 	Outcomes EvidenceOutcomes                 `json:"outcomes"`
 	Metrics  map[string]EvidenceControlMetric `json:"metrics"`
 }
 
+// EvidenceControlMetric is a metric value with its denominator N; Value is nil when N is zero.
 type EvidenceControlMetric struct {
 	N     int      `json:"n"`
 	Value *float64 `json:"value"`
