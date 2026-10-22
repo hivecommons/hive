@@ -38,6 +38,29 @@ It is **not**:
 - A replacement for GitHub branch protection, your identity provider, or
   your organisation's incident-response, vendor-management and HR controls.
 
+## Review status and how to read control IDs
+
+The shipped profiles were checked against the published framework
+numbering and titles in [#13578](https://github.com/hivecommons/hive/issues/13578):
+SOC 2 uses the 2017 Trust Services Criteria (CC6.1–CC9.2), FedRAMP uses
+NIST SP 800-53 Rev 5 identifiers, and ISO 27001 uses the **2022** Annex A
+numbering (A.5.x–A.8.x, not the 2013 A.9–A.18 numbers). Control text on this
+page is a paraphrase for orientation, never the framework's own wording; read
+the cited publication for the authoritative requirement.
+
+- Each profile is a **subset** of its framework, not a full checklist. A
+  control missing from a profile is not "passed": it is simply not mapped.
+  Passing every row here says nothing about the controls that are absent.
+- `AC-2.ELIG` is a Hive-specific row, not a NIST control identifier. It marks
+  the US-persons/location eligibility conditions that FedRAMP assessors ask
+  about under AC-2 and AC-3.
+- The mapping of a setting to a control is a plausibility judgement by the
+  Hive maintainers. It has not been reviewed by a person with audit
+  experience; have your own control owners and auditor confirm it before
+  relying on it.
+- Hive is not certified or assessed under any of these frameworks. Exports are
+  configuration evidence for your own control owners, not an audit opinion.
+
 ## Turning it on
 
 ```yaml
