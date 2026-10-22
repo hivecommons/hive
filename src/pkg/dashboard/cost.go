@@ -101,6 +101,10 @@ type costResponse struct {
 	// 30-day snapshot ring (/api/cost/history). Empty until the first UTC
 	// day of snapshots has completed.
 	DailyRollup []CostDailyRollup `json:"daily_rollup"`
+	// Recording says whether the token recorder is still capturing the spend
+	// the configured agents generate; when Stale the UI replaces the live
+	// run-rate with a "no usage recorded since <date>" notice (#13485).
+	Recording costRecording `json:"recording"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -222,6 +226,7 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.CountWindowEnd = time.Now().UnixMilli()
 	resp.DailyRollup = s.CostDailyRollups()
+	resp.Recording = s.costRecording(resp.Estimated)
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {

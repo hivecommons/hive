@@ -268,3 +268,49 @@ assert.equal(allTime.resets[0].next, 5.4);
 		t.Fatalf("cost lineage JS failed: %v\n%s", err, out)
 	}
 }
+
+func TestDashboardCostRecordingStaleNotice(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: cost recording notice behavior was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "    function costRecordingStale(cost) {")
+	if start < 0 {
+		t.Fatal("cost recording helper block not found")
+	}
+	end := strings.Index(html[start:], "    // Last cost payload")
+	if end < 0 {
+		t.Fatal("cost recording helper block end not found")
+	}
+	block := html[start : start+end]
+
+	script := `
+const assert = require('node:assert/strict');
+function fmtCostDateTime(ms) { return new Date(ms).toISOString(); }
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+` + block + `
+assert.equal(costRecordingStale(null), false);
+assert.equal(costRecordingStale({ recording: { stale: false } }), false);
+assert.equal(costRecordingNoticeHtml({ recording: { stale: false } }), '');
+const rec = { stale: true, stale_since: Date.UTC(2026, 8, 29, 12, 0, 0), unrecorded_models: ['claude-fable-5-1', 'claude-sonnet-5-5'], issue: 'hivecommons/hive#13480', reason: 'configured model(s) with no recorded tokens' };
+const text = costRecordingNoticeText(rec);
+assert.ok(text.startsWith('No priced usage recorded since 2026-09-29T12:00:00.000Z.'), text);
+assert.ok(/claude-fable-5-1, claude-sonnet-5-5/.test(text), text);
+assert.ok(/not live spend/.test(text), text);
+assert.equal(costRecordingIssueUrl(rec), 'https://github.com/hivecommons/hive/issues/13480');
+assert.equal(costRecordingIssueUrl({ issue: 'junk' }), '');
+const html = costRecordingNoticeHtml({ recording: rec });
+assert.ok(/role="alert"/.test(html), html);
+assert.ok(/href="https:\/\/github.com\/hivecommons\/hive\/issues\/13480"/.test(html), html);
+assert.ok(/see hivecommons\/hive#13480/.test(html), html);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost recording notice JS failed: %v\n%s", err, out)
+	}
+}

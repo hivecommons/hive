@@ -2856,6 +2856,9 @@
     .cost-stat .clabel { font-size: var(--fs-xs); color: var(--muted); }
     .cost-badge { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: var(--r); margin-left: var(--sp-3); vertical-align: middle; }
     .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
+    .cost-recording-stale { margin: var(--sp-2) var(--sp-0) var(--sp-3); padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm, 6px); font-size: 0.78rem; line-height: 1.4; background: rgba(255, 196, 0, 0.12); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.45); }
+    .cost-recording-stale a { color: inherit; text-decoration: underline; }
+    .cost-recording-stale-inline { color: var(--yellow); font-weight: 600; }
     .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
     .cost-gateways { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: 14px; }
     .cost-gateway { border: 1px solid var(--border); border-radius: 8px; padding: var(--sp-4) var(--sp-5); }
@@ -12521,7 +12524,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const spendStr = fmtUSD(total);
       const rate = costWindowRunRate(total, win); // $ per ms, or null
       let rateStr = '';
-      if (rate != null) {
+      if (costRecordingStale(_lastCost)) {
+        // A run-rate over a window in which recording was broken is not spend.
+        const rec = _lastCost.recording;
+        const since = rec.stale_since ? ` since ${fmtCostDateTime(rec.stale_since)}` : '';
+        rateStr = ` &nbsp;·&nbsp; <span class="cost-recording-stale-inline" title="${esc(costRecordingNoticeText(rec))}">run-rate unavailable — no usage recorded${since}</span>`;
+      } else if (rate != null) {
         const unit = costRunRateUnit(win);
         rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(rate * unit.ms)}${unit.label}</b>`;
       }
@@ -22986,6 +22994,33 @@ function burnAreaChart() {
       return start > 0 ? `since ${fmtCostDateTime(start)}` : 'outcome window pending refresh';
     }
 
+    // Stale-recording notice (#13485). When /api/cost says the recorder has
+    // stopped capturing the configured models' usage, the card must say so
+    // plainly instead of presenting a frozen headline and a cents-per-day
+    // run-rate as live spend.
+    function costRecordingStale(cost) {
+      return !!(cost && cost.recording && cost.recording.stale);
+    }
+    function costRecordingIssueUrl(rec) {
+      const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(rec && rec.issue || '');
+      return m ? `https://github.com/${m[1]}/issues/${m[2]}` : '';
+    }
+    function costRecordingNoticeText(rec) {
+      if (!rec || !rec.stale) return '';
+      const since = rec.stale_since ? ` since ${fmtCostDateTime(rec.stale_since)}` : '';
+      const missing = (rec.unrecorded_models || []).length
+        ? ` Configured model(s) with no recorded tokens: ${rec.unrecorded_models.join(', ')}.`
+        : '';
+      return `No priced usage recorded${since}.${missing} The total above is frozen history; the chart and run-rate below are not live spend.`;
+    }
+    function costRecordingNoticeHtml(cost) {
+      if (!costRecordingStale(cost)) return '';
+      const rec = cost.recording;
+      const url = costRecordingIssueUrl(rec);
+      const link = url ? ` <a href="${esc(url)}" target="_blank" rel="noopener">see ${esc(rec.issue)}</a>` : '';
+      return `<div class="cost-recording-stale" data-collapsed-keep role="alert" title="${esc(rec.reason || '')}">⚠ ${esc(costRecordingNoticeText(rec))}${link}</div>`;
+    }
+
     // Last cost payload, so the range pills can re-render the trend chart
     // instantly (client-only bucketing) without waiting for the next poll.
     let _lastCost = null;
@@ -23398,6 +23433,7 @@ function burnAreaChart() {
             <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${esc(prCountLabel)}</div></div>
             <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${esc(issueCountLabel)}</div></div>
           </div>
+          ${costRecordingNoticeHtml(cost)}
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
           <div class="cost-table-scroll"><table class="cost-table table-compact">
@@ -23414,7 +23450,7 @@ function burnAreaChart() {
       // runs on every SSE agent-status tick, and an innerHTML rebuild that
       // inserted the sub-tables open and collapsed them after a forced layout
       // moved the page by their height every tick (#12512).
-      morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, costBody));
+      morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd) + (costRecordingStale(cost) ? ' <span class="cost-badge est" title="' + esc(costRecordingNoticeText(cost.recording)) + '">recording stale</span>' : ''), summaryTitle: costRecordingStale(cost) ? costRecordingNoticeText(cost.recording) : costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, costBody));
       // Re-apply the persisted collapsed state so a poll re-render never resets
       // it. Sub-tables first: applyCostCollapse replays sparklines, which
       // forces a layout, and that layout must never see them open (#12512).
