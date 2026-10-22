@@ -119,6 +119,9 @@ func TestEnrichLinkedIssueTitles_FailedReadBacksOff(t *testing.T) {
 		http.Error(w, `{"message":"secondary rate limit"}`, http.StatusForbidden)
 	}))
 	defer srv.Close()
+	// A rate-limit 403 engages the process-wide slow-start pacer; clear it so
+	// later tests in this binary are not spaced ~2s apart.
+	t.Cleanup(ResetRateLimitPacingForTest)
 	c := newTestClient(t, srv, "org", []string{"pluk"})
 	now := time.Date(2026, 10, 21, 22, 0, 0, 0, time.UTC)
 	fresh := func() []PullRequest {
