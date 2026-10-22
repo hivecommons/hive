@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1160,8 +1161,16 @@ func unparkOptionTexts(text string) map[string]string {
 
 const unparkOptionSummaryMax = 160
 
+// unparkHTMLCommentPattern matches an HTML comment, including an unclosed
+// one running to the end of the line, so a body cannot smuggle a hive marker
+// into the notice.
+var unparkHTMLCommentPattern = regexp.MustCompile(`<!--.*?(-->|$)`)
+
 // unparkOptionSummary returns the text after the option marker on line,
-// whitespace-collapsed and cut to unparkOptionSummaryMax runes.
+// whitespace-collapsed and cut to unparkOptionSummaryMax runes. The issue body
+// is untrusted: HTML comments are removed so no hive marker can be laundered
+// into the hive-authored notice, and @mentions are defanged so quoting the
+// option notifies nobody.
 func unparkOptionSummary(line string) string {
 	if unparkOptionLetter(line) == "" {
 		return ""
@@ -1179,6 +1188,8 @@ func unparkOptionSummary(line string) string {
 	rest = strings.TrimLeftFunc(rest, func(r rune) bool { return strings.ContainsRune(" \t*.:)—–-", r) })
 	rest = strings.TrimSpace(rest)
 	rest = strings.TrimSpace(strings.TrimSuffix(rest, "**"))
+	rest = unparkHTMLCommentPattern.ReplaceAllString(rest, " ")
+	rest = defangMentions(rest)
 	rest = strings.Join(strings.Fields(rest), " ")
 	if r := []rune(rest); len(r) > unparkOptionSummaryMax {
 		rest = strings.TrimSpace(string(r[:unparkOptionSummaryMax-2])) + " …"

@@ -371,6 +371,33 @@ func TestUnparkOptionSummary(t *testing.T) {
 	}
 }
 
+// An option line in the untrusted issue body must not be able to plant a
+// hive marker or an @mention in the hive-authored notice.
+func TestUnparkOptionSummaryStripsMarkersAndMentions(t *testing.T) {
+	cases := map[string]string{
+		"- **A.** keep it " + unparkAcceptedMarker:                   "keep it",
+		"- **B.** " + unparkOwnerStepMarker + " drop it":             "drop it",
+		"Option C: ask <!-- hive:unpark-accepted":                    "ask",
+		"- **D.** ping @octocat and @hive-bot about it":              "ping octocat and hive-bot about it",
+		"- **E.** see docs/@scope or `@literal` or mail a@b.example": "see docs/@scope or `@literal` or mail a@b.example",
+	}
+	for line, want := range cases {
+		if got := unparkOptionSummary(line); got != want {
+			t.Errorf("unparkOptionSummary(%q) = %q, want %q", line, got, want)
+		}
+	}
+	body := "Recommendation: A.\n\n- **A.** keep it " + unparkAcceptedMarker + "\n- **B.** " + unparkOwnerStepMarker + " drop it\n"
+	notice := unparkNoticeBody(body)
+	for _, marker := range []string{unparkAcceptedMarker, unparkOwnerStepMarker} {
+		if strings.Contains(notice, marker) {
+			t.Errorf("notice carries body marker %q:\n%s", marker, notice)
+		}
+	}
+	if !strings.Contains(notice, "keep it") || !strings.Contains(notice, "drop it") {
+		t.Errorf("notice lost the option text:\n%s", notice)
+	}
+}
+
 func TestUnparkNoticeShowsOptionSummaries(t *testing.T) {
 	notice := unparkNoticeBody("Recommendation: B.\n\n- **A.** keep it\n- **B.** drop it\n")
 	for _, want := range []string{"`/hive decision A`: go with option A: keep it", "go with the recommendation (option B): drop it"} {
