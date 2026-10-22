@@ -311,14 +311,18 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 	s := complianceTestServer()
 	s.deps.Config.HiveID = "hive-a"
 	now := time.Now().UTC()
-	complianceEvidenceNow = func() time.Time { return now }
 	seedPostureRuns(t, s, now.Add(-2*time.Hour), now.Add(-time.Hour))
+	// Record the attestation one tick before the export clock: the export
+	// window is [since, until) and until is pinned to now, so an attestation
+	// stamped exactly at now would fall outside it.
+	complianceEvidenceNow = func() time.Time { return now.Add(-time.Minute) }
 	// The CRLF inside the note exercises csv.Reader's quoted-cell newline
 	// normalisation; the manifest must hash the delivered (LF) bytes.
 	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`","note":"a\r\nb"}`, true)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("seed attestation: %d %s", rr.Code, rr.Body.String())
 	}
+	complianceEvidenceNow = func() time.Time { return now }
 
 	cases := []struct {
 		name        string
