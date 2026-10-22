@@ -1,1 +1,0 @@
-Fixed: `gh run watch` is now refused by the gh wrapper (reason=ci_watch_blocked) so agents cannot keep polling CI after the ci_poll_nudge (#13587, #13594).
