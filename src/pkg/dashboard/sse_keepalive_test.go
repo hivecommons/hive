@@ -34,7 +34,10 @@ func TestHandleSSEEmitsKeepaliveOnIdleStream(t *testing.T) {
 	s := NewServer(0, logger)
 	s.UpdateStatus(&StatusPayload{Agents: []FrontendAgent{{Name: "test"}}})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The request context's deadline ends the stream after several keepalive
+	// ticks; the handler returns on ctx.Done() so no sleep is needed.
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 
@@ -43,8 +46,6 @@ func TestHandleSSEEmitsKeepaliveOnIdleStream(t *testing.T) {
 		s.mux.ServeHTTP(rec, req)
 		close(done)
 	}()
-	time.Sleep(80 * time.Millisecond)
-	cancel()
 	<-done
 
 	body := rec.Body.String()
