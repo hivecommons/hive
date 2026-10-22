@@ -1009,10 +1009,15 @@ type FrontendRepo struct {
 	// forgestate cache reported in its totals but could not list as item
 	// rows. Issues/PRs count only listed items (the canonical open-items set,
 	// open_items.go), so these are shown beside the total, not inside it.
-	UnlistedIssues int                       `json:"unlistedIssues,omitempty"`
-	UnlistedPRs    int                       `json:"unlistedPrs,omitempty"`
-	WorkBreakdown  *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
-	SLA            *timeline.SLARepoReport   `json:"sla,omitempty"`
+	UnlistedIssues int `json:"unlistedIssues,omitempty"`
+	UnlistedPRs    int `json:"unlistedPrs,omitempty"`
+	// IssuesSyncing means the repo lists open pull requests but no open
+	// issues while its issue side is stale or unlisted: the issue list has
+	// not come back for real yet, so the printed 0 is a pending fetch, not
+	// an empty backlog (hosted hive, 2026-10-22). Set by markIssuesSyncing.
+	IssuesSyncing bool                      `json:"issuesSyncing,omitempty"`
+	WorkBreakdown *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA           *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the

@@ -105,6 +105,7 @@ const document = { _els: {}, getElementById(id) { if (!this._els[id]) this._els[
 ` + jsFunc(t, html, "overviewSidebarPill") + `
 ` + jsFunc(t, html, "overviewUnlistedCounts") + `
 ` + jsFunc(t, html, "overviewUnlistedNote") + `
+` + jsFunc(t, html, "overviewSyncingNote") + `
 ` + jsFunc(t, html, "sidebarPairBadgeText") + `
 ` + jsFunc(t, html, "setSidebarPairBadge") + `
 `

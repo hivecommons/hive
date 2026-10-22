@@ -20440,7 +20440,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage), or this is the snapshot restored at startup. These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the next enumeration or hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
       const unlistedBadge = unlisted.issues + unlisted.prs > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewUnlistedNote(unlisted))}">+${unlisted.issues + unlisted.prs} not yet listed</span>` : '';
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
+      // A repo listing open PRs but no issues while its issue side is
+      // stale or unlisted (repos[].issuesSyncing) is a pending issue fetch,
+      // not an empty backlog: the issue total is a lower bound until the
+      // list comes back (open_items.go markIssuesSyncing).
+      const syncingBadge = unlisted.syncing > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewSyncingNote(unlisted))}">⏳ issues syncing · ${unlisted.syncing} ${unlisted.syncing === 1 ? 'repo' : 'repos'}</span>` : '';
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${syncingBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
@@ -20460,6 +20465,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prs = Number(openPRs) || 0;
       let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
       if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      const syncing = overviewSyncingNote(unlisted);
+      if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
       if (note) title += ` · ${note}`;
       return { issues, prs, title };
@@ -20469,9 +20476,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        totals without an item row behind them (repos[].unlistedIssues /
        unlistedPrs). Counted beside the totals, never inside them. */
     function overviewUnlistedCounts(repos) {
-      const out = { issues: 0, prs: 0 };
-      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); });
+      const out = { issues: 0, prs: 0, syncing: 0 };
+      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); if (r.issuesSyncing) out.syncing++; });
       return out;
+    }
+    /* Pure: repos whose issue side has not been listed for real yet
+       (repos[].issuesSyncing): they show open PRs and no issues while
+       stale or unlisted, so their issue count is pending, not zero. */
+    function overviewSyncingNote(unlisted) {
+      const n = Number(unlisted?.syncing || 0);
+      if (n <= 0) return '';
+      return `issues still syncing for ${n} ${n === 1 ? 'repo' : 'repos'} — the issue total is a lower bound until the issue list comes back`;
     }
     function overviewUnlistedNote(unlisted) {
       const issues = Number(unlisted?.issues || 0), prs = Number(unlisted?.prs || 0);

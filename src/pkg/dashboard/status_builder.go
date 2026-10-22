@@ -2425,6 +2425,7 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 		// the activity monitor count from; TotalByRepo and the cache's
 		// totals only contribute the "unlisted" remainder (open_items.go).
 		reconcileRepoOpenItems(&r)
+		markIssuesSyncing(&r, time.Now().UTC().Format(time.RFC3339))
 		if r.ActionableIssues == nil {
 			r.ActionableIssues = []any{}
 		}

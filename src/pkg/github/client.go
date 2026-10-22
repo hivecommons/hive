@@ -1506,6 +1506,32 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			breakdown:   RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown},
 			details:     RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs},
 		}
+		// An issue list that came back empty beside a populated PR list is
+		// verified against the repo record before it is published as zero
+		// (hosted hive, 2026-10-22: every repo "0 issues · N PRs"). A list
+		// that under-reports is the issue side failing, not an empty
+		// backlog: the previous enumeration is served when there is one,
+		// else the PRs are kept and the missing issues are reported as an
+		// unlisted, stale remainder so the dashboard never prints 0.
+		if issueTotal == 0 && prTotal > 0 {
+			if missing, verr := c.verifyEmptyIssueList(repoCtx, repo, prTotal); verr != nil || missing > 0 {
+				if verr == nil {
+					verr = fmt.Errorf("%w: %s lists %d open pull requests and no issues while GitHub reports %d more open items", errIssueListIncomplete, repo, prTotal, missing)
+				}
+				if serveLastGood(repo, "issues", verr) {
+					continue
+				}
+				enum.counts.Issues = missing
+				appendRepo(repo, enum)
+				staleRepos = append(staleRepos, repo)
+				if staleSince.IsZero() || now.Before(staleSince) {
+					staleSince = now
+				}
+				c.logger.Warn("issue list came back empty beside open pull requests and could not be confirmed; publishing the repo's issue count as unverified (marked stale)",
+					"repo", repo, "prs", prTotal, "unlisted_issues", missing, "error", verr)
+				continue
+			}
+		}
 		appendRepo(repo, enum)
 		if listing != nil {
 			listing.itemPatches(repo, itemPatches)
