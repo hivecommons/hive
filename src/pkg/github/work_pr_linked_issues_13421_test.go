@@ -9,7 +9,7 @@ import (
 // Sidelined PRs (drafts, exempt labels) are RepoWorkPR rows, which the
 // enumeration never enriches; the activity monitor still needs their
 // closing references to pair them with the issue they fix (#13421).
-func TestEnrichWorkPRLinkedIssues_StampsSidelinedPRs(t *testing.T) {
+func TestEnrichReviewSignalsAndWorkPRs_StampsSidelinedPRs(t *testing.T) {
 	p := &protectionServer{
 		closingIssues: []map[string]any{
 			{"number": 12, "title": "Fix login", "state": "OPEN", "url": "https://github.test/org/repo/issues/12", "repository": map[string]any{"nameWithOwner": "org/repo"}},
@@ -23,7 +23,7 @@ func TestEnrichWorkPRLinkedIssues_StampsSidelinedPRs(t *testing.T) {
 			{Repo: "org/repo", Number: 2, Bucket: "filtered"}, // not in the forge's answer
 		}},
 	}
-	c.EnrichWorkPRLinkedIssues(context.Background(), details)
+	c.EnrichReviewSignalsAndWorkPRs(context.Background(), nil, details)
 	want := []PRLinkedIssue{{Number: 12, Title: "Fix login", Repo: "org/repo", State: "open", URL: "https://github.test/org/repo/issues/12"}}
 	if got := details["org/repo"].PRs[0].LinkedIssues; !reflect.DeepEqual(got, want) {
 		t.Errorf("draft LinkedIssues = %+v, want %+v", got, want)
@@ -39,7 +39,7 @@ func TestEnrichWorkPRLinkedIssues_StampsSidelinedPRs(t *testing.T) {
 	}
 
 	var nilClient *Client
-	nilClient.EnrichWorkPRLinkedIssues(context.Background(), details)
+	nilClient.EnrichReviewSignalsAndWorkPRs(context.Background(), nil, details)
 }
 
 // The cycle calls one entry point for stale drafts and sidelined PRs; a repo

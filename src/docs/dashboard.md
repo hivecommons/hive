@@ -484,20 +484,29 @@ display-only: no enumeration, review, hold, or merge gate reads any of them.
   response size rather than an additional request. The pill shows `🗨 N`
   with the sum; the tooltip splits comments from review threads. Nothing is
   shown when both are zero.
-- **Linked issues.** `linked_issues: [{number, repo, state, url}]` are the
-  first 20 `closingIssuesReferences` GitHub reports for the PR, from that
-  same request. The pill's action cluster shows a `🔗` badge that opens the
-  first still-open one (else the first); the tooltip lists all. This is the
-  PR-side mirror of the issue column's `linked_prs` badge, and like it comes
-  only from the snapshot — the card never infers or fetches relationships.
+- **Linked issues.** `linked_issues: [{number, title, repo, state, url}]`
+  are the `closingIssuesReferences` GitHub reports for the PR: the first 10
+  from the batch PR query when it answered for the repository (the default
+  path), else the first 20 from that same per-repository review-signals
+  request. Both producers fill every field. The pill's action cluster shows
+  a `🔗` badge that opens the first still-open one (else the first); the
+  tooltip lists all. This is the PR-side mirror of the issue column's
+  `linked_prs` badge, and like it comes only from the snapshot — the card
+  never infers or fetches relationships. The activity monitor's
+  [activity monitor](#hive-activity-monitor) uses `title` to name a linked issue
+  that is not itself listed in the snapshot.
 
 The extended request is tried first; a forge that rejects one of the added
 fields (an older GHE) is asked the decision-only query instead, so the review
 decision the merge-block wording depends on is never lost to a display
 field. Stale drafts, which `EnrichCIStatus` never touches, receive these
-signals through `EnrichReviewSignals` — the same per-repository query and no
-per-PR mergeability or check-run fetch, since a draft is not a merge
-candidate.
+signals through `EnrichReviewSignalsAndWorkPRs` — the same per-repository
+query and no per-PR mergeability or check-run fetch, since a draft is not a
+merge candidate. The same call stamps `linked_issues` onto the sidelined PRs
+(drafts, exempt-labelled) in each repository's work details, so a draft whose
+body says `Fixes #N` pairs with that issue in the activity monitor; a
+repository with both stale drafts and sidelined PRs still costs one query, and
+none when the batch PR query already answered.
 
 
 ### Settings → Labels → Reporter trust: clanker-requested
