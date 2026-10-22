@@ -153,6 +153,9 @@ type Client struct {
 	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
 	appBotUserMu              sync.Mutex
 	appBotUserID              int64 // cached GitHub user id of appBotLogin; see AppBotUserID
+	selfLoginMu               sync.Mutex
+	selfLogin                 string    // cached login of the authenticated account; see resolveSelfLogin
+	selfLoginFailedAt         time.Time // last failed GET /user; retried after selfLoginRetryAfter
 	additionalBotLogins       []string
 	noBotIdentityWarned       sync.Once
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR

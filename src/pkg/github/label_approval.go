@@ -94,6 +94,8 @@ func (c *Client) labelApprovalPolicyFor(repo string) (LabelApprovalPolicy, bool)
 // the GitHub App bot, the configured ai_author, or an additional hive bot
 // login. It is narrower than !isHumanAuthor, which is also true for every
 // other bot; a park label another organisation's bot added is not Hive's.
+// It also matches the login resolved from GET /user (see resolveSelfLogin),
+// but never triggers that lookup itself.
 func (c *Client) isHiveAccount(user *gh.User) bool {
 	login := strings.TrimSpace(user.GetLogin())
 	if login == "" || c == nil {
@@ -102,13 +104,18 @@ func (c *Client) isHiveAccount(user *gh.User) bool {
 	if isHiveBotLogin(c.hiveBotLogins(), login) {
 		return true
 	}
+	if self := c.cachedSelfLogin(); self != "" && strings.EqualFold(self, login) {
+		return true
+	}
 	return c.getHiveIdentity().Matches(login)
 }
 
 // knowsOwnAccounts reports whether the client can name at least one of its
-// own accounts. Checks that require hive authorship fall back to the legacy
-// any-author rule when it cannot, so a PAT hive with no identity configured
-// keeps answering each `/hive` comment once rather than every cycle.
+// own accounts, either from configuration or from its own login resolved via
+// GET /user when none is configured. Checks that require hive authorship fall
+// back to the legacy any-author rule only when neither is available, so a PAT
+// hive that cannot reach /user keeps answering each `/hive` comment once
+// rather than every cycle.
 func (c *Client) knowsOwnAccounts() bool {
 	if c == nil {
 		return false
@@ -117,7 +124,10 @@ func (c *Client) knowsOwnAccounts() bool {
 		return true
 	}
 	id := c.getHiveIdentity()
-	return id.AIAuthor != "" || id.AppLogin != ""
+	if id.AIAuthor != "" || id.AppLogin != "" {
+		return true
+	}
+	return c.resolveSelfLogin(context.Background()) != ""
 }
 
 // issueLabelEvent is one `labeled` or `unlabeled` entry from an issue's
@@ -389,7 +399,8 @@ func (c *Client) labelApprovalAlreadyCommented(comments []*gh.IssueComment, even
 
 // markerAuthorTrusted reports whether a once-only marker found in a comment
 // may be believed: the comment must come from one of the hive's own accounts.
-// A hive that cannot name its accounts keeps the legacy any-author rule.
+// The legacy any-author rule applies only when the hive has no identity
+// configured and could not resolve its own login either.
 func (c *Client) markerAuthorTrusted(user *gh.User) bool {
 	if !c.knowsOwnAccounts() {
 		return true

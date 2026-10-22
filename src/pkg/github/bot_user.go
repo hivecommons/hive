@@ -49,3 +49,50 @@ func (c *Client) AppBotUserID(ctx context.Context) int64 {
 	c.appBotUserID = id
 	return id
 }
+
+// selfLoginRetryAfter spaces out retries of a failed GET /user so sweep loops
+// that check marker authors many times per cycle do not hammer GitHub.
+const selfLoginRetryAfter = 5 * time.Minute
+
+// resolveSelfLogin returns the login of the account the client's token
+// authenticates as, learned from GET /user. It returns "" when the lookup
+// failed (App installation tokens cannot call it; App clients carry
+// appBotLogin instead). A success is cached for the client's lifetime; a
+// failure is cached for selfLoginRetryAfter.
+func (c *Client) resolveSelfLogin(ctx context.Context) string {
+	if c == nil {
+		return ""
+	}
+	c.selfLoginMu.Lock()
+	defer c.selfLoginMu.Unlock()
+	if c.selfLogin != "" {
+		return c.selfLogin
+	}
+	if !c.selfLoginFailedAt.IsZero() && time.Since(c.selfLoginFailedAt) < selfLoginRetryAfter {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, botUserLookupTimeout)
+	defer cancel()
+	user, _, err := c.client.Users.Get(ctx, "")
+	login := strings.TrimSpace(user.GetLogin())
+	if err != nil || login == "" {
+		c.selfLoginFailedAt = time.Now()
+		c.logger.Warn("could not resolve the authenticated login; once-only markers from any author are trusted until it resolves", "error", err)
+		return ""
+	}
+	c.selfLogin = login
+	return login
+}
+
+// cachedSelfLogin returns the resolved self-login without triggering a lookup.
+func (c *Client) cachedSelfLogin() string {
+	if c == nil {
+		return ""
+	}
+	c.selfLoginMu.Lock()
+	defer c.selfLoginMu.Unlock()
+	return c.selfLogin
+}
