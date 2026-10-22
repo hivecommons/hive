@@ -9222,6 +9222,65 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	})
 }
 
+// legacyFleetReportSweepInterval is how often the hive that watches the
+// fleet-report repo looks for standalone "Fleet report:" issues to close.
+const legacyFleetReportSweepInterval = github.LegacyFleetReportSweepInterval
+
+// hiveWatchesRepo reports whether repo is one of project.repos.
+func hiveWatchesRepo(cfg *config.Config, repo string) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, r := range cfg.Project.Repos {
+		if strings.EqualFold(strings.TrimSpace(r), strings.TrimSpace(repo)) {
+			return true
+		}
+	}
+	return false
+}
+
+// runLegacyFleetReportSweepIfDue closes standalone "Fleet report:" issues a
+// spoke still on a pre-#13470 build filed directly in the report repo
+// (hivecommons/hive#13567). Only the hive that watches that repo runs it —
+// it is the one with write access there — at most once per
+// legacyFleetReportSweepInterval.
+func runLegacyFleetReportSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil || cfg == nil {
+		return
+	}
+	repo := cfg.Governor.FleetReport.EffectiveRepo()
+	if !hiveWatchesRepo(cfg, repo) {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < legacyFleetReportSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepLegacyFleetReportIssues(ctx, github.LegacyFleetReportSweepOptions{
+		Repo: repo,
+		Audit: func(event github.LegacyFleetReportSweepEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, author=%s, title=%s", event.Repo, event.Number, event.Author, event.Title)
+			dashSrv.AuditLogRecord("system", "legacy-fleet-report-closed", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("legacy fleet report sweep failed", "error", err)
+		return
+	}
+	for _, e := range result.Errors {
+		logger.Warn("legacy fleet report sweep: issue skipped", "detail", e)
+	}
+	if len(result.Closed) > 0 {
+		logger.Info("legacy fleet report sweep complete", "scanned", result.Scanned, "closed", len(result.Closed), "skipped", result.Skipped)
+	}
+}
+
 // runTaskListSweepIfDue closes hive-filed issues whose task-list bodies are
 // fully ticked, at most once per taskListSweepInterval. The finding-granularity
 // policy (guidance now in every issue-filing template) tells agents to encode

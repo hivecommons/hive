@@ -56,17 +56,32 @@ and here is the hive-attributable reason why". A shortfall with no attributable
 evidence is treated as an **operator** concern instead — it is surfaced to you
 on the dashboard and is not reported upstream.
 
-**Roll-up onto an open self-report**
-([#13470](https://github.com/hivecommons/hive/issues/13470)). When this hive
-already has an open `[selfreport]` issue about the same component (its
-`runtime-error` state entry is open and not recovered), the shortfall does
-not file its own `Fleet report:` issue. It posts one short comment on that
-self-report instead — "ACMM shortfall rolled up from **<hive>**: `<component>`
-is holding `<criterion>` unmet (<count>)" — and its state entry points at the
-self-report. The roll-up is re-posted only when its text changes; once the
-self-report is closed, the shortfall files standalone as before.
+**Always the self-report tracker, never a standalone issue**
+([#13470](https://github.com/hivecommons/hive/issues/13470)). A shortfall is
+filed in one of two ways, and neither is a `Fleet report:` issue:
 
-### Retired: `hive-code-defect`
+- When this hive already has an open `[selfreport]` tracker about the same
+  component (a `runtime-error` entry, or an earlier shortfall that opened the
+  tracker itself — open, not recovered, not found closed), the shortfall
+  posts one short comment there — "ACMM shortfall rolled up from **<hive>**
+  (<version>): `<component>` (<error class>) is blocking criterion
+  `<criterion>` — <count>" — and its state entry points at that tracker. The
+  roll-up is re-posted only when its text changes.
+- Otherwise the shortfall **opens the tracker**: a
+  `[selfreport] acmm-shortfall: <component> blocks <criterion>` issue with the
+  same identity rows, owners, spoke link, `Affected hives` block and
+  (when the evidence carries any) scrubbed diagnostics a `runtime-error`
+  report has, plus an `## ACMM shortfall` section naming the criterion. A
+  second criterion blocked by the same component then rolls up onto it. When
+  the tracker is closed the next persistent shortfall opens a fresh one; a
+  fingerprint closed upstream inside the 7-day cooldown is not re-filed.
+
+The standalone `Fleet report: <component> blocks <criterion> [<fingerprint>]`
+format is retired. Nothing on a current build renders it, the hub relay
+refuses it from a spoke that still does (below), and the hive that watches
+the report repo closes any that still land.
+
+### Retired: `hive-code-defect` and every standalone `Fleet report:` issue
 
 Until [#13470](https://github.com/hivecommons/hive/issues/13470) a third
 trigger synthesised "agent stall", "agent crash loop" and "CI-poll nudge"
@@ -80,6 +95,28 @@ classes (`agent_stall`, `agent_crash_loop`, `ci_poll_nudge`, below), observed
 at the moment the agent manager or watchdog sees them, with the kick/pane
 context attached. A persisted state entry for the retired trigger is pruned
 on the next evaluation; nothing is filed or recovered under it.
+
+A spoke still running a pre-#13470 build (hivecommons/hive#13567 came from
+`5.186.4-22-g20cec0241`) can still *ask* for a standalone issue. Two guards
+make sure it never gets one:
+
+- **Hub relay.** `POST /api/selfreport/ingest` recognises the retired
+  `Fleet report:` title. With no open issue for the fingerprint it looks for
+  the relaying hive's open `[selfreport]` tracker (open, `hive/selfreport`,
+  body carrying that hive's `<!-- hive:selfreport … hive=<id> -->` marker)
+  and folds the payload onto it as one comment (the original report inside
+  `<details>`), answering `200 {"joined": true}`. With no tracker it answers
+  `410 Gone {"reason": "legacy_standalone_retired"}` and logs the spoke's
+  version; the spoke records an upstream-write failure and retries next
+  cycle, which is a log line, not an issue. Neither path creates an issue.
+- **Governor sweep.** A spoke whose own credential can write to the report
+  repo files directly and never touches the hub, so the hive that watches
+  `hivecommons/hive` runs an hourly sweep: one search for open issues titled
+  `Fleet report:` authored by a Bot account and carrying the
+  `<!-- hive-fleet-fingerprint:… -->` marker, each closed as `not_planned`
+  with a comment pointing at #13470 (at most 5 per pass). An issue a person
+  reopened (`state_reason: reopened`), a human-authored one, or one without
+  the marker is left alone.
 
 ### `runtime-error`
 
@@ -138,7 +175,7 @@ Each report — `acmm-shortfall` and `runtime-error` alike, since
 | hive version, commit | build stamp, short commit |
 | mode | the hive's mode |
 | ACMM level | e.g. `L3` |
-| unmet criterion | name and key (`acmm-shortfall` only) |
+| unmet criterion | name and key (`acmm-shortfall` only; also repeated in the `## ACMM shortfall` section) |
 | component, agent, lane | which part of the hive produced the evidence |
 | error class | the classified error, not the raw message |
 | count + window | how many occurrences, over what window |
@@ -361,8 +398,8 @@ confirm the fix.
 Report state lives at `/data/fleet-report-state.json`: the per-criterion epoch
 history that drives the two-epoch threshold, and the open-issue records
 (number, URL, whether the hive opened it, component, body hash, recovery
-flag, and for a rolled-up shortfall the fingerprint of the self-report it
-commented on). Deleting
+flag, and for a rolled-up shortfall the fingerprint of the self-report
+tracker it commented on). Deleting
 it resets the epoch counters and makes the hive forget which upstream issues
 are already open, so a persisting condition can file again.
 

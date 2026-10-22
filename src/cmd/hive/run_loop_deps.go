@@ -101,6 +101,7 @@ func defaultRunLoopDeps() runLoopDeps {
 			runDuplicateSweepIfDue(b.ctx, b.cfg, b.ghClient, b.dashSrv, &b.lastDuplicateSweep, b.logger)
 			runIssueUnparkSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastIssueUnparkSweep, b.logger)
 			runSentinelSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSentinelSweep, b.logger)
+			runLegacyFleetReportSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastLegacyFleetReportSweep, b.logger)
 			runGoodFirstIssueSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.gfiState(), b.lastActionable.Load(), &b.lastGFISweep, b.logger)
 			runFirstTimerWelcome(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.firstTimerState(), b.firstTimerKnownContributor, b.lastActionable.Load(), b.logger)
 		},
