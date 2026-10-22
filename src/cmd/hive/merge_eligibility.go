@@ -154,11 +154,7 @@ func contributorLaneReviewerConfigured(cfg *config.Config) bool {
 		if ac.Paused || ac.OnDemand {
 			continue
 		}
-		cap := review.AgentCapability{
-			Name: name, Enabled: true, Role: ac.Role,
-			LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases,
-		}
-		if review.ReviewCapable(cap, allowed) {
+		if review.ReviewCapable(review.CapabilityFromConfig(name, ac), allowed) {
 			return true
 		}
 	}

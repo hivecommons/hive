@@ -73,6 +73,7 @@ type Bundle struct {
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
 	IssueReopens     []IssueReopen     `json:"issue_reopens,omitempty"`
+	IssueClosures    []IssueClosure    `json:"issue_closures,omitempty"`
 	Shadow           *Shadow           `json:"shadow,omitempty"`
 	// ControlWindow is the prospectively assigned dispatch arm at PR open
 	// time: on = Hive dispatch enabled, off = scheduled control window.
@@ -446,6 +447,11 @@ func (b *Bundle) Validate() error {
 			if id == "" {
 				bad("%s[%d]: bundle id is required", l.name, i)
 			}
+		}
+	}
+	for i, c := range b.IssueClosures {
+		if strings.TrimSpace(c.Repo) == "" || c.Issue <= 0 || c.At.IsZero() {
+			bad("issue_closures[%d]: repo, positive issue and at are required", i)
 		}
 	}
 	for i, r := range b.IssueReopens {

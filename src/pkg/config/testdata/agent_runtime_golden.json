@@ -591,7 +591,9 @@
       "enabled": true
     }
   },
-  "issues": {},
+  "issues": {
+    "rfc_existing_check": {}
+  },
   "contribute": {},
   "HiveID": "",
   "acmm_level": null,

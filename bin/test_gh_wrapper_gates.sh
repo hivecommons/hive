@@ -130,6 +130,7 @@ run_wrapper() {
   [[ "$out" == *"NOT in merge-eligible.json"* || "$out" == *"cannot verify merge eligibility"* ]] && gate=eligibility
   [[ "$out" == *"needs an explicit PR number or URL"* ]] && gate=no-identifier
   [[ "$out" == *"is not on the hive's allowlist"* ]] && gate=surface
+  [[ "$out" == *"reason=ci_watch_blocked"* ]] && gate=ci_watch_blocked
 
   echo "exit=${rc} stub=${reached} gate=${gate}"
   # Surface wrapper output only when debugging a failure.
@@ -231,6 +232,23 @@ assert_blocked "lowercase variant of a real mode is still unknown" \
   "$(run_wrapper "issues_only" 5 -- pr merge 123)" mode-default
 assert_blocked "mode with trailing junk is unknown" \
   "$(run_wrapper "ISSUES_ONLY_EXTRA" 5 -- pr merge 123)" mode-default
+
+# ── gh run watch is refused (#13587, #13594) ──────────────────────────────────
+echo "-- gh run watch is blocked --"
+assert_blocked "run watch is blocked" \
+  "$(run_wrapper ISSUES_ONLY 5 -- run watch 123)" ci_watch_blocked
+assert_blocked "run watch with --repo before the action is blocked" \
+  "$(run_wrapper ISSUES_ONLY 5 -- run --repo o/r watch 123)" ci_watch_blocked
+assert_reached "run view still reaches gh" \
+  "$(run_wrapper ISSUES_ONLY 5 -- run view 123)"
+assert_blocked "pr checks --watch is blocked" \
+  "$(run_wrapper ISSUES_ONLY 5 -- pr checks 123 --watch)" ci_watch_blocked
+assert_blocked "pr checks -w is blocked" \
+  "$(run_wrapper ISSUES_ONLY 5 -- pr checks -w 123)" ci_watch_blocked
+assert_blocked "pr checks --watch with --repo before the action is blocked" \
+  "$(run_wrapper ISSUES_ONLY 5 -- pr --repo o/r checks 123 --watch)" ci_watch_blocked
+assert_reached "pr checks without --watch still reaches gh" \
+  "$(run_wrapper ISSUES_ONLY 5 -- pr checks 123)"
 
 # ── Known modes keep working (no over-correction) ─────────────────────────────
 echo "-- known modes still enforce as before --"

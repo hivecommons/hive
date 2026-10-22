@@ -381,7 +381,10 @@ _gh_surface_allowed() {
     search)
       case "$a" in issues|prs|repos|code|commits) return 0 ;; esac ;;
     run)
-      case "$a" in list|view|watch) return 0 ;; esac ;;
+      # `watch` is deliberately NOT here: it blocks for the whole CI wait
+      # (#13587/#13594). The tailored ci_watch_blocked gate above this
+      # allowlist refuses it with a specific message before we get here.
+      case "$a" in list|view) return 0 ;; esac ;;
     release)
       case "$a" in list|view) return 0 ;; esac ;;
     cache)
@@ -405,10 +408,38 @@ _gh_surface_allowed() {
   return 1
 }
 
+# ── Blocking CI waits are refused (#13587, #13594, #13596) ───────────────────
+#
+# `gh run watch` and `gh pr checks --watch` block for the whole CI wait and
+# every refresh is an API call; the stop-polling nudge (ci_poll_nudge) only
+# advised, so agents kept looping. Refuse both outright. ORDERING: this gate
+# runs BEFORE the surface allowlist on purpose — `watch` is not in the `run`
+# arm below, so without this gate `gh run watch` would fall through to the
+# generic surface_allowlist denial and lose the tailored reason code/message.
+# This does NOT turn the allowlist into a denylist: the allowlist still decides
+# what is on the map; this only gives one refused verb a better explanation.
+_gh_is_blocking_ci_wait() {
+  if [ "$subcmd" = "run" ] && [ "$action" = "watch" ]; then
+    return 0
+  fi
+  if [ "$subcmd" = "pr" ] && [ "$action" = "checks" ]; then
+    local _a
+    for _a in "${args[@]}"; do
+      case "$_a" in --watch|--watch=*|-w) return 0 ;; esac
+    done
+  fi
+  return 1
+}
+if _gh_is_blocking_ci_wait; then
+  _ci_wait_cmd="gh ${subcmd} ${action}"
+  [ "$action" = "checks" ] && _ci_wait_cmd="${_ci_wait_cmd} --watch"
+  _deny ci_watch_blocked "'${_ci_wait_cmd}' is not allowed: stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup: leave the PR as is (awaiting-ci) and move to the next work-list item. The automerge sweep handles green PRs."
+fi
+
 # `gh` with no arguments prints help — harmless, and denying it produces a
 # confusing error for an agent that is just probing.
 if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
-  _deny surface_allowlist "'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands (deny-by-default, #3840); permitted: issue/pr, search, run list|view|watch, release list|view, label list|create, repo view|list|fork|clone, api — if genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh."
+  _deny surface_allowlist "'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands (deny-by-default, #3840); permitted: issue/pr, search, run list|view, release list|view, label list|create, repo view|list|fork|clone, api — if genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh."
 fi
 
 # ── Write-surface enforcement in the sandbox (hivecommons/hive#9587, #9772) ──

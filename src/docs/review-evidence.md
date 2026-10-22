@@ -33,7 +33,8 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `merge` | Present once merged: `actor`, `method`, `at`, `sha`, and `opened_at` (when the PR was opened on GitHub, so `at` − `opened_at` is its time to merge; absent on bundles recorded before it was captured — such a merge is left out of time-to-merge, never counted as zero). Absent before merge. |
 | `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
 | `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
-| `issue_reopens` | Issues this PR closed that a person reopened within 14 days of the merge: `issue`, `repo` (only when it differs from the PR's), `at`, `source` (`claim-ledger`). A change-failure signal for the Outcome card ([#13241](https://github.com/hivecommons/hive/issues/13241)). |
+| `issue_closures` | Confirmed closing-keyword issue closures captured at hive merge: issue `repo`, `issue`, closure `at`, and `clarity_gate` (marker present in the issue body or comments). Missing closure records mean unknown clarity status, not ungated. |
+| `issue_reopens` | Issues this PR closed that a person reopened (legacy bundles capture only within 14 days of the merge): `issue`, `repo` (only when it differs from the PR's), `at`, `source` (`claim-ledger`). A change-failure signal for the Outcome card ([#13241](https://github.com/hivecommons/hive/issues/13241)). |
 | `shadow` | Optional. What shadow-mode gates would have done, recorded only: `review_gate` (`would_have_held`, plus `lane` — `self-merge`, `trusted-bot` or `trusted-author` when the [self-merge review gate](hive-merge.md#self-merge-review-gate) recorded it on that sweep lane, absent for the merge-eligible lane) and `intent` (`would_have_blocked`), each with `reason`, `tier`, `confidence` and `evaluated_at`. Absent unless a shadow gate ran; it never affects a merge ([#12103](https://github.com/hivecommons/hive/issues/12103)). |
 | `control_window` | Optional prospective dispatch assignment at PR open time: `on` or `off`. Absent means unknown/unassigned, not `on`. Reporting foundation only; runtime collection is not yet enabled. See [Control arm](evidence.md#control-arm). |
 | `backfilled`, `backfill` | Optional. Present only on bundles reconstructed from forge history by `hivectl evidence backfill` rather than recorded live: `backfilled: true` and a `backfill` block with `source`, `at`, `state` (`open`, `closed`, `merged`), `closed_at`, `author_kind_rule` and the pre-registration exclusion `flags` (`placeholder_hive`, `hive_on_hive`, `under_min_merged`). Such a bundle has no `verdicts`, `ci`, `sentinel` or `shadow`; see [Backfilled bundles](#backfilled-bundles) ([#12371](https://github.com/hivecommons/hive/issues/12371)). |
@@ -103,7 +104,42 @@ The self-report prompt requires a bin for each perspective independently of its 
 
 Retries preserve the original score. These optional schema-v1 fields leave old bundles’ canonical hashes unchanged when absent. This score measures observable support, not a calibrated probability, and does not feed enforce/advisory decisions.
 
-### Change-failure links
+### Issue reopen rate by repository
+
+The Evidence card and `/api/evidence/summary` (`issue_reopen_rates_30d`)
+report distinct issues closed by hive-merged PRs in the trailing 30 days,
+partitioned by the `<!-- hive:clarity-gate -->` marker captured in the issue
+body or question comments at closure. This is a fixed rolling window by
+**issue closure time**, independent of the selected PR-open-time window and
+author filter; the repository selector applies to the issue repository,
+including cross-repository closing links.
+
+At merge, explicit closing-keyword references are fetched and recorded only
+when the issue is closed and GitHub's closure timestamp is within one minute
+after the PR merge. Issue/comment fetch failures, older bundles without
+closure capture, manual closures, and merges not recorded by this hive are
+unknown and excluded, not treated as an ungated control arm. Collection uses
+the existing bounded post-merge evidence context and is report-only.
+
+`/metrics` exports these **gauges**, each labelled
+`hive_id`, `repo`, `clarity_gate="true|false"`:
+
+| Series | Meaning |
+| --- | --- |
+| `hive_issue_closures_30d` | Distinct issues in the closure cohort (denominator). |
+| `hive_issue_reopens_30d` | Those issues subsequently observed reopened by webhook or polling (numerator). |
+| `hive_issue_reopen_rate_30d` | Numerator / denominator, in [0, 1]. Omitted for an empty cohort (API `rate: null`, UI —), never a misleading zero. |
+
+Repeated bundle heads and repeated reopen observations do not inflate counts.
+An issue closed more than once uses its latest captured closure in the window;
+only a reopen after that closure counts. Both clarity cohorts are emitted for
+repositories with captured closures, including zero counts. Historical status
+is not reconstructed from today's marker. Recent closures have less time to
+reopen, and an unobserved reopen is missed: this is a comparison, not proof
+that the clarity gate caused an improvement. The existing 14-day PR-level
+change-failure proxy is unchanged.
+
+## Change-failure links
 
 A proxy for the change failure rate, not a verdict on any change ([#12067](https://github.com/hivecommons/hive/issues/12067)). When a PR merges, Hive scans its title and body for a keyword followed by `#N` or `owner/repo#N` (optionally `PR #N` / `pull request #N`) in the same repository:
 
@@ -114,7 +150,7 @@ A PR named both ways counts as a revert. A referenced number is linked only when
 
 **Reverts the hive did not merge** ([#13241](https://github.com/hivecommons/hive/issues/13241)): a merge the hive only observes — the `pull_request` `closed` webhook with `merged: true`, the PR state fetched for the review-outcome ledger, or the merged-PR backfill listing — is also checked for revert text, from the title and body already in hand and with no further GitHub call. `Revert "…"` titles (including GitHub's generated `Revert "Original title (#N)"`), `Reverts #N` references and git's `This reverts commit <sha>` line (7+ hex characters, matched against each candidate bundle's merge commit and head SHA) resolve to merged bundles in the same 14-day window and receive a `reverted_by` back-link naming the reverting PR as `owner/repo#N@<head>` (or `@merged` when the head is unknown). A revert whose text names neither a PR nor a commit is missed; the card says so.
 
-**Issue re-opens:** when the duplicate-PR claim ledger voids a merged claim because a person reopened the issue it closed (the `issues` `reopened` webhook, or an enumeration listing the issue with `state_reason: reopened`), it hands the claim to `Client.RecordReviewEvidenceIssueReopen`, which stamps the closing PR's merged bundle with an `issue_reopens` entry if the reopen falls within 14 days of the merge, then re-seals it. Each issue is recorded once per bundle. Only issues linked by a closing keyword are tracked — the ledger never saw an issue closed by hand.
+**Issue re-opens:** when the duplicate-PR claim ledger voids a merged claim because a person reopened the issue it closed (the `issues` `reopened` webhook, or an enumeration listing the issue with `state_reason: reopened`), it hands the claim to `Client.RecordReviewEvidenceIssueReopen`, which stamps the closing PR's merged bundle with an `issue_reopens` entry, then re-seals it. Bundles with a matching captured `issue_closures` record retain later reopens too; legacy bundles retain the 14-day limit. The existing change-failure rate still counts only reopens within 14 days. Each issue is recorded once per bundle. Only issues linked by a closing keyword are tracked — the ledger never saw an issue closed by hand.
 
 ### Shadow gates and cross-family review in the study
 

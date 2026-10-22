@@ -174,6 +174,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	writeIssueReopenMetrics(&b, hiveID)
 	writePRFollowUpMetrics(&b, hiveID, writeHeader)
 	writeTrajectoryMetrics(&b, hiveID, writeHeader)
 	writeStageEngineMetrics(&b, hiveID, writeHeader, stageengine.DefaultCounters())

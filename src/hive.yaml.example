@@ -137,6 +137,14 @@ project:
 #   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
 #   lift_hive_hard_suppress: true
 #   hard_suppress_reconcile_interval: 30m
+#   # Comment once on new RFC/feature issues with the existing settings that
+#   # may already cover them; never labels or closes (#13575). Default off.
+#   rfc_existing_check:
+#     enabled: false
+#     post_when_nothing_found: false
+#     labels: [rfc, enhancement, kind/feature]
+#     max_matches: 5
+#     max_age: 168h
 #
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then

@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
@@ -712,23 +713,7 @@ func dashboardAgentReviewCapable(name string, a config.AgentConfig, allowed []st
 	if !a.Enabled || a.Paused || a.OnDemand {
 		return false
 	}
-	if len(allowed) > 0 {
-		for _, n := range allowed {
-			if strings.TrimSpace(n) == name {
-				return true
-			}
-		}
-		return false
-	}
-	fields := append([]string{name, a.Role}, a.Aliases...)
-	fields = append(fields, a.LaneKeywords...)
-	fields = append(fields, a.DetectKeywords...)
-	for _, f := range fields {
-		if strings.Contains(strings.ToLower(f), "review") {
-			return true
-		}
-	}
-	return false
+	return review.ReviewCapable(review.CapabilityFromConfig(name, a), review.ReviewerAgentSet(allowed))
 }
 
 // buildPlatform surfaces the v4 spoke capabilities (forge, mint, skills) from

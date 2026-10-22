@@ -165,10 +165,11 @@ func mergedReviewEvidenceIDsBySHA(repo string, shas []string, revertedAt time.Ti
 
 // RecordReviewEvidenceIssueReopen stamps the merged PR that claimed issue
 // (repo, number) with an issue_reopens entry when a person reopened it at
-// `at`, within LinkWindow of the merge. claim is the duplicate-PR claim the
+// `at`. claim is the duplicate-PR claim the
 // ledger just voided; its PRRepo/PRNumber name the closing PR and MergedAt
 // its merge. Nothing is written for a PR with no bundle or whose merge the
-// hive never recorded, nor for a reopen more than 14 days after the merge.
+// hive never recorded. Legacy bundles without issue closures retain the
+// 14-day limit; captured closures keep later reopens for the 30-day rate.
 func (c *Client) RecordReviewEvidenceIssueReopen(claim IssueClaim, at time.Time) {
 	if c == nil || claim.PRNumber <= 0 || claim.Issue <= 0 || at.IsZero() {
 		return
@@ -208,7 +209,18 @@ func (c *Client) RecordReviewEvidenceIssueReopen(claim IssueClaim, at time.Time)
 	if b.Merge != nil {
 		mergedAt = b.Merge.At
 	}
-	if mergedAt.IsZero() || !evidence.WithinLinkWindow(mergedAt, at) {
+	closureRepo := issueRepo
+	if closureRepo == "" {
+		closureRepo = full
+	}
+	knownClosure := false
+	for _, closure := range b.IssueClosures {
+		if closure.Issue == claim.Issue && strings.EqualFold(closure.Repo, closureRepo) && at.After(closure.At) {
+			knownClosure = true
+			break
+		}
+	}
+	if mergedAt.IsZero() || (!knownClosure && !evidence.WithinLinkWindow(mergedAt, at)) {
 		return
 	}
 	if !b.AddIssueReopen(evidence.IssueReopen{Issue: claim.Issue, Repo: issueRepo, At: at.UTC(), Source: evidence.IssueReopenSourceClaimLedger}) {

@@ -273,8 +273,10 @@ fan-out toggle and **Max parallel reviews**.
 An agent is considered review-capable if it is enabled, not paused, and not on-demand,
 **and** one of the following is true:
 
-1. **Explicit list** — `review.reviewer_agents` names the agent exactly. When this list is
-   non-empty, only agents on it qualify; the keyword scan below is skipped entirely.
+1. **Explicit list** — `review.reviewer_agents` names the agent, or the base agent a
+   replica was expanded from (`replicas: N` lanes qualify through their base, so the list
+   never needs each replica spelled out). When this list is non-empty, only agents on it
+   and their replicas qualify; the keyword scan below is skipped entirely.
 2. **Keyword scan** — the string `review` (case-insensitive) appears in any of:
    the agent's name, `role`, `aliases`, `lane_keywords`, or `detect_keywords`.
 
@@ -304,13 +306,17 @@ review:
   reviewer_agents: [my-reviewer, scanner]
 ```
 
-Source: `dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`.
+Source: `ReviewCapable` in `src/pkg/review/dispatch.go`, which the dashboard
+(`dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`), the relay and
+the merge-eligibility gate all call.
 
 ## Dispatch and prompt construction
 
 `pkg/review` provides prompt builders for one prompt per perspective plus a sequential fallback prompt. These prompts instruct review-capable agents to emit the extended AgentReport JSON shape above.
 
 **Who gets reviewed: every PR, regardless of author.** When review is on (`review.require_approval` and `review.fan_out`), the planner dispatches reviews for every open PR in the hive's repositories — hive-agent PRs, human PRs, clanker PRs at either trust tier, dependabot and any other bot. There is no author-class filter and no opt-out below the review feature switch itself; the only way to stop reviews is to turn review off ([#12974](https://github.com/hivecommons/hive/issues/12974): *"if pr review is selected in hive, then all prs should be reviewed"*). Before this, the swarm reviewed only agent and `[bot]` authors unless `review.all_authors` was set, and human PRs such as hivecommons/hive#12966 reached merge with zero swarm reviews. Author kind still decides what happens *after* the verdict — who may be pushed to (below), which auto-merge lane may act on it ([hive-merge.md](hive-merge.md#self-merge-review-gate)), and whether the hive may approve at all (a contributor-tier clanker's PR is reviewed like any other, then still parks at `090-ready-for-human-merge`; the hive never approves on their behalf).
+
+**Who may review a PR.** A PR's author never reviews it, and neither does any lane in the author's family: when the author is a replica (`replicas: N`), its base agent and sibling replicas are excluded too, and when the author is a base agent, all of its replicas are. The author's base is resolved from the full configured agent set, enabled or not, so an authoring replica that is itself paused, disabled or not review-capable still rules out its siblings; a replica name that a reduced `replicas:` count no longer materialises still maps to its declared base. The verdict relay applies the same family rule: a verdict no dispatch row binds is refused as `author_self_approval` when the submitting lane shares the author's base.
 
 Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
 

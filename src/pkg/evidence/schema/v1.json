@@ -69,6 +69,16 @@
     "reverted_by": {"$ref": "#/$defs/bundle_ids"},
     "followed_up_by": {"$ref": "#/$defs/bundle_ids"},
     "issue_reopens": {"type": "array", "items": {"$ref": "#/$defs/issue_reopen"}},
+    "issue_closures": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repo", "issue", "at", "clarity_gate"],
+      "properties": {
+        "repo": {"type": "string", "minLength": 1},
+        "issue": {"type": "integer", "minimum": 1},
+        "at": {"type": "string", "format": "date-time"},
+        "clarity_gate": {"type": "boolean"}
+      }
+    }},
     "shadow": {
       "type": "object",
       "additionalProperties": false,

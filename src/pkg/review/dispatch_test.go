@@ -1,6 +1,7 @@
 package review
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,12 @@ import (
 
 func reviewer(name string) AgentCapability {
 	return AgentCapability{Name: name, Enabled: true, UsesKick: true, Role: "reviewer"}
+}
+
+func replica(name, base string) AgentCapability {
+	c := reviewer(name)
+	c.ReplicaOf = base
+	return c
 }
 
 func dispatchPR(sha string) PullRequest {
@@ -470,5 +477,86 @@ func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
 	}
 	if ReviewCapable(AgentCapability{Name: "docs-writer"}, nil) {
 		t.Fatal("non-review lane judged review-capable with no configured set")
+	}
+}
+
+func TestReviewersForPRExcludesAuthorFamily(t *testing.T) {
+	all := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
+	tests := []struct {
+		name   string
+		author string
+		want   []string
+	}{
+		{name: "base author excludes its replicas", author: "alpha", want: []string{"beta"}},
+		{name: "replica author excludes base and sibling replicas", author: "alpha-2", want: []string{"beta"}},
+		{name: "unrelated author keeps others", author: "beta", want: []string{"alpha", "alpha-2", "alpha-3"}},
+		{name: "empty author keeps all", author: "", want: []string{"alpha", "alpha-2", "alpha-3", "beta"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, r := range reviewersForPR(all, tt.author, agentBase(all, tt.author)) {
+				got = append(got, r.Name)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("reviewersForPR() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReviewersForPRResolvesAuthorBaseFromFullAgentSet(t *testing.T) {
+	full := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
+	// The authoring replica alpha-2 was filtered out of the reviewer pool.
+	pool := []AgentCapability{full[0], full[2], full[3]}
+	var got []string
+	for _, r := range reviewersForPR(pool, "alpha-2", agentBase(full, "alpha-2")) {
+		got = append(got, r.Name)
+	}
+	if strings.Join(got, ",") != "beta" {
+		t.Errorf("reviewersForPR() = %v, want [beta]", got)
+	}
+}
+
+func TestCapabilityFromConfigCarriesEveryField(t *testing.T) {
+	ac := config.AgentConfig{
+		ReplicaOf: "alpha", Enabled: true, Paused: true, OnDemand: true,
+		Role: "reviewer", LaneKeywords: []string{"lane"}, DetectKeywords: []string{"detect"},
+		Aliases: []string{"alias"}, Backend: "claude", Model: "opus",
+	}
+	got := CapabilityFromConfig("alpha-2", ac)
+	want := AgentCapability{
+		Name: "alpha-2", ReplicaOf: "alpha", Enabled: true, Paused: true, OnDemand: true,
+		UsesKick: ac.UsesGovernorKick(), Role: "reviewer", LaneKeywords: []string{"lane"},
+		DetectKeywords: []string{"detect"}, Aliases: []string{"alias"}, Backend: "claude", Model: "opus",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CapabilityFromConfig() = %+v, want %+v", got, want)
+	}
+	if baseOf(got) != "alpha" || baseOf(reviewer("beta")) != "beta" {
+		t.Error("baseOf() did not resolve replica to base / base to itself")
+	}
+}
+
+// A caller-resolved AuthorBase wins over the dispatch agent slice, which holds
+// only enabled lanes: a disabled or retired authoring replica is absent from
+// it, so resolving there would fall back to the raw name and let the base and
+// sibling replicas review their own family's PR.
+func TestPRAuthorBasePrefersCallerResolvedBase(t *testing.T) {
+	enabled := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), reviewer("beta")}
+	pr := PullRequest{AuthorAgent: "alpha-3"}
+	if got := prAuthorBase(pr, enabled); got != "alpha-3" {
+		t.Fatalf("prAuthorBase() without AuthorBase = %q, want alpha-3", got)
+	}
+	pr.AuthorBase = "alpha"
+	if got := prAuthorBase(pr, enabled); got != "alpha" {
+		t.Fatalf("prAuthorBase() = %q, want alpha", got)
+	}
+	var got []string
+	for _, r := range reviewersForPR(enabled, pr.AuthorAgent, prAuthorBase(pr, enabled)) {
+		got = append(got, r.Name)
+	}
+	if strings.Join(got, ",") != "beta" {
+		t.Errorf("reviewersForPR() = %v, want [beta]", got)
 	}
 }
