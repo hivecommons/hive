@@ -12425,9 +12425,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // step. The absolute floor below keeps a tiny median from nuking legit spend.
     const COST_DISCONTINUITY_MULT = 20;
     // Absolute-$ floor: an increment is only ever discarded as a discontinuity
-    // if it also exceeds this many dollars in a single step. No plausible run
-    // rate spends this within one snapshot interval (~30s–few min), so real
-    // spend never trips it, while a ~$18k all-time restore obviously does.
+    // if it also exceeds this many dollars in a single step. Real session
+    // flushes DO exceed it (a day's flush on an Opus-class hive runs $600–$18k,
+    // #13497), so the ceiling it anchors applies only to restore-shaped steps —
+    // those that regain ground the counter had already reached
+    // (costStepRegainsGround). A step to a new high is spend however large;
+    // the ~$18k all-time restore it was built to catch lands back at old
+    // ground and still trips it.
     const COST_DISCONTINUITY_FLOOR_USD = 500;
 
     // ── Accrual spreading ──────────────────────────────────────────────────
@@ -12481,6 +12485,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         return s;
       };
       const incs = [], gaps = [], restores = [];
+      // peak is tracked separately from prev/prevKind: pre-window entries
+      // `continue` before prev is updated (they must not seed an increment),
+      // yet they still raise the peak the restore test compares against, so
+      // the peak needs its own kind marker to reset on a measure change.
       let prev = null, prevKind = null, prevTs = 0, sawWindow = false, peak = -Infinity, peakKind = null;
       for (const e of hist) {
         if (e.timestamp > t1) break;
@@ -12526,10 +12534,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // costStepAllowed: a positive step observed over gapMs is spend when it is
     // under the fixed ceiling or within what the plausible rate could have
     // accrued over the gap. `cap` may be a number (fixed ceiling only, legacy
-    // callers) or { ceiling, ratePerMs }.
+    // callers) or { ceiling, ratePerMs }. `restore` is the costStepRegainsGround
+    // verdict for the step: false → always spend (a step to a new high is never
+    // a correction, #13497); true → the size tests apply; undefined (legacy
+    // callers without peak tracking) → the size tests apply to every step.
+    // The Go mirror (costFoldDailyRollups) applies the same rule as a
+    // precondition at the call site rather than inside the predicate.
     function costStepAllowed(amount, gapMs, cap, restore) {
-      // Only a restore (regained ground) can be a correction; a step to a new
-      // high is a session flush however big (#13497).
       if (restore === false) return true;
       const obj = !!(cap && typeof cap === 'object');
       const ceiling = obj ? cap.ceiling : cap;
@@ -12647,7 +12658,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // ~$394 → ~$18,350 step). That single jump is a data correction, not spend,
     // yet the positive-increment sum would bill it into one hourly bucket,
     // producing a bogus giant bar and an inflated window-spend + run-rate. So an
-    // increment above the discontinuity ceiling (see above) is skipped. `ceiling`
+    // increment above the discontinuity ceiling (see above) is skipped — but
+    // only when the step is restore-shaped, i.e. it regains ground the counter
+    // had already reached (costStepRegainsGround); a step to a new high is
+    // spend however large (#13497). `ceiling`
     // is derived once from the full history and passed in; omit it to disable the
     // guard (kept optional so callers without full history stay correct).
     function costSpendBetween(hist, rate, t0, t1, ceiling) {
