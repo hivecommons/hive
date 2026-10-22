@@ -186,6 +186,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # The model list-price table behind /api/cost is refreshed weekly by
+      # price-table-refresh.yml (which also re-dates it after 30 quiet days).
+      # If that stops happening the Cost panel silently drifts from reality,
+      # so a table older than 60 days fails here: merge the open
+      # bot/price-table-refresh PR, or run `go run ./internal/tools/pricetable`.
+      - name: Price table staleness guard
+        run: go run ./internal/tools/pricetable --check-age 60
+
       # The entrypoint decides which file a hive boots its config from. The
       # hive.yaml.bak -> hive.yaml.runtime migration must keep reading the
       # legacy name, or hives that have not saved since upgrading lose their
