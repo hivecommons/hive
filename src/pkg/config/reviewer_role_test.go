@@ -17,19 +17,22 @@ package config
 
 import "testing"
 
-// reviewerLevels are the packs the role is defined in. L5 and L6 are the levels
-// where a PR can reach merge without a mandatory human read — L5 gates on the
-// `hold` label and L6 auto-merges on green — so they are where a repo-grounded
-// pre-merge judgment has somewhere to land. L2 is the review-first advisory
-// pack: the reviewer posts COMMENT-only reviews so humans get repo-grounded
-// evidence on the PR queue before any agent is allowed to write.
-var reviewerLevels = []int{2, 5, 6}
+// reviewerLevels are the packs the role is defined in: L2 and every level
+// above (community vote 2026-10-22, hivecommons/hive#13574). L2 is the
+// review-first advisory pack: the reviewer posts COMMENT-only reviews so humans
+// get repo-grounded evidence on the PR queue before any agent is allowed to
+// write. At L3/L4 it reviews the `hold`-gated PR queue with exactly the
+// authority those levels already grant (comment and route to a human; no
+// lgtm/approve/merge). L5 and L6 are the levels where a PR can reach merge
+// without a mandatory human read — L5 gates on the `hold` label and L6
+// auto-merges on green — so they are where a repo-grounded pre-merge judgment
+// has somewhere to land.
+var reviewerLevels = []int{2, 3, 4, 5, 6}
 
 // nonReviewerLevels are the packs the role is deliberately absent from. L1 is
-// observe-only, and at L3/L4 the `hold` label already blocks every agent PR
-// behind a human, so a reviewer there is triage rather than a safety gate —
-// and adding it is not free, so it is left out rather than shipped unused.
-var nonReviewerLevels = []int{1, 3, 4}
+// observe-only: no agent touches GitHub there, so there is no PR queue to
+// review.
+var nonReviewerLevels = []int{1}
 
 // adjudicatorLevels are the packs the needs-human adjudicator lane runs in.
 // It repairs and de-escalates PRs, which needs ISSUES_AND_PRS, so it stays
@@ -69,15 +72,29 @@ func TestReviewerRoleDefinedAtHighTrustLevels(t *testing.T) {
 	}
 }
 
-// TestReviewerAbsentAtObserveAndHoldLevels pins that the role does NOT
-// silently appear at levels whose merge policy already requires a human. This is the positive
-// control for the test above: it proves the lookup can return false, so
-// "present at L5/L6" is a real assertion rather than a helper that always
-// finds something.
-func TestReviewerAbsentAtObserveAndHoldLevels(t *testing.T) {
+// TestReviewerAbsentAtObserveLevel pins that the role does NOT silently
+// appear at the observe-only level. This is the positive control for the test
+// above: it proves the lookup can return false, so "present at L2–L6" is a
+// real assertion rather than a helper that always finds something.
+func TestReviewerAbsentAtObserveLevel(t *testing.T) {
 	for _, lvl := range nonReviewerLevels {
 		if _, ok := reviewerIn(t, lvl); ok {
-			t.Errorf("L%d must not define the reviewer agent: the hold label already gates every agent PR behind a human there", lvl)
+			t.Errorf("L%d must not define the reviewer agent: L1 is observe-only and has no PR queue", lvl)
+		}
+	}
+}
+
+// TestReviewerNeverGainsMergeAuthority pins that the reviewer is ADVISORY at
+// every level it ships in: it comments and routes to a human, and never gains
+// lgtm/approve/merge power beyond what the level's merge policy grants.
+func TestReviewerNeverGainsMergeAuthority(t *testing.T) {
+	for _, lvl := range reviewerLevels {
+		a, ok := reviewerIn(t, lvl)
+		if !ok {
+			t.Fatalf("L%d pack is missing the reviewer agent", lvl)
+		}
+		if a.Mode != "ADVISORY" {
+			t.Errorf("L%d: reviewer mode = %q, want ADVISORY", lvl, a.Mode)
 		}
 	}
 }

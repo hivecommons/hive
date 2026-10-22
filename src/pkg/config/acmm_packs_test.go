@@ -24,10 +24,10 @@ func TestACMMPacksLoad(t *testing.T) {
 func TestACMMPacksAgentCounts(t *testing.T) {
 	packs := ACMMPacks()
 
-	// The `reviewer` is COMMENT-only. It joined L2 as the review-first entry
-	// point (hivecommons/hive#13574) and also sits at L5 and L6, where a PR can
-	// reach merge without a mandatory human read (L5 gates on `hold`, L6
-	// auto-merges on green).
+	// The `reviewer` ships at L2 and every level above (hivecommons/hive#13574,
+	// community vote 2026-10-22). It is ADVISORY everywhere: COMMENT-only at L2,
+	// and at L3–L6 it reviews the `hold`-gated queue without gaining lgtm,
+	// approve or merge power beyond what each level's merge policy grants.
 	//
 	// L5 and L6 also carry the `adjudicator` (hivecommons/hive#9477): a
 	// role-reviewer agent with no kick_template, so its kick reaches the
@@ -37,7 +37,7 @@ func TestACMMPacksAgentCounts(t *testing.T) {
 	// cadence-kicked issue+PR duplicate triage that posts one consolidation
 	// checklist per repository.
 	expected := map[int]int{
-		1: 2, 2: 6, 3: 6, 4: 7, 5: 14, 6: 15, // reviewer (#8023, #13574 adds it at L2) + adjudicator (#9477) + dedupe (#11582) at L5/L6
+		1: 2, 2: 6, 3: 7, 4: 8, 5: 14, 6: 15, // reviewer at L2–L6 (#8023, #13574) + adjudicator (#9477) + dedupe (#11582) at L5/L6
 	}
 	for _, p := range packs {
 		want, ok := expected[p.Level]
@@ -167,29 +167,44 @@ func TestACMMPackManagedAgentNames(t *testing.T) {
 	}
 	// The union must not grow beyond what the packs define: an agent listed
 	// here is one whose operator-set mode a pack apply is allowed to discard.
-	// reviewer joined the L5/L6 rosters in #8023 and L2 in #13574; it is absent at L1, L3 and L4.
+	// reviewer joined the L5/L6 rosters in #8023 and L2–L4 in #13574; it is absent at L1 only.
 	if !seen["reviewer"] {
-		t.Errorf("`reviewer` is in the L2/L5/L6 packs (#8023, #13574) but missing from the managed set")
+		t.Errorf("`reviewer` is in the L2–L6 packs (#8023, #13574) but missing from the managed set")
 	}
-	for _, lvl := range []int{1, 3, 4} {
+	for _, lvl := range []int{2, 3, 4, 5, 6} {
+		p, err := ACMMPackByLevel(lvl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found bool
+		for _, a := range p.Agents {
+			if a.Name == "reviewer" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("L%d pack must carry reviewer (L2 and above, #8023, #13574)", lvl)
+		}
+	}
+	for _, lvl := range []int{1} {
 		p, err := ACMMPackByLevel(lvl)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, a := range p.Agents {
 			if a.Name == "reviewer" {
-				t.Errorf("L%d pack must not carry reviewer (L2/L5/L6 only, #8023, #13574)", lvl)
+				t.Errorf("L%d pack must not carry reviewer (observe-only level, #13574)", lvl)
 			}
 		}
 	}
 }
 
-// The L5/L6 pack YAML declares `converse: true` on reviewer (#8023). Until
+// The L2–L6 pack YAML declares `converse: true` on reviewer (#8023, #13574). Until
 // PackAgent carried the field, yaml.Unmarshal dropped it silently and a
 // pack-created reviewer landed with no converse — unable to post the reviews
 // that are its entire product. Pin that the value survives loading.
 func TestPackReviewerConverseSurvivesLoad(t *testing.T) {
-	for _, level := range []int{2, 5, 6} {
+	for _, level := range []int{2, 3, 4, 5, 6} {
 		p, err := ACMMPackByLevel(level)
 		if err != nil {
 			t.Fatalf("no pack for level %d: %v", level, err)
@@ -208,11 +223,11 @@ func TestPackReviewerConverseSurvivesLoad(t *testing.T) {
 			t.Fatalf("L%d pack has no reviewer", level)
 		}
 	}
-	for _, level := range []int{1, 3, 4} {
+	for _, level := range []int{1} {
 		p, _ := ACMMPackByLevel(level)
 		for _, a := range p.Agents {
 			if a.Converse != nil {
-				t.Errorf("L%d %s: pack sets converse=%v; converse is opt-in outside L2/L5/L6", level, a.Name, *a.Converse)
+				t.Errorf("L%d %s: pack sets converse=%v; converse is opt-in at L1", level, a.Name, *a.Converse)
 			}
 		}
 	}
