@@ -1,0 +1,1 @@
+- Design record `src/docs/design/crux.md` for the Crux agent-runtime boundary (RFC #13536) and an architecture ratchet test that fails when any package outside `pkg/agent/...` references more distinct `agent.<Symbol>` identifiers or invokes tmux from more files than its recorded baseline.

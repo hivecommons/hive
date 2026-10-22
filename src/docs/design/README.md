@@ -20,6 +20,8 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [Crux: the agent runtime boundary](crux.md) — **partly shipped (v5).** RFC [#13536](https://github.com/hivecommons/hive/issues/13536): names the agent runtime inside Hive (`pkg/agent` and its ring) as Crux, lists what stays in Hive, records the staged plan (in-repo boundary → nested module → `crux serve`) and the naming decision. The architecture ratchet in `src/internal/testutil/crux_boundary_ratchet_test.go` is live; the rest of Stage 1 is tracked on the RFC.
+
 - [PR follow-up session resume](pr-follow-up-resume.md) - **shipped (v5, default off).** #9583: ties each agent-opened PR to the CLI session that authored it (a `pkg/turn` envelope per PR) and feeds CI failures, changes-requested reviews, new review-bot threads and comments from people with write access back into that session without `/clear` while it is still live. When the session is gone (a restart or the next regular kick), the follow-up takes the fix-before-new path and the agent's next kick carries a compact handoff note of the PR's original reasoning. Pointers are pruned on merge or close; a live-review soak is the remaining follow-up.
 
 - [Achievement system 2.0](achievements-2.md) — **shipped (v5).** Spektacular-ready spec for #8832: teamwork-first Solo/Dual/Fireteam/Raid tiers, local-model achievements, the “local always wins” mastery tier, dark-pattern guardrails, anti-gaming rules, data sources, and shipped dossier/leaderboard rollout.
