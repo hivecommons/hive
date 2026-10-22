@@ -2849,10 +2849,12 @@ func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, numbe
 	if err == nil {
 		return
 	}
-	c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
-		"repo", owner+"/"+repoName, "number", number, "error", err)
+	if c.logger != nil {
+		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
+			"repo", owner+"/"+repoName, "number", number, "error", err)
+	}
 	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
-	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil {
+	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil && c.logger != nil {
 		c.logger.Warn("could not post the prow/lgtm status warning comment",
 			"repo", owner+"/"+repoName, "number", number, "error", cerr)
 	}
