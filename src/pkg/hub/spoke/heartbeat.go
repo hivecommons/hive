@@ -1747,7 +1747,7 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
-		if resp.StatusCode >= http.StatusInternalServerError {
+		if hubHeartbeatStatusIsDefect(resp.StatusCode) {
 			fleetreport.Observe(fleetreport.ClassUnexpectedHub5xx, "heartbeat", fmt.Sprintf("hub heartbeat returned HTTP %d", resp.StatusCode), string(respBody))
 		}
 		return nil
@@ -2922,4 +2922,16 @@ func StartTaskStatusPush(ctx context.Context, hubURL string, collect TaskStatusC
 			}
 		}
 	}
+}
+
+// hubHeartbeatStatusIsDefect reports whether a heartbeat status points at a
+// hub defect worth self-reporting. 502/503/504 are the front proxy saying the
+// hub is restarting or has no backend ("no available server"); the next beat
+// retries on its own interval, so they are logged but never escalated.
+func hubHeartbeatStatusIsDefect(status int) bool {
+	switch status {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	}
+	return status >= http.StatusInternalServerError
 }

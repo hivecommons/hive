@@ -1,0 +1,1 @@
+- Spoke heartbeat: HTTP 502/503/504 from the hub front proxy (hub restarting / "no available server") are treated as transient and no longer self-reported as `unexpected_http_5xx_from_hub` (#13620).
