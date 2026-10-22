@@ -37,9 +37,10 @@ const costRollupDayLayout = "2006-01-02"
 // UI's COST_DISCONTINUITY_MULT / COST_DISCONTINUITY_FLOOR_USD: a single
 // snapshot-to-snapshot increase is a data correction (re-seed, restore, price
 // change), not spend, only when it beats BOTH the relative and the absolute
-// test AND is not explained by the step's own per-model token increments (see
-// costRollupStepTokenBacked). A large step backed by token growth is real
-// spend that accrued across a sampling gap.
+// test AND is explained neither by elapsed time × a plausible rate
+// (costRollupStepAllowed) nor by the step's own per-model token increments
+// (costRollupStepTokenBacked). A large step revealed after a sampling gap or
+// backed by token growth (e.g. a daily session flush) is real spend.
 const (
 	costRollupDiscontinuityMult     = 20
 	costRollupDiscontinuityFloorUSD = 500
@@ -75,22 +76,8 @@ func costRollupDayStart(day string) (int64, bool) {
 // increments, floor). Sub-cent increments do not count as ordinary. +Inf when
 // there are too few ordinary increments to judge.
 func costRollupDiscontinuityCeiling(incs []float64) float64 {
-	normal := make([]float64, 0, len(incs))
-	for _, v := range incs {
-		if v >= costRollupMedianMinIncUSD && v < costRollupDiscontinuityFloorUSD {
-			normal = append(normal, v)
-		}
-	}
-	if len(normal) < 2 {
-		return math.Inf(1)
-	}
-	sort.Float64s(normal)
-	mid := len(normal) / 2
-	median := normal[mid]
-	if len(normal)%2 == 0 {
-		median = (normal[mid-1] + normal[mid]) / 2
-	}
-	if !(median > 0) {
+	median, ok := costRollupMedian(incs)
+	if !ok {
 		return math.Inf(1)
 	}
 	ceiling := costRollupDiscontinuityMult * median
@@ -125,6 +112,75 @@ func costRollupStepTokenBacked(prev, cur *CostHistoryEntry, d float64) bool {
 	return backed >= costRollupTokenBackedRatio*d
 }
 
+// costRollupMedian is the median of the ordinary values — at least
+// costRollupMedianMinIncUSD and below the floor; ok is false when fewer than
+// two ordinary values exist or the median is not > 0.
+func costRollupMedian(vals []float64) (float64, bool) {
+	normal := make([]float64, 0, len(vals))
+	for _, v := range vals {
+		if v >= costRollupMedianMinIncUSD && v < costRollupDiscontinuityFloorUSD {
+			normal = append(normal, v)
+		}
+	}
+	if len(normal) < 2 {
+		return 0, false
+	}
+	sort.Float64s(normal)
+	mid := len(normal) / 2
+	median := normal[mid]
+	if len(normal)%2 == 0 {
+		median = (normal[mid-1] + normal[mid]) / 2
+	}
+	return median, median > 0
+}
+
+// costRollupStep is one positive step of the cumulative total together with
+// the time the sampler took to observe it.
+type costRollupStep struct {
+	USD   float64
+	GapMs int64
+}
+
+// costRollupDiscontinuityRate returns the plausible-spend rate ceiling in
+// $/ms: mult × the hive's average rate, where the average is the ordinary
+// (below-floor) spend divided by the span the history covers. The fixed
+// ceiling above judges a step as if it arrived at the normal 5-minute
+// cadence, but the sampler is view-driven and a hive that nobody looked at
+// for a week reveals a week of real spend in one step. That step is spend,
+// not a correction, whenever it is explained by elapsed time × a plausible
+// rate (hivecommons/hive#13482). The average — not the median — is the
+// baseline because spend arrives in lumps (a session's tokens appear when
+// its transcript flushes) between long runs of near-zero steps, so the
+// median step rate says nothing about how fast the hive really spends.
+// +Inf when there are too few ordinary steps or no span to divide by.
+func costRollupDiscontinuityRate(steps []costRollupStep, spanMs int64) float64 {
+	var sum float64
+	n := 0
+	for _, st := range steps {
+		if st.USD < costRollupDiscontinuityFloorUSD && st.GapMs > 0 {
+			sum += st.USD
+			n++
+		}
+	}
+	if n < 2 || spanMs <= 0 || !(sum > 0) {
+		return math.Inf(1)
+	}
+	return costRollupDiscontinuityMult * sum / float64(spanMs)
+}
+
+// costRollupStepAllowed reports whether a positive step observed over gapMs
+// is spend: it passes the fixed per-step ceiling, or it is within what the
+// plausible rate could have accrued over the gap.
+func costRollupStepAllowed(usd float64, gapMs int64, ceiling, ratePerMs float64) bool {
+	if usd <= ceiling {
+		return true
+	}
+	if gapMs <= 0 || math.IsInf(ratePerMs, 1) {
+		return math.IsInf(ratePerMs, 1)
+	}
+	return usd <= ratePerMs*float64(gapMs)
+}
+
 // costFoldDailyRollups folds a cumulative snapshot series into per-UTC-day
 // spend records. Increments are attributed to the day of the snapshot that
 // revealed them, so a day's first increment counts the growth since the last
@@ -132,7 +188,8 @@ func costRollupStepTokenBacked(prev, cur *CostHistoryEntry, d float64) bool {
 // buffer guarantees it).
 //
 // A step above the discontinuity ceiling is discarded as a data correction
-// only when it is not token-backed (costRollupStepTokenBacked); a discarded
+// only when the gap-aware rate rule does not allow it (costRollupStepAllowed)
+// and it is not token-backed (costRollupStepTokenBacked); a discarded
 // step's token increments are discarded with it, so a day's cost_usd and
 // *_tokens always describe the same steps.
 func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
@@ -141,12 +198,15 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 		return out
 	}
 	incs := make([]float64, 0, len(hist))
+	steps := make([]costRollupStep, 0, len(hist))
 	for i := 1; i < len(hist); i++ {
 		if d := hist[i].USD - hist[i-1].USD; d > 0 {
 			incs = append(incs, d)
+			steps = append(steps, costRollupStep{USD: d, GapMs: hist[i].Timestamp - hist[i-1].Timestamp})
 		}
 	}
 	ceiling := costRollupDiscontinuityCeiling(incs)
+	rate := costRollupDiscontinuityRate(steps, hist[len(hist)-1].Timestamp-hist[0].Timestamp)
 
 	var prev *CostHistoryEntry
 	for i := range hist {
@@ -157,7 +217,13 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 		r.Samples++
 		if prev != nil {
 			d := e.USD - prev.USD
-			if d > ceiling && !costRollupStepTokenBacked(prev, e, d) {
+			// A step above the ceiling is spend when elapsed time × a plausible
+			// rate explains it (sampling gap) OR the step's own per-model token
+			// growth explains it (e.g. a daily session flush, #13497). A step
+			// discarded as a correction takes its token deltas with it:
+			// counting the tokens of a re-seed while dropping its dollars made
+			// 800M-token / $0 days (#13482).
+			if d > 0 && !costRollupStepAllowed(d, e.Timestamp-prev.Timestamp, ceiling, rate) && !costRollupStepTokenBacked(prev, e, d) {
 				out[day] = r
 				prev = e
 				continue

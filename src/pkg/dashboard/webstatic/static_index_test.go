@@ -703,3 +703,24 @@ func TestStaticTopbarProvidersChipNeverRendersEmpty(t *testing.T) {
 		}
 	}
 }
+
+func TestStaticCostStaleRecordingNoticeWiring(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`function costRecordingNoticeText(recording) {`,
+		`const recordingText = costRecordingNoticeText(cost.recording);`,
+		`<div class="cost-recording-notice" id="cost-recording-notice" role="alert">`,
+		`href="https://github.com/hivecommons/hive/issues/13487"`,
+		"          ${recordingNotice}\n",
+		`_lastCost.recording.stale) rateStr += ' <span class="cost-recording-incomplete">(recording incomplete)</span>';`,
+		`.cost-recording-notice {`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("cost stale-recording notice wiring missing %q", want)
+		}
+	}
+}

@@ -107,6 +107,9 @@ type costResponse struct {
 	// first snapshot before any day has rolled up).
 	AllTimeUSD   float64 `json:"all_time_usd"`
 	AllTimeSince int64   `json:"all_time_since,omitempty"`
+	// Recording reports whether the running agents' configured models are
+	// actually being recorded (hivecommons/hive#13485); see cost_recording.go.
+	Recording costRecording `json:"recording"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -229,6 +232,7 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	resp.CountWindowEnd = time.Now().UnixMilli()
 	resp.DailyRollup = s.CostDailyRollups()
 	resp.AllTimeUSD, resp.AllTimeSince = s.costAllTime(resp.Estimated)
+	resp.Recording = s.costRecording(resp.Estimated)
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {

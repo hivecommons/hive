@@ -2900,6 +2900,9 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
+    .cost-recording-notice a { color: inherit; text-decoration: underline; }
+    .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
 
     /* Cost spend-over-time: range pills + bucketed bar chart */
     .cost-trend { margin: 6px 0 14px; }
@@ -11965,6 +11968,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function fmtCostDateTime(ms) {
       return formatDashboardDateTime(ms, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' });
     }
+    // Stale-recording notice (#13485): plain text, escaped by the caller.
+    // Empty unless /api/cost reports the running agents' models recorded
+    // nothing for longer than the stale window.
+    function costRecordingNoticeText(recording) {
+      if (!recording || !recording.stale) return '';
+      const models = (recording.agent_models || []).slice(0, 4);
+      const more = (recording.agent_models || []).length > models.length ? ', …' : '';
+      const sinceMs = Number(recording.last_agent_model_growth_at) || Number(recording.last_priced_growth_at) || 0;
+      const since = sinceMs > 0 ? `since ${fmtCostDateTime(sinceMs)}` : 'in the recorded history';
+      const recent = recording.recent_models || [];
+      const reflect = recent.length
+        ? ` The figures below only reflect ${recent.join(', ')}.`
+        : ' No model recorded any usage recently.';
+      return `⚠ No usage recorded from the agents' configured models (${models.join(', ')}${more}) ${since}.${reflect} Live cost recording is likely broken — see`;
+    }
     function fmtCostDuration(ms) {
       const min = Math.round(ms / 60000);
       if (min < 60) return `${Math.max(1, min)} min`;
@@ -12201,7 +12219,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Ceiling derived once from the full history so every bucket judges a
       // one-time re-seed jump against the same baseline (a bucket holding only
       // the spike has no local typical of its own).
-      const ceiling = costDiscontinuityCeiling(hist, rate);
+      const ceiling = { ceiling: costDiscontinuityCeiling(hist, rate), ratePerMs: costDiscontinuityRate(hist, rate) };
       // Spread each increment across the interval it accrued over rather than
       // billing it to the instant it was observed — otherwise a bucket narrower
       // than the observation cadence (notably every hourly bucket) reads $0 even
@@ -12333,10 +12351,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Mirrors the rollup's costRollupMedianMinIncUSD: sub-cent increments are
     // left out of the median so a quiet fleet cannot collapse the ceiling.
     const COST_DISCONTINUITY_MIN_INC_USD = 0.01;
-    // The ceiling only judges steps that are NOT backed by per-model token
-    // growth (legacy usd-only snapshots). A priced-token increment is token
-    // growth by construction — real spend revealed across a sampling gap, kept
-    // regardless of size, exactly as the server rollup does.
+    // A step above the ceiling is still spend when EITHER elapsed time × a
+    // plausible rate explains it (costStepAllowed, sampling gaps) OR it is
+    // backed by per-model token growth. A priced-token increment is token
+    // growth by construction (e.g. a daily session flush), so the guard only
+    // ever drops legacy usd-only steps — mirroring the server rollup's
+    // costRollupStepAllowed / costRollupStepTokenBacked.
 
     // ── Accrual spreading ──────────────────────────────────────────────────
     // The cumulative token counter does NOT rise smoothly as agents work: the
@@ -12388,19 +12408,57 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
         return s;
       };
-      const incs = [];
-      const backed = [];
-      let prev = null, prevKind = null, sawWindow = false;
+      const incs = [], gaps = [], backed = [];
+      let prev = null, prevKind = null, prevTs = 0, sawWindow = false;
       for (const e of hist) {
         if (e.timestamp < t0 || e.timestamp > t1) { if (e.timestamp > t1) break; continue; }
         const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
         if (kind == null) continue;
         const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
         sawWindow = true;
-        if (prev != null && kind === prevKind && cur > prev) { incs.push(cur - prev); backed.push(kind === 'm'); }
-        prev = cur; prevKind = kind;
+        if (prev != null && kind === prevKind && cur > prev) { incs.push(cur - prev); gaps.push(e.timestamp - prevTs); backed.push(kind === 'm'); }
+        prev = cur; prevKind = kind; prevTs = e.timestamp;
       }
-      return { incs, backed, sawWindow };
+      return { incs, gaps, backed, sawWindow };
+    }
+
+    // costDiscontinuityRate: the plausible-spend rate ceiling in $/ms —
+    // COST_DISCONTINUITY_MULT × the hive's average rate (ordinary, below-floor
+    // spend ÷ the span the history covers). The fixed ceiling judges every
+    // step as if it arrived at the 5-minute cadence, but the sampler is
+    // view-driven (#13483): a hive nobody looked at for a week reveals a week
+    // of real spend in one step. Such a step is spend, not a correction, when
+    // elapsed time × a plausible rate explains it (#13482). The average, not
+    // the median, is the baseline: spend arrives in lumps between long runs
+    // of near-zero steps, so the median step rate says nothing about how fast
+    // the hive really spends. Infinity (no rate cap) on thin data. Mirrors
+    // costRollupDiscontinuityRate in cost_rollup.go.
+    function costDiscontinuityRate(hist, rate) {
+      if (!hist || hist.length < 2) return Infinity;
+      const { incs, gaps } = costPositiveIncrements(hist, rate, -Infinity, Infinity);
+      let sum = 0, n = 0;
+      for (let i = 0; i < incs.length; i++) {
+        if (incs[i] < COST_DISCONTINUITY_FLOOR_USD && gaps[i] > 0) { sum += incs[i]; n++; }
+      }
+      const span = hist[hist.length - 1].timestamp - hist[0].timestamp;
+      if (n < 2 || !(span > 0) || !(sum > 0)) return Infinity;
+      return COST_DISCONTINUITY_MULT * sum / span;
+    }
+
+    // costStepAllowed: a positive step observed over gapMs is spend when it is
+    // under the fixed ceiling or within what the plausible rate could have
+    // accrued over the gap. `cap` may be a number (fixed ceiling only, legacy
+    // callers) or { ceiling, ratePerMs }.
+    function costStepAllowed(amount, gapMs, cap) {
+      const obj = !!(cap && typeof cap === 'object');
+      const ceiling = obj ? cap.ceiling : cap;
+      const c = (typeof ceiling === 'number') ? ceiling : Infinity;
+      if (amount <= c) return true;
+      if (!obj) return false;
+      const ratePerMs = cap.ratePerMs;
+      if (ratePerMs === Infinity) return true;
+      if (!(gapMs > 0)) return false;
+      return amount <= ratePerMs * gapMs;
     }
 
     // costAccrualSpans: every POSITIVE increment in the WHOLE history, each
@@ -12438,7 +12496,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (e.timestamp - from >= COST_ACCRUAL_MAX_SPREAD_MS) break;
           }
           from = Math.max(from, e.timestamp - COST_ACCRUAL_MAX_SPREAD_MS);
-          spans.push({ amount: cur - prev, from, to: e.timestamp, backed: kind === 'm' });
+          // gap is the observation interval (previous snapshot → this one),
+          // which the discontinuity guard judges the step against; `from` is
+          // the (liveness-bounded) accrual start and may be later. A priced-
+          // token step is token-backed and skips the guard.
+          spans.push({ amount: cur - prev, from, to: e.timestamp, gap: stamps.length ? e.timestamp - stamps[stamps.length - 1] : 0, backed: kind === 'm' });
         }
         prev = cur; prevKind = kind;
         stamps.push(e.timestamp);
@@ -12450,13 +12512,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // each increment the fraction of its accrual interval that overlaps the
     // bucket. An increment whose interval is shorter than
     // COST_ACCRUAL_MIN_SPREAD_MS is treated as a point event at its observation
-    // time. Increments above `cap` that are not token-backed are dropped as
-    // data corrections, exactly as in costSpendBetween.
+    // time. Increments that are not token-backed and that `cap` does not allow
+    // (costStepAllowed) are dropped as data corrections, exactly as in
+    // costSpendBetween.
     function costSpreadSpendBetween(spans, t0, t1, cap) {
-      const ceil = (typeof cap === 'number') ? cap : Infinity;
       let spend = 0;
       for (const s of (spans || [])) {
-        if (!s.backed && s.amount > ceil) continue;
+        if (!s.backed && !costStepAllowed(s.amount, s.gap, cap)) continue;
         const span = s.to - s.from;
         if (span < COST_ACCRUAL_MIN_SPREAD_MS) {
           // Point event: bill it entirely to the bucket containing it.
@@ -12504,15 +12566,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // ~$394 → ~$18,350 step). That single jump is a data correction, not spend,
     // yet the positive-increment sum would bill it into one hourly bucket,
     // producing a bogus giant bar and an inflated window-spend + run-rate. So an
-    // increment above the discontinuity ceiling (see above) that is not token-backed
-    // (a usd-only step) is skipped. `ceiling`
+    // increment above the discontinuity ceiling (see above) that is neither
+    // token-backed (a usd-only step) nor explained by its observation gap
+    // (costStepAllowed) is skipped. `ceiling` — a number or { ceiling, ratePerMs } —
     // is derived once from the full history and passed in; omit it to disable the
     // guard (kept optional so callers without full history stay correct).
     function costSpendBetween(hist, rate, t0, t1, ceiling) {
-      const cap = (typeof ceiling === 'number') ? ceiling : Infinity;
-      const { incs, backed, sawWindow } = costPositiveIncrements(hist, rate, t0, t1);
+      const { incs, gaps, backed, sawWindow } = costPositiveIncrements(hist, rate, t0, t1);
       let spend = 0;
-      incs.forEach((inc, i) => { if (backed[i] || inc <= cap) spend += inc; });
+      for (let i = 0; i < incs.length; i++) { if (backed[i] || costStepAllowed(incs[i], gaps[i], ceiling)) spend += incs[i]; }
       return sawWindow ? spend : null;
     }
 
@@ -12600,6 +12662,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (rate != null) {
         const unit = costRunRateUnit(win);
         rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(rate * unit.ms)}${unit.label}</b>`;
+        // The agents' models have recorded nothing lately (#13485): the
+        // run-rate only reflects whatever is still being recorded.
+        if (_lastCost && _lastCost.recording && _lastCost.recording.stale) rateStr += ' <span class="cost-recording-incomplete">(recording incomplete)</span>';
       }
       // When the window reaches past the recorded history, say where history
       // starts so the owner knows the earlier bars are blank, not $0.
@@ -23576,6 +23641,10 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      const recordingText = costRecordingNoticeText(cost.recording);
+      const recordingNotice = recordingText
+        ? `<div class="cost-recording-notice" id="cost-recording-notice" role="alert">${esc(recordingText)} <a href="https://github.com/hivecommons/hive/issues/13487" target="_blank" rel="noopener">#13487</a>.</div>`
+        : '';
       // ── Estimated cost by work item (#12128) ──
       // Spend placed against the issue / PR / head SHA each kick was launched
       // for. Attribution only — never a gate; the governor window budget is
@@ -23601,6 +23670,7 @@ function burnAreaChart() {
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+          ${recordingNotice}
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}

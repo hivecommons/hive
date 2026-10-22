@@ -324,9 +324,10 @@ assert.equal(costAllTimeEstimate({ total_usd: 600 }, {}).usd, 600);
 	}
 }
 
-// The trend chart mirrors the rollup's discontinuity rule: only steps that are
-// not token-backed are judged against the ceiling, and sub-cent increments do
-// not collapse its median (#13482).
+// The trend chart mirrors the rollup's discontinuity rule: a step is dropped
+// only when it is neither token-backed nor allowed by the gap-aware ceiling
+// (costStepAllowed), and sub-cent increments do not collapse its median
+// (#13482, #13497).
 func TestDashboardCostDiscontinuityKeepsTokenBackedSteps(t *testing.T) {
 	raw, err := staticFS.ReadFile("static/index.html")
 	if err != nil {
@@ -337,8 +338,8 @@ func TestDashboardCostDiscontinuityKeepsTokenBackedSteps(t *testing.T) {
 		"const COST_DISCONTINUITY_MIN_INC_USD = 0.01;",
 		"v >= COST_DISCONTINUITY_MIN_INC_USD && v < COST_DISCONTINUITY_FLOOR_USD",
 		"backed: kind === 'm'",
-		"if (!s.backed && s.amount > ceil) continue;",
-		"if (backed[i] || inc <= cap) spend += inc;",
+		"if (!s.backed && !costStepAllowed(s.amount, s.gap, cap)) continue;",
+		"if (backed[i] || costStepAllowed(incs[i], gaps[i], ceiling)) spend += incs[i];",
 		"costAllTimeEstimate(est, cost)",
 	} {
 		if !strings.Contains(html, snippet) {
