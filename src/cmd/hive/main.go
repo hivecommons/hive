@@ -1762,7 +1762,6 @@ func (b *boot) wireBootClosures() {
 				case <-ticker.C:
 					runSessionPrune(b.logger, dir, maxAge)
 					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
-			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 				}
 			}
