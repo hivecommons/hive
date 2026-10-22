@@ -44,7 +44,7 @@ The advisor computes the checklist for advancing to the level **one above** the 
 | L5 (Semi-Automated) | required | ≥ 75% | ≥ 8 | ≥ 85% | ≤ 25 | ≤ 15 |
 | L6 (Fully Autonomous) | required | ≥ 90% | ≥ 12 | ≥ 95% | ≤ 10 | ≤ 5 |
 
-The L2 pack includes a COMMENT-only `reviewer` as the review-first entry point; the advisor criteria above are unchanged by it. Decision taken by hive: review is part of L2 proper (COMMENT-only); no L2.5 level — a new level would ripple through level enums, advisor and dashboard; keeping L2 triage+review preserves the review-first entry point the vote asked for.
+The L2 pack includes a COMMENT-only `reviewer` as the review-first entry point, and the reviewer ships in every pack from L2 up (L3/L4 review the `hold`-gated queue with no merge power; L5/L6 per [#8023](https://github.com/hivecommons/hive/issues/8023)); the advisor criteria above are unchanged by it. Decision taken by hive: review is part of L2 proper (COMMENT-only); no L2.5 level — a new level would ripple through level enums, advisor and dashboard; keeping L2 triage+review preserves the review-first entry point the vote asked for.
 
 Source: `criteriaForTarget` and the threshold constants in `src/pkg/acmmadvisor/acmmadvisor.go:32-104,259-338`. All thresholds are compile-time constants; there is no config field or environment variable that overrides them (see [What this does NOT do](#what-this-does-not-do)).
 

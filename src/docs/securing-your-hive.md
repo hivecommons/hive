@@ -53,7 +53,7 @@ Either way, any resulting pull request is held: at L5 the level gate labels
 those are held the same way; the rest stay `measured` (issues only) or
 `advisory`. Don't describe L4 as "L5 but smaller" — it's a genuinely mixed
 roster, not a uniformly held one. See the [L3–L5 agent/mode
-tables](acmm-policy-matrix.md#l4--security-aware-adaptive-7-agents).
+tables](acmm-policy-matrix.md#l4--security-aware-adaptive-8-agents).
 
 **A known contributor (`COLLABORATOR`/`MEMBER`) files an issue:** same
 treatment — reporter trust is off, so Hive doesn't look at who asked, only at
