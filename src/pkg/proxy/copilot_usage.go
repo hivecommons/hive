@@ -35,10 +35,12 @@ type copilotUsageRequest struct {
 	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
 }
 
-// isCopilotCompletionsPath reports whether an HTTP request path targets the
-// Copilot chat completions endpoint.
+// isCopilotCompletionsPath reports whether an HTTP request path targets a
+// Copilot completion endpoint whose response carries a usage block: the
+// OpenAI-shaped chat completions endpoint or the Anthropic Messages endpoint
+// (see isCopilotAnthropicMessagesPath).
 func isCopilotCompletionsPath(path string) bool {
-	return strings.HasSuffix(path, copilotCompletionsPathSuffix)
+	return strings.HasSuffix(path, copilotCompletionsPathSuffix) || isCopilotAnthropicMessagesPath(path)
 }
 
 // parseCopilotRequest extracts the model id and streaming flag from a Copilot

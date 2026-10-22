@@ -1,0 +1,1 @@
+- Copilot live usage capture now records Claude completions that the Copilot CLI sends to the Anthropic `/v1/messages` endpoint (JSON and streamed, including prompt-cache tokens), and helper calls on another model no longer relabel the agent's model ([#13487](https://github.com/hivecommons/hive/issues/13487)).

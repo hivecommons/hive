@@ -62,6 +62,22 @@ The path, end to end:
   when the request pinned the `auto` sentinel
   (`extractCopilotResponseModel`, `:147`), and records it at `github_proxy.go:2662`.
 
+- Claude models: Copilot CLI 1.0.88 and later sends Claude completions to the
+  Anthropic Messages endpoint (`POST …/v1/messages`) instead of
+  `/chat/completions`. `isCopilotCompletionsPath` matches that suffix too
+  (`isCopilotAnthropicMessagesPath`, `src/pkg/proxy/copilot_anthropic_usage.go`),
+  and `forwardCopilotAnthropicResponseWithUsage` tees the response body
+  through a usage parser rather than buffering it, so streams are relayed as
+  they arrive. Usage comes from `usage` on the JSON response, or from
+  `message_start.message.usage` overlaid by `message_delta.usage` on the SSE
+  stream, with the model from `message_start.message.model`. The request is
+  forwarded unmodified (no `stream_options` injection), and the prompt-cache
+  counts (`cache_read_input_tokens`, `cache_creation_input_tokens`) are
+  recorded alongside input/output via `InferenceSink.RecordCopilotWithCache`.
+  Each recorded call keeps its own model in the usage timeline. The agent's
+  pinned model is the one with the most tokens, so the CLI's occasional
+  `gpt-4o-mini` helper calls no longer relabel a Claude agent.
+
 So at `github_proxy.go:2662` the proxy holds, per completion response:
 `(agentName, resolvedModel, inputTokens, outputTokens)`, at a known wall-clock
 moment. That is the per-request grain phase 4 wants, and it already exists.

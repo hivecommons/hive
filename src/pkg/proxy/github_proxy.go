@@ -3313,6 +3313,7 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 		}
 
 		isCompletion := isCopilotCompletionsPath(req.URL.Path)
+		isAnthropic := isCopilotAnthropicMessagesPath(req.URL.Path)
 		model := ""
 
 		// For completion requests, buffer the body so we can (a) learn the
@@ -3328,7 +3329,9 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			}
 			var streaming bool
 			model, streaming = parseCopilotRequest(body)
-			if streaming {
+			// stream_options is OpenAI-only; Anthropic streams always carry
+			// usage in message_start/message_delta.
+			if streaming && !isAnthropic {
 				body = ensureStreamUsageRequested(body)
 			}
 			req.Body = io.NopCloser(bytes.NewReader(body))
@@ -3354,14 +3357,18 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			return
 		}
 
-		if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if isAnthropic && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if err := p.forwardCopilotAnthropicResponseWithUsage(client, resp, host, agentName, model); err != nil {
+				p.logTimeout("copilot sniff: response relay timed out", err, "agent", agentName, "host", host, "path", req.URL.Path)
+				return
+			}
+		} else if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			p.forwardCopilotResponseWithUsage(client, resp, host, agentName, model)
 		} else {
-			// This is the branch that carries Anthropic-style streaming
-			// completions (/v1/messages never matches the OpenAI-shaped
-			// completions suffix), so the Write below can legitimately stay
-			// open for the whole generation. It must therefore be bounded by
-			// stall, not by total duration — see stallBoundedWriter.
+			// Non-completion and non-2xx responses are relayed verbatim. The
+			// Write below can legitimately stay open for a long time, so it
+			// must be bounded by stall, not by total duration — see
+			// stallBoundedWriter.
 			if err := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout}); err != nil {
 				_ = resp.Body.Close()
 				_ = client.SetWriteDeadline(time.Time{})
@@ -3376,6 +3383,42 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 			return
 		}
 	}
+}
+
+// forwardCopilotAnthropicResponseWithUsage relays an Anthropic Messages
+// (/v1/messages) response to the client while teeing the body through a usage
+// parser, so streamed Claude completions are forwarded as they arrive rather
+// than buffered. Usage (including prompt-cache counts) is recorded once the
+// body has been fully relayed. resp.Body is consumed and closed here.
+func (p *GitHubProxy) forwardCopilotAnthropicResponseWithUsage(client net.Conn, resp *http.Response, host, agentName, model string) error {
+	tee := newAnthropicUsageTee(resp.Body, resp.Header.Get("Content-Type"))
+	resp.Body = tee
+	writeErr := resp.Write(&stallBoundedWriter{conn: client, idle: httpWriteTimeout})
+	_ = resp.Body.Close()
+	_ = client.SetWriteDeadline(time.Time{})
+
+	// Record whatever was observed even if the client went away mid-stream:
+	// the upstream already billed those tokens.
+	u := tee.usage()
+	if u.total() > 0 {
+		resolvedModel := model
+		if resolvedModel == "" || resolvedModel == copilotAutoModelSentinel {
+			resolvedModel = u.Model
+		}
+		if resolvedModel != "" && resolvedModel != copilotAutoModelSentinel {
+			p.tokenSink.RecordCopilotWithCache(agentName, resolvedModel, u.Input, u.Output, u.CacheRead, u.CacheCreation)
+			p.logger.Info("copilot usage recorded",
+				"agent", agentName,
+				"host", host,
+				"model", resolvedModel,
+				"input", u.Input,
+				"output", u.Output,
+				"cache_read", u.CacheRead,
+				"cache_creation", u.CacheCreation,
+			)
+		}
+	}
+	return writeErr
 }
 
 // forwardCopilotResponseWithUsage forwards a completion response to the client
