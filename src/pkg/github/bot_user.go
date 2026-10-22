@@ -58,7 +58,9 @@ const selfLoginRetryAfter = 5 * time.Minute
 // authenticates as, learned from GET /user. It returns "" when the lookup
 // failed (App installation tokens cannot call it; App clients carry
 // appBotLogin instead). A success is cached for the client's lifetime; a
-// failure is cached for selfLoginRetryAfter.
+// failure is cached for selfLoginRetryAfter. Concurrent callers share the
+// in-flight lookup; a waiter whose context is cancelled returns "" without
+// cancelling the lookup.
 func (c *Client) resolveSelfLogin(ctx context.Context) string {
 	if c == nil {
 		return ""
