@@ -20,14 +20,24 @@ import "testing"
 // reviewerLevels are the packs the role is defined in. L5 and L6 are the levels
 // where a PR can reach merge without a mandatory human read — L5 gates on the
 // `hold` label and L6 auto-merges on green — so they are where a repo-grounded
-// pre-merge judgment has somewhere to land.
-var reviewerLevels = []int{5, 6}
+// pre-merge judgment has somewhere to land. L2 is the review-first advisory
+// pack: the reviewer posts COMMENT-only reviews so humans get repo-grounded
+// evidence on the PR queue before any agent is allowed to write.
+var reviewerLevels = []int{2, 5, 6}
 
-// nonReviewerLevels are the packs the role is deliberately absent from. At
-// L3/L4 the `hold` label already blocks every agent PR behind a human, so a
-// reviewer there is triage rather than a safety gate — and adding it is not
-// free, so it is left out rather than shipped unused.
-var nonReviewerLevels = []int{1, 2, 3, 4}
+// nonReviewerLevels are the packs the role is deliberately absent from. L1 is
+// observe-only, and at L3/L4 the `hold` label already blocks every agent PR
+// behind a human, so a reviewer there is triage rather than a safety gate —
+// and adding it is not free, so it is left out rather than shipped unused.
+var nonReviewerLevels = []int{1, 3, 4}
+
+// adjudicatorLevels are the packs the needs-human adjudicator lane runs in.
+// It repairs and de-escalates PRs, which needs ISSUES_AND_PRS, so it stays
+// dormant below L5 even where the comment-only reviewer is present.
+var adjudicatorLevels = []int{5, 6}
+
+// nonAdjudicatorLevels are the packs the adjudicator must not appear in.
+var nonAdjudicatorLevels = []int{1, 2, 3, 4}
 
 func reviewerIn(t *testing.T, level int) (PackAgent, bool) {
 	t.Helper()
@@ -59,12 +69,12 @@ func TestReviewerRoleDefinedAtHighTrustLevels(t *testing.T) {
 	}
 }
 
-// TestReviewerAbsentBelowL5 pins that the role does NOT silently appear at
-// levels whose merge policy already requires a human. This is the positive
+// TestReviewerAbsentAtObserveAndHoldLevels pins that the role does NOT
+// silently appear at levels whose merge policy already requires a human. This is the positive
 // control for the test above: it proves the lookup can return false, so
 // "present at L5/L6" is a real assertion rather than a helper that always
 // finds something.
-func TestReviewerAbsentBelowL5(t *testing.T) {
+func TestReviewerAbsentAtObserveAndHoldLevels(t *testing.T) {
 	for _, lvl := range nonReviewerLevels {
 		if _, ok := reviewerIn(t, lvl); ok {
 			t.Errorf("L%d must not define the reviewer agent: the hold label already gates every agent PR behind a human there", lvl)
@@ -179,7 +189,7 @@ func adjudicatorIn(t *testing.T, level int) (PackAgent, bool) {
 }
 
 func TestAdjudicatorReachesReviewerLane(t *testing.T) {
-	for _, lvl := range reviewerLevels {
+	for _, lvl := range adjudicatorLevels {
 		a, ok := adjudicatorIn(t, lvl)
 		if !ok {
 			t.Fatalf("L%d pack is missing the adjudicator agent: nothing would work needs-human PRs", lvl)
@@ -202,7 +212,7 @@ func TestAdjudicatorReachesReviewerLane(t *testing.T) {
 			t.Errorf("L%d: adjudicator must have include_repos: true to repair a branch", lvl)
 		}
 	}
-	for _, lvl := range nonReviewerLevels {
+	for _, lvl := range nonAdjudicatorLevels {
 		if _, ok := adjudicatorIn(t, lvl); ok {
 			t.Errorf("L%d must not define the adjudicator: the lane is dormant below L5", lvl)
 		}
@@ -210,7 +220,7 @@ func TestAdjudicatorReachesReviewerLane(t *testing.T) {
 }
 
 func TestAdjudicatorHasCadenceEntry(t *testing.T) {
-	for _, lvl := range reviewerLevels {
+	for _, lvl := range adjudicatorLevels {
 		p, err := ACMMPackByLevel(lvl)
 		if err != nil {
 			t.Fatalf("ACMMPackByLevel(%d): %v", lvl, err)
