@@ -80,9 +80,13 @@ func TestCostRollupDiscontinuityCeiling(t *testing.T) {
 // retention horizon, and surfaces the rollup on /api/cost.
 func TestCostRollupFoldLifecycle(t *testing.T) {
 	s := covCServer(t)
-	now := time.Date(2026, 10, 21, 12, 30, 0, 0, time.UTC)
+	// SeedCostDailyRollups folds with the wall clock, so "today" must be the
+	// real UTC date: a fixed date turns into a complete day the moment the
+	// calendar moves past it, and the still-open day below gets stored.
+	now := time.Now().UTC().Truncate(24 * time.Hour).Add(12*time.Hour + 30*time.Minute)
 	today := now.Truncate(24 * time.Hour)
 	yesterday := today.AddDate(0, 0, -1)
+	older := today.AddDate(0, 0, -50).Format(costRollupDayLayout)
 
 	var hist []CostHistoryEntry
 	for h := 0; h < 24; h++ {
@@ -110,14 +114,14 @@ func TestCostRollupFoldLifecycle(t *testing.T) {
 	// the retention horizon are pruned.
 	ancient := now.AddDate(0, 0, -costDailyRollupRetentionDays-1).Format(costRollupDayLayout)
 	s.SeedCostDailyRollups([]CostDailyRollup{
-		{Day: "2026-09-01", USD: 12, Samples: 288},
+		{Day: older, USD: 12, Samples: 288},
 		{Day: ancient, USD: 99, Samples: 288},
 		{Day: "not-a-day", USD: 1, Samples: 1},
 	})
 	s.foldCostRollups(now)
 	got = s.CostDailyRollups()
-	if len(got) != 2 || got[0].Day != "2026-09-01" || got[1].USD != 23 {
-		t.Fatalf("rollups after seed = %+v, want 2026-09-01 then yesterday", got)
+	if len(got) != 2 || got[0].Day != older || got[1].Day != yesterday.Format(costRollupDayLayout) || got[1].USD != 23 {
+		t.Fatalf("rollups after seed = %+v, want %s then yesterday", got, older)
 	}
 
 	rec := doGet(s, "/api/cost")
