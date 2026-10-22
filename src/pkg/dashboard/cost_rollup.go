@@ -231,16 +231,17 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 			if d > 0 {
 				r.USD += d
 			}
-			for name, cur := range e.Models {
-				p, ok := prev.Models[name]
-				if !ok && len(prev.Models) == 0 {
-					continue
-				}
-				if d := cur.Input - p.Input; d > 0 {
-					r.InputTokens += d
-				}
-				if d := cur.Output - p.Output; d > 0 {
-					r.OutputTokens += d
+			// Legacy snapshots without per-model data contribute no token
+			// growth; otherwise a model absent from prev counts from zero.
+			if len(prev.Models) > 0 {
+				for name, cur := range e.Models {
+					p := prev.Models[name]
+					if d := cur.Input - p.Input; d > 0 {
+						r.InputTokens += d
+					}
+					if d := cur.Output - p.Output; d > 0 {
+						r.OutputTokens += d
+					}
 				}
 			}
 		}
@@ -257,7 +258,9 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 // the partial refold replaces it only when it recovers more spend (e.g. a day
 // folded before token-backed gap steps were kept), so an eroding window can
 // never overwrite a full day with a smaller partial one. Days beyond the
-// retention horizon are pruned.
+// retention horizon are pruned. The folded days that end up not stored
+// (today's partial) are cached for costAllTime so a GET /api/cost never
+// refolds the ring.
 func (s *Server) foldCostRollups(now time.Time) {
 	hist := s.CostHistory()
 	folded := costFoldDailyRollups(hist)
@@ -290,6 +293,13 @@ func (s *Server) foldCostRollups(now time.Time) {
 			delete(s.costRollup, day)
 		}
 	}
+	s.costRollupPending = map[string]CostDailyRollup{}
+	for day, r := range folded {
+		if _, have := s.costRollup[day]; !have {
+			s.costRollupPending[day] = r
+		}
+	}
+	s.costRollupFirstTS = firstTS
 }
 
 // CostDailyRollups returns the stored daily rollups in ascending day order.
@@ -322,30 +332,31 @@ func (s *Server) SeedCostDailyRollups(entries []CostDailyRollup) {
 }
 
 // costAllTime is the headline all-time estimate: the persisted daily rollups
-// plus the ring's folded days that are not stored yet (today's partial), so it
-// neither double counts lineage residuals nor shrinks as the 30-day ring
-// evicts. since is the start of the oldest rollup day (stable), else the first
-// snapshot; with no history at all it falls back to the live estimate.
+// plus the ring's folded days that are not stored yet (today's partial, cached
+// by foldCostRollups), so it neither double counts lineage residuals nor
+// shrinks as the 30-day ring evicts. since is the start of the oldest rollup
+// day (stable), else the first snapshot; with no history at all it falls back
+// to the live estimate.
 func (s *Server) costAllTime(est costEstimated) (usd float64, since int64) {
-	rollups := s.CostDailyRollups()
-	hist := s.CostHistory()
-	if len(rollups) == 0 && len(hist) == 0 {
+	s.costRollupMu.Lock()
+	defer s.costRollupMu.Unlock()
+	if len(s.costRollup) == 0 && s.costRollupFirstTS == 0 {
 		return est.TotalUSD, est.WindowStart
 	}
-	stored := make(map[string]bool, len(rollups))
-	for _, r := range rollups {
-		stored[r.Day] = true
+	oldest := ""
+	for day, r := range s.costRollup {
 		usd += r.USD
-	}
-	for day, r := range costFoldDailyRollups(hist) {
-		if !stored[day] {
-			usd += r.USD
+		if oldest == "" || day < oldest {
+			oldest = day
 		}
 	}
-	if len(rollups) > 0 {
-		since, _ = costRollupDayStart(rollups[0].Day)
+	for _, r := range s.costRollupPending {
+		usd += r.USD
+	}
+	if oldest != "" {
+		since, _ = costRollupDayStart(oldest)
 	} else {
-		since = hist[0].Timestamp
+		since = s.costRollupFirstTS
 	}
 	return usd, since
 }

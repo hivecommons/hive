@@ -275,7 +275,7 @@ func TestCostAllTimeFromDailyRollup(t *testing.T) {
 	today := now.Truncate(24 * time.Hour)
 	old := today.AddDate(0, 0, -100).Format(costRollupDayLayout)
 	s.SeedCostDailyRollups([]CostDailyRollup{{Day: old, USD: 1000, Samples: 288}})
-	s.costSeries().Seed([]CostHistoryEntry{
+	s.SeedCostHistory([]CostHistoryEntry{
 		rollupSnap(today, 5, 5000, 50),
 		rollupSnap(today.Add(time.Minute), 7, 7000, 70),
 	})
@@ -297,7 +297,7 @@ func TestCostAllTimeFromDailyRollup(t *testing.T) {
 	}
 
 	// Ring eviction leaves the rollup-backed total and its start alone.
-	s.costSeries().Seed(nil)
+	s.SeedCostHistory(nil)
 	usd, since := s.costAllTime(s.estimatedCost())
 	if usd != 1000 || since != wantSince {
 		t.Fatalf("after eviction all_time = $%v since %d, want $1000 since %d", usd, since, wantSince)

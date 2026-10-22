@@ -6,9 +6,13 @@ import (
 )
 
 // costHistorySampleInterval is the server-side sampler's period: the cost
-// ring's own throttle, so the ring really holds ~30 days at 5-min intervals
-// whether or not a browser is polling /api/knowledge/stats.
-const costHistorySampleInterval = costHistoryMinIntervalMs * time.Millisecond
+// ring's own throttle plus a second of slack, so the ring really holds ~30
+// days at 5-min intervals whether or not a browser is polling
+// /api/knowledge/stats. The slack matters: entry timestamps are taken after
+// the sample is computed, so a tick at exactly the throttle lands a jittered
+// ~300000ms after the last entry and the ring (strict "< minInterval") would
+// silently drop about half of them, recording at 5- or 10-minute spacing.
+const costHistorySampleInterval = costHistoryMinIntervalMs*time.Millisecond + time.Second
 
 // StartCostHistorySampler samples the estimated-cost and fact histories every
 // costHistorySampleInterval until ctx is cancelled. The browser-triggered

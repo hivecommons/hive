@@ -11698,7 +11698,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const total = costAllTimeEstimate(_lastCost && _lastCost.estimated, _lastCost);
       const hist = total.series;
       const title = hist.length
-        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} lineage reset(s) preserved in the cumulative total` : 'recorded history samples'}`
+        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} lineage reset(s) ${total.rollup ? 'ignored by the daily-rollup total' : 'preserved in the cumulative total'}` : 'recorded history samples'}`
         : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
       return axisSparkSvg(hist, e => e.usd, e => e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
         title);
@@ -12096,10 +12096,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         currentUSD: Number.isFinite(est && Number(est.total_usd)) ? Number(est.total_usd) : null,
         currentStart: est && est.window_start ? est.window_start : 0,
         resets,
+        rollup: false,
         series,
       };
     }
 
+    // Resets are still detected for the tooltip, but the rollup total folds
+    // only positive per-day increments, so they are ignored, not preserved.
     function costAllTimeFromRollup(est, cost) {
       const hist = costHist();
       const total = Number(cost.all_time_usd);
@@ -12133,6 +12136,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         currentUSD: Number.isFinite(est && Number(est.total_usd)) ? Number(est.total_usd) : null,
         currentStart: est && est.window_start ? est.window_start : 0,
         resets,
+        rollup: true,
         series,
       };
     }
@@ -23227,7 +23231,7 @@ function burnAreaChart() {
         parts.push(`Current token-summary lineage: ${fmtUSD(total.currentUSD)}${since}.`);
       }
       if (total.resets.length) {
-        parts.push(`Preserved ${total.resets.length} lineage reset(s): ` + total.resets.map(r => `${fmtCostDateTime(r.timestamp)} dropped ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ') + '.');
+        parts.push(`${total.rollup ? 'Ignored' : 'Preserved'} ${total.resets.length} lineage reset(s): ` + total.resets.map(r => `${fmtCostDateTime(r.timestamp)} dropped ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ') + '.');
       }
       return parts.join(' ');
     }

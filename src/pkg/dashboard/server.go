@@ -198,6 +198,11 @@ type Server struct {
 	// section can reach beyond the ring's ~30 days (see cost_rollup.go).
 	costRollupMu sync.Mutex
 	costRollup   map[string]CostDailyRollup
+	// costRollupPending caches the folded days foldCostRollups did not store
+	// (today's partial) and costRollupFirstTS the ring's first timestamp, so
+	// costAllTime never refolds the ring per request.
+	costRollupPending map[string]CostDailyRollup
+	costRollupFirstTS int64
 	// budgetWindowHist records one row per CLOSED budget window (#4298). Lazily
 	// built like the sparkline rings so a zero-value Server works in tests.
 	budgetWindowOnce sync.Once
