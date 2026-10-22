@@ -26666,6 +26666,12 @@ function burnAreaChart() {
       return `${headline}<div class="ev-flow"><div><h5>Issues</h5>${issues}</div><div><h5>Pull requests</h5>${prs}</div></div>`;
     }
 
+    function evIssueReopenRatesHtml(dto) {
+      const rows = Array.isArray(dto.issue_reopen_rates_30d) ? dto.issue_reopen_rates_30d : [];
+      const body = rows.length ? `<table><thead><tr><th>Repository</th><th>Clarity gate</th><th>Reopened / closed</th><th>Rate</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(String(r.repo || ''))}</td><td>${r.clarity_gate ? 'Passed through' : 'No marker'}</td><td>${Number(r.reopened) || 0} / ${Number(r.closed) || 0}</td><td>${evPct(r.rate)}</td></tr>`).join('')}</tbody></table>` : '<div class="ev-note">No captured issue closures in the last 30 days.</div>';
+      return `<section class="ev-panel"><h4>Issue reopen rate · rolling 30 days</h4>${body}<p class="ev-note">Distinct issues closed by hive PRs in the last 30 days, split by the clarity-gate marker at closure. Uses closure time, not the selected PR window or author filter. Missing historical clarity status is excluded, not counted as ungated. Recent closures have less time to reopen; this comparison does not prove causality.</p></section>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -26708,6 +26714,7 @@ function burnAreaChart() {
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
+        + evIssueReopenRatesHtml(dto)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
           `The self-reported series includes ${Number(dto.reviewer_calibration_legacy) || 0} legacy verdict(s) using the old verdict-based confidence. The derived series excludes verdicts without a recorded derived score; n counts only the selected series. Slopes pool perspectives and compare the endpoint rise per bin across bins with at least five known outcomes, using each series’ available records. Later CI results never rewrite a recorded derived score. This calibration panel plots merge and block rates. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),

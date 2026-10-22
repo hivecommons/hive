@@ -103,6 +103,9 @@ type EvidenceSummary struct {
 	// plain-English summary shown above each chart (#13204). Derived from the
 	// fields above by evidenceCards; see pkg/evidence/grade.go for the rubrics.
 	Cards map[string]evidence.Card `json:"cards"`
+	// IssueReopenRates always uses the trailing 30 days by closure time,
+	// independent of the PR-open-time window and author filter.
+	IssueReopenRates []evidence.ReopenRate `json:"issue_reopen_rates_30d"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -703,6 +706,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	ledger, lerr := review.LoadOutcomeLedger("")
 	hints := evidenceOutcomeHints(ledger)
 	resp := buildEvidenceSummaryWindowHints(bundles, hints, win, repo, kind)
+	resp.IssueReopenRates = evidence.IssueReopenRates(bundles, now, repo)
 	resp.AvailableWindows = evidenceAvailableWindows(bundles, now, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)

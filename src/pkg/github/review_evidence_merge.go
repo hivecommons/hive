@@ -82,6 +82,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	collect := func(b *evidence.Bundle) {
 		c.captureReviewEvidenceMergeContext(ctx, owner, name, b, merge.At)
 		linkReviewEvidenceChanges(b, text, merge.At)
+		c.captureReviewEvidenceClosures(ctx, b, fetched)
 	}
 	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect, fetched)
 	c.recordReviewEvidenceBacklinks(b, settings)
