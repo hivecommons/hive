@@ -117,6 +117,11 @@ func isTransientEnumerationError(err error) bool {
 	if errors.Is(err, ErrForgeStateNotReady) {
 		return true
 	}
+	// An issue list that under-reports against the repository record is
+	// the list failing, not the repo's backlog (enumerate_verify.go).
+	if errors.Is(err, errIssueListIncomplete) {
+		return true
+	}
 	if isRetryableGitHubError(err) {
 		return true
 	}

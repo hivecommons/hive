@@ -489,6 +489,10 @@ func SelfReportMarker(fp, hive string) string {
 	return fmt.Sprintf("%sfp=%s hive=%s -->", SelfReportMarkerPrefix, safeToken(fp), labelValue(hive))
 }
 
+// MarkerHive is the normalised hive value the self-report and seen markers
+// carry (`hive=<value>`), so a reader can build the needle for a given hive.
+func MarkerHive(hive string) string { return labelValue(hive) }
+
 // SeenMarker is the comment marker a joining hive leaves.
 func SeenMarker(fp, hive string) string {
 	return fmt.Sprintf("%shive=%s fp=%s -->", SelfReportSeenMarkerPrefix, labelValue(hive), safeToken(fp))

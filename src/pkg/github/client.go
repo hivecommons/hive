@@ -966,6 +966,14 @@ type PullRequest struct {
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// ReferencedIssues are the same-repo issues the PR's own title and body
+	// refer to (PRReferencedIssues: closing keywords GitHub did not derive,
+	// `Refs #N`, `(#N, part 1)` titles, first-paragraph mentions), each
+	// tagged with its Via. Read from the list payload, no extra call. The
+	// activity monitor falls back to them when LinkedIssues is empty so a
+	// PR that works towards an issue still sits on its row, drawn as a
+	// soft link.
+	ReferencedIssues []PRLinkedIssue `json:"referenced_issues,omitempty"`
 }
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
@@ -977,6 +985,9 @@ type PRLinkedIssue struct {
 	Repo   string `json:"repo,omitempty"`
 	State  string `json:"state,omitempty"`
 	URL    string `json:"url,omitempty"`
+	// Via is how the link was found: "" for GitHub's closing reference,
+	// else one of the PRLinkVia* values (pr_reference_links.go).
+	Via string `json:"via,omitempty"`
 }
 type PRReworkStats struct {
 	ReviewRounds        int       `json:"review_rounds,omitempty"`
@@ -1521,6 +1532,32 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			breakdown:   RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown},
 			details:     RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs},
 		}
+		// An issue list that came back empty beside a populated PR list is
+		// verified against the repo record before it is published as zero
+		// (hosted hive, 2026-10-22: every repo "0 issues · N PRs"). A list
+		// that under-reports is the issue side failing, not an empty
+		// backlog: the previous enumeration is served when there is one,
+		// else the PRs are kept and the missing issues are reported as an
+		// unlisted, stale remainder so the dashboard never prints 0.
+		if issueTotal == 0 && prTotal > 0 {
+			if missing, verr := c.verifyEmptyIssueList(repoCtx, repo, prTotal); verr != nil || missing > 0 {
+				if verr == nil {
+					verr = fmt.Errorf("%w: %s lists %d open pull requests and no issues while GitHub reports %d more open items", errIssueListIncomplete, repo, prTotal, missing)
+				}
+				if serveLastGood(repo, "issues", verr) {
+					continue
+				}
+				enum.counts.Issues = missing
+				appendRepo(repo, enum)
+				staleRepos = append(staleRepos, repo)
+				if staleSince.IsZero() || now.Before(staleSince) {
+					staleSince = now
+				}
+				c.logger.Warn("issue list came back empty beside open pull requests and could not be confirmed; publishing the repo's issue count as unverified (marked stale)",
+					"repo", repo, "prs", prTotal, "unlisted_issues", missing, "error", verr)
+				continue
+			}
+		}
 		appendRepo(repo, enum)
 		if listing != nil {
 			listing.itemPatches(repo, itemPatches)
@@ -1953,6 +1990,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					BaseRef:             prBaseRef(pr),
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
+					ReferencedIssues:    PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 				})
 			} else {
 				sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Held draft"))
@@ -1985,6 +2023,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
 					RequestedReviewers: reqLogins,
 					RequestedTeams:     reqTeams,
+					ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 				})
 			}
 			continue
@@ -2042,6 +2081,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			BaseRef:            prBaseRef(pr),
 			RequestedReviewers: reqLogins,
 			RequestedTeams:     reqTeams,
+			ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 		})
 	}
 
@@ -4126,6 +4166,9 @@ type RepoWorkPR struct {
 	// monitor. Stamped by EnrichReviewSignalsAndWorkPRs, not by the
 	// enumeration.
 	LinkedIssues []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// ReferencedIssues mirrors PullRequest.ReferencedIssues; stamped by the
+	// enumeration, which has the body.
+	ReferencedIssues []PRLinkedIssue `json:"referenced_issues,omitempty"`
 }
 
 // Work-detail buckets for sidelined PRs (RepoPRBreakdown field names).
@@ -4150,6 +4193,9 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 		URL:            pr.GetHTMLURL(),
 		Bucket:         bucket,
 		Reason:         reason,
+		// The list payload carries the body, so the soft issue links cost
+		// no extra call.
+		ReferencedIssues: PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 	}
 }
 

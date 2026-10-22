@@ -145,6 +145,7 @@ writes no entry.
 | Recommendations issue | `recommendations.go` | yes (`recommendations_posted`, `outcome=created` or `updated`) | yes / issue number |
 | Fleet report issue | `fleet_report.go` | yes (`fleet_report_posted`, `outcome=created` or `commented`) | yes / issue number |
 | Fleet report recovery | `fleet_report.go` | yes (`fleet_report_recovered`, with `closed`) | yes / issue number |
+| Legacy standalone `Fleet report:` close (hourly sweep in the hive watching the report repo, #13470) | `fleet_report_legacy_sweep.go` | yes (`fleet_report_recovered`, `reason=legacy_standalone`) | yes / issue number |
 | Reporter-trust wait notice/comment and owned label cleanup | `client.go` / `reporter_trust_wait.go` (`fetchIssues` reporter-trust reject/admit paths) | yes (`reporter_trust_wait_noticed`, `reporter_trust_wait_cleared`; label adds also record `hive_label_applied` with `reason=reporter_trust_wait`) | yes / issue number |
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`

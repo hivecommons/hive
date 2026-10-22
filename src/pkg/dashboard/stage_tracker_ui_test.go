@@ -80,6 +80,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_VIAS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
@@ -397,6 +399,16 @@ assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, st
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 4 }, { number: 5, state: 'closed', title: 'C', url: 'u' }] }), { number: 5, title: 'C', url: 'u', closed: true, placeholder: '' }, 'a known-closed issue beats one of unknown state');
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, state: 'closed' }] }), { number: 5, title: '', url: '', closed: true, placeholder: STAGE_TRACKER_CLOSED_ISSUE_TITLE });
 assert.deepStrictEqual(stageTrackerPRIssueSlot({}), { number: 0, text: 'no linked issue' });
+// Soft links (hivecommons/hive#13544): a Refs #N / (#N, part 1) reference fills the issue slot under a "refs" chip; a closing link never wears one.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 13544, kind: 'pr', title: 'Model heads (#13542, part 1)', stage: 50, nested_under: 13542, linked_issues: [{ number: 13542, title: 'Split the reviewer', url: 'https://x/13542', state: 'open', listed: true, via: 'refs' }] }, stages, ctx);
+assert.strictEqual(lead(row), '#13542 Split the reviewer refs', lead(row));
+assert.ok(row.includes('<span class="ham-badge ham-issue-refs-chip" title="' + STAGE_TRACKER_SOFT_LINK_TIP + '">refs</span>'), 'refs chip: ' + row);
+assert.ok(!row.includes('ham-no-issue'), 'no placeholder once a soft link resolves: ' + row);
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 6, state: 'open', title: 'T', via: 'title' }] }), { number: 6, title: 'T', url: '', soft: true });
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 6, via: 'mention' }] }), { number: 6, title: '', url: '', closed: false, placeholder: STAGE_TRACKER_UNTITLED_ISSUE, soft: true });
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 6, state: 'open', title: 'T', via: 'fixes' }] }), { number: 6, title: 'T', url: '' }, 'a hive-read closing keyword is not soft');
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 113, kind: 'pr', title: 'Fix', stage: 50, linked_issues: [{ number: 77, state: 'open', title: 'Closed by it' }] }, stages, ctx);
+assert.ok(!row.includes('ham-issue-refs-chip'), 'closing link draws no refs chip: ' + row);
 
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
@@ -577,6 +589,8 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_VIAS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),

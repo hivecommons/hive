@@ -94,8 +94,8 @@ func TestSweepIssueUnparkCommandsNotLabelDrivenUnchanged(t *testing.T) {
 		t.Fatalf("expected issue 21 un-parked, got %+v", result.Unparked)
 	}
 	removed := strings.Join(rec.removed[21], ",")
-	if strings.Contains(removed, "needs-human") || !strings.Contains(removed, "needs-decision") {
-		t.Fatalf("expected the decision park label removed and needs-human kept, got %v", rec.removed[21])
+	if !strings.Contains(removed, "needs-human") || !strings.Contains(removed, "needs-decision") {
+		t.Fatalf("expected the decision park label and needs-human removed on a default repo, got %v", rec.removed[21])
 	}
 	var notice bool
 	for _, body := range rec.posted[21] {

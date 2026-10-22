@@ -362,12 +362,17 @@ type advisoryPostFailure int
 const (
 	advisoryPostWriteForbidden advisoryPostFailure = iota
 	advisoryPostRateLimited
+	advisoryPostRepoArchived
 	advisoryPostAuthProbe
 )
 
 // githubWriteForbiddenText is GitHub's body when an installation token holds
 // the permission but the repo is not in the installation's selected repos.
 const githubWriteForbiddenText = "Resource not accessible by integration"
+
+// githubRepoArchivedText is GitHub's 403 body for writes to an archived repo,
+// a permanent condition that retrying cannot fix.
+const githubRepoArchivedText = "Repository was archived"
 
 func classifyAdvisoryPostError(err error) advisoryPostFailure {
 	if err == nil {
@@ -376,6 +381,9 @@ func classifyAdvisoryPostError(err error) advisoryPostFailure {
 	text := err.Error()
 	if strings.Contains(text, "403") && strings.Contains(text, githubWriteForbiddenText) {
 		return advisoryPostWriteForbidden
+	}
+	if strings.Contains(text, "403") && strings.Contains(text, githubRepoArchivedText) {
+		return advisoryPostRepoArchived
 	}
 	if isGitHubRateLimitText(err) {
 		return advisoryPostRateLimited

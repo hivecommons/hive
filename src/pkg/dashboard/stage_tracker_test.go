@@ -600,3 +600,73 @@ func TestStageTrackerPRLinkedIssues(t *testing.T) {
 		})
 	}
 }
+
+// A closed issue is never a tracker row, whatever stage label it closed
+// wearing (hivecommons/homebrew-hive#127); and a 045 store record whose
+// issue has lost every park label — a `/hive decision` the engine has not
+// yet re-derived — no longer reads "Needs human decision"
+// (hivecommons/docs#419). A record the labels still back is unchanged.
+func TestStageTrackerDecisionStateFollowsCurrentLabels(t *testing.T) {
+	now := time.Date(2026, 10, 22, 17, 0, 0, 0, time.UTC)
+	s := newTestServer()
+	clock := now
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	s.stageStore = store
+	clock = now.Add(-72 * time.Hour)
+	store.Observe(stagelabels.Key("acme/console", 127), stagelabels.IssueNeedsDecision, "parked: needs a maintainer")
+	store.Observe(stagelabels.Key("acme/console", 419), stagelabels.IssueNeedsDecision, "parked: needs a maintainer")
+	store.Observe(stagelabels.Key("acme/console", 459), stagelabels.IssueNeedsDecision, "parked: needs a maintainer")
+	store.Observe(stagelabels.Key("acme/console", 460), stagelabels.IssueNeedsDecision, "parked: needs a maintainer")
+	clock = now
+
+	status := minimalPayload()
+	status.HiveID = "hv-test"
+	status.Repos = []FrontendRepo{{
+		Name: "console", Full: "acme/console",
+		ActionableIssues: []any{
+			github.Issue{Number: 127, Title: "Closed with a stale park", Author: "pat", AuthorIsHuman: true, State: "closed", Labels: []string{"stage/045-needs-decision", "needs-human"}},
+			github.Issue{Number: 419, Title: "Decided, record not yet re-derived", Author: "pat", AuthorIsHuman: true, State: "open", Labels: []string{"approved-direction"}},
+			github.Issue{Number: 459, Title: "Still parked", Author: "pat", AuthorIsHuman: true, Labels: []string{"stage/045-needs-decision"}},
+			github.Issue{Number: 460, Title: "needs-human without the stage label", Author: "pat", AuthorIsHuman: true, Labels: []string{"needs-human"}},
+		},
+	}}
+	s.UpdateStatus(status)
+	resp := s.buildStageTracker(s.status, store, now)
+
+	for _, it := range resp.Items {
+		if it.Kind == "issue" && it.Number == 127 {
+			t.Errorf("closed issue #127 rendered at stage %d; closed issues are never tracker rows", it.Stage)
+		}
+	}
+	if it := trackerItem(t, resp, "issue", 419); it.Stage == 45 || it.StageSince != nil || hasMod(it, modNeedsDecision) {
+		t.Errorf("decided issue #419 = stage %d since %v mods %v, want no needs-decision state from a stale record", it.Stage, it.StageSince, it.Modifiers)
+	}
+	if it := trackerItem(t, resp, "issue", 459); it.Stage != 45 || it.StageSince == nil {
+		t.Errorf("parked issue #459 = stage %d since %v, want 045 from the record", it.Stage, it.StageSince)
+	}
+	if it := trackerItem(t, resp, "issue", 460); it.Stage != 45 || !hasMod(it, modNeedsHuman) {
+		t.Errorf("needs-human issue #460 = stage %d mods %v, want 045 kept (label still backs the record)", it.Stage, it.Modifiers)
+	}
+}
+
+func TestStageTrackerStaleDecisionRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		rec    stagelabels.Record
+		labels []string
+		want   bool
+	}{
+		{"045 record, no park labels", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"approved-direction"}, true},
+		{"085 record, no park labels", stagelabels.Record{Stage: stagelabels.NeedsDecision}, nil, true},
+		{"045 record backed by stage label", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"stage/045-needs-decision"}, false},
+		{"045 record backed by needs-human", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"Needs-Human"}, false},
+		{"045 record backed by retired spelling", stagelabels.Record{Stage: stagelabels.IssueNeedsDecision}, []string{"needs-decision"}, false},
+		{"085 record backed by 085 label", stagelabels.Record{Stage: stagelabels.NeedsDecision}, []string{"stage/085-needs-decision"}, false},
+		{"other stage, no labels", stagelabels.Record{Stage: stagelabels.Claimed}, nil, false},
+	}
+	for _, tc := range cases {
+		if got := stageTrackerStaleDecisionRecord(tc.rec, tc.labels); got != tc.want {
+			t.Errorf("%s: stale = %t, want %t", tc.name, got, tc.want)
+		}
+	}
+}

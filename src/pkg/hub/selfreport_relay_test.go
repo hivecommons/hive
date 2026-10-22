@@ -746,3 +746,112 @@ func TestHubSelfReportIngestCreateRetriesWithKnownLabelsNeverNone(t *testing.T) 
 		t.Fatalf("observation fallback labels = %v", obs)
 	}
 }
+
+// selfReportLegacyBody is what a spoke still on a pre-#13470 build sends for
+// a standalone ACMM-shortfall report: a "Fleet report:" title and no class
+// (hivecommons/hive#13567 was one, from 5.186.4-22-g20cec0241).
+const selfReportLegacyBody = `{"hive_id":"h1","fingerprint":"3669d5d395e864a651596cae","title":"Fleet report: agent-runtime blocks Green-CI streak [3669d5d395e864a651596cae]","body":"<!-- hive-fleet-fingerprint:3669d5d395e864a651596cae -->\n<!-- hive-fleet-instance:15c62508b5ccd73e -->\n\nA spoke reports that a hive-attributable condition is preventing it from satisfying an ACMM criterion.","labels":["fleet-report","hive/selfreport","criterion:green-ci-streak"],"version":"5.186.4-22-g20cec0241"}`
+
+// legacySelfReportGitHubScript answers the two searches the legacy path makes
+// (fingerprint miss, then the hive's tracker: hit or miss) and the comment.
+func legacySelfReportGitHubScript(t *testing.T, trackerHit bool) (http.HandlerFunc, *[]string, *[]string) {
+	t.Helper()
+	var mu sync.Mutex
+	var paths, comments []string
+	return func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		case r.URL.Path == "/search/issues":
+			q := r.URL.Query().Get("q")
+			items := []map[string]any{}
+			if strings.Contains(q, "label:"+selfReportRelayLabel) && trackerHit {
+				// A stale legacy issue must never be picked as the tracker,
+				// even when the search returns it first.
+				items = append(items,
+					map[string]any{"number": 5, "html_url": "https://github.com/hivecommons/hive/issues/5", "title": "Fleet report: merge hive-code defect [x]", "body": fleetreport.SelfReportMarker("x", "h1")},
+					map[string]any{"number": 64, "html_url": "https://github.com/hivecommons/hive/issues/64", "title": "[selfreport] advisory_post_failed: digest post failed", "body": "<!-- hive-fleet-fingerprint:zz -->\n" + fleetreport.SelfReportMarker("zz", "h1") + "\n\nbody"},
+				)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			mu.Lock()
+			comments = append(comments, payload.Body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			t.Errorf("legacy standalone report must never create an issue")
+			http.Error(w, "no", http.StatusTeapot)
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusTeapot)
+		}
+	}, &paths, &comments
+}
+
+func TestHubSelfReportIngestLegacyStandaloneFoldsOntoTracker(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths, comments := legacySelfReportGitHubScript(t, true)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	rec := selfReportIngest(s, selfReportLegacyBody, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.OK || out.Number != 64 || !out.Joined {
+		t.Fatalf("response = %s (%v)", rec.Body.String(), err)
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,GET /search/issues,POST /repos/hivecommons/hive/issues/64/comments" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+	if len(*comments) != 1 {
+		t.Fatalf("comments = %v", *comments)
+	}
+	for _, want := range []string{fleetreport.SeenMarker("3669d5d395e864a651596cae", "h1"), "5.186.4-22-g20cec0241", "#13470", "Fleet report: agent-runtime blocks Green-CI streak", "hive-fleet-instance:15c62508b5ccd73e"} {
+		if !strings.Contains((*comments)[0], want) {
+			t.Errorf("fold-in comment missing %q: %s", want, (*comments)[0])
+		}
+	}
+}
+
+func TestHubSelfReportIngestLegacyStandaloneWithoutTrackerIsGone(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths, comments := legacySelfReportGitHubScript(t, false)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	rec := selfReportIngest(s, selfReportLegacyBody, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.OK || out.Reason != selfReportLegacyRetiredReason {
+		t.Fatalf("response = %s (%v)", rec.Body.String(), err)
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,GET /search/issues" || len(*comments) != 0 {
+		t.Fatalf("github calls = %v comments = %v", *paths, *comments)
+	}
+}
+
+// A legacy title whose fingerprint already has an open issue still takes
+// the join path (comment, label, affected block): nothing new is created
+// and the sweep retires the old issue on its own.
+func TestHubSelfReportIngestLegacyStandaloneJoinsFingerprintMatch(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportGitHubScript(true)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := strings.Replace(selfReportLegacyBody, "3669d5d395e864a651596cae", "abc123", -1)
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(strings.Join(*paths, ","), "POST /repos/hivecommons/hive/issues,") || strings.HasSuffix(strings.Join(*paths, ","), "POST /repos/hivecommons/hive/issues") {
+		t.Fatalf("legacy report created an issue: %v", *paths)
+	}
+}

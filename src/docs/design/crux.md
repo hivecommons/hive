@@ -68,9 +68,12 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
 1. Architecture ratchet (shipped):
    `src/internal/testutil/crux_boundary_ratchet_test.go` counts, per package
    outside `pkg/agent/...`, the distinct `agent.<Symbol>` identifiers and the
-   non-test files that invoke tmux. Either count rising above its recorded
-   baseline fails the PR gate and names the offenders. Baselines are
-   lowered by hand as coupling is removed; they are never raised.
+   non-test files that invoke tmux. Baselines are exact and fail closed in
+   both directions: a count above its baseline fails the PR gate and names
+   the offenders; a count below it also fails and names the baseline to
+   lower, so removed coupling cannot grow back into stale headroom. Baselines
+   are lowered in the same change that removes coupling; they are never
+   raised.
 2. tmux funnel (shipped): `pkg/agent/tmux` is the one package outside the
    manager that names the tmux binary (`LookPath`, `Command`, `Attach`,
    `HasSession`); `pkg/tui` attaches through it and the ratchet's tmux
@@ -79,7 +82,10 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
 3. `agent.Runtime`: the surface dashboard and hub actually need (sessions,
    panes, kicks, engines, limits, event stream). Migrate both to it and
    ratchet the symbol counts down.
-4. Agent configuration as its own struct and file; Hive config embeds it.
+4. Agent configuration as its own struct and file (shipped):
+   `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
+   `src/pkg/config/agent_config.go`, embedded inline in `Config` and
+   `GovernorConfig` so every `hive.yaml` key keeps its position.
 5. CI path filters so agent-only PRs skip hub/rest/dashboard shards and vice
    versa, with the aggregate required check kept fail-closed.
 

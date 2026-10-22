@@ -284,7 +284,11 @@ type FrontendOpenItems struct {
 	Buckets    FrontendOpenItemBuckets `json:"buckets"`
 	Unlisted   FrontendOpenItemKinds   `json:"unlisted"`
 	StaleSince string                  `json:"staleSince,omitempty"`
-	Repos      []FrontendRepoOpenItems `json:"repos"`
+	// IssuesSyncing is true when any repo's issue side is still pending
+	// (FrontendRepoOpenItems.IssuesSyncing): the issue total is a lower
+	// bound, not a count.
+	IssuesSyncing bool                    `json:"issuesSyncing,omitempty"`
+	Repos         []FrontendRepoOpenItems `json:"repos"`
 }
 
 // FrontendOpenItemKinds is an issues/PRs pair.
@@ -310,6 +314,31 @@ type FrontendRepoOpenItems struct {
 	Unlisted   FrontendOpenItemKinds `json:"unlisted"`
 	Stale      bool                  `json:"stale,omitempty"`
 	StaleSince string                `json:"staleSince,omitempty"`
+	// IssuesSyncing mirrors FrontendRepo.IssuesSyncing: the issue side of
+	// this repo has not been listed for real yet.
+	IssuesSyncing bool `json:"issuesSyncing,omitempty"`
+}
+
+// markIssuesSyncing enforces the Overview invariant that a repo's issue
+// count never silently renders 0 beside open pull requests. A repo that
+// lists PRs but no issues while its issue figures are stale or unlisted is
+// a pending issue fetch, not an empty backlog: it is flagged IssuesSyncing
+// and its counts are marked stale so the tile, the sidebar pill and the
+// activity monitor show "syncing" rather than a confident zero. A repo
+// whose empty issue list is confirmed (no stale, nothing unlisted) is
+// left alone. Call after reconcileRepoOpenItems.
+func markIssuesSyncing(r *FrontendRepo, staleSince string) {
+	if r.Issues != 0 || r.PRs == 0 {
+		return
+	}
+	if r.UnlistedIssues == 0 && !r.CountsStale {
+		return
+	}
+	r.IssuesSyncing = true
+	r.CountsStale = true
+	if r.CountsStaleSince == "" {
+		r.CountsStaleSince = staleSince
+	}
 }
 
 // openItemsSummary builds FrontendOpenItems from a status whose repos have
@@ -331,6 +360,10 @@ func openItemsSummary(status *StatusPayload) FrontendOpenItems {
 		if repo.CountsStale {
 			row.Stale = true
 			row.StaleSince = repo.CountsStaleSince
+		}
+		if repo.IssuesSyncing {
+			row.IssuesSyncing = true
+			out.IssuesSyncing = true
 		}
 		out.Issues += row.Issues
 		out.PRs += row.PRs
