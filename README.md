@@ -140,6 +140,10 @@ Moved to [src/docs/kubernetes-deployment.md](src/docs/kubernetes-deployment.md).
 
 Hive is one of several repositories in the hivecommons organization. See [docs/repositories.md](docs/repositories.md) for the full list, what each one is for, and which ones ship inside a Hive release.
 
+## Adopters
+
+See [ADOPTERS.md](ADOPTERS.md) for the organizations running Hive and how far along each one is. If you use Hive, you can add your organization to that file with a pull request.
+
 ## Contributing
 
 See the [Hive Hub](https://hive.hivecommons.dev) to browse registered hives, view leaderboards, and find hives accepting contributions.
