@@ -80,6 +80,26 @@ func soc2Config() *config.Config {
 	return &config.Config{Compliance: config.ComplianceConfig{Frameworks: []string{"soc2-type2"}}}
 }
 
+// testBackupKeyFile is the key_file path hardenedConfig points at; the
+// TestEvaluateSOC2 readKeyFile stub makes it (and only it) resolvable.
+const testBackupKeyFile = "/test/secrets/backup_encryption_key"
+
+// stubKeyFiles swaps readKeyFile so the named paths resolve to a key and
+// every other path is missing, restoring the real reader on cleanup.
+func stubKeyFiles(t *testing.T, present ...string) {
+	t.Helper()
+	prev := readKeyFile
+	readKeyFile = func(path string) ([]byte, error) {
+		for _, p := range present {
+			if p == path {
+				return []byte("0123abcd\n"), nil
+			}
+		}
+		return nil, os.ErrNotExist
+	}
+	t.Cleanup(func() { readKeyFile = prev })
+}
+
 func hardenedConfig() *config.Config {
 	cfg := soc2Config()
 	cfg.Dashboard.AuthorizedUsers = []string{"alice", "bob:merger", "carol:read"}
@@ -91,7 +111,7 @@ func hardenedConfig() *config.Config {
 	cfg.AgentSandbox.Enabled = true
 	cfg.ToolApproval.Enabled = true
 	cfg.ACMMLevel = intPtr(4)
-	cfg.Governor.Backup.KeyFile = "/secrets/backup_encryption_key"
+	cfg.Governor.Backup.KeyFile = testBackupKeyFile
 	return cfg
 }
 
@@ -125,6 +145,7 @@ func soc2ExpectedStatuses(t *testing.T, covered map[string]Status) map[string]St
 }
 
 func TestEvaluateSOC2(t *testing.T) {
+	stubKeyFiles(t, testBackupKeyFile)
 	cases := []struct {
 		name   string
 		cfg    *config.Config
@@ -196,6 +217,71 @@ func TestEvaluateSOC2(t *testing.T) {
 						t.Errorf("unexpected control %s", id)
 					}
 				}
+			}
+		})
+	}
+}
+
+// TestBackupKeySourceFollowsResolution pins A1.2 to the key source the
+// backup path actually resolves, not the raw key_file setting.
+func TestBackupKeySourceFollowsResolution(t *testing.T) {
+	a12 := func(cfg *config.Config, getenv func(string) string) (Status, string) {
+		for _, cs := range EvaluateWith(cfg, getenv) {
+			if cs.ControlID != "A1.2" {
+				continue
+			}
+			if len(cs.Settings) != 1 {
+				t.Fatalf("A1.2 settings = %d, want 1", len(cs.Settings))
+			}
+			return cs.Status, cs.Settings[0].Current
+		}
+		t.Fatal("A1.2 not evaluated")
+		return "", ""
+	}
+	noEnv := func(string) string { return "" }
+	backupEnv := func(name string) string {
+		if name == config.BackupKeyEnv {
+			return "0123abcd"
+		}
+		return ""
+	}
+	altEnv := func(name string) string {
+		if name == "HIVE_ALT_BACKUP_KEY" {
+			return "0123abcd"
+		}
+		return ""
+	}
+	cases := []struct {
+		name       string
+		keyFile    string
+		keyEnv     string
+		present    []string
+		getenv     func(string) string
+		wantStatus Status
+		wantSource string
+	}{
+		{"unset everywhere is off", "", "", nil, noEnv, StatusOff, recNone},
+		{"key_file pointing at a missing file is off", testBackupKeyFile, "", nil, noEnv, StatusOff, recNone},
+		{"key_file present meets", testBackupKeyFile, "", []string{testBackupKeyFile}, noEnv, StatusMeets, "file:" + testBackupKeyFile},
+		{"default Secret mount meets with key_file unset", "", "", []string{config.DefaultBackupKeyFile}, noEnv, StatusMeets, "file:" + config.DefaultBackupKeyFile},
+		{"dashboard-written PVC file meets with key_file unset", "", "", []string{config.WritableBackupKeyFile}, noEnv, StatusMeets, "file:" + config.WritableBackupKeyFile},
+		{"HIVE_BACKUP_KEY fallback meets with key_file unset", "", "", nil, backupEnv, StatusMeets, "env:" + config.BackupKeyEnv},
+		{"HIVE_BACKUP_KEY fallback meets with key_file missing", testBackupKeyFile, "", nil, backupEnv, StatusMeets, "env:" + config.BackupKeyEnv},
+		{"key_env fallback meets", "", "HIVE_ALT_BACKUP_KEY", nil, altEnv, StatusMeets, "env:HIVE_ALT_BACKUP_KEY"},
+		{"nil getenv falls back safely", "", "", nil, nil, StatusOff, recNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stubKeyFiles(t, tc.present...)
+			cfg := soc2Config()
+			cfg.Governor.Backup.KeyFile = tc.keyFile
+			cfg.Governor.Backup.KeyEnv = tc.keyEnv
+			status, current := a12(cfg, tc.getenv)
+			if status != tc.wantStatus {
+				t.Errorf("A1.2 status = %s, want %s", status, tc.wantStatus)
+			}
+			if current != tc.wantSource {
+				t.Errorf("A1.2 current = %q, want %q", current, tc.wantSource)
 			}
 		})
 	}

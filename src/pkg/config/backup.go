@@ -75,13 +75,34 @@ func (c *BackupConfig) ResolveKeySource() string {
 // nil-receiver safe so callers without a config (the hub cron backup) can
 // resolve the environment fallback through the same code path.
 func (c *BackupConfig) ResolveKeyWithSource() (string, string) {
+	return c.ResolveKeyWithSourceFunc(os.Getenv, os.ReadFile)
+}
+
+// ResolveKeySourceWith is ResolveKeySource with the environment and file
+// reads injected, so callers that already thread a getenv (the compliance
+// evaluator) report the same effective source the backup path will use.
+func (c *BackupConfig) ResolveKeySourceWith(getenv func(string) string, readFile func(string) ([]byte, error)) string {
+	_, source := c.ResolveKeyWithSourceFunc(getenv, readFile)
+	return source
+}
+
+// ResolveKeyWithSourceFunc is ResolveKeyWithSource with the environment and
+// file reads injected. Nil arguments fall back to the process environment
+// and filesystem.
+func (c *BackupConfig) ResolveKeyWithSourceFunc(getenv func(string) string, readFile func(string) ([]byte, error)) (string, string) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
 	if c == nil {
 		// No config in hand means no governor-config path to honour: this is
 		// the hub cron backup and the hive-backup CLI, whose key is the
 		// escrowed env var. Probing the well-known spoke key files here would
 		// let a stray PVC file silently outrank the escrowed key and seal an
 		// archive nobody can decrypt at restore time.
-		if key := strings.TrimSpace(os.Getenv(BackupKeyEnv)); key != "" {
+		if key := strings.TrimSpace(getenv(BackupKeyEnv)); key != "" {
 			return key, "env:" + BackupKeyEnv
 		}
 		return "", ""
@@ -94,18 +115,18 @@ func (c *BackupConfig) ResolveKeyWithSource() (string, string) {
 			continue
 		}
 		seen[f] = true
-		if data, err := os.ReadFile(f); err == nil {
+		if data, err := readFile(f); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key, "file:" + f
 			}
 		}
 	}
 	if envName != "" {
-		if key := strings.TrimSpace(os.Getenv(envName)); key != "" {
+		if key := strings.TrimSpace(getenv(envName)); key != "" {
 			return key, "env:" + envName
 		}
 	}
-	if key := strings.TrimSpace(os.Getenv(BackupKeyEnv)); key != "" {
+	if key := strings.TrimSpace(getenv(BackupKeyEnv)); key != "" {
 		return key, "env:" + BackupKeyEnv
 	}
 	return "", ""

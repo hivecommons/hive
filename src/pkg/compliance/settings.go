@@ -1,6 +1,7 @@
 package compliance
 
 import (
+	"os"
 	"sort"
 	"strings"
 
@@ -144,9 +145,15 @@ var settings = map[string]setting{
 	},
 	"governor.backup.key_file": {
 		Kind:        kindString,
-		Description: "Path to the encryption key that enables fail-closed self-service backups",
-		read: func(c *config.Config, _ func(string) string) any {
-			return c.Governor.Backup.KeyFile
+		Description: "Effective backup encryption key source (file:<path> or env:<NAME>) that enables fail-closed self-service backups",
+		read: func(c *config.Config, getenv func(string) string) any {
+			// Report the source the backup path actually resolves — key_file,
+			// then the default Secret and PVC mounts, then the env fallbacks —
+			// rather than the raw key_file path, which may be unset or stale.
+			if src := c.Governor.Backup.ResolveKeySourceWith(getenv, readKeyFile); src != "" {
+				return src
+			}
+			return nil
 		},
 	},
 	"audit.retention_days": {
@@ -163,6 +170,10 @@ var settings = map[string]setting{
 		},
 	},
 }
+
+// readKeyFile is swapped by tests so the backup key-file fallbacks can be
+// exercised without touching the well-known mount paths.
+var readKeyFile = os.ReadFile
 
 func nonNilList(in []string) []string {
 	out := []string{}

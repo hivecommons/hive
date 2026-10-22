@@ -481,10 +481,12 @@ controls:
     citation: AICPA TSC 2017 A1.2
     domain: Risk management
     rationale: >-
-      A configured backup encryption key enables Hive's fail-closed encrypted
-      backup path. It does not evidence backup scheduling, off-site storage,
-      environmental protection or successful restoration; operators must
-      supply that evidence separately.
+      A resolvable backup encryption key enables Hive's fail-closed encrypted
+      backup path. The value is the effective key source the backup path uses
+      (governor key_file, the default Secret or PVC mount, or the HIVE_BACKUP_KEY
+      env fallback), not the raw key_file setting. It does not evidence backup
+      scheduling, off-site storage, environmental protection or successful
+      restoration; operators must supply that evidence separately.
     mappings:
       - setting_path: governor.backup.key_file
         recommended: non-empty
