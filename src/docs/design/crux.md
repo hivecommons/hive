@@ -1,8 +1,8 @@
 # Crux: the agent runtime boundary (#13536)
 
 Status: **partly shipped (v5).** Stage 1 is in progress in this repo: the
-boundary is named, the architecture ratchet is live, and the remaining Stage 1
-items are tracked on the RFC. Stages 2 and 3 are design only.
+boundary is named, the architecture ratchet and the tmux funnel are live, and
+the remaining Stage 1 items are tracked on the RFC. Stages 2 and 3 are design only.
 
 ## What Crux is
 
@@ -49,7 +49,8 @@ Inbound coupling. Everything reaches into `pkg/agent` directly:
   `loginscan`, `ioscan`, `discord` (AST count over Go files including tests;
   the RFC's grep-based 109/26 also matched local variables named `agent`).
 - tmux is the assumed primary isolation and is driven from `pkg/agent`'s
-  `tmuxCmd`; outside the runtime, `pkg/tui` invokes `tmux attach` directly.
+  `tmuxCmd`; outside the runtime, `pkg/tui` invoked `tmux attach` directly
+  until the funnel landed.
   (The RFC's "dashboard 17, hub 5" counted files that *mention* tmux in
   comments, JSON field names and messages, not files that invoke it.)
 - `pkg/config/config.go` is one 9,580-line file; agent settings are not a
@@ -70,8 +71,11 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    non-test files that invoke tmux. Either count rising above its recorded
    baseline fails the PR gate and names the offenders. Baselines are
    lowered by hand as coupling is removed; they are never raised.
-2. tmux funnel: every tmux invocation outside `pkg/agent` goes through one
-   package in Crux; the ratchet's tmux baseline goes to zero everywhere else.
+2. tmux funnel (shipped): `pkg/agent/tmux` is the one package outside the
+   manager that names the tmux binary (`LookPath`, `Command`, `Attach`,
+   `HasSession`); `pkg/tui` attaches through it and the ratchet's tmux
+   baseline is zero everywhere else. Operations are added as call sites
+   move behind the funnel, not ahead of them.
 3. `agent.Runtime`: the surface dashboard and hub actually need (sessions,
    panes, kicks, engines, limits, event stream). Migrate both to it and
    ratchet the symbol counts down.

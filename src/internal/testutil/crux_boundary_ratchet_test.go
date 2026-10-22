@@ -59,9 +59,11 @@ var cruxSymbolBaseline = map[string]int{
 // is what a funnel has to absorb. Likewise the RFC's "dashboard 109 symbols"
 // was a grep that also matched local variables named agent; the AST walk
 // here counts only selectors on the pkg/agent import.
-var cruxTmuxBaseline = map[string]int{
-	"pkg/tui": 1,
-}
+//
+// Empty since the tmux funnel landed: pkg/agent/tmux is the only package
+// outside pkg/agent's manager that names the binary, and it is inside the
+// Crux tree the walk skips. Any new entry here is a regression.
+var cruxTmuxBaseline = map[string]int{}
 
 const (
 	cruxAgentImportPath = "github.com/hivecommons/hive/pkg/agent"

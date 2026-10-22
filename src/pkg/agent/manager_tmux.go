@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent/tmux"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -115,12 +116,12 @@ func (m *Manager) applySessionEnv(agent *AgentProcess) {
 // Otherwise it returns ["tmux"] for the shared tmux server.
 func (m *Manager) tmuxBaseArgs(agent *AgentProcess) []string {
 	if agent.tmuxSocket != "" {
-		return []string{"tmux", "-L", agent.tmuxSocket}
+		return []string{tmux.Binary, "-L", agent.tmuxSocket}
 	}
 	if defaultTmuxSocket != "" {
-		return []string{"tmux", "-L", defaultTmuxSocket}
+		return []string{tmux.Binary, "-L", defaultTmuxSocket}
 	}
-	return []string{"tmux"}
+	return []string{tmux.Binary}
 }
 
 // tmuxHistoryLimit returns the scrollback depth (in lines) agent tmux sessions

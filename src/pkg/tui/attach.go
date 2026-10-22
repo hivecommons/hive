@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/hivecommons/hive/pkg/agent/tmux"
 	"github.com/hivecommons/hive/pkg/tui/client"
 )
 
@@ -79,14 +80,14 @@ func tmuxSessionFor(agent string) string {
 }
 
 // attachCmdFor constructs, but does not run, the interactive command for an
-// agent. exec.Command resolves tmux through PATH while retaining "tmux" as
-// Args[0], so the command is both directly executable and easy to audit as
-// exactly `tmux attach -t hive-<agent>`.
+// agent. The tmux funnel resolves tmux through PATH while retaining "tmux"
+// as Args[0], so the command is both directly executable and easy to audit
+// as exactly `tmux attach -t hive-<agent>`.
 func attachCmdFor(agent string) (*exec.Cmd, error) {
-	if _, err := exec.LookPath("tmux"); err != nil {
+	if _, err := tmux.LookPath(); err != nil {
 		return nil, &tmuxNotFoundError{err: err}
 	}
-	return exec.Command("tmux", "attach", "-t", tmuxSessionFor(agent)), nil
+	return tmux.Attach(tmuxSessionFor(agent)), nil
 }
 
 // attachDialTimeout bounds the remote dial that runs before the TUI suspends.
@@ -134,8 +135,7 @@ func localAttachTarget(agent string) (*exec.Cmd, error) {
 		return nil, err
 	}
 	session := tmuxSessionFor(agent)
-	check := exec.Command(cmd.Path, "has-session", "-t", session)
-	output, err := check.CombinedOutput()
+	output, err := tmux.HasSession(session)
 	if err != nil {
 		// tmux diagnostics are one or two short stderr lines. Folding them
 		// keeps the message a single line even when a platform emits both.
