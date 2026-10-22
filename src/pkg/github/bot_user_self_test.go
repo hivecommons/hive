@@ -67,6 +67,42 @@ func TestResolveSelfLoginPanicReleasesPending(t *testing.T) {
 	}
 }
 
+func TestResolveSelfLoginLeaderCancellationDoesNotPoisonLookup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls int
+	c := &Client{}
+	c.client = gh.NewClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		cancel()
+		if err := r.Context().Err(); err != nil {
+			t.Errorf("leader cancellation reached shared request: %v", err)
+			return nil, err
+		}
+		deadline, ok := r.Context().Deadline()
+		if !ok || time.Until(deadline) > botUserLookupTimeout {
+			t.Error("shared request is not bounded by botUserLookupTimeout")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"login":"pat-hive"}`)),
+		}, nil
+	})})
+	if login := c.resolveSelfLogin(ctx); login != "pat-hive" {
+		t.Fatalf("leader login = %q, want pat-hive", login)
+	}
+	if login := c.resolveSelfLogin(context.Background()); login != "pat-hive" {
+		t.Fatalf("subsequent login = %q, want pat-hive", login)
+	}
+	if calls != 1 {
+		t.Fatalf("GET /user calls = %d, want 1", calls)
+	}
+	if !c.selfLoginFailedAt.IsZero() {
+		t.Fatal("leader cancellation started the failure cooldown")
+	}
+}
+
 func TestResolveSelfLoginSharesInflightLookup(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("failure=%v", fail), func(t *testing.T) {
