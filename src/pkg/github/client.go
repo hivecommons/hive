@@ -2806,17 +2806,18 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	if err := c.AddLabels(ctx, owner+"/"+repoName, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s label: %w", label, err)
 	}
-	if strings.EqualFold(label, "lgtm") {
+	if strings.EqualFold(label, prowLgtmLabel) {
 		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
 	}
 	return nil
 }
 
-// prowLgtmStatusContext is the commit status Prow's commit-bound `lgtm`
-// (cncf/prow-github-actions v3, bind_to_commit) requires beside the label;
-// without it Prow strips the label and the PR drops out of the queue
-// (hivecommons/hive#13616).
+// prowLgtmLabel is Prow's approval label; prowLgtmStatusContext is the
+// commit status Prow's commit-bound `lgtm` (cncf/prow-github-actions v3,
+// bind_to_commit) requires beside the label; without it Prow strips the
+// label and the PR drops out of the queue (hivecommons/hive#13616).
 const (
+	prowLgtmLabel         = "lgtm"
 	prowLgtmStatusContext = "prow/lgtm"
 	prowStatusDescMaxLen  = 140
 )

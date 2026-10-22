@@ -41,7 +41,7 @@ Fine-grained PATs are supported — the token is sent as a plain bearer, same as
 | Pull requests | Read | Read | Read and write |
 | Checks | Read | Read | Read |
 | Actions | Read | Read | Read |
-| Commit statuses | Read | Read | Read |
+| Commit statuses | Read | Read | Read and write — needed when `governor.labels.automerge` is the default `lgtm` on a Prow repository, so the queue action can set the `prow/lgtm` status beside the label. With only Read, every queue action still applies the label but posts a PR comment that the status could not be set. |
 
 Hive does not request **Actions: Read and write** for workflow-run approvals. It only needs **Actions: Read** to inspect runs. When GitHub leaves same-repository `pull_request` runs in `action_required` on trusted Dependabot/Renovate/App PRs or registry-trusted `author/clanker` PRs, Hive posts `/ok-to-test` once for that head and reports `workflow-approval-required:<ctx>` / `stage/085-needs-decision` until the repository's own self-contained `hive-ok-to-test` workflow approves the held runs. The approval is performed by that repository's `GITHUB_TOKEN` through `.github/workflows/hive-ok-to-test.yml`; no Prow and no Hive App Actions-write grant are required. Hive never approves fork heads or PRs carrying `sentinel-alert`.
 
@@ -92,6 +92,7 @@ Repository permissions used by the dashboard setup UI are:
 | Checks | Read-only | Monitor CI status. |
 | Actions | Read-only | Inspect workflow runs. If GitHub holds trusted Dependabot/App/clanker runs in `action_required`, Hive posts `/ok-to-test`; the repository-local `hive-ok-to-test` workflow uses its own `GITHUB_TOKEN` with Actions write to approve those runs. |
 | Administration | Read-only | Read branch-protection rules before the merge-request watcher lands a PR; Hive refuses closed if it cannot verify the base branch is protected. |
+| Commit statuses | Read/write | Needed when `governor.labels.automerge` is the default `lgtm` on a repository running Prow's commit-bound `lgtm` (prow-github-actions v3): the queue action sets a `prow/lgtm` success status on the approved head so Prow does not strip the label. Without the write grant the label and approval still land, but every queue action takes the failure branch and posts a PR comment saying the status could not be set. Choose a distinct label such as `hive/auto-merge` if you would rather keep this at Read. |
 
 | Workflows | Read/write | Let trusted-tier agents push branches that modify `.github/workflows/`. Without it GitHub rejects any GitHub App-token push touching those files server-side ("refusing to allow a GitHub App to create or update workflow … without workflows permission") no matter what the token requests. Maintainer user credentials are separate and can still push workflow-file changes when their account has the normal repository rights; the Hive App cannot until this grant is added **and re-accepted on each installation** (an existing install must approve the new permission under Settings → Integrations → the app → Review request). See [`hive-open-pr`](hive-open-pr.md#workflow-file-pushes-rejected-by-app-tokens) for the agent delivery procedure and [#6985](https://github.com/hivecommons/hive/issues/6985) for the outstanding permission change. |
 Organization permission:
@@ -102,9 +103,11 @@ Organization permission:
 
 ### The optional Visual Hive App (#4030)
 
-Visual Hive needs two grants the Hive App deliberately does **not** hold — Actions
+Visual Hive needs two grants the Hive App does not otherwise require — Actions
 at write (to dispatch its installed workflow) and Commit statuses at write (to
-publish the provenance-bound setup authorization status). Rather than widen the
+publish the provenance-bound setup authorization status). The Hive App only
+asks for Commit statuses write for the `prow/lgtm` auto-merge binding above,
+and never for Actions write. Rather than widen the
 Hive App, those grants live in a separate, optional, KubeStellar-owned App, so
 enabling Visual Hive never changes what an installation that will never use it
 has approved.
