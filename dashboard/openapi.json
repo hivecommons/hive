@@ -28150,6 +28150,132 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/items/{number}/decision": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Record an operator decision on one parked issue or pull request from the activity monitor",
+        "description": "Backs the activity monitor's row context menu / selection bar Decide actions. approve and direction act on an issue parked at 045 (needs-human-decision) and do exactly what a maintainer's `/hive approve` or `/hive decision <text>` comment does: the parking labels are removed, approved-direction is applied, the stage engine records the Unparked fact and a reply comment names the operator. close-superseded and close-wontfix post a comment naming the operator and close the item as not planned (a superseded PR is closed through the sweep's labelled path). Nothing is merged. Same authorisation as the hold toggle plus a signed-in GitHub user; every decision is written to the audit log as repo_item_decision_approve|direction|close.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "decision"
+                ],
+                "properties": {
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "direction",
+                      "close-superseded",
+                      "close-wontfix"
+                    ]
+                  },
+                  "comment": {
+                    "type": "string",
+                    "description": "Required for direction (the text recorded as the decision); optional context for the close variants"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ],
+                    "description": "What the number names; defaults to issue"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decision recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "decision": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "unparked",
+                        "closed"
+                      ]
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "The label applied (approved-direction or hive/superseded), when any"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (unknown decision, direction without a comment, approve/direction on a pull request)"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "409": {
+            "description": "The issue is not parked for a decision"
+          },
+          "502": {
+            "description": "GitHub mutation failed"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      }
+    },
     "/api/repos/pauses": {
       "get": {
         "tags": [
