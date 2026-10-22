@@ -1063,7 +1063,7 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-assign-row:last-child{border-bottom:none}
 .cc-assign-action{font-family:var(--font-mono,monospace);font-weight:600;color:var(--text)}
 .cc-assign-when{color:var(--text-faint);font-size:var(--fs-xs);margin-left:auto}
-.cc-assign-detail{flex-basis:100%;color:var(--text-muted);font-size:var(--fs-xs);overflow-wrap:anywhere}
+.cc-assign-detail{flex-basis:100%%;color:var(--text-muted);font-size:var(--fs-xs);overflow-wrap:anywhere}
 .cc-mine-eligible{grid-column:1/-1;font-size:.78rem;color:var(--status-attention);background:color-mix(in srgb,var(--status-attention) var(--component-tint-soft),transparent);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);border-radius:8px;padding:var(--sp-4) 10px}
 /* When the body carries a message instead of tiles (signed out, no profile yet,
    or a load fault — #6937) the tile grid would squeeze that one sentence into a
