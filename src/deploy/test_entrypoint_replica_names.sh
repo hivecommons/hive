@@ -72,6 +72,27 @@ agents:
     replicas: 2
 YAML
 
+# #13542: review_heads derive <base>-<alias>-<n>, mirroring
+# config.ReviewHeadAgentName (pkg/config/review_heads_test.go uses the same cases).
+expect "review_heads expand per head and replica" "code-reviewer code-reviewer-claude-sonnet-5-5-1 code-reviewer-claude-sonnet-5-5-2 code-reviewer-codex-gpt-6-sol-1 code-reviewer-sol-6-1" <<'YAML'
+agents:
+  code-reviewer:
+    backend: claude
+    review_heads:
+      - {backend: claude, model: claude-sonnet-5-5, replicas: 2}
+      - {backend: codex, model: gpt-6-sol}
+      - {backend: codex, model: gpt-6-sol, alias: Sol_6}
+YAML
+
+expect "malformed or out-of-range heads expand to nothing" "r" <<'YAML'
+agents:
+  r:
+    review_heads:
+      - {backend: codex}
+      - {backend: codex, model: m, replicas: 6}
+      - not-a-head
+YAML
+
 expect "an empty config prints nothing" "" <<'YAML'
 YAML
 

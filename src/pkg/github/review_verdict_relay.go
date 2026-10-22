@@ -355,6 +355,9 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	}
 	report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, dispatchHead, prHead)
 	report.HiveAuthored = hiveAuthored
+	// The review head comes from the dispatch record, never the reviewer's
+	// own JSON: a head cannot claim to be another head (hivecommons/hive#13542).
+	report.Head = dispatchReviewHead(report, req)
 	if review.ConcreteRemediationText(req.Body) {
 		report.ConcreteRemediation = true
 	}
@@ -387,11 +390,17 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 		return report, false
 	}
 
+	// One file per perspective, and per review head when the perspective was
+	// dispatched to several heads, so each head's verdict is kept rather than
+	// the last one overwriting the others.
 	name := review.ReviewReportFilePrefix +
 		verdictSlug(report.Repo) + "-" +
 		strconv.Itoa(report.Number) + "-" +
-		verdictSlug(string(report.Perspective)) +
-		review.ReviewReportFileSuffix
+		verdictSlug(string(report.Perspective))
+	if report.Head != "" {
+		name += "-" + verdictSlug(report.Head)
+	}
+	name += review.ReviewReportFileSuffix
 	path := filepath.Join(dir, name)
 
 	// Write-then-rename: review.Collect scans this dir on its own schedule and
@@ -475,6 +484,26 @@ func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req 
 		return false, "author_self_approval", "", "", false
 	}
 	return true, "", head, strings.TrimSpace(report.BodyDigest), false
+}
+
+// dispatchReviewHead is the review head of the dispatch record this verdict
+// binds to, or "" when it binds to none or the dispatch had no head.
+func dispatchReviewHead(report review.PerspectiveReport, req ReviewRequest) string {
+	state, err := review.LoadDispatchState("")
+	if err != nil {
+		return ""
+	}
+	for _, p := range state.Pending {
+		if pendingReviewMatchesVerdict(p, report, req) {
+			return strings.TrimSpace(p.Head)
+		}
+	}
+	for _, r := range state.Recent {
+		if recentReviewMatchesVerdict(r, report, req) {
+			return strings.TrimSpace(r.Head)
+		}
+	}
+	return ""
 }
 
 func pendingReviewMatchesVerdict(p review.PendingReview, report review.PerspectiveReport, req ReviewRequest) bool {

@@ -87,6 +87,10 @@ agents.<key>.review_models.exclude_author_model # TODO #11854
 agents.<key>.review_models.fallback # TODO #11854
 agents.<key>.review_models.pool[].backend # TODO #11854
 agents.<key>.review_models.pool[].model # TODO #11854
+agents.<key>.review_heads[].alias # TODO #13542
+agents.<key>.review_heads[].backend # TODO #13542
+agents.<key>.review_heads[].model # TODO #13542
+agents.<key>.review_heads[].replicas # TODO #13542
 agents.<key>.role # TODO #11854
 agents.<key>.sandbox.enabled # TODO #11854
 agents.<key>.sandbox.env_allowlist[] # TODO #11854

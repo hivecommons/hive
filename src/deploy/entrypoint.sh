@@ -426,6 +426,11 @@ hive_ensure_agent_user() {
 # 2..MaxAgentReplicas (5) bound mirror config.replicaAgentName and
 # ExpandAgentReplicas; an out-of-range count is left for config validation to
 # reject and expands to nothing here.
+#
+# Review heads (#13542): agents.<base>.review_heads derives
+# <base>-<alias>-<n> per head and replica the same way, with alias the head's
+# `alias` or a slug of <backend>-<model>. head_names mirrors
+# config.ReviewHeadAgentName / reviewHeadSlug / ReviewHead.EffectiveAlias.
 hive_collect_agent_names() {
   HIVE_COLLECT_CONFIG="$1" python3 - <<'PY'
 import glob, os, yaml
@@ -443,6 +448,47 @@ def replica_names(name, spec):
         return []
     return ['%s-%d' % (name, i) for i in range(2, n + 1)]
 
+def head_slug(s):
+    out, dash = [], False
+    for ch in str(s or '').strip().lower():
+        if ('a' <= ch <= 'z') or ('0' <= ch <= '9'):
+            out.append(ch)
+            dash = False
+        elif not dash and out:
+            out.append('-')
+            dash = True
+    return ''.join(out).rstrip('-')
+
+def head_alias(h):
+    alias = head_slug(h.get('alias'))
+    if alias:
+        return alias
+    backend, model = head_slug(h.get('backend')), head_slug(h.get('model'))
+    if not backend:
+        return model
+    if model == backend or model.startswith(backend + '-'):
+        return model
+    if not model:
+        return backend
+    return backend + '-' + model
+
+def head_names(name, spec):
+    if not isinstance(spec, dict) or not isinstance(spec.get('review_heads'), list):
+        return []
+    out = []
+    for h in spec['review_heads']:
+        if not isinstance(h, dict) or not str(h.get('backend') or '').strip() or not str(h.get('model') or '').strip():
+            continue
+        alias = head_alias(h)
+        try:
+            n = int(h.get('replicas') or 0) or 1
+        except (TypeError, ValueError):
+            continue
+        if not alias or n < 1 or n > MAX_REPLICAS:
+            continue
+        out += ['%s-%s-%d' % (name, alias, i) for i in range(1, n + 1)]
+    return out
+
 names = set()
 with open(os.environ['HIVE_COLLECT_CONFIG']) as f:
     cfg = yaml.safe_load(f) or {}
@@ -451,11 +497,13 @@ if isinstance(agents, dict):
     for name, spec in agents.items():
         names.add(name)
         names.update(replica_names(name, spec))
+        names.update(head_names(name, spec))
 elif isinstance(agents, list):
     for a in agents:
         if isinstance(a, dict) and 'name' in a:
             names.add(a['name'])
             names.update(replica_names(a['name'], a))
+            names.update(head_names(a['name'], a))
 # Also check pack YAML if HIVE_LEVEL is set
 if os.environ.get('HIVE_LEVEL', ''):
     for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):

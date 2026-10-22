@@ -128,6 +128,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		// negative value disables expiry, exactly as the loader reads it.
 		PendingTTL                 *string `json:"pending_ttl"`
 		MaxRedispatch              *int    `json:"max_redispatch"`
+		HeadMaxRetries             *int    `json:"head_max_retries"`
 		OutOfScopeBacklogDisabled  *bool   `json:"out_of_scope_backlog_disabled"`
 		MaxOutOfScopeBacklogIssues *int    `json:"max_out_of_scope_backlog_issues"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
@@ -193,6 +194,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		name string
 	}{
 		{body.MaxRedispatch, "max_redispatch"},
+		{body.HeadMaxRetries, "head_max_retries"},
 		{body.MaxOutOfScopeBacklogIssues, "max_out_of_scope_backlog_issues"},
 	} {
 		if f.v != nil && *f.v < 0 {
@@ -459,6 +461,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	cfg.Review.PendingTTL = dispatch.PendingTTL
 	if body.MaxRedispatch != nil {
 		cfg.Review.MaxRedispatch = *body.MaxRedispatch
+	}
+	if body.HeadMaxRetries != nil {
+		cfg.Review.HeadMaxRetries = *body.HeadMaxRetries
 	}
 	if body.OutOfScopeBacklogDisabled != nil {
 		cfg.Review.OutOfScopeBacklogDisabled = *body.OutOfScopeBacklogDisabled

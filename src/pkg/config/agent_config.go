@@ -209,6 +209,16 @@ type AgentConfig struct {
 	ReplicaOf       string `yaml:"-" json:"replicaOf,omitempty"`
 	ReplicaIndex    int    `yaml:"-" json:"replicaIndex,omitempty"`
 	ReplicaCount    int    `yaml:"-" json:"replicaCount,omitempty"`
+	// ReviewHeads derives one reviewer agent per entry and replica from this
+	// (base) agent, each with its own backend/model: the swarm's model
+	// "heads" (hivecommons/hive#13542). With split perspectives every
+	// perspective is reviewed once per head, and the base agent is kept out
+	// of head dispatch. See review_heads.go.
+	ReviewHeads []ReviewHead `yaml:"review_heads,omitempty" json:"review_heads,omitempty"`
+	// ReviewHead is set on an agent derived from a base's review_heads: the
+	// head key (<base>-<alias>) shared by that head's replicas. Runtime only,
+	// like ReplicaOf.
+	ReviewHead string `yaml:"-" json:"reviewHead,omitempty"`
 	// Paused persists an operator pause across restarts/upgrades. Without
 	// this, every pod restart rebuilt agents un-paused (Go zero value), so
 	// an operator pause was silently undone on the next upgrade.

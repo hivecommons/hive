@@ -130,6 +130,10 @@ type PerspectiveReport struct {
 	HiveAuthored bool        `json:"hive_authored,omitempty"`
 	AuthorModel  string      `json:"author_model,omitempty"`
 	ReviewModel  string      `json:"review_model,omitempty"`
+	// Head is the review head (agents.<name>.review_heads key, e.g.
+	// code-reviewer-sol) this report came from, set by the relay from the
+	// dispatch record. Empty for ordinary single-reviewer perspectives.
+	Head string `json:"head,omitempty"`
 	// Confidence is the optional binned self-report; it never feeds the gate.
 	Confidence    *float64 `json:"confidence,omitempty"`
 	ConfidenceRaw *float64 `json:"confidence_raw,omitempty"`
@@ -184,6 +188,11 @@ type AggregateOptions struct {
 	// them, from what the planner recorded when it dispatched the review
 	// (ModelStampsFromState). Nil leaves reports as written.
 	ModelStamps ModelStamps
+	// ExpectedHeads are the review head keys every perspective must hear from
+	// (hivecommons/hive#13542). When a head's reports carry Head, an all-approve
+	// aggregate stays incomplete until each expected head has reported each
+	// perspective. Reports without Head are judged as before.
+	ExpectedHeads []string
 }
 
 type Aggregate struct {
@@ -209,6 +218,10 @@ type Aggregate struct {
 	Reasons           []string                `json:"reasons,omitempty"`
 	Findings          []PerspectiveFinding    `json:"findings,omitempty"`
 	Perspectives      map[Perspective]Verdict `json:"perspectives"`
+	// Heads lists, per perspective, the review heads whose reports this
+	// aggregate holds. Empty unless reports came from review_heads; with
+	// several heads Perspectives holds the strictest of their verdicts.
+	Heads map[Perspective][]string `json:"heads,omitempty"`
 	// Confidence is the derived 0–5 mergeability score (hivecommons/hive#8182),
 	// computed from the same reports as the verdict so the two never disagree.
 	Confidence Confidence `json:"confidence"`
@@ -341,15 +354,16 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		if agg.ReviewModel == "" {
 			agg.ReviewModel = r.ReviewModel
 		}
+		recordAggregateHead(&agg, r)
 		if r.NotApplicable {
 			// Nothing to judge is not a judgement withheld. Findings on a
 			// not-applicable report are ignored: there was no plan to find
 			// anything against.
-			agg.Perspectives[r.Perspective] = VerdictApprove
+			setStrictestPerspectiveVerdict(agg.Perspectives, r.Perspective, VerdictApprove)
 			seenVerdicts[VerdictApprove] = true
 			continue
 		}
-		agg.Perspectives[r.Perspective] = effective.Verdict
+		setStrictestPerspectiveVerdict(agg.Perspectives, r.Perspective, effective.Verdict)
 		seenVerdicts[effective.Verdict] = true
 		switch effective.Verdict {
 		case VerdictReject:
@@ -472,6 +486,13 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		return agg
 	}
 	if len(seenVerdicts) == 1 && seenVerdicts[VerdictApprove] {
+		if missing := missingHeadReports(agg, opts.ExpectedHeads); missing != "" {
+			// Every head that answered approved, but not every head has
+			// answered yet: the same in-flight state as a missing perspective.
+			agg.Verdict = VerdictIncomplete
+			agg.Reasons = []string{"review coverage incomplete: waiting on " + missing}
+			return agg
+		}
 		if hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
 			agg.Verdict = VerdictApprove
 			agg.MergeEligible = true
@@ -1399,4 +1420,77 @@ func reviewKey(repo string, number int, headSHA, bodyDigest string) string {
 		return fmt.Sprintf("%s#%d@%s", repo, number, headSHA)
 	}
 	return fmt.Sprintf("%s#%d@%s body:%s", repo, number, headSHA, bodyDigest)
+}
+
+// verdictStrictness orders verdicts for folding several heads' reports on one
+// perspective into the aggregate's per-perspective verdict: the strictest
+// head wins until a decision step reconciles them (hivecommons/hive#13542).
+func verdictStrictness(v Verdict) int {
+	switch v {
+	case VerdictReject:
+		return 4
+	case VerdictRequiresHuman:
+		return 3
+	case VerdictChangesRequested:
+		return 2
+	case VerdictApprove:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// setStrictestPerspectiveVerdict records v for p unless a stricter verdict
+// for p is already recorded. With one report per perspective, the case for
+// every hive without review_heads, it is a plain assignment.
+func setStrictestPerspectiveVerdict(m map[Perspective]Verdict, p Perspective, v Verdict) {
+	if cur, ok := m[p]; ok && verdictStrictness(cur) >= verdictStrictness(v) {
+		return
+	}
+	m[p] = v
+}
+
+// recordAggregateHead notes which review head a report came from.
+func recordAggregateHead(agg *Aggregate, r PerspectiveReport) {
+	head := strings.TrimSpace(r.Head)
+	if head == "" {
+		return
+	}
+	if agg.Heads == nil {
+		agg.Heads = map[Perspective][]string{}
+	}
+	for _, h := range agg.Heads[r.Perspective] {
+		if h == head {
+			return
+		}
+	}
+	agg.Heads[r.Perspective] = append(agg.Heads[r.Perspective], head)
+	sort.Strings(agg.Heads[r.Perspective])
+}
+
+// missingHeadReports names the (perspective, head) pairs an aggregate still
+// lacks, or "" when it lacks none or holds no head reports at all (a hive
+// without review_heads, or reports recorded before heads were configured).
+func missingHeadReports(agg Aggregate, expected []string) string {
+	if len(expected) == 0 || len(agg.Heads) == 0 {
+		return ""
+	}
+	perspectives := make([]string, 0, len(agg.Perspectives))
+	for p := range agg.Perspectives {
+		perspectives = append(perspectives, string(p))
+	}
+	sort.Strings(perspectives)
+	var missing []string
+	for _, p := range perspectives {
+		have := map[string]bool{}
+		for _, h := range agg.Heads[Perspective(p)] {
+			have[h] = true
+		}
+		for _, h := range expected {
+			if !have[h] {
+				missing = append(missing, p+"/"+h)
+			}
+		}
+	}
+	return strings.Join(missing, ", ")
 }

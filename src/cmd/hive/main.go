@@ -9915,8 +9915,20 @@ func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapabil
 		cap.LaneKeywords = ac.LaneKeywords
 		cap.DetectKeywords = ac.DetectKeywords
 		cap.Aliases = ac.Aliases
+		cap.ReviewHead = ac.ReviewHead
+		cap.ReviewHeadOf = reviewHeadBase(ac)
 	}
 	return cap
+}
+
+// reviewHeadBase is the base agent a review head was derived from, so that
+// review.reviewer_agents naming the base admits its heads
+// (hivecommons/hive#13542). Empty for every other agent.
+func reviewHeadBase(ac config.AgentConfig) string {
+	if ac.IsReviewHead() {
+		return ac.ReplicaOf
+	}
+	return ""
 }
 
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
@@ -10317,6 +10329,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			Backend:        ac.Backend,
 			Model:          ac.Model,
 			ReviewModels:   ac.ReviewModels,
+			ReviewHead:     ac.ReviewHead,
+			ReviewHeadOf:   reviewHeadBase(ac),
+			HasReviewHeads: len(ac.ReviewHeads) > 0 && !ac.IsReviewHead(),
 		})
 	}
 	reviewBotLogins := []string{}
@@ -10374,6 +10389,7 @@ func refreshReviewVerdicts(cfg *config.Config, logger *slog.Logger) {
 		Perspectives:               reviewPerspectiveSet(cfg, logger),
 		SelfAuthoredDecisionPolicy: cfg.Review.EffectiveSelfAuthoredDecisionPolicy(),
 		ModelStamps:                reviewModelStamps(logger),
+		ExpectedHeads:              cfg.ExpectedReviewHeads(),
 	}, time.Now().UTC())
 	if err != nil {
 		if !os.IsNotExist(err) {

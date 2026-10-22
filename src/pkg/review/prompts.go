@@ -251,6 +251,12 @@ type PromptOptions struct {
 	// tells the reviewer to record the model as review_model.
 	ReviewBackend string
 	ReviewModel   string
+	// HeadRecordOnly is set to the head key when this kick is one review
+	// head's independent pass (agents.<name>.review_heads,
+	// hivecommons/hive#13542). The head records its verdict without
+	// posting anything on the PR and must not read other reviews of this
+	// head; PostComments and AcknowledgeNoFindings are ignored.
+	HeadRecordOnly string
 }
 
 // BuildPerspectivePromptWith is BuildPerspectivePromptOpts with the full set
@@ -295,10 +301,32 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString("For Hive-authored PRs, resolve sequencing, naming, config-shape, scope, and land-now-vs-later questions yourself: prefer approve with an advisory note, or changes_requested only for a concrete in-scope fix. Use requires_human only for risk a human must own: security, data loss, irreversible or public-facing behavior, policy/governance, licensing, spend, or when you could not read the diff.\n")
 	b.WriteString(permissionsTighteningGuidance)
 	b.WriteString("A Hive-authored incomplete fix with concrete remediation is changes_requested, not requires_human. If there are two engineering remedies (for example, add producer code OR reword a changelog), choose the best route yourself and state it as the requested change; do not escalate the choice to a human unless it falls into one of the risk categories above. Intent-alignment cleanup such as trimming a PR summary or changelog fragment that duplicates already-landed work is also changes_requested when the remediation is concrete.\n")
-	if opts.PostComments {
+	if head := strings.TrimSpace(opts.HeadRecordOnly); head != "" {
+		b.WriteString(buildHeadRecordOnlyInstruction(pr, head))
+	} else if opts.PostComments {
 		b.WriteString(buildPublishInstruction(pr, opts.AcknowledgeNoFindings, opts.Revise))
 	}
 	b.WriteString(buildProposeOnlyInstruction(pr, opts))
+	return b.String()
+}
+
+// buildHeadRecordOnlyInstruction is the delivery contract for one review
+// head's independent pass. Several heads review the same perspective so that
+// their judgements are independent; a head that read another head's review,
+// or posted its own, would defeat that. The verdict reaches the hive through
+// the relay's record-only path, and the PR stays quiet until the heads'
+// verdicts are reconciled.
+func buildHeadRecordOnlyInstruction(pr PullRequest, head string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nINDEPENDENT REVIEW HEAD (%s).\n", head)
+	b.WriteString("You are one of several independent reviewers judging this same perspective, each on a different model. Your value is an independent judgement:\n")
+	b.WriteString("- Do NOT read, quote or respond to other reviews or review comments on this PR from the hive's reviewers for this head SHA. Form your verdict from the code, the diff and the PR description alone. (Answering review-bot threads as instructed above is still required.)\n")
+	b.WriteString("- Do NOT post anything on the PR: no comment, no review, no suggestion thread. Put every finding, with its file:line evidence and the fix you would propose, in the verdict JSON.\n")
+	b.WriteString("Write the JSON to a file and record it, without a comment:\n")
+	fmt.Fprintf(&b, "  hive-review %d --repo %s --record-verdict --verdict-file <verdict>\n", pr.Number, pr.Repo)
+	b.WriteString("Printing the JSON to your terminal does not deliver it, and you cannot write it into the metrics dir yourself: the relay is the only path. Omit it and your judgement is lost and this perspective is dispatched to you again.\n")
+	b.WriteString("Use hive-review, never `gh pr review` or `gh pr comment`. Do NOT approve, request changes, merge, close, or label.\n")
+	b.WriteString("Every finding must cite a file:line you actually read.\n")
 	return b.String()
 }
 
@@ -314,7 +342,13 @@ func buildProposeOnlyInstruction(pr PullRequest, opts PromptOptions) string {
 	var b strings.Builder
 	b.WriteString("\nPROPOSE FIXES, DO NOT PUSH THEM.\n")
 	fmt.Fprintf(&b, "PR %s#%d was opened by someone this hive does not speak for, so NO agent will push to its branch after your review, whatever review.fix_human_prs says: a commit signed off by the hive instead of the PR author fails the squash sign-off gate, and only the author could clear it. Do not check out, commit to, or push to this PR's branch yourself, and do not open a replacement PR.\n", pr.Repo, pr.Number)
-	b.WriteString("For every finding you would have asked an agent to fix, put the fix in the review comment so the author can apply it: a ```suggestion block for a change that fits in a few lines at one location, or a ```diff patch block for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
+	if strings.TrimSpace(opts.HeadRecordOnly) != "" {
+		// A head posts nothing, so its proposed fixes travel in the verdict
+		// for whoever publishes the reconciled review.
+		b.WriteString("For every finding you would have asked an agent to fix, put the concrete fix in that finding in the verdict JSON: the exact replacement lines for a small change at one location, or a unified diff for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
+	} else {
+		b.WriteString("For every finding you would have asked an agent to fix, put the fix in the review comment so the author can apply it: a ```suggestion block for a change that fits in a few lines at one location, or a ```diff patch block for anything larger. A finding without a concrete fix is a request for the author's time; a finding with one is an offer of yours.\n")
+	}
 	b.WriteString("changes_requested still means what it says — the verdict is recorded and the PR waits on the author, not on the hive.\n")
 	return b.String()
 }

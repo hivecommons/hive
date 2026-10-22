@@ -7636,6 +7636,7 @@ func (c *Config) ExpandAgentReplicas() error {
 			delete(c.Agents, name)
 		}
 	}
+	derivedNames := map[string]string{}
 	for name, agent := range baseAgents {
 		replicas := normalizeReplicaCount(agent.Replicas)
 		if replicas < 1 || replicas > MaxAgentReplicas {
@@ -7646,6 +7647,19 @@ func (c *Config) ExpandAgentReplicas() error {
 			if existing, ok := baseAgents[derived]; ok && existing.ReplicaOf == "" {
 				return fmt.Errorf("agent %s: replicas:%d would create %s, but an agent with that name already exists", name, replicas, derived)
 			}
+			derivedNames[derived] = name
+		}
+	}
+	heads, err := reviewHeadAgentNames(baseAgents)
+	if err != nil {
+		return err
+	}
+	for derived, base := range heads {
+		if _, ok := baseAgents[derived]; ok {
+			return fmt.Errorf("agent %s: review_heads would create %s, but an agent with that name already exists", base, derived)
+		}
+		if other, ok := derivedNames[derived]; ok {
+			return fmt.Errorf("agent %s: review_heads would create %s, which agent %s's replicas also create", base, derived, other)
 		}
 	}
 	for name, agent := range baseAgents {
@@ -7667,6 +7681,9 @@ func (c *Config) ExpandAgentReplicas() error {
 			derived.ReplicaIndex = i
 			derived.ReplicaCount = replicas
 			c.Agents[derivedName] = derived
+		}
+		for _, h := range expandReviewHeads(name, agent) {
+			c.Agents[h.Name()] = h
 		}
 	}
 	for name, agent := range c.Agents {
@@ -8554,6 +8571,10 @@ type ReviewConfig struct {
 	// hold (reason prefix review-dispatch-exhausted). 0 means
 	// DefaultMaxRedispatch.
 	MaxRedispatch int `yaml:"max_redispatch,omitempty" json:"max_redispatch,omitempty"`
+	// HeadMaxRetries caps how many times one head's review of a perspective
+	// may be re-sent when it posts no verdict (agents.<name>.review_heads,
+	// hivecommons/hive#13542). 0 means max_redispatch applies.
+	HeadMaxRetries int `yaml:"head_max_retries,omitempty" json:"head_max_retries,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the

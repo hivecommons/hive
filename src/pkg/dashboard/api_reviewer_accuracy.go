@@ -77,7 +77,10 @@ func (s *Server) reviewerAccuracyOptions() review.ReviewerAccuracyOptions {
 	allowed := review.ReviewerAgentSet(cfg.Review.ReviewerAgents)
 	model := ""
 	for name, ac := range cfg.EnabledAgents() {
-		cap := review.AgentCapability{Name: name, Role: ac.Role, LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases}
+		cap := review.AgentCapability{Name: name, Role: ac.Role, LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases, ReviewHead: ac.ReviewHead}
+		if ac.IsReviewHead() {
+			cap.ReviewHeadOf = ac.ReplicaOf
+		}
 		if !review.ReviewCapable(cap, allowed) {
 			continue
 		}
