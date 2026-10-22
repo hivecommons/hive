@@ -232,6 +232,9 @@ type boot struct {
 	// firstTimer is first-time contributor welcome state
 	// (governor.first_timer_welcome.*).
 	firstTimer *firstTimerState
+	// rfcCoverage is the triage existing-coverage check state
+	// (issues.rfc_existing_check.*).
+	rfcCoverage *rfcCoverageState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).

@@ -273,6 +273,11 @@ hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 issues.hard_suppress_reconcile_interval # TODO #11854
 issues.lift_hive_hard_suppress # TODO #11854
+issues.rfc_existing_check.enabled # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.labels[] # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.max_age # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.max_matches # triage existing-coverage check; yaml-only (#13575)
+issues.rfc_existing_check.post_when_nothing_found # triage existing-coverage check; yaml-only (#13575)
 issues.sha_hold_trusted_label # TODO #11854
 knowledge.agent_scopes.<key>.include_states[] # TODO #11854
 knowledge.agent_scopes.<key>.layers[] # TODO #11854

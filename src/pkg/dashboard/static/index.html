@@ -38745,6 +38745,15 @@ function burnAreaChart() {
       if (c.input.value) applySettingsSearch(c.input.value);
     }
 
+    // #config/governor/<tab>/<query> opens Settings with the search box
+    // already holding <query> — the link triage comments carry (#13575).
+    function settingsSearchPrefill(query) {
+      const c = settingsSearchControls();
+      if (!c.input) return;
+      c.input.value = query;
+      c.input.dispatchEvent(new Event('input'));
+    }
+
     function settingsSearchShortcutHandler(e) {
       if (!_configModalOpen || _configState.type !== 'governor') return;
       const c = settingsSearchControls();
@@ -39095,13 +39104,13 @@ function burnAreaChart() {
       return true;
     }
 
-    function openConfigDialog(type, agentName, initialTabOverride) {
+    function openConfigDialog(type, agentName, initialTabOverride, initialSearch) {
       const isCreate = type === 'agent' && !agentName;
       _configModalOpen = true;
       // promptTemplateDirty/Value hold the Prompt Template tab's pending edit
       // (it has its own endpoint, so it is not a `dirty` section). Reset on every
       // open and on close, so Cancel/X/Escape discard it like any other field.
-      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
+      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, initialSearch: initialSearch || '', promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
       hiveRememberModalOpen(document.getElementById('config-overlay'));
       const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
@@ -39138,6 +39147,7 @@ function burnAreaChart() {
           }
           try {
             switchConfigTab(initialTab);
+            if (type === 'governor' && _configState.initialSearch) settingsSearchPrefill(_configState.initialSearch);
           } catch (err) {
             document.getElementById('config-body').innerHTML =
               '<div style="text-align:center;padding:40px;color:var(--red)">Failed to render tab: ' + err.message + '</div>';
@@ -39167,7 +39177,7 @@ function burnAreaChart() {
       const target = parts[0];
       const tab = parts[1] || null;
       if (target === 'governor') {
-        openConfigDialog('governor', null, tab);
+        openConfigDialog('governor', null, tab, parts[2] || '');
       } else {
         openConfigDialog('agent', target, tab);
       }
