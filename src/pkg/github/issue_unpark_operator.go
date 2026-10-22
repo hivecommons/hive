@@ -31,8 +31,9 @@ const operatorDecisionMarkerID = 0
 // `approved-direction` is applied, the stage engine is told the park lifted,
 // and one reply naming the actor and the decision is posted. The caller is
 // responsible for having verified that actor holds write access on repo, the
-// bar the sweep itself applies to a commenter. A person's `needs-human` is
-// left in place exactly as the sweep leaves it.
+// bar the sweep itself applies to a commenter. `needs-human` is lifted or
+// kept exactly as the sweep decides for a maintainer's command (#13568);
+// `hold` is never touched.
 func (c *Client) RecordOperatorIssueDecision(ctx context.Context, repo string, number int, actor, decision string) (IssueUnparkEvent, error) {
 	if c == nil || c.client == nil {
 		return IssueUnparkEvent{}, ErrNoGitHubClient

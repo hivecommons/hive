@@ -22,8 +22,13 @@ func TestRecordOperatorIssueDecisionApproveClearsParkAndReplies(t *testing.T) {
 	if !strings.Contains(removed, "needs-decision") {
 		t.Fatalf("expected the decision park label removed, got %v", rec.removed[7])
 	}
-	if strings.Contains(removed, "hold") || strings.Contains(removed, "needs-human") {
-		t.Fatalf("hold / a person's needs-human must be left alone, got %v", rec.removed[7])
+	// A maintainer's decision is the human input `needs-human` asked for
+	// (#13568), so it comes off with the park label; `hold` is never touched.
+	if !strings.Contains(removed, "needs-human") {
+		t.Fatalf("needs-human is answered by the maintainer's decision and comes off, got %v", rec.removed[7])
+	}
+	if strings.Contains(removed, "hold") {
+		t.Fatalf("hold must be left alone, got %v", rec.removed[7])
 	}
 	if len(rec.added[7]) != 1 || rec.added[7][0] != HumanAckLabel {
 		t.Fatalf("expected %s added, got %v", HumanAckLabel, rec.added[7])
