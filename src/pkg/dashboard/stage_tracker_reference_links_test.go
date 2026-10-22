@@ -108,9 +108,12 @@ func TestStageTrackerSoftReferenceLinks(t *testing.T) {
 	if len(squash.LinkedIssues) != 0 || squash.NestedUnder != 0 {
 		t.Fatalf("a title reference to an open PR must not link: %+v", squash.LinkedIssues)
 	}
-	pr102 := trackerItem(t, resp, "pr", 102)
-	if len(pr102.LinkedIssues) != 0 {
-		t.Fatalf("PR 102 gained links from being named in a title: %+v", pr102.LinkedIssues)
+	// PR 102 keeps only its own pairing (issue 7 mirrors it in the fixture):
+	// being named in another PR's title adds nothing to it.
+	for _, li := range trackerItem(t, resp, "pr", 102).LinkedIssues {
+		if li.Number != 7 || li.Via != "" {
+			t.Fatalf("PR 102 gained a link from being named in a title: %+v", li)
+		}
 	}
 }
 
