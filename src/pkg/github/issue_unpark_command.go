@@ -563,10 +563,10 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 		}
 		ev, ok := lastLabeledEvent(events, label)
 		if isUnparkKeptLabel(label) {
-			// needs-human lifts under stageengine.DecisionLiftsNeedsHuman
-			// whoever applied it: the command is the person answering.
+			// A label-driven repo's lifecycle bot owns `needs-human`
+			// (hivecommons/hive#10537 R5): only the hive's own lifts here.
 			outcome := c.needsHumanOutcome(ctx, owner, repo, number, events)
-			if outcome.lift {
+			if outcome.lift && outcome.applier == stageengine.NeedsHumanApplierHive {
 				if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
 					return false, err
 				}
@@ -681,21 +681,19 @@ func (c *Client) needsHumanOutcome(ctx context.Context, owner, repo string, numb
 		var err error
 		if events, err = c.listIssueLabelEvents(ctx, owner, repo, number); err != nil {
 			if c.logger != nil {
-				c.logger.Warn("unpark: needs-human attribution unavailable, keeping it", "repo", owner+"/"+repo, "issue", number, "error", err)
+				c.logger.Warn("unpark: needs-human attribution unavailable", "repo", owner+"/"+repo, "issue", number, "error", err)
 			}
-			return unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierUnknown}
+			events = nil
 		}
 	}
 	out := unparkNeedsHumanOutcome{applier: stageengine.NeedsHumanApplierUnknown}
-	ev, ok := lastLabeledEvent(events, issueNeedsHumanLabel)
-	if !ok {
-		return out
-	}
-	out.actor = safeGetLogin(ev.Actor)
-	if c.isHiveAccount(ev.Actor) {
-		out.applier = stageengine.NeedsHumanApplierHive
-	} else if out.actor != "" {
-		out.applier = stageengine.NeedsHumanApplierPerson
+	if ev, ok := lastLabeledEvent(events, issueNeedsHumanLabel); ok {
+		out.actor = safeGetLogin(ev.Actor)
+		if c.isHiveAccount(ev.Actor) {
+			out.applier = stageengine.NeedsHumanApplierHive
+		} else if out.actor != "" {
+			out.applier = stageengine.NeedsHumanApplierPerson
+		}
 	}
 	out.lift = stageengine.DecisionLiftsNeedsHuman(out.applier)
 	return out
@@ -1093,14 +1091,17 @@ func (c *Client) closeParkedIssueAsFixed(ctx context.Context, displayRepo, owner
 	actor := safeGetLogin(candidate.GetUser())
 	labels := issueLabelNames(issue.Labels)
 	var removed []string
-	// needs-human lifts whoever applied it (stageengine.DecisionLiftsNeedsHuman);
-	// the retired park spellings are a label-driven repo's own to keep.
+	// needs-human lifts whoever applied it (stageengine.DecisionLiftsNeedsHuman),
+	// except on a label-driven repo, whose lifecycle bot owns it along with
+	// the retired park spellings: there only the hive's own comes off.
 	for _, label := range append([]string{issueNeedsHumanLabel}, unparkRemovableLabels...) {
 		if !labelPresent(labels, label) || stagelabels.IsStageLabel(label) {
 			continue
 		}
-		if labelDriven && label != issueNeedsHumanLabel {
-			continue
+		if labelDriven {
+			if label != issueNeedsHumanLabel || c.needsHumanOutcome(ctx, owner, repo, number, nil).applier != stageengine.NeedsHumanApplierHive {
+				continue
+			}
 		}
 		if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
 			return false, err

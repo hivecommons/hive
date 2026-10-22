@@ -166,8 +166,8 @@ On an opted-in repository the un-park sweep:
   per acceptance (`<!-- hive:label-approval:11313 event=N -->`). No `/hive`
   comment is needed;
 - answers `/hive approve` and `/hive decision <text>` the same way (Hive-added
-  park labels only, plus `needs-human` whoever added it), and also accepts them
-  from collaborators with the GitHub **triage** role; `/hive help` gets a one-line reply pointing at the labels;
+  park labels only), and also accepts them from collaborators with the GitHub
+  **triage** role; `/hive help` gets a one-line reply pointing at the labels;
 - never removes a park label a person added, nor `hold` / `do-not-merge`. When
   one of those is present the issue stays parked and Hive posts one
   "accepted, but still held by …" note naming the labels.
@@ -210,7 +210,7 @@ them; the table states every effect in one place.
 | `stage/045-needs-decision` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
 | `stage/045-needs-decision` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
 | `needs-human` added by Hive | Removed on `/hive approve` / `/hive decision` / `/fixed` — the maintainer's answer to the hive's own ask ([#13075](https://github.com/hivecommons/hive/issues/13075)); kept on label approval; removed when the issue closes | Parked → no sign-off | n/a |
-| `needs-human` added by a person (or unreadable timeline) | Removed on `/hive approve` / `/hive decision` / `/fixed` — the maintainer's command outranks the label ([docs#419](https://github.com/hivecommons/docs/issues/419)); the reply names who had added it. Kept on label approval and when the issue closes. Use `hold` to keep agents off an issue through a decision. | Parked → no sign-off | n/a |
+| `needs-human` added by a person (or unreadable timeline) | Kept on a label-driven repo: the lifecycle bot owns it, and only a person removes it; the issue stays derived at 045 and out of the agent queue. (Elsewhere `/hive approve` / `/hive decision` / `/fixed` lift it whoever added it — [docs#419](https://github.com/hivecommons/docs/issues/419).) | Parked → no sign-off | n/a |
 | retired `needs-decision` / `needs-direction` ([#12683](https://github.com/hivecommons/hive/issues/12683)) | Migrated by the issue stage reconciler: `stage/045-needs-decision` added, retired label removed; a person's retired label therefore becomes a Hive-added 045 and `/hive approve` can clear it | Parked → no sign-off | n/a |
 | `hold`, `do-not-merge` | Kept; issue stays parked (unchanged) | Hold (unchanged) | n/a |
 
