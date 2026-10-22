@@ -54,6 +54,10 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 					reviewCreated = true
 					w.WriteHeader(http.StatusCreated)
 					json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "APPROVED"})
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/statuses/head7":
+					// Prow's commit-bound lgtm needs a prow/lgtm status beside the label (hivecommons/hive#13616).
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]any{"id": 1})
 				default:
 					t.Fatalf("unexpected GitHub API call: %s %s", r.Method, r.URL.Path)
 				}

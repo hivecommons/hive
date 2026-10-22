@@ -2939,7 +2939,59 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 	if err := c.AddLabels(ctx, owner+"/"+repoName, number, []string{label}); err != nil {
 		return fmt.Errorf("adding %s label: %w", label, err)
 	}
+	if strings.EqualFold(label, prowLgtmLabel) {
+		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
+	}
 	return nil
+}
+
+// prowLgtmLabel is Prow's approval label; prowLgtmStatusContext is the
+// commit status Prow's commit-bound `lgtm` (cncf/prow-github-actions v3,
+// bind_to_commit) requires beside the label; without it Prow strips the
+// label and the PR drops out of the queue (hivecommons/hive#13616).
+const (
+	prowLgtmLabel         = "lgtm"
+	prowLgtmStatusContext = "prow/lgtm"
+	prowStatusDescMaxLen  = 140
+)
+
+// bindProwLgtm records the `prow/lgtm` success status on headSHA, the commit
+// the queue review approved. The label and review are already in place, so a
+// failure is logged and surfaced on the PR but never returned.
+func (c *Client) bindProwLgtm(ctx context.Context, owner, repoName string, number int, headSHA, queuedBy string) {
+	sha7 := headSHA
+	if len(sha7) > 7 {
+		sha7 = sha7[:7]
+	}
+	desc := fmt.Sprintf("lgtm by %s at %s", queuedBy, sha7)
+	if len(desc) > prowStatusDescMaxLen {
+		desc = desc[:prowStatusDescMaxLen]
+	}
+	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		Repo:   owner + "/" + repoName,
+		Kind:   effects.KindStatusCreate,
+		Target: strconv.Itoa(number),
+		Inputs: map[string]string{"context": prowLgtmStatusContext, "state": "success", "head_sha": headSHA, "description": effects.StableDigest(desc)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		_, _, apiErr := c.client.Repositories.CreateStatus(WithRESTCaller(ctx, "hive:queue_pr_automerge_status"), owner, repoName, headSHA, &gh.RepoStatus{
+			Context:     gh.Ptr(prowLgtmStatusContext),
+			State:       gh.Ptr("success"),
+			Description: gh.Ptr(desc),
+		})
+		return effects.Result{Provenance: owner + "/" + repoName + "@" + headSHA}, apiErr
+	})
+	if err == nil {
+		return
+	}
+	if c.logger != nil {
+		c.logger.Warn("could not set the prow/lgtm commit status; the GitHub App likely lacks the statuses: write permission",
+			"repo", owner+"/"+repoName, "number", number, "error", err)
+	}
+	note := "Hive queued this PR but could not set the `prow/lgtm` commit status, so Prow may strip the `lgtm` label and the auto-merge queue may not hold."
+	if cerr := c.CreateIssueComment(ctx, owner+"/"+repoName, number, note); cerr != nil && c.logger != nil {
+		c.logger.Warn("could not post the prow/lgtm status warning comment",
+			"repo", owner+"/"+repoName, "number", number, "error", cerr)
+	}
 }
 
 func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) error {
