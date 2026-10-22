@@ -466,7 +466,7 @@ func TestStaticNoStrategyLabCopy(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`<span class="oc-nav-text">Experiment Lab</span>`,
+		`<span class="oc-nav-text">Experiment Lab (nous)</span>`,
 		`🧪 Experiment Lab`,
 		`Experiment Lab Configuration`,
 	} {
