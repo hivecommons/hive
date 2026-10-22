@@ -40,6 +40,14 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
      If either record fails, leave `needs-human` in place, do not add a reviewer verdict
      label, and do not close; report the audit failure for a later retry.
 
+## Do Not Wait for CI (MANDATORY)
+
+Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on
+CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`.
+If you repaired or pushed to a PR, that ends your work on it for this kick; the
+automerge sweep merges it the moment its checks are green. Never spend more than
+**two** status checks on the same run in one kick, then move to the next PR.
+
 INVARIANTS:
   ⛔ Adjudicate AT MOST ${REVIEWER_MAX_PRS} PRs this kick, oldest first — the list above is
      already capped and ordered; work it top to bottom.

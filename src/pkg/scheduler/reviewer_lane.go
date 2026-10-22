@@ -328,6 +328,13 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("     If either record fails, leave `needs-human` in place, do not add a reviewer verdict\n")
 	b.WriteString("     label, and do not close; report the audit failure for a later retry.\n")
 
+	b.WriteString("\n## Do Not Wait for CI (MANDATORY)\n\n")
+	b.WriteString("Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on\n")
+	b.WriteString("CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`.\n")
+	b.WriteString("If you repaired or pushed to a PR, that ends your work on it for this kick; the\n")
+	b.WriteString("automerge sweep merges it the moment its checks are green. Never spend more than\n")
+	b.WriteString("**two** status checks on the same run in one kick, then move to the next PR.\n")
+
 	b.WriteString("\nINVARIANTS:\n")
 	b.WriteString(fmt.Sprintf("  ⛔ Adjudicate AT MOST %d PRs this kick, oldest first — the list above is\n", reviewerMaxPRsPerKick))
 	b.WriteString("     already capped and ordered; work it top to bottom.\n")
