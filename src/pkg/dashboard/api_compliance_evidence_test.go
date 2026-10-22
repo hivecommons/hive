@@ -317,8 +317,10 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 	// stamped exactly at now would fall outside it.
 	complianceEvidenceNow = func() time.Time { return now.Add(-time.Minute) }
 	// The CRLF inside the note exercises csv.Reader's quoted-cell newline
-	// normalisation; the manifest must hash the delivered (LF) bytes.
-	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`","note":"a\r\nb"}`, true)
+	// normalisation; the manifest must hash the delivered (LF) bytes. The <
+	// and & check the JSON manifest hashes unescaped bytes a verifier's
+	// compact re-encoding reproduces.
+	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`","note":"a\r\n<b> & c"}`, true)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("seed attestation: %d %s", rr.Code, rr.Body.String())
 	}
@@ -442,6 +444,9 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			if auditCount(s, "compliance_export") != before+1 {
 				t.Fatal("export not audited")
 			}
+			if detail := lastAuditDetail(s, "compliance_export"); !strings.Contains(detail, "sha256="+sha256Hex(rr.Body.String())) {
+				t.Fatalf("compliance_export audit detail %q lacks the delivered body digest", detail)
+			}
 			tc.check(t, rr.Body.Bytes())
 			if tc.contentType == "application/json" {
 				assertComplianceJSONManifest(t, rr.Body.Bytes())
@@ -529,6 +534,15 @@ func mustDecodeComplianceJSON(t *testing.T, body []byte, v any) {
 	}
 }
 
+func lastAuditDetail(s *Server, action string) string {
+	for _, e := range s.GetAudit().Recent(0) { // newest first
+		if e.Action == action {
+			return e.Detail
+		}
+	}
+	return ""
+}
+
 func assertComplianceJSONManifest(t *testing.T, body []byte) {
 	t.Helper()
 	var envelope map[string]json.RawMessage
@@ -610,7 +624,7 @@ func assertComplianceMarkdownManifest(t *testing.T, body []byte) {
 		Manifest complianceExportManifest `json:"manifest"`
 	}
 	mustDecodeComplianceJSON(t, raw, &envelope)
-	metaRaw, err := json.Marshal(envelope.Meta)
+	metaRaw, err := complianceJSON(envelope.Meta, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -446,8 +446,8 @@ attachment outside the dashboard. `since` takes an RFC 3339 time, a `YYYY-MM-DD`
 or a look-back such as `720h`; `until` takes an RFC 3339 time or a
 `YYYY-MM-DD` date meaning the end of that day. Without them the range is
 the last 30 days. Every export is written to the
-[audit log](audit-log.md) as `compliance_export` with its kind, format and
-range.
+[audit log](audit-log.md) as `compliance_export` with its kind, format,
+range and the `sha256` of the delivered file.
 
 | `kind` | Formats | Contents |
 |---|---|---|
@@ -466,13 +466,18 @@ statements. `generated_by` records chain of custody for the download; it is
 not itself an attestation.
 
 Every export also carries a SHA-256 manifest. JSON manifests hash the compact
-JSON bytes of `meta` and each included top-level evidence section. Markdown
+JSON bytes (no HTML escaping, so `jq -c` reproduces them) of `meta` and each
+included top-level evidence section. Markdown
 appends a JSON metadata block whose manifest hashes the report before that
 block and the compact metadata JSON. CSV starts with a `metadata` row followed
 by `evidence` rows; its manifest hashes the compact metadata JSON and the
 domain-only CSV (the kind-specific header and evidence rows, with LF line
 endings). This excludes the manifest itself and avoids a self-referential
-digest while protecting both provenance and evidence. CSV metadata is also
+digest. The manifest travels inside the file it covers, so on its own it only
+detects accidental corruption: anyone editing a row can recompute it. To tie a
+file to what the hive actually handed out, each `compliance_export` audit entry
+records `sha256=` of the exact delivered bytes; compare a file's digest
+(`sha256sum`) against that entry. CSV metadata is also
 available as named columns, including `profile_versions`, `attesters`,
 `retention` and the exact compact `metadata` JSON used for its hash. CSV cells
 that start with `=`, `+`, `-` or `@` are prefixed with `'` so a spreadsheet

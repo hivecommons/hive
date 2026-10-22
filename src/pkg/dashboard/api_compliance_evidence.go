@@ -280,6 +280,20 @@ func newComplianceManifestEntry(name, contentType string, payload []byte) compli
 	}
 }
 
+// complianceJSON encodes value without HTML escaping so a verifier's
+// compact re-encoding (for example `jq -c`) reproduces the manifest digest
+// even when a note or audit detail contains <, > or &. indent "" is compact.
+func complianceJSON(value any, indent string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", indent)
+	if err := enc.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
 func complianceManifestForJSON(payload map[string]any) (complianceExportManifest, error) {
 	manifest := complianceExportManifest{Algorithm: "sha256", Entries: []complianceExportManifestEntry{}}
 	for _, name := range []string{"meta", "controls", "posture", "audit", "config", "attestations"} {
@@ -287,7 +301,7 @@ func complianceManifestForJSON(payload map[string]any) (complianceExportManifest
 		if !ok {
 			continue
 		}
-		raw, err := json.Marshal(value)
+		raw, err := complianceJSON(value, "")
 		if err != nil {
 			return complianceExportManifest{}, fmt.Errorf("encoding %s manifest entry: %w", name, err)
 		}
@@ -361,7 +375,7 @@ func complianceExportCSV(kind string, meta complianceExportMeta, evidence []byte
 	if err := csv.NewWriter(&domain).WriteAll(rows); err != nil {
 		return nil, fmt.Errorf("encoding %s CSV: %w", kind, err)
 	}
-	metaRaw, err := json.Marshal(meta)
+	metaRaw, err := complianceJSON(meta, "")
 	if err != nil {
 		return nil, fmt.Errorf("encoding CSV metadata: %w", err)
 	}
@@ -411,7 +425,7 @@ func complianceExportCSV(kind string, meta complianceExportMeta, evidence []byte
 }
 
 func complianceExportMarkdown(meta complianceExportMeta, report []byte) ([]byte, error) {
-	metaRaw, err := json.Marshal(meta)
+	metaRaw, err := complianceJSON(meta, "")
 	if err != nil {
 		return nil, fmt.Errorf("encoding Markdown metadata: %w", err)
 	}
@@ -422,7 +436,7 @@ func complianceExportMarkdown(meta complianceExportMeta, report []byte) ([]byte,
 			newComplianceManifestEntry("controls", "text/markdown; charset=utf-8", report),
 		},
 	}
-	envelope, err := json.MarshalIndent(map[string]any{"manifest": manifest, "meta": meta}, "", "  ")
+	envelope, err := complianceJSON(map[string]any{"manifest": manifest, "meta": meta}, "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encoding Markdown manifest: %w", err)
 	}
@@ -515,7 +529,7 @@ func (s *Server) handleComplianceExport(w http.ResponseWriter, r *http.Request) 
 		var payload map[string]any
 		payload, err = s.complianceExportJSON(kind, meta, attestations)
 		if err == nil {
-			body, err = json.MarshalIndent(payload, "", "  ")
+			body, err = complianceJSON(payload, "  ")
 			body, contentType = append(body, '\n'), "application/json"
 		}
 	}
@@ -524,11 +538,16 @@ func (s *Server) handleComplianceExport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The in-band manifest only detects accidental corruption: whoever edits
+	// the file can recompute it. Recording the digest of the delivered bytes
+	// here ties each download to its audit entry out-of-band.
+	bodySum := sha256.Sum256(body)
 	s.auditFromRequest(r, "compliance_export", auditDetail(
 		"kind", kind,
 		"format", format,
 		"since", since.Format(time.RFC3339),
 		"until", until.Format(time.RFC3339),
+		"sha256", hex.EncodeToString(bodySum[:]),
 	), "")
 	hiveID := safeFilenamePart(cfg.HiveID)
 	if hiveID == "" {
