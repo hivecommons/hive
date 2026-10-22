@@ -31,6 +31,8 @@ func TestEvaluators(t *testing.T) {
 		{"non_empty meets", EvalNonEmpty, []string{"a", "b"}, recNonEmpty, StatusMeets, "a; b"},
 		{"non_empty off", EvalNonEmpty, []string{}, recNonEmpty, StatusOff, "none"},
 		{"non_empty nil", EvalNonEmpty, nil, recNonEmpty, StatusOff, "none"},
+		{"non_empty string meets", EvalNonEmpty, "/secrets/backup-key", recNonEmpty, StatusMeets, "/secrets/backup-key"},
+		{"non_empty blank string off", EvalNonEmpty, "  ", recNonEmpty, StatusOff, "none"},
 		{"empty meets", EvalEmpty, []string{}, recNone, StatusMeets, "none"},
 		{"empty deviates", EvalEmpty, []string{"test_removal"}, recNone, StatusDeviates, "test_removal"},
 		{"at_least meets", EvalAtLeast, 365, "365", StatusMeets, "365"},
@@ -89,6 +91,7 @@ func hardenedConfig() *config.Config {
 	cfg.AgentSandbox.Enabled = true
 	cfg.ToolApproval.Enabled = true
 	cfg.ACMMLevel = intPtr(4)
+	cfg.Governor.Backup.KeyFile = "/secrets/backup_encryption_key"
 	return cfg
 }
 
@@ -107,6 +110,20 @@ func statusByID(statuses []ControlStatus) map[string]Status {
 	return out
 }
 
+func soc2ExpectedStatuses(t *testing.T, covered map[string]Status) map[string]Status {
+	t.Helper()
+	out := make(map[string]Status, len(mustProfile(t, "soc2-type2").Controls))
+	for _, control := range mustProfile(t, "soc2-type2").Controls {
+		if control.NotCovered {
+			out[control.ID] = StatusNotCovered
+		}
+	}
+	for id, status := range covered {
+		out[id] = status
+	}
+	return out
+}
+
 func TestEvaluateSOC2(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -118,25 +135,29 @@ func TestEvaluateSOC2(t *testing.T) {
 			name:   "defaults",
 			cfg:    soc2Config(),
 			getenv: func(string) string { return "" },
-			want: map[string]Status{
-				"CC6.1": StatusOff, "CC6.2": StatusOff, "CC6.3": StatusDeviates, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusOff, "CC6.8": StatusMeets, "CC7.1": StatusDeviates, "CC7.2": StatusDeviates,
-				"CC7.3": StatusMeets, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusDeviates, "CC9.1": StatusOff, "CC9.2": StatusNotCovered,
-			},
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusDeviates,
+				"CC6.1": StatusOff, "CC6.2": StatusOff, "CC6.3": StatusDeviates,
+				"CC6.6": StatusOff, "CC6.7": StatusOff, "CC6.8": StatusMeets,
+				"CC7.1": StatusDeviates, "CC7.2": StatusDeviates, "CC7.3": StatusMeets,
+				"CC8.1": StatusDeviates, "CC9.1": StatusOff,
+				"A1.2": StatusOff,
+			}),
 		},
 		{
 			name:   "hardened",
 			cfg:    hardenedConfig(),
 			getenv: injectOn,
-			want: map[string]Status{
-				"CC6.1": StatusMeets, "CC6.2": StatusMeets, "CC6.3": StatusMeets, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusMeets, "CC6.8": StatusMeets, "CC7.1": StatusMeets,
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusMeets,
+				"CC6.1": StatusMeets, "CC6.2": StatusMeets, "CC6.3": StatusMeets,
+				"CC6.6": StatusMeets, "CC6.7": StatusMeets, "CC6.8": StatusMeets,
+				"CC7.1": StatusMeets,
 				// Audit retention is fixed at 90 days until #11077 makes it configurable.
 				"CC7.2": StatusDeviates,
-				"CC7.3": StatusMeets, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusMeets, "CC9.1": StatusMeets, "CC9.2": StatusNotCovered,
-			},
+				"CC7.3": StatusMeets, "CC8.1": StatusMeets, "CC9.1": StatusMeets,
+				"A1.2": StatusMeets,
+			}),
 		},
 		{
 			name: "risky",
@@ -151,12 +172,14 @@ func TestEvaluateSOC2(t *testing.T) {
 				return c
 			}(),
 			getenv: injectOn,
-			want: map[string]Status{
-				"CC6.1": StatusDeviates, "CC6.2": StatusMeets, "CC6.3": StatusDeviates, "CC6.4": StatusNotCovered,
-				"CC6.6": StatusMeets, "CC6.8": StatusDeviates, "CC7.1": StatusDeviates, "CC7.2": StatusDeviates,
-				"CC7.3": StatusDeviates, "CC7.4": StatusNotCovered, "CC7.5": StatusNotCovered,
-				"CC8.1": StatusDeviates, "CC9.1": StatusDeviates, "CC9.2": StatusNotCovered,
-			},
+			want: soc2ExpectedStatuses(t, map[string]Status{
+				"CC4.1": StatusDeviates,
+				"CC6.1": StatusDeviates, "CC6.2": StatusMeets, "CC6.3": StatusDeviates,
+				"CC6.6": StatusMeets, "CC6.7": StatusMeets, "CC6.8": StatusDeviates,
+				"CC7.1": StatusDeviates, "CC7.2": StatusDeviates, "CC7.3": StatusDeviates,
+				"CC8.1": StatusDeviates, "CC9.1": StatusDeviates,
+				"A1.2": StatusMeets,
+			}),
 		},
 	}
 	for _, tc := range cases {

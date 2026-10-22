@@ -142,6 +142,13 @@ var settings = map[string]setting{
 			return *c.ACMMLevel
 		},
 	},
+	"governor.backup.key_file": {
+		Kind:        kindString,
+		Description: "Path to the encryption key that enables fail-closed self-service backups",
+		read: func(c *config.Config, _ func(string) string) any {
+			return c.Governor.Backup.KeyFile
+		},
+	},
 	"audit.retention_days": {
 		Kind:        kindInt,
 		Description: "Audit log retention in days (fixed in code today; configurable floor tracked by #11077)",

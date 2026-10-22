@@ -9,8 +9,8 @@ import "strings"
 func FrameworkDescription(id string) string {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "soc2-type2":
-		return "AICPA Trust Services Criteria (Common Criteria CC6–CC9) evaluated over an " +
-			"observation period: access control, change management, monitoring and risk mitigation."
+		return "AICPA 2017 Trust Services Criteria: all common criteria plus availability, " +
+			"confidentiality, processing integrity and privacy criteria."
 	case "fedramp-moderate":
 		return "NIST SP 800-53 Rev. 5 Moderate baseline controls required for U.S. federal cloud authorisations."
 	case "iso27001-annex-a":

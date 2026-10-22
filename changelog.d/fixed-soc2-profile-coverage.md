@@ -1,0 +1,1 @@
+- List all 61 SOC 2 Trust Services Criteria in the compliance profile, with explicit not-covered rationales and mappings for monitoring, protected credential movement, and encrypted backups.

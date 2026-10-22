@@ -13,9 +13,209 @@
 # pkg/compliance/evaluators.go. The mapping tables in docs/compliance.md are
 # rendered from this file by src/scripts/render-compliance-tables.py.
 id: soc2-type2
-name: SOC 2 Type II (Trust Services Criteria, Common Criteria)
+name: SOC 2 Type II (Trust Services Criteria)
 version: "2017 TSC (2022 points of focus)"
 controls:
+  # ── CC1 Control environment ──────────────────────────────────────────────
+  - id: CC1.1
+    title: Commitment to integrity and ethical values
+    text: >-
+      The entity demonstrates a commitment to integrity and ethical values.
+    citation: AICPA TSC 2017 CC1.1
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Integrity standards, conduct reviews and remediation are organisational
+      governance and personnel processes; no Hive setting can evidence them.
+  - id: CC1.2
+    title: Independent oversight of internal control
+    text: >-
+      The board exercises independent oversight of the development and
+      performance of internal control.
+    citation: AICPA TSC 2017 CC1.2
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Board independence, expertise and oversight are organisational governance
+      responsibilities outside the system Hive can observe.
+  - id: CC1.3
+    title: Structures, reporting lines, authorities and responsibilities
+    text: >-
+      Management establishes structures, reporting lines, authorities and
+      responsibilities, with board oversight, in pursuit of objectives.
+    citation: AICPA TSC 2017 CC1.3
+    domain: Segregation of duties
+    not_covered: true
+    rationale: >-
+      Hive roles cover access to Hive, not the entity's governance structures,
+      reporting lines or assignment of control responsibilities.
+  - id: CC1.4
+    title: Commitment to attract, develop and retain competent people
+    text: >-
+      The entity attracts, develops and retains competent individuals in
+      alignment with its objectives.
+    citation: AICPA TSC 2017 CC1.4
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Recruitment, training, competency assessment and succession planning are
+      organisational personnel processes outside Hive.
+  - id: CC1.5
+    title: Accountability for internal control responsibilities
+    text: >-
+      Individuals are held accountable for their internal control
+      responsibilities in pursuit of the entity's objectives.
+    citation: AICPA TSC 2017 CC1.5
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Performance measures, incentives, discipline and accountability are
+      organisational processes; Hive cannot evidence that they operate.
+  # ── CC2 Information and communication ────────────────────────────────────
+  - id: CC2.1
+    title: Relevant, quality information supports internal control
+    text: >-
+      The entity obtains or generates and uses relevant, quality information
+      to support the functioning of internal control.
+    citation: AICPA TSC 2017 CC2.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive produces operational records, but cannot evidence the entity's
+      information requirements, asset inventory, classification or data flows.
+  - id: CC2.2
+    title: Internal communication of control information
+    text: >-
+      Internal-control objectives, responsibilities and other necessary
+      information are communicated within the entity.
+    citation: AICPA TSC 2017 CC2.2
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Internal communications, awareness training and confidential reporting
+      channels are operated by the organisation, not by Hive settings.
+  - id: CC2.3
+    title: Communication with external parties
+    text: >-
+      The entity communicates with external parties about matters affecting
+      the functioning of internal control.
+    citation: AICPA TSC 2017 CC2.3
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Communications with customers, regulators, auditors and other external
+      parties are organisational processes that Hive cannot evidence.
+  # ── CC3 Risk assessment ──────────────────────────────────────────────────
+  - id: CC3.1
+    title: Clear objectives support risk identification and assessment
+    text: >-
+      Objectives are specified clearly enough to identify and assess risks to
+      their achievement.
+    citation: AICPA TSC 2017 CC3.1
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Defining business, reporting, compliance and system objectives and their
+      risk tolerances is the operator's risk-management process.
+  - id: CC3.2
+    title: Identification and analysis of risks
+    text: >-
+      Risks to objectives are identified and analysed across the entity as a
+      basis for determining how they should be managed.
+    citation: AICPA TSC 2017 CC3.2
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Hive can expose technical findings but cannot evidence an entity-wide
+      risk assessment, risk significance decisions or accepted residual risk.
+  - id: CC3.3
+    title: Consideration of fraud risk
+    text: >-
+      The potential for fraud is considered when assessing risks to the
+      achievement of objectives.
+    citation: AICPA TSC 2017 CC3.3
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Fraud-risk assessment, including incentives, pressures and
+      rationalisations, is an organisational process outside Hive.
+  - id: CC3.4
+    title: Identification and assessment of significant change
+    text: >-
+      Changes that could significantly affect the system of internal control
+      are identified and assessed.
+    citation: AICPA TSC 2017 CC3.4
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Hive reviews repository changes but cannot evidence the entity's broader
+      assessment of regulatory, business, leadership, vendor and technology
+      change.
+  # ── CC4 Monitoring activities ────────────────────────────────────────────
+  - id: CC4.1
+    title: Ongoing and separate evaluations of internal control
+    text: >-
+      Ongoing or separate evaluations determine whether internal-control
+      components are present and functioning.
+    citation: AICPA TSC 2017 CC4.1
+    domain: Logging & monitoring
+    rationale: >-
+      Sentinel supplies ongoing security evaluation and required independent
+      review supplies a separate evaluation of proposed repository changes.
+      These are evidence inputs, not an entity-wide internal-audit programme.
+    mappings:
+      - setting_path: sentinel.enabled
+        recommended: "true"
+        evaluator: equals
+      - setting_path: review.require_approval
+        recommended: "true"
+        evaluator: equals
+  - id: CC4.2
+    title: Evaluation and communication of control deficiencies
+    text: >-
+      Internal-control deficiencies are evaluated and communicated promptly to
+      parties responsible for corrective action and oversight.
+    citation: AICPA TSC 2017 CC4.2
+    domain: Logging & monitoring
+    not_covered: true
+    rationale: >-
+      Hive can report findings, but cannot evidence management's evaluation,
+      communication and tracking of control deficiencies to remediation.
+  # ── CC5 Control activities ───────────────────────────────────────────────
+  - id: CC5.1
+    title: Control activities mitigate risks
+    text: >-
+      The entity selects and develops control activities that reduce risks to
+      acceptable levels.
+    citation: AICPA TSC 2017 CC5.1
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Selecting entity-wide controls from assessed risks and deciding acceptable
+      residual risk are organisational responsibilities outside Hive.
+  - id: CC5.2
+    title: General control activities over technology
+    text: >-
+      General control activities over technology support the achievement of
+      the entity's objectives.
+    citation: AICPA TSC 2017 CC5.2
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Hive exposes controls over its own workflows but cannot evidence the
+      entity's complete technology infrastructure, security-management and
+      acquisition controls.
+  - id: CC5.3
+    title: Deployment of controls through policies and procedures
+    text: >-
+      Policies state what is expected and procedures put control activities
+      into action.
+    citation: AICPA TSC 2017 CC5.3
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Establishing, assigning, performing and periodically reassessing
+      organisation-wide policies and procedures is outside Hive's evidence.
   # ── CC6 Logical and physical access ──────────────────────────────────────
   - id: CC6.1
     title: Logical access security over protected information assets
@@ -75,6 +275,18 @@ controls:
       Hive is software running on infrastructure the operator chooses. Physical
       security belongs to the operator's hosting provider and facilities
       controls; no Hive setting can evidence it.
+  - id: CC6.5
+    title: Secure disposal of protected data and software
+    text: >-
+      Logical and physical protections are removed from physical assets only
+      after data and software can no longer be read or recovered and are no
+      longer required.
+    citation: AICPA TSC 2017 CC6.5
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Media sanitisation and disposal are performed by the operator and its
+      infrastructure providers; Hive cannot observe or evidence them.
   - id: CC6.6
     title: Protection against threats from outside system boundaries
     text: >-
@@ -83,6 +295,25 @@ controls:
     citation: AICPA TSC 2017 CC6.6
     domain: Access control
     mappings:
+      - setting_path: agent_sandbox.enabled
+        recommended: "true"
+        evaluator: equals
+  - id: CC6.7
+    title: Restricted and protected transmission and removal of information
+    text: >-
+      Transmission, movement and removal of information are restricted to
+      authorized users and processes and protected in transit.
+    citation: AICPA TSC 2017 CC6.7
+    domain: Data handling
+    rationale: >-
+      Proxy credential injection keeps the GitHub credential out of agent
+      processes, while the sandbox restricts the processes that may receive it.
+      Operators remain responsible for transport and endpoint controls outside
+      Hive.
+    mappings:
+      - setting_path: env.HIVE_PROXY_INJECT_GH_AUTH
+        recommended: "true"
+        evaluator: equals
       - setting_path: agent_sandbox.enabled
         recommended: "true"
         evaluator: equals
@@ -230,3 +461,328 @@ controls:
       Model providers, GitHub and the hosting platform are the operator's
       vendors. Assessing them is the operator's vendor-management process;
       Hive can only list which backends and gateways are configured.
+  # ── A1 Availability ─────────────────────────────────────────────────────
+  - id: A1.1
+    title: Capacity monitoring and management
+    text: >-
+      Current processing capacity and use are monitored and evaluated so
+      additional capacity can be implemented when required.
+    citation: AICPA TSC 2017 A1.1
+    domain: Logging & monitoring
+    not_covered: true
+    rationale: >-
+      Infrastructure capacity measurement, forecasting and scaling belong to
+      the operator's hosting and service-management controls.
+  - id: A1.2
+    title: Environmental protection, backup and recovery infrastructure
+    text: >-
+      Environmental protections, data backups and recovery infrastructure are
+      authorized, implemented, operated, maintained and monitored.
+    citation: AICPA TSC 2017 A1.2
+    domain: Risk management
+    rationale: >-
+      A configured backup encryption key enables Hive's fail-closed encrypted
+      backup path. It does not evidence backup scheduling, off-site storage,
+      environmental protection or successful restoration; operators must
+      supply that evidence separately.
+    mappings:
+      - setting_path: governor.backup.key_file
+        recommended: non-empty
+        evaluator: non_empty
+  - id: A1.3
+    title: Testing of recovery procedures
+    text: >-
+      Recovery-plan procedures and the integrity and completeness of backup
+      data are tested periodically.
+    citation: AICPA TSC 2017 A1.3
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Hive provides backup and restore tooling but cannot evidence that the
+      operator maintains or tests a business-continuity and recovery plan.
+  # ── C1 Confidentiality ───────────────────────────────────────────────────
+  - id: C1.1
+    title: Identification and retention of confidential information
+    text: >-
+      Confidential information is identified, protected and retained only as
+      long as needed to meet confidentiality objectives.
+    citation: AICPA TSC 2017 C1.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Information classification, confidentiality commitments and retention
+      schedules are defined and operated by the organisation, not Hive.
+  - id: C1.2
+    title: Disposal of confidential information
+    text: >-
+      Confidential information is identified for destruction and securely
+      disposed of at the end of its retention period.
+    citation: AICPA TSC 2017 C1.2
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot determine which operator data is confidential or evidence
+      its secure destruction across repositories, hosts and service providers.
+  # ── PI1 Processing integrity ─────────────────────────────────────────────
+  - id: PI1.1
+    title: Quality information about processing objectives
+    text: >-
+      Relevant, quality information about processing objectives, data
+      definitions and product or service specifications is used and
+      communicated.
+    citation: AICPA TSC 2017 PI1.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Defining service-processing requirements, specifications and data
+      semantics is the operator's product and service-management process.
+  - id: PI1.2
+    title: Complete and accurate system inputs
+    text: >-
+      Policies and procedures over system inputs support complete and accurate
+      products, services and reporting.
+    citation: AICPA TSC 2017 PI1.2
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot evidence completeness and accuracy controls for every input
+      to the operator's in-scope products, services and reports.
+  - id: PI1.3
+    title: Controlled system processing
+    text: >-
+      Policies and procedures over system processing support products,
+      services and reporting that meet the entity's objectives.
+    citation: AICPA TSC 2017 PI1.3
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Processing specifications, error correction and complete processing
+      records depend on the operator's in-scope systems, not Hive settings.
+  - id: PI1.4
+    title: Complete, accurate and timely output
+    text: >-
+      Output is protected and delivered completely, accurately and on time in
+      accordance with specifications.
+    citation: AICPA TSC 2017 PI1.4
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot establish or evaluate the output specifications, intended
+      recipients and delivery controls of the operator's services.
+  - id: PI1.5
+    title: Complete, accurate and timely storage
+    text: >-
+      Inputs, work in process and outputs are stored completely, accurately and
+      on time in accordance with system specifications.
+    citation: AICPA TSC 2017 PI1.5
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Storage specifications, archival controls and complete storage-activity
+      records belong to the operator's in-scope systems.
+  # ── P1 Privacy notice ────────────────────────────────────────────────────
+  - id: P1.1
+    title: Notice of privacy practices
+    text: >-
+      Data subjects receive timely notice of privacy practices and changes to
+      those practices.
+    citation: AICPA TSC 2017 P1.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      The organisation determines whether it is a data controller or processor
+      and owns its privacy notice; Hive cannot evidence that notice.
+  # ── P2 Choice and consent ────────────────────────────────────────────────
+  - id: P2.1
+    title: Privacy choices and consent
+    text: >-
+      Available privacy choices and their consequences are communicated, and
+      required consent is obtained and documented for intended purposes.
+    citation: AICPA TSC 2017 P2.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Consent collection, withdrawal and purpose records are features of the
+      operator's products and privacy programme, not Hive.
+  # ── P3 Collection ────────────────────────────────────────────────────────
+  - id: P3.1
+    title: Collection consistent with privacy objectives
+    text: >-
+      Personal information is collected lawfully, fairly and only as needed
+      for the entity's privacy objectives.
+    citation: AICPA TSC 2017 P3.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot classify all personal information collected by the operator
+      or determine whether each collection is necessary, fair and lawful.
+  - id: P3.2
+    title: Explicit consent before collection when required
+    text: >-
+      When collection requires explicit consent, the need and consequences are
+      communicated and consent is obtained before collection.
+    citation: AICPA TSC 2017 P3.2
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Required consent and its timing depend on the operator's products,
+      jurisdictions and privacy programme; Hive does not administer them.
+  # ── P4 Use, retention and disposal ───────────────────────────────────────
+  - id: P4.1
+    title: Use limited to identified privacy purposes
+    text: >-
+      Personal information is used only for purposes identified in the
+      entity's privacy objectives.
+    citation: AICPA TSC 2017 P4.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot determine the purposes for which the operator processes
+      personal information or evidence purpose limitation.
+  - id: P4.2
+    title: Retention consistent with privacy objectives
+    text: >-
+      Personal information is retained consistently with the entity's privacy
+      objectives and protected during the retention period.
+    citation: AICPA TSC 2017 P4.2
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Personal-information retention schedules and legal exceptions are
+      organisational controls outside Hive.
+  - id: P4.3
+    title: Secure disposal of personal information
+    text: >-
+      Personal information is securely anonymized, disposed of or destroyed
+      when it is no longer retained.
+    citation: AICPA TSC 2017 P4.3
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot identify all personal information held by the operator or
+      evidence its deletion across in-scope systems and service providers.
+  # ── P5 Access ────────────────────────────────────────────────────────────
+  - id: P5.1
+    title: Data-subject access to personal information
+    text: >-
+      Authenticated data subjects can review and receive their stored personal
+      information, or are told why access is denied.
+    citation: AICPA TSC 2017 P5.1
+    domain: Access control
+    not_covered: true
+    rationale: >-
+      Data-subject authentication and access-request fulfilment are operated by
+      the organisation's privacy programme, not Hive.
+  - id: P5.2
+    title: Correction of personal information
+    text: >-
+      Personal information is corrected, amended or appended on valid request,
+      and denials and applicable third-party updates are communicated.
+    citation: AICPA TSC 2017 P5.2
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot process data-subject correction requests or propagate
+      corrections through the operator's in-scope systems and third parties.
+  # ── P6 Disclosure and notification ───────────────────────────────────────
+  - id: P6.1
+    title: Consented disclosure to third parties
+    text: >-
+      Personal information is disclosed to appropriate third parties only
+      after required consent is obtained.
+    citation: AICPA TSC 2017 P6.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      The operator controls personal-information disclosures, purposes,
+      recipients and consent; Hive cannot evidence those decisions.
+  - id: P6.2
+    title: Records of authorized disclosures
+    text: >-
+      Complete, accurate and timely records of authorized personal-information
+      disclosures are created and retained.
+    citation: AICPA TSC 2017 P6.2
+    domain: Logging & monitoring
+    not_covered: true
+    rationale: >-
+      Hive's audit log covers Hive actions, not every authorized disclosure of
+      personal information by the operator's in-scope systems.
+  - id: P6.3
+    title: Records of unauthorized disclosures
+    text: >-
+      Complete, accurate and timely records of detected or reported
+      unauthorized personal-information disclosures are retained.
+    citation: AICPA TSC 2017 P6.3
+    domain: Logging & monitoring
+    not_covered: true
+    rationale: >-
+      Hive cannot evidence a complete breach and unauthorized-disclosure
+      register for the operator's systems and third parties.
+  - id: P6.4
+    title: Third-party privacy commitments and compliance
+    text: >-
+      Privacy commitments are obtained from third parties with access to
+      personal information, and their compliance is assessed and remediated.
+    citation: AICPA TSC 2017 P6.4
+    domain: Risk management
+    not_covered: true
+    rationale: >-
+      Contracting with and assessing vendors is the operator's privacy and
+      vendor-management process.
+  - id: P6.5
+    title: Third-party notification of unauthorized disclosures
+    text: >-
+      Vendors and third parties commit to notify the entity of actual or
+      suspected unauthorized disclosures, which are reported and acted upon.
+    citation: AICPA TSC 2017 P6.5
+    domain: Incident response
+    not_covered: true
+    rationale: >-
+      Vendor breach-notification commitments and the response to their reports
+      are organisational and contractual controls outside Hive.
+  - id: P6.6
+    title: Breach notification
+    text: >-
+      Affected data subjects, regulators and others receive required
+      notification of privacy breaches and incidents.
+    citation: AICPA TSC 2017 P6.6
+    domain: Incident response
+    not_covered: true
+    rationale: >-
+      Determining notification obligations and issuing legally sufficient
+      notices are responsibilities of the operator's privacy programme.
+  - id: P6.7
+    title: Accounting of personal information and disclosures
+    text: >-
+      Data subjects receive an accounting of personal information held and its
+      disclosures when requested.
+    citation: AICPA TSC 2017 P6.7
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Hive cannot inventory all personal information held about a data subject
+      or all disclosures made by the operator and its third parties.
+  # ── P7 Quality ───────────────────────────────────────────────────────────
+  - id: P7.1
+    title: Quality of personal information
+    text: >-
+      Personal information is accurate, current, complete and relevant for its
+      intended purposes.
+    citation: AICPA TSC 2017 P7.1
+    domain: Data handling
+    not_covered: true
+    rationale: >-
+      Data-quality requirements and correction processes belong to the
+      operator's in-scope products and privacy programme.
+  # ── P8 Monitoring and enforcement ───────────────────────────────────────
+  - id: P8.1
+    title: Privacy inquiries, disputes and compliance monitoring
+    text: >-
+      Privacy inquiries, complaints and disputes are resolved and communicated,
+      and compliance is monitored with timely correction of deficiencies.
+    citation: AICPA TSC 2017 P8.1
+    domain: Logging & monitoring
+    not_covered: true
+    rationale: >-
+      Hive cannot evidence the operator's privacy complaint process, compliance
+      reviews, remediation or disciplinary actions.

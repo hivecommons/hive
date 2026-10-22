@@ -126,6 +126,24 @@ profile disagree.
 <!-- BEGIN GENERATED: compliance-profile soc2-type2 -->
 | Control | Domain | Hive setting | Recommended | Evaluator | Notes |
 |---|---|---|---|---|---|
+| CC1.1 — Commitment to integrity and ethical values | Risk management | _not covered by Hive_ | — | — | Integrity standards, conduct reviews and remediation are organisational governance and personnel processes; no Hive setting can evidence them. |
+| CC1.2 — Independent oversight of internal control | Risk management | _not covered by Hive_ | — | — | Board independence, expertise and oversight are organisational governance responsibilities outside the system Hive can observe. |
+| CC1.3 — Structures, reporting lines, authorities and responsibilities | Segregation of duties | _not covered by Hive_ | — | — | Hive roles cover access to Hive, not the entity's governance structures, reporting lines or assignment of control responsibilities. |
+| CC1.4 — Commitment to attract, develop and retain competent people | Risk management | _not covered by Hive_ | — | — | Recruitment, training, competency assessment and succession planning are organisational personnel processes outside Hive. |
+| CC1.5 — Accountability for internal control responsibilities | Risk management | _not covered by Hive_ | — | — | Performance measures, incentives, discipline and accountability are organisational processes; Hive cannot evidence that they operate. |
+| CC2.1 — Relevant, quality information supports internal control | Data handling | _not covered by Hive_ | — | — | Hive produces operational records, but cannot evidence the entity's information requirements, asset inventory, classification or data flows. |
+| CC2.2 — Internal communication of control information | Risk management | _not covered by Hive_ | — | — | Internal communications, awareness training and confidential reporting channels are operated by the organisation, not by Hive settings. |
+| CC2.3 — Communication with external parties | Risk management | _not covered by Hive_ | — | — | Communications with customers, regulators, auditors and other external parties are organisational processes that Hive cannot evidence. |
+| CC3.1 — Clear objectives support risk identification and assessment | Risk management | _not covered by Hive_ | — | — | Defining business, reporting, compliance and system objectives and their risk tolerances is the operator's risk-management process. |
+| CC3.2 — Identification and analysis of risks | Risk management | _not covered by Hive_ | — | — | Hive can expose technical findings but cannot evidence an entity-wide risk assessment, risk significance decisions or accepted residual risk. |
+| CC3.3 — Consideration of fraud risk | Risk management | _not covered by Hive_ | — | — | Fraud-risk assessment, including incentives, pressures and rationalisations, is an organisational process outside Hive. |
+| CC3.4 — Identification and assessment of significant change | Risk management | _not covered by Hive_ | — | — | Hive reviews repository changes but cannot evidence the entity's broader assessment of regulatory, business, leadership, vendor and technology change. |
+| CC4.1 — Ongoing and separate evaluations of internal control | Logging & monitoring | `sentinel.enabled` | `true` | `equals` | Sentinel supplies ongoing security evaluation and required independent review supplies a separate evaluation of proposed repository changes. These are evidence inputs, not an entity-wide internal-audit programme. |
+| CC4.1 — Ongoing and separate evaluations of internal control | Logging & monitoring | `review.require_approval` | `true` | `equals` |  |
+| CC4.2 — Evaluation and communication of control deficiencies | Logging & monitoring | _not covered by Hive_ | — | — | Hive can report findings, but cannot evidence management's evaluation, communication and tracking of control deficiencies to remediation. |
+| CC5.1 — Control activities mitigate risks | Risk management | _not covered by Hive_ | — | — | Selecting entity-wide controls from assessed risks and deciding acceptable residual risk are organisational responsibilities outside Hive. |
+| CC5.2 — General control activities over technology | Risk management | _not covered by Hive_ | — | — | Hive exposes controls over its own workflows but cannot evidence the entity's complete technology infrastructure, security-management and acquisition controls. |
+| CC5.3 — Deployment of controls through policies and procedures | Risk management | _not covered by Hive_ | — | — | Establishing, assigning, performing and periodically reassessing organisation-wide policies and procedures is outside Hive's evidence. |
 | CC6.1 — Logical access security over protected information assets | Access control | `dashboard.authorized_users` | `2` | `max_owners` |  |
 | CC6.1 — Logical access security over protected information assets | Access control | `env.HIVE_PROXY_INJECT_GH_AUTH` | `true` | `equals` |  |
 | CC6.2 — Registration and authorization of users before access is granted | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` | On a hub-proxied hive the hub's Manage Access screen is the registration point and delivers this list; on a standalone spoke the list itself is the gate. Either way an empty list means no named-user allowlist exists. |
@@ -133,7 +151,10 @@ profile disagree.
 | CC6.3 — Role-based access, least privilege and segregation of duties | Segregation of duties | `auto_merge.trusted_authors.enabled` | `false` | `equals` |  |
 | CC6.3 — Role-based access, least privilege and segregation of duties | Segregation of duties | `auto_merge.trusted_authors.require_github_permission` | `true` | `equals` |  |
 | CC6.4 — Physical access to facilities and protected information assets | Access control | _not covered by Hive_ | — | — | Hive is software running on infrastructure the operator chooses. Physical security belongs to the operator's hosting provider and facilities controls; no Hive setting can evidence it. |
+| CC6.5 — Secure disposal of protected data and software | Data handling | _not covered by Hive_ | — | — | Media sanitisation and disposal are performed by the operator and its infrastructure providers; Hive cannot observe or evidence them. |
 | CC6.6 — Protection against threats from outside system boundaries | Access control | `agent_sandbox.enabled` | `true` | `equals` |  |
+| CC6.7 — Restricted and protected transmission and removal of information | Data handling | `env.HIVE_PROXY_INJECT_GH_AUTH` | `true` | `equals` | Proxy credential injection keeps the GitHub credential out of agent processes, while the sandbox restricts the processes that may receive it. Operators remain responsible for transport and endpoint controls outside Hive. |
+| CC6.7 — Restricted and protected transmission and removal of information | Data handling | `agent_sandbox.enabled` | `true` | `equals` |  |
 | CC6.8 — Prevention and detection of unauthorized or malicious software | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
 | CC6.8 — Prevention and detection of unauthorized or malicious software | Vulnerability management | `sentinel.disabled_behaviors` | `none` | `empty` |  |
 | CC7.1 — Detection of configuration changes that introduce vulnerabilities | Vulnerability management | `sentinel.enabled` | `true` | `equals` |  |
@@ -152,6 +173,34 @@ profile disagree.
 | CC9.1 — Mitigation of risks from potential business disruptions | Risk management | `tool_approval.enabled` | `true` | `equals` |  |
 | CC9.1 — Mitigation of risks from potential business disruptions | Risk management | `acmm_level` | `5` | `at_most` |  |
 | CC9.2 — Vendor and business partner risk | Risk management | _not covered by Hive_ | — | — | Model providers, GitHub and the hosting platform are the operator's vendors. Assessing them is the operator's vendor-management process; Hive can only list which backends and gateways are configured. |
+| A1.1 — Capacity monitoring and management | Logging & monitoring | _not covered by Hive_ | — | — | Infrastructure capacity measurement, forecasting and scaling belong to the operator's hosting and service-management controls. |
+| A1.2 — Environmental protection, backup and recovery infrastructure | Risk management | `governor.backup.key_file` | `non-empty` | `non_empty` | A configured backup encryption key enables Hive's fail-closed encrypted backup path. It does not evidence backup scheduling, off-site storage, environmental protection or successful restoration; operators must supply that evidence separately. |
+| A1.3 — Testing of recovery procedures | Risk management | _not covered by Hive_ | — | — | Hive provides backup and restore tooling but cannot evidence that the operator maintains or tests a business-continuity and recovery plan. |
+| C1.1 — Identification and retention of confidential information | Data handling | _not covered by Hive_ | — | — | Information classification, confidentiality commitments and retention schedules are defined and operated by the organisation, not Hive. |
+| C1.2 — Disposal of confidential information | Data handling | _not covered by Hive_ | — | — | Hive cannot determine which operator data is confidential or evidence its secure destruction across repositories, hosts and service providers. |
+| PI1.1 — Quality information about processing objectives | Data handling | _not covered by Hive_ | — | — | Defining service-processing requirements, specifications and data semantics is the operator's product and service-management process. |
+| PI1.2 — Complete and accurate system inputs | Data handling | _not covered by Hive_ | — | — | Hive cannot evidence completeness and accuracy controls for every input to the operator's in-scope products, services and reports. |
+| PI1.3 — Controlled system processing | Data handling | _not covered by Hive_ | — | — | Processing specifications, error correction and complete processing records depend on the operator's in-scope systems, not Hive settings. |
+| PI1.4 — Complete, accurate and timely output | Data handling | _not covered by Hive_ | — | — | Hive cannot establish or evaluate the output specifications, intended recipients and delivery controls of the operator's services. |
+| PI1.5 — Complete, accurate and timely storage | Data handling | _not covered by Hive_ | — | — | Storage specifications, archival controls and complete storage-activity records belong to the operator's in-scope systems. |
+| P1.1 — Notice of privacy practices | Data handling | _not covered by Hive_ | — | — | The organisation determines whether it is a data controller or processor and owns its privacy notice; Hive cannot evidence that notice. |
+| P2.1 — Privacy choices and consent | Data handling | _not covered by Hive_ | — | — | Consent collection, withdrawal and purpose records are features of the operator's products and privacy programme, not Hive. |
+| P3.1 — Collection consistent with privacy objectives | Data handling | _not covered by Hive_ | — | — | Hive cannot classify all personal information collected by the operator or determine whether each collection is necessary, fair and lawful. |
+| P3.2 — Explicit consent before collection when required | Data handling | _not covered by Hive_ | — | — | Required consent and its timing depend on the operator's products, jurisdictions and privacy programme; Hive does not administer them. |
+| P4.1 — Use limited to identified privacy purposes | Data handling | _not covered by Hive_ | — | — | Hive cannot determine the purposes for which the operator processes personal information or evidence purpose limitation. |
+| P4.2 — Retention consistent with privacy objectives | Data handling | _not covered by Hive_ | — | — | Personal-information retention schedules and legal exceptions are organisational controls outside Hive. |
+| P4.3 — Secure disposal of personal information | Data handling | _not covered by Hive_ | — | — | Hive cannot identify all personal information held by the operator or evidence its deletion across in-scope systems and service providers. |
+| P5.1 — Data-subject access to personal information | Access control | _not covered by Hive_ | — | — | Data-subject authentication and access-request fulfilment are operated by the organisation's privacy programme, not Hive. |
+| P5.2 — Correction of personal information | Data handling | _not covered by Hive_ | — | — | Hive cannot process data-subject correction requests or propagate corrections through the operator's in-scope systems and third parties. |
+| P6.1 — Consented disclosure to third parties | Data handling | _not covered by Hive_ | — | — | The operator controls personal-information disclosures, purposes, recipients and consent; Hive cannot evidence those decisions. |
+| P6.2 — Records of authorized disclosures | Logging & monitoring | _not covered by Hive_ | — | — | Hive's audit log covers Hive actions, not every authorized disclosure of personal information by the operator's in-scope systems. |
+| P6.3 — Records of unauthorized disclosures | Logging & monitoring | _not covered by Hive_ | — | — | Hive cannot evidence a complete breach and unauthorized-disclosure register for the operator's systems and third parties. |
+| P6.4 — Third-party privacy commitments and compliance | Risk management | _not covered by Hive_ | — | — | Contracting with and assessing vendors is the operator's privacy and vendor-management process. |
+| P6.5 — Third-party notification of unauthorized disclosures | Incident response | _not covered by Hive_ | — | — | Vendor breach-notification commitments and the response to their reports are organisational and contractual controls outside Hive. |
+| P6.6 — Breach notification | Incident response | _not covered by Hive_ | — | — | Determining notification obligations and issuing legally sufficient notices are responsibilities of the operator's privacy programme. |
+| P6.7 — Accounting of personal information and disclosures | Data handling | _not covered by Hive_ | — | — | Hive cannot inventory all personal information held about a data subject or all disclosures made by the operator and its third parties. |
+| P7.1 — Quality of personal information | Data handling | _not covered by Hive_ | — | — | Data-quality requirements and correction processes belong to the operator's in-scope products and privacy programme. |
+| P8.1 — Privacy inquiries, disputes and compliance monitoring | Logging & monitoring | _not covered by Hive_ | — | — | Hive cannot evidence the operator's privacy complaint process, compliance reviews, remediation or disciplinary actions. |
 <!-- END GENERATED: compliance-profile soc2-type2 -->
 
 A step-by-step SOC 2 operator guide, written for auditors and control
@@ -418,11 +467,15 @@ rather than implying coverage:
   the people and organisation operating the hive. Name accountable owners
   (`dashboard.authorized_users`) and keep a human on the merge decision
   wherever your policy requires accountability.
-- **Physical, HR, vendor, incident-response and recovery controls.** These
-  belong to your hosting provider and your organisation's programmes. The
-  profiles mark these `not_covered` for this reason: SOC 2 CC6.4, CC7.4,
-  CC7.5 and CC9.2; FedRAMP AC-2.ELIG, SA-9, PE-3 and PS-3; ISO 27001 A.5.1,
-  A.5.19, A.5.24, A.5.30, A.6.1 and A.7.2.
+- **Organisational, physical and infrastructure controls.** The SOC 2 profile
+  lists all 61 Trust Services Criteria. It marks criteria `not_covered` when
+  evidence must come from the operator or its providers: governance and HR,
+  entity-wide risk and communication processes, physical security, capacity,
+  recovery testing, data life-cycle and processing-integrity controls, and the
+  privacy programme. The generated table above gives the criterion-specific
+  reason instead of allowing an omitted criterion to look covered. FedRAMP
+  AC-2.ELIG, SA-9, PE-3 and PS-3 and ISO 27001 A.5.1, A.5.19, A.5.24, A.5.30,
+  A.6.1 and A.7.2 are likewise explicit.
 
 ## Related
 
