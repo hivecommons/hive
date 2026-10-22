@@ -47,7 +47,22 @@ func tmuxServerPID(sock string) (int, bool) {
 	return pid, true
 }
 
-// processAlive (reaper_test.go) probes pids with signal 0.
+// waitProcessGone polls processAlive (reaper_test.go) until pid is gone or
+// the timeout elapses.
+func waitProcessGone(pid int, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for processAlive(pid) {
+		select {
+		case <-deadline.C:
+			return !processAlive(pid)
+		case <-tick.C:
+		}
+	}
+	return true
+}
 
 // killTestTmuxServers tears down every tmux server whose socket lives under
 // tmuxDir (the run's TMUX_TMPDIR). It returns a description of anything it
@@ -62,18 +77,13 @@ func killTestTmuxServers(tmuxDir string) []string {
 		pid, ok := tmuxServerPID(sock)
 		_ = exec.Command("tmux", "-S", sock, "kill-server").Run()
 		if ok {
-			deadline := time.Now().Add(3 * time.Second)
-			for processAlive(pid) && time.Now().Before(deadline) {
-				time.Sleep(50 * time.Millisecond)
-			}
-			if processAlive(pid) {
+			if !waitProcessGone(pid, 3*time.Second) {
 				// kill-server did not finish the job: take out the server's
 				// whole process group (pipe-pane `sh -c … pluk watch` children
 				// live there) and then the server itself.
 				_ = syscall.Kill(-pid, syscall.SIGKILL)
 				_ = syscall.Kill(pid, syscall.SIGKILL)
-				time.Sleep(100 * time.Millisecond)
-				if processAlive(pid) {
+				if !waitProcessGone(pid, time.Second) {
 					problems = append(problems, fmt.Sprintf("tmux server pid %d (socket %s) survived kill-server and SIGKILL", pid, sock))
 				}
 			}
