@@ -188,6 +188,15 @@ The dashboard serves recent entries at `GET /api/audit`
 - **Sensitive filter**: `?sensitive=1` returns sensitive entries from the same
   24-hour window as `sensitive_24h`, scanning the in-memory ring so an entry
   older than the default 200-row page can still be found.
+- **Contributor filter**: `?contributor=<login>` returns only entries whose
+  `user` is that GitHub login (case-insensitive) — the principal of the
+  [contributor relay rows](#contributor-relay-rows) above. It scans the
+  in-memory ring like `?sensitive=1`, keeps the same 200-entry cap and the same
+  role gate, and combines with `?sensitive=1` (both filters apply). The
+  summary fields (`histogram`, `sensitive_24h`, `today`, `last`) still cover
+  the whole ring. The contribute page's Operations **Your assignments** card
+  reads the caller's own `relay_*` rows through it, and the Audit Log's
+  `relay_` chip narrows the loaded page to `relay_*` actions.
 - **Enrichment**: `user_name` is stamped here, on served copies only (see
   above).
 

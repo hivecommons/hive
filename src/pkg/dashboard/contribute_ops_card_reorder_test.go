@@ -9,7 +9,7 @@ import (
 func TestOpsCardReorderStaticWiring(t *testing.T) {
 	body := renderContributePage(t)
 
-	wantIDs := []string{"clankers", "pipeline", "mine", "wall", "models", "work", "runs", "decisions", "queue", "opp", "triage"}
+	wantIDs := []string{"clankers", "pipeline", "mine", "assignments", "wall", "models", "work", "runs", "decisions", "queue", "opp", "triage"}
 	seen := map[string]int{}
 	for _, match := range regexp.MustCompile(`<div[^>\n]+data-ops-card="([^"]+)"`).FindAllStringSubmatch(body, -1) {
 		seen[match[1]]++
@@ -33,7 +33,7 @@ func TestOpsCardReorderStaticWiring(t *testing.T) {
 		`id="ops-layout-reset"`,
 		`hive.ops.layout`,
 		`left:['clankers','pipeline']`,
-		`main:['mine','wall','models','work','runs','decisions','queue','opp','triage']`,
+		`main:['mine','assignments','wall','models','work','runs','decisions','queue','opp','triage']`,
 		`wide:[]`,
 		`OPS_LAYOUT_ALLOWED_REGION={triage:'main'}`,
 		`function opsLayoutNormalize`,

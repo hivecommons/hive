@@ -6669,6 +6669,7 @@
           <datalist id="audit-saved-searches"></datalist>
         </div>
         <button id="audit-sensitive-filter" class="hv-btn btn-secondary btn-sm audit-filter-chip" data-action="toggleAuditSensitiveFilter" data-keydown-action="toggleAuditSensitiveFilter" data-keys="Enter, " data-stop="1" data-prevent="1" aria-pressed="false" title="Show only sensitive audit entries from the last 24h">Sensitive only</button>
+        <button id="audit-relay-filter" class="hv-btn btn-secondary btn-sm audit-filter-chip" data-action="toggleAuditRelayFilter" data-keydown-action="toggleAuditRelayFilter" data-keys="Enter, " data-stop="1" data-prevent="1" aria-pressed="false" title="Show only contributor relay (relay_*) audit entries">relay_</button>
         <button class="hv-btn btn-primary btn-sm" data-action="saveAuditSearch" title="Save this search">💾 Save</button>
         <button class="hv-btn btn-danger btn-sm" data-action="clearAuditSearches" title="Clear saved searches">✕</button>
         <span id="audit-match-count" style="font-size:0.7rem;color:var(--muted);white-space:nowrap"></span>
@@ -30017,6 +30018,7 @@ function burnAreaChart() {
     var _auditSummary = { histogram: [], sensitive_24h: 0, today: 0, last: null };
     var _auditResizeObserver = null;
     var _auditSensitiveOnly = false;
+    var _auditRelayOnly = false;
     var _auditPendingSensitiveScroll = false;
     function auditPanelSavedHeight() {
       const n = Number(localStorage.getItem(AUDIT_PANEL_HEIGHT_KEY));
@@ -30078,7 +30080,7 @@ function burnAreaChart() {
       // scroll offset and the empty/loaded states swap without a rebuild; the
       // panel's height is fixed by --audit-panel-height either way.
       if (!entries.length) {
-        morphInnerHtml(panel, '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">' + (_auditSensitiveOnly ? 'No sensitive audit entries in the last 24h' : 'No audit entries yet') + '</div>');
+        morphInnerHtml(panel, '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">' + (_auditSensitiveOnly ? 'No sensitive audit entries in the last 24h' : (_auditRelayOnly ? 'No relay_ audit entries loaded' : 'No audit entries yet')) + '</div>');
         return;
       }
       morphInnerHtml(panel, '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
@@ -30108,22 +30110,29 @@ function burnAreaChart() {
         chip.textContent = _auditSensitiveOnly ? 'Sensitive only ×' : 'Sensitive only';
         chip.title = _auditSensitiveOnly ? 'Clear sensitive-only audit filter' : 'Show only sensitive audit entries from the last 24h';
       }
+      var relayChip = document.getElementById('audit-relay-filter');
+      if (relayChip) {
+        relayChip.setAttribute('aria-pressed', _auditRelayOnly ? 'true' : 'false');
+        relayChip.textContent = _auditRelayOnly ? 'relay_ ×' : 'relay_';
+        relayChip.title = _auditRelayOnly ? 'Clear relay_ audit filter' : 'Show only contributor relay (relay_*) audit entries';
+      }
+      var base = _auditRelayOnly ? _auditEntries.filter(auditEntryIsRelay) : _auditEntries;
       if (!raw) {
-        renderAuditTable(_auditEntries);
-        if (countEl) countEl.textContent = _auditEntries.length ? (_auditSensitiveOnly ? _auditEntries.length + ' sensitive / 24h' : _auditEntries.length + ' entries') : '';
+        renderAuditTable(base);
+        if (countEl) countEl.textContent = base.length ? (_auditSensitiveOnly ? base.length + ' sensitive / 24h' : base.length + (_auditRelayOnly ? ' relay_ entries' : ' entries')) : '';
         scrollPendingAuditSensitiveEntry();
         return;
       }
       var query = parseAuditQuery(raw);
       var terms = typeof query === 'string' ? query.split(/\s+/).filter(Boolean) : [];
-      var filtered = _auditEntries.filter(function(e) {
+      var filtered = base.filter(function(e) {
         var haystack = [e.ts || '', e.user || '', e.action || '', e.agent || '', e.detail || ''].join(' ');
         if (query instanceof RegExp) return query.test(haystack);
         var lower = haystack.toLowerCase();
         return terms.some(function(t) { return lower.includes(t); });
       });
       renderAuditTable(filtered);
-      if (countEl) countEl.textContent = filtered.length + ' / ' + _auditEntries.length + (_auditSensitiveOnly ? ' sensitive / 24h' : '');
+      if (countEl) countEl.textContent = filtered.length + ' / ' + base.length + (_auditSensitiveOnly ? ' sensitive / 24h' : '') + (_auditRelayOnly ? ' relay_' : '');
       scrollPendingAuditSensitiveEntry();
     }
 
@@ -30136,6 +30145,17 @@ function burnAreaChart() {
         _auditPendingSensitiveScroll = false;
         row.scrollIntoView({ block: 'center', behavior: 'smooth' });
       });
+    }
+
+    // Contributor relay rows (relay_connected, relay_task_assigned, ...) share
+    // the relay_ action prefix; the chip narrows the loaded page client-side.
+    function auditEntryIsRelay(e) {
+      return String((e && e.action) || '').indexOf('relay_') === 0;
+    }
+
+    function toggleAuditRelayFilter() {
+      _auditRelayOnly = !_auditRelayOnly;
+      filterAuditLog();
     }
 
     function toggleAuditSensitiveFilter() {

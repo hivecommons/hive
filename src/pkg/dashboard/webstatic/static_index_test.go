@@ -219,6 +219,11 @@ func TestStaticAuditCollapsedSummaryUsesSharedSparklineAndRiskChip(t *testing.T)
 		"function showAuditSensitiveEntries()",
 		"fetch('/api/audit' + (_auditSensitiveOnly ? '?sensitive=1' : ''))",
 		".audit-entry-sensitive-tag",
+		"id=\"audit-relay-filter\"",
+		"data-action=\"toggleAuditRelayFilter\"",
+		"function toggleAuditRelayFilter()",
+		"function auditEntryIsRelay(e)",
+		"indexOf('relay_') === 0",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("static dashboard audit sensitive chip CSS missing %q", want)
