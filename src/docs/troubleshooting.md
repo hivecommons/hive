@@ -671,6 +671,30 @@ One related status is also nginx-origin but never wears this body: **429** on
 gateway's `limit_req` rate limiter, not a service failure — back off and
 retry after the window.
 
+## The dashboard shows `issue request stuck` or `effect ledger op stuck`
+
+These are self-report classes (see [fleet-report.md](fleet-report.md)) for
+work the hive is silently not doing: a relay request file that keeps failing,
+or a journaled external effect the mutation boundary refuses to retry because
+its last attempt ended `Unknown`. Both appear on the Fleet report card and,
+when self-reporting is enabled, as a `[selfreport]` issue.
+
+- **`issue_request_stuck`** — the key is the request file name under the
+  issue-requests queue
+  (`kubectl -n hive exec deploy/hive -- ls /var/run/hive-metrics/issue-requests/`).
+  Read the sibling `.result.json` for the last error. A placeholder or
+  malformed request (`repo: "owner/repo"`, title `t`) will never succeed: move
+  it aside (`mv x.json x.failed`) and the condition clears on the next scan.
+- **`effect_ledger_op_stuck`** — the key is the op's logical ID in the
+  mutation journal (`/data/convergence/mutation/journal.json` in the pod). Check whether the effect
+  exists on GitHub; the owning call site reconciles it on its next pass, or
+  the op resolves once the request behind it is removed. A watcher retrying
+  a doomed request keeps the op pinned, so fix the request first.
+- **`unclassified_error_repeated`** — any WARN/ERROR line repeated five times
+  in ten minutes. The report's message is the normalised line; grep the log
+  for it (`kubectl -n hive logs deploy/hive | grep -F "<message>"`) to find
+  the component.
+
 ## Health endpoints
 
 Use the same endpoints as the probes:

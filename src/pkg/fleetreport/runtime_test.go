@@ -344,6 +344,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassAgentStall, message: "agent stalled after kick: 3 continue nudges sent without the pane moving"},
 		{class: ClassAgentCrashLoop, message: "agent crash loop: 5 failures within the backoff window"},
 		{class: ClassCIPollNudge, message: "ci-poll nudge: agent polling ci 4 times since last kick"},
+		{class: ClassIssueRequestStuck, message: "issue-request stuck: issue request failed 3 attempts over 7m"},
+		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
 	for _, tc := range cases {
@@ -421,6 +423,18 @@ func TestRuntimeClassThresholdValues(t *testing.T) {
 	}
 	if s := Classes[ClassCIPollNudge]; s.MinCount != 1 || s.Window != 24*time.Hour || s.Severity != "low" {
 		t.Fatalf("ci_poll_nudge = %+v", s)
+	}
+	// Queue-health classes: the owning component applies the stuck
+	// threshold (attempts/age), so the class fires on the first observation
+	// and clears the moment the work completes or is quarantined.
+	if s := Classes[ClassIssueRequestStuck]; s.MinCount != 1 || s.Severity != "medium" || s.Component != "github-relay" || s.MinDuration != 0 {
+		t.Fatalf("issue_request_stuck = %+v", s)
+	}
+	if s := Classes[ClassEffectLedgerOpStuck]; s.MinCount != 1 || s.Severity != "medium" || s.Component != "mutation-ledger" || s.MinDuration != 0 {
+		t.Fatalf("effect_ledger_op_stuck = %+v", s)
+	}
+	if s := Classes[ClassUnclassifiedRepeated]; s.IdleClear != 2*s.Window {
+		t.Fatalf("unclassified_error_repeated IdleClear = %s, want 2× window", s.IdleClear)
 	}
 }
 
@@ -697,5 +711,98 @@ func TestObserveItemCarriesRepoAndRefIntoEvidence(t *testing.T) {
 	}
 	if got := strings.Join(OwnersOf([]string{"B/x", "a/y", "a/z", "bad"}), ","); got != "a,b" {
 		t.Fatalf("owners = %q", got)
+	}
+}
+
+func TestMatchesExplicitClass(t *testing.T) {
+	if !MatchesExplicitClass("Kick FAILED for agent quality") {
+		t.Fatal("kick failed not matched")
+	}
+	if !MatchesExplicitClass("issue-request watcher: request exceeded retry horizon") {
+		t.Fatal("issue-request watcher keyword not matched")
+	}
+	if MatchesExplicitClass("some brand new failure nobody classified") {
+		t.Fatal("unclassified message matched an explicit class")
+	}
+}
+
+func TestIsBenignMessage(t *testing.T) {
+	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled"} {
+		if !IsBenignMessage(m) {
+			t.Fatalf("%q not benign", m)
+		}
+	}
+	for _, m := range []string{"write failed: i/o timeout", "request failed: 500"} {
+		if IsBenignMessage(m) {
+			t.Fatalf("%q wrongly benign", m)
+		}
+	}
+}
+
+func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
+	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	tr := NewRuntimeTracker(now)
+	tr.ObserveItem(ClassIssueRequestStuck, "req-1.json", "issue-request stuck: issue request failed 3 attempts over 2m", "file=req-1.json", "owner/repo", "")
+	tr.Observe(ClassEffectLedgerOpStuck, "abc123", "effect ledger op stuck: issue_create has been Unknown for 31m", "logical_id=abc123")
+	ev := tr.Evidence()
+	if len(ev) != 2 {
+		t.Fatalf("evidence = %+v", ev)
+	}
+	if ev[0].Class != ClassEffectLedgerOpStuck || ev[0].Component != "mutation-ledger" || ev[0].Severity != "medium" {
+		t.Fatalf("ledger evidence = %+v", ev[0])
+	}
+	if ev[1].Class != ClassIssueRequestStuck || ev[1].Component != "github-relay" || ev[1].Repo != "owner/repo" || ev[1].Agent != "req-1.json" {
+		t.Fatalf("relay evidence = %+v", ev[1])
+	}
+	tr.Clear(ClassIssueRequestStuck, "req-1.json")
+	tr.Clear(ClassEffectLedgerOpStuck, "abc123")
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("cleared conditions still reported: %+v", ev)
+	}
+	if cleared := tr.TakeCleared(); len(cleared) != 2 {
+		t.Fatalf("TakeCleared = %+v", cleared)
+	}
+}
+
+func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
+	now, advance := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	tr := NewRuntimeTracker(now)
+	// Five observations spread over 40 minutes never share a 10-minute window.
+	for i := 0; i < 5; i++ {
+		tr.Observe(ClassUnclassifiedRepeated, "k", "spread out", "")
+		advance(10 * time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("spread observations qualified: %+v", ev)
+	}
+	// Five inside one window qualify.
+	for i := 0; i < 5; i++ {
+		tr.Observe(ClassUnclassifiedRepeated, "k", "burst", "")
+		advance(time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Window != unclassifiedRepeatWindow {
+		t.Fatalf("burst evidence = %+v", ev)
+	}
+	// Quiet for less than IdleClear: still tracked (not cleared), just not
+	// qualifying any more.
+	advance(unclassifiedIdleClear - 2*time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("stale burst still qualifies: %+v", ev)
+	}
+	if cleared := tr.TakeCleared(); len(cleared) != 0 {
+		t.Fatalf("cleared before IdleClear: %+v", cleared)
+	}
+	advance(2 * time.Minute)
+	_ = tr.Evidence()
+	cleared := tr.TakeCleared()
+	if len(cleared) != 1 || cleared[0].Key != "k" || cleared[0].Message != "burst" {
+		t.Fatalf("TakeCleared = %+v", cleared)
+	}
+	// Never-qualified conditions are dropped silently on idle.
+	tr.Observe(ClassUnclassifiedRepeated, "once", "one-off", "")
+	advance(unclassifiedIdleClear)
+	_ = tr.Evidence()
+	if cleared := tr.TakeCleared(); len(cleared) != 0 {
+		t.Fatalf("one-off recorded as cleared: %+v", cleared)
 	}
 }

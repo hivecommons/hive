@@ -24508,7 +24508,7 @@ function burnAreaChart() {
         const evidence = Array.isArray(r.evidence) ? r.evidence : [];
         const ev = evidence[0] || null;
         const trigger = r.trigger || (r.criterion ? 'acmm-shortfall' : 'runtime-error');
-        const subject = r.criterion || r.class || trigger;
+        const subject = r.criterion || fleetReportClassLabel(r.class) || trigger;
         const title = recovered ? 'Recovered: ' : '';
         // A recovery carries no evidence by construction (fleetreport.go
         // RecoveryReport builds it from fingerprint/instance/criterion/trigger
@@ -24540,8 +24540,31 @@ function burnAreaChart() {
       const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
       const recoveryHtml = recoveries.map((r, i) => mk(r, i, true)).join('');
       section.style.display = '';
-      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale">Persistent ACMM shortfalls and hive-owned runtime conditions (stalls, crash loops, kick failures, panics). Reports contain shape-only scrubbed evidence.</span></div>${selfReports.html}<ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale">Persistent ACMM shortfalls and hive-owned runtime conditions (stalls, crash loops, kick failures, panics, stuck relay requests and ledger ops, repeated unclassified errors). Reports contain shape-only scrubbed evidence.</span></div>${selfReports.html}<ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
       applySectionCollapse('fleet-report-section');
+    }
+
+    // fleetReportClassLabel renders a runtime-error class id as the label the
+    // operator reads on the self-report card; classes without an entry keep
+    // their id (pkg/fleetreport/runtime.go Classes is the source of truth).
+    const FLEET_REPORT_CLASS_LABELS = {
+      restart_storm: 'restart storm',
+      kick_failed_repeatedly: 'kicks failing repeatedly',
+      panic_recovered: 'panic recovered',
+      model_discovery_degraded: 'model discovery degraded',
+      inference_auth_failed: 'inference auth failed',
+      advisory_post_failed: 'advisory post failed',
+      agent_stall: 'agent stall',
+      agent_crash_loop: 'agent crash loop',
+      ci_poll_nudge: 'CI-poll nudge',
+      issue_request_stuck: 'issue request stuck in relay queue',
+      effect_ledger_op_stuck: 'effect ledger op stuck (needs reconciliation)',
+      unclassified_error_repeated: 'repeated unclassified error',
+    };
+    function fleetReportClassLabel(cls) {
+      if (!cls) return '';
+      const label = FLEET_REPORT_CLASS_LABELS[cls];
+      return label ? `${label} (${cls})` : cls;
     }
 
     // fleetReportSelfReportRow summarises the hivecommons/hive issues this

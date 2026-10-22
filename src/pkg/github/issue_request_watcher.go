@@ -307,6 +307,7 @@ func (c *Client) issueClearRetry(path string) {
 	c.issueRetryMu.Lock()
 	defer c.issueRetryMu.Unlock()
 	delete(c.issueRetries, path)
+	clearIssueRequestStuck(path)
 }
 
 func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn func() time.Time) {
@@ -699,6 +700,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
 			slog.String("repo", req.Repo), slog.String("kind", kind), slog.String("error", err.Error()))
+		c.observeIssueRequestStuck(path, req.Repo, kind, err, nowFn())
 		return
 	}
 

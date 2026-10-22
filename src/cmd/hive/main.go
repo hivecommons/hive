@@ -40,6 +40,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
@@ -914,7 +915,10 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// No authoritative image outside a cluster means tracking stays unknown.
 	dashboard.SetDeploymentImageSource(deps.selfImage)
 
-	b.logger = slog.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	// slogfeed tees WARN+ records into the self-report tracker so a log line
+	// that keeps repeating is noticed even without a hook site (see
+	// fleetreport.ClassUnclassifiedRepeated).
+	b.logger = slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))))
 	slog.SetDefault(b.logger)
 
 	// Process singleton: refuse to become a second hive process in this
@@ -2031,6 +2035,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		Stats:    stats,
 		Mode:     b.cfg.ConvergenceMode,
 	}
+	installMutationSelfReportHooks(boundary)
 	b.mutationBoundary = boundary
 	b.applyGitHubClientMutationBoundary(b.ghClient)
 	b.logger.Info("mutation convergence boundary wired", "mode", mode, "state_dir", mutationStateDir)
@@ -10928,7 +10933,7 @@ const logFilename = "hive.log"
 func setupLogger(dir string, maxSizeMB, maxAgeDays, maxBackups int, compress bool, level string) *slog.Logger {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("failed to create log directory, falling back to stdout only", "dir", dir, "error", err)
-		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(level)}))
+		return slog.New(slogfeed.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseLogLevel(level)})))
 	}
 
 	lj := &lumberjack.Logger{
@@ -10940,7 +10945,9 @@ func setupLogger(dir string, maxSizeMB, maxAgeDays, maxBackups int, compress boo
 	}
 
 	tee := io.MultiWriter(os.Stdout, lj)
-	return slog.New(slog.NewJSONHandler(tee, &slog.HandlerOptions{Level: parseLogLevel(level)}))
+	// Same self-report tee as the boot logger: the file logger replaces it
+	// as the default, so the feed must be installed here too.
+	return slog.New(slogfeed.New(slog.NewJSONHandler(tee, &slog.HandlerOptions{Level: parseLogLevel(level)})))
 }
 
 func parseLogLevel(s string) slog.Level {

@@ -13,6 +13,12 @@ import (
 
 const defaultBoundaryTTL = 10 * time.Minute
 
+// DefaultStuckAfter is how long a journaled operation may sit unresolved
+// (Planned/Unknown) before a refused retry is reported through OnStuck. It is
+// three boundary TTLs: long enough for the owner's own reconciliation to run,
+// short enough that an operator learns about a clogged queue the same hour.
+const DefaultStuckAfter = 30 * time.Minute
+
 // Boundary adapts Executor to the narrow pkg/effects seam used by GitHub and
 // push call sites. It acquires a per-(repo, kind, target) claim for each
 // external mutation, journals the operation, and releases the claim after the
@@ -24,6 +30,16 @@ type Boundary struct {
 	Logger   *slog.Logger
 	Stats    *effects.Recorder
 	Mode     func() string
+	// OnStuck, when set, is called each time Execute refuses an effect because
+	// its journaled operation has been unresolved for at least StuckAfter
+	// (DefaultStuckAfter when zero). The caller keeps retrying the same
+	// logical ID forever otherwise (observed on a live hive: one Unknown op,
+	// 175 refused retries over six hours), so this is the queue-health hook.
+	OnStuck func(op Operation, age time.Duration)
+	// OnResolved, when set, is called with the logical ID once an operation
+	// leaves the unresolved state: applied, already applied, or reconciled.
+	OnResolved func(logicalID string)
+	StuckAfter time.Duration
 }
 
 func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func(context.Context) (effects.Result, error)) (effects.Result, error) {
@@ -90,8 +106,10 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 	// denies every other mutation on the repo for ten minutes (observed on a
 	// live hive as "writers exhausted (max 1)" behind one stuck review).
 	b.release(executor, claim, mclaim, entry)
+	logicalID := mutEffect.LogicalID()
 	if execErr != nil {
 		if errors.Is(execErr, ErrAlreadyApplied) {
+			b.noteResolved(logicalID)
 			// The journal says this exact effect already happened. The
 			// caller's desired state holds, so this is idempotent success:
 			// hand back the recorded provenance (Execute returns the
@@ -111,6 +129,7 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 			return out, fmt.Errorf("%w: %v", effects.ErrDenied, execErr)
 		}
 		if errors.Is(execErr, ErrNeedsReconciliation) {
+			b.noteStuck(executor, logicalID)
 			return out, fmt.Errorf("%w: %w", effects.ErrNeedsReconciliation, execErr)
 		}
 		return out, execErr
@@ -118,7 +137,35 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 	if b.Stats != nil && op.LogicalID != "" {
 		b.Stats.IncJournaled()
 	}
+	b.noteResolved(logicalID)
 	return out, nil
+}
+
+// noteStuck reports the unresolved operation behind a refused retry through
+// OnStuck once it has been unresolved for StuckAfter.
+func (b *Boundary) noteStuck(executor Executor, logicalID string) {
+	if b.OnStuck == nil || executor.Journal == nil {
+		return
+	}
+	op, ok := executor.Journal.Get(logicalID)
+	if !ok || (op.Status != StatusUnknown && op.Status != StatusPlanned) {
+		return
+	}
+	after := b.StuckAfter
+	if after <= 0 {
+		after = DefaultStuckAfter
+	}
+	age := executor.now().Sub(op.UpdatedAt)
+	if age < after {
+		return
+	}
+	b.OnStuck(op, age)
+}
+
+func (b *Boundary) noteResolved(logicalID string) {
+	if b.OnResolved != nil && logicalID != "" {
+		b.OnResolved(logicalID)
+	}
 }
 
 // Reconcile resolves the journaled operation for claim from an authoritative
@@ -142,11 +189,14 @@ func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effec
 	if executor.Journal == nil {
 		return fmt.Errorf("mutation boundary requires a journal when mode is enabled")
 	}
-	_, err := executor.Journal.Reconcile(boundaryEffect(claim).LogicalID(), ExternalState{
+	op, err := executor.Journal.Reconcile(boundaryEffect(claim).LogicalID(), ExternalState{
 		Known:   true,
 		Applied: state.Applied,
 		Result:  state.Provenance,
 	}, executor.now())
+	if err == nil && op.Status != StatusUnknown && op.Status != StatusPlanned {
+		b.noteResolved(op.LogicalID)
+	}
 	return err
 }
 

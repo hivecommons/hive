@@ -41,6 +41,14 @@ const (
 	ClassAgentStall     = "agent_stall"
 	ClassAgentCrashLoop = "agent_crash_loop"
 	ClassCIPollNudge    = "ci_poll_nudge"
+	// ClassIssueRequestStuck and ClassEffectLedgerOpStuck are queue-health
+	// classes: a relay request that keeps failing or a journaled external
+	// effect that stays Unknown is work the hive is silently not doing. Both
+	// are fed by the owning component once ITS stuck threshold is crossed
+	// (pkg/github issue-request watcher, pkg/convergence/mutation boundary),
+	// so the class itself fires on the first observation.
+	ClassIssueRequestStuck   = "issue_request_stuck"
+	ClassEffectLedgerOpStuck = "effect_ledger_op_stuck"
 )
 
 const (
@@ -49,6 +57,10 @@ const (
 	// qualifies as unusual.
 	unclassifiedRepeatCount  = 5
 	unclassifiedRepeatWindow = 10 * time.Minute
+	// unclassifiedIdleClear: an unclassified error that has not recurred for
+	// this long (2× its window) is cleared, so a "cleared" comment follows
+	// once the symptom stops instead of the condition idling until the TTL.
+	unclassifiedIdleClear = 2 * unclassifiedRepeatWindow
 	// kickFailureStreak is the consecutive-failure count that makes repeated
 	// kick failures reportable.
 	kickFailureStreak = 3
@@ -93,6 +105,10 @@ type ClassSpec struct {
 	// Window, when set, requires MinCount observations inside this window
 	// rather than cumulatively.
 	Window time.Duration
+	// IdleClear, when set, clears a condition that has had no observation
+	// for this long on the next snapshot (recorded as cleared when it had
+	// qualified), instead of letting it idle until the TTL drops it.
+	IdleClear time.Duration
 	// Keywords are the human phrasings used to find an existing issue about
 	// the same symptom (join-first search). Lower-case.
 	Keywords []string
@@ -110,10 +126,32 @@ var Classes = map[string]ClassSpec{
 	ClassDataDiskPressure:         {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
 	ClassGitHubAppTokenMintFailed: {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
 	ClassUnexpectedHub5xx:         {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
-	ClassUnclassifiedRepeated:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow},
+	ClassUnclassifiedRepeated:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
 	ClassAgentStall:               {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
 	ClassAgentCrashLoop:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
 	ClassCIPollNudge:              {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
+	ClassIssueRequestStuck:        {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
+	ClassEffectLedgerOpStuck:      {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
+}
+
+// MatchesExplicitClass reports whether msg (lower-cased) contains a Keyword
+// of any class other than ClassUnclassifiedRepeated. The generic repeated-
+// error feed skips such messages: the owning hook site already reports them
+// under their class, and a second low-severity report would only split the
+// evidence.
+func MatchesExplicitClass(msg string) bool {
+	msg = strings.ToLower(msg)
+	for class, spec := range Classes {
+		if class == ClassUnclassifiedRepeated {
+			continue
+		}
+		for _, kw := range spec.Keywords {
+			if kw != "" && strings.Contains(msg, kw) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // IsKnownClass reports whether class is on the allow-list.
@@ -135,6 +173,9 @@ type RuntimeCondition struct {
 	Repo   string
 	Ref    string
 	events []time.Time
+	// qualified records that the condition met its threshold on some
+	// snapshot, so an idle clear after the window emptied still posts.
+	qualified bool
 }
 
 // RuntimeTracker accumulates runtime error observations and turns the ones
@@ -264,10 +305,16 @@ func (t *RuntimeTracker) Clear(class, key string) {
 	if !ok {
 		return
 	}
-	if t.qualifiesLocked(c, t.now()) {
+	t.clearLocked(ck, c, t.now())
+}
+
+// clearLocked removes c; if it qualifies now, or ever did, it is remembered
+// as cleared. Callers hold t.mu.
+func (t *RuntimeTracker) clearLocked(ck string, c *RuntimeCondition, now time.Time) {
+	if c.qualified || t.qualifiesLocked(c, now) {
 		snap := *c
 		snap.events = nil
-		snap.LastSeen = t.now()
+		snap.LastSeen = now
 		t.cleared[ck] = snap
 	}
 	delete(t.conds, ck)
@@ -343,10 +390,15 @@ func (t *RuntimeTracker) Evidence() []Evidence {
 			delete(t.conds, ck)
 			continue
 		}
+		spec := Classes[c.Class]
+		if spec.IdleClear > 0 && now.Sub(c.LastSeen) >= spec.IdleClear {
+			t.clearLocked(ck, c, now)
+			continue
+		}
 		if !t.qualifiesLocked(c, now) {
 			continue
 		}
-		spec := Classes[c.Class]
+		c.qualified = true
 		window := spec.Window
 		if window == 0 {
 			window = now.Sub(c.FirstSeen).Round(time.Second)

@@ -136,10 +136,21 @@ title is `[selfreport] <class>: <short message>`.
 | `agent_stall` | ≥3 consecutive "continue" nudges sent to one agent after a kick without the pane moving; a credited stall recovery (the pane moves before the next kick) clears the streak. Message carries the nudge count, last kick time and frozen pane hash; diagnostics carry agent, lane, backend, counters and a scrubbed 15-line pane tail (#13470, was the hive-code-defect "agent stall") | medium |
 | `agent_crash_loop` | the watchdog latches an agent as crash-looping and pauses it (acting mode only — observe mode would re-count every sweep); the healthy-window reset clears it. Diagnostics carry the classifier detail, failure count/cap, backoff ladder and healthy-reset window (#13470, was "agent crash loop") | high |
 | `ci_poll_nudge` | the harness sent an agent the stop-polling-CI nudge (at most one per kick); one per 24h window, message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail (#13470, was "CI-poll nudge") | low |
+| `issue_request_stuck` | an issue/comment/label request file in the relay queue (`issue-requests/`) has failed ≥3 attempts **or** has been retrying for ≥30 min. Key is the request file name; message carries kind, attempts and age, diagnostics the last error (scrubbed). Clears when the request completes or is quarantined (`.failed`/`.bad`) | medium |
+| `effect_ledger_op_stuck` | the mutation boundary refused a retry because the journaled external effect (issue create, PR open, …) has been `Unknown`/`Planned` for ≥30 min — the caller keeps replaying the same logical op and it never resolves. Key is the op's logical ID; message carries kind, status and age, diagnostics the attempt count, repo and claim target. Clears when the op is applied, replayed as already-applied, or reconciled | medium |
+| `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, context cancellation) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
 
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
-`unexpected_http_5xx_from_hub`, `unclassified_error_repeated`.
+`unexpected_http_5xx_from_hub`.
+
+The queue-health classes exist because of a real incident: eleven
+placeholder request files (`repo: "owner/repo"`, title `t`, body `b`) sat in
+the relay queue and were retried for six hours — 175 identical warnings
+sharing one effect-ledger op stuck in `Unknown` — while the allow-list,
+having no hook for the watcher, reported nothing. The generic feed catches
+the *shape* of that failure (one message, many repeats) for any component;
+the two explicit classes name the queues an operator actually has to drain.
 
 Each report attaches the class, severity, count and window, the normalised
 message (numbers, hashes, paths and quoted strings replaced by placeholders)

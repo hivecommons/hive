@@ -681,9 +681,26 @@ func StableBodyHash(body string) string {
 func CriterionKey(c acmmadvisor.Criterion) string { return labelValue(c.Name) }
 
 func isBenign(e ErrorEvent) bool {
-	class := strings.ToLower(e.Class)
-	component := strings.ToLower(e.Component)
+	return benignIOTimeout(strings.ToLower(e.Class), strings.ToLower(e.Component))
+}
+
+// benignIOTimeout is the one exclusion both the ACMM classifier and the
+// generic log feed share: a read/keepalive i/o timeout is network weather,
+// not a hive defect.
+func benignIOTimeout(class, component string) bool {
 	return strings.Contains(class, "i/o timeout") && (strings.Contains(component, "read") || strings.Contains(component, "keepalive"))
+}
+
+// IsBenignMessage reports whether a raw log message is noise the generic
+// repeated-error feed must not report: the read/keepalive i/o timeout rule
+// above applied to the whole line, plus context cancellation (shutdown and
+// per-request deadlines log it on purpose).
+func IsBenignMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	if benignIOTimeout(m, m) {
+		return true
+	}
+	return strings.Contains(m, "context canceled") || strings.Contains(m, "context cancelled")
 }
 
 // openTrigger is the trigger of a persisted entry; entries written before
