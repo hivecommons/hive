@@ -170,7 +170,7 @@ type Recorder struct {
 
 // Recorded is one FactSink call.
 type Recorded struct {
-	Method string // Claimed | ClaimReleased | InProgress | CoveredBy | Uncovered | Parked | Unparked
+	Method string // Claimed | ClaimReleased | InProgress | CoveredBy | Uncovered | Parked | Unparked | Closed
 	Ref    stageengine.Ref
 	Claim  *stageengine.ClaimFact
 	PR     *stageengine.Ref
@@ -213,6 +213,9 @@ func (r *Recorder) Parked(_ context.Context, ref stageengine.Ref, label string) 
 }
 func (r *Recorder) Unparked(_ context.Context, ref stageengine.Ref, by string) error {
 	return r.record(Recorded{Method: "Unparked", Ref: ref, Who: by})
+}
+func (r *Recorder) Closed(_ context.Context, ref stageengine.Ref) error {
+	return r.record(Recorded{Method: "Closed", Ref: ref})
 }
 
 var _ stageengine.FactSink = (*Recorder)(nil)

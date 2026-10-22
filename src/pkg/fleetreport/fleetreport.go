@@ -28,6 +28,17 @@ const (
 	// trigger (#13470); it survives only to recognise old state entries.
 	legacyTriggerHiveDefect = "hive-code-defect"
 
+	// SelfReportTitlePrefix is the title every hive-filed issue starts with
+	// since #13470: runtime-error classes and ACMM shortfalls alike land in
+	// a `[selfreport]` tracker issue.
+	SelfReportTitlePrefix = "[selfreport] "
+	// LegacyStandaloneTitlePrefix is the retired standalone title format
+	// ("Fleet report: <component> blocks <criterion> [<fp>]" and "Fleet
+	// report: <component> hive-code defect [<fp>]"). Nothing builds it any
+	// more; the hub relay and the governor sweep recognise it so a spoke
+	// still running a pre-#13470 build cannot land one.
+	LegacyStandaloneTitlePrefix = "Fleet report:"
+
 	PersistentUnmetEpochs = 2
 	DefaultEvidenceWindow = 10 * time.Minute
 	periodicMinEvents     = 3
@@ -335,11 +346,14 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			}
 			open.Component = report.Evidence[0].Component
 			if open.Number == 0 || open.RollupOf != "" {
-				// No standalone issue yet (or already rolled up): if this hive
-				// has an open self-report about the same component on this
-				// version, the shortfall is one more symptom of that defect
-				// and rolls up onto it rather than opening a second, thinner
-				// issue. A roll-up whose target closed starts over standalone.
+				// Not yet written (or already rolled up): if this hive has an
+				// open self-report tracker about the same component, the
+				// shortfall is one more symptom of that defect and rolls up
+				// onto it as a comment. Otherwise the report below opens the
+				// tracker itself (a `[selfreport]` issue carrying the
+				// shortfall section) — never a standalone "Fleet report:"
+				// issue. A roll-up whose target closed starts over the same
+				// way.
 				if target, ok := OpenSelfReportFor(state, ev.Component); ok {
 					report = RollupReport(report, target, obs.HiveSlug, instance, version)
 				} else if open.RollupOf != "" {
@@ -515,9 +529,13 @@ func observationCell(value string) string {
 	return value
 }
 
-// BuildReport renders an ACMM-shortfall report. It carries the same identity
-// rows, label set and Affected-hives block as a runtime-error report so a
-// maintainer can see WHO is affected and the join path can enrich it (#13470).
+// BuildReport renders an ACMM-shortfall report as this hive's self-report
+// tracker for the component (#13470): a `[selfreport]` issue with the same
+// identity rows, label set, Affected-hives block and diagnostics a
+// runtime-error report carries, plus an "ACMM shortfall" section naming the
+// unmet criterion. It is what gets filed when no tracker about the component
+// is open yet; with one open the shortfall rolls up onto it (RollupReport).
+// There is no standalone "Fleet report:" format any more.
 func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidence, fingerprint, instance, version, commit string) Report {
 	hive := strings.TrimSpace(obs.HiveSlug)
 	if hive == "" {
@@ -526,10 +544,10 @@ func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidenc
 	labels := SelfReportLabels(TriggerACMMShortfall, ev.Severity, "")
 	labels = append(labels, "criterion:"+criterionKey)
 	sort.Strings(labels)
-	title := fmt.Sprintf("Fleet report: %s blocks %s [%s]", ev.Component, criterionName, fingerprint)
+	title := fmt.Sprintf("%s%s: %s blocks %s", SelfReportTitlePrefix, TriggerACMMShortfall, ev.Component, criterionName)
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!-- hive-fleet-fingerprint:%s -->\n<!-- hive-fleet-instance:%s -->\n%s\n\n", fingerprint, instance, SelfReportMarker(fingerprint, hive))
-	b.WriteString("A spoke reports that a hive-attributable condition is preventing it from satisfying an ACMM criterion.\n\n")
+	fmt.Fprintf(&b, "A hive cannot satisfy an ACMM criterion because of a hive-attributable condition in `%s`, and is opening its self-report tracker for that component so the same defect across the fleet lands in one issue.\n\n", ev.Component)
 	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
 	name, spokeURL := writeIdentityRows(&b, obs, hive, instance, version, commit)
 	fmt.Fprintf(&b, "| ACMM level | L%d |\n", obs.ACMMLevel)
@@ -547,13 +565,34 @@ func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidenc
 	// No timestamps in the body: an ACMM report is re-emitted only when its
 	// body changes, so the hive's last-seen is left to the join path.
 	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Name: name, URL: spokeURL, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1}}, Repos: repos, Seen: 1}.Render())
+	b.WriteString("\n\n## ACMM shortfall\n\n")
+	b.WriteString(shortfallSummary(hive, version, ev, criterionKey))
+	b.WriteString("\n")
+	if ev.Diagnostics != "" {
+		fmt.Fprintf(&b, "\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>\n", ev.Diagnostics)
+	}
 	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Hive: hive, HiveName: name, SpokeURL: spokeURL, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
 }
 
-// OpenSelfReportFor finds this hive's open runtime-error self-report about
-// component: an entry with an issue number, not recovered, not found closed.
-// Ties resolve to the lowest fingerprint so the choice is stable across
-// cycles.
+// shortfallSummary is the one-line statement of an ACMM shortfall shared by
+// the tracker body and the roll-up comment.
+func shortfallSummary(hive, version string, ev Evidence, criterion string) string {
+	return fmt.Sprintf("ACMM shortfall on **%s** (%s): `%s` (%s) is blocking criterion `%s` — %s.",
+		labelValue(hive), displayVersion(version), ev.Component, emptyDash(ev.ErrorClass), criterion, countWindow(ev.Count, ev.Window))
+}
+
+// IsLegacyStandaloneTitle reports whether title is the retired standalone
+// "Fleet report: …" format (#13470). The hub relay refuses to file it and the
+// governor sweep closes any that still land.
+func IsLegacyStandaloneTitle(title string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(title)), strings.ToLower(LegacyStandaloneTitlePrefix))
+}
+
+// OpenSelfReportFor finds this hive's open self-report tracker about
+// component: a runtime-error entry, or an ACMM-shortfall entry that opened
+// the tracker itself (not a roll-up), with an issue number, not recovered,
+// not found closed. Ties resolve to the lowest fingerprint so the choice is
+// stable across cycles.
 func OpenSelfReportFor(st State, component string) (string, bool) {
 	want := strings.ToLower(strings.TrimSpace(component))
 	if want == "" {
@@ -561,7 +600,16 @@ func OpenSelfReportFor(st State, component string) (string, bool) {
 	}
 	best := ""
 	for fp, open := range st.Open {
-		if open.Trigger != TriggerRuntimeError || open.Number <= 0 || open.Recovered || !open.ClosedAt.IsZero() {
+		if open.Number <= 0 || open.Recovered || !open.ClosedAt.IsZero() {
+			continue
+		}
+		switch open.Trigger {
+		case TriggerRuntimeError:
+		case TriggerACMMShortfall:
+			if open.RollupOf != "" {
+				continue
+			}
+		default:
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(open.Component)) != want {
@@ -590,8 +638,9 @@ func RollupReport(report Report, target, hive, instance, version string) Report 
 	}
 	var b strings.Builder
 	b.WriteString(SeenMarker(report.Fingerprint, hive))
-	fmt.Fprintf(&b, "\nACMM shortfall rolled up from **%s** (%s): `%s` (%s) is blocking criterion `%s` — %s. Folded onto this self-report because it is about the same component on the same version; no standalone `Fleet report:` issue was filed.",
-		labelValue(hive), displayVersion(version), ev.Component, emptyDash(ev.ErrorClass), report.Criterion, countWindow(ev.Count, ev.Window))
+	b.WriteString("\n")
+	b.WriteString(strings.Replace(shortfallSummary(hive, version, ev, report.Criterion), "ACMM shortfall on", "ACMM shortfall rolled up from", 1))
+	b.WriteString(" Folded onto this self-report because it is about the same component; no separate issue was filed.")
 	report.Body = safeText(b.String())
 	report.RollupOf = target
 	return report

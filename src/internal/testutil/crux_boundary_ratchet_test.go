@@ -32,13 +32,15 @@ import (
 //     feeds one). Every production tmux call belongs behind one package
 //     inside Crux; hermetic tests that drive a real tmux are not the target.
 //
-// Both are ratchets, not targets. Lower a baseline freely when you remove a
-// symbol or a tmux call site — the test logs the new value — and never raise
-// one. Packages are keyed by their path relative to src/ (e.g. "pkg/dashboard",
+// Both are ratchets, not targets, and both are exact: a count above its
+// baseline fails, and so does a count BELOW it. When you remove a symbol or a
+// tmux call site, lower the baseline in the same change (the failure names the
+// new value); never raise one. Holding the baseline at the measured count is
+// what stops removed coupling from quietly growing back into the headroom. Packages are keyed by their path relative to src/ (e.g. "pkg/dashboard",
 // "cmd/hive"); a package with no entry has a baseline of zero, so coupling in
 // a brand-new consumer fails closed.
 //
-// Measured on v5 at the commit that introduced the ratchet, with exactly the
+// Re-measured on v5 when the baselines were made exact, with exactly the
 // AST walk below (so a re-measure is `go test ./internal/testutil -run
 // TestCruxBoundaryRatchet -v`, not a grep).
 var cruxSymbolBaseline = map[string]int{
@@ -92,8 +94,9 @@ type cruxMeasurement struct {
 	files     int
 }
 
-// TestCruxBoundaryRatchet fails when either coupling count rises above its
-// recorded baseline and names the offending symbols or files. It is a parse
+// TestCruxBoundaryRatchet fails when either coupling count differs from its
+// recorded baseline: above it names the offending symbols or files, below it
+// names the baseline to lower. It is a parse
 // of every non-test Go file under src/pkg, src/cmd and src/internal with no
 // type-checking, so it runs in a second or two and is fully deterministic.
 func TestCruxBoundaryRatchet(t *testing.T) {
@@ -103,7 +106,6 @@ func TestCruxBoundaryRatchet(t *testing.T) {
 	}
 
 	var failures []string
-	var lowerable []string
 
 	for _, pkg := range sortedSetKeys(mapKeysOfSetsAsSet(m.symbols)) {
 		t.Logf("agent.<Symbol> references: %-16s %3d", pkg, len(m.symbols[pkg]))
@@ -121,7 +123,7 @@ func TestCruxBoundaryRatchet(t *testing.T) {
 				"%s references %d distinct agent.<Symbol> identifiers, above its baseline of %d:\n%s",
 				pkg, got, want, indentList(sortedSetKeys(m.symbols[pkg]))))
 		case got < want:
-			lowerable = append(lowerable, fmt.Sprintf("cruxSymbolBaseline[%q] can drop from %d to %d", pkg, want, got))
+			failures = append(failures, cruxStaleBaseline("cruxSymbolBaseline", pkg, want, got))
 		}
 	}
 
@@ -136,19 +138,26 @@ func TestCruxBoundaryRatchet(t *testing.T) {
 				"%s has %d non-test files invoking tmux, above its baseline of %d:\n%s",
 				pkg, got, want, indentList(files)))
 		case got < want:
-			lowerable = append(lowerable, fmt.Sprintf("cruxTmuxBaseline[%q] can drop from %d to %d", pkg, want, got))
+			failures = append(failures, cruxStaleBaseline("cruxTmuxBaseline", pkg, want, got))
 		}
 	}
 
 	if len(failures) > 0 {
 		t.Fatalf("Crux boundary ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
 			"New agent.<Symbol> references belong on the exported runtime surface; new tmux calls belong "+
-			"inside pkg/agent/... Remove the coupling, or move an existing reference out so the count does not grow.",
+			"inside pkg/agent/... Remove the coupling, or move an existing reference out so the count does not grow. "+
+			"A baseline above the measured count must be lowered to it in the same change.",
 			strings.Join(failures, "\n\n"))
 	}
-	for _, l := range lowerable {
-		t.Logf("%s — lower it in internal/testutil/crux_boundary_ratchet_test.go so the ratchet keeps biting", l)
-	}
+}
+
+// cruxStaleBaseline is the failure for a baseline above the measured count.
+// The ratchet fails closed on it so headroom left by removed coupling cannot
+// be silently re-used by a later change.
+func cruxStaleBaseline(table, pkg string, want, got int) string {
+	return fmt.Sprintf("%s[%q] is %d but the measured count is %d: lower it to %d in "+
+		"internal/testutil/crux_boundary_ratchet_test.go (delete the entry when it reaches 0)",
+		table, pkg, want, got, got)
 }
 
 // measureCruxBoundary parses every non-test Go file under cruxBoundaryRoots
@@ -375,5 +384,9 @@ const bin = "tmux"
 var msg = "tmux session missing"
 `)) {
 		t.Fatal("prose mention of tmux must not count as an invocation")
+	}
+
+	if got := cruxStaleBaseline("cruxSymbolBaseline", "pkg/hub", 18, 17); !strings.Contains(got, `cruxSymbolBaseline["pkg/hub"] is 18`) || !strings.Contains(got, "lower it to 17") {
+		t.Fatalf("stale-baseline message = %q", got)
 	}
 }

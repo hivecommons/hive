@@ -166,6 +166,7 @@ func (c *Client) classifyWebhookPR(repo string, pr *gh.PullRequest, labels []str
 		BaseRef:             prBaseRef(pr),
 		RequestedReviewers:  reqLogins,
 		RequestedTeams:      reqTeams,
+		ReferencedIssues:    PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 	}
 	if pr.GetBase() != nil {
 		full.BaseSHA = pr.GetBase().GetSHA()

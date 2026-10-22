@@ -28,7 +28,7 @@ type unparkWireIssue struct {
 	// State feed the pulls/{n} endpoint (hivecommons/hive#13041).
 	PullRequest *unparkWirePRLink `json:"pull_request,omitempty"`
 	HeadSHA     string            `json:"-"`
-	State       string            `json:"-"`
+	State       string            `json:"state,omitempty"`
 }
 
 type unparkWirePRLink struct {
@@ -68,6 +68,16 @@ type unparkServer struct {
 	// timeline read with that status.
 	timelines      map[int][]unparkWireTimelineEvent
 	timelineStatus int
+	// closedIssues is what GET /issues?state=closed answers; the plain
+	// listing answers the open issues the server was built with.
+	closedIssues []unparkWireIssue
+	// patched maps issue number to the state_reason of each PATCH that
+	// closed it.
+	patched map[int][]string
+	// register adds an issue GET /issues/{n} answers for without listing
+	// it as open — a closed issue the closed-issue sweep finds via
+	// ?state=closed.
+	register func(unparkWireIssue)
 	// orgLookups counts membership lookups, permLookups permission lookups.
 	orgLookups, permLookups, timelineReads int
 }
@@ -97,12 +107,14 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 		edited:      map[int64]string{},
 		added:       map[int][]string{},
 		removed:     map[int][]string{},
+		patched:     map[int][]string{},
 		permissions: permissions,
 	}
 	byNum := map[int]unparkWireIssue{}
 	for _, issue := range issues {
 		byNum[issue.Number] = issue
 	}
+	rec.register = func(issue unparkWireIssue) { byNum[issue.Number] = issue }
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/orgs/", func(w http.ResponseWriter, r *http.Request) {
@@ -123,8 +135,35 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 		defer rec.mu.Unlock()
 
 		switch {
+		case path == "issues" && r.Method == http.MethodGet && r.URL.Query().Get("state") == "closed":
+			closed := rec.closedIssues
+			if closed == nil {
+				closed = []unparkWireIssue{}
+			}
+			_ = json.NewEncoder(w).Encode(closed)
+
 		case path == "issues" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(issues)
+
+		case strings.HasPrefix(path, "issues/") && !strings.Contains(strings.TrimPrefix(path, "issues/"), "/") && r.Method == http.MethodPatch:
+			var n int
+			fmt.Sscanf(path, "issues/%d", &n)
+			issue, ok := byNum[n]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			var body struct {
+				State       string `json:"state"`
+				StateReason string `json:"state_reason"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.State != "" {
+				issue.State = body.State
+				byNum[n] = issue
+			}
+			rec.patched[n] = append(rec.patched[n], body.StateReason)
+			_ = json.NewEncoder(w).Encode(issue)
 
 		case strings.HasPrefix(path, "issues/") && !strings.Contains(strings.TrimPrefix(path, "issues/"), "/") && r.Method == http.MethodGet:
 			var n int
@@ -328,13 +367,13 @@ func TestSweepIssueUnparkCommandsApproveClearsParkingLabels(t *testing.T) {
 	if !strings.Contains(removed, "needs-decision") {
 		t.Fatalf("expected the decision park label removed, got %v", rec.removed[7])
 	}
-	if strings.Contains(removed, "needs-human") {
-		t.Fatalf("needs-human must never be removed by an un-park, got %v", rec.removed[7])
+	if !strings.Contains(removed, "needs-human") {
+		t.Fatalf("needs-human is answered by the maintainer's command and comes off, got %v", rec.removed[7])
 	}
 	if strings.Contains(removed, "hold") {
 		t.Fatalf("hold must never be removed, got %v", rec.removed[7])
 	}
-	if len(rec.added[7]) != 1 || rec.added[7][0] != HumanAckLabel {
+	if len(rec.added[7]) == 0 || rec.added[7][0] != HumanAckLabel {
 		t.Fatalf("expected %s added, got %v", HumanAckLabel, rec.added[7])
 	}
 	var accepted bool
@@ -597,6 +636,10 @@ func TestParseUnparkCommand(t *testing.T) {
 		{"/hive decision B", unparkCommandDecision, "B", true},
 		{"/hive decision keep 10 stable tags", unparkCommandDecision, "keep 10 stable tags", true},
 		{"/hive help", unparkCommandHelp, "", true},
+		{"/fixed", unparkCommandFixed, "", true},
+		{"/Fixed admin change made out-of-band\nthanks", unparkCommandFixed, "admin change made out-of-band", true},
+		{"/close", unparkCommandFixed, "", true},
+		{"> /fixed", unparkCommandNone, "", false},
 		{"thanks!\n/hive approve", unparkCommandNone, "", false},
 		{"/hive", unparkCommandNone, "", false},
 		{"", unparkCommandNone, "", false},
@@ -629,7 +672,7 @@ func TestIsUnparkProseAssent(t *testing.T) {
 			t.Errorf("isUnparkProseAssent(%q) = false, want true", body)
 		}
 	}
-	for _, body := range []string{"/hive approve", "> approved", "what do you think?", ""} {
+	for _, body := range []string{"/hive approve", "/fixed approved", "> approved", "what do you think?", ""} {
 		if isUnparkProseAssent(body) {
 			t.Errorf("isUnparkProseAssent(%q) = true, want false", body)
 		}
@@ -676,25 +719,20 @@ func TestRenderUnparkHelpReplyListsDocumentedCommands(t *testing.T) {
 	}
 }
 
-// The incident on hivecommons/hive#12680 / #12681 (2026-10-17): the owner
-// replied `/hive decision … Agents stand down` on issues carrying
-// `needs-human` + stage/085, the sweep removed every needs-* label including
-// `needs-human`, and both issues became stage/010-actionable. An un-park
-// records the decision and clears the decision park label, but never lifts
-// `needs-human`; the accepted reply says so; and the resulting label set
-// remains hard-suppressed. Under the owner decision that issues park at
-// stage/045 (085 is PR-only), the kept `needs-human` re-derives 045 — the
-// issue stays visibly a person's, never 085 and never actionable. The
-// un-park is an Unparked fact for the stage engine (ADR-0025), which
-// re-reads the issue and keeps 045 in place rather than removing and
-// re-adding it.
-func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
-	issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision Agents stand down; owner/Console owners handle this"))
+// hivecommons/docs#419 (2026-10-22): the maintainer wrote "Adding
+// `needs-human`", put the label on, and later replied `/hive decision …`.
+// The un-park attributed the label to them and refused to lift it, so the
+// issue re-derived stage/045 and the tracker kept reading "Needs human
+// decision". A maintainer's command is the human input the label asked
+// for, whoever applied it: the un-park clears `needs-human` with the park
+// label, the reply attributes what it cleared and names `hold` as the way
+// to keep agents off, and the issue re-derives as actionable. `hold` is
+// still never touched.
+func TestSweepIssueUnparkCommandsDecisionLiftsPersonAppliedNeedsHuman(t *testing.T) {
+	issue := parkedIssue(419, humanComment(31, "owner", "/hive decision Agents stand down; owner/Console owners handle this"))
 	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: NeedsDecisionStageLabel}, {Name: "kind/bug"}}
 	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, map[string]string{"owner": "admin"})
-	// The owner put needs-human on the issue: a person's hold (#13075 lifts
-	// only the hive's own).
-	rec.timelines = map[int][]unparkWireTimelineEvent{12680: {labeledAt(1, "owner", "needs-human", time.Now().Add(-time.Hour))}}
+	rec.timelines = map[int][]unparkWireTimelineEvent{419: {labeledAt(1, "owner", "needs-human", time.Now().Add(-time.Hour))}}
 	c := newTestClient(t, server, "org", []string{"repo"})
 	c.SetAppBotLogin("hive[bot]")
 
@@ -705,38 +743,37 @@ func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 	if len(result.Unparked) != 1 || result.Unparked[0].Decision != "Agents stand down; owner/Console owners handle this" {
 		t.Fatalf("decision not recorded: %+v", result.Unparked)
 	}
-	if len(rec.removed[12680]) != 0 {
-		t.Fatalf("removed = %v, want nothing: needs-human keeps the issue at %s", rec.removed[12680], NeedsDecisionStageLabel)
+	if got := strings.Join(rec.removed[419], ","); got != "needs-human,"+NeedsDecisionStageLabel {
+		t.Fatalf("removed = %v, want needs-human then %s", rec.removed[419], NeedsDecisionStageLabel)
 	}
-	if len(rec.added[12680]) != 1 || rec.added[12680][0] != HumanAckLabel {
-		t.Fatalf("added = %v, want only %s", rec.added[12680], HumanAckLabel)
+	if got := strings.Join(rec.added[419], ","); got != HumanAckLabel+","+stagelabels.Actionable.Label() {
+		t.Fatalf("added = %v, want %s then the engine's %s", rec.added[419], HumanAckLabel, stagelabels.Actionable.Label())
 	}
 	var accepted string
-	for _, body := range rec.posted[12680] {
+	for _, body := range rec.posted[419] {
 		if strings.Contains(body, "Un-parked by @owner") {
 			accepted = body
 		}
 	}
-	if accepted == "" || !strings.Contains(accepted, "`needs-human` stays (added by @owner)") {
-		t.Fatalf("accepted reply must say needs-human stays, got %v", rec.posted[12680])
+	if accepted == "" || !strings.Contains(accepted, "`needs-human` cleared (added by @owner)") || !strings.Contains(accepted, "add `hold` to keep agents off it") {
+		t.Fatalf("accepted reply must attribute the cleared needs-human and name hold, got %v", rec.posted[419])
 	}
 
 	// What the issue carries after the sweep, as the stage reconciler sees it.
-	after := []string{"needs-human", "kind/bug", HumanAckLabel}
-	stage, _, reason := IssueStageFor(IssueStageInput{Repo: "org/repo", Number: 12680, Labels: after}, nil)
-	if stage != stagelabels.IssueNeedsDecision || reason != "held for a person: needs-human" {
-		t.Fatalf("stage after un-park = %s (%s), want 045 while needs-human holds it", stage, reason)
+	after := []string{"kind/bug", HumanAckLabel, stagelabels.Actionable.Label()}
+	if stage, _, _ := IssueStageFor(IssueStageInput{Repo: "org/repo", Number: 419, Labels: after}, nil); stage == stagelabels.IssueNeedsDecision {
+		t.Fatalf("stage after un-park = %s, want anything but 045 once needs-human is gone", stage)
 	}
-	if !hasHardSuppressIssueLabel(after) {
-		t.Fatal("an issue still carrying needs-human must remain hard-suppressed after un-park")
+	if hasHardSuppressIssueLabel(after) {
+		t.Fatal("an issue whose needs-human lifted must no longer be hard-suppressed")
 	}
 }
 
-// An issue carrying only `needs-human` is a person's to work; `/hive approve`
-// records the go-ahead but lifts no park: the Unparked fact makes the stage
-// engine re-read the issue, and needs-human derives stage/045 — the stage
-// it was missing.
-func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T) {
+// An issue carrying only `needs-human` is a person's to work until a
+// maintainer answers; `/hive approve` is that answer: the label comes off,
+// approved-direction goes on, and the Unparked fact makes the stage engine
+// re-read the issue as actionable.
+func TestSweepIssueUnparkCommandsNeedsHumanOnlyApproveLifts(t *testing.T) {
 	issue := parkedIssue(12681, humanComment(32, "owner", "/hive approve"))
 	issue.Labels = []wireLabel{{Name: "needs-human"}}
 	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, map[string]string{"owner": "write"})
@@ -745,11 +782,11 @@ func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T)
 	if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{}); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	if len(rec.removed[12681]) != 0 {
-		t.Fatalf("nothing should be removed, got %v", rec.removed[12681])
+	if got := strings.Join(rec.removed[12681], ","); got != "needs-human" {
+		t.Fatalf("removed = %v, want needs-human", rec.removed[12681])
 	}
-	if got := strings.Join(rec.added[12681], ","); got != HumanAckLabel+","+NeedsDecisionStageLabel {
-		t.Fatalf("added = %v, want %s then the engine's %s", rec.added[12681], HumanAckLabel, NeedsDecisionStageLabel)
+	if got := strings.Join(rec.added[12681], ","); got != HumanAckLabel+","+stagelabels.Actionable.Label() {
+		t.Fatalf("added = %v, want %s then the engine's %s", rec.added[12681], HumanAckLabel, stagelabels.Actionable.Label())
 	}
 }
 
@@ -760,7 +797,8 @@ func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T)
 // engine re-derived 045 from it — the decision was a silent no-op. The rule
 // now lives in stageengine.DecisionLiftsNeedsHuman: the hive's own
 // `needs-human` is answered by the maintainer's decision and lifts with the
-// park; a person's (#12680) or an unattributed one stays. The stage engine
+// park — and since hivecommons/docs#419 so does a person's or an
+// unattributed one; the reply attributes what it cleared. The stage engine
 // then derives the post-decision stage from the labels it reads back.
 func TestSweepIssueUnparkCommandsNeedsHumanByApplier(t *testing.T) {
 	const hiveBot = "hivecommons-hive[bot]"
@@ -822,27 +860,27 @@ func TestSweepIssueUnparkCommandsNeedsHumanByApplier(t *testing.T) {
 			timeline:  []unparkWireTimelineEvent{labeledAt(1, hiveBot, "needs-human", base)},
 		},
 		{
-			name:        "person-applied needs-human stays (#12680)",
+			name:        "person-applied needs-human lifts and is attributed (docs#419)",
 			command:     "/hive decision Agents stand down",
 			commenter:   "owner",
 			perms:       map[string]string{"owner": "admin"},
 			labels:      []string{"needs-human", NeedsDecisionStageLabel},
 			timeline:    []unparkWireTimelineEvent{labeledAt(1, hiveBot, "needs-human", base), unlabeledAt(2, hiveBot, "needs-human", base.Add(time.Minute)), labeledAt(3, "owner", "needs-human", base.Add(2*time.Minute))},
-			wantRemoved: nil,
-			wantAdded:   []string{HumanAckLabel},
-			wantReply:   "`needs-human` stays (added by @owner)",
+			wantRemoved: []string{"needs-human", NeedsDecisionStageLabel},
+			wantAdded:   []string{HumanAckLabel, stagelabels.Actionable.Label()},
+			wantReply:   "`needs-human` cleared (added by @owner)",
 			wantUnpark:  true,
 		},
 		{
-			name:        "unattributed needs-human stays",
+			name:        "unattributed needs-human lifts",
 			command:     "/hive approve",
 			commenter:   "maintainer",
 			perms:       map[string]string{"maintainer": "write"},
 			labels:      []string{"needs-human", NeedsDecisionStageLabel},
 			timeline:    nil,
-			wantRemoved: nil,
-			wantAdded:   []string{HumanAckLabel},
-			wantReply:   "`needs-human` stays (Hive could not read who added it)",
+			wantRemoved: []string{"needs-human", NeedsDecisionStageLabel},
+			wantAdded:   []string{HumanAckLabel, stagelabels.Actionable.Label()},
+			wantReply:   "`needs-human` cleared: your command is the human input",
 			wantUnpark:  true,
 		},
 		{
@@ -911,9 +949,11 @@ func TestSweepIssueUnparkCommandsNeedsHumanByApplier(t *testing.T) {
 	}
 }
 
-// The applier classification the un-park rule feeds on: the last `labeled
-// needs-human` event decides, a later re-add by a person outranks the
-// hive's earlier one, and a missing or unreadable timeline is unknown.
+// The applier classification the un-park reply attributes with: the last
+// `labeled needs-human` event decides, a later re-add by a person outranks
+// the hive's earlier one, and a missing or unreadable timeline is unknown.
+// The lift itself (stageengine.DecisionLiftsNeedsHuman) no longer depends
+// on the applier.
 func TestNeedsHumanOutcomeClassifiesApplier(t *testing.T) {
 	const hiveBot = "hive[bot]"
 	base := time.Now().Add(-time.Hour)
@@ -925,12 +965,12 @@ func TestNeedsHumanOutcomeClassifiesApplier(t *testing.T) {
 		wantLift bool
 	}{
 		{"hive", []unparkWireTimelineEvent{labeledAt(1, hiveBot, "needs-human", base)}, 0, stageengine.NeedsHumanApplierHive, true},
-		{"person", []unparkWireTimelineEvent{labeledAt(1, "owner", "needs-human", base)}, 0, stageengine.NeedsHumanApplierPerson, false},
-		{"person re-added after hive", []unparkWireTimelineEvent{labeledAt(1, hiveBot, "needs-human", base), labeledAt(2, "owner", "needs-human", base.Add(time.Minute))}, 0, stageengine.NeedsHumanApplierPerson, false},
+		{"person", []unparkWireTimelineEvent{labeledAt(1, "owner", "needs-human", base)}, 0, stageengine.NeedsHumanApplierPerson, true},
+		{"person re-added after hive", []unparkWireTimelineEvent{labeledAt(1, hiveBot, "needs-human", base), labeledAt(2, "owner", "needs-human", base.Add(time.Minute))}, 0, stageengine.NeedsHumanApplierPerson, true},
 		{"hive re-added after person", []unparkWireTimelineEvent{labeledAt(1, "owner", "needs-human", base), labeledAt(2, hiveBot, "needs-human", base.Add(time.Minute))}, 0, stageengine.NeedsHumanApplierHive, true},
-		{"other label only", []unparkWireTimelineEvent{labeledAt(1, hiveBot, "hold", base)}, 0, stageengine.NeedsHumanApplierUnknown, false},
-		{"no events", nil, 0, stageengine.NeedsHumanApplierUnknown, false},
-		{"timeline unreadable", nil, http.StatusInternalServerError, stageengine.NeedsHumanApplierUnknown, false},
+		{"other label only", []unparkWireTimelineEvent{labeledAt(1, hiveBot, "hold", base)}, 0, stageengine.NeedsHumanApplierUnknown, true},
+		{"no events", nil, 0, stageengine.NeedsHumanApplierUnknown, true},
+		{"timeline unreadable", nil, http.StatusInternalServerError, stageengine.NeedsHumanApplierUnknown, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -944,5 +984,190 @@ func TestNeedsHumanOutcomeClassifiesApplier(t *testing.T) {
 				t.Fatalf("outcome = %+v, want applier %v lift %v", got, tc.want, tc.wantLift)
 			}
 		})
+	}
+}
+
+// hivecommons/dibs#459 (2026-10-22): the issue parked at stage/045 for an
+// admin change outside the repository; the maintainer made it and replied
+// `/fixed` with the evidence. Nothing consumed it — `/fixed` was only a
+// per-repo Actions workflow — so the park stayed and the tracker kept
+// asking. A maintainer's `/fixed` on a parked issue is a command the sweep
+// honours: close as completed, take `needs-human` and the stage label off,
+// post one acknowledgement, leave `hold` alone.
+func TestSweepIssueUnparkCommandsFixedClosesParkedIssue(t *testing.T) {
+	issue := parkedIssue(459, humanComment(41, "maintainer", "/fixed admin change made; see org settings audit log"))
+	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: NeedsDecisionStageLabel}, {Name: "hold"}, {Name: "kind/bug"}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, map[string]string{"maintainer": "write"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	var audited []IssueUnparkEvent
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{
+		ClosedAudit: func(ev IssueUnparkEvent) { audited = append(audited, ev) },
+	})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 0 {
+		t.Fatalf("/fixed is a close, not an un-park: %+v", result.Unparked)
+	}
+	if len(result.Closed) != 1 || result.Closed[0].Number != 459 || result.Closed[0].Actor != "maintainer" || result.Closed[0].Decision != "admin change made; see org settings audit log" {
+		t.Fatalf("closed = %+v", result.Closed)
+	}
+	if len(audited) != 1 || audited[0].Number != 459 {
+		t.Fatalf("closed audit = %+v, want one event for #459", audited)
+	}
+	if got := strings.Join(rec.patched[459], ","); got != string(IssueStateReasonCompleted) {
+		t.Fatalf("patched state_reason = %v, want completed", rec.patched[459])
+	}
+	removed := strings.Join(rec.removed[459], ",")
+	for _, want := range []string{"needs-human", NeedsDecisionStageLabel} {
+		if !strings.Contains(removed, want) {
+			t.Errorf("removed = %v, want %s off", rec.removed[459], want)
+		}
+	}
+	if strings.Contains(removed, "hold") {
+		t.Fatalf("hold must never be removed, got %v", rec.removed[459])
+	}
+	if len(rec.added[459]) != 0 {
+		t.Fatalf("a close adds no labels, got %v", rec.added[459])
+	}
+	var acks int
+	for _, body := range rec.posted[459] {
+		if strings.Contains(body, "Closed as completed: @maintainer confirmed with `/fixed`") {
+			acks++
+			if !strings.Contains(body, "admin change made; see org settings audit log") || !strings.Contains(body, "`hold` label is left exactly as it was") {
+				t.Errorf("ack = %q, want the note and the hold caveat", body)
+			}
+		}
+	}
+	if acks != 1 {
+		t.Fatalf("want exactly one acknowledgement, got %v", rec.posted[459])
+	}
+}
+
+// `/fixed` is a maintainer's word: a commenter without write access is
+// ignored, and an issue that is not parked is not this sweep's to close
+// (the per-repo workflow, where present, handles reporter confirmation).
+func TestSweepIssueUnparkCommandsFixedGates(t *testing.T) {
+	driveBy := parkedIssue(460, humanComment(42, "drive-by", "/fixed"))
+	unparked := parkedIssue(461, humanComment(43, "maintainer", "/fixed"))
+	unparked.Labels = []wireLabel{{Name: "kind/bug"}, {Name: stagelabels.Actionable.Label()}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{driveBy, unparked}, map[string]string{"maintainer": "write", "drive-by": "read"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Closed) != 0 || len(result.Unparked) != 0 {
+		t.Fatalf("nothing should act: closed %+v unparked %+v", result.Closed, result.Unparked)
+	}
+	for _, n := range []int{460, 461} {
+		if len(rec.patched[n]) != 0 || len(rec.removed[n]) != 0 {
+			t.Errorf("#%d: patched %v removed %v, want no writes", n, rec.patched[n], rec.removed[n])
+		}
+	}
+}
+
+// hivecommons/homebrew-hive#127 (2026-10-22): PR #128 merged with
+// "Fixes #127", GitHub closed the issue, and `stage/045-needs-decision` +
+// the hive's `needs-human` stayed on it for the rest of the day — the
+// issue-stage reconciler visits open issues only. The closed-issue sweep
+// lists recently closed issues, and for each still wearing hive labels
+// sends the stage engine a Closed fact (its writer strips every stage/*
+// label) and lifts the hive's own `needs-human`. A person's `needs-human`
+// stays, `hold` stays, PRs and clean issues are not touched.
+func TestSweepClosedIssueStageLabels(t *testing.T) {
+	const hiveBot = "hivecommons-hive[bot]"
+	base := time.Now().Add(-time.Hour)
+	server, rec := newUnparkServer(t, "org", "repo", nil, nil)
+	closed := []unparkWireIssue{
+		{Number: 127, Title: "fixed by a merged PR", State: "closed", Labels: []wireLabel{{Name: NeedsDecisionStageLabel}, {Name: "needs-human"}, {Name: "kind/bug"}}},
+		{Number: 128, Title: "closed by hand, person's needs-human", State: "closed", Labels: []wireLabel{{Name: NeedsDecisionStageLabel}, {Name: "needs-human"}, {Name: "hold"}}},
+		{Number: 129, Title: "closed clean", State: "closed", Labels: []wireLabel{{Name: "kind/bug"}}},
+		{Number: 130, Title: "retired park spelling only", State: "closed", Labels: []wireLabel{{Name: "needs-decision"}}},
+		{Number: 131, Title: "a merged PR", State: "closed", PullRequest: &unparkWirePRLink{URL: "https://example.test/pulls/131"}, Labels: []wireLabel{{Name: "stage/085-needs-decision"}}},
+	}
+	rec.closedIssues = closed
+	for _, issue := range closed {
+		rec.register(issue)
+	}
+	rec.timelines = map[int][]unparkWireTimelineEvent{
+		127: {labeledAt(1, hiveBot, "needs-human", base), labeledAt(2, hiveBot, NeedsDecisionStageLabel, base)},
+		128: {labeledAt(3, "owner", "needs-human", base), labeledAt(4, hiveBot, NeedsDecisionStageLabel, base)},
+	}
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetAppBotLogin(hiveBot)
+
+	var audited []ClosedIssueStageEvent
+	result, err := c.SweepClosedIssueStageLabels(context.Background(), ClosedIssueStageSweepOptions{
+		Audit: func(ev ClosedIssueStageEvent) { audited = append(audited, ev) },
+	})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Seen != 3 || len(result.Cleaned) != 3 || result.Skipped != 0 {
+		t.Fatalf("result = seen %d cleaned %d skipped %d, want 3/3/0: %+v", result.Seen, len(result.Cleaned), result.Skipped, result.Cleaned)
+	}
+	if len(audited) != 3 {
+		t.Fatalf("audit = %+v, want three events", audited)
+	}
+	if got := strings.Join(rec.removed[127], ","); got != "needs-human,"+NeedsDecisionStageLabel {
+		t.Errorf("#127 removed = %v, want the hive's needs-human then the stage label", rec.removed[127])
+	}
+	if got := strings.Join(rec.removed[128], ","); got != NeedsDecisionStageLabel {
+		t.Errorf("#128 removed = %v, want only the stage label (person's needs-human and hold stay)", rec.removed[128])
+	}
+	if got := strings.Join(rec.removed[130], ","); got != "needs-decision" {
+		t.Errorf("#130 removed = %v, want the retired park spelling", rec.removed[130])
+	}
+	for _, n := range []int{129, 131} {
+		if len(rec.removed[n]) != 0 || len(rec.added[n]) != 0 {
+			t.Errorf("#%d: removed %v added %v, want untouched", n, rec.removed[n], rec.added[n])
+		}
+	}
+	for n, rm := range rec.removed {
+		if strings.Contains(strings.Join(rm, ","), "hold") {
+			t.Errorf("#%d: hold must never be removed, got %v", n, rm)
+		}
+	}
+	for n, added := range rec.added {
+		if len(added) != 0 {
+			t.Errorf("#%d: a closed issue gets no stage label back, got %v", n, added)
+		}
+	}
+	for _, ev := range audited {
+		switch ev.Number {
+		case 127:
+			if !ev.NeedsHuman || len(ev.Stage) != 1 {
+				t.Errorf("#127 event = %+v, want needs_human=true stage=[045]", ev)
+			}
+		case 128:
+			if ev.NeedsHuman {
+				t.Errorf("#128 event = %+v, want needs_human=false", ev)
+			}
+		}
+	}
+}
+
+// The per-pass cap bounds the writes; a second pass picks up the rest.
+func TestSweepClosedIssueStageLabelsCap(t *testing.T) {
+	server, rec := newUnparkServer(t, "org", "repo", nil, nil)
+	for n := 200; n < 205; n++ {
+		issue := unparkWireIssue{Number: n, State: "closed", Labels: []wireLabel{{Name: NeedsDecisionStageLabel}}}
+		rec.closedIssues = append(rec.closedIssues, issue)
+		rec.register(issue)
+	}
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepClosedIssueStageLabels(context.Background(), ClosedIssueStageSweepOptions{MaxActions: 2})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Cleaned) != 2 {
+		t.Fatalf("cleaned = %d, want the cap of 2", len(result.Cleaned))
+	}
+	if _, err := (*Client)(nil).SweepClosedIssueStageLabels(context.Background(), ClosedIssueStageSweepOptions{}); err != ErrNoGitHubClient {
+		t.Fatalf("nil client err = %v, want ErrNoGitHubClient", err)
 	}
 }

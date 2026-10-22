@@ -221,13 +221,20 @@ type boot struct {
 	lastSupersessionSweep  time.Time
 	lastSharedCIRerunSweep time.Time
 	lastIssueUnparkSweep   time.Time
+	lastClosedIssueSweep   time.Time
 	lastSentinelSweep      time.Time
 	lastGFISweep           time.Time
+	// lastLegacyFleetReportSweep gates runLegacyFleetReportSweepIfDue
+	// (hivecommons/hive#13470).
+	lastLegacyFleetReportSweep time.Time
 	// gfi is good-first-issue curation state (good_first_issue.*).
 	gfi *gfiState
 	// firstTimer is first-time contributor welcome state
 	// (governor.first_timer_welcome.*).
 	firstTimer *firstTimerState
+	// rfcCoverage is the triage existing-coverage check state
+	// (issues.rfc_existing_check.*).
+	rfcCoverage *rfcCoverageState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).

@@ -57,6 +57,10 @@ type IssuesConfig struct {
 	// HardSuppressReconcileInterval is the reconcile cadence; see
 	// DefaultHardSuppressReconcileInterval.
 	HardSuppressReconcileInterval time.Duration `yaml:"hard_suppress_reconcile_interval,omitempty" json:"hard_suppress_reconcile_interval,omitempty"`
+	// RFCExistingCheck comments, once, on new RFC/feature issues with the
+	// existing settings that may already cover the request
+	// (hivecommons/hive#13575). Default off.
+	RFCExistingCheck RFCExistingCheckConfig `yaml:"rfc_existing_check,omitempty" json:"rfc_existing_check,omitempty"`
 }
 
 // EffectiveSHAHoldTrustedLabel returns the trusted-reporter SHA label.

@@ -1,0 +1,1 @@
+- Triage can now comment once on new RFC/feature issues with the existing settings that may already cover the request, each linked to Settings with the search pre-filled (`issues.rfc_existing_check.enabled`, default off; never labels or closes). Settings also accepts `#config/governor/<tab>/<query>` deep links that open with the search box filled in.

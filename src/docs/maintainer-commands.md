@@ -14,10 +14,10 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 | Command | What it does | Who may use it | Where it works | Pickup speed | Labels changed |
 | --- | --- | --- | --- | --- | --- |
-| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated). On an open pull request the command gets one acknowledgement or explanation reply and changes no labels (see [PR approval command feedback](#pr-approval-command-feedback)). | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; `needs-human` lifts when **Hive** added it (an agent parked the issue on a person — your approval is that person's answer, and the stage engine derives 010; [#13075](https://github.com/hivecommons/hive/issues/13075)) and **stays** when a person added it or the timeline cannot say who did (the issue stays at 045 and out of the agent queue until a person removes it; [#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. |
-| `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; `needs-human` lifts when **Hive** added it (your decision is the human input Hive asked for; left in place it would re-derive 045 two minutes later, [#13075](https://github.com/hivecommons/hive/issues/13075)) and **stays** when a person added it or the timeline cannot say who did — a decision never lifts a person's hold ([#12680](https://github.com/hivecommons/hive/issues/12680)); never removes `hold`. An agent's later re-park on 085 is refused while `approved-direction` is present and the recorded decision text is unchanged. |
+| `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated). On an open pull request the command gets one acknowledgement or explanation reply and changes no labels (see [PR approval command feedback](#pr-approval-command-feedback)). | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; removes `needs-human` **whoever added it** — your approval is the human input the label asked for ([#13075](https://github.com/hivecommons/hive/issues/13075), [docs#419](https://github.com/hivecommons/docs/issues/419)); the reply names who had added it. Never removes `hold`: add `hold` to keep agents off an issue through a decision. |
+| `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human` or `stage/045-needs-decision` (or the retired `needs-decision` / `needs-direction` / a pre-045 `stage/085-needs-decision`, until migrated); pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `stage/045-needs-decision` (and the retired spellings) when present; adds `approved-direction`; removes `needs-human` **whoever added it** — your decision is the human input the label asked for, and left in place it would re-derive 045 two minutes later ([#13075](https://github.com/hivecommons/hive/issues/13075), [docs#419](https://github.com/hivecommons/docs/issues/419)); the reply names who had added it. Never removes `hold`: add `hold` to keep agents off an issue through a decision. An agent's later re-park on 085 is refused while `approved-direction` is present and the recorded decision text is unchanged. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
-| `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` and `needs-reporter-confirmation` when present. |
+| `/fixed` | Confirms that an open issue's fix is verified — or that what a parked issue waited on was done, in or outside the repository — and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. On a parked issue (`stage/045-needs-decision`, `needs-human`, or a retired park spelling) the un-park sweep honours it from a human with `write`, `maintain`, or `admin` permission. | Open issues only, not pull requests. | GitHub Actions on the new comment where the repository runs the `/fixed` workflow; on parked issues, the next un-park sweep, normally within 5 minutes ([dibs#459](https://github.com/hivecommons/dibs/issues/459)). | Closes the issue as completed. The workflow adds `hive: reporter-confirmed` and removes `hive/likely-done` and `needs-reporter-confirmation` when present. On a parked issue the sweep removes `needs-human` and the retired park spellings, the stage engine strips `stage/*`, and Hive posts one acknowledgement; `hold` is never touched. |
 | `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | Removes `needs-reporter-confirmation` when present. The reopen sticks: close-on-merge does not close the issue again for a PR that merged before the reopen, whether Hive (`<!-- hive-close-on-merge -->` comment) or GitHub's closing keyword closed it; Hive records the latter with a `<!-- hive-reopened-after-merge pr=<pr> -->` comment. A later PR can still close it. |
 | `/help-wanted` | Adds the `help wanted` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `help wanted`. |
 | `/good-first-issue` | Adds the `good first issue` label. | Any non-bot commenter accepted by the label-helper workflow. | Issues and pull requests. | GitHub Actions on the new comment. | Adds `good first issue`. |
@@ -32,9 +32,9 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 Hive-authored issues normally arrive actionable rather than parked when the question is only an engineering choice (sequencing, naming, numbering, config shape, scope, or approach A vs B). With `project.agent_issue_decision_policy: resolve` (the default), the relay downgrades those attempted parks and records `Decision taken by hive: …`; maintainers can still override with `/hive hold` or `needs-human`. Parked Hive-authored issues should include `Risk: <category>` for the reason a person is required.
 
-The un-park sweep only honors `/hive approve`, `/hive decision <text>`, and the
-sweep fallback for `/hive help` when the command is the first non-empty line of
-the comment, outside quoted text and fenced code. The comment must be newer than
+The un-park sweep only honors `/hive approve`, `/hive decision <text>`, `/fixed`
+(alias `/close`), and the sweep fallback for `/hive help` when the command is
+the first non-empty line of the comment, outside quoted text and fenced code. The comment must be newer than
 seven days, unedited, authored by a human rather than the hive or another bot,
 and posted by someone who currently has `write`, `maintain`, or `admin`
 permission on the repository. A `/hive decision` must include non-empty
@@ -83,7 +83,10 @@ reporter or for `write`/`maintain`/`admin` collaborators. `/fixed` plain prose i
 only meaningful when Hive has already asked whether a merged referenced fix can
 close the issue; an explicit `/fixed` works on any open issue. Ambiguous prose
 with negation or remaining-work language asks the commenter to use `/fixed`
-instead of closing.
+instead of closing. On a parked issue — many park for an action a person must
+take outside the repository — the un-park sweep itself honours a maintainer's
+`/fixed`, so a repository without the `/fixed` workflow still gets the close,
+the label clean-up and one acknowledgement.
 
 ## Prose replies on parked issues
 
@@ -108,6 +111,13 @@ described above. While Hive waits, issues carry `needs-reporter-confirmation`
 (and may also carry `needs-human` when the reporter is a maintainer). `/reopen`,
 label-helper, and assignment-helper commands are single-comment workflows;
 repeat comments can repeat their documented action.
+
+However an issue closes — `/fixed`, a merged PR's `Fixes #N`, or by hand — Hive
+clears the stage labels it left on it: the closed-issue sweep (every 10
+minutes) strips `stage/*` and a Hive-added `needs-human` from recently closed
+issues, so a closed issue never sits in the dashboard tracker as needing a
+decision ([homebrew-hive#127](https://github.com/hivecommons/homebrew-hive/issues/127)).
+A person's `needs-human` and any `hold` stay.
 
 ## The `hive/selfreport` label
 
@@ -199,8 +209,8 @@ them; the table states every effect in one place.
 | `approved-direction` | Issue is not parked | Human sign-off (unchanged) | n/a |
 | `stage/045-needs-decision` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
 | `stage/045-needs-decision` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
-| `needs-human` added by Hive | Removed on `/hive approve` / `/hive decision` — the maintainer's answer to the hive's own ask ([#13075](https://github.com/hivecommons/hive/issues/13075)); kept on label approval | Parked → no sign-off | n/a |
-| `needs-human` added by a person (or unreadable timeline) | Kept: it is held for a person, and only a person removes it; the issue stays derived at 045 and out of the agent queue ([#12680](https://github.com/hivecommons/hive/issues/12680)) | Parked → no sign-off | n/a |
+| `needs-human` added by Hive | Removed on `/hive approve` / `/hive decision` / `/fixed` — the maintainer's answer to the hive's own ask ([#13075](https://github.com/hivecommons/hive/issues/13075)); kept on label approval; removed when the issue closes | Parked → no sign-off | n/a |
+| `needs-human` added by a person (or unreadable timeline) | Kept on a label-driven repo: the lifecycle bot owns it, and only a person removes it; the issue stays derived at 045 and out of the agent queue. (Elsewhere `/hive approve` / `/hive decision` / `/fixed` lift it whoever added it — [docs#419](https://github.com/hivecommons/docs/issues/419).) | Parked → no sign-off | n/a |
 | retired `needs-decision` / `needs-direction` ([#12683](https://github.com/hivecommons/hive/issues/12683)) | Migrated by the issue stage reconciler: `stage/045-needs-decision` added, retired label removed; a person's retired label therefore becomes a Hive-added 045 and `/hive approve` can clear it | Parked → no sign-off | n/a |
 | `hold`, `do-not-merge` | Kept; issue stays parked (unchanged) | Hold (unchanged) | n/a |
 

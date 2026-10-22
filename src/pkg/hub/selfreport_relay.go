@@ -310,6 +310,16 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	if err != nil && s.logger != nil {
 		s.logger.Warn("selfreport relay: fingerprint search failed; will create", "hive", req.HiveID, "error", err)
 	}
+	if existing.Number <= 0 && fleetreport.IsLegacyStandaloneTitle(req.Title) {
+		// A spoke still on a pre-#13470 build asking the hub to file a
+		// standalone "Fleet report:" issue (hivecommons/hive#13567 was one,
+		// from 5.186.4-22-g20cec0241). That format is retired: fold the
+		// payload onto the hive's open self-report tracker as a comment when
+		// it has one, otherwise refuse with 410 so the spoke logs and moves
+		// on. Either way no new issue is created.
+		s.handleLegacyStandaloneSelfReport(w, r, client, token, owner, repo, req)
+		return
+	}
 	if existing.Number > 0 {
 		comment := fmt.Sprintf("<!-- hive:selfreport-seen hive=%s fp=%s --> Also seen on **%s** (v%s) at %s — relayed via hub.",
 			req.HiveID, req.Fingerprint, req.HiveID, orUnknown(req.Version), time.Now().UTC().Format(time.RFC3339))
@@ -404,6 +414,87 @@ func selfReportFallbackLabels(class string) []string {
 		labels = append(labels, selfReportObservationLabel)
 	}
 	return labels
+}
+
+// selfReportLegacyRetiredReason is the 410 body an old spoke gets when its
+// standalone report has no tracker to fold onto.
+const selfReportLegacyRetiredReason = "legacy_standalone_retired"
+
+// handleLegacyStandaloneSelfReport converts a retired standalone "Fleet
+// report:" payload (#13470) into a comment on the relaying hive's open
+// `[selfreport]` tracker, or refuses it with 410 Gone. It never creates an
+// issue. The log line names the spoke's version so the operator can see
+// which hive is still on a pre-#13470 build.
+func (s *HubServer) handleLegacyStandaloneSelfReport(w http.ResponseWriter, r *http.Request, client *http.Client, token, owner, repo string, req selfReportRelayRequest) {
+	tracker, err := findSelfReportTrackerForHive(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.HiveID)
+	if err != nil && s.logger != nil {
+		s.logger.Warn("selfreport relay: tracker search failed for legacy standalone report", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "error", err)
+	}
+	if tracker.Number <= 0 {
+		if s.logger != nil {
+			s.logger.Warn("selfreport relay: refused legacy standalone fleet report; spoke predates #13470 and has no open self-report tracker",
+				"hive", req.HiveID, "spoke_version", orUnknown(req.Version), "fingerprint", req.Fingerprint, "title", req.Title)
+		}
+		writeSelfReportRelayResponse(w, http.StatusGone, selfReportRelayResponse{Reason: selfReportLegacyRetiredReason})
+		return
+	}
+	comment := fmt.Sprintf("%s\nLegacy standalone fleet report from **%s** (v%s) folded onto this self-report by the hub (hivecommons/hive#13470: standalone `Fleet report:` issues are retired; upgrade the spoke to stop seeing this).\n\n<details><summary>Original report: %s</summary>\n\n%s\n</details>",
+		fleetreport.SeenMarker(req.Fingerprint, req.HiveID), req.HiveID, orUnknown(req.Version), req.Title, req.Body)
+	if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, tracker.Number, comment); err != nil {
+		if s.logger != nil {
+			s.logger.Error("selfreport relay: legacy standalone fold-in comment failed", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "issue", tracker.Number, "error", err)
+		}
+		npsJSONError(w, "failed to update issue", http.StatusBadGateway)
+		return
+	}
+	if s.logger != nil {
+		s.logger.Info("selfreport relay: folded legacy standalone fleet report onto self-report tracker", "hive", req.HiveID, "spoke_version", orUnknown(req.Version), "issue", tracker.Number, "title", req.Title)
+	}
+	writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: tracker.Number, URL: tracker.URL, Joined: true})
+}
+
+// findSelfReportTrackerForHive finds the relaying hive's open `[selfreport]`
+// tracker: an open issue labelled hive/selfreport whose body carries the
+// hive's self-report marker (`<!-- hive:selfreport fp=… hive=<id> -->`).
+// Returns zero Number when it has none.
+func findSelfReportTrackerForHive(ctx context.Context, client *http.Client, apiBase, token, owner, repo, hiveID string) (feedbackIssueResult, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_tracker_search")
+	needle := "hive=" + fleetreport.MarkerHive(hiveID) + " -->"
+	q := fmt.Sprintf("repo:%s/%s is:issue is:open label:%s in:body %q", owner, repo, selfReportRelayLabel, needle)
+	u := strings.TrimRight(apiBase, "/") + "/search/issues?per_page=10&sort=created&order=asc&q=" + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return feedbackIssueResult{}, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return feedbackIssueResult{}, fmt.Errorf("github search: %d", resp.StatusCode)
+	}
+	var out struct {
+		Items []struct {
+			Number  int    `json:"number"`
+			HTMLURL string `json:"html_url"`
+			Title   string `json:"title"`
+			Body    string `json:"body"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return feedbackIssueResult{}, err
+	}
+	for _, it := range out.Items {
+		if fleetreport.IsLegacyStandaloneTitle(it.Title) || !strings.Contains(it.Body, fleetreport.SelfReportMarkerPrefix) || !strings.Contains(it.Body, needle) {
+			continue
+		}
+		return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body}, nil
+	}
+	return feedbackIssueResult{}, nil
 }
 
 // selfReportObservationBelongsToHive reads the evidence field emitted by

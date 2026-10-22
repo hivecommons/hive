@@ -711,3 +711,41 @@ func TestRecordVerdictEventPassesShapeValidation(t *testing.T) {
 	}
 	reviewRequestDirForTest = ""
 }
+
+// A replica is review-capable when its base is a reviewer, so the
+// dispatch-less path must refuse a verdict from any lane of the authoring
+// family: alpha-2 may not approve a PR alpha opened (hivecommons/hive#13558).
+func TestAdvisoryVerdictRejectsSiblingReplicaOfAuthor(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	oldAuditPath := reviewVerdictAuditPath
+	reviewVerdictAuditPath = auditPath
+	t.Cleanup(func() { reviewVerdictAuditPath = oldAuditPath })
+	line := `{"ts":"` + time.Now().UTC().Format(time.RFC3339) + `","action":"agent_pr_created","detail":"repo=o/r, number=1, author=hive[bot]","agent":"alpha"}` + "\n"
+	if err := os.WriteFile(auditPath, []byte(line), 0o644); err != nil {
+		t.Fatalf("write audit fixture: %v", err)
+	}
+	bases := map[string]string{"alpha-2": "alpha"}
+	c := &Client{logger: testLogger(), reviewerAgent: func(string) bool { return true }}
+	c.SetAgentBaseFunc(func(agent string) string {
+		if base, ok := bases[agent]; ok {
+			return base
+		}
+		return agent
+	})
+	report := review.PerspectiveReport{Repo: "o/r", Number: 1, Perspective: review.PerspectiveCorrectness, HeadSHA: "abc123"}
+
+	if ok, reason, _, _, _ := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2"}); ok || reason != "author_self_approval" {
+		t.Fatalf("alpha-2 on alpha-authored PR: ok=%v reason=%q, want rejected author_self_approval", ok, reason)
+	}
+	if ok, reason, _, _, _ := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "beta"}); !ok {
+		t.Fatalf("beta on alpha-authored PR rejected: %q", reason)
+	}
+
+	reportDir := filepath.Join(dir, "reports")
+	withVerdictDispatchState(t, review.DispatchState{})
+	c.recordReviewVerdict(context.Background(), ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2", Report: validVerdictJSONWithHead(t, "o/r", 1, "correctness", "approve", "abc123")}, reportDir)
+	if matches, _ := filepath.Glob(filepath.Join(reportDir, "*")); len(matches) != 0 {
+		t.Fatalf("sibling-replica self-approval verdict was recorded: %v", matches)
+	}
+}

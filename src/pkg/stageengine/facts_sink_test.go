@@ -138,23 +138,53 @@ func TestFactSinkEnrichAndErrors(t *testing.T) {
 	}
 }
 
-// DecisionLiftsNeedsHuman: a maintainer's decision answers the hive's own
-// `needs-human` (#13075) and never a person's or an unattributed one (#12680).
+// DecisionLiftsNeedsHuman: a maintainer's explicit decision is a person
+// answering, so it lifts `needs-human` whoever applied it (#13075 for the
+// hive's own; hivecommons/docs#419 for a maintainer's earlier label). The
+// applier only shapes the reply's attribution.
 func TestDecisionLiftsNeedsHuman(t *testing.T) {
-	cases := []struct {
-		name    string
-		applier NeedsHumanApplier
-		want    bool
-	}{
-		{"hive-applied lifts", NeedsHumanApplierHive, true},
-		{"person-applied stays", NeedsHumanApplierPerson, false},
-		{"unknown stays", NeedsHumanApplierUnknown, false},
+	for _, applier := range []NeedsHumanApplier{NeedsHumanApplierHive, NeedsHumanApplierPerson, NeedsHumanApplierUnknown} {
+		if !DecisionLiftsNeedsHuman(applier) {
+			t.Fatalf("DecisionLiftsNeedsHuman(%v) = false, want true", applier)
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := DecisionLiftsNeedsHuman(tc.applier); got != tc.want {
-				t.Fatalf("DecisionLiftsNeedsHuman(%v) = %v, want %v", tc.applier, got, tc.want)
-			}
-		})
+}
+
+// Closed: the fact pins Open=false even when the fresh read still says open,
+// and Enrich errors are returned without a reconcile.
+func TestFactSinkClosedPinsOpenFalse(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	cap := &captureReconciler{}
+	issue := Ref{Owner: "acme", Repo: "widgets", Number: 127, Kind: stagelabels.IssueItem}
+	pr := Ref{Owner: "acme", Repo: "widgets", Number: 128, Kind: stagelabels.PRItem}
+	sink := NewFactSink(cap, FactSinkOptions{Now: func() time.Time { return now }, Enrich: func(_ context.Context, f Facts) (Facts, error) {
+		f.Open = true // a stale read
+		f.Labels = append(f.Labels, "stage/045-needs-decision")
+		return f, nil
+	}})
+	if err := sink.Closed(ctx, issue); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Closed(ctx, pr); err != nil {
+		t.Fatal(err)
+	}
+	if len(cap.got) != 2 {
+		t.Fatalf("%d facts submitted, want 2", len(cap.got))
+	}
+	got := cap.got[0]
+	if got.Open || got.Issue == nil || got.PR != nil || !got.ObservedAt.Equal(now) || len(got.Labels) != 1 {
+		t.Fatalf("issue closed fact: %+v", got)
+	}
+	if got := cap.got[1]; got.Open || got.PR == nil || got.Issue != nil {
+		t.Fatalf("pr closed fact: %+v", got)
+	}
+	boom := errors.New("boom")
+	failing := NewFactSink(cap, FactSinkOptions{Enrich: func(context.Context, Facts) (Facts, error) { return Facts{}, boom }})
+	if err := failing.Closed(ctx, issue); !errors.Is(err, boom) {
+		t.Fatalf("enrich error = %v", err)
+	}
+	if len(cap.got) != 2 {
+		t.Fatal("a failed enrich must not reconcile")
 	}
 }

@@ -28,6 +28,10 @@ type PullRequest struct {
 	URL         string
 	Lane        string
 	AuthorAgent string
+	// AuthorBase is AuthorAgent's base lane, resolved by the caller over the
+	// full configured agent set. Empty falls back to resolving AuthorAgent
+	// against DispatchOptions.Agents.
+	AuthorBase string
 	// HiveAttributed is true when the PR body carries the hive attribution
 	// trailer: a PR an agent opened on a person's credentials, which GitHub
 	// shows under that person's login. It is carried for consumers and the

@@ -179,7 +179,19 @@ func TestMain(m *testing.M) {
 	os.Setenv("HIVE_WORK_DIR", filepath.Join(dir, "work"))
 	os.Setenv(kickLogDirEnv, filepath.Join(dir, "kicks"))
 
+	// The detached reaper tears the run's tmux servers down even if this
+	// process dies before the teardown below (panic, -timeout SIGQUIT).
+	startTmuxReaper(tmuxDir)
+
 	code := m.Run()
+
+	// Kill the run's tmux servers (and with them the `-zsh` panes and the
+	// `sh -c … pluk watch` pipe-pane children) BEFORE the socket dir is
+	// removed below — once the socket is gone the server is unreachable and
+	// leaks for good. Then fail the run if anything from it is still alive.
+	if leakCode := teardownTestProcesses(tmuxDir, dir); leakCode != 0 && code == 0 {
+		code = leakCode
+	}
 
 	if hadWorkDir {
 		os.Setenv("HIVE_WORK_DIR", originalWorkDir)
@@ -669,6 +681,9 @@ func TestResume_ClearsPausedFlag(t *testing.T) {
 		"worker": makeAgentConfig("claude", "sonnet"),
 	}
 	m := NewManager(cfgs, discardLogger(), ProjectContext{})
+	// Resume launches a real tmux session rooted in t.TempDir(); kill it
+	// before the dir vanishes or its shell is left spinning on a deleted cwd.
+	t.Cleanup(func() { _ = testTmuxCommand("kill-session", "-t", "hive-worker").Run() })
 
 	_ = m.Pause("worker", "test", "test pause")
 	if err := m.Resume(context.Background(), "worker", "test", "test resume"); err != nil {
@@ -847,6 +862,9 @@ func TestStart_UnknownBackendSetsFailed(t *testing.T) {
 		"bad": makeAgentConfig("not-a-real-backend", ""),
 	}
 	m := NewManager(cfgs, discardLogger(), ProjectContext{})
+	// Start creates the tmux session (and its pluk pipe-pane watcher) before
+	// the unknown backend fails the launch; tear it down with the test.
+	t.Cleanup(func() { _ = testTmuxCommand("kill-session", "-t", "hive-bad").Run() })
 
 	_ = m.Start(context.Background(), "bad")
 	ap, err := m.GetStatus("bad")

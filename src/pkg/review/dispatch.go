@@ -65,7 +65,9 @@ var ReviewDispatchStatePath = filepath.Join(DefaultDispatchStateDir, ReviewDispa
 var LegacyReviewDispatchStatePath = filepath.Join(outputschema.AgentReportDir, ReviewDispatchStateFile)
 
 type AgentCapability struct {
-	Name           string
+	Name string
+	// ReplicaOf is the base agent a derived replica was expanded from.
+	ReplicaOf      string
 	Enabled        bool
 	Paused         bool
 	OnDemand       bool
@@ -90,6 +92,51 @@ type AgentCapability struct {
 	ReviewHead     string
 	ReviewHeadOf   string
 	HasReviewHeads bool
+}
+
+// CapabilityFromConfig builds the dispatcher's view of one configured lane
+// from its agents.<name> entry. Every site that hands an agent to the review
+// package goes through here so a field added to AgentCapability is populated
+// everywhere at once. Callers layer runtime state (an agent-manager pause) on
+// top of the result.
+func CapabilityFromConfig(name string, ac config.AgentConfig) AgentCapability {
+	return AgentCapability{
+		Name:           name,
+		ReplicaOf:      ac.ReplicaOf,
+		Enabled:        ac.Enabled,
+		Paused:         ac.Paused,
+		OnDemand:       ac.OnDemand,
+		UsesKick:       ac.UsesGovernorKick(),
+		Role:           ac.Role,
+		LaneKeywords:   ac.LaneKeywords,
+		DetectKeywords: ac.DetectKeywords,
+		Aliases:        ac.Aliases,
+		Backend:        ac.Backend,
+		Model:          ac.Model,
+		ReviewModels:   ac.ReviewModels,
+		ReviewHead:     ac.ReviewHead,
+		ReviewHeadOf:   reviewHeadBase(ac),
+		HasReviewHeads: len(ac.ReviewHeads) > 0 && !ac.IsReviewHead(),
+	}
+}
+
+// reviewHeadBase is the base agent a review head was derived from, so that
+// review.reviewer_agents naming the base admits its heads
+// (hivecommons/hive#13542). Empty for every other agent.
+func reviewHeadBase(ac config.AgentConfig) string {
+	if ac.IsReviewHead() {
+		return ac.ReplicaOf
+	}
+	return ""
+}
+
+// baseOf is the lane an agent's reviewer identity resolves to: the base agent
+// for a replica, otherwise the agent itself (config.AgentConfig.BaseName).
+func baseOf(a AgentCapability) string {
+	if a.ReplicaOf != "" {
+		return a.ReplicaOf
+	}
+	return a.Name
 }
 
 type DispatchOptions struct {
@@ -541,7 +588,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		} else {
 			plan.expirePending(pr, opts, now)
 		}
-		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent)
+		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, prAuthorBase(pr, opts.Agents))
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
@@ -701,14 +748,39 @@ func leastLoadedReviewer(reviewers []AgentCapability, pending []PendingReview) A
 	return best
 }
 
-func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapability {
+// agentBase resolves an agent's base lane from the full configured set, so an
+// authoring replica that is itself paused, on-demand or not review-capable
+// still maps to its base.
+func agentBase(all []AgentCapability, name string) string {
+	name = strings.TrimSpace(name)
+	for _, a := range all {
+		if a.Name == name {
+			return baseOf(a)
+		}
+	}
+	return name
+}
+
+// prAuthorBase is the PR's author base: the caller-resolved AuthorBase when
+// set, otherwise AuthorAgent resolved against agents.
+func prAuthorBase(pr PullRequest, agents []AgentCapability) string {
+	if base := strings.TrimSpace(pr.AuthorBase); base != "" {
+		return base
+	}
+	return agentBase(agents, pr.AuthorAgent)
+}
+
+func reviewersForPR(reviewers []AgentCapability, authorAgent, authorBase string) []AgentCapability {
 	authorAgent = strings.TrimSpace(authorAgent)
 	if authorAgent == "" {
 		return reviewers
 	}
+	if authorBase == "" {
+		authorBase = authorAgent
+	}
 	out := make([]AgentCapability, 0, len(reviewers))
 	for _, reviewer := range reviewers {
-		if reviewer.Name != authorAgent {
+		if reviewer.Name != authorAgent && baseOf(reviewer) != authorBase {
 			out = append(out, reviewer)
 		}
 	}
@@ -1247,11 +1319,14 @@ func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
 // the dispatcher uses to hand out review kicks: when review.reviewer_agents
 // names lanes, membership in that set decides; otherwise the agent's name,
 // role, aliases or keywords must carry the review token. The relay uses it to
-// decide whose dispatch-less verdicts may be recorded.
+// decide whose dispatch-less verdicts may be recorded. A replica is review-
+// capable when its base agent is a listed reviewer.
 func ReviewCapable(a AgentCapability, reviewerAgents map[string]bool) bool {
 	if len(reviewerAgents) > 0 {
-		// Naming a base admits the heads derived from its review_heads.
-		return reviewerAgents[a.Name] || (a.ReviewHeadOf != "" && reviewerAgents[a.ReviewHeadOf])
+		// Naming a base admits its replicas and the heads derived from its
+		// review_heads.
+		return reviewerAgents[a.Name] || reviewerAgents[baseOf(a)] ||
+			(a.ReviewHeadOf != "" && reviewerAgents[a.ReviewHeadOf])
 	}
 	return hasReviewCapability(a)
 }

@@ -1401,6 +1401,8 @@
     .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
     .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
     .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
+    /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
+    .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
     /* Repo chip before the number: monospace, tinted per repo from the
        --ham-repo-tint-N palette (slot = string hash), muted for the primary
        repo; a button that sets the Repo filter. Owner/repo rides its title. */
@@ -13425,6 +13427,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
     const STAGE_TRACKER_UNTITLED_ISSUE = '(title unavailable)';
+    // linked_issues[].via values that mark a reference link (`Refs #N`, a
+    // `(#N, part 1)` title, a first-paragraph mention) rather than a
+    // closing one; the issue slot draws these under a "refs" chip.
+    const STAGE_TRACKER_SOFT_LINK_VIAS = ['refs', 'title', 'mention'];
+    const STAGE_TRACKER_SOFT_LINK_TIP = 'Referenced by the PR (Refs #N / title), not closed by it';
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // 015 triage-needed: actionable but no maintainer has looked at it yet.
@@ -13955,7 +13962,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
-            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
+            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
@@ -14368,15 +14375,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the "no linked issue" placeholder when its body names none. A closed
     // issue whose title the server could not resolve shows the muted
     // STAGE_TRACKER_CLOSED_ISSUE_TITLE placeholder, never a blank.
+    // A link the server tagged with a soft `via` (refs / title / mention —
+    // the PR works towards the issue without closing it) carries soft: true
+    // so the row draws a "refs" chip beside it; a closing link never does.
     function stageTrackerPRIssueSlot(item) {
       const linked = (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0);
+      const soft = li => STAGE_TRACKER_SOFT_LINK_VIAS.indexOf(li.via || '') >= 0;
       const open = linked.find(li => Number(li.number) === Number(item.nested_under)) || linked.find(li => li.listed || (li.state || '') === 'open');
-      if (open) return { number: Number(open.number), title: open.title || '', url: open.url || '' };
+      if (open) {
+        const slot = { number: Number(open.number), title: open.title || '', url: open.url || '' };
+        if (soft(open)) slot.soft = true;
+        return slot;
+      }
       const li = linked.find(l => (l.state || '') === 'closed') || linked[0];
       if (li) {
         const closed = (li.state || '') === 'closed';
         const title = li.title || '';
-        return { number: Number(li.number), title: title, url: li.url || '', closed: closed, placeholder: !title && closed ? STAGE_TRACKER_CLOSED_ISSUE_TITLE : (!title ? STAGE_TRACKER_UNTITLED_ISSUE : '') };
+        const slot = { number: Number(li.number), title: title, url: li.url || '', closed: closed, placeholder: !title && closed ? STAGE_TRACKER_CLOSED_ISSUE_TITLE : (!title ? STAGE_TRACKER_UNTITLED_ISSUE : '') };
+        if (soft(li)) slot.soft = true;
+        return slot;
       }
       return { number: 0, text: 'no linked issue' };
     }
@@ -20423,7 +20440,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const staleBadge = staleSince ? `<span class="overview-kpi-stale" role="status" title="GitHub refused the latest enumeration or count reconcile (rate limit or outage), or this is the snapshot restored at startup. These figures are the last successful read plus webhook updates since, as of ${esc(fmtOverviewStaleSince(staleSince))}; the next enumeration or hourly reconcile clears this.">⚠ stale since ${esc(fmtOverviewStaleSince(staleSince))}${(() => { const ago = relativeTimeShort(staleSince); return ago ? ` (${esc(ago)})` : ''; })()} · serving last-good</span>` : '';
       const unlistedBadge = unlisted.issues + unlisted.prs > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewUnlistedNote(unlisted))}">+${unlisted.issues + unlisted.prs} not yet listed</span>` : '';
-      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
+      // A repo listing open PRs but no issues while its issue side is
+      // stale or unlisted (repos[].issuesSyncing) is a pending issue fetch,
+      // not an empty backlog: the issue total is a lower bound until the
+      // list comes back (open_items.go markIssuesSyncing).
+      const syncingBadge = unlisted.syncing > 0 ? `<span class="overview-kpi-stale" role="status" title="${esc(overviewSyncingNote(unlisted))}">⏳ issues syncing · ${unlisted.syncing} ${unlisted.syncing === 1 ? 'repo' : 'repos'}</span>` : '';
+      return `<div class="overview-headline sec-headline" data-collapsed-keep>${overviewKPIWindowControls()}${staleBadge}${syncingBadge}${unlistedBadge}<div class="overview-kpis" aria-label="${esc(equationLabel)}">${cards.map((card, i) => {
         const value = card.value;
         const n = Number(card.rawValue);
         const attrs = Number.isFinite(n) ? ` data-overview-kpi-key="${esc(card.key)}" data-overview-kpi-value="${n}" data-overview-kpi-display="${esc(String(value ?? '—'))}"` : '';
@@ -20443,6 +20465,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prs = Number(openPRs) || 0;
       let title = equationLabel || `${issues} total open issues + ${prs} total open PRs`;
       if (staleSince) title += ` (stale since ${fmtOverviewStaleSince(staleSince)} · serving last-good)`;
+      const syncing = overviewSyncingNote(unlisted);
+      if (syncing) title += ` · ${syncing}`;
       const note = overviewUnlistedNote(unlisted);
       if (note) title += ` · ${note}`;
       return { issues, prs, title };
@@ -20452,9 +20476,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        totals without an item row behind them (repos[].unlistedIssues /
        unlistedPrs). Counted beside the totals, never inside them. */
     function overviewUnlistedCounts(repos) {
-      const out = { issues: 0, prs: 0 };
-      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); });
+      const out = { issues: 0, prs: 0, syncing: 0 };
+      (repos || []).forEach(r => { if (!r) return; out.issues += Number(r.unlistedIssues || 0); out.prs += Number(r.unlistedPrs || 0); if (r.issuesSyncing) out.syncing++; });
       return out;
+    }
+    /* Pure: repos whose issue side has not been listed for real yet
+       (repos[].issuesSyncing): they show open PRs and no issues while
+       stale or unlisted, so their issue count is pending, not zero. */
+    function overviewSyncingNote(unlisted) {
+      const n = Number(unlisted?.syncing || 0);
+      if (n <= 0) return '';
+      return `issues still syncing for ${n} ${n === 1 ? 'repo' : 'repos'} — the issue total is a lower bound until the issue list comes back`;
     }
     function overviewUnlistedNote(unlisted) {
       const issues = Number(unlisted?.issues || 0), prs = Number(unlisted?.prs || 0);
@@ -26125,6 +26157,35 @@ function burnAreaChart() {
     // viewBox width of every .ev-svg; the stylesheet pins the rendered width
     // to the same px so labels keep the dashboard's font size (1 unit = 1px).
     const EV_SVG_W = 320;
+    // Report-only, within-repo on/off contrasts. The server guards each
+    // metric by its own denominator, not merely the number of tagged PRs.
+    function evControlArmHtml(control) {
+      control = control || {};
+      const repos = Array.isArray(control.by_repo) ? control.by_repo : [];
+      const minN = Math.max(20, Number(control.min_n) || 20);
+      const unassigned = Number(control.unassigned) || 0;
+      const note = `<div class="ev-note">Control arm: Hive dispatch on vs scheduled off, within repo. ${unassigned} PR(s) unassigned or conflicting; excluded, never inferred as on. Δ = on − off; withheld below n=${minN} in either metric denominator. Descriptive, not causal; assignment/collection rollout is not yet enabled.</div>`;
+      if (!repos.length) return note + '<div class="ev-note">No prospectively assigned control-window observations.</div>';
+      const metrics = [
+        ['merged_rate', 'Merged / known outcomes'], ['closed_rate', 'Closed / known outcomes'],
+        ['open_rate', 'Open / known outcomes'], ['reverted_14d_rate', 'Reverted / merged (14 d)'],
+        ['issue_reopened_14d_rate', 'Issue reopened / merged (14 d)'], ['ci_pass_rate', 'CI pass / settled CI'],
+        ['median_time_to_merge_hours', 'Median open → merge (hours)'],
+      ];
+      return note + repos.map((r) => {
+        const on = r.on || {}, off = r.off || {}, deltas = r.delta || {};
+        const rows = metrics.map(([key, label]) => {
+          const a = (on.metrics || {})[key] || {}, b = (off.metrics || {})[key] || {};
+          const hours = key === 'median_time_to_merge_hours';
+          const format = (v) => v == null ? '—' : hours ? Number(v).toFixed(1) : (Number(v) * 100).toFixed(1) + '%';
+          const d = deltas[key];
+          const delta = d == null || Number(a.n) < minN || Number(b.n) < minN ? 'withheld' : (Number(d) > 0 ? '+' : '') + (hours ? Number(d).toFixed(1) + ' h' : (Number(d) * 100).toFixed(1) + ' pp');
+          return `<tr><td>${label}</td><td>${format(a.value)} (n=${Number(a.n) || 0})</td><td>${format(b.value)} (n=${Number(b.n) || 0})</td><td>${delta}</td></tr>`;
+        }).join('');
+        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><table><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }).join('');
+    }
+
     function evOutcomesSvg(outcomes) {
       outcomes = outcomes || {};
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
@@ -26645,7 +26706,7 @@ function burnAreaChart() {
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
-        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
+        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
           `The self-reported series includes ${Number(dto.reviewer_calibration_legacy) || 0} legacy verdict(s) using the old verdict-based confidence. The derived series excludes verdicts without a recorded derived score; n counts only the selected series. Slopes pool perspectives and compare the endpoint rise per bin across bins with at least five known outcomes, using each series’ available records. Later CI results never rewrite a recorded derived score. This calibration panel plots merge and block rates. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
@@ -38684,6 +38745,15 @@ function burnAreaChart() {
       if (c.input.value) applySettingsSearch(c.input.value);
     }
 
+    // #config/governor/<tab>/<query> opens Settings with the search box
+    // already holding <query> — the link triage comments carry (#13575).
+    function settingsSearchPrefill(query) {
+      const c = settingsSearchControls();
+      if (!c.input) return;
+      c.input.value = query;
+      c.input.dispatchEvent(new Event('input'));
+    }
+
     function settingsSearchShortcutHandler(e) {
       if (!_configModalOpen || _configState.type !== 'governor') return;
       const c = settingsSearchControls();
@@ -39034,13 +39104,13 @@ function burnAreaChart() {
       return true;
     }
 
-    function openConfigDialog(type, agentName, initialTabOverride) {
+    function openConfigDialog(type, agentName, initialTabOverride, initialSearch) {
       const isCreate = type === 'agent' && !agentName;
       _configModalOpen = true;
       // promptTemplateDirty/Value hold the Prompt Template tab's pending edit
       // (it has its own endpoint, so it is not a `dirty` section). Reset on every
       // open and on close, so Cancel/X/Escape discard it like any other field.
-      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
+      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, initialSearch: initialSearch || '', isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
       hiveRememberModalOpen(document.getElementById('config-overlay'));
       const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
@@ -39077,6 +39147,7 @@ function burnAreaChart() {
           }
           try {
             switchConfigTab(initialTab);
+            if (type === 'governor' && _configState.initialSearch) settingsSearchPrefill(_configState.initialSearch);
           } catch (err) {
             document.getElementById('config-body').innerHTML =
               '<div style="text-align:center;padding:40px;color:var(--red)">Failed to render tab: ' + err.message + '</div>';
@@ -39106,7 +39177,7 @@ function burnAreaChart() {
       const target = parts[0];
       const tab = parts[1] || null;
       if (target === 'governor') {
-        openConfigDialog('governor', null, tab);
+        openConfigDialog('governor', null, tab, parts[2] || '');
       } else {
         openConfigDialog('agent', target, tab);
       }

@@ -324,3 +324,76 @@ console.log('ok');
 		t.Fatalf("unexpected output: %s", out)
 	}
 }
+
+// A repo whose enumeration listed open PRs but no issues must not render a
+// confident 0 while its issue side is stale or unlisted (hosted hive,
+// 2026-10-22: every repo "0 issues · N PRs" after an update). The repo is
+// flagged issuesSyncing and stale, and the flag propagates to the openItems
+// summary. A confirmed empty issue list (nothing stale, nothing unlisted)
+// and a repo with no PRs are left alone.
+func TestOpenItemsZeroIssuesBesideOpenPRsIsSyncingNotZero(t *testing.T) {
+	cfg := &config.Config{Project: config.ProjectConfig{Org: "hivecommons", Repos: []string{"hive", "empty", "quiet"}}}
+	now := time.Date(2026, 10, 22, 16, 23, 0, 0, time.UTC)
+	actionable := &github.ActionableResult{
+		GeneratedAt: now,
+		PRs: github.PRResult{Items: []github.PullRequest{
+			{Repo: "hive", Number: 20, Title: "p"}, {Repo: "hive", Number: 21, Title: "q"},
+			{Repo: "empty", Number: 30, Title: "e"},
+		}},
+		TotalByRepo: map[string]github.RepoCounts{
+			// The enumeration verified the empty issue list against the
+			// repo record and reported the remainder as unlisted.
+			"hive":  {Issues: 25, PRs: 2},
+			"empty": {Issues: 0, PRs: 1},
+			"quiet": {Issues: 0, PRs: 0},
+		},
+		StaleRepos: []string{"hive"},
+		StaleSince: now,
+	}
+	repos := buildReposWithForge(cfg, actionable, governor.State{}, nil)
+	byName := map[string]FrontendRepo{}
+	for _, r := range repos {
+		byName[r.Name] = r
+	}
+	hive := byName["hive"]
+	if hive.Issues != 0 || hive.PRs != 2 || hive.UnlistedIssues != 25 {
+		t.Fatalf("hive = issues %d prs %d unlisted %d, want 0/2/25", hive.Issues, hive.PRs, hive.UnlistedIssues)
+	}
+	if !hive.IssuesSyncing || !hive.CountsStale || hive.CountsStaleSince == "" {
+		t.Fatalf("hive syncing=%v stale=%v since=%q, want the issue side flagged as pending", hive.IssuesSyncing, hive.CountsStale, hive.CountsStaleSince)
+	}
+	if e := byName["empty"]; e.IssuesSyncing || e.CountsStale {
+		t.Fatalf("a confirmed empty issue list must not be flagged: %+v", e)
+	}
+	if q := byName["quiet"]; q.IssuesSyncing {
+		t.Fatalf("a repo with no PRs must not be flagged: %+v", q)
+	}
+
+	status := &StatusPayload{Repos: repos}
+	oi := openItemsSummary(status)
+	if !oi.IssuesSyncing || oi.Unlisted.Issues != 25 || oi.StaleSince == "" {
+		t.Fatalf("openItems = %+v, want issuesSyncing with 25 unlisted and a staleSince", oi)
+	}
+	var flagged int
+	for _, row := range oi.Repos {
+		if row.IssuesSyncing {
+			flagged++
+			if row.Repo != "hivecommons/hive" || !row.Stale {
+				t.Fatalf("flagged row = %+v, want stale hivecommons/hive", row)
+			}
+		}
+	}
+	if flagged != 1 {
+		t.Fatalf("flagged %d repo rows, want 1", flagged)
+	}
+
+	// Stale without unlisted still counts as syncing: a last-good
+	// enumeration that itself had no issues beside PRs.
+	r := FrontendRepo{Name: "x", Issues: 0, PRs: 1, CountsStale: true,
+		OpenPrs: []any{FrontendPR{PullRequest: github.PullRequest{Repo: "x", Number: 9}}}}
+	reconcileRepoOpenItems(&r)
+	markIssuesSyncing(&r, "2026-10-22T16:23:00Z")
+	if !r.IssuesSyncing || r.CountsStaleSince != "2026-10-22T16:23:00Z" {
+		t.Fatalf("stale repo = %+v, want syncing with the supplied since", r)
+	}
+}

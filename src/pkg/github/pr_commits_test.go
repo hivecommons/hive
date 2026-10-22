@@ -104,6 +104,10 @@ func TestEnumerateActionablePopulatesHoldItemHeadAndAuthor(t *testing.T) {
 		switch r.URL.Path {
 		case "/repos/acme/widget/issues":
 			json.NewEncoder(w).Encode([]map[string]any{})
+		case "/repos/acme/widget":
+			// The empty issue list beside an open PR is verified against
+			// the repo record (enumerate_verify.go): one open item, the PR.
+			json.NewEncoder(w).Encode(map[string]any{"name": "widget", "open_issues_count": 1})
 		case "/repos/acme/widget/pulls":
 			json.NewEncoder(w).Encode([]map[string]any{{
 				"number": 7,

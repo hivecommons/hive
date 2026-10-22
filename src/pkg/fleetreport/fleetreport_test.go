@@ -246,13 +246,24 @@ func TestEvaluateSuppressesUnchangedEnabledReport(t *testing.T) {
 	}
 }
 
-func TestReportTitleIncludesFingerprintForCreateDedupe(t *testing.T) {
+// The standalone title carried the fingerprint so exact-title dedupe could
+// not merge distinct reports. A shortfall now opens a `[selfreport]` tracker
+// like a runtime report does: the fingerprint lives in the body marker (the
+// hub and joiner search on it), the title is human-readable and shared, so
+// other hives hitting the same component and criterion join the same issue.
+func TestReportTitleIsSelfReportTrackerWithFingerprintInBody(t *testing.T) {
 	obs := Observation{HiveID: "hive-a", Version: "4.0.0", Commit: "abcdef1", Mode: "busy", ACMMLevel: 3}
 	ev := Evidence{Component: "agent-runtime", ErrorClass: "agent stall", Count: 3, Window: time.Hour, Severity: "medium", Attributable: true}
 	fp := Fingerprint(ev.ErrorClass, ev.Component, "4.0.0", "green-ci-streak")
 	report := BuildReport(obs, "green-ci-streak", "green CI streak", ev, fp, AnonymousInstanceID(obs.HiveID), "4.0.0", "abcdef1")
-	if !strings.Contains(report.Title, fp) {
-		t.Fatalf("title %q must include fingerprint %q so CreateIssue title dedupe cannot merge distinct reports", report.Title, fp)
+	if report.Title != "[selfreport] acmm-shortfall: agent-runtime blocks green CI streak" {
+		t.Fatalf("title = %q", report.Title)
+	}
+	if IsLegacyStandaloneTitle(report.Title) || strings.Contains(report.Title, fp) {
+		t.Fatalf("title %q must not be the retired standalone format", report.Title)
+	}
+	if !strings.Contains(report.Body, "<!-- hive-fleet-fingerprint:"+fp+" -->") {
+		t.Fatalf("body must carry the fingerprint marker: %s", report.Body)
 	}
 }
 
@@ -404,8 +415,20 @@ func TestACMMReportCarriesIdentityOwnersReposAndAffectedBlock(t *testing.T) {
 	if containsPrefix(r.Labels, "class:") || containsPrefix(r.Labels, "instance:") || containsPrefix(r.Labels, "version:") || containsPrefix(r.Labels, "component:") {
 		t.Fatalf("legacy per-instance labels (which the report repo rejects) are back: %v", r.Labels)
 	}
-	if r.Hive != "hosted-aslom" || r.HiveName != "Aslom" || r.SpokeURL != "https://aslom.hive.example" || !reflect.DeepEqual(r.Owners, []string{"alice", "bob"}) || len(r.Repos) != 2 || !strings.HasPrefix(r.Title, "Fleet report: merge blocks Merge success rate [") {
+	if r.Hive != "hosted-aslom" || r.HiveName != "Aslom" || r.SpokeURL != "https://aslom.hive.example" || !reflect.DeepEqual(r.Owners, []string{"alice", "bob"}) || len(r.Repos) != 2 {
 		t.Fatalf("report identity = %+v", r)
+	}
+	// The shortfall opens the self-report tracker for the component; the
+	// standalone "Fleet report: … [fp]" title format is gone (#13470).
+	if r.Title != "[selfreport] acmm-shortfall: merge blocks Merge success rate" || IsLegacyStandaloneTitle(r.Title) {
+		t.Fatalf("title = %q", r.Title)
+	}
+	if !strings.Contains(r.Body, "## ACMM shortfall") || !strings.Contains(r.Body, "`merge-success-rate`") || strings.Contains(r.Body, "<details>") {
+		t.Fatalf("body missing the shortfall section (or has diagnostics it was not given):\n%s", r.Body)
+	}
+	withDiag := BuildReport(obs, "k", "K", Evidence{Component: "merge", ErrorClass: "x", Count: 1, Severity: "low", Attributable: true, Diagnostics: "pane tail line"}, "fp3", "inst", "v", "c")
+	if !strings.Contains(withDiag.Body, "<details><summary>Diagnostics (scrubbed)</summary>") || !strings.Contains(withDiag.Body, "pane tail line") {
+		t.Fatalf("diagnostics not rendered:\n%s", withDiag.Body)
 	}
 	hidden := BuildReport(Observation{HiveID: "hive-a", Owners: []string{"alice"}, OwnersHidden: true}, "k", "K", ev, "fp2", "inst", "v", "c")
 	if strings.Contains(hidden.Body, "@alice") || hidden.Owners != nil || hidden.Hive != "inst" {
@@ -413,9 +436,10 @@ func TestACMMReportCarriesIdentityOwnersReposAndAffectedBlock(t *testing.T) {
 	}
 }
 
-// With an open self-report about the same component (and this version), a
-// persistent ACMM shortfall rolls up onto it instead of filing its own
-// "Fleet report:" issue; once that self-report is gone it files standalone.
+// With an open self-report about the same component, a persistent ACMM
+// shortfall rolls up onto it as a comment; without one it opens the
+// self-report tracker itself. Nothing ever files a standalone "Fleet report:"
+// issue (#13470).
 func TestEvaluateRollsUpACMMShortfallOntoOpenSelfReport(t *testing.T) {
 	first := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	crit := acmmadvisor.Criterion{Name: "Green CI streak"}
@@ -436,7 +460,7 @@ func TestEvaluateRollsUpACMMShortfallOntoOpenSelfReport(t *testing.T) {
 	if r.RollupOf != "fp-self" || r.Fingerprint != fp || r.Trigger != TriggerACMMShortfall || r.Criterion != "green-ci-streak" {
 		t.Fatalf("roll-up = %+v", r)
 	}
-	for _, want := range []string{SeenMarker(fp, "hosted-aslom"), "rolled up from **hosted-aslom**", "`agent-runtime`", "`green-ci-streak`", "3 (cumulative)", "no standalone `Fleet report:` issue"} {
+	for _, want := range []string{SeenMarker(fp, "hosted-aslom"), "rolled up from **hosted-aslom**", "`agent-runtime`", "`green-ci-streak`", "3 (cumulative)", "no separate issue was filed"} {
 		if !strings.Contains(r.Body, want) {
 			t.Errorf("roll-up body missing %q:\n%s", want, r.Body)
 		}
@@ -457,20 +481,58 @@ func TestEvaluateRollsUpACMMShortfallOntoOpenSelfReport(t *testing.T) {
 		t.Fatalf("unchanged roll-up re-emitted: %#v", again.Reports)
 	}
 
-	// Target closed: the shortfall starts over as a standalone report.
+	// Target closed: the shortfall starts over by opening the tracker itself.
 	state.Open["fp-self"] = OpenIssue{Number: 21, Trigger: TriggerRuntimeError, Component: "agent-runtime", ClosedAt: first}
 	fresh := Evaluate(mkObs(first.Add(21*24*time.Hour)), state, false)
-	if len(fresh.Reports) != 1 || fresh.Reports[0].RollupOf != "" || !strings.Contains(fresh.Reports[0].Body, "## Evidence") {
-		t.Fatalf("standalone fallback = %#v", fresh.Reports)
+	if len(fresh.Reports) != 1 || fresh.Reports[0].RollupOf != "" || !strings.Contains(fresh.Reports[0].Body, "## Evidence") || !strings.Contains(fresh.Reports[0].Body, "## ACMM shortfall") {
+		t.Fatalf("tracker fallback = %#v", fresh.Reports)
+	}
+	if !strings.HasPrefix(fresh.Reports[0].Title, SelfReportTitlePrefix) || IsLegacyStandaloneTitle(fresh.Reports[0].Title) {
+		t.Fatalf("tracker title = %q", fresh.Reports[0].Title)
 	}
 	if o := fresh.State.Open[fp]; o.Number != 0 || o.RollupOf != "" || o.Criterion != "green-ci-streak" {
-		t.Fatalf("roll-up entry not reset for standalone filing: %+v", o)
+		t.Fatalf("roll-up entry not reset for the tracker filing: %+v", o)
 	}
 
-	// No self-report at all: standalone from the start.
+	// No self-report at all: the shortfall opens the tracker from the start.
 	plain := Evaluate(mkObs(first.Add(7*24*time.Hour)), Evaluate(mkObs(first), State{}, true).State, true)
-	if len(plain.Reports) != 1 || plain.Reports[0].RollupOf != "" {
-		t.Fatalf("standalone without a self-report = %#v", plain.Reports)
+	if len(plain.Reports) != 1 || plain.Reports[0].RollupOf != "" || !strings.HasPrefix(plain.Reports[0].Title, SelfReportTitlePrefix) {
+		t.Fatalf("tracker without a self-report = %#v", plain.Reports)
+	}
+
+	// A second criterion on the same component rolls up onto the tracker the
+	// first shortfall opened rather than opening a second one.
+	posted := plain.State
+	posted.Open[fp] = OpenIssue{Number: 31, URL: "u31", Trigger: TriggerACMMShortfall, Criterion: "green-ci-streak", Component: "agent-runtime", PostedAt: first, BodyHash: StableBodyHash(plain.Reports[0].Body)}
+	crit2 := acmmadvisor.Criterion{Name: "Merge success rate"}
+	two := Observation{EpochStart: first.Add(7 * 24 * time.Hour), HiveID: "hive-a", HiveSlug: "hosted-aslom", Version: "v5.1.0", Unmet: []acmmadvisor.Criterion{crit, crit2}, Evidence: []Evidence{ev}}
+	posted = Evaluate(two, posted, true).State
+	two.EpochStart = first.Add(14 * 24 * time.Hour)
+	second := Evaluate(two, posted, true)
+	fp2 := Fingerprint(ev.ErrorClass, ev.Component, "v5.1.0", "merge-success-rate")
+	var got2 *Report
+	for i := range second.Reports {
+		if second.Reports[i].Fingerprint == fp2 {
+			got2 = &second.Reports[i]
+		}
+	}
+	if got2 == nil || got2.RollupOf != fp {
+		t.Fatalf("second criterion did not roll up onto the shortfall tracker: %#v", second.Reports)
+	}
+}
+
+func TestIsLegacyStandaloneTitle(t *testing.T) {
+	for title, want := range map[string]bool{
+		"Fleet report: agent-runtime blocks Green-CI streak [3669d5d395e864a651596cae]": true,
+		"  fleet report: merge hive-code defect [abc]":                                  true,
+		"[selfreport] acmm-shortfall: merge blocks Merge success rate":                  false,
+		"[selfreport] agent_stall: scanner frozen":                                      false,
+		"":                    false,
+		"Weekly fleet report": false,
+	} {
+		if got := IsLegacyStandaloneTitle(title); got != want {
+			t.Errorf("IsLegacyStandaloneTitle(%q) = %v, want %v", title, got, want)
+		}
 	}
 }
 
@@ -481,11 +543,20 @@ func TestOpenSelfReportForPicksLowestOpenMatch(t *testing.T) {
 		"c": {Number: 3, Trigger: TriggerRuntimeError, Component: "agent-runtime", Recovered: true},
 		"d": {Trigger: TriggerRuntimeError, Component: "agent-runtime"},
 		"e": {Number: 5, Trigger: TriggerACMMShortfall, Component: "agent-runtime"},
+		"f": {Number: 6, Trigger: TriggerACMMShortfall, Component: "merge", RollupOf: "zz"},
+		"g": {Number: 7, Trigger: TriggerACMMShortfall, Component: "merge"},
 	}}
 	if got, ok := OpenSelfReportFor(st, " agent-runtime "); !ok || got != "a" {
 		t.Fatalf("got %q/%v, want a", got, ok)
 	}
-	if _, ok := OpenSelfReportFor(st, "merge"); ok {
+	// A shortfall that opened the tracker itself is a target; a roll-up is not.
+	if got, ok := OpenSelfReportFor(st, "merge"); !ok || got != "g" {
+		t.Fatalf("got %q/%v, want g", got, ok)
+	}
+	if _, ok := OpenSelfReportFor(State{Open: map[string]OpenIssue{"f": st.Open["f"]}}, "merge"); ok {
+		t.Fatal("a roll-up entry must not be a roll-up target")
+	}
+	if _, ok := OpenSelfReportFor(st, "dashboard"); ok {
 		t.Fatal("matched a component with no self-report")
 	}
 	if _, ok := OpenSelfReportFor(st, ""); ok {

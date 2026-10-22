@@ -20,6 +20,7 @@ type FactSink interface {
 	Uncovered(ctx context.Context, issue Ref, pr Ref) error
 	Parked(ctx context.Context, ref Ref, label string) error // agent escalation (045/085/needs-human)
 	Unparked(ctx context.Context, ref Ref, by string) error  // /hive approve|decision
+	Closed(ctx context.Context, ref Ref) error               // the issue closed; its stage lifts
 }
 
 // NeedsHumanLabel is the non-stage park label an agent may request; a
@@ -45,21 +46,28 @@ const (
 // DecisionLiftsNeedsHuman is the one rule for whether a maintainer's
 // `/hive approve` / `/hive decision <text>` lifts `needs-human` along with
 // the park it derives (stage/045-needs-decision). The label means "a person
-// must answer"; who asked decides whose answer it is:
+// must answer"; the command IS a person answering, so it lifts whoever
+// applied it:
 //
 //   - the hive asked (an agent parked the issue on a person): the
-//     maintainer's decision is that answer, so the label lifts and the
-//     engine derives 010 — otherwise the next reconcile re-derives 045 from
-//     the surviving source label and the un-park silently reverts
-//     (hivecommons/hive#13075, seen on #12984);
-//   - a person asked, or nobody can say who did: the label is a person's
-//     hold and a decision never lifts it (hivecommons/hive#12680, #12681).
+//     maintainer's decision is that answer — otherwise the next reconcile
+//     re-derives 045 from the surviving source label and the un-park
+//     silently reverts (hivecommons/hive#13075, seen on #12984);
+//   - a person asked, or nobody can say who did: an explicit command from a
+//     maintainer with write access is a stronger, later signal than a label
+//     they (or anyone) added earlier — refusing it left the issue parked
+//     and the tracker reading "Needs human decision" after the decision
+//     was given (hivecommons/docs#419). A maintainer who wants agents to
+//     stay off the issue after deciding says so with `hold`, which no
+//     command ever touches.
 //
-// The engine never writes `needs-human` itself; the command handler that
-// owns source labels removes it when this returns true and then submits
-// the Unparked fact, so the derived stage follows from truth.
+// The applier still matters for the reply, which attributes the cleared
+// label. The engine never writes `needs-human` itself; the command handler
+// that owns source labels removes it and then submits the Unparked fact, so
+// the derived stage follows from truth.
 func DecisionLiftsNeedsHuman(applier NeedsHumanApplier) bool {
-	return applier == NeedsHumanApplierHive
+	_ = applier
+	return true
 }
 
 // FactSinkOptions configures NewFactSink.
@@ -172,4 +180,28 @@ func (s *factSink) Unparked(ctx context.Context, ref Ref, by string) error {
 		f.Issue = &IssueFacts{Bucket: BucketActionable}
 	}
 	return s.submit(ctx, f)
+}
+
+// Closed implements FactSink: the issue closed (for any reason — a merged
+// fix, a maintainer's `/fixed`, a manual close) and is out of the pipeline;
+// the deriver answers a closed item with Terminal/None, so the writer takes
+// every stage/* label off and the Store forgets it. Open is pinned false
+// after Enrich: the close is the fact being reported, and a fresh read
+// that still says open (eventual consistency) must not re-stage the item.
+func (s *factSink) Closed(ctx context.Context, ref Ref) error {
+	f := Facts{Ref: ref, ObservedAt: s.opts.Now(), Open: false}
+	if ref.Kind == stagelabels.PRItem {
+		f.PR = &PRFacts{}
+	} else {
+		f.Issue = &IssueFacts{Bucket: BucketActionable}
+	}
+	if s.opts.Enrich != nil {
+		var err error
+		if f, err = s.opts.Enrich(ctx, f); err != nil {
+			return err
+		}
+	}
+	f.Open = false
+	_, err := s.r.Reconcile(ctx, f)
+	return err
 }
