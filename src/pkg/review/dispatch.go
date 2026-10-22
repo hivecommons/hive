@@ -559,7 +559,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		} else {
 			plan.expirePending(pr, opts, now)
 		}
-		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, agentBase(opts.Agents, pr.AuthorAgent))
+		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, prAuthorBase(pr, opts.Agents))
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
@@ -726,6 +726,15 @@ func agentBase(all []AgentCapability, name string) string {
 		}
 	}
 	return name
+}
+
+// prAuthorBase is the PR's author base: the caller-resolved AuthorBase when
+// set, otherwise AuthorAgent resolved against agents.
+func prAuthorBase(pr PullRequest, agents []AgentCapability) string {
+	if base := strings.TrimSpace(pr.AuthorBase); base != "" {
+		return base
+	}
+	return agentBase(agents, pr.AuthorAgent)
 }
 
 func reviewersForPR(reviewers []AgentCapability, authorAgent, authorBase string) []AgentCapability {

@@ -537,3 +537,26 @@ func TestCapabilityFromConfigCarriesEveryField(t *testing.T) {
 		t.Error("baseOf() did not resolve replica to base / base to itself")
 	}
 }
+
+// A caller-resolved AuthorBase wins over the dispatch agent slice, which holds
+// only enabled lanes: a disabled or retired authoring replica is absent from
+// it, so resolving there would fall back to the raw name and let the base and
+// sibling replicas review their own family's PR.
+func TestPRAuthorBasePrefersCallerResolvedBase(t *testing.T) {
+	enabled := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), reviewer("beta")}
+	pr := PullRequest{AuthorAgent: "alpha-3"}
+	if got := prAuthorBase(pr, enabled); got != "alpha-3" {
+		t.Fatalf("prAuthorBase() without AuthorBase = %q, want alpha-3", got)
+	}
+	pr.AuthorBase = "alpha"
+	if got := prAuthorBase(pr, enabled); got != "alpha" {
+		t.Fatalf("prAuthorBase() = %q, want alpha", got)
+	}
+	var got []string
+	for _, r := range reviewersForPR(enabled, pr.AuthorAgent, prAuthorBase(pr, enabled)) {
+		got = append(got, r.Name)
+	}
+	if strings.Join(got, ",") != "beta" {
+		t.Errorf("reviewersForPR() = %v, want [beta]", got)
+	}
+}

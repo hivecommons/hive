@@ -170,6 +170,10 @@ type Client struct {
 	// Only reviewers may record a verdict that no dispatch row binds; nil falls
 	// back to the dispatcher's name-token rule.
 	reviewerAgent func(agent string) bool
+	// agentBase maps a lane to its base agent (config.AgentConfig.BaseName),
+	// so the self-approval guard treats a base and its replicas as one
+	// author. nil compares exact lane names.
+	agentBase func(agent string) string
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore      func() bool
 	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap
@@ -560,6 +564,28 @@ func (c *Client) isReviewerAgent(agent string) bool {
 		return c.reviewerAgent(agent)
 	}
 	return review.ReviewCapable(review.AgentCapability{Name: agent}, nil)
+}
+
+// SetAgentBaseFunc tells the relay how to resolve a lane to its base agent.
+// A replica is review-capable when its base is a reviewer, so the
+// self-approval guard must refuse a verdict from any lane of the authoring
+// family, not just the authoring lane itself.
+func (c *Client) SetAgentBaseFunc(fn func(agent string) string) {
+	if c == nil {
+		return
+	}
+	c.agentBase = fn
+}
+
+func (c *Client) agentBaseName(agent string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" || c == nil || c.agentBase == nil {
+		return agent
+	}
+	if base := strings.TrimSpace(c.agentBase(agent)); base != "" {
+		return base
+	}
+	return agent
 }
 
 // SetConfidenceScore turns on the one-line mergeability score the relay

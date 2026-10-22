@@ -429,7 +429,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if !pendingReviewMatchesVerdict(p, report, req) {
 			continue
 		}
-		if sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
+		if c.sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
 			return false, "author_self_approval", "", "", false
 		}
 		return true, "", p.HeadSHA, p.BodyDigest, strings.TrimSpace(p.AuthorAgent) != ""
@@ -442,7 +442,7 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 		if !r.Confirmed.IsZero() && r.Confirmed.Before(cutoff) {
 			continue
 		}
-		if sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
+		if c.sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
 			return false, "author_self_approval", "", "", false
 		}
 		return true, "", r.HeadSHA, r.BodyDigest, strings.TrimSpace(r.AuthorAgent) != ""
@@ -471,7 +471,7 @@ func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req 
 	if !c.isReviewerAgent(req.Agent) {
 		return false, "non_reviewer_without_dispatch", "", "", false
 	}
-	if sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
+	if c.sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
 		return false, "author_self_approval", "", "", false
 	}
 	return true, "", head, strings.TrimSpace(report.BodyDigest), false
@@ -497,10 +497,15 @@ func reviewDispatchFieldsMatch(repo string, number int, headSHA string, perspect
 	return review.HeadSHAMatchesOrBlank(headSHA, report.HeadSHA)
 }
 
-func sameVerdictAuthor(authorAgent, agent string) bool {
+// sameVerdictAuthor reports whether agent belongs to the authoring lane's
+// family: the author itself, its base, or a sibling replica.
+func (c *Client) sameVerdictAuthor(authorAgent, agent string) bool {
 	authorAgent = strings.TrimSpace(authorAgent)
 	agent = strings.TrimSpace(agent)
-	return authorAgent != "" && agent != "" && authorAgent == agent
+	if authorAgent == "" || agent == "" {
+		return false
+	}
+	return authorAgent == agent || c.agentBaseName(authorAgent) == c.agentBaseName(agent)
 }
 
 func verdictAuthorAgent(stateAuthor string, report review.PerspectiveReport) string {

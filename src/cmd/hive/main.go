@@ -9914,6 +9914,29 @@ func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapabil
 	return review.AgentCapability{Name: agent}
 }
 
+// reviewAuthorBase resolves an authoring lane to its base agent over the full
+// configured agent set, enabled or not. A replica name the current config no
+// longer materialises (its replicas: count was reduced) still maps to the
+// declared base it was derived from, so the base and its remaining replicas
+// stay excluded from reviewing it.
+func reviewAuthorBase(cfg *config.Config, agent string) string {
+	agent = strings.TrimSpace(agent)
+	if cfg == nil || agent == "" {
+		return agent
+	}
+	if _, ok := cfg.Agents[agent]; ok {
+		return cfg.BaseAgentName(agent)
+	}
+	if i := strings.LastIndex(agent, "-"); i > 0 {
+		if n, err := strconv.Atoi(agent[i+1:]); err == nil && n >= 2 {
+			if ac, ok := cfg.Agents[agent[:i]]; ok && ac.ReplicaOf == "" {
+				return agent[:i]
+			}
+		}
+	}
+	return agent
+}
+
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
 // review-relay knobs that live in cfg.Review: which repos may be revised in
 // place, which perspectives a verdict may name, and whether comments carry a
@@ -9928,6 +9951,9 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
 	client.SetReviewerAgentFunc(func(agent string) bool {
 		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
+	})
+	client.SetAgentBaseFunc(func(agent string) string {
+		return reviewAuthorBase(cfg, agent)
 	})
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
 	client.SetReviewBacklog(func() (bool, int) {
@@ -10281,6 +10307,10 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 			// to read rather than being left to infer from the diff.
 			MergeBase:   pr.BaseSHA,
 			AuthorAgent: prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)],
+			// The author's base over every configured lane, enabled or not,
+			// so a disabled or retired authoring replica still excludes its
+			// family from reviewing it (hivecommons/hive#13552).
+			AuthorBase: reviewAuthorBase(cfg, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)]),
 			// Run trailers (#8310) and the plan they name, for plan_match
 			// (#8317). Identifiers and planner output only: the PR body
 			// itself still never reaches the prompt.
