@@ -240,6 +240,28 @@ func (s *Server) foldCostRollups(now time.Time) {
 	}
 }
 
+// CostWindowStart is the instant the persisted cost record begins: the start
+// of the oldest daily rollup when there is one, else the oldest snapshot still
+// in the ring. The rollup is the stable anchor — the ring evicts its oldest
+// sample on every append once full, so a window anchored on the ring creeps
+// forward hour by hour (#13481). Zero when there is no cost data at all.
+func (s *Server) CostWindowStart() time.Time {
+	var oldest int64
+	for _, r := range s.CostDailyRollups() {
+		if start, ok := costRollupDayStart(r.Day); ok && r.Samples > 0 {
+			oldest = start
+			break
+		}
+	}
+	if hist := s.CostHistory(); len(hist) > 0 && hist[0].Timestamp > 0 && (oldest == 0 || hist[0].Timestamp < oldest) {
+		oldest = hist[0].Timestamp
+	}
+	if oldest == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(oldest).UTC()
+}
+
 // CostDailyRollups returns the stored daily rollups in ascending day order.
 func (s *Server) CostDailyRollups() []CostDailyRollup {
 	s.costRollupMu.Lock()

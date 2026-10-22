@@ -12099,7 +12099,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.day);
         if (!m) continue;
         const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-        days.push({ day: r.day, start, end: start + COST_DAY_MS, spend: Number(r.cost_usd) || 0 });
+        // localStart: the same calendar date at local midnight, for display
+        // (the chart places UTC days on the local calendar day the same way).
+        const localStart = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
+        days.push({ day: r.day, start, localStart, end: start + COST_DAY_MS, spend: Number(r.cost_usd) || 0 });
       }
       days.sort((a, b) => a.start - b.start);
       // The ring takes over from the LAST snapshot that still falls on the
@@ -12132,8 +12135,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function costAllTimeEstimate(est) {
       const hist = costHistWithCurrent(est);
       const roll = costRollupsBeforeRing(hist);
-      const rate = costPriceMap(hist);
-      const ceiling = costDiscontinuityCeiling(hist, rate);
       const series = [];
       let running = 0;
       for (const d of roll.days) {
@@ -12142,24 +12143,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       const opening = (!roll.coversRingStart && hist.length && Number.isFinite(Number(hist[0].usd))) ? Number(hist[0].usd) : 0;
       running += opening;
-      let first = roll.days.length ? roll.days[0].start : (hist.length ? hist[0].timestamp : 0);
-      let prev = null, prevKind = null, prevVal = null, peak = -Infinity;
-      const pricedTok = (models) => {
-        let t = 0;
-        for (const k in models) { const m = models[k]; t += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
-        return t;
-      };
-      for (const e of hist) {
-        if (e.timestamp < roll.ringFrom) continue;
-        const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
-        if (kind == null) continue;
-        const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
-        if (prev != null && kind === prevKind && cur > prevVal) {
-          const inc = cur - prevVal;
-          if (!costStepIsRestore(inc, prevVal, cur, peak, ceiling)) running += inc;
+      const first = roll.days.length ? roll.days[0].localStart : (hist.length ? hist[0].timestamp : 0);
+      // Differenced on the recorded $ (what the server's daily rollup folds
+      // and what "persisted history" means), not on re-priced tokens: the
+      // headline is the one figure that must agree with the persisted record.
+      const ring = hist.filter(e => e.timestamp >= roll.ringFrom && Number.isFinite(Number(e.usd)));
+      const incs = [];
+      for (let i = 1; i < ring.length; i++) {
+        const d = Number(ring[i].usd) - Number(ring[i - 1].usd);
+        if (d > 0) incs.push(d);
+      }
+      const ceiling = costHeadlineCeiling(incs);
+      let peak = -Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const cur = Number(ring[i].usd);
+        if (i > 0) {
+          const prevVal = Number(ring[i - 1].usd);
+          if (cur > prevVal && !costStepIsRestore(cur - prevVal, prevVal, cur, peak, ceiling)) running += cur - prevVal;
         }
-        series.push({ timestamp: e.timestamp, usd: running });
-        prev = e; prevKind = kind; prevVal = cur;
+        series.push({ timestamp: ring[i].timestamp, usd: running });
         if (cur > peak) peak = cur;
       }
       return {
@@ -12172,6 +12174,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         openingUSD: opening,
         series,
       };
+    }
+
+    // costHeadlineCeiling: the $ above which a single step is "abnormally
+    // large" — the same rule as the chart's costDiscontinuityCeiling (20× the
+    // median ordinary step, never below $500) applied to the recorded $ steps.
+    // Infinity on thin data so nothing is dropped before a baseline exists.
+    function costHeadlineCeiling(incs) {
+      const normal = incs.filter(v => v < COST_DISCONTINUITY_FLOOR_USD).sort((a, b) => a - b);
+      if (normal.length < 2) return Infinity;
+      const mid = Math.floor(normal.length / 2);
+      const median = normal.length % 2 ? normal[mid] : (normal[mid - 1] + normal[mid]) / 2;
+      if (!(median > 0)) return Infinity;
+      return Math.max(COST_DISCONTINUITY_MULT * median, COST_DISCONTINUITY_FLOOR_USD);
     }
 
     // A large step is a RESTORE (a re-seeded counter regaining ground that

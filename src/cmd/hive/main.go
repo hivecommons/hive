@@ -2987,13 +2987,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
-	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
-		history := b.dashSrv.CostHistory()
-		if len(history) == 0 || history[0].Timestamp <= 0 {
-			return time.Time{}
-		}
-		return time.UnixMilli(history[0].Timestamp).UTC()
-	})
+	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
 	// come from the cache the governor already reads (#13376).

@@ -336,9 +336,8 @@ func actorMatrixCount(m PRThroughputActorMatrix, kind, role, actor string) int {
 }
 
 func (s *Server) costCountWindowStart() int64 {
-	history := s.CostHistory()
-	if len(history) > 0 {
-		return history[0].Timestamp
+	if start := s.CostWindowStart(); !start.IsZero() {
+		return start.UnixMilli()
 	}
 	if est := s.estimatedCost(); est.WindowStart > 0 {
 		return est.WindowStart
