@@ -2883,6 +2883,9 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
+    .cost-recording-notice a { color: inherit; text-decoration: underline; }
+    .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
 
     /* Cost spend-over-time: range pills + bucketed bar chart */
     .cost-trend { margin: 6px 0 14px; }
@@ -11947,6 +11950,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function fmtCostDateTime(ms) {
       return formatDashboardDateTime(ms, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' });
     }
+    // Stale-recording notice (#13485): plain text, escaped by the caller.
+    // Empty unless /api/cost reports the running agents' models recorded
+    // nothing for longer than the stale window.
+    function costRecordingNoticeText(recording) {
+      if (!recording || !recording.stale) return '';
+      const models = (recording.agent_models || []).slice(0, 4);
+      const more = (recording.agent_models || []).length > models.length ? ', …' : '';
+      const sinceMs = Number(recording.last_agent_model_growth_at) || Number(recording.last_priced_growth_at) || 0;
+      const since = sinceMs > 0 ? `since ${fmtCostDateTime(sinceMs)}` : 'in the recorded history';
+      const recent = recording.recent_models || [];
+      const reflect = recent.length
+        ? ` The figures below only reflect ${recent.join(', ')}.`
+        : ' No model recorded any usage recently.';
+      return `⚠ No usage recorded from the agents' configured models (${models.join(', ')}${more}) ${since}.${reflect} Live cost recording is likely broken — see`;
+    }
     function fmtCostDuration(ms) {
       const min = Math.round(ms / 60000);
       if (min < 60) return `${Math.max(1, min)} min`;
@@ -12524,6 +12542,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (rate != null) {
         const unit = costRunRateUnit(win);
         rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(rate * unit.ms)}${unit.label}</b>`;
+        // The agents' models have recorded nothing lately (#13485): the
+        // run-rate only reflects whatever is still being recorded.
+        if (_lastCost && _lastCost.recording && _lastCost.recording.stale) rateStr += ' <span class="cost-recording-incomplete">(recording incomplete)</span>';
       }
       // When the window reaches past the recorded history, say where history
       // starts so the owner knows the earlier bars are blank, not $0.
@@ -23367,6 +23388,10 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      const recordingText = costRecordingNoticeText(cost.recording);
+      const recordingNotice = recordingText
+        ? `<div class="cost-recording-notice" id="cost-recording-notice" role="alert">${esc(recordingText)} <a href="https://github.com/hivecommons/hive/issues/13487" target="_blank" rel="noopener">#13487</a>.</div>`
+        : '';
       // ── Estimated cost by work item (#12128) ──
       // Spend placed against the issue / PR / head SHA each kick was launched
       // for. Attribution only — never a gate; the governor window budget is
@@ -23392,6 +23417,7 @@ function burnAreaChart() {
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+          ${recordingNotice}
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}

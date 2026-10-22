@@ -1,0 +1,1 @@
+- The Cost card now warns when the running agents' models have recorded no usage for over 24 hours and marks the run-rate "(recording incomplete)", backed by a new `recording` block on `/api/cost` ([#13485](https://github.com/hivecommons/hive/issues/13485)).
