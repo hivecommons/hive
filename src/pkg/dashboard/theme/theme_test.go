@@ -206,7 +206,7 @@ func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
 		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
 		`body #repos.repo-grid .repo-card .repo-name{display:flex!important;`,
 		`justify-content:flex-start!important;`,
-		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 6rem!important;`,
+		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 12rem!important;min-width:0!important;max-width:100%!important;text-align:left!important;justify-self:start!important;white-space:normal!important;overflow-wrap:anywhere!important;`,
 		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin:0 0 0 auto!important;`,
 	} {
 		if !strings.Contains(css, want) {

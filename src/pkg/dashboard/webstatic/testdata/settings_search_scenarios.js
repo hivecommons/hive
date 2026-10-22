@@ -27,6 +27,12 @@ function activeTab(h) {
   return t ? t.getAttribute('data-tab') : '';
 }
 
+// scrollIntoView calls on setting rows only; switchConfigTab also scrolls the
+// active tab button into view, which is not a "reveal the row" scroll.
+function rowScrolls(h) {
+  return h.scrollCalls.filter(c => c.el.getAttribute('data-setting-key'));
+}
+
 // Clicks a [data-action] element the way the document-level dispatcher does.
 function clickAction(h, el) {
   const action = el.getAttribute('data-action');
@@ -50,7 +56,7 @@ module.exports = {
     await h.flush();
     const body = d.getElementById('config-body');
     const row = body.querySelector('[data-setting-key="dashboard.experiment_lab"]');
-    const scrolled = h.scrollCalls.map(c => ({ key: c.el.getAttribute('data-setting-key'), block: c.opts && c.opts.block }));
+    const scrolled = rowScrolls(h).map(c => ({ key: c.el.getAttribute('data-setting-key'), block: c.opts && c.opts.block }));
     return {
       groups, hits,
       activeTab: activeTab(h),
@@ -75,14 +81,14 @@ module.exports = {
     await h.flush();
     const body = d.getElementById('config-body');
     const row1 = body.querySelector('.cfg-row-flash');
-    const first = { tab: activeTab(h), key: row1 ? row1.getAttribute('data-setting-key') : '', scrolled: h.scrollCalls.length };
+    const first = { tab: activeTab(h), key: row1 ? row1.getAttribute('data-setting-key') : '', scrolled: rowScrolls(h).length };
     h.scrollCalls.length = 0;
     h.call('switchConfigTab', 'General');
     h.call('applySettingsSearch', 'experiment lab');
     input.listeners.keydown.forEach(fn => fn({ key: 'Enter', preventDefault() {} }));
     await h.flush();
     const row2 = d.getElementById('config-body').querySelector('.cfg-row-flash');
-    return { first, second: { tab: activeTab(h), key: row2 ? row2.getAttribute('data-setting-key') : '', scrolled: h.scrollCalls.length } };
+    return { first, second: { tab: activeTab(h), key: row2 ? row2.getAttribute('data-setting-key') : '', scrolled: rowScrolls(h).length } };
   },
 
   // A result row inside a closed <details> is expanded before it is revealed.
@@ -131,7 +137,7 @@ module.exports = {
     body.innerHTML += '<div class="config-field" data-setting-key="lazy.key"><label>Lazy thing</label><input></div>';
     await new Promise(r => setTimeout(r, h.resolveName('SETTINGS_REVEAL_RETRY_MS') * 3));
     const row = body.querySelector('.cfg-row-flash');
-    return { flashedBefore: !!before, key: row ? row.getAttribute('data-setting-key') : '', scrolled: h.scrollCalls.length };
+    return { flashedBefore: !!before, key: row ? row.getAttribute('data-setting-key') : '', scrolled: rowScrolls(h).length };
   },
 
   audit(h) {

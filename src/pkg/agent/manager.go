@@ -1651,17 +1651,15 @@ func (m *Manager) CountAgentsWithModel() int {
 	return count
 }
 
+// AllStatuses snapshots every agent. It reads only in-memory state: the
+// Copilot transcript liveness it reports is refreshed by
+// StartTranscriptActivityRefresh on its own goroutine, never walked here,
+// so callers on a deadline (the hub heartbeat collect, the dashboard status
+// build) cannot be stalled by a slow /data.
 func (m *Manager) AllStatuses() map[string]*AgentProcess {
 	now := time.Now()
 	m.mu.Lock()
-	scans := m.pendingTranscriptActivityScansLocked(now)
-	m.mu.Unlock()
-
-	results := scanTranscriptActivity(scans)
-
-	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.applyTranscriptActivityResultsLocked(results, now)
 
 	result := make(map[string]*AgentProcess, len(m.agents))
 	for k, v := range m.agents {

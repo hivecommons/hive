@@ -36,7 +36,7 @@ func TestDashboardRateLimitUIUsesRemainingSemantics(t *testing.T) {
 		".gh-api-budget-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); grid-column: span 2; min-width: 0; }",
 		"@media (max-width: 640px) { .gh-api-budget-card { grid-column: span 1; } }",
 		".gh-api-budget-table-wrap { overflow-x: auto;",
-		".gh-api-budget-table { width: 100%; table-layout: fixed;",
+		".gh-api-budget-table { width: 100%; min-width: 36rem; table-layout: fixed;",
 		"text-overflow: ellipsis; }",
 		"<td class=\"gh-api-budget-col-endpoint\" title=\"${endpoint}\">${endpoint}</td>",
 		"<td class=\"gh-api-budget-col-caller\" title=\"${caller}\">${caller}</td>",

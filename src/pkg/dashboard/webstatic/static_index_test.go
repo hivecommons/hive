@@ -275,7 +275,7 @@ func TestStaticCadenceTableTogglesUsePowerSwitchMarkup(t *testing.T) {
 		"${pwrSwitchHtml(_continuous, ' id=\"cfg-agent-continuous\" data-action=\"toggleContinuousAllActiveModes\" data-arg-types=\"t\"'",
 		"Continuous in all active modes",
 		"<span class=\"pwr-mark\">1</span><span class=\"pwr-lever\"></span><span class=\"pwr-mark\">0</span>",
-		".gov-matrix .power-col { width: 52px; white-space: nowrap; }",
+		".gov-matrix .power-col { width: 64px; white-space: nowrap; }",
 		"data-stop=\"1\"",
 	} {
 		if !strings.Contains(html, want) {

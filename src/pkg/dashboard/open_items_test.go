@@ -297,8 +297,15 @@ assert.strictEqual(tile.prs.forge, status.openItems.prs);
 const open = stageTrackerOpenCounts(tracker);
 assert.deepStrictEqual(open, { issues: tile.issues.forge, prs: tile.prs.forge }, 'tracker counts the same set');
 const page = { total: tracker.items.length, from: 1, to: tracker.items.length };
-const header = stageTrackerCountsText(page, tracker.items.length, 2, open).header;
-assert.strictEqual(header, (open.issues + open.prs) + ' items (' + open.issues + ' issues / ' + open.prs + ' PRs) · 2 need attention');
+const counts = stageTrackerCountsText(page, tracker.items.length, 2, open, 3);
+assert.strictEqual(counts.header, (open.issues + open.prs) + ' items (' + open.issues + ' issues / ' + open.prs + ' PRs) · 2 need attention');
+assert.strictEqual(counts.badge, open.issues + open.prs, 'activity-monitor pill is the total open items, same number as the header lead and the tile');
+assert.strictEqual(counts.badge, tile.issues.forge + tile.prs.forge);
+assert.strictEqual(counts.badgeTitle, (open.issues + open.prs) + ' items (' + open.issues + ' issues / ' + open.prs + ' PRs) open · 3 need attention', 'attention moves to the pill tooltip');
+// Nesting a PR under its issue shrinks the row count, never the total.
+const nested = stageTrackerCountsText({ total: tracker.items.length - 1, from: 1, to: tracker.items.length - 1 }, tracker.items.length - 1, 0, open);
+assert.strictEqual(nested.badge, open.issues + open.prs);
+assert.ok(nested.showing.endsWith(' (1 nested under its issue)'), nested.showing);
 const filtered = stageTrackerCountsText({ total: 4, from: 1, to: 4 }, tracker.items.length, 0, open).header;
 assert.strictEqual(filtered, (open.issues + open.prs) + ' items (' + open.issues + ' issues / ' + open.prs + ' PRs) · 4 match filters · nothing needs attention');
 assert.deepStrictEqual(stageTrackerOpenCounts({ items: [{ kind: 'issue' }, { kind: 'pr' }, { kind: 'issue' }] }), { issues: 2, prs: 1 }, 'falls back to counting items');

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,18 @@ const (
 	copilotQuestionFormCondition   = "copilot-question-form"
 	busyUndeliverableThreshold     = 3
 	transcriptLivenessScanInterval = 10 * time.Second
+	// transcriptHotSessionAge bounds which Copilot sessions the refresher
+	// re-stats every scan: a session whose events.jsonl changed within this
+	// window may still be live. Older sessions are ended CLI runs whose
+	// cached mtime is trusted until the next full rescan, so a home that
+	// has accumulated thousands of sessions costs a handful of stats per
+	// tick rather than one NFS GETATTR per session (hivecommons/hive: the
+	// heartbeat collect spent 8–12 s in this walk on a 16k-session hive).
+	transcriptHotSessionAge = 6 * time.Hour
+	// transcriptFullRescanInterval is how often every session, cold ones
+	// included, is re-stat'd, so a resumed old session is noticed well
+	// inside the busy-no-activity threshold (60m by default).
+	transcriptFullRescanInterval = 10 * time.Minute
 	// busyNoActivityRecoveryKicks and busyNoActivityRecoveryFactor bound when
 	// a busy-no-activity pane stops being visibility-only and is restarted
 	// (#12505): twice the kicks that raise the condition, and twice the
@@ -37,27 +50,80 @@ type transcriptActivityResult struct {
 	ok   bool
 }
 
+// transcriptSessionCache remembers, per agent, the events.jsonl mtime last
+// observed for each session directory (zero when the directory has no
+// events.jsonl) and when every session was last re-stat'd. Owned by the
+// refresher goroutine; never shared.
+type transcriptSessionCache struct {
+	sessions map[string]time.Time
+	lastFull time.Time
+}
+
 // newestCopilotTranscriptActivity reports the newest events.jsonl mtime under
 // the agent's own Copilot session-state tree. Sub-agents write separate
 // session directories under the same HOME, so scanning every session catches
-// their activity without parsing JSON.
+// their activity without parsing JSON. Every session is stat'd; the refresher
+// uses newestCopilotTranscriptActivityCached to skip cold ones.
 func newestCopilotTranscriptActivity(home string) (time.Time, bool) {
+	return newestCopilotTranscriptActivityCached(home, nil, time.Time{})
+}
+
+// newestCopilotTranscriptActivityCached is newestCopilotTranscriptActivity
+// with a per-agent cache: between full rescans, a session whose cached mtime
+// is older than transcriptHotSessionAge is trusted rather than stat'd. A
+// session with no events.jsonl yet (zero cached mtime) is always re-stat'd:
+// the CLI creates the directory a moment before the first event lands, and
+// trusting that empty read would hide a brand-new session until the next
+// full rescan. Sessions that disappeared from the directory are dropped from
+// the cache. A nil cache stats everything.
+func newestCopilotTranscriptActivityCached(home string, cache *transcriptSessionCache, now time.Time) (time.Time, bool) {
 	root := filepath.Join(home, ".copilot", "session-state")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return time.Time{}, false
+	}
+	full := cache == nil || cache.lastFull.IsZero() || now.Sub(cache.lastFull) >= transcriptFullRescanInterval
+	var seen map[string]bool
+	if cache != nil {
+		if cache.sessions == nil {
+			cache.sessions = make(map[string]time.Time, len(entries))
+		}
+		seen = make(map[string]bool, len(entries))
 	}
 	var newest time.Time
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(root, entry.Name(), "events.jsonl"))
-		if err != nil {
-			continue
+		name := entry.Name()
+		if cache != nil {
+			seen[name] = true
+			if prev, ok := cache.sessions[name]; ok && !full && !prev.IsZero() && now.Sub(prev) > transcriptHotSessionAge {
+				if prev.After(newest) {
+					newest = prev
+				}
+				continue
+			}
 		}
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
+		var mod time.Time
+		if info, err := os.Stat(filepath.Join(root, name, "events.jsonl")); err == nil {
+			mod = info.ModTime()
+		}
+		if cache != nil {
+			cache.sessions[name] = mod
+		}
+		if mod.After(newest) {
+			newest = mod
+		}
+	}
+	if cache != nil {
+		for name := range cache.sessions {
+			if !seen[name] {
+				delete(cache.sessions, name)
+			}
+		}
+		if full {
+			cache.lastFull = now
 		}
 	}
 	if newest.IsZero() {
@@ -262,10 +328,20 @@ func (m *Manager) pendingTranscriptActivityScansLocked(now time.Time) []transcri
 	return scans
 }
 
-func scanTranscriptActivity(scans []transcriptActivityScan) []transcriptActivityResult {
+// scanTranscriptActivity stats each agent's sessions. caches is keyed by
+// agent name and may be nil (every session is stat'd).
+func scanTranscriptActivity(scans []transcriptActivityScan, caches map[string]*transcriptSessionCache, now time.Time) []transcriptActivityResult {
 	results := make([]transcriptActivityResult, 0, len(scans))
 	for _, scan := range scans {
-		at, ok := newestCopilotTranscriptActivity(AgentHome(scan.name, scan.uid, "copilot"))
+		var cache *transcriptSessionCache
+		if caches != nil {
+			cache = caches[scan.name]
+			if cache == nil {
+				cache = &transcriptSessionCache{}
+				caches[scan.name] = cache
+			}
+		}
+		at, ok := newestCopilotTranscriptActivityCached(AgentHome(scan.name, scan.uid, "copilot"), cache, now)
 		results = append(results, transcriptActivityResult{name: scan.name, at: at, ok: ok})
 	}
 	return results
@@ -284,6 +360,77 @@ func (m *Manager) applyTranscriptActivityResultsLocked(results []transcriptActiv
 			agent.LastTranscriptActivity = result.at
 		}
 	}
+}
+
+// StartTranscriptActivityRefresh keeps every Copilot agent's
+// LastTranscriptActivity fresh on its own goroutine, so readers such as
+// AllStatuses (the dashboard status build and the hub heartbeat collect)
+// only ever copy a cached value and never wait on the session-state walk.
+// That walk stats one events.jsonl per session directory; on an NFS /data
+// with thousands of accumulated sessions a cold walk takes 8–12 s, which
+// blew the heartbeat's 10 s collect budget on every beat and left the hub
+// reading the hive as unhealthy. Runs until ctx is cancelled.
+func (m *Manager) StartTranscriptActivityRefresh(ctx context.Context) {
+	ticker := time.NewTicker(transcriptLivenessScanInterval)
+	defer ticker.Stop()
+	m.runTranscriptActivityRefresh(ctx, ticker.C, time.Now)
+}
+
+// runTranscriptActivityRefresh is StartTranscriptActivityRefresh with the
+// tick source and clock injected. It scans once immediately, then once per
+// tick; scans never overlap because they run on this goroutine alone.
+func (m *Manager) runTranscriptActivityRefresh(ctx context.Context, ticks <-chan time.Time, now func() time.Time) {
+	caches := map[string]*transcriptSessionCache{}
+	slow := false
+	m.refreshTranscriptActivity(caches, now, &slow)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			m.refreshTranscriptActivity(caches, now, &slow)
+		}
+	}
+}
+
+// refreshTranscriptActivity runs one scan pass: pick the stale agents under
+// a short read lock, stat their sessions with no lock held, then publish
+// the results under a short write lock. Returns how many agents were
+// scanned. slow tracks the previous pass's verdict so a walk that outlives
+// the scan interval is logged on the transition, not every tick.
+func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSessionCache, now func() time.Time, slow *bool) int {
+	started := now()
+	m.mu.RLock()
+	scans := m.pendingTranscriptActivityScansLocked(started)
+	m.mu.RUnlock()
+	if len(scans) == 0 {
+		return 0
+	}
+	results := scanTranscriptActivity(scans, caches, started)
+	m.mu.Lock()
+	m.applyTranscriptActivityResultsLocked(results, started)
+	live := make(map[string]bool, len(m.agents))
+	for name := range m.agents {
+		live[name] = true
+	}
+	m.mu.Unlock()
+	for name := range caches {
+		if !live[name] {
+			delete(caches, name)
+		}
+	}
+	if took := now().Sub(started); took > transcriptLivenessScanInterval {
+		if slow != nil && !*slow && m.logger != nil {
+			m.logger.Warn("copilot transcript activity scan outlived its interval; agent liveness reads may lag",
+				"took", took.Round(time.Millisecond).String(), "agents", len(scans), "interval", transcriptLivenessScanInterval.String())
+		}
+		if slow != nil {
+			*slow = true
+		}
+	} else if slow != nil {
+		*slow = false
+	}
+	return len(results)
 }
 
 func busyCondition(agent *AgentProcess, now time.Time) (string, string) {

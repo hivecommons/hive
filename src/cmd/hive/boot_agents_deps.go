@@ -67,6 +67,7 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 			go mgr.StartAgentTokenRefresh(ctx)
 			go mgr.StartCredentialWatchdog(ctx)
 			go mgr.StartCopilotSessionRefresh(ctx)
+			go mgr.StartTranscriptActivityRefresh(ctx)
 		},
 		prepareRequestDirs: github.PrepareRequestDirs,
 		startTokenAccessAudit: func(ctx context.Context, logger *slog.Logger) {

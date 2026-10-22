@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -409,5 +411,153 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 				t.Fatalf("busyNoActivityStall = %q, want no escalation", got)
 			}
 		})
+	}
+}
+
+// transcriptRefreshTestManager returns a Manager with one Copilot agent whose
+// session-state tree lives under HOME (UID 0 agents run out of the process
+// HOME), and that HOME.
+func transcriptRefreshTestManager(t *testing.T) (*Manager, string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "copilot"},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), ProjectContext{})
+	return m, home
+}
+
+// AllStatuses is on the hub heartbeat's 10 s collect budget; it must copy the
+// cached transcript liveness, never walk the session-state tree itself (a
+// cold NFS walk of a 16k-session hive took 8–12 s). The refresher owns the
+// walk.
+func TestAllStatusesReadsCachedTranscriptActivityWithoutScanning(t *testing.T) {
+	m, home := transcriptRefreshTestManager(t)
+	mod := time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)
+	writeEventsFile(t, home, "live", mod)
+
+	if got := m.AllStatuses()["scanner"].LastTranscriptActivity; !got.IsZero() {
+		t.Fatalf("AllStatuses scanned the session tree itself: LastTranscriptActivity = %v, want zero", got)
+	}
+
+	now := mod.Add(time.Minute)
+	caches := map[string]*transcriptSessionCache{}
+	if n := m.refreshTranscriptActivity(caches, func() time.Time { return now }, nil); n != 1 {
+		t.Fatalf("refresh scanned %d agents, want 1", n)
+	}
+	if got := m.AllStatuses()["scanner"].LastTranscriptActivity; !got.Equal(mod) {
+		t.Fatalf("LastTranscriptActivity after refresh = %v, want %v", got, mod)
+	}
+	// Inside the scan interval the agent is not re-scanned.
+	if n := m.refreshTranscriptActivity(caches, func() time.Time { return now.Add(time.Second) }, nil); n != 0 {
+		t.Fatalf("refresh inside the interval scanned %d agents, want 0", n)
+	}
+}
+
+func TestRunTranscriptActivityRefreshScansOnTickAndStopsOnCancel(t *testing.T) {
+	m, home := transcriptRefreshTestManager(t)
+	first := time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)
+	writeEventsFile(t, home, "s1", first)
+
+	// The fake clock is read by the refresher goroutine and advanced by the
+	// test, so it lives behind an atomic.
+	var clock atomic.Int64
+	clock.Store(first.UnixNano())
+	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
+	ticks := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.runTranscriptActivityRefresh(ctx, ticks, now)
+	}()
+
+	// The initial scan runs before the loop waits for its first tick, so a
+	// tick send is only accepted once it has finished.
+	later := first.Add(time.Hour)
+	writeEventsFile(t, home, "s2", later)
+	tick := first.Add(transcriptLivenessScanInterval)
+	clock.Store(tick.UnixNano())
+	ticks <- tick
+	// Each further tick send proves the previous pass completed; two more
+	// guarantee a pass that both started after s2 was written and finished
+	// before the read below, whatever the initial scan observed.
+	for range 2 {
+		tick = tick.Add(transcriptLivenessScanInterval)
+		clock.Store(tick.UnixNano())
+		ticks <- tick
+	}
+	if got := m.AllStatuses()["scanner"].LastTranscriptActivity; !got.Equal(later) {
+		t.Fatalf("LastTranscriptActivity after tick = %v, want %v", got, later)
+	}
+
+	cancel()
+	<-done
+}
+
+// Between full rescans only sessions touched within transcriptHotSessionAge
+// are stat'd; a cold session's cached mtime is trusted. The full rescan still
+// notices a cold session that was resumed.
+func TestNewestCopilotTranscriptActivityCachedSkipsColdSessions(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 10, 21, 17, 0, 0, 0, time.UTC)
+	hot := now.Add(-time.Minute)
+	cold := now.Add(-transcriptHotSessionAge - time.Hour)
+	writeEventsFile(t, home, "hot", hot)
+	writeEventsFile(t, home, "cold", cold)
+	if err := os.MkdirAll(filepath.Join(home, ".copilot", "session-state", "no-events"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := &transcriptSessionCache{}
+	got, ok := newestCopilotTranscriptActivityCached(home, cache, now)
+	if !ok || !got.Equal(hot) {
+		t.Fatalf("full scan = %v, %v; want %v, true", got, ok, hot)
+	}
+	if !cache.lastFull.Equal(now) || len(cache.sessions) != 3 {
+		t.Fatalf("cache after full scan = %+v, want lastFull=%v and 3 sessions", cache, now)
+	}
+
+	// The cold session is resumed: on the next (partial) pass it is not
+	// stat'd, so the cached mtime wins and the newest stays the hot one.
+	resumed := now.Add(time.Second)
+	writeEventsFile(t, home, "cold", resumed)
+	got, ok = newestCopilotTranscriptActivityCached(home, cache, now.Add(transcriptLivenessScanInterval))
+	if !ok || !got.Equal(hot) {
+		t.Fatalf("partial scan = %v, %v; want cached %v, true", got, ok, hot)
+	}
+
+	// The hot session IS re-stat'd on a partial pass.
+	hotter := now.Add(2 * time.Second)
+	writeEventsFile(t, home, "hot", hotter)
+	got, _ = newestCopilotTranscriptActivityCached(home, cache, now.Add(2*transcriptLivenessScanInterval))
+	if !got.Equal(hotter) {
+		t.Fatalf("partial scan missed the hot session update: %v, want %v", got, hotter)
+	}
+
+	// A session directory that had no events.jsonl is re-stat'd on a partial
+	// pass too, so a just-started session is seen as soon as its first event
+	// lands rather than at the next full rescan.
+	started := now.Add(3 * time.Second)
+	writeEventsFile(t, home, "no-events", started)
+	got, _ = newestCopilotTranscriptActivityCached(home, cache, now.Add(3*transcriptLivenessScanInterval))
+	if !got.Equal(started) {
+		t.Fatalf("partial scan missed the new session's first event: %v, want %v", got, started)
+	}
+
+	// The full rescan picks the resumed cold session up and drops a removed one.
+	if err := os.RemoveAll(filepath.Join(home, ".copilot", "session-state", "no-events")); err != nil {
+		t.Fatal(err)
+	}
+	full := now.Add(transcriptFullRescanInterval)
+	got, _ = newestCopilotTranscriptActivityCached(home, cache, full)
+	if !got.Equal(hotter) {
+		t.Fatalf("full rescan newest = %v, want %v", got, hotter)
+	}
+	if !cache.sessions["cold"].Equal(resumed) {
+		t.Fatalf("full rescan did not re-stat the cold session: %v, want %v", cache.sessions["cold"], resumed)
+	}
+	if _, still := cache.sessions["no-events"]; still || !cache.lastFull.Equal(full) {
+		t.Fatalf("cache after full rescan = %+v, want no-events dropped and lastFull=%v", cache, full)
 	}
 }
