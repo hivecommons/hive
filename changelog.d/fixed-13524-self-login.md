@@ -1,0 +1,1 @@
+- Share concurrent authenticated-login lookups without blocking cached login reads behind GitHub requests.
