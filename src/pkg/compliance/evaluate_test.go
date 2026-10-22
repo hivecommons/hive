@@ -371,6 +371,7 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestBuildReport(t *testing.T) {
+	stubKeyFiles(t, testBackupKeyFile)
 	cfg := hardenedConfig()
 	cfg.Compliance.Frameworks = append(cfg.Compliance.Frameworks, "not-shipped")
 	r := BuildReport(cfg, injectOn)
@@ -386,8 +387,14 @@ func TestBuildReport(t *testing.T) {
 	if r.PostureCheckInterval != "1h0m0s" || r.PostureChecksPending || r.PostureChecksTracking != "" || r.ProfileLoadError != "" {
 		t.Fatalf("report meta = %+v", r)
 	}
-	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != 4 {
-		t.Fatalf("summary = %+v", r.Summary)
+	wantNotCovered := 0
+	for _, c := range mustProfile(t, "soc2-type2").Controls {
+		if c.NotCovered {
+			wantNotCovered++
+		}
+	}
+	if r.Summary != Summarize(r.Controls) || r.Summary.NotCovered != wantNotCovered || r.Summary.Off != 0 {
+		t.Fatalf("summary = %+v, want not_covered=%d off=0", r.Summary, wantNotCovered)
 	}
 	empty := BuildReport(nil, nil)
 	if empty.Controls == nil || empty.Frameworks == nil || len(empty.Controls) != 0 {
