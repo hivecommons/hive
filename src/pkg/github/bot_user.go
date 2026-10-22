@@ -64,20 +64,27 @@ func (c *Client) resolveSelfLogin(ctx context.Context) string {
 		return ""
 	}
 	c.selfLoginMu.Lock()
-	defer c.selfLoginMu.Unlock()
 	if c.selfLogin != "" {
-		return c.selfLogin
+		login := c.selfLogin
+		c.selfLoginMu.Unlock()
+		return login
 	}
 	if !c.selfLoginFailedAt.IsZero() && time.Since(c.selfLoginFailedAt) < selfLoginRetryAfter {
+		c.selfLoginMu.Unlock()
 		return ""
 	}
+	c.selfLoginMu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, botUserLookupTimeout)
 	defer cancel()
+	// The lock is not held across the network call so cachedSelfLogin stays
+	// non-blocking; concurrent first callers may each look up (last writer wins).
 	user, _, err := c.client.Users.Get(ctx, "")
 	login := strings.TrimSpace(user.GetLogin())
+	c.selfLoginMu.Lock()
+	defer c.selfLoginMu.Unlock()
 	if err != nil || login == "" {
 		c.selfLoginFailedAt = time.Now()
 		if c.logger != nil { // bare clients (e.g. tests) may carry no logger
