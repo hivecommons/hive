@@ -16,9 +16,15 @@ func TestCostHistorySamplerSamplesWithoutViewers(t *testing.T) {
 		s.runCostHistorySampler(ctx, time.Hour)
 		close(done)
 	}()
-	deadline := time.Now().Add(5 * time.Second)
-	for len(s.CostHistory()) == 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	timeout := time.After(5 * time.Second)
+	for len(s.CostHistory()) == 0 {
+		select {
+		case <-tick.C:
+		case <-timeout:
+			t.Fatal("sampler did not record an initial sample")
+		}
 	}
 	if n := len(s.CostHistory()); n != 1 {
 		t.Fatalf("cost history = %d entries, want 1 from the initial sample", n)
