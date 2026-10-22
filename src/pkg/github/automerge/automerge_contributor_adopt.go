@@ -390,6 +390,12 @@ func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason
 // adoptionBlockerText spells out what the lane reason stands for.
 func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	switch {
+	case adoptedHeadSignoffUnfixable(obs, rec):
+		return fmt.Sprintf("%d commit(s) on `%s` carry the App's `Signed-off-by` while a squash merge would land them as @%s, so the `Sign-off survives the squash` gate stays red. "+
+			"The hive cannot rewrite that authorship without the contributor, and a superseding PR would carry the same head, so it opened none. "+
+			"**Ask:** every commit already carries a sign-off matching its own author, so a maintainer can merge this PR with a merge commit (`gh pr merge %d --merge`, not squash) and DCO holds without rewriting history; "+
+			"otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.",
+			obs.Detail.DCOSquashUnsafeHive, shortSHA(obs.HeadSHA), nonEmpty(obs.Author, "the contributor"), obs.Number, nonEmpty(obs.Author, "the contributor"))
 	case verdictBlocks(obs.Detail):
 		msg := fmt.Sprintf("the review swarm's latest verdict on `%s` is `%s` and no fix landed", shortSHA(obs.HeadSHA), strings.ToLower(strings.TrimSpace(obs.Detail.Verdict.Verdict)))
 		if n := len(obs.Detail.Verdict.HumanSummaries); n > 0 {
@@ -891,15 +897,25 @@ func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLab
 	return now.Sub(since) >= stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell)
 }
 
+// adoptedHeadSignoffUnfixable reports an in-place-adopted head carrying a
+// hive commit the squash merge cannot attribute (its Signed-off-by names the
+// App, the squash lands as the contributor). A supersede would re-home the
+// very same head with the same authorship and fail the same gate, and the
+// hive may not rewrite the contributor's history, so nothing the hive can
+// push fixes it: the PR is a person's (hivecommons/hive#13623). A DCO-red
+// head is left to settleAdoption's DCO re-home.
+func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) bool {
+	return rec.AdoptedInPlace() && obs.HeadSHA != "" && !adoptedHeadDCORed(obs, rec) && obs.Detail.DCOSquashUnsafeHive > 0
+}
+
 // inPlaceRehomeReason is the reason an in-place adoption converts to a
 // supersession this sweep, or "" to stay in place. A DCO-red head is left to
-// settleAdoption's DCO re-home, which carries the repair instructions.
+// settleAdoption's DCO re-home, which carries the repair instructions. A
+// squash-unsafe hive sign-off is never re-homed: the superseding PR would
+// carry the same head (adoptedHeadSignoffUnfixable).
 func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
-	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || adoptedHeadDCORed(obs, rec) {
+	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || adoptedHeadDCORed(obs, rec) || adoptedHeadSignoffUnfixable(obs, rec) {
 		return ""
-	}
-	if obs.Detail.DCOSquashUnsafeHive > 0 {
-		return AdoptReasonSignoffRehome
 	}
 	if verdictBlocks(obs.Detail) && adoptionStale(obs, rec, policy, now) {
 		return AdoptReasonInPlaceStalled
@@ -917,6 +933,9 @@ func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy 
 	}
 	if rec.AdoptionAttemptedNothingOpened(obs.HeadSHA) {
 		return stagelabels.LaneReasonAdoptionStalledPrefix + "supersede-failed:" + nonEmpty(rec.AdoptReason, obs.Reason)
+	}
+	if adoptedHeadSignoffUnfixable(obs, rec) {
+		return stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution
 	}
 	if adoptionOptionalCheckOnly(obs) || !adoptionStale(obs, rec, policy, now) {
 		return ""

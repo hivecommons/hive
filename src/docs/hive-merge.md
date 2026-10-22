@@ -542,11 +542,16 @@ GitHub user id, not the App id) so their fixer pushes
 normally provide the GitHub linkage, while their commit name/sign-off still
 shows the lane. An in-place adoption does not sit at 074 forever: the sweep
 re-evaluates every adopted record each pass, and when the hive cannot finish
-on the contributor branch — a hive commit the squash sign-off gate strips
-(`hive-signoff-attribution`), or a blocking review-swarm finding left on a
-head that sat idle for the 074 dwell — it converts to a supersession
-(`reason=signoff-rehome` / `in-place-stalled`) and the superseding PR takes
-the same red-PR / review-fix route. An adoption with nothing the hive can
+on the contributor branch because a blocking review-swarm finding was left
+on a head that sat idle for the 074 dwell, it converts to a supersession
+(`reason=in-place-stalled`) and the superseding PR takes the same red-PR /
+review-fix route. A hive commit the squash sign-off gate strips
+(`hive-signoff-attribution`) is never re-homed: a supersede would carry the
+same head and fail the same gate, so the PR goes straight to
+`stage/085-needs-decision` as `adoption-stalled:hive-signoff-attribution`
+with one ask — merge it with a merge commit (`--merge`, not squash; every
+commit's sign-off matches its own author) or have the contributor re-author
+the hive's commits (hivecommons/hive#13623). An adoption with nothing the hive can
 push past the dwell goes to `stage/085-needs-decision` as
 `adoption-stalled:<lane reason>` with one comment naming the blocker, so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
