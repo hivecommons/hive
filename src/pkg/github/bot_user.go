@@ -80,7 +80,9 @@ func (c *Client) resolveSelfLogin(ctx context.Context) string {
 	login := strings.TrimSpace(user.GetLogin())
 	if err != nil || login == "" {
 		c.selfLoginFailedAt = time.Now()
-		c.logger.Warn("could not resolve the authenticated login; once-only markers from any author are trusted until it resolves", "error", err)
+		if c.logger != nil { // bare clients (e.g. tests) may carry no logger
+			c.logger.Warn("could not resolve the authenticated login; once-only markers from any author are trusted until it resolves", "error", err)
+		}
 		return ""
 	}
 	c.selfLogin = login

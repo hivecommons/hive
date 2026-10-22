@@ -3,6 +3,8 @@ package github
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -463,7 +465,18 @@ func TestAnsweredUnparkCommentIDsRequiresHiveAuthor(t *testing.T) {
 		t.Fatal("the hive's own marker must count")
 	}
 
+	// A client with no logger and no resolvable identity (GET /user is denied)
+	// must neither panic nor leave the sandbox, and keeps the legacy rule.
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+	}))
+	defer denied.Close()
 	anonymous := NewClient("fake", "org", []string{"repo"}, nil, "")
+	base, err := url.Parse(denied.URL + "/")
+	if err != nil {
+		t.Fatalf("parse server URL: %v", err)
+	}
+	anonymous.client.BaseURL = base
 	if got := anonymous.answeredUnparkCommentIDs([]*gh.IssueComment{byOther}); !got[77] {
 		t.Fatal("a hive with no known identity keeps the legacy any-author rule")
 	}
