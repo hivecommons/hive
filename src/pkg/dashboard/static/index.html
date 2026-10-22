@@ -32297,6 +32297,34 @@ function burnAreaChart() {
     const STATUS_EXPECTED_REFRESH_MS = 30000;
     const STATUS_STALE_AFTER_POLLS = 3;
     const STATUS_STALE_AFTER_MS = STATUS_EXPECTED_REFRESH_MS * STATUS_STALE_AFTER_POLLS;
+    // ── SSE idle watchdog ──────────────────────────────────────────────
+    // /api/events only carries status frames when the eval cycle publishes
+    // (~every STATUS_EXPECTED_REFRESH_MS). A connection that a NAT/proxy idle
+    // timeout or a laptop sleep silently dropped never fires EventSource
+    // onerror, so without a watchdog the tab paints its last snapshot
+    // forever while the "live" dot stays green — one tab shows counts from
+    // hours ago while a fresh tab beside it is right. The server now sends a
+    // `keepalive` event every SSE_KEEPALIVE_EXPECTED_MS; any frame (status,
+    // agent-status, stage-tracker, keepalive) resets the idle clock, and
+    // SSE_IDLE_RECONNECT_MS of silence (3 missed status publishes, the same
+    // window the "status Xm old" badge uses) reconnects and refetches
+    // /api/status so the page converges on the server's truth.
+    const SSE_KEEPALIVE_EXPECTED_MS = 20000;
+    const SSE_WATCHDOG_TICK_MS = 15000;
+    const SSE_IDLE_RECONNECT_MS = STATUS_STALE_AFTER_MS;
+    // sse watchdog helpers begin
+    // sseStreamIdle: true when the stream has been silent for longer than
+    // idleMs. lastFrameAtMs is the newest frame of any kind; openedAtMs is
+    // when the current EventSource was created, so a connection that never
+    // produced a frame (half-open from the start, or the server never got the
+    // request) is also recycled instead of waiting on a frame that will not
+    // come. Zero/absent timestamps mean "not connected yet" → not idle.
+    function sseStreamIdle(nowMs, lastFrameAtMs, openedAtMs, idleMs) {
+      const since = Math.max(Number(lastFrameAtMs) || 0, Number(openedAtMs) || 0);
+      if (!since) return false;
+      return (nowMs - since) > idleMs;
+    }
+    // sse watchdog helpers end
     const DASHBOARD_TIMEZONE_STORAGE_KEY = 'hive-dashboard-display-timezone';
     const DASHBOARD_TIMEZONE_BROWSER = 'browser';
     const DASHBOARD_TIMEZONE_SERVER = 'server';
@@ -38504,14 +38532,38 @@ function burnAreaChart() {
 
     var _eventSource = null;
     var _eventSourceReconnectTimer = null;
+    var _sseLastFrameAtMs = 0;
+    var _sseOpenedAtMs = 0;
+    function noteSSEFrame() { _sseLastFrameAtMs = Date.now(); }
+    // sseWatchdogTick recycles a silent stream (see sseStreamIdle). `force`
+    // (tab became visible again) always refetches /api/status: Safari and
+    // Chrome throttle hidden-tab timers to once a minute or less, so the tick
+    // may not have run while the tab was in the background and the socket may
+    // have died during a sleep the watchdog never saw.
+    function sseWatchdogTick(force) {
+      const idle = sseStreamIdle(Date.now(), _sseLastFrameAtMs, _sseOpenedAtMs, SSE_IDLE_RECONNECT_MS);
+      if (idle) {
+        console.warn('[hive] /api/events silent for >' + Math.round(SSE_IDLE_RECONNECT_MS / 1000) + 's — reconnecting');
+        connect();
+      }
+      if (idle || force) refreshStatus();
+    }
     function connect() {
       if (_eventSourceReconnectTimer) { clearTimeout(_eventSourceReconnectTimer); _eventSourceReconnectTimer = null; }
       if (_eventSource) { _eventSource.onerror = null; _eventSource.onmessage = null; _eventSource.close(); _eventSource = null; }
       const source = new EventSource('/api/events');
       _eventSource = source;
+      _sseOpenedAtMs = Date.now();
+      _sseLastFrameAtMs = 0;
       const conn = document.getElementById('conn');
 
+      source.onopen = noteSSEFrame;
+      // Server-side idle keepalive (sseKeepaliveInterval); carries no state,
+      // it only proves the socket is alive.
+      source.addEventListener('keepalive', noteSSEFrame);
+
       source.onmessage = (e) => {
+        noteSSEFrame();
         try {
           const data = JSON.parse(e.data);
           render(data);
@@ -38564,10 +38616,12 @@ function burnAreaChart() {
       // now (ETag keeps an unchanged body to one 304) rather than on the next
       // STAGE_TRACKER_POLL_MS tick. Only once the panel has loaded itself.
       source.addEventListener('stage-tracker', () => {
+        noteSSEFrame();
         if (_stageTrackerSig || _stageTrackerEtag) fetchStageTracker();
       });
 
       source.addEventListener('agent-status', (e) => {
+        noteSSEFrame();
         try {
           const payload = JSON.parse(e.data);
           noteAgentNowUpdate(payload.timestamp);
@@ -38684,6 +38738,10 @@ function burnAreaChart() {
     tickNavbarClock();
     dashboardSetInterval('navbar-clock', tickNavbarClock, NAVBAR_CLOCK_TICK_MS);
     fetch('/api/status').then(r => r.json()).then(render).catch(console.error);
+    dashboardSetInterval('sse-watchdog', function() { sseWatchdogTick(false); }, SSE_WATCHDOG_TICK_MS);
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') sseWatchdogTick(true);
+    });
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];
     function applyTrends(d) {
