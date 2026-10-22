@@ -137,6 +137,13 @@
   /* A tracker row leaving the list (merged/closed) or arriving in it. */
   --ham-move-exit-ms: 300ms;
   --ham-move-enter-ms: 220ms;
+  /* Hive activity monitor: per-repo chip palette (slot = repo string hash). */
+  --ham-repo-tint-0: var(--blue);
+  --ham-repo-tint-1: var(--purple);
+  --ham-repo-tint-2: var(--cyan);
+  --ham-repo-tint-3: var(--green);
+  --ham-repo-tint-4: var(--indigo);
+  --ham-repo-tint-5: var(--orange);
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;

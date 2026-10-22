@@ -1401,6 +1401,39 @@
     .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
     .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
     .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
+    /* Repo chip before the number: monospace, tinted per repo from the
+       --ham-repo-tint-N palette (slot = string hash), muted for the primary
+       repo; a button that sets the Repo filter. Owner/repo rides its title. */
+    .ham-repo-chip { flex: 0 0 auto; display: inline-block; font: inherit; font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.5; padding: 0 var(--sp-2); border-radius: var(--r-sm); border: var(--line-width) solid color-mix(in srgb, var(--ham-repo-tint) 45%, transparent); background: color-mix(in srgb, var(--ham-repo-tint) 12%, transparent); color: var(--ham-repo-tint); cursor: pointer; white-space: nowrap; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline; }
+    .ham-repo-chip:hover, .ham-repo-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--ham-repo-tint) 26%, transparent); color: var(--text); }
+    .ham-repo-chip:focus-visible { outline: var(--focus-ring-width) solid var(--ham-repo-tint); outline-offset: 1px; }
+    .ham-repo-tint-0 { --ham-repo-tint: var(--ham-repo-tint-0); }
+    .ham-repo-tint-1 { --ham-repo-tint: var(--ham-repo-tint-1); }
+    .ham-repo-tint-2 { --ham-repo-tint: var(--ham-repo-tint-2); }
+    .ham-repo-tint-3 { --ham-repo-tint: var(--ham-repo-tint-3); }
+    .ham-repo-tint-4 { --ham-repo-tint: var(--ham-repo-tint-4); }
+    .ham-repo-tint-5 { --ham-repo-tint: var(--ham-repo-tint-5); }
+    .ham-repo-chip.ham-repo-primary { --ham-repo-tint: var(--text-muted); }
+    .ham-pr-line { display: inline-flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; max-width: 100%; }
+    /* Group-by-repo header row: sticky under the column header while its
+       rows scroll, caret toggle, chip, owner/repo, counts, and a mini
+       per-column distribution (bar height steps ham-gd-1..4 from the group's
+       busiest column). */
+    .ham-group { position: sticky; top: 0; z-index: var(--z-sticky); display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) var(--sp-2); margin-top: var(--sp-3); border-top: var(--line-width) solid var(--line-subtle); border-bottom: var(--line-width) solid var(--line-subtle); background: var(--panel); font-size: var(--fs-sm); color: var(--text); min-width: 0; }
+    .ham-cols + .ham-group { margin-top: 0; border-top: 0; }
+    .ham-group-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 1.4em; height: 1.4em; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+    .ham-group-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+    .ham-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--line-strong); outline-offset: 1px; }
+    .ham-group-name { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .ham-group-n, .ham-group-attn { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+    .ham-group-attn { color: var(--amber); }
+    .ham-group-collapsed .ham-group-name { color: var(--muted); }
+    .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
+    .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
+    .ham-gd-1 { height: 35%; background: color-mix(in srgb, var(--amber) 55%, transparent); }
+    .ham-gd-2 { height: 55%; background: color-mix(in srgb, var(--amber) 70%, transparent); }
+    .ham-gd-3 { height: 80%; background: color-mix(in srgb, var(--amber) 85%, transparent); }
+    .ham-gd-4 { height: 100%; background: var(--amber); }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
@@ -1526,6 +1559,13 @@
     @media (prefers-reduced-motion: reduce) { .ham-row.ham-leaving { animation-name: ham-row-exit-rm; } .ham-row.ham-entering { animation: none; } }
     .ham-rm-preview .ham-row.ham-leaving { animation-name: ham-row-exit-rm; }
     .ham-rm-preview .ham-row.ham-entering { animation: none; }
+    /* Group-by-repo headers depart and arrive like rows (a header whose
+       last row leaves collapses out beside it). */
+    .ham-group.ham-leaving { overflow: hidden; pointer-events: none; position: static; animation: ham-row-exit var(--ham-move-exit-ms) var(--ham-move-ease) both; }
+    .ham-group.ham-entering { animation: ham-row-enter var(--ham-move-enter-ms) ease-out both; }
+    @media (prefers-reduced-motion: reduce) { .ham-group.ham-leaving { animation-name: ham-row-exit-rm; } .ham-group.ham-entering { animation: none; } }
+    .ham-rm-preview .ham-group.ham-leaving { animation-name: ham-row-exit-rm; }
+    .ham-rm-preview .ham-group.ham-entering { animation: none; }
     /* Settings modal (gear on the card header): the Movement animation
        section reuses the Overview settings section styles and adds a radio
        list with one Preview button each plus a sample row the previews play on. */
@@ -6838,6 +6878,7 @@
         <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
         <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, regressed, held, needs-human, needs-decision, needs-rebase, blocked, or on 045 / 071 / 072 / 085 / 090">Needs attention</button>
         <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Group</span><select id="activity-monitor-group" class="ham-select" data-change-action="hamGroup" data-arg-types="v" title="Group rows under one collapsible header per repository"><option value="none">None</option><option value="repo">Repo</option></select></label>
         <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
         <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
         <button type="button" class="ham-chip ham-sound" id="activity-monitor-sound" data-action="hamSoundToggle" aria-pressed="false" aria-label="Sound off — turn on (merge zap + new-item buzz; plays a test of each)" title="Sound off — turn on (merge zap + new-item buzz; plays a test of each)">🔇</button>
@@ -13347,6 +13388,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // labels follow when at least two items carry them.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+    // Repo chip + group-by-repo. The chip before an item's number names its
+    // repo (short name; owner/repo in the tooltip; click = the Repo filter)
+    // and is shown always / only when the payload spans several repos
+    // (default) / never. Group puts rows under one collapsible header per
+    // repo. Both settings and the collapsed set persist per browser.
+    const STAGE_TRACKER_REPO_CHIP_KEY = 'hive.tracker.repochip';
+    const STAGE_TRACKER_REPO_CHIP_MODES = [
+      { id: 'always', label: 'Always' },
+      { id: 'multi', label: 'Only when several repos are listed' },
+      { id: 'never', label: 'Never' },
+    ];
+    const STAGE_TRACKER_REPO_CHIP_DEFAULT = 'multi';
+    const STAGE_TRACKER_GROUP_KEY = 'hive.tracker.group';
+    const STAGE_TRACKER_GROUP_COLLAPSED_KEY = 'hive.tracker.group.collapsed';
+    const STAGE_TRACKER_GROUPS = ['none', 'repo'];
+    const STAGE_TRACKER_GROUP_DEFAULT = 'none';
+    const STAGE_TRACKER_GROUP_KEY_PREFIX = 'group:';
+    // Palette slots --ham-repo-tint-0..N-1 in tokens.css.
+    const STAGE_TRACKER_REPO_TINTS = 6;
+    // Mini stage distribution on a group header: bar height steps.
+    const STAGE_TRACKER_GROUP_DIST_STEPS = 4;
+    var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
+    var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
       return { kind: 'all', repo: '', q: '', labels: [], age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
@@ -13619,7 +13683,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
-      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
+      const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
+      if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
@@ -13646,6 +13712,125 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const lead = linked.length && linked[0].stage ? linked[0] : item;
       const kind = lead === item ? item.kind : 'pr';
       return { anchor: stageTrackerAnchor(lead.stage, stages, kind), since: Date.parse(lead.stage_since || '') || Infinity };
+    }
+
+    /* ---- Repo chip and group-by-repo (pure; run under node by
+       stage_tracker_repo_grouping_test.go) ------------------------------- */
+    // Deterministic palette slot for a repo: the string hash the contributor
+    // tint fallback uses (contribTintFallback), bucketed onto the
+    // --ham-repo-tint-N tokens so the chip CSS names no literal colour.
+    function stageTrackerRepoTint(repo) {
+      const text = String(repo || '');
+      let hash = 0;
+      for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+      return Math.abs(hash) % STAGE_TRACKER_REPO_TINTS;
+    }
+    function stageTrackerRepoShort(repo) {
+      const s = String(repo || '');
+      const i = s.indexOf('/');
+      return i >= 0 ? s.slice(i + 1) : s;
+    }
+    // The configured primary repo may arrive as owner/repo or as the bare
+    // name; an item's repo is owner/repo.
+    function stageTrackerIsPrimary(repo, primary) {
+      if (!repo || !primary) return false;
+      if (repo === primary) return true;
+      return String(primary).indexOf('/') < 0 && stageTrackerRepoShort(repo) === primary;
+    }
+    // Whether rows carry the chip under a setting, given how many repos the
+    // payload spans.
+    function stageTrackerRepoChipOn(mode, repoCount) {
+      if (mode === 'never') return false;
+      if (mode === 'always') return true;
+      return (Number(repoCount) || 0) > 1;
+    }
+    // The chip. ctx.repoChips = { primary, active } turns it on
+    // (renderStageTracker sets it from the setting); absent → ''. The
+    // primary repo's chip is muted; click filters the list to the repo, or
+    // clears the filter when it already is that repo.
+    function stageTrackerRepoChipHtml(repo, ctx) {
+      if (!ctx || !ctx.repoChips || !repo) return '';
+      const primary = stageTrackerIsPrimary(repo, ctx.repoChips.primary);
+      const active = ctx.repoChips.active === repo;
+      const tip = repo + (primary ? ' (primary repo)' : '') + (active ? ' — showing only this repo; click to show all repos' : ' — click to show only this repo');
+      return `<button type="button" class="ham-repo-chip ham-repo-tint-${stageTrackerRepoTint(repo)}${primary ? ' ham-repo-primary' : ''}" data-action="hamRepoChip" data-arg0="${esc(repo)}" data-stop="1" aria-pressed="${active ? 'true' : 'false'}" title="${esc(tip)}">${esc(stageTrackerRepoShort(repo))}</button>`;
+    }
+    // Column name for a group header's distribution tooltip (as the column header draws it).
+    function stageTrackerColName(idx, stages) {
+      if (idx >= STAGE_TRACKER_PATH.length) return 'Merged';
+      const n = STAGE_TRACKER_PATH[idx];
+      const st = (stages || []).find(s => Number(s.number) === n) || {};
+      return n === 0 ? 'Open' : (st.short || st.label || String(n));
+    }
+    // Rows grouped by repo: [{ repo, key, rows, count, attention, cols,
+    // collapsed }], the primary repo first, then by row count (desc), then
+    // by name. cols is the per-column row count (a covered issue rides its
+    // furthest PR, as the strip draws it); needs-attention is counted over
+    // the rows. opts: { primary, collapsed: { repo: true }, stages }.
+    function stageTrackerGroups(rows, opts) {
+      opts = opts || {};
+      const by = {};
+      for (const it of rows || []) {
+        const r = it.repo || '';
+        if (!by[r]) by[r] = { repo: r, key: STAGE_TRACKER_GROUP_KEY_PREFIX + r, rows: [], count: 0, attention: 0, cols: Array.from({ length: STAGE_TRACKER_PATH.length + 1 }, () => 0), collapsed: !!(opts.collapsed && opts.collapsed[r]) };
+        const g = by[r];
+        g.rows.push(it);
+        g.count++;
+        if (stageTrackerNeedsAttention(it)) g.attention++;
+        const anchor = stageTrackerSortKey(it, opts.stages || []).anchor;
+        const col = anchor >= STAGE_TRACKER_TERMINAL ? STAGE_TRACKER_PATH.length : STAGE_TRACKER_PATH.indexOf(anchor);
+        if (col >= 0) g.cols[col]++;
+      }
+      const prim = g => stageTrackerIsPrimary(g.repo, opts.primary) ? 0 : 1;
+      return Object.keys(by).map(r => by[r]).sort((a, b) => (prim(a) - prim(b)) || (b.count - a.count) || a.repo.localeCompare(b.repo));
+    }
+    // One page of grouped entries: { group } headers and { group, item }
+    // rows. Headers do not count toward the page size; a page that opens
+    // mid-group repeats that group's header; a collapsed group is its
+    // header alone. total counts every row (so a collapsed group is not
+    // reported as filtered out); from/to and the pages run over the rows
+    // of expanded groups (shown).
+    function stageTrackerGroupPage(groups, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const flat = [];
+      let total = 0;
+      for (const g of groups || []) { total += g.count; flat.push({ group: g }); if (!g.collapsed) for (const it of g.rows) flat.push({ group: g, item: it }); }
+      const shown = flat.filter(e => e.item).length;
+      const pages = Math.max(1, Math.ceil(shown / f.size));
+      const page = Math.min(f.page, pages);
+      const lo = (page - 1) * f.size, hi = page * f.size;
+      const rows = [];
+      let n = 0, lastHeader = null;
+      for (const e of flat) {
+        if (!e.item) {
+          // A header sits at the row position its rows start; one exactly
+          // at the page end opens the next page unless this is the last.
+          if (n >= lo && (n < hi || page === pages)) { rows.push(e); lastHeader = e.group; }
+          continue;
+        }
+        if (n >= lo && n < hi) {
+          if (lastHeader !== e.group) { rows.push({ group: e.group }); lastHeader = e.group; }
+          rows.push(e);
+        }
+        n++;
+      }
+      return { rows, page, pages, from: shown ? lo + 1 : 0, to: Math.min(shown, hi), total, shown, size: f.size };
+    }
+    // Group header row: caret toggle, repo chip, owner/repo, row count,
+    // needs-attention count and a mini per-column distribution. Keyed
+    // `group:owner/repo` by the render so the reconcile keeps it stable.
+    function stageTrackerGroupHeaderHtml(g, stages, ctx) {
+      const max = Math.max(1, ...g.cols);
+      const dist = g.cols.map((c, i) => `<i class="ham-gd ham-gd-${c ? Math.max(1, Math.ceil(c / max * STAGE_TRACKER_GROUP_DIST_STEPS)) : 0}" title="${esc(stageTrackerColName(i, stages) + ': ' + c)}"></i>`).join('');
+      const attn = g.attention ? `<span class="ham-group-attn">${g.attention} need${g.attention === 1 ? 's' : ''} attention</span>` : '';
+      // The header always carries the chip, whatever the row setting.
+      const chipCtx = { repoChips: Object.assign({}, (ctx && ctx.repoChips) || {}) };
+      return `<div class="ham-group${g.collapsed ? ' ham-group-collapsed' : ''}" data-ham-repo="${esc(g.repo)}" role="row">
+        <button type="button" class="ham-group-toggle" data-action="hamGroupToggle" data-arg0="${esc(g.repo)}" data-stop="1" aria-expanded="${g.collapsed ? 'false' : 'true'}" aria-label="${esc((g.collapsed ? 'Expand ' : 'Collapse ') + g.repo)}"><span class="ham-group-caret" aria-hidden="true">${g.collapsed ? '▸' : '▾'}</span></button>
+        ${stageTrackerRepoChipHtml(g.repo, chipCtx)}<span class="ham-group-name">${esc(g.repo)}</span>
+        <span class="ham-group-n">${g.count} ${g.count === 1 ? 'row' : 'rows'}</span>${attn}
+        <span class="ham-group-dist" role="img" aria-label="${esc(g.cols.map((c, i) => stageTrackerColName(i, stages) + ' ' + c).join(', '))}">${dist}</span>
+      </div>`;
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -13687,10 +13872,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // it closes — or a muted "no linked issue" placeholder — on the left
       // and names itself in the PR column, exactly where a covering PR sits
       // on an issue row.
+      // The repo chip (when on) leads the row, before the issue slot's #N.
+      const chip = ctx.repoChips ? stageTrackerRepoChipHtml(item.repo, ctx) : '';
       let leadHtml;
       if (isIssue) {
         leadHtml = `<div class="ham-head-main">
-            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
           </div>`;
@@ -13699,12 +13886,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
         leadHtml = li.number
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
-            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
             ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
-            ${stageTrackerIcon('issue', 'ham-kind-ico')}
+            ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
           </div>`;
       }
@@ -14312,6 +14499,67 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSaveFilter() {
       try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
     }
+    // Repo chip / group settings and the per-repo collapsed set (localStorage).
+    function stageTrackerRepoChipSetting() {
+      let v = '';
+      try { v = localStorage.getItem(STAGE_TRACKER_REPO_CHIP_KEY) || ''; } catch { v = ''; }
+      return STAGE_TRACKER_REPO_CHIP_MODES.some(m => m.id === v) ? v : STAGE_TRACKER_REPO_CHIP_DEFAULT;
+    }
+    function stageTrackerSetRepoChip(id) {
+      const v = STAGE_TRACKER_REPO_CHIP_MODES.some(m => m.id === id) ? id : STAGE_TRACKER_REPO_CHIP_DEFAULT;
+      try { localStorage.setItem(STAGE_TRACKER_REPO_CHIP_KEY, v); } catch {}
+      return v;
+    }
+    function stageTrackerGroupSetting() {
+      let v = '';
+      try { v = localStorage.getItem(STAGE_TRACKER_GROUP_KEY) || ''; } catch { v = ''; }
+      return STAGE_TRACKER_GROUPS.indexOf(v) >= 0 ? v : STAGE_TRACKER_GROUP_DEFAULT;
+    }
+    function stageTrackerSetGroup(id) {
+      const v = STAGE_TRACKER_GROUPS.indexOf(id) >= 0 ? id : STAGE_TRACKER_GROUP_DEFAULT;
+      try { localStorage.setItem(STAGE_TRACKER_GROUP_KEY, v); } catch {}
+      return v;
+    }
+    function stageTrackerLoadCollapsed() {
+      try {
+        const o = JSON.parse(localStorage.getItem(STAGE_TRACKER_GROUP_COLLAPSED_KEY) || '{}');
+        if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+        const out = {};
+        for (const k of Object.keys(o)) if (o[k]) out[k] = true;
+        return out;
+      } catch { return {}; }
+    }
+    function stageTrackerSaveCollapsed(c) {
+      try { localStorage.setItem(STAGE_TRACKER_GROUP_COLLAPSED_KEY, JSON.stringify(c || {})); } catch {}
+    }
+    // Pure: the collapsed set with one repo toggled.
+    function stageTrackerToggleCollapsed(collapsed, repo) {
+      const out = Object.assign({}, collapsed || {});
+      if (out[repo]) delete out[repo]; else out[repo] = true;
+      return out;
+    }
+    function stageTrackerLoadGrouping() {
+      _stageTrackerGroup = stageTrackerGroupSetting();
+      _stageTrackerCollapsed = stageTrackerLoadCollapsed();
+    }
+    function stageTrackerPrimaryRepo() { return (typeof window !== 'undefined' && window._primaryRepo) || ''; }
+    function hamGroup(value) {
+      _stageTrackerGroup = stageTrackerSetGroup(value);
+      _stageTrackerFilter.page = 1;
+      renderStageTracker();
+      stageTrackerRenderSettings();
+    }
+    function hamGroupToggle(repo) {
+      _stageTrackerCollapsed = stageTrackerToggleCollapsed(_stageTrackerCollapsed, repo);
+      stageTrackerSaveCollapsed(_stageTrackerCollapsed);
+      renderStageTracker();
+    }
+    // A row's repo chip: filter to that repo, or back to all when it already is.
+    function hamRepoChip(repo) { hamFilter('repo', _stageTrackerFilter.repo === repo ? '' : repo); }
+    function stageTrackerRepoChipChange(value) {
+      stageTrackerSetRepoChip(value);
+      renderStageTracker();
+    }
 
     function hamFilter(key, value) {
       const f = _stageTrackerFilter;
@@ -14344,6 +14592,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setVal('activity-monitor-age', f.age);
       setVal('activity-monitor-author', f.author);
       setVal('activity-monitor-sort', f.sort);
+      setVal('activity-monitor-group', _stageTrackerGroup);
       setVal('activity-monitor-size', f.size);
       const att = document.getElementById('activity-monitor-attention');
       if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
@@ -14414,17 +14663,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
       const nowMs = Date.now();
       const stages = d.stages || [];
+      const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
       const sel = document.getElementById('activity-monitor-repo');
       if (sel) {
-        const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
         const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === f.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
       stageTrackerSyncToolbar(f);
       const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      // Repo chips ride the setting against how many repos the payload spans.
+      if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
       const ordered = stageTrackerSort(visible, stages, f);
-      const page = stageTrackerPage(ordered, f);
+      const grouping = _stageTrackerGroup === 'repo';
+      const page = grouping
+        ? stageTrackerGroupPage(stageTrackerGroups(ordered, { primary: stageTrackerPrimaryRepo(), collapsed: _stageTrackerCollapsed, stages }), f)
+        : stageTrackerPage(ordered, f);
       if (page.page !== f.page) f.page = page.page;
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
@@ -14460,8 +14714,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         setIfChanged(el, emptyHtml);
         return;
       }
+      // Grouped: header rows keyed group:owner/repo sit between the item
+      // rows; the reconcile treats them like any keyed row (kept while
+      // unchanged, collapsed out with their last row).
       const rows = [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
-        .concat(page.rows.map(it => ({ key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, ctx) })));
+        .concat(page.rows.map(e => grouping && !e.item
+          ? { key: e.group.key, html: stageTrackerGroupHeaderHtml(e.group, stages, ctx) }
+          : { key: stageTrackerItemKey(grouping ? e.item : e), html: stageTrackerRowHtml(grouping ? e.item : e, stages, ctx) }));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
       // Moves play once, on the render that follows the payload; a filter
@@ -14482,6 +14741,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is restored from storage on the first fetch.
     async function fetchStageTracker() {
       try {
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
         if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
         if (r.status === 304) { stageTrackerTickClock(); return; }
@@ -14994,14 +15254,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         + `<p class="ham-sound-help text-muted">Sounds play for every repo this hive governs when the tab is visible. Replace either with your own WAV (or any audio the browser decodes, up to ${Math.round(STAGE_TRACKER_CLIP_MAX_BYTES / (1024 * 1024))} MB); files stay in this browser.</p>`
         + rows
         + `<div class="overview-settings-links"><button type="button" class="hv-btn btn-sm" data-action="stageTrackerPlayTest" data-arg-types="t" data-stop="1">▶ Play both</button></div></div>`
+        + stageTrackerRepoSectionHtml(state.repoChip, state.group)
         + stageTrackerMotionSectionHtml(state.motion, state.stages || []);
+    }
+    // Pure: the Repositories section — repo chip visibility and Group.
+    function stageTrackerRepoSectionHtml(repoChip, group) {
+      const opts = STAGE_TRACKER_REPO_CHIP_MODES.map(m => `<label class="overview-settings-row"><input type="radio" name="sts-repochip" value="${esc(m.id)}"${m.id === repoChip ? ' checked' : ''} data-change-action="stageTrackerRepoChipChange" data-arg-types="v">${esc(m.label)}${m.id === STAGE_TRACKER_REPO_CHIP_DEFAULT ? ' <span class="text-muted">(default)</span>' : ''}</label>`).join('');
+      return `<section class="overview-settings-section" id="sts-repos" aria-labelledby="sts-repos-title">
+          <div class="overview-settings-card-title" id="sts-repos-title">Repositories</div>
+          <p class="sts-hint">Each row can carry a small chip naming its repository before the number (the primary repo's chip is muted; hover for owner/repo, click to filter the list to that repo).</p>
+          <div class="overview-settings-grid" role="radiogroup" aria-label="Show repo chip">${opts}</div>
+          <div class="sts-row"><label class="overview-settings-field">Group rows by <select class="ham-select" id="sts-group" data-change-action="hamGroup" data-arg-types="v"><option value="none"${group === 'repo' ? '' : ' selected'}>None</option><option value="repo"${group === 'repo' ? ' selected' : ''}>Repo</option></select></label></div>
+        </section>`;
     }
     function stageTrackerRenderSettings() {
       const body = document.getElementById('activity-monitor-settings-body');
       if (!body) return;
       const names = {};
       for (const kind of Object.keys(STAGE_TRACKER_SOUND_KINDS)) names[kind] = stageTrackerClipStatusText(kind);
-      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [] }));
+      setIfChanged(body, stageTrackerSettingsHtml({ on: _stageTrackerSoundOn, volume: _stageTrackerVolume, clips: _stageTrackerClips, names, motion: stageTrackerMotionSetting(), stages: (_stageTracker && _stageTracker.stages) || [], repoChip: stageTrackerRepoChipSetting(), group: _stageTrackerGroup }));
       const rm = document.getElementById('sts-rm-preview');
       if (rm) rm.checked = document.body.classList.contains('ham-rm-preview');
     }
