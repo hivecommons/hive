@@ -417,3 +417,150 @@ assert.deepStrictEqual(ols(stageTrackerRowHtml(next[0], stages, { nowMs: now }))
 		t.Fatalf("node row stamp fixture failed: %v\n%s", err, out)
 	}
 }
+
+// The settings-modal preview is one real tracker row, rebuilt in place on
+// every Preview click and on every settings re-render; it must never grow a
+// second chevron strip (hivecommons/hive: the preview once wrote chevrons
+// into the row's title-column strip, stacking two strips with different
+// geometry).
+func TestStageTrackerMotionPreviewSample(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — motion preview sample was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		"const window = {};",
+		"function formatDashboardTime(d){return new Date(d).toISOString().slice(11,16)+' UTC';}",
+		"function formatDashboardDate(d){return new Date(d).toISOString().slice(0,10);}",
+		"function formatDashboardDateTime(d){return new Date(d).toISOString().slice(0,16);}",
+		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
+		jsConstLine(t, html, "STAGE_TRACKER_PR_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTOR"),
+		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRAIL_HOPS"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
+		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_CHIP_LIMIT"),
+		jsConstLine(t, html, "STAGE_TRACKER_AGE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ATTENTION_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_FAMILIES"),
+		jsConstLine(t, html, "STAGE_TRACKER_CAP_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_DEFAULT"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_NONE"),
+		jsConstBlock(t, html, "STAGE_TRACKER_MOTIONS"),
+		jsConstLine(t, html, "STAGE_TRACKER_PREVIEW_STAGES"),
+		"var _stageTrackerPreviewAt = 0; var _stageTrackerCols = null; var _stageTrackerMoves = {};",
+		jsFunc(t, html, "esc"),
+		jsFunc(t, html, "agentNowAgo"),
+		jsFunc(t, html, "agentNowClockTime"),
+		jsFunc(t, html, "stageTrackerWaitSince"),
+		jsFunc(t, html, "stageTrackerLabelFamily"),
+		jsFunc(t, html, "stageTrackerIcon"),
+		jsFunc(t, html, "stageTrackerPRRef"),
+		jsFunc(t, html, "stageTrackerActorKind"),
+		jsFunc(t, html, "stageTrackerHeaderHtml"),
+		jsFunc(t, html, "stageTrackerHoldLabels"),
+		jsFunc(t, html, "stageTrackerSoakLeft"),
+		jsFunc(t, html, "stageTrackerStripItems"),
+		jsFunc(t, html, "stageTrackerCurrentStageHtml"),
+		jsFunc(t, html, "stageTrackerTooltip"),
+		jsFunc(t, html, "stageTrackerChipsHtml"),
+		jsFunc(t, html, "stageTrackerHeadColsHtml"),
+		jsFunc(t, html, "stageTrackerSinceHtml"),
+		jsFunc(t, html, "stageTrackerSubRowHtml"),
+		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerSortKey"),
+		jsFunc(t, html, "stageTrackerHeadline"),
+		jsFunc(t, html, "stageTrackerAnchor"),
+		jsFunc(t, html, "stageTrackerSegments"),
+		jsFunc(t, html, "stageTrackerShortAgo"),
+		jsFunc(t, html, "stageTrackerRowHtml"),
+		jsFunc(t, html, "stageTrackerPRIssueSlot"),
+		jsFunc(t, html, "stageTrackerItemKey"),
+		jsFunc(t, html, "stageTrackerMoveAttrs"),
+		jsFunc(t, html, "stageTrackerColIndex"),
+		jsFunc(t, html, "stageTrackerSampleRowHtml"),
+		jsFunc(t, html, "stageTrackerSampleStrip"),
+		jsFunc(t, html, "stageTrackerMotionSectionHtml"),
+		jsFunc(t, html, "stageTrackerPreviewMotion"),
+	}, "\n") + `
+const stages = [
+  { number: 10, label: 'Actionable', short: 'Actionable' }, { number: 20, label: 'Claimed', short: 'Claimed' },
+  { number: 30, label: 'PR in progress', short: 'PR in progress' }, { number: 50, label: 'Review pending', short: 'CI / Review' },
+  { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' }, { number: 110, label: 'Merged', short: 'Merged' },
+];
+const _stageTracker = { stages };
+const PIPE = 'aria-label="Pipeline progress"';
+const count = (s, needle) => s.split(needle).length - 1;
+const chevrons = (s) => count(s.slice(s.indexOf(PIPE)).split('</ol>')[0], '<li class="ham-seg');
+const activeShort = (s) => { const m = s.slice(s.indexOf(PIPE)).split('</ol>')[0].match(/<span class="ham-seg-t">([^<]+)<\/span>/); return m && m[1].trim(); };
+
+// A live row for comparison: the sample must have the same chevron count.
+const liveRow = stageTrackerRowHtml({ repo: 'hive/x', number: 7, kind: 'issue', title: 'Live', url: '#', stage: 30, stage_since: '' }, stages, { nowMs: Date.now() });
+const LIVE_CHEVRONS = chevrons(liveRow);
+assert.ok(LIVE_CHEVRONS >= stages.length, 'live row draws a chevron per column');
+
+// One sample row, inside #sts-motion, with exactly one pipeline strip, drawn
+// by the real row builder (same .ham-row/.ham-strip markup as live rows).
+function render() {
+  const section = stageTrackerMotionSectionHtml('wash', stages);
+  assert.ok(section.indexOf('id="sts-motion"') < section.indexOf('id="sts-sample"'), 'sample lives under #sts-motion');
+  const sample = section.slice(section.indexOf('id="sts-sample"'));
+  assert.strictEqual(count(sample, '<div class="ham-row"'), 1, 'exactly one sample row');
+  assert.strictEqual(count(sample, PIPE), 1, 'exactly one chevron strip');
+  assert.strictEqual(chevrons(sample), LIVE_CHEVRONS, 'same chevron count as a live row');
+  assert.strictEqual(count(sample, 'ham-seg active'), 1, 'one lit chevron');
+  return sample;
+}
+let first = render();
+assert.strictEqual(activeShort(first), 'Claimed', 'sample starts at Claimed');
+// settings re-render (setIfChanged) yields the same single row
+assert.strictEqual(render(), first, 'settings re-render is idempotent');
+
+// -- fake DOM: #sts-sample holds a string; querySelector only answers the
+// pipeline-strip selector, and only when that strip is unique --
+const animated = [];
+const sampleEl = {
+  _html: first,
+  get innerHTML() { return this._html; }, set innerHTML(v) { this._html = v; },
+  querySelector(sel) {
+    assert.ok(sel.includes('.ham-row') && sel.includes(PIPE), 'preview targets the pipeline strip, not the title columns: ' + sel);
+    return count(this._html, PIPE) === 1 ? { sel } : null;
+  },
+};
+global.document = { getElementById: id => (id === 'sts-sample' ? sampleEl : null) };
+function stageTrackerAnimateMove(strip, from, to, effect) { animated.push([from, to, effect]); return true; }
+function stageTrackerMotionEffect(id) { return id; }
+function stageTrackerReducedMotion() { return false; }
+
+// N Preview clicks: still one row, one strip, lit chevron alternating
+const want = ['CI / Review', 'Claimed', 'CI / Review', 'Claimed', 'CI / Review'];
+for (let i = 0; i < want.length; i++) {
+  stageTrackerPreviewMotion(i % 2 ? 'comet' : 'wash');
+  const s = sampleEl.innerHTML;
+  assert.strictEqual(count(s, '<div class="ham-row"'), 1, 'click ' + (i + 1) + ': one row');
+  assert.strictEqual(count(s, PIPE), 1, 'click ' + (i + 1) + ': one chevron strip');
+  assert.strictEqual(chevrons(s), LIVE_CHEVRONS, 'click ' + (i + 1) + ': chevron count');
+  assert.strictEqual(count(s, 'ham-seg active'), 1, 'click ' + (i + 1) + ': one lit chevron');
+  assert.strictEqual(activeShort(s), want[i], 'click ' + (i + 1) + ': destination lit');
+}
+const claimed = stageTrackerColIndex({ kind: 'issue', stage: 20 }, stages), review = stageTrackerColIndex({ kind: 'issue', stage: 50 }, stages);
+assert.deepStrictEqual(animated, [[claimed, review, 'wash'], [review, claimed, 'comet'], [claimed, review, 'wash'], [review, claimed, 'comet'], [claimed, review, 'wash']], 'each click animates origin → destination on the single strip');
+// a re-render after clicks picks up where the preview left off
+assert.strictEqual(activeShort(stageTrackerMotionSectionHtml('wash', stages)), 'CI / Review');
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node motion preview sample fixture failed: %v\n%s", err, out)
+	}
+}

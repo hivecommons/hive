@@ -14659,6 +14659,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        Preview that plays it on a sample row inside the modal. */
     const STAGE_TRACKER_PREVIEW_STAGES = [20, 50];
     var _stageTrackerPreviewAt = 0;
+    // Pure: the whole sample — column header plus ONE real tracker row built
+    // by stageTrackerRowHtml so its geometry matches the live rows. The
+    // preview replaces #sts-sample's content with this (never appends).
+    function stageTrackerSampleRowHtml(stage, stages) {
+      const sample = { repo: 'hive/sample', number: 1, kind: 'issue', title: 'Sample item', url: '#', stage, stage_since: '' };
+      return stageTrackerHeaderHtml(stages) + stageTrackerRowHtml(sample, stages, { nowMs: Date.now() });
+    }
+    // A row holds two .ham-strip lists (the title/head columns and the
+    // pipeline chevrons); only the pipeline one is animated.
+    function stageTrackerSampleStrip(sample) {
+      return sample ? sample.querySelector('.ham-row .ham-strip[aria-label="Pipeline progress"]') : null;
+    }
     // Pure: the #sts-motion section. `motion` is the saved choice, `stages`
     // the live stage list for the sample row.
     function stageTrackerMotionSectionHtml(motion, stages) {
@@ -14667,12 +14679,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <label class="sts-motion-label" for="sts-motion-${esc(m.id)}"><span>${m.key ? `<span class="sts-motion-key">${esc(m.key)}</span>` : ''}${esc(m.label)}${m.id === STAGE_TRACKER_MOTION_DEFAULT ? ' <span class="sts-motion-desc">(default)</span>' : ''}</span><span class="sts-motion-desc">${esc(m.desc)}</span></label>
           ${m.id === STAGE_TRACKER_MOTION_NONE ? '<span></span>' : `<button type="button" class="ham-chip" data-action="stageTrackerPreviewMotion" data-arg0="${esc(m.id)}" data-stop="1" title="Play ${esc(m.label)} on the sample row">Preview</button>`}
         </li>`).join('');
-      const sample = { repo: 'hive/sample', number: 1, kind: 'issue', title: 'Sample item', url: '#', stage: STAGE_TRACKER_PREVIEW_STAGES[0], stage_since: '' };
       return `<section class="overview-settings-section" id="sts-motion" aria-labelledby="sts-motion-title">
           <div class="overview-settings-card-title" id="sts-motion-title">Movement animation</div>
           <p class="sts-hint">Plays once on a row when its lit chevron moves to another column between refreshes, forwards or back: the old chevron flashes twice, the chosen effect travels, and the new chevron lands lit. Under reduced motion every choice becomes one soft flash and a plain crossfade.</p>
           <ol class="sts-motion-list" role="radiogroup" aria-label="Movement animation">${opts}</ol>
-          <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerHeaderHtml(stages)}${stageTrackerRowHtml(sample, stages, { nowMs: Date.now() })}</div>
+          <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerSampleRowHtml(STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt], stages)}</div>
           <div class="sts-row"><label><input type="checkbox" id="sts-rm-preview" data-change-action="stageTrackerRmPreview" data-arg-types="c"> Preview the reduced-motion fallback</label></div>
         </section>`;
     }
@@ -14686,15 +14697,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // consulted; reduced motion still is).
     function stageTrackerPreviewMotion(id) {
       const sample = document.getElementById('sts-sample');
-      const strip = sample && sample.querySelector('.ham-row .ham-strip');
-      if (!strip) return;
+      if (!sample) return;
       const stages = (_stageTracker && _stageTracker.stages) || [];
       const fromStage = STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt];
       _stageTrackerPreviewAt = (_stageTrackerPreviewAt + 1) % STAGE_TRACKER_PREVIEW_STAGES.length;
       const toStage = STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt];
       const from = stageTrackerColIndex({ kind: 'issue', stage: fromStage }, stages), to = stageTrackerColIndex({ kind: 'issue', stage: toStage }, stages);
-      strip.innerHTML = stageTrackerStripItems({ repo: 'hive/sample', number: 1, kind: 'issue', stage: toStage }, stages, null);
-      stageTrackerAnimateMove(strip, from, to, stageTrackerMotionEffect(id, stageTrackerReducedMotion()));
+      sample.innerHTML = stageTrackerSampleRowHtml(toStage, stages);
+      const strip = stageTrackerSampleStrip(sample);
+      if (strip) stageTrackerAnimateMove(strip, from, to, stageTrackerMotionEffect(id, stageTrackerReducedMotion()));
     }
 
     function parseCadenceMinutes(cadence) {
