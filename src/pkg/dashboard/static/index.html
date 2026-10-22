@@ -2856,6 +2856,7 @@
     .cost-stat .clabel { font-size: var(--fs-xs); color: var(--muted); }
     .cost-badge { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: var(--r); margin-left: var(--sp-3); vertical-align: middle; }
     .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
+    .cost-help { display: inline-flex; align-items: center; justify-content: center; width: 1.1em; height: 1.1em; margin-left: var(--sp-2); border-radius: 50%; border: 1px solid var(--muted); color: var(--muted); font-size: 0.55em; font-weight: 700; vertical-align: middle; cursor: help; }
     .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
     .cost-gateways { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: 14px; }
     .cost-gateway { border: 1px solid var(--border); border-radius: 8px; padding: var(--sp-4) var(--sp-5); }
@@ -8026,7 +8027,7 @@
       'lifecycle-section': { heading: 'Lifecycle Timeline', help: 'A timeline of recent pull requests, from when they were opened to when they were merged or got stuck.' },
       'pr-throughput-section': { heading: 'Throughput', help: 'How many pull requests were opened, merged and closed over a chosen time window, and who did the work.' },
       'token-panel': { heading: 'Tokens', help: 'How much text the AI models read and wrote for Hive recently, broken down by model and by worker.' },
-      'cost-panel': { heading: 'Cost', help: "An estimate of what Hive's use of AI models has cost so far, based on public list prices." },
+      'cost-panel': { heading: 'Cost', help: "An estimate of what Hive's use of AI models would cost at public per-token list prices. It is not a bill: Copilot and Claude subscription seats and self-hosted inference are not billed per token, so real spend can be far lower." },
       'repos-section': { heading: 'Projects', help: 'One card per repository Hive looks after, listing its open issues and pull requests grouped by what each one needs next.' },
       'acmm-eval-section': { heading: 'ACMM Eval', help: 'How ready your repositories are for Hive to work on them alone, scored against a published checklist.' },
       'approvals-section': { heading: 'Approvals', help: 'Actions Hive wants to take that are waiting for you to approve or reject them.' },
@@ -21360,15 +21361,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       '</div>';
     }
 
+    // fmtTokens keeps at least two significant digits at every magnitude, so
+    // 176,372 output tokens read "176K" rather than the "0.000B" the
+    // billions-only scale produced for every sub-million count (#13484).
     function fmtTokens(n) {
+      n = Number(n) || 0;
       if (n === 0) return '0';
-      const b = n / 1e9;
-      if (b >= 100) return b.toFixed(0) + 'B';
-      if (b >= 10) return b.toFixed(1) + 'B';
-      if (b >= 1) return b.toFixed(2) + 'B';
-      if (b >= 0.1) return b.toFixed(2) + 'B';
-      if (b >= 0.01) return b.toFixed(3) + 'B';
-      return b.toFixed(3) + 'B';
+      const scale = (v, unit) => {
+        if (v >= 100) return v.toFixed(0) + unit;
+        if (v >= 10) return v.toFixed(1) + unit;
+        return v.toFixed(2) + unit;
+      };
+      if (n >= 1e9) return scale(n / 1e9, 'B');
+      if (n >= 1e6) return scale(n / 1e6, 'M');
+      if (n >= 1e3) return scale(n / 1e3, 'K');
+      return String(Math.round(n));
     }
     function pillAge(createdAt) {
       if (!createdAt) return '';
@@ -22938,33 +22945,71 @@ function burnAreaChart() {
       return '$' + formatNumber(n, 'en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
     }
 
+    // Headline wording (#13484): one plainly-named figure. "lineage" and
+    // "persisted history" were implementation terms; the card now says what
+    // the number is (an estimate at list price), from when, and that it is
+    // not an invoice. The live token summary is shown as a subset of the
+    // headline, dated from its last reset rather than from the oldest
+    // surviving session file.
+    const COST_HEADLINE_LABEL = 'Estimated spend at list price';
+    const COST_NOT_A_BILL = 'tokens × public per-token price · not a bill';
+
     function costTotalLabel(total) {
       if (total && total.firstTimestamp) {
-        return `estimated total — since ${fmtCostDateTime(total.firstTimestamp)} (persisted history × list price)`;
+        return `${COST_HEADLINE_LABEL} — since ${fmtCostDateTime(total.firstTimestamp)} · ${COST_NOT_A_BILL}`;
       }
-      return 'estimated total — persisted history unavailable';
+      return `${COST_HEADLINE_LABEL} — no recorded history yet`;
     }
 
-    function costTotalTooltip(total) {
+    // costLiveSummaryLabel describes the live token summary (what /api/cost
+    // estimated.total_usd holds right now) relative to the headline.
+    function costLiveSummaryLabel(total) {
+      if (!total || total.currentUSD == null) return '';
+      const lastReset = total.resets.length ? total.resets[total.resets.length - 1].timestamp : 0;
+      let since = '';
+      if (lastReset) since = ` since the last reset on ${fmtCostDateTime(lastReset)}`;
+      else if (total.currentStart) since = ` (sessions since ${fmtCostDateTime(total.currentStart)})`;
+      return `of which ${fmtUSD(total.currentUSD)} is in the live token summary${since}`;
+    }
+
+    function costTotalTooltip(total, cost) {
       if (!total || !total.series.length) return 'no cost records yet';
-      const parts = [`Persisted all-time estimate ${fmtUSD(total.usd)} since ${fmtCostDateTime(total.firstTimestamp)}.`];
+      const priceDate = cost && cost.price_table_date ? ` (price table ${cost.price_table_date})` : '';
+      const parts = [
+        `Estimate = recorded tokens × each model's public list price${priceDate}. Not an invoice: Copilot / Claude subscription seats and self-hosted inference are not billed per token, so real spend can be far lower.`,
+        `${fmtUSD(total.usd)} recorded since ${fmtCostDateTime(total.firstTimestamp)}.`,
+      ];
       if (total.currentUSD != null) {
-        const since = total.currentStart ? ` since ${fmtCostDateTime(total.currentStart)}` : '';
-        parts.push(`Current token-summary lineage: ${fmtUSD(total.currentUSD)}${since}.`);
+        const since = total.currentStart ? ` (sessions since ${fmtCostDateTime(total.currentStart)})` : '';
+        parts.push(`The live token summary currently holds ${fmtUSD(total.currentUSD)}${since}.`);
       }
       if (total.resets.length) {
-        parts.push(`Preserved ${total.resets.length} lineage reset(s): ` + total.resets.map(r => `${fmtCostDateTime(r.timestamp)} dropped ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ') + '.');
+        parts.push(`That summary was reset ${total.resets.length} time(s) — ${total.resets.map(r => `${fmtCostDateTime(r.timestamp)}: ${fmtUSD(r.previous)} → ${fmtUSD(r.next)}`).join('; ')} — and the spend before each reset is kept in the headline.`);
       }
       return parts.join(' ');
+    }
+
+    // costCountAsOf renders when the merged / closed counts were last confirmed
+    // (count_updated_at), and — when GitHub has since refused the refresh — how
+    // long they have been stale, so a cached denominator is never presented as
+    // live (#13484).
+    function costCountAsOf(cost) {
+      if (!cost) return '';
+      if (cost.count_stale) {
+        const since = cost.count_stale_since || cost.count_updated_at;
+        const when = since ? ` since ${fmtOverviewStaleSince(since)}` : '';
+        const why = cost.count_status && !/^stale/.test(cost.count_status) ? ` (${cost.count_status})` : (cost.count_status && /rate-limited/.test(cost.count_status) ? ' (GitHub rate-limited)' : '');
+        return `counts stale${when}${why}`;
+      }
+      return cost.count_updated_at ? `counts as of ${fmtOverviewStaleSince(cost.count_updated_at)}` : '';
     }
 
     function costCountLabel(cost, count, unitLabel, outcomeWindow) {
       if (!cost || !cost.count_available) return 'counts unavailable (GitHub rate-limited)';
       const n = Number(count) || 0;
-      const staleSince = cost.count_stale && cost.count_stale_since ? ` since ${fmtOverviewStaleSince(cost.count_stale_since)}` : '';
-      const stale = cost.count_stale ? ` · ${cost.count_status || 'stale'}${staleSince}` : '';
       const window = outcomeWindow ? ` ${outcomeWindow}` : '';
-      return `${formatNumber(n, 'en-US')} ${unitLabel}${window}${stale}`;
+      const asOf = costCountAsOf(cost);
+      return `total ÷ ${formatNumber(n, 'en-US')} ${unitLabel}${window}${asOf ? ` · ${asOf}` : ''}`;
     }
 
     function costPerUnitDisplay(totalUSD, count, unitLabel, countsAvailable = true, countStatus = '') {
@@ -22977,13 +23022,13 @@ function burnAreaChart() {
       const status = countStatus ? ` (${countStatus})` : '';
       return {
         value: fmtUSD(value),
-        title: `${fmtUSD(total)} ÷ ${formatNumber(n, 'en-US')} ${unitLabel} = ${fmtUSD(value)}${status}`,
+        title: `${fmtUSD(total)} ÷ ${formatNumber(n, 'en-US')} ${unitLabel} = ${fmtUSD(value)}${status}. The headline total divided by this count — cost / PR and cost / issue share one total and are not additive.`,
       };
     }
 
     function costOutcomeWindowLabel(cost, fallbackTotal) {
       const start = Number(cost && cost.count_window_start) || 0;
-      return start > 0 ? `since ${fmtCostDateTime(start)}` : 'outcome window pending refresh';
+      return start > 0 ? `since ${fmtCostDateTime(start)}` : 'window pending refresh';
     }
 
     // Last cost payload, so the range pills can re-render the trend chart
@@ -23184,7 +23229,7 @@ function burnAreaChart() {
       if (!el) return;
       _lastCost = cost;
       if (!cost || (!cost.estimated && (!cost.gateways || cost.gateways.length === 0))) {
-        morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: '$0', summaryTitle: 'Estimated all-time total', bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, '<div class="text-muted">No cost data yet.</div>'));
+        morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: '$0', summaryTitle: COST_HEADLINE_LABEL, bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, '<div class="text-muted">No cost data yet.</div>'));
         applyCostCollapse();
         return;
       }
@@ -23373,11 +23418,12 @@ function burnAreaChart() {
       // the single enforced budget.
       const launchTable = costLaunchTableHtml(lastLaunchCost);
       const allTimeCost = costAllTimeEstimate(est);
-      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs', cost.count_available, cost.count_status);
-      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues', cost.count_available, cost.count_status);
+      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'PRs merged by hive', cost.count_available, cost.count_status);
+      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'issues closed by hive', cost.count_available, cost.count_status);
       const outcomeWindow = costOutcomeWindowLabel(cost, allTimeCost);
-      const prCountLabel = costCountLabel(cost, cost.merged_prs, 'hive-attributed merged PRs', outcomeWindow);
-      const issueCountLabel = costCountLabel(cost, cost.closed_issues, 'hive-attributed closed issues', outcomeWindow);
+      const prCountLabel = costCountLabel(cost, cost.merged_prs, 'PRs merged by hive', outcomeWindow);
+      const issueCountLabel = costCountLabel(cost, cost.closed_issues, 'issues closed by hive', outcomeWindow);
+      const countAuthorNote = cost.count_author ? ` Counted for author ${cost.count_author} in the configured repos.` : '';
       const coinLabel = est.coin_label || '';
       const coinEquiv = Number(est.coin_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_usd)}` : '';
       const coinBudgetEquiv = Number(est.coin_budget_usd) > 0 ? ` ≈ ${fmtUSD(est.coin_budget_usd)}` : '';
@@ -23385,21 +23431,24 @@ function burnAreaChart() {
       const coinStat = coinLabel && Number(est.coins) > 0
         ? `<div class="cost-stat"><div class="cval" title="Bob backend coin usage estimated from configured tokens-per-coin conversion">${fmtCoins(est.coins, coinLabel)}${coinEquiv}</div><div class="clabel">Bob coins${est.coin_budget ? ` — ${fmtCoins(est.coins, coinLabel)} of ${fmtCoins(est.coin_budget, coinLabel)}${coinBudgetEquiv}` : ''}${est.usd_budget ? ` · USD cap ${fmtUSD(est.usd_budget)}${usdBudgetEquiv}` : ''}</div></div>`
         : '';
+      const headlineTooltip = costTotalTooltip(allTimeCost, cost);
       const currentLine = allTimeCost.currentUSD != null && allTimeCost.currentUSD !== allTimeCost.usd
-        ? `<div class="clabel" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.currentUSD)} current lineage${allTimeCost.currentStart ? ` since ${esc(fmtCostDateTime(allTimeCost.currentStart))}` : ''}</div>`
+        ? `<div class="clabel" title="${esc(headlineTooltip)}">${esc(costLiveSummaryLabel(allTimeCost))}</div>`
         : '';
 
       const costBody = `
           <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
           <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
           <div class="cost-grid sec-headline" data-collapsed-keep>
-            <div class="cost-stat"><div class="cval" title="${esc(costTotalTooltip(allTimeCost))}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est">est.</span></div><div class="clabel">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
+            <div class="cost-stat"><div class="cval" title="${esc(headlineTooltip)}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est" title="${esc(headlineTooltip)}">est.</span><span class="cost-help" role="img" aria-label="What this estimate means" title="${esc(headlineTooltip)}">?</span></div><div class="clabel" title="${esc(headlineTooltip)}">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}
-            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title)}">${prUnit.value}</div><div class="clabel">cost / PR — ${esc(prCountLabel)}</div></div>
-            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title)}">${issueUnit.value}</div><div class="clabel">cost / issue — ${esc(issueCountLabel)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title + countAuthorNote)}">${prUnit.value}</div><div class="clabel">cost / merged PR — ${esc(prCountLabel)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title + countAuthorNote)}">${issueUnit.value}</div><div class="clabel">cost / closed issue — ${esc(issueCountLabel)}</div></div>
           </div>
+          <div class="cost-disclaimer cost-sub-disclaimer">cost / merged PR and cost / closed issue each divide the same headline total — two views of one figure, not two costs to add.</div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
+          <div class="cost-subtable-title" title="Live token summary only — the sessions currently on disk, priced at list price. Spend recorded before a reset of that summary is in the headline but not in these rows.">usage by model <span class="cost-window-tag">(live token summary · ${esc(usageWindow)})</span></div>
           <div class="cost-table-scroll"><table class="cost-table table-compact">
             <thead><tr>${costSortTh('model', 'name', 'model')}${costSortTh('model', 'running', 'running agents', { align: 'center', title: 'Running agents on this model right now — hover the count for names' })}${costSortTh('model', 'input', 'input', { align: 'right' })}${costSortTh('model', 'output', 'output', { align: 'right' })}${costSortTh('model', 'usd', 'est. $', { align: 'right' })}</tr></thead>
             <tbody>${modelRows || '<tr><td class="text-muted" colspan="5">no usage yet</td></tr>'}</tbody>
@@ -23414,7 +23463,7 @@ function burnAreaChart() {
       // runs on every SSE agent-status tick, and an innerHTML rebuild that
       // inserted the sub-tables open and collapsed them after a forced layout
       // moved the page by their height every tick (#12512).
-      morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, costBody));
+      morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: headlineTooltip, bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, costBody));
       // Re-apply the persisted collapsed state so a poll re-render never resets
       // it. Sub-tables first: applyCostCollapse replays sparklines, which
       // forces a layout, and that layout must never see them open (#12512).

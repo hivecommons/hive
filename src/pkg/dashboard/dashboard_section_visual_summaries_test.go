@@ -178,10 +178,20 @@ func TestDashboardCostTileMathFormatting(t *testing.T) {
 		t.Fatal("cost formatting helper block end not found")
 	}
 	block := html[start : start+end]
+	tokStart := strings.Index(html, "    function fmtTokens(n) {")
+	if tokStart < 0 {
+		t.Fatal("fmtTokens helper not found")
+	}
+	tokEnd := strings.Index(html[tokStart:], "    function pillAge(")
+	if tokEnd < 0 {
+		t.Fatal("fmtTokens helper end not found")
+	}
+	block += html[tokStart : tokStart+tokEnd]
 
 	script := `
 const assert = require('node:assert/strict');
 function fmtCostDateTime(ms) { return new Date(ms).toISOString(); }
+function fmtOverviewStaleSince(ts) { return new Date(ts).toISOString(); }
 function formatNumber(value, locale, options) { try { return new Intl.NumberFormat(locale || undefined, options || {}).format(value); } catch (e) { return String(value); } }
 ` + block + `
 assert.equal(fmtUSD(0), '$0.00');
@@ -189,13 +199,14 @@ assert.equal(fmtUSD(0.004321), '$0.00432');
 assert.equal(fmtUSD(0.00999), '$0.00999');
 assert.equal(fmtUSD(5.48), '$5.48');
 
-let pr = costPerUnitDisplay(5.48, 937, 'hive-attributed merged PRs');
+let pr = costPerUnitDisplay(5.48, 937, 'PRs merged by hive');
 assert.equal(pr.value, '$0.00585');
-assert.equal(pr.title, '$5.48 ÷ 937 hive-attributed merged PRs = $0.00585');
+assert.ok(pr.title.startsWith('$5.48 ÷ 937 PRs merged by hive = $0.00585'), pr.title);
+assert.ok(/not additive/.test(pr.title), 'per-unit tooltip must say the tiles share one total');
 
-pr = costPerUnitDisplay(14005.48, 937, 'hive-attributed merged PRs');
+pr = costPerUnitDisplay(14005.48, 937, 'PRs merged by hive');
 assert.equal(pr.value, '$14.95');
-assert.equal(pr.title, '$14,005 ÷ 937 hive-attributed merged PRs = $14.95');
+assert.ok(pr.title.startsWith('$14,005 ÷ 937 PRs merged by hive = $14.95'), pr.title);
 
 let issue = costPerUnitDisplay(14005.48, 1182, 'hive-attributed closed issues');
 assert.equal(issue.value, '$11.85');
@@ -211,8 +222,36 @@ assert.equal(div0.title, 'no hive-attributed closed issues yet');
 let unavailable = costPerUnitDisplay(5.48, 0, 'hive-attributed closed issues', false, 'counts unavailable (GitHub rate-limited)');
 assert.equal(unavailable.value, '—');
 assert.equal(unavailable.title, 'counts unavailable (GitHub rate-limited)');
-assert.equal(costCountLabel({count_available:false}, 0, 'hive-attributed merged PRs', 'since Jul 24'), 'counts unavailable (GitHub rate-limited)');
-assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'persisted'}, 937, 'hive-attributed merged PRs', 'since Jul 24'), '937 hive-attributed merged PRs since Jul 24 · persisted');
+assert.equal(costCountLabel({count_available:false}, 0, 'PRs merged by hive', 'since Jul 24'), 'counts unavailable (GitHub rate-limited)');
+// Stale denominators carry their as-of time instead of a bare "stale" (#13484).
+assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'persisted',count_stale_since:'2026-08-18T00:00:00Z'}, 937, 'PRs merged by hive', 'since Jul 24'), 'total ÷ 937 PRs merged by hive since Jul 24 · counts stale since 2026-08-18T00:00:00.000Z (persisted)');
+assert.equal(costCountLabel({count_available:true,count_stale:true,count_status:'stale: GitHub rate-limited',count_stale_since:'2026-08-18T00:00:00Z'}, 283, 'PRs merged by hive', 'since Sep 13'), 'total ÷ 283 PRs merged by hive since Sep 13 · counts stale since 2026-08-18T00:00:00.000Z (GitHub rate-limited)');
+assert.equal(costCountLabel({count_available:true,count_updated_at:'2026-08-18T01:00:00Z'}, 937, 'PRs merged by hive', 'since Jul 24'), 'total ÷ 937 PRs merged by hive since Jul 24 · counts as of 2026-08-18T01:00:00.000Z');
+
+// Headline wording: plain label, no "lineage" / "persisted history" jargon, says it is not a bill.
+const total = { usd: 14005.48, firstTimestamp: 1, series: [{usd: 1}], currentUSD: 5.48, currentStart: 3, resets: [{ timestamp: 3, previous: 14000, next: 5.4 }] };
+const label = costTotalLabel(total);
+assert.ok(label.startsWith('Estimated spend at list price — since '), label);
+assert.ok(/not a bill/.test(label), label);
+assert.ok(!/lineage|persisted/i.test(label), label);
+const live = costLiveSummaryLabel(total);
+assert.ok(live.startsWith('of which $5.48 is in the live token summary since the last reset on '), live);
+assert.ok(!/lineage/i.test(live), live);
+const tip = costTotalTooltip(total, { price_table_date: '2026-10-01' });
+assert.ok(/public list price \(price table 2026-10-01\)/.test(tip), tip);
+assert.ok(/Not an invoice/.test(tip), tip);
+assert.ok(/reset 1 time/.test(tip), tip);
+assert.equal(costTotalLabel({ firstTimestamp: 0, series: [] }), 'Estimated spend at list price — no recorded history yet');
+
+// Token formatting keeps ≥2 significant digits (no "0.000B" for sub-million counts).
+assert.equal(fmtTokens(0), '0');
+assert.equal(fmtTokens(950), '950');
+assert.equal(fmtTokens(32963), '33.0K');
+assert.equal(fmtTokens(176372), '176K');
+assert.equal(fmtTokens(2500000), '2.50M');
+assert.equal(fmtTokens(61e6), '61.0M');
+assert.equal(fmtTokens(1.234e9), '1.23B');
+assert.equal(fmtTokens(325e9), '325B');
 `
 
 	cmd := exec.Command(node, "-e", script)

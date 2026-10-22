@@ -293,17 +293,18 @@ How much text the AI models read and wrote for Hive recently, broken down by mod
 
 ## Cost
 
-An estimate of what Hive's use of AI models has cost so far, based on public list prices.
+An estimate of what Hive's use of AI models would cost at public per-token list prices. It is not a bill.
 
-**What it tells you.** It turns token counts into money, so you can see what Hive costs.
+**What it tells you.** It turns token counts into money, so you can see roughly what Hive's model use is worth.
 
 **How the numbers are worked out.**
 
-- Cost is tokens multiplied by each model's public list price. The badge "est." is a reminder that it is an estimate.
-- If you pay a flat subscription, your real bill may differ.
-- **Cost per merged PR** and **cost per closed issue** divide the estimate by how many were merged or closed. With none, they show a dash.
+- The headline reads **Estimated spend at list price — since <date> · tokens × public per-token price · not a bill**. The date is the oldest cost snapshot the hive still holds. Hover the figure, the "est." badge or the **?** mark for the full explanation: Copilot and Claude subscription seats and self-hosted inference are not billed per token, so real spend can be far lower than the estimate.
+- Beneath it, **of which $X is in the live token summary since the last reset on <date>** says how much of the headline comes from the session files currently on disk. That summary starts over when the hive is rebuilt or its token store is cleared; spend recorded before each reset stays in the headline, which is why the two figures differ. (Older builds called this the "current lineage".)
+- **Cost / merged PR** and **cost / closed issue** each divide the *same* headline total by one count — they are two views of one figure, not two costs to add, and the card says so under the tiles. Each label spells out the division (**total ÷ N PRs merged by hive since <date>**) and when the count was last confirmed (**counts as of <time>**). With no cost or no count, they show a dash.
 - The merged and closed counts behind those two figures are kept by Hive itself: every `pull_request closed` (merged) and `issues closed` webhook event for the hive's own author adds one, and once an hour (`forgestate.CountsReconcileInterval`) the counts are re-read from GitHub search and overwritten so drift from missed events is corrected. Search is no longer queried on every 5-minute collection.
-- When that hourly check is rate-limited or fails, the last good counts stay in use and the count label reads **stale since <time>**. The cost API carries the moment as `count_stale_since` and names where the counts came from in `count_source` (`forgestate` or `search`).
+- When that hourly check is rate-limited or fails, the last good counts stay in use and the count label reads **counts stale since <time> (GitHub rate-limited)**, so a cached denominator is never presented as live. The cost API carries the moment as `count_stale_since`, the last successful read as `count_updated_at`, and names where the counts came from in `count_source` (`forgestate` or `search`).
+- The **usage by model** and **usage by sandbox** tables are built from the live token summary only (their window tag says so), so their totals match the "of which" line, not the headline.
 - When your AI gateway reports its own spending, that figure appears too.
 - The spend-over-time chart has a range selector: **hourly** (the current clock hour and the 23 before it, one bar per hour), **daily** (the last 14 calendar days including today, one bar per day — labelled by weekday when 7 or fewer are shown, by month/day beyond that), **weekly** (the current Monday→Sunday week and the 4 before it, one bar per week labelled by its Monday; the rest of this week is empty), **monthly** (the current calendar month and the 4 before it, one bar per month labelled by name) and **custom** (your own start and end; hour bars up to 2 days, day bars beyond). Boundaries follow your browser's clock.
 - A **−/+ stepper** right of the range chips grows or shrinks the window, showing the current size with its unit (**24 h**, **14 d**, **5 wk**, **5 mo**): hourly moves in steps of 6 hours between 6 and 72, daily in steps of 7 days between 7 and 60, weekly one week at a time between 2 and 26, monthly one month at a time between 2 and 24. The chips are disabled at the bounds, work from the keyboard, and the chosen size is remembered per range in this browser. Custom has no stepper — its bounds are explicit.
