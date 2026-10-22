@@ -104,7 +104,7 @@ func TestResolveSelfLoginSharesInflightLookup(t *testing.T) {
 				c.selfLoginMu.Lock()
 				c.selfLoginFailedAt = time.Now().Add(-selfLoginRetryAfter)
 				c.selfLoginMu.Unlock()
-				if login := c.resolveSelfLogin(nil); login != "" {
+				if login := c.resolveSelfLogin(context.Background()); login != "" {
 					t.Fatalf("failed retry login = %q", login)
 				}
 				if n := calls.Load(); n != 2 {
