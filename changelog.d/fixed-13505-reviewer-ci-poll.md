@@ -1,0 +1,1 @@
+- The reviewer lane's policy now carries the mandatory "do not wait for CI" guidance, so reviewer agents stop polling CI on PRs they have already handled instead of triggering the stop-polling nudge ([#13505](https://github.com/hivecommons/hive/issues/13505)).
