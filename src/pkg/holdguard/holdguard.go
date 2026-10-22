@@ -22,12 +22,16 @@
 //     EVERY merge lane re-gates, and the snapshot re-arms at the drifted head.
 //     A human lifting the re-applied hold after reading the evidence IS the
 //     fresh approval — that lift compares clean and the PR proceeds.
-//  4. Head moved, but a trusted human lifted the gate AFTER the branch's
-//     latest push (a rebase landed earlier during the hold, then the human
+//  4. Head moved, but a trusted human lifted the gate AFTER the current head
+//     arrived (a rebase landed earlier during the hold, then the human
 //     reviewed the result and lifted) ⇒ the lift covered the current head
 //     (LiftCoversCurrentHead), so the entry clears like step 2 instead of
-//     re-holding the PR a human just reviewed (#13603). A push at or after
-//     the lift, or a lift by the hive or any bot, still takes step 3.
+//     re-holding the PR a human just reviewed (#13603). The head's arrival
+//     is dated only by a server-stamped signal (the force-push event that
+//     produced it, else the earliest check suite / status created for it);
+//     commit dates are client-set and never trusted. A push at or after the
+//     lift, a lift by the hive or any bot, or no server signal at all still
+//     takes step 3.
 //
 // Held-gated PRs must also stay mergeable, not just frozen (#10437): while a
 // PR is held, the hive may merge its base in with its own identity to clear a
@@ -405,14 +409,33 @@ func Diff(recorded Entry, currentHeadSHA string, current []Commit) Drift {
 	return d
 }
 
+// Push-evidence kinds a GateLift.PushEvidence may carry: the server-stamped
+// signal that dated the current head's arrival (#13603).
+const (
+	// PushEvidenceForcePush: the `head_ref_force_pushed` timeline event that
+	// produced the current head (GitHub stamps its created_at).
+	PushEvidenceForcePush = "head_ref_force_pushed"
+	// PushEvidenceCheckSuite: the earliest check suite GitHub created for the
+	// head SHA when it first reached the repository.
+	PushEvidenceCheckSuite = "check_suite"
+	// PushEvidenceStatus: the earliest commit status created for the head SHA.
+	PushEvidenceStatus = "status"
+)
+
 // GateLift is the evidence the guard reads about the event that lifted a
 // PR's hold gate, relative to the PR's latest head change (#13603).
 type GateLift struct {
 	// LiftedAt is when the gate label was removed. Zero means unknown.
 	LiftedAt time.Time
-	// LatestPushAt is when the PR's head last changed (newest commit, or the
-	// latest force-push). Zero means unknown.
+	// LatestPushAt is when the current head arrived on the branch, taken from
+	// a server-stamped signal only (see PushEvidence). Zero means unknown.
+	// Commit committer dates are never acceptable here: git sets them
+	// client-side, so a contributor could backdate a commit pushed after the
+	// lift and have the stale lift honoured on new code.
 	LatestPushAt time.Time
+	// PushEvidence names the server-stamped signal LatestPushAt came from
+	// (one of the PushEvidence* constants); empty when LatestPushAt is zero.
+	PushEvidence string
 	// ActorIsHive reports that one of the hive's own accounts removed the
 	// label; the hive never approves for the human.
 	ActorIsHive bool
@@ -428,7 +451,9 @@ type GateLift struct {
 //
 // It fails closed: an unknown lift time or push time, or a lift by the hive
 // or any bot, never covers the head. A push at or after the lift is exactly
-// the attack the guard exists for and is never covered.
+// the attack the guard exists for and is never covered. Callers must supply
+// LatestPushAt from a server-stamped signal (force-push event, check suite or
+// status creation), never from a commit's committer date.
 func LiftCoversCurrentHead(lift GateLift) bool {
 	if lift.ActorIsHive || lift.ActorIsBot {
 		return false

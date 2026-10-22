@@ -50,7 +50,9 @@ type holdGuardServer struct {
 	commits       map[int][]map[string]any // PR number -> commit list served
 	issueComments map[int][]map[string]any
 	issueEvents   map[int][]map[string]any
-	timeline      map[int][]map[string]any // PR number -> issue timeline (#13603 gate-lift provenance)
+	timeline      map[int][]map[string]any    // PR number -> issue timeline (#13603 gate-lift provenance)
+	checkSuites   map[string][]map[string]any // head SHA -> check suites (#13603 server-stamped arrival)
+	statuses      map[string][]map[string]any // head SHA -> commit statuses (#13603 server-stamped arrival)
 	comments      []string
 	labels        []string
 
@@ -90,6 +92,18 @@ func (s *holdGuardServer) handler(t *testing.T) http.Handler {
 				events = []map[string]any{}
 			}
 			_ = json.NewEncoder(w).Encode(events)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/check-suites"):
+			suites := s.checkSuites[pathCommitSHA(t, r.URL.Path)]
+			if suites == nil {
+				suites = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(suites), "check_suites": suites})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/statuses"):
+			statuses := s.statuses[pathCommitSHA(t, r.URL.Path)]
+			if statuses == nil {
+				statuses = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(statuses)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			if s.failComments {
 				http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
@@ -153,6 +167,19 @@ func pathPRNumber(t *testing.T, path string) int {
 	}
 	t.Fatalf("no PR number in %q", path)
 	return 0
+}
+
+// pathCommitSHA extracts the ref from /repos/{o}/{r}/commits/{ref}/... paths.
+func pathCommitSHA(t *testing.T, path string) string {
+	t.Helper()
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		if p == "commits" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	t.Fatalf("no commit ref in %q", path)
+	return ""
 }
 
 func pathIssueNumber(t *testing.T, path string) int {
@@ -347,8 +374,10 @@ func TestEnforceHoldGuardDriftBlocksCommentsAndReholds(t *testing.T) {
 }
 
 // gateLiftTimeline builds the PR timeline the #13603 cases share: the PR was
-// held at c1, Renovate rebased it to r1 at 06:25, and the gate label was
-// removed at liftedAt by liftedBy.
+// held at c1, Renovate force-pushed the rebase r1 at 06:25 (the server-stamped
+// head_ref_force_pushed event names r1), and the gate label was removed at
+// liftedAt by liftedBy. The `committed` entry carries a client-set committer
+// date far in the past so that a reader trusting it would be caught.
 func gateLiftTimeline(gateLabel, liftedBy, liftedByType, liftedAt string) []map[string]any {
 	return []map[string]any{{
 		"event":      "labeled",
@@ -358,9 +387,10 @@ func gateLiftTimeline(gateLabel, liftedBy, liftedByType, liftedAt string) []map[
 	}, {
 		"event":     "committed",
 		"sha":       "r1",
-		"committer": map[string]string{"name": "mergeraptor[bot]", "date": "2026-10-22T06:25:00Z"},
+		"committer": map[string]string{"name": "mergeraptor[bot]", "date": "2020-01-01T00:00:00Z"},
 	}, {
 		"event":      "head_ref_force_pushed",
+		"commit_id":  "r1",
 		"actor":      map[string]string{"login": "mergeraptor[bot]", "type": "Bot"},
 		"created_at": "2026-10-22T06:25:01Z",
 	}, {
@@ -409,8 +439,14 @@ func TestEnforceHoldGuardPushAfterHumanLiftStillReholds(t *testing.T) {
 		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
 	}}
 	fake.timeline = map[int][]map[string]any{
-		// Lift at 06:00, before the 06:25 rebase/force-push.
-		7: gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T06:00:00Z"),
+		// Lift at 06:00, before the 06:25 rebase/force-push; the force-push
+		// event (server-stamped) names f1 as the head it produced.
+		7: append(gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T06:00:00Z"), map[string]any{
+			"event":      "head_ref_force_pushed",
+			"commit_id":  "f1",
+			"actor":      map[string]string{"login": "other-agent", "type": "User"},
+			"created_at": "2026-10-22T06:25:02Z",
+		}),
 	}
 	client := newHoldGuardClient(t, fake)
 	client.SetAppBotLogin("kubestellar-hive[bot]")
@@ -427,6 +463,129 @@ func TestEnforceHoldGuardPushAfterHumanLiftStillReholds(t *testing.T) {
 	}
 	if rec, ok := store.Recorded("acme/widgets", 7); !ok || rec.HeadSHA != "f1" {
 		t.Fatalf("snapshot after drift = %+v, want re-armed at f1", rec)
+	}
+}
+
+// #13603 / maintainer decision: an ordinary (non-force) push after the human
+// lift whose commit carries a BACKDATED committer date must still re-hold.
+// The only acceptable arrival evidence is server-stamped: here the earliest
+// check suite for f1 was created after the lift.
+func TestEnforceHoldGuardBackdatedCommitPushedAfterLiftStillReholds(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
+	}}
+	tl := gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T18:19:00Z")
+	// Ordinary push of f1 (no force-push event) with a committer date well
+	// before the lift; GitHub's check suite says it arrived after the lift.
+	tl = append(tl, map[string]any{
+		"event":     "committed",
+		"sha":       "f1",
+		"committer": map[string]string{"name": "other-agent", "date": "2026-10-22T07:00:00Z"},
+	})
+	fake.timeline = map[int][]map[string]any{7: tl}
+	fake.checkSuites = map[string][]map[string]any{
+		"f1": {{"id": 1, "head_sha": "f1", "created_at": "2026-10-22T19:00:00Z"}},
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "f1"}), discardLogger())
+	if !got["widgets/7"] {
+		t.Fatalf("backdated commit pushed after the human lift must still be re-review-gated, got %v", got)
+	}
+	if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
+	}
+	if rec, ok := store.Recorded("acme/widgets", 7); !ok || rec.HeadSHA != "f1" {
+		t.Fatalf("snapshot after drift = %+v, want re-armed at f1", rec)
+	}
+}
+
+// #13603: an ordinary push during the hold, dated by the server-side check
+// suite / status created for the head, followed by a human lift, is covered.
+func TestEnforceHoldGuardHumanLiftAfterOrdinaryPushAcceptsCurrentHead(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		suites   []map[string]any
+		statuses []map[string]any
+	}{
+		{"check suite", []map[string]any{{"id": 1, "head_sha": "p1", "created_at": "2026-10-22T06:30:00Z"}}, nil},
+		{"commit status", nil, []map[string]any{{"id": 1, "state": "pending", "created_at": "2026-10-22T06:30:00Z"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			fake := &holdGuardServer{commits: map[int][]map[string]any{
+				7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("p1", "strategist-bot", "docs: fix typo")},
+			}}
+			// No force-push for p1; its committer date is irrelevant.
+			fake.timeline = map[int][]map[string]any{7: {{
+				"event":      "labeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": "kubestellar-hive[bot]", "type": "Bot"},
+				"created_at": "2026-10-22T05:00:00Z",
+			}, {
+				"event":     "committed",
+				"sha":       "p1",
+				"committer": map[string]string{"name": "strategist-bot", "date": "2026-10-23T00:00:00Z"},
+			}, {
+				"event":      "unlabeled",
+				"label":      map[string]string{"name": "hold"},
+				"actor":      map[string]string{"login": "clubanderson", "type": "User"},
+				"created_at": "2026-10-22T18:19:00Z",
+			}}}
+			fake.checkSuites = map[string][]map[string]any{"p1": tc.suites}
+			fake.statuses = map[string][]map[string]any{"p1": tc.statuses}
+			client := newHoldGuardClient(t, fake)
+			client.SetAppBotLogin("kubestellar-hive[bot]")
+			cfg := escalationTestConfig()
+			store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+			got := enforceHoldGuard(context.Background(), cfg, client, client,
+				actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "p1"}), discardLogger())
+			if len(got) != 0 {
+				t.Fatalf("human lift after the server-dated push must reopen the merge lanes, got %v", got)
+			}
+			if len(fake.comments)+len(fake.labels) != 0 {
+				t.Fatalf("human lift after the push must not comment or re-hold, saw %v / %v", fake.comments, fake.labels)
+			}
+			if _, ok := store.Recorded("acme/widgets", 7); ok {
+				t.Fatal("human lift after the push must clear the snapshot")
+			}
+		})
+	}
+}
+
+// #13603: with no server-stamped arrival signal for the head (no force-push
+// event naming it, no check suite, no status) the guard fails closed even
+// though the commit's committer date predates the human lift.
+func TestEnforceHoldGuardNoServerPushEvidenceFailsClosed(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
+	}}
+	tl := gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T18:19:00Z")
+	tl = append(tl, map[string]any{
+		"event":     "committed",
+		"sha":       "f1",
+		"committer": map[string]string{"name": "other-agent", "date": "2026-10-22T07:00:00Z"},
+	})
+	fake.timeline = map[int][]map[string]any{7: tl}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "f1"}), discardLogger())
+	if !got["widgets/7"] {
+		t.Fatalf("no server push evidence must fail closed into re-review, got %v", got)
+	}
+	if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
 	}
 }
 

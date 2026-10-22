@@ -158,20 +158,23 @@ func enforceHoldGuard(
 			}
 		}
 		if ghClient != nil {
-			// A trusted human who removed the gate label AFTER the branch's
-			// latest push reviewed the head that is on the branch now; an
+			// A trusted human who removed the gate label AFTER the current
+			// head arrived reviewed the head that is on the branch now; an
 			// earlier rebase during the hold is not drift to them (#13603).
-			// Lookup failures fail closed into the drift path below.
-			lift, found, err := ghClient.LatestHoldGateLift(ctx, pr.Repo, pr.Number)
+			// Arrival is dated by server-stamped signals only (force-push
+			// event, check suite / status creation) — never commit dates.
+			// Lookup failures and missing signals fail closed into the drift
+			// path below.
+			lift, found, err := ghClient.LatestHoldGateLift(ctx, pr.Repo, pr.Number, pr.HeadSHA)
 			if err != nil {
 				logger.Warn("hold guard: could not read gate-lift provenance; treating moved head as drift",
 					"repo", repo, "pr", pr.Number, "error", err)
 			} else if found && holdguard.LiftCoversCurrentHead(lift) {
 				store.Clear(repo, pr.Number)
-				logger.Info("hold guard: gate lifted by a human after the latest push; current head accepted",
+				logger.Info("hold guard: gate lifted by a human after the current head arrived; head accepted",
 					"repo", repo, "pr", pr.Number,
 					"recorded_head", rec.HeadSHA, "current_head", pr.HeadSHA,
-					"lifted_at", lift.LiftedAt, "latest_push_at", lift.LatestPushAt)
+					"lifted_at", lift.LiftedAt, "head_arrived_at", lift.LatestPushAt, "push_evidence", lift.PushEvidence)
 				continue
 			}
 		}
