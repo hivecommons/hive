@@ -29,6 +29,12 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 		`localStorage.setItem(STAGE_TRACKER_MOTION_KEY, v)`,
 		`id="sts-sounds"`,
 		`id="sts-motion"`,
+		// The modal body is a grid whose items include the .config-body::before
+		// scroll spacer; without align-content:start the spare modal height
+		// stretched that spacer into a ~100px band above the Sounds heading.
+		`.config-body::before { content: ''; display: block; height: var(--config-body-pad); }`,
+		`.overview-settings-body { display: grid; gap: var(--sp-4); align-content: start; }`,
+		`.overview-settings-section { display: grid; gap: var(--sp-3); align-content: start;`,
 		`data-action="stageTrackerPreviewMotion"`,
 		`data-change-action="stageTrackerMotionChange"`,
 		`function stageTrackerColIndex(item, stages)`,
@@ -493,6 +499,10 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		jsFunc(t, html, "stageTrackerSampleStrip"),
 		jsFunc(t, html, "stageTrackerMotionSectionHtml"),
 		jsFunc(t, html, "stageTrackerPreviewMotion"),
+		jsConstLine(t, html, "STAGE_TRACKER_VOLUME_MAX"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLIP_MAX_BYTES"),
+		jsConstBlock(t, html, "STAGE_TRACKER_SOUND_KINDS"),
+		jsFunc(t, html, "stageTrackerSettingsHtml"),
 	}, "\n") + `
 const stages = [
   { number: 10, label: 'Actionable', short: 'Actionable' }, { number: 20, label: 'Claimed', short: 'Claimed' },
@@ -510,11 +520,23 @@ const liveRow = stageTrackerRowHtml({ repo: 'hive/x', number: 7, kind: 'issue', 
 const LIVE_CHEVRONS = chevrons(liveRow);
 assert.ok(LIVE_CHEVRONS >= stages.length, 'live row draws a chevron per column');
 
+// The modal body must start with the Sounds section itself — no empty
+// block (stale preview container, notice slot, blank paragraph) before it.
+const body = stageTrackerSettingsHtml({ on: false, volume: 70, clips: {}, names: { open: 'Built-in', merge: 'Built-in' }, motion: 'wash', stages });
+assert.ok(/^<div class="overview-settings-section" id="sts-sounds"><div class="overview-settings-card-title">Sounds<\/div>/.test(body), 'no empty block precedes #sts-sounds: ' + body.slice(0, 120));
+assert.strictEqual(body.indexOf('id="sts-sounds"'), body.indexOf('id="sts-'), 'Sounds is the first section');
+assert.ok(!/><\/(div|p|section|ol)>/.test(body.slice(0, body.indexOf('id="sts-sounds"') + 1)), 'nothing empty before Sounds');
+
 // One sample row, inside #sts-motion, with exactly one pipeline strip, drawn
 // by the real row builder (same .ham-row/.ham-strip markup as live rows).
 function render() {
   const section = stageTrackerMotionSectionHtml('wash', stages);
   assert.ok(section.indexOf('id="sts-motion"') < section.indexOf('id="sts-sample"'), 'sample lives under #sts-motion');
+  // In flow inside the section: intro sentence → preview block (sample row +
+  // reduced-motion checkbox together) → radio list; not trailing under F.
+  const at = (n) => section.indexOf(n);
+  assert.ok(at('class="sts-hint"') < at('class="sts-preview"') && at('class="sts-preview"') < at('id="sts-sample"') && at('id="sts-sample"') < at('id="sts-rm-preview"') && at('id="sts-rm-preview"') < at('class="sts-motion-list"'), 'preview block sits between the intro and the radios');
+  assert.ok(at('class="sts-motion-list"') > at('id="sts-rm-preview"') && at('class="sts-motion-list"') < at('id="sts-motion-none"'), 'radios come after the preview block');
   const sample = section.slice(section.indexOf('id="sts-sample"'));
   assert.strictEqual(count(sample, '<div class="ham-row"'), 1, 'exactly one sample row');
   assert.strictEqual(count(sample, PIPE), 1, 'exactly one chevron strip');

@@ -1520,6 +1520,7 @@
     .sts-motion-label { display: grid; gap: var(--sp-1); cursor: pointer; }
     .sts-motion-key { font-family: var(--font-mono); color: var(--amber); margin-right: var(--sp-2); }
     .sts-motion-desc { color: var(--text-faint); font-size: var(--fs-xs); }
+    .sts-preview { display: grid; gap: var(--sp-2); padding: var(--sp-2) var(--sp-2) var(--sp-3); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-sm); }
     .sts-sample { padding: var(--sp-3) var(--sp-2) 0; }
     .sts-sample .ham-row { padding: var(--sp-2); }
     .sts-sample .ham-cols { padding-top: 0; }
@@ -2392,8 +2393,12 @@
     .overview-card { position: relative; margin: var(--sp-0) var(--sp-0) var(--sp-6); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
     .overview-header { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .overview-settings-modal { width: min(44rem, calc(100vw - var(--modal-gap) - var(--modal-gap))); }
-    .overview-settings-body { display: grid; gap: var(--sp-4); }
-    .overview-settings-section { display: grid; gap: var(--sp-3); padding-top: var(--sp-3); margin-top: var(--sp-3); border-top: 1px solid var(--border); }
+    /* align-content: start — the body is a grid whose items include the
+       .config-body::before scroll spacer; the default stretch handed the
+       modal's spare height to that spacer (a ~100px band above the first
+       section) and to each section's own rows. */
+    .overview-settings-body { display: grid; gap: var(--sp-4); align-content: start; }
+    .overview-settings-section { display: grid; gap: var(--sp-3); align-content: start; padding-top: var(--sp-3); margin-top: var(--sp-3); border-top: 1px solid var(--border); }
     .overview-settings-section:first-child { padding-top: var(--sp-0); margin-top: var(--sp-0); border-top: 0; }
     .overview-settings-card-title { color: var(--text); font-size: var(--fs-xs); font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
     .overview-settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
@@ -14682,9 +14687,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<section class="overview-settings-section" id="sts-motion" aria-labelledby="sts-motion-title">
           <div class="overview-settings-card-title" id="sts-motion-title">Movement animation</div>
           <p class="sts-hint">Plays once on a row when its lit chevron moves to another column between refreshes, forwards or back: the old chevron flashes twice, the chosen effect travels, and the new chevron lands lit. Under reduced motion every choice becomes one soft flash and a plain crossfade.</p>
+          <div class="sts-preview">
+            <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerSampleRowHtml(STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt], stages)}</div>
+            <div class="sts-row"><label><input type="checkbox" id="sts-rm-preview" data-change-action="stageTrackerRmPreview" data-arg-types="c"> Preview the reduced-motion fallback</label></div>
+          </div>
           <ol class="sts-motion-list" role="radiogroup" aria-label="Movement animation">${opts}</ol>
-          <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerSampleRowHtml(STAGE_TRACKER_PREVIEW_STAGES[_stageTrackerPreviewAt], stages)}</div>
-          <div class="sts-row"><label><input type="checkbox" id="sts-rm-preview" data-change-action="stageTrackerRmPreview" data-arg-types="c"> Preview the reduced-motion fallback</label></div>
         </section>`;
     }
     function stageTrackerMotionChange(value) {
