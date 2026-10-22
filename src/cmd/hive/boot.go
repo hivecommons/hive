@@ -221,6 +221,7 @@ type boot struct {
 	lastSupersessionSweep  time.Time
 	lastSharedCIRerunSweep time.Time
 	lastIssueUnparkSweep   time.Time
+	lastClosedIssueSweep   time.Time
 	lastSentinelSweep      time.Time
 	lastGFISweep           time.Time
 	// gfi is good-first-issue curation state (good_first_issue.*).

@@ -9605,6 +9605,13 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 				event.Repo, event.Number, event.Actor, event.Decision)
 			dashSrv.AuditLogRecord("system", "issue-unparked-by-reply", detail, "", event.Repo, event.Number)
 		},
+		ClosedAudit: func(event github.IssueUnparkEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, actor=%s", event.Repo, event.Number, event.Actor)
+			dashSrv.AuditLogRecord("system", "issue-closed-by-fixed", detail, "", event.Repo, event.Number)
+		},
 		// `/hive decision` on a hive-authored PR at 085 (hivecommons/hive#13041)
 		// is routed to the fix lane under the automerge lane's merger trust.
 		HumanChangeRequests: review.DefaultHumanChangeRequests(),
@@ -9625,9 +9632,60 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if result == nil {
 		return
 	}
-	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 || len(result.PRDecisions) > 0 {
+	if len(result.Unparked) > 0 || len(result.Closed) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 || len(result.PRDecisions) > 0 {
 		logger.Info("issue un-park sweep complete",
-			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "pr_decisions", len(result.PRDecisions), "replies", result.Replies, "skipped", result.Skipped)
+			"seen", result.Seen, "unparked", len(result.Unparked), "closed", len(result.Closed), "label_approved", len(result.LabelApproved), "pr_decisions", len(result.PRDecisions), "replies", result.Replies, "skipped", result.Skipped)
+	}
+}
+
+// closedIssueStageSweepInterval spaces the closed-issue clean-up. A closed
+// issue wearing stage/045 is a stale dashboard row, not a person waiting, so
+// this runs at the task-list cadence; each pass is one listing per repo.
+const closedIssueStageSweepInterval = 10 * time.Minute
+
+// closedIssueStageSweepSlack widens each pass's `since` so an issue that
+// closed while the previous pass was running is not missed.
+const closedIssueStageSweepSlack = 10 * time.Minute
+
+// runClosedIssueStageSweepIfDue strips hive stage and park labels from issues
+// that closed while carrying them (hivecommons/homebrew-hive#127): the
+// issue-stage reconciler only visits open issues, so a `Fixes #N` merge or a
+// by-hand close left `stage/045-needs-decision` behind and the tracker kept
+// reading it as a pending decision. Every rule lives in
+// SweepClosedIssueStageLabels; this is the scheduler and audit sink.
+func runClosedIssueStageSweepIfDue(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	var since time.Time
+	if lastRun != nil && !lastRun.IsZero() {
+		if now.Sub(*lastRun) < closedIssueStageSweepInterval {
+			return
+		}
+		since = lastRun.Add(-closedIssueStageSweepSlack)
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepClosedIssueStageLabels(ctx, github.ClosedIssueStageSweepOptions{
+		Since:      since,
+		MaxActions: github.DefaultClosedIssueStageSweepMaxActions,
+		Audit: func(event github.ClosedIssueStageEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, stage=%s, needs_human=%t",
+				event.Repo, event.Number, strings.Join(event.Stage, ","), event.NeedsHuman)
+			dashSrv.AuditLogRecord("system", "closed-issue-stage-cleared", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("closed-issue stage sweep failed", "error", err)
+		return
+	}
+	if result != nil && (len(result.Cleaned) > 0 || result.Skipped > 0) {
+		logger.Info("closed-issue stage sweep complete", "seen", result.Seen, "cleaned", len(result.Cleaned), "skipped", result.Skipped)
 	}
 }
 

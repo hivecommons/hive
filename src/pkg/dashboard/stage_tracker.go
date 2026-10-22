@@ -845,6 +845,24 @@ func (s *Server) stageDwellOverrides() map[string]time.Duration {
 	return s.deps.Config.Governor.Labels.Stage.DwellOverrides()
 }
 
+// stageTrackerStaleDecisionRecord reports whether rec parks the item at
+// 045/085 while its current labels carry no park signal at all — no stage
+// label for the bay, no `needs-human`, no retired needs-decision spelling.
+// The labels are the newer fact: the park lifted and the record is waiting
+// on the engine's next reconcile.
+func stageTrackerStaleDecisionRecord(rec stagelabels.Record, labels []string) bool {
+	if rec.Stage != stagelabels.NeedsDecision && rec.Stage != stagelabels.IssueNeedsDecision {
+		return false
+	}
+	for _, l := range labels {
+		switch strings.ToLower(strings.TrimSpace(l)) {
+		case needsDecisionLabel, prNeedsDecisionLabel, "needs-decision", "needs-human", "needs-direction":
+			return false
+		}
+	}
+	return true
+}
+
 // buildStageTracker assembles the response from status and store at now.
 func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Store, now time.Time) StageTrackerResponse {
 	overrides := s.stageDwellOverrides()
@@ -865,6 +883,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return store.Get(stagelabels.Key(repo, number))
 	}
 	finish := func(it *StageTrackerItem, labels []string, stage stagelabels.Stage, rec stagelabels.Record, hasRec bool, draft bool) {
+		// "Needs human decision" is read from the item's current labels, not
+		// a store record that outlived them: once the park label is gone
+		// (a `/hive decision` the engine has not re-derived yet) the row
+		// must stop asking (hivecommons/docs#419).
+		if hasRec && stageTrackerStaleDecisionRecord(rec, labels) {
+			rec, hasRec = stagelabels.Record{}, false
+		}
 		if hasRec && rec.Stage != stagelabels.None {
 			stage = rec.Stage
 			t := rec.EnteredAt
@@ -916,6 +941,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		resp.Items = append(resp.Items, it)
 	}
 	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string) {
+		// A closed issue has no stage; a stage label it closed wearing is
+		// the closed-issue sweep's to remove, not a row to render
+		// (hivecommons/homebrew-hive#127).
+		if strings.EqualFold(issue.State, "closed") {
+			return
+		}
 		issue.Repo = nonEmpty(issue.Repo, repoName)
 		rec, ok := lookup(repoName, issue.Number)
 		it := StageTrackerItem{Repo: repoName, Number: issue.Number, Kind: "issue", Title: issue.Title, Author: issue.Author, Lane: laneIssue,
