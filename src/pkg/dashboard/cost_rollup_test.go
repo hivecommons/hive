@@ -143,7 +143,7 @@ func TestCostRollupFoldLifecycle(t *testing.T) {
 // lags the ring by more than one sample.
 func TestAppendCostHistoryFoldsRollup(t *testing.T) {
 	s := &Server{}
-	yesterday := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -1)
+	yesterday := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
 	s.costSeries().Seed([]CostHistoryEntry{
 		rollupSnap(yesterday, 1, 0, 0),
 		rollupSnap(yesterday.Add(time.Hour), 4, 0, 0),
@@ -152,5 +152,69 @@ func TestAppendCostHistoryFoldsRollup(t *testing.T) {
 	got := s.CostDailyRollups()
 	if len(got) != 1 || got[0].USD != 3 {
 		t.Fatalf("rollup after append = %+v, want yesterday at $3", got)
+	}
+}
+
+// A sampler gap (the collector only ran while a browser was polling, #13483)
+// reveals days of real spend in one step. That step must be kept when a
+// plausible rate over the elapsed time explains it, while a same-size jump
+// at normal cadence is still a correction (#13482).
+func TestCostFoldDailyRollupsKeepsGapExplainedSteps(t *testing.T) {
+	day1 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	var hist []CostHistoryEntry
+	// $40 every 5 minutes for 24 samples: median step $40 → $800 fixed
+	// ceiling. Ordinary spend is $920 over the 48h10m span → ≈$19/h average,
+	// ×20 ≈ $382/h plausible rate.
+	for i := 0; i < 24; i++ {
+		hist = append(hist, rollupSnap(day1.Add(time.Duration(i)*5*time.Minute), float64(40*i), int64(1000*i), int64(10*i)))
+	}
+	last := hist[len(hist)-1]
+	// 48 h of silence, then +$10,000: above the $800 fixed ceiling, but
+	// 48 h × $382/h ≈ $18,300 of plausible accrual — real spend.
+	gapEnd := day1.Add(48 * time.Hour)
+	hist = append(hist, rollupSnap(gapEnd, last.USD+10000, 1_000_000, 10_000))
+	// Five minutes later another +$10,000: nothing can accrue that in 5 min
+	// ($382/h × 5 min ≈ $32) — correction, and its tokens go with it.
+	hist = append(hist, rollupSnap(gapEnd.Add(5*time.Minute), last.USD+20000, 900_000_000, 10_000))
+	// Then an ordinary +$40.
+	hist = append(hist, rollupSnap(gapEnd.Add(10*time.Minute), last.USD+20040, 900_001_000, 10_010))
+
+	got := costFoldDailyRollups(hist)
+	d3 := got["2026-09-03"]
+	if d3.USD != 10040 {
+		t.Errorf("gap day USD = %v, want 10040 (gap-explained $10,000 kept, instant $10,000 dropped, +$40 kept)", d3.USD)
+	}
+	if d3.InputTokens != 1_000_000-int64(last.Models["m"].Input)+1000 {
+		t.Errorf("gap day input tokens = %d, want the kept steps only (no 899M from the discarded step)", d3.InputTokens)
+	}
+}
+
+func TestCostRollupStepAllowed(t *testing.T) {
+	rate := 20 * (480.0 / float64(time.Hour/time.Millisecond)) // 20 × $480/h in $/ms
+	if !costRollupStepAllowed(500, 1, 800, rate) {
+		t.Error("a step under the fixed ceiling is always spend")
+	}
+	if costRollupStepAllowed(10000, int64(5*time.Minute/time.Millisecond), 800, rate) {
+		t.Error("$10,000 in 5 minutes is a correction")
+	}
+	if !costRollupStepAllowed(10000, int64(48*time.Hour/time.Millisecond), 800, rate) {
+		t.Error("$10,000 over 48 h is explained by the rate")
+	}
+	if !costRollupStepAllowed(10000, 0, 800, math.Inf(1)) {
+		t.Error("with no rate baseline nothing is discarded by rate")
+	}
+	if costRollupStepAllowed(10000, 0, 800, rate) {
+		t.Error("a zero gap cannot explain a step above the ceiling")
+	}
+	if r := costRollupDiscontinuityRate([]costRollupStep{{USD: 1, GapMs: 1}}, 100); !math.IsInf(r, 1) {
+		t.Errorf("one step → no rate baseline, got %v", r)
+	}
+	if r := costRollupDiscontinuityRate([]costRollupStep{{USD: 10, GapMs: 10}, {USD: 20, GapMs: 10}}, 0); !math.IsInf(r, 1) {
+		t.Errorf("no span → no rate baseline, got %v", r)
+	}
+	// $60 of ordinary spend over a 30 ms span → 2 $/ms average; the $5,000
+	// outlier is excluded from the baseline it is judged against.
+	if r := costRollupDiscontinuityRate([]costRollupStep{{USD: 10, GapMs: 10}, {USD: 20, GapMs: 10}, {USD: 30, GapMs: 10}, {USD: 5000, GapMs: 10}}, 30); r != 20*2 {
+		t.Errorf("rate = %v, want 20 × average 2 $/ms", r)
 	}
 }

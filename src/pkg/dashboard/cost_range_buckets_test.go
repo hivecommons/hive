@@ -288,3 +288,77 @@ func TestCostRangeSummaryAndChartShareWindow(t *testing.T) {
 		t.Error("fixed-trailing-window costRunRate() should be gone")
 	}
 }
+
+// TestCostDiscontinuityGuardIsGapAware pins #13482: a step above the fixed
+// per-step ceiling is still spend when a plausible rate over the observation
+// gap explains it (the sampler was simply not running), while the same step
+// at normal cadence remains a correction. Mirrors costRollupStepAllowed.
+func TestCostDiscontinuityGuardIsGapAware(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost discontinuity behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const M = 60e3, H = 3600e3;
+const T0 = Date.UTC(2026, 8, 1, 0, 0, 0);
+// $40 every 5 minutes, 24 samples → median step $40 ($800 fixed ceiling); ≈$20/h average → ≈$399/h plausible rate.
+const hist = [];
+for (let i = 0; i < 24; i++) hist.push({ timestamp: T0 + i * 5 * M, usd: 40 * i, models: { m: { i: 1000 * i, o: 0, usd: 40 * i } } });
+const lastUsd = 40 * 23, lastTok = 1000 * 23;
+const gapEnd = T0 + 48 * H;
+// 48 h silence then +$10,000 (gap-explained: 48 h × ≈$399/h ≈ $19,100 ≥ $10,000).
+hist.push({ timestamp: gapEnd, usd: lastUsd + 10000, models: { m: { i: lastTok + 250000, o: 0, usd: lastUsd + 10000 } } });
+// 5 min later another +$10,000 — a correction.
+hist.push({ timestamp: gapEnd + 5 * M, usd: lastUsd + 20000, models: { m: { i: lastTok + 500000, o: 0, usd: lastUsd + 20000 } } });
+// then an ordinary +$40.
+hist.push({ timestamp: gapEnd + 10 * M, usd: lastUsd + 20040, models: { m: { i: lastTok + 501000, o: 0, usd: lastUsd + 20040 } } });
+
+const rate = costPriceMap(hist);
+const ceiling = costDiscontinuityCeiling(hist, rate);
+assert.equal(ceiling, 800, 'fixed ceiling = 20 × $40 median');
+const ratePerMs = costDiscontinuityRate(hist, rate);
+const perHour = ratePerMs * H;
+// Ordinary spend $920 (+$40 after the gap = $960) over the 48h10m span, ×20.
+const expectPerHour = 20 * 960 / (48 + 10 / 60);
+assert.ok(Math.abs(perHour - expectPerHour) < 1e-6, 'rate ceiling = 20 × average $/h, got ' + perHour + ' want ' + expectPerHour);
+
+assert.equal(costStepAllowed(500, 1, 800), true, 'under the fixed ceiling');
+assert.equal(costStepAllowed(10000, 5 * M, { ceiling, ratePerMs }), false, '$10,000 in 5 min is a correction');
+assert.equal(costStepAllowed(10000, 48 * H, { ceiling, ratePerMs }), true, '$10,000 over 48 h is spend');
+assert.equal(costStepAllowed(10000, 0, { ceiling, ratePerMs }), false, 'zero gap cannot explain it');
+assert.equal(costStepAllowed(10000, 0, { ceiling, ratePerMs: Infinity }), true, 'no rate baseline → nothing dropped by rate');
+assert.equal(costStepAllowed(10000, 5 * M, 800), false, 'legacy numeric cap: fixed ceiling only');
+
+const cap = { ceiling, ratePerMs };
+const spend = costSpendBetween(hist, rate, T0, gapEnd + 10 * M, cap);
+assert.equal(spend, 40 * 23 + 10000 + 40, 'window spend keeps the gap-explained step and drops the instant one');
+const legacy = costSpendBetween(hist, rate, T0, gapEnd + 10 * M, ceiling);
+assert.equal(legacy, 40 * 23 + 40, 'the old fixed ceiling alone dropped both big steps');
+
+const spans = costAccrualSpans(hist, rate);
+const big = spans.filter(s => s.amount > 800);
+assert.equal(big.length, 2);
+assert.equal(big[0].gap, 48 * H - 23 * 5 * M, 'span records the observation gap');
+assert.equal(big[1].gap, 5 * M);
+const spread = costSpreadSpendBetween(spans, T0, gapEnd + 10 * M, cap);
+assert.ok(Math.abs(spread - (40 * 23 + 10000 + 40)) < 1e-6, 'spread spend matches: ' + spread);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost discontinuity JS failed: %v\n%s", err, out)
+	}
+}
