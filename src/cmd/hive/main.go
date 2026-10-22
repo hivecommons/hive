@@ -9911,6 +9911,7 @@ func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapabil
 		return cap
 	}
 	if ac, ok := cfg.Agents[agent]; ok {
+		cap.ReplicaOf = ac.ReplicaOf
 		cap.Role = ac.Role
 		cap.LaneKeywords = ac.LaneKeywords
 		cap.DetectKeywords = ac.DetectKeywords

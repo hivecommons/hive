@@ -527,7 +527,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		} else {
 			plan.expirePending(pr, opts, now)
 		}
-		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent)
+		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, agentBase(opts.Agents, pr.AuthorAgent))
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
@@ -683,16 +683,26 @@ func leastLoadedReviewer(reviewers []AgentCapability, pending []PendingReview) A
 	return best
 }
 
-func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapability {
+// agentBase resolves an agent's base lane from the full configured set, so an
+// authoring replica that is itself paused, on-demand or not review-capable
+// still maps to its base.
+func agentBase(all []AgentCapability, name string) string {
+	name = strings.TrimSpace(name)
+	for _, a := range all {
+		if a.Name == name && a.ReplicaOf != "" {
+			return a.ReplicaOf
+		}
+	}
+	return name
+}
+
+func reviewersForPR(reviewers []AgentCapability, authorAgent, authorBase string) []AgentCapability {
 	authorAgent = strings.TrimSpace(authorAgent)
 	if authorAgent == "" {
 		return reviewers
 	}
-	authorBase := authorAgent
-	for _, reviewer := range reviewers {
-		if reviewer.Name == authorAgent && reviewer.ReplicaOf != "" {
-			authorBase = reviewer.ReplicaOf
-		}
+	if authorBase == "" {
+		authorBase = authorAgent
 	}
 	out := make([]AgentCapability, 0, len(reviewers))
 	for _, reviewer := range reviewers {
@@ -1239,10 +1249,11 @@ func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
 // the dispatcher uses to hand out review kicks: when review.reviewer_agents
 // names lanes, membership in that set decides; otherwise the agent's name,
 // role, aliases or keywords must carry the review token. The relay uses it to
-// decide whose dispatch-less verdicts may be recorded.
+// decide whose dispatch-less verdicts may be recorded. A replica is review-
+// capable when its base agent is a listed reviewer.
 func ReviewCapable(a AgentCapability, reviewerAgents map[string]bool) bool {
 	if len(reviewerAgents) > 0 {
-		return reviewerAgents[a.Name]
+		return reviewerAgents[a.Name] || (a.ReplicaOf != "" && reviewerAgents[a.ReplicaOf])
 	}
 	return hasReviewCapability(a)
 }

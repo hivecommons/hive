@@ -493,12 +493,30 @@ func TestReviewersForPRExcludesAuthorFamily(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var got []string
-			for _, r := range reviewersForPR(all, tt.author) {
+			for _, r := range reviewersForPR(all, tt.author, agentBase(all, tt.author)) {
 				got = append(got, r.Name)
 			}
 			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
 				t.Errorf("reviewersForPR() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReviewersForPRResolvesAuthorBaseFromFullAgentSet(t *testing.T) {
+	replica := func(name, base string) AgentCapability {
+		c := reviewer(name)
+		c.ReplicaOf = base
+		return c
+	}
+	full := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
+	// The authoring replica alpha-2 was filtered out of the reviewer pool.
+	pool := []AgentCapability{full[0], full[2], full[3]}
+	var got []string
+	for _, r := range reviewersForPR(pool, "alpha-2", agentBase(full, "alpha-2")) {
+		got = append(got, r.Name)
+	}
+	if strings.Join(got, ",") != "beta" {
+		t.Errorf("reviewersForPR() = %v, want [beta]", got)
 	}
 }

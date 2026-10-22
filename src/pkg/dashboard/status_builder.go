@@ -24,6 +24,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
@@ -713,13 +714,7 @@ func dashboardAgentReviewCapable(name string, a config.AgentConfig, allowed []st
 		return false
 	}
 	if len(allowed) > 0 {
-		for _, n := range allowed {
-			n = strings.TrimSpace(n)
-			if n == name || (a.ReplicaOf != "" && n == strings.TrimSpace(a.ReplicaOf)) {
-				return true
-			}
-		}
-		return false
+		return review.ReviewCapable(review.AgentCapability{Name: name, ReplicaOf: strings.TrimSpace(a.ReplicaOf)}, review.ReviewerAgentSet(allowed))
 	}
 	fields := append([]string{name, a.Role}, a.Aliases...)
 	fields = append(fields, a.LaneKeywords...)

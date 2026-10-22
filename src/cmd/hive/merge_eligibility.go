@@ -155,7 +155,7 @@ func contributorLaneReviewerConfigured(cfg *config.Config) bool {
 			continue
 		}
 		cap := review.AgentCapability{
-			Name: name, Enabled: true, Role: ac.Role,
+			Name: name, ReplicaOf: ac.ReplicaOf, Enabled: true, Role: ac.Role,
 			LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases,
 		}
 		if review.ReviewCapable(cap, allowed) {
