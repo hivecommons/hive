@@ -1089,6 +1089,14 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 		// trusted-author "trusted" is kept but its absence is refined.
 		role = role.Merge(o.Detail.Role)
 	}
+	// No lane reported a tier this pass (the contributor lane's deep
+	// evaluation does not run every cycle): keep the tier the PR already
+	// carries instead of dropping it, which flapped role/trusted (#13637).
+	if role == stagelabels.RoleNone {
+		for _, o := range list {
+			role = role.Merge(stagelabels.RoleOf(o.Labels))
+		}
+	}
 	if best.Rank < stageRankOwned {
 		switch {
 		case role == stagelabels.RoleNone:
