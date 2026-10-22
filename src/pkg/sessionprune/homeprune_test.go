@@ -401,3 +401,53 @@ func TestPruneAgentHomesCountsRemoveFailures(t *testing.T) {
 		t.Errorf("got %+v, want Scanned=1 Removed=0 Failed=1", res)
 	}
 }
+
+func TestPruneAgentSessionTrees(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+	recent := now.Add(-1 * time.Hour)
+
+	tree := func(agent string) string {
+		return filepath.Join(root, agent, ".copilot", "session-state")
+	}
+	agedA := filepath.Join(tree("alpha"), "11111111-1111-4111-8111-111111111111")
+	freshA := filepath.Join(tree("alpha"), "22222222-2222-4222-8222-222222222222")
+	agedB := filepath.Join(tree("beta"), "33333333-3333-4333-8333-333333333333")
+	mkTree(t, agedA, old)
+	mkTree(t, freshA, recent)
+	mkTree(t, agedB, old)
+
+	// A bridged .copilot must not be followed into the shared tree.
+	shared := t.TempDir()
+	agedShared := filepath.Join(shared, "session-state", "44444444-4444-4444-8444-444444444444")
+	mkTree(t, agedShared, old)
+	if err := os.MkdirAll(filepath.Join(root, "gamma"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, filepath.Join(root, "gamma", ".copilot")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := PruneAgentSessionTrees(root, 7*24*time.Hour, now, quietLogger())
+	if err != nil {
+		t.Fatalf("PruneAgentSessionTrees: %v", err)
+	}
+	if res.Removed != 2 || res.Failed != 0 {
+		t.Errorf("result = %+v, want Removed=2 Failed=0", res)
+	}
+	for _, p := range []string{agedA, agedB} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s should be removed", p)
+		}
+	}
+	for _, p := range []string{freshA, agedShared} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should be kept: %v", p, err)
+		}
+	}
+
+	if res, err := PruneAgentSessionTrees(filepath.Join(root, "missing"), time.Hour, now, quietLogger()); err != nil || res.Removed != 0 {
+		t.Errorf("missing root: %+v, %v", res, err)
+	}
+}

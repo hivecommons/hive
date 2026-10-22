@@ -108,6 +108,9 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
+	// evidenceHB is the background-refreshed evidence aggregate the hub
+	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
+	evidenceHB evidenceHeartbeatCache
 	// stageTrackerServed flips once /api/stage-tracker has been built; it
 	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
 	stageTrackerServed bool
@@ -1518,6 +1521,11 @@ func (s *Server) Start() error {
 		// answer even when a saturated node is slow to build the static cache.
 		go idx.Precompress()
 	}
+	// Viewer-independent cost sampling (#13483); the ring's throttle is the
+	// same interval, so this is exactly one snapshot per period.
+	costTicker := time.NewTicker(costHistoryMinIntervalMs * time.Millisecond)
+	defer costTicker.Stop()
+	go s.runCostSampler(costTicker.C)
 	return srv.Serve(ln)
 }
 
@@ -3761,6 +3769,61 @@ func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, m
 	}
 	if s.costSeries().Append(entry) {
 		s.foldCostRollups(time.UnixMilli(entry.Timestamp))
+	}
+}
+
+// sampleCostHistory records one estimated-cost snapshot — the same all-time
+// cumulative estimate GET /api/cost returns, with the per-agent map that feeds
+// the agent cards' spend-over-window display and the per-model map that feeds
+// the cost table's mini sparklines (unpriced models included — tokens still
+// trend). The ring's own 5-minute throttle makes extra calls no-ops, so it is
+// safe to call from both the ticker and a viewer's poll. Returns true when a
+// snapshot was actually appended.
+func (s *Server) sampleCostHistory() bool {
+	// Nothing scanned yet (startup, or no collector): do not record a $0 point
+	// that the lineage detector would read as a reset to zero.
+	if s.deps == nil || s.deps.Tokens == nil || s.deps.Tokens.Summary() == nil {
+		return false
+	}
+	est := s.estimatedCost()
+	perAgent := make(map[string]float64, len(est.ByAgent))
+	for _, row := range est.ByAgent {
+		if row.USD > 0 {
+			perAgent[row.Name] = row.USD
+		}
+	}
+	perModel := make(map[string]CostModelSnap, len(est.ByModel))
+	for _, row := range est.ByModel {
+		if row.Input > 0 || row.Output > 0 || row.USD > 0 {
+			perModel[row.Name] = CostModelSnap{Input: row.Input, Output: row.Output, USD: row.USD}
+		}
+	}
+	entry := CostHistoryEntry{
+		Timestamp: collect.NowMillis(),
+		USD:       est.TotalUSD,
+	}
+	if len(perAgent) > 0 {
+		entry.Agents = perAgent
+	}
+	if len(perModel) > 0 {
+		entry.Models = perModel
+	}
+	if !s.costSeries().Append(entry) {
+		return false
+	}
+	s.foldCostRollups(time.UnixMilli(entry.Timestamp))
+	return true
+}
+
+// runCostSampler takes a cost snapshot on every tick until ticks is closed.
+// Before #13483 the only sampler was GET /api/knowledge/stats, i.e. a browser
+// polling the dashboard: with no viewer the history had multi-day holes (296 h
+// on one spoke) that the trend chart drew as "$0 spent" and whose spend then
+// landed as one step the moment someone opened the page. Start() drives this
+// from a real ticker; tests feed the channel directly.
+func (s *Server) runCostSampler(ticks <-chan time.Time) {
+	for range ticks {
+		s.sampleCostHistory()
 	}
 }
 

@@ -1750,6 +1750,7 @@ func (b *boot) wireBootClosures() {
 			// Run once at startup rather than waiting a full interval. A spoke that
 			// restarts more often than the interval would otherwise never prune.
 			runSessionPrune(b.logger, dir, maxAge)
+			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
@@ -1760,6 +1761,7 @@ func (b *boot) wireBootClosures() {
 					return
 				case <-ticker.C:
 					runSessionPrune(b.logger, dir, maxAge)
+					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
 				}
 			}
@@ -2985,13 +2987,7 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
-	b.metricsCollector.SetPRIssueWindowStartProvider(func() time.Time {
-		history := b.dashSrv.CostHistory()
-		if len(history) == 0 || history[0].Timestamp <= 0 {
-			return time.Time{}
-		}
-		return time.UnixMilli(history[0].Timestamp).UTC()
-	})
+	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
 	// come from the cache the governor already reads (#13376).
@@ -4626,9 +4622,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			if !b.cfg.Hub.Enabled {
 				return nil
 			}
-			govState := b.gov.GetState()
+			// Every sub-collector below is a named TimedSection so that when the
+			// collect exceeds its budget the spoke logs WHICH one ate it (see
+			// collectWithTimeout). Keep new collectors wrapped the same way.
+			govState := spoke.TimedSection("governor_state", b.gov.GetState)
 			currentMode := strings.ToLower(string(govState.Mode))
-			agents := b.heartbeatAgents(govState, currentMode, true)
+			agents := spoke.TimedSection("agents", func() []spoke.AgentSummary { return b.heartbeatAgents(govState, currentMode, true) })
 			acmmLvl := b.heartbeatACMMLevel()
 			prsMerged, prsRejected, cvesClosed, fleetStatsCollectedAt := b.heartbeatFleetStats()
 			repoActivity, repoActivityCollectedAt, repoActivityWindowHours, repoActivityCountWindowHours := b.heartbeatRepoActivity()
@@ -4636,7 +4635,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// user-journey stage detection. Always a non-nil pointer from a
 			// spoke new enough to compute it, so the hub can distinguish
 			// "genuinely zero agents configured" from "old spoke, unknown".
-			agentsWithModel := b.agentMgr.CountAgentsWithModel()
+			agentsWithModel := spoke.TimedSection("agents_with_model", b.agentMgr.CountAgentsWithModel)
 
 			// --- Quadrant signals ------------------------------------------
 			// All read from state this spoke already maintains on an existing
@@ -4670,20 +4669,24 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// statuses: it feeds only FrontendPlanning.ArchitectPaused, which
 			// this heartbeat does not send, and the resolver is unexported to
 			// pkg/dashboard. Passing false cannot perturb AwaitingReview.
-			var awaitingReview *int
-			if planning := dashboard.BuildPlanning(b.beadStores, false, acmmLvl); planning.Available {
-				n := planning.AwaitingReview
-				awaitingReview = &n
-			}
+			awaitingReview := spoke.TimedSection("planning", func() *int {
+				if planning := dashboard.BuildPlanning(b.beadStores, false, acmmLvl); planning.Available {
+					n := planning.AwaitingReview
+					return &n
+				}
+				return nil
+			})
 
 			// Contributor-relay tasks over the trailing 7d, summed from the
 			// spoke's own 168 hourly buckets. nil until the store exists; a
 			// zero from an existing store is a real "no contributor finished
 			// anything" reading.
-			var tasksCompleted7d *int
-			if n, ok := b.dashSrv.TasksCompleted7d(); ok {
-				tasksCompleted7d = &n
-			}
+			tasksCompleted7d := spoke.TimedSection("tasks_completed_7d", func() *int {
+				if n, ok := b.dashSrv.TasksCompleted7d(); ok {
+					return &n
+				}
+				return nil
+			})
 
 			providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 			lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
@@ -4701,9 +4704,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// token collector's first bob-recording scan completes ("not
 			// measured", hub carries forward); the other two are always live
 			// measurements and send [] to clear a stale carry-forward.
-			agentErrorStreaks := b.tokenCollector.AgentErrorStreaks()
-			consentWedged := b.agentMgr.ConsentWedgedAgents()
-			noCadenceAgents := b.gov.NoCadenceAgents()
+			agentErrorStreaks := spoke.TimedSection("agent_error_streaks", b.tokenCollector.AgentErrorStreaks)
+			consentWedged := spoke.TimedSection("consent_wedged", b.agentMgr.ConsentWedgedAgents)
+			noCadenceAgents := spoke.TimedSection("no_cadence_agents", b.gov.NoCadenceAgents)
 
 			return &spoke.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
@@ -4724,7 +4727,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// record only when it sees the gateway named here, so a lost
 				// delivery is re-offered rather than dropped. Names only — the
 				// key never leaves the spoke.
-				GatewayNames: b.dashSrv.ConfiguredGatewayNames(),
+				GatewayNames: spoke.TimedSection("gateway_names", b.dashSrv.ConfiguredGatewayNames),
 				// Hash only, never the raw token: lets the hub verify this
 				// spoke's upgrade-proof credential without reading the
 				// hive-secrets secret from a cluster it may not reach
@@ -4744,7 +4747,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// self-DoSed spokes with nothing surfacing it. Report the count
 				// and its rlimit every beat so the next leak is a climbing
 				// number on the hub, not a manual /proc excavation.
-				OpenFDs:     spoke.OpenFDCount(),
+				OpenFDs:     spoke.TimedSection("open_fds", spoke.OpenFDCount),
 				FDSoftLimit: spoke.FDSoftLimit(),
 				// Reporter names THIS process (the pod) so the hub can tell two
 				// instances reporting as one hive apart — the pod name is the
@@ -4793,13 +4796,13 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				ProviderLimitRebuffs:    providerLimitRebuffs,
 				ProviderLimitHiveWide:   providerLimitHiveWide,
 				ProviderLimitAgents:     providerLimitAgents,
-				Providers:               heartbeatProviders(b.cfg, agents),
+				Providers:               spoke.TimedSection("providers", func() []agent.ProviderStatus { return heartbeatProviders(b.cfg, agents) }),
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,
 				NotWritableQueued:       notWritableQueued,
-				RepoTargetMisconfigured: b.repoTargetMisconfigured(),
-				RepoTargetIssue:         b.repoTargetIssueMessage(),
+				RepoTargetMisconfigured: spoke.TimedSection("repo_target_misconfigured", b.repoTargetMisconfigured),
+				RepoTargetIssue:         spoke.TimedSection("repo_target_issue", b.repoTargetIssueMessage),
 				Repos:                   b.cfg.Project.Repos,
 				PrimaryRepo:             b.cfg.Project.PrimaryRepo,
 				ACMMLevel:               acmmLvl,
@@ -4834,26 +4837,26 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					reg, active := b.dashSrv.ContributorSummary()
 					return spoke.ContributorSummary{Registered: reg, Active: active}
 				}(),
-				Leaderboard: b.leaderboardForHeartbeat(),
+				Leaderboard: spoke.TimedSection("leaderboard", b.leaderboardForHeartbeat),
 				// Report who has a live dashboard session so the hub can accumulate
 				// per-user "time in hive". Bare usernames only — never session
 				// ids/tokens (ActiveSessionUsernames guarantees this).
-				ActiveSessionUsers: b.dashSrv.ActiveSessionUsernames(),
+				ActiveSessionUsers: spoke.TimedSection("active_session_users", b.dashSrv.ActiveSessionUsernames),
 				// The honest subset of the above: users whose browser reported
 				// focused, recent-input presence (see dashboard/presence.go).
 				// An idle open tab appears in ActiveSessionUsers but not here.
-				EngagedSessionUsers: b.dashSrv.EngagedSessionUsernames(),
+				EngagedSessionUsers: spoke.TimedSection("engaged_session_users", b.dashSrv.EngagedSessionUsernames),
 				// Per-user last audit-logged real action, so the hub can tell
 				// users who DO things from users who merely stay logged in.
-				UserLastActions: b.dashSrv.UserLastActions(),
-				Owner:           b.ownerForHeartbeat(),
+				UserLastActions: spoke.TimedSection("user_last_actions", b.dashSrv.UserLastActions),
+				Owner:           spoke.TimedSection("owner", b.ownerForHeartbeat),
 				// Report the API URL we are actually running against so the hub
 				// can see whether a GitHub Enterprise API URL it delivered has
 				// landed. Resolved (never empty) so the hub can distinguish
 				// "public github.com" from "spoke too old to report this".
 				GitHubAPIURL: b.cfg.GitHub.ResolvedAPIURL(),
-				Health:       b.dashSrv.HealthSummary(),
-				DashboardURL: b.dashboardURLForHeartbeat(),
+				Health:       spoke.TimedSection("health", b.dashSrv.HealthSummary),
+				DashboardURL: spoke.TimedSection("dashboard_url", b.dashboardURLForHeartbeat),
 				SnapshotURL:  b.cfg.Hub.SnapshotURL,
 				HiveType:     b.cfg.Hub.HiveType,
 				ClusterID:    b.cfg.Hub.ClusterID,
@@ -4866,7 +4869,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// is the only way to distinguish a hive pinned to an immutable
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
-				ImageRef: spoke.SelfDeploymentImage(),
+				ImageRef: spoke.TimedSection("image_ref", spoke.SelfDeploymentImage),
 				// The GitHub instance this spoke actually runs against. Only
 				// the spoke knows this for certain: a hive's GitHub can differ
 				// from its cluster's default, so the hub cannot infer it.
@@ -4885,12 +4888,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppHTTPStatus:      ghAppHTTPStatus,
 				PendingGitHubAppInstall:  b.dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:              b.cfg.Hub.AutoUpgrade,
-				ClusterHealth: func() *spoke.HeartbeatClusterHealthReport {
+				ClusterHealth: spoke.TimedSection("cluster_health", func() *spoke.HeartbeatClusterHealthReport {
 					if !shouldCollectHeartbeatClusterHealth(b.cfg.Hub.ClusterID) {
 						return nil
 					}
 					return spoke.CollectClusterHealth(b.logger)
-				}(),
+				}),
 				PRsMerged90d:                 prsMerged,
 				PRsRejected90d:               prsRejected,
 				CVEsClosed:                   cvesClosed,
@@ -4903,8 +4906,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs
 				// nothing and a spoke holding the wrong one self-heals.
-				GitHubAppKeyFingerprint: appKeys.ReportedFingerprint(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID),
-				GitHubAppKeyPerHive:     appKeys.HasPerHiveKey(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID),
+				GitHubAppKeyFingerprint: spoke.TimedSection("app_key_fingerprint", func() string { return appKeys.ReportedFingerprint(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
+				GitHubAppKeyPerHive:     spoke.TimedSection("app_key_per_hive", func() bool { return appKeys.HasPerHiveKey(b.cfg.GitHub.KeyFile, b.cfg.GitHub.AppID) }),
 				// Report the App this hive believes it authenticates as. The hub
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
@@ -4920,20 +4923,20 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
-				GitHubAppKeysHeld: appKeys.HeldFingerprints(),
+				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", appKeys.HeldFingerprints),
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that
 				// reaches every spoke, push-reported ones included (D1). nil until
 				// the first span, which the hub reads as "no data", never as
 				// zero reach. Capped at tracing.MaxReachComponents entries.
-				ComponentReach: tracing.ReachSnapshot(),
+				ComponentReach: spoke.TimedSection("component_reach", tracing.ReachSnapshot),
 				// Compliance profile + latest posture pass/fail (#11083); an
 				// empty block when compliance is not configured.
-				Compliance: b.dashSrv.ComplianceHeartbeat(),
+				Compliance: spoke.TimedSection("compliance", b.dashSrv.ComplianceHeartbeat),
 				// 90-day evidence-pipeline summary + self-authored auto-merge
 				// posture (#12114); nil when bundles are unreadable.
-				Evidence: b.dashSrv.EvidenceHeartbeat(),
+				Evidence: spoke.TimedSection("evidence", b.dashSrv.EvidenceHeartbeat),
 			}
 
 		}, heartbeatSendInterval, b.logger,
@@ -5288,26 +5291,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					// Fingerprint before and after so the key rotation is auditable
 					// from the spoke's own logs. Fingerprints only — the key itself
 					// is never logged.
-					beforeFP, _ := config.AppKeyFingerprintFromFile(keyPath)
-					if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), appKeys.FileMode); err != nil {
-						b.logger.Error("failed to write github app key from heartbeat", "error", err)
+					changed, err := applyDeliveredPrimaryKey(b.logger, keyPath, ghCfg.PrivateKey)
+					if err != nil {
+						b.logger.Error("failed to write github app key from heartbeat", "path", keyPath, "error", err)
 						return
 					}
-					// os.WriteFile does NOT re-apply the mode to a file that already
-					// exists, so a key written by an older build (or restored from a
-					// looser-moded source) would keep its old permissions forever.
-					// Chmod unconditionally so every path converges on 0600.
-					if err := os.Chmod(keyPath, appKeys.FileMode); err != nil {
-						b.logger.Warn("could not tighten github app key permissions", "path", keyPath, "error", err)
-					}
-					afterFP, _ := config.AppKeyFingerprintFromFile(keyPath)
-					keyChanged = afterFP != "" && afterFP != beforeFP
-					b.logger.Info("github app private key written via heartbeat",
-						"path", keyPath,
-						"from_fingerprint", beforeFP,
-						"to_fingerprint", afterFP,
-						"key_changed", keyChanged,
-					)
+					keyChanged = changed
 					if keyChanged {
 						// Invalidate before the new client is built, so nothing can
 						// read the dead token out of the shared on-disk cache in

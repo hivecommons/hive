@@ -218,3 +218,32 @@ func TestCostRollupStepAllowed(t *testing.T) {
 		t.Errorf("rate = %v, want 20 × average 2 $/ms", r)
 	}
 }
+
+// TestCostWindowStartAnchorsOnOldestRollup pins that the cost window — the
+// headline's "since" and the merged-PR / closed-issue denominators — begins at
+// the oldest persisted rollup day, not at the ring's first snapshot, so it
+// does not creep forward as the ring evicts samples (#13481).
+func TestCostWindowStartAnchorsOnOldestRollup(t *testing.T) {
+	s := &Server{}
+	if got := s.CostWindowStart(); !got.IsZero() {
+		t.Fatalf("no data: want zero, got %v", got)
+	}
+	// A snapshot from today is never folded (the day is not complete), so the
+	// ring alone anchors the window.
+	ringStart := time.Now().UTC().Truncate(time.Minute)
+	s.SeedCostHistory([]CostHistoryEntry{{Timestamp: ringStart.UnixMilli(), USD: 690}})
+	if got := s.CostWindowStart(); !got.Equal(ringStart) {
+		t.Fatalf("ring only: want %v, got %v", ringStart, got)
+	}
+	s.SeedCostDailyRollups([]CostDailyRollup{
+		{Day: "2026-08-08", USD: 39, Samples: 12},
+		{Day: "2026-08-07", USD: 0, Samples: 0}, // no samples: not data
+	})
+	want := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	if got := s.CostWindowStart(); !got.Equal(want) {
+		t.Fatalf("with rollups: want %v, got %v", want, got)
+	}
+	if got := s.costCountWindowStart(); got != want.UnixMilli() {
+		t.Fatalf("count window start: want %d, got %d", want.UnixMilli(), got)
+	}
+}

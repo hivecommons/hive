@@ -83,6 +83,9 @@ var modelPrices = map[string]ModelPrice{
 	"claude-opus-4-1": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	// Fable 5: $10 in / $50 out; cache read $1.00, cache write $12.50.
 	"claude-fable-5": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
+	// Fable 5.1 is the same list tier as Fable 5 (#13488); without this entry it
+	// fell to tierBig at roughly half the real rate and was flagged estimated.
+	"claude-fable-5-1": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
 	// Sonnet 5.5: $2 in / $10 out; cache read $0.20, cache write $2.50 (1.25×)
 	// — per the Claude Code 2.1.284 changelog ("$2/$10 per Mtok with
 	// $0.20/Mtok cache reads", #9804).

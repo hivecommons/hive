@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,10 +196,10 @@ func TestEvidenceHeartbeat(t *testing.T) {
 	ghpkg.ReviewEvidenceRoot = filepath.Join(dir, "evidence")
 	t.Cleanup(func() { ghpkg.ReviewEvidenceRoot = prev })
 
-	// No evidence dir yet: an empty, non-nil block; nil server has no posture.
-	got := (*Server)(nil).EvidenceHeartbeat()
-	if got == nil || got.Verdicts90d != 0 || got.AutomergeSelfAuthored != nil {
-		t.Fatalf("nil server = %+v, want empty block without posture", got)
+	// A nil server has no cache and no refresher: nil, so the hub keeps what
+	// it has rather than reading a false zero.
+	if got := (*Server)(nil).EvidenceHeartbeat(); got != nil {
+		t.Fatalf("nil server = %+v, want nil", got)
 	}
 
 	b := evSummaryBundle("a/b", 7, evidence.AuthorAgent, time.Now().UTC().Add(-time.Hour), true, []evidence.Verdict{
@@ -226,7 +227,13 @@ func TestEvidenceHeartbeat(t *testing.T) {
 
 	s := newTestServer()
 	s.deps = &Dependencies{Config: &config.Config{}}
-	got = s.EvidenceHeartbeat()
+	// The bundle walk never runs on the beat path: the first call only
+	// schedules the background refresh and reports nil ("keep what you have").
+	if got := s.EvidenceHeartbeat(); got != nil {
+		t.Fatalf("first call = %+v, want nil while the refresh is in flight", got)
+	}
+	waitEvidenceHeartbeatRefresh(t, s)
+	got := s.EvidenceHeartbeat()
 	if got == nil || got.Verdicts90d != 1 || got.Merged90d != 1 {
 		t.Fatalf("got %+v, want 1 verdict / 1 merged", got)
 	}
@@ -365,5 +372,106 @@ func TestHeartbeatEvidenceMatchesSummaryFold(t *testing.T) {
 	if got.Verdicts90d != 3 || got.Merged90d != 2 || got.Reverted14d90d != 1 || got.FalseApprove90d != 1 || got.FalseBlock90d != 0 {
 		t.Errorf("90d = verdicts %d merged %d reverted %d false approve %d false block %d, want 3/2/1/1/0",
 			got.Verdicts90d, got.Merged90d, got.Reverted14d90d, got.FalseApprove90d, got.FalseBlock90d)
+	}
+}
+
+// waitEvidenceHeartbeatRefresh blocks until the refresh EvidenceHeartbeat
+// scheduled has stored its result. No sleeping: the cache exposes the
+// completion channel.
+func waitEvidenceHeartbeatRefresh(t *testing.T, s *Server) {
+	t.Helper()
+	done := s.evidenceHB.refreshDone()
+	if done == nil {
+		t.Fatal("no evidence refresh was scheduled")
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("evidence refresh did not finish")
+	}
+}
+
+// TestEvidenceHeartbeatCacheRefreshesOffTheBeatPath pins the behaviour that
+// fixes the hosted hive's permanent MINIMAL beats: the walk runs at most once
+// per evidenceHeartbeatRefreshInterval in the background, a fresh cache is
+// served without re-walking, a stale cache triggers exactly one refresh, and
+// an unreadable root keeps the previous block.
+func TestEvidenceHeartbeatCacheRefreshesOffTheBeatPath(t *testing.T) {
+	var walks atomic.Int32
+	var c evidenceHeartbeatCache
+	// refresh stands in for the bundle walk; at is the fake clock it stores
+	// as refreshedAt so staleness is judged against the test's own time.
+	refresh := func(block *spoke.HeartbeatEvidence, at time.Time) func() {
+		return func() {
+			walks.Add(1)
+			c.store(block, at)
+		}
+	}
+	now := time.Date(2026, 10, 22, 4, 0, 0, 0, time.UTC)
+
+	// Empty cache: schedules a refresh, returns nil.
+	if got := c.snapshot(now, refresh(&spoke.HeartbeatEvidence{Merged90d: 1}, now)); got != nil {
+		t.Fatalf("empty cache = %+v, want nil", got)
+	}
+	<-c.refreshDone()
+	if walks.Load() != 1 {
+		t.Fatalf("walks = %d, want 1", walks.Load())
+	}
+	// Fresh cache: served as-is, no second walk, no in-flight refresh.
+	soon := now.Add(evidenceHeartbeatRefreshInterval / 2)
+	if got := c.snapshot(soon, refresh(nil, soon)); got == nil || got.Merged90d != 1 {
+		t.Fatalf("fresh cache = %+v, want merged=1", got)
+	}
+	if c.isRefreshing() || walks.Load() != 1 {
+		t.Fatalf("fresh cache must not refresh: walks=%d refreshing=%v", walks.Load(), c.isRefreshing())
+	}
+	// Stale cache: previous block is served immediately while ONE refresh runs.
+	later := now.Add(evidenceHeartbeatRefreshInterval)
+	if got := c.snapshot(later, refresh(&spoke.HeartbeatEvidence{Merged90d: 2}, later)); got == nil || got.Merged90d != 1 {
+		t.Fatalf("stale cache = %+v, want previous merged=1 while refreshing", got)
+	}
+	<-c.refreshDone()
+	if got := c.snapshot(later, refresh(nil, later)); got == nil || got.Merged90d != 2 {
+		t.Fatalf("after refresh = %+v, want merged=2", got)
+	}
+	if walks.Load() != 2 {
+		t.Fatalf("walks = %d, want 2", walks.Load())
+	}
+	// A failed refresh (nil block) keeps the previous block and still advances
+	// refreshedAt, so a broken root is retried per interval, not per beat.
+	much := later.Add(evidenceHeartbeatRefreshInterval)
+	c.snapshot(much, refresh(nil, much))
+	<-c.refreshDone()
+	if got := c.snapshot(much, refresh(nil, much)); got == nil || got.Merged90d != 2 {
+		t.Fatalf("after failed refresh = %+v, want previous merged=2", got)
+	}
+	if c.isRefreshing() || walks.Load() != 3 {
+		t.Fatalf("failed refresh must not re-run within the interval: walks=%d", walks.Load())
+	}
+}
+
+// TestEvidenceHeartbeatCacheSingleFlight: a second snapshot while a refresh
+// is in flight must not start another walk.
+func TestEvidenceHeartbeatCacheSingleFlight(t *testing.T) {
+	var c evidenceHeartbeatCache
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var walks atomic.Int32
+	refresh := func() {
+		walks.Add(1)
+		close(started)
+		<-release
+		c.store(&spoke.HeartbeatEvidence{Merged90d: 1}, time.Now())
+	}
+	now := time.Now()
+	c.snapshot(now, refresh)
+	<-started
+	if got := c.snapshot(now, refresh); got != nil {
+		t.Fatalf("snapshot during refresh = %+v, want nil", got)
+	}
+	close(release)
+	<-c.refreshDone()
+	if walks.Load() != 1 {
+		t.Fatalf("walks = %d, want 1 (single flight)", walks.Load())
 	}
 }
