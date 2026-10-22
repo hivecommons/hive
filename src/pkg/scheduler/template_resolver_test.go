@@ -20,7 +20,9 @@ func TestSubstituteTemplate_BuiltinsAndOperatorVars(t *testing.T) {
 	dflt := "prod"
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "acme", Name: "widgets", Repos: []string{"widgets"}},
-		Agents:  map[string]config.AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Role: "scanner"}},
+		},
 		Variables: config.VariablesConfig{
 			Defs: map[string]config.VarDef{
 				// Custom template variable.
@@ -59,7 +61,9 @@ func TestSubstituteTemplate_NoVariablesBlock(t *testing.T) {
 	os.Unsetenv("PROJECT_NAME") // ensure no accidental env influence
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "acme", Name: "widgets", Repos: []string{"widgets"}},
-		Agents:  map[string]config.AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 	s := New(cfg, slog.Default())
 	out, _ := s.substituteTemplateWithPolicy("a=${PROJECT_ORG} b=${NOPE}", nil, "scanner", nil)

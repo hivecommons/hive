@@ -12,7 +12,9 @@ func TestReviewModelsDefaultsAndValidation(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"reviewer": {Backend: "copilot", ReviewModels: ReviewModelsConfig{Pool: []ReviewModelPoolEntry{{Backend: "definitely-not-real", Model: "m"}}}}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"reviewer": {Backend: "copilot", ReviewModels: ReviewModelsConfig{Pool: []ReviewModelPoolEntry{{Backend: "definitely-not-real", Model: "m"}}}}},
+		},
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted an unknown review_models backend")
@@ -83,8 +85,10 @@ func TestReviewPerspectiveModelsValidation(t *testing.T) {
 		return &Config{
 			Project: ProjectConfig{Org: "o"},
 			GitHub:  GitHubConfig{Token: "x"},
-			Agents:  map[string]AgentConfig{"reviewer": {Backend: "copilot"}},
-			Review:  ReviewConfig{PerspectiveModels: entries},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"reviewer": {Backend: "copilot"}},
+			},
+			Review: ReviewConfig{PerspectiveModels: entries},
 		}
 	}
 	if err := base(map[string]ReviewModelPoolEntry{"security": {Backend: "copilot", Model: "gpt-6-astra"}}).Validate(); err != nil {

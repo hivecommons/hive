@@ -22,8 +22,10 @@ func newScopeTestConfig(t *testing.T, agents map[string]AgentConfig) *Config {
 			PrimaryRepo: "console",
 		},
 		GitHub: GitHubConfig{AppID: 3568013},
-		Agents: agents,
-		Data:   DataConfig{AgentsDir: t.TempDir()},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: agents,
+		},
+		Data: DataConfig{AgentsDir: t.TempDir()},
 	}
 }
 

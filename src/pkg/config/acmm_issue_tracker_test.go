@@ -39,8 +39,10 @@ func TestValidate_RejectsBadACMMIssueTracker(t *testing.T) {
 	c := &Config{
 		Project: ProjectConfig{Org: "my-org"},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 	}
 	c.Governor.ACMM.IssueTracker = "jira"

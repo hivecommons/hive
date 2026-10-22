@@ -38,9 +38,11 @@ func TestValidate_ReviewGateMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
 			c := &Config{
-				Project:  ProjectConfig{Org: "my-org"},
-				GitHub:   GitHubConfig{Token: "t"},
-				Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+				Project: ProjectConfig{Org: "my-org"},
+				GitHub:  GitHubConfig{Token: "t"},
+				AgentRuntimeConfig: AgentRuntimeConfig{
+					Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+				},
 				Governor: GovernorConfig{ReviewGate: ReviewGateConfig{Mode: tt.mode}},
 			}
 			err := c.validate()

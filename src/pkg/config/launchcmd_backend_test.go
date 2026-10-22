@@ -76,8 +76,10 @@ func TestValidateLaunchCmdBackend_AcceptsAgreementAndNoOpinion(t *testing.T) {
 
 func TestValidateLaunchCmdBackend_InferenceAndGateways(t *testing.T) {
 	g := GovernorConfig{
-		Gateways: []GatewayConfig{
-			{Name: "ibm-granite-prod", Kind: GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			Gateways: []GatewayConfig{
+				{Name: "ibm-granite-prod", Kind: GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+			},
 		},
 	}
 	// Inference backends and gateway names run the claude CLI, so a claude
@@ -98,7 +100,9 @@ func TestValidateLaunchCmdBackend_InferenceAndGateways(t *testing.T) {
 
 func TestClearInvalidInferenceLaunchCmds(t *testing.T) {
 	g := GovernorConfig{
-		Gateways: []GatewayConfig{{Name: "corp-gw", Kind: GatewayKindCustom, Endpoint: "https://gw.example"}},
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			Gateways: []GatewayConfig{{Name: "corp-gw", Kind: GatewayKindCustom, Endpoint: "https://gw.example"}},
+		},
 	}
 	agents := map[string]AgentConfig{
 		"litellm": {Backend: "litellm", LaunchCmd: "litellm --model aws/claude-sonnet-5"},

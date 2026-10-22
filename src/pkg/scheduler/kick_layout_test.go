@@ -55,11 +55,13 @@ func kickLayoutScheduler(t *testing.T) *Scheduler {
 	cfg := &config.Config{
 		ACMMLevel: &level,
 		Project:   config.ProjectConfig{Org: "test-org", PrimaryRepo: "console", Repos: []string{"test-org/console", "test-org/docs"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Mode:         "ISSUES_AND_PRS",
-				KickTemplate: "layout-scanner.md",
-				ReviewModels: config.ReviewModelsConfig{Pool: []config.ReviewModelPoolEntry{{Backend: "claude", Model: "opus"}}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Mode:         "ISSUES_AND_PRS",
+					KickTemplate: "layout-scanner.md",
+					ReviewModels: config.ReviewModelsConfig{Pool: []config.ReviewModelPoolEntry{{Backend: "claude", Model: "opus"}}},
+				},
 			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},

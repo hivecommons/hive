@@ -26,12 +26,14 @@ func TestBuildAgents_NoCadence(t *testing.T) {
 		"manual":      newBlockerProc("manual", config.AgentConfig{Backend: "claude", Enabled: true, OnDemand: true}, nil),
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scheduled":   {Backend: "claude", Enabled: true},
-			"unscheduled": {Backend: "claude", Enabled: true},
-			"kickedonce":  {Backend: "claude", Enabled: true},
-			"switchedoff": {Backend: "claude"},
-			"manual":      {Backend: "claude", Enabled: true, OnDemand: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scheduled":   {Backend: "claude", Enabled: true},
+				"unscheduled": {Backend: "claude", Enabled: true},
+				"kickedonce":  {Backend: "claude", Enabled: true},
+				"switchedoff": {Backend: "claude"},
+				"manual":      {Backend: "claude", Enabled: true, OnDemand: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {Cadences: map[string]config.Cadence{"scheduled": "30m"}},
@@ -78,9 +80,11 @@ func TestBuildAgents_NextKickIn(t *testing.T) {
 		"stopped":   newBlockerProc("stopped", config.AgentConfig{Backend: "claude", Enabled: true}, &last),
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scheduled": {Backend: "claude", Enabled: true},
-			"stopped":   {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scheduled": {Backend: "claude", Enabled: true},
+				"stopped":   {Backend: "claude", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {Cadences: map[string]config.Cadence{"scheduled": "30m", "stopped": "pause"}},

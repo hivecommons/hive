@@ -119,9 +119,11 @@ agents:
 func TestGateWarnsJobRuntimeWithoutClaim(t *testing.T) {
 	yes := true
 	cfg := &Config{
-		AgentSandbox: AgentSandboxConfig{Enabled: true, Image: "img"},
-		Agents: map[string]AgentConfig{
-			"deps": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: SandboxRuntimeJob}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			AgentSandbox: AgentSandboxConfig{Enabled: true, Image: "img"},
+			Agents: map[string]AgentConfig{
+				"deps": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: SandboxRuntimeJob}},
+			},
 		},
 	}
 	got := AgentSandboxGateWarnings(cfg)
@@ -133,9 +135,11 @@ func TestGateWarnsJobRuntimeWithoutClaim(t *testing.T) {
 func TestGateWarnsUnknownRuntime(t *testing.T) {
 	yes := true
 	cfg := &Config{
-		AgentSandbox: AgentSandboxConfig{Enabled: true, Image: "img"},
-		Agents: map[string]AgentConfig{
-			"deps": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: "lambda"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			AgentSandbox: AgentSandboxConfig{Enabled: true, Image: "img"},
+			Agents: map[string]AgentConfig{
+				"deps": {Sandbox: &AgentSandboxOverride{Enabled: &yes, Runtime: "lambda"}},
+			},
 		},
 	}
 	got := AgentSandboxGateWarnings(cfg)

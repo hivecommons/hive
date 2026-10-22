@@ -185,8 +185,10 @@ func TestSetProxyViolationsProvider(t *testing.T) {
 
 func TestBuildAgentOnlyStatus(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -926,9 +928,11 @@ func TestBuildBeadsFromConfig(t *testing.T) {
 		"supervisor": supStore,
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {BeadRole: "worker"},
-			"supervisor": {BeadRole: "supervisor"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {BeadRole: "worker"},
+				"supervisor": {BeadRole: "supervisor"},
+			},
 		},
 	}
 

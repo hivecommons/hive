@@ -451,9 +451,11 @@ func TestEnabledAgents_FiltersDisabled(t *testing.T) {
 	// After Load(), applyDefaults sets all agents to enabled=true.
 	// Test EnabledAgents() directly on a crafted Config where one is disabled.
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"active":   {Backend: "claude", Enabled: true},
-			"inactive": {Backend: "copilot", Enabled: false},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"active":   {Backend: "claude", Enabled: true},
+				"inactive": {Backend: "copilot", Enabled: false},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -470,9 +472,11 @@ func TestEnabledAgents_FiltersDisabled(t *testing.T) {
 
 func TestEnabledAgents_AllEnabled(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"a": {Backend: "claude", Enabled: true},
-			"b": {Backend: "copilot", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"a": {Backend: "claude", Enabled: true},
+				"b": {Backend: "copilot", Enabled: true},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -483,8 +487,10 @@ func TestEnabledAgents_AllEnabled(t *testing.T) {
 
 func TestEnabledAgents_NoneEnabled(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"a": {Backend: "claude", Enabled: false},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"a": {Backend: "claude", Enabled: false},
+			},
 		},
 	}
 	enabled := cfg.EnabledAgents()
@@ -892,7 +898,9 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 	}
 	cfg.applyDefaults()
 
@@ -933,9 +941,11 @@ func TestApplyDefaults_AllGovernorDefaults(t *testing.T) {
 
 func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	cfg := &Config{
-		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:    GitHubConfig{Token: "t"},
-		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 		Knowledge: KnowledgeConfig{Enabled: true},
 	}
 	cfg.applyDefaults()
@@ -978,7 +988,9 @@ func TestDashboardExperimentLabDefaultsHidden(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 	}
 	cfg.applyDefaults()
 
@@ -992,9 +1004,11 @@ func TestDashboardExperimentLabDefaultsHidden(t *testing.T) {
 
 func TestApplyDefaults_ExistingValuesNotOverridden(t *testing.T) {
 	cfg := &Config{
-		Project:   ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:    GitHubConfig{Token: "t"},
-		Agents:    map[string]AgentConfig{"a": {Backend: "claude"}},
+		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  GitHubConfig{Token: "t"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 		Dashboard: DashboardConfig{Port: 8080},
 		Governor: GovernorConfig{
 			EvalIntervalS: 600,
@@ -1102,7 +1116,9 @@ func TestSave_BlocksEmptyOrg(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: ""}, // missing org
-		Agents:     map[string]AgentConfig{"w": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"w": {Backend: "claude"}},
+		},
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -1124,7 +1140,9 @@ func TestSave_BlocksNoAgents(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "my-org", Repos: []string{"r"}},
-		Agents:     map[string]AgentConfig{}, // no agents
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		}, // no agents
 	}
 	err := cfg.Save()
 	if err == nil {
@@ -1145,7 +1163,9 @@ func TestSave_AllowsValidConfig(t *testing.T) {
 	cfg := &Config{
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "my-org", Repos: []string{"r"}},
-		Agents:     map[string]AgentConfig{"w": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"w": {Backend: "claude"}},
+		},
 	}
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save() should succeed for valid config: %v", err)
@@ -1399,7 +1419,7 @@ func TestHumanMergePathsFor(t *testing.T) {
 }
 
 func TestValidateGitHubAPIBudgetThresholds(t *testing.T) {
-	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}
+	cfg := &Config{Project: ProjectConfig{Org: "acme", Repos: []string{"widgets"}}, GitHub: GitHubConfig{Token: "ghp_test", APIReserve: 250, APICritical: 250}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude"}}}}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "github.api_critical") {
 		t.Fatalf("Validate() error = %v, want github.api_critical", err)
 	}

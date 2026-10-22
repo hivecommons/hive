@@ -177,7 +177,9 @@ func TestConfigValidateRunsKnowledgeConnectors(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude", Model: "sonnet"}},
+		},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("baseline config invalid: %v", err)

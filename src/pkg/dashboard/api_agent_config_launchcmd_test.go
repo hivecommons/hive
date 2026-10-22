@@ -35,13 +35,17 @@ func TestHandleAgentConfigGet_InferenceBackendUsesClaudeLaunchDefault(t *testing
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
-			"gateway":       {Backend: "corp-gw", Model: "granite", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
+				"gateway":       {Backend: "corp-gw", Model: "granite", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{Name: "corp-gw", Kind: config.GatewayKindCustom, Endpoint: "https://gw.example"}},
-			Modes:    map[string]config.ModeConfig{"idle": {Threshold: 0}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{Name: "corp-gw", Kind: config.GatewayKindCustom, Endpoint: "https://gw.example"}},
+			},
+			Modes: map[string]config.ModeConfig{"idle": {Threshold: 0}},
 		},
 	}
 	s := agentConfigLaunchCmdServer(t, cfg)
@@ -62,8 +66,10 @@ func TestHandleAgentConfigGeneral_RejectsInferenceBackendBinaryLaunchCmd(t *test
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Threshold: 0}}},
 	}
@@ -83,8 +89,10 @@ func TestHandleAgentConfigGeneral_NormalizesDisplayDefaultLaunchCmd(t *testing.T
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"ci-maintainer": {Backend: "litellm", Model: "aws/claude-sonnet-5", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Threshold: 0}}},
 	}

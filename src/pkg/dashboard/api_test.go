@@ -38,8 +38,10 @@ func testDeps(t *testing.T) *Dependencies {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
@@ -636,12 +638,14 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Backend:     "claude",
-				Model:       "sonnet",
-				Enabled:     true,
-				Description: multilineDesc,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Backend:     "claude",
+					Model:       "sonnet",
+					Enabled:     true,
+					Description: multilineDesc,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{

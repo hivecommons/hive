@@ -11,8 +11,10 @@ import (
 )
 
 func TestSubAgentModelsStatus(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {Backend: "copilot", Enabled: true},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Enabled: true},
+		},
 	}}
 	statuses := map[string]*agent.AgentProcess{"scanner": {
 		Name: "scanner", Config: cfg.Agents["scanner"],

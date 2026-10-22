@@ -384,9 +384,11 @@ func TestWriteMergeEligible_ConflictedHivePRRoutesToOwnerOrFallback(t *testing.T
 	}
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Enabled: true},
-			"strategist": {Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Enabled: true},
+				"strategist": {Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle":  {Cadences: map[string]config.Cadence{"strategist": config.NewIntervalCadence("paused")}},

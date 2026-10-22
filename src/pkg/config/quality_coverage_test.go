@@ -244,9 +244,11 @@ func TestAgentConfig_BackendIsOperatorOwned(t *testing.T) {
 
 func TestConfig_BaseAgentName(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+			},
 		},
 	}
 	if got := cfg.BaseAgentName("scanner"); got != "scanner" {

@@ -42,8 +42,10 @@ func TestCadenceTooltipAndCardAgreeOnNextKick(t *testing.T) {
 	lastKick := time.Now().Add(-40 * time.Minute)
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -133,8 +135,10 @@ func TestCadenceTooltipNonActiveModesOmitNext(t *testing.T) {
 	lastKick := time.Now().Add(-40 * time.Minute)
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{

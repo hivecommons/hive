@@ -206,7 +206,13 @@ func yamlPathExists(typ reflect.Type, parts []string) bool {
 	}
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
-		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		name, opts, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if f.Anonymous && name == "" && strings.Contains(opts, "inline") {
+			if yamlPathExists(f.Type, parts) {
+				return true
+			}
+			continue
+		}
 		if name == parts[0] {
 			return yamlPathExists(f.Type, parts[1:])
 		}

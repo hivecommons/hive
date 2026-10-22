@@ -46,8 +46,10 @@ func backendAuthErrorStatuses(cfg *config.Config, lastKick *time.Time) map[strin
 
 func inferenceLastErrorCfg() *config.Config {
 	return &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+			},
 		},
 	}
 }

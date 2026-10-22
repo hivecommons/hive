@@ -120,8 +120,10 @@ func TestRemoveAgentFile_NonExistent(t *testing.T) {
 
 func TestMergeAgentOverrides(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 
@@ -143,8 +145,10 @@ func TestMergeAgentOverrides(t *testing.T) {
 
 func TestMergeAgentOverrides_OverrideExisting(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Model: "opus", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Model: "opus", Enabled: true},
+			},
 		},
 	}
 
@@ -160,8 +164,10 @@ func TestMergeAgentOverrides_OverrideExisting(t *testing.T) {
 
 func TestApplyAgentDefaults(t *testing.T) {
 	cfg := &Config{
-		Agents: map[string]AgentConfig{
-			"my-agent": {Backend: "copilot", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"my-agent": {Backend: "copilot", Enabled: true},
+			},
 		},
 	}
 	cfg.ApplyAgentDefaults("my-agent")

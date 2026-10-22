@@ -159,7 +159,9 @@ func TestWriteSurfaceOwnerGate(t *testing.T) {
 
 func TestWriteSurfaceSection_WarnsUnknownOpFromYAML(t *testing.T) {
 	cfg := &config.Config{
-		Agents:       map[string]config.AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {}},
+		},
 		WriteSurface: config.WriteSurfaceConfig{Allowlist: map[string][]string{"scanner": {"comennt"}, "scanner-2": {"comment"}}},
 	}
 	got := writeSurfaceSection(cfg)
@@ -169,7 +171,7 @@ func TestWriteSurfaceSection_WarnsUnknownOpFromYAML(t *testing.T) {
 }
 
 func TestWriteSurfaceLaneConfigured(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"scanner": {}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"scanner": {}}}}
 	for lane, want := range map[string]bool{"scanner": true, "scanner-3": true, "reviewer": false, "reviewer-2": false} {
 		if got := writeSurfaceLaneConfigured(cfg, lane); got != want {
 			t.Errorf("writeSurfaceLaneConfigured(%q) = %v, want %v", lane, got, want)

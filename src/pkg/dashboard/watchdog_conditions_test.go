@@ -16,9 +16,11 @@ import (
 // (omitempty) for agents the watchdog has not swept.
 func TestAgentPayloadCarriesWatchdogConditions(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
-			"quality": {Backend: "codex", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+				"quality": {Backend: "codex", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
 	}
@@ -77,10 +79,14 @@ func TestAgentPayloadCarriesWatchdogMode(t *testing.T) {
 	}
 	newCfg := func(mode string) *config.Config {
 		return &config.Config{
-			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Enabled: true}},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Enabled: true}},
+			},
 			Governor: config.GovernorConfig{
-				Modes:    map[string]config.ModeConfig{},
-				Watchdog: config.WatchdogConfig{Mode: mode},
+				Modes: map[string]config.ModeConfig{},
+				AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+					Watchdog: config.WatchdogConfig{Mode: mode},
+				},
 			},
 		}
 	}

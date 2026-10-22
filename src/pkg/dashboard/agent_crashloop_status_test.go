@@ -33,7 +33,9 @@ func crashLoopProc(name string, events []agent.RestartEvent) *agent.AgentProcess
 func buildOneAgent(t *testing.T, proc *agent.AgentProcess) FrontendAgent {
 	t.Helper()
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{proc.Name: proc.Config},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{proc.Name: proc.Config},
+		},
 	}
 	agents := buildAgents(map[string]*agent.AgentProcess{proc.Name: proc}, cfg, governor.State{Mode: governor.ModeIdle})
 	if len(agents) != 1 {

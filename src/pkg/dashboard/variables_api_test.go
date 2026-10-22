@@ -14,9 +14,11 @@ import (
 func newVarServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := &config.Config{
-		Project:    config.ProjectConfig{Org: "o", Repos: []string{"r"}},
-		GitHub:     config.GitHubConfig{Token: "ghp_x"},
-		Agents:     map[string]config.AgentConfig{"scanner": {Backend: "copilot"}},
+		Project: config.ProjectConfig{Org: "o", Repos: []string{"r"}},
+		GitHub:  config.GitHubConfig{Token: "ghp_x"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "copilot"}},
+		},
 		SourcePath: t.TempDir() + "/hive.yaml",
 	}
 	// A real (discarding) logger is required: RegisterAPI constructs a

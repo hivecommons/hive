@@ -57,10 +57,12 @@ func reviewSwarmConfig() *config.Config {
 			ReviewerAgents:  []string{"reviewer"},
 			FixerAgent:      "scanner",
 		},
-		Agents: map[string]config.AgentConfig{
-			"reviewer": {Enabled: true, Role: "review specialist"},
-			"scanner":  {Enabled: true, Role: "scanner"},
-			"disabled": {Enabled: false, Role: "review"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": {Enabled: true, Role: "review specialist"},
+				"scanner":  {Enabled: true, Role: "scanner"},
+				"disabled": {Enabled: false, Role: "review"},
+			},
 		},
 	}
 }

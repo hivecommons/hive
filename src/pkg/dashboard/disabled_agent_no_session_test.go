@@ -36,9 +36,11 @@ func TestBuildAgentsCarriesEnabledFlag(t *testing.T) {
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {Backend: "claude", Enabled: true, SortOrder: 10},
-		"guide":   {Backend: "copilot", Enabled: false, SortOrder: 20},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "claude", Enabled: true, SortOrder: 10},
+			"guide":   {Backend: "copilot", Enabled: false, SortOrder: 20},
+		},
 	}}
 
 	byName := map[string]FrontendAgent{}
@@ -72,8 +74,10 @@ func TestBuildAgentsPrefersLiveConfigForEnabled(t *testing.T) {
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"guide": {Backend: "copilot", Enabled: false},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"guide": {Backend: "copilot", Enabled: false},
+		},
 	}}
 
 	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})
@@ -90,7 +94,7 @@ func TestAgentDisabledInConfigFallsBackToProcessCopy(t *testing.T) {
 
 	// Absent from the live config (an agent that exists only in the roster):
 	// the process copy is all there is.
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}}
 	if !agentDisabledInConfig(cfg, "guide", proc) {
 		t.Error("want disabled when the live config has no entry and the process copy says disabled")
 	}

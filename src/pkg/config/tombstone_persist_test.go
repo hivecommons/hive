@@ -159,7 +159,9 @@ removed_agents: [guide]
 // the tombstone authoritative independent of the per-agent file's deletion.
 func TestMergeAgentOverridesTombstoneWinsOverStaleFile(t *testing.T) {
 	cfg := &Config{
-		Agents:        map[string]AgentConfig{},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 		RemovedAgents: []string{"brainstorm"},
 	}
 	// The stale per-agent overlay file, still on disk, offered up by a reload.

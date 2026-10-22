@@ -29,15 +29,19 @@ func rotationTestLogger() *slog.Logger {
 func rotationTestConfig() *config.Config {
 	return &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Repos: []string{"r"}},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Backend: "claude", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
-			Rotation: config.RotationConfig{
-				Enabled: true,
-				Providers: map[string]config.ProviderRotationConfig{
-					"anthropic": {Class: rotation.ClassSubscription, Backends: []string{"claude"}},
-					"openai":    {Class: rotation.ClassMetered, Backends: []string{"codex"}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Rotation: config.RotationConfig{
+					Enabled: true,
+					Providers: map[string]config.ProviderRotationConfig{
+						"anthropic": {Class: rotation.ClassSubscription, Backends: []string{"claude"}},
+						"openai":    {Class: rotation.ClassMetered, Backends: []string{"codex"}},
+					},
 				},
 			},
 		},

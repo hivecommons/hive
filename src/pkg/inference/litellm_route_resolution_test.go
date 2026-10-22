@@ -168,8 +168,10 @@ func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 			t.Setenv(config.LiteLLMEndpointEnv, "")
 
 			cfg := &config.Config{Governor: config.GovernorConfig{
-				LiteLLM:  tc.litellm,
-				Gateways: tc.gateways,
+				AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+					LiteLLM:  tc.litellm,
+					Gateways: tc.gateways,
+				},
 			}}
 
 			endpoint, model, ok := ResolveLiteLLMRoute(cfg, tc.backend, tc.requestedModel)
@@ -198,7 +200,9 @@ func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 func TestResolveLiteLLMInferenceRouteEnvEndpoint(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "https://from-env.example")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example", DefaultModel: "legacy-model"},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example", DefaultModel: "legacy-model"},
+		},
 	}}
 
 	endpoint, model, ok := ResolveLiteLLMRoute(cfg, "litellm", "")
@@ -232,11 +236,13 @@ func TestResolveLiteLLMInferenceRouteExplicitGatewayBeatsStaleLegacyEndpoint(t *
 				t.Setenv(config.LiteLLMEndpointEnv, "")
 			}
 			cfg := &config.Config{Governor: config.GovernorConfig{
-				LiteLLM: lc,
-				Gateways: []config.GatewayConfig{{
-					Name: "litellm", Kind: config.GatewayKindLiteLLM,
-					Endpoint: " https://litellm.cb.example ", DefaultModel: "rits/zai-org/glm-5-3",
-				}},
+				AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+					LiteLLM: lc,
+					Gateways: []config.GatewayConfig{{
+						Name: "litellm", Kind: config.GatewayKindLiteLLM,
+						Endpoint: " https://litellm.cb.example ", DefaultModel: "rits/zai-org/glm-5-3",
+					}},
+				},
 			}}
 
 			endpoint, model, ok := ResolveLiteLLMRoute(cfg, "litellm", "")
@@ -262,8 +268,10 @@ func TestResolveLiteLLMInferenceRouteExplicitGatewayBeatsStaleLegacyEndpoint(t *
 func TestResolveLiteLLMInferenceRouteExplicitGatewayWithoutEndpointFallsBackToLegacy(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		LiteLLM:  config.LiteLLMConfig{Endpoint: "https://legacy.example", DefaultModel: "legacy-model"},
-		Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "  "}},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			LiteLLM:  config.LiteLLMConfig{Endpoint: "https://legacy.example", DefaultModel: "legacy-model"},
+			Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "  "}},
+		},
 	}}
 	if gw := ExplicitLiteLLMGateway(cfg, "litellm"); gw != nil {
 		t.Fatalf("ExplicitLiteLLMGateway = %+v, want nil for an endpoint-less gateway", gw)

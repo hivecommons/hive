@@ -10,11 +10,13 @@ import "testing"
 
 func TestHasAnyCadence(t *testing.T) {
 	c := &Config{
-		Agents: map[string]AgentConfig{
-			"scanner":   {},
-			"quality":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
-			"lonely":    {},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner":   {},
+				"quality":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+				"lonely":    {},
+			},
 		},
 		Governor: GovernorConfig{Modes: map[string]ModeConfig{
 			"idle":  {Cadences: map[string]Cadence{"scanner": "15m"}},

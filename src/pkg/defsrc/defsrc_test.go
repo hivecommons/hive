@@ -249,13 +249,15 @@ func TestApplyToConfig_OnlyLinkedAgents(t *testing.T) {
 	f := &stubFetcher{body: validDef}
 	r := NewResolver(f, allowAll, nil)
 
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {
-			DisplayName:      "Baked Scanner",
-			Paused:           true,
-			DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {
+				DisplayName:      "Baked Scanner",
+				Paused:           true,
+				DefinitionSource: &config.DefinitionSourceConfig{Owner: "hivecommons", Repo: "hive", Path: "agents/scanner.yaml", Ref: "v2"},
+			},
+			"reviewer": {DisplayName: "Reviewer", Paused: true}, // no definition_source
 		},
-		"reviewer": {DisplayName: "Reviewer", Paused: true}, // no definition_source
 	}}
 
 	ApplyToConfig(context.Background(), cfg, r, nil)
@@ -285,8 +287,10 @@ func TestApplyToConfig_OnlyLinkedAgents(t *testing.T) {
 
 // TestApplyToConfig_NilResolverNoop.
 func TestApplyToConfig_NilResolverNoop(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {DisplayName: "Baked", DefinitionSource: &config.DefinitionSourceConfig{Owner: "o", Repo: "r", Path: "a.yaml"}},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {DisplayName: "Baked", DefinitionSource: &config.DefinitionSourceConfig{Owner: "o", Repo: "r", Path: "a.yaml"}},
+		},
 	}}
 	ApplyToConfig(context.Background(), cfg, nil, nil) // must not panic
 	if cfg.Agents["scanner"].DisplayName != "Baked" {

@@ -10,8 +10,10 @@ func TestValidateAgentSpecRef(t *testing.T) {
 		return &Config{
 			Project: ProjectConfig{Org: "my-org"},
 			GitHub:  GitHubConfig{Token: "t"},
-			Agents: map[string]AgentConfig{
-				"supervisor": {Backend: "copilot", AgentSpec: agentSpec},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{
+					"supervisor": {Backend: "copilot", AgentSpec: agentSpec},
+				},
 			},
 		}
 	}

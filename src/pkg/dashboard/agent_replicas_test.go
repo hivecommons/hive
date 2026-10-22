@@ -10,9 +10,11 @@ import (
 
 func TestBuildAgentsIncludesReplicaMetadataAndBaseCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":   {ID: "scanner", Enabled: true, Replicas: 2, ReplicaIndex: 1, ReplicaCount: 2},
-			"scanner-2": {ID: "scanner-2", Enabled: true, ReplicaOf: "scanner", ReplicaIndex: 2, ReplicaCount: 2},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":   {ID: "scanner", Enabled: true, Replicas: 2, ReplicaIndex: 1, ReplicaCount: 2},
+				"scanner-2": {ID: "scanner-2", Enabled: true, ReplicaOf: "scanner", ReplicaIndex: 2, ReplicaCount: 2},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {Cadences: map[string]config.Cadence{"scanner": "10m"}},

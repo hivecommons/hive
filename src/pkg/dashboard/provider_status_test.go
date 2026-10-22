@@ -9,10 +9,12 @@ import (
 
 func TestBuildProviderStatusRollsUpEnabledAgents(t *testing.T) {
 	refreshable := true
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner":  {Enabled: true},
-		"reviewer": {Enabled: true},
-		"idle":     {Enabled: false},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner":  {Enabled: true},
+			"reviewer": {Enabled: true},
+			"idle":     {Enabled: false},
+		},
 	}}
 	agents := []FrontendAgent{
 		{Name: "scanner", GovBackend: "claude", BackendAuthStatus: agent.BackendAuthTokenExpired, BackendAuthSince: "2026-10-01T08:00:00Z", BackendAuthRefreshable: &refreshable},

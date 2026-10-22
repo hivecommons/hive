@@ -383,7 +383,7 @@ func TestWatchdogAgentLivenessLiveConfigWins(t *testing.T) {
 			condAt(watchdog.ConditionReady, watchdog.ConditionTrue, "ready", "", now),
 		}},
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"scanner": {Enabled: false}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"scanner": {Enabled: false}}}}
 	if rows := watchdogAgentLiveness(statuses, cfg); len(rows) != 0 {
 		t.Errorf("agent disabled in LIVE config must be omitted, got %+v", rows)
 	}

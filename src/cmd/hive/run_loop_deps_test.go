@@ -77,7 +77,7 @@ func (h *loopHarness) deps() runLoopDeps {
 
 func newLoopBoot(t *testing.T, evalS, agentPollS int) (*boot, *strings.Builder, context.CancelFunc) {
 	t.Helper()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"alpha": {Enabled: true}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"alpha": {Enabled: true}}}}
 	cfg.Governor.EvalIntervalS = evalS
 	cfg.Dashboard.AgentPollIntervalS = agentPollS
 	b, _ := newDepsTestBoot(t, cfg)

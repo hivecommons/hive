@@ -48,7 +48,9 @@ func TestPausePersist_ConcurrentSoak(t *testing.T) {
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{AppID: 3568013},
-		Agents:     agents,
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: agents,
+		},
 		// Empty temp dir so Load() can't merge the live host's
 		// /data/agent-configs overlays over the paused flags.
 		Data: DataConfig{AgentsDir: t.TempDir()},
@@ -145,7 +147,9 @@ func TestPausePersist_TwoUnsynchronizedSavers(t *testing.T) {
 		SourcePath: path,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
 		GitHub:     GitHubConfig{AppID: 3568013},
-		Agents:     agents,
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: agents,
+		},
 		// Empty temp dir so Load() can't merge the live host's
 		// /data/agent-configs overlays over the paused flags.
 		Data: DataConfig{AgentsDir: t.TempDir()},

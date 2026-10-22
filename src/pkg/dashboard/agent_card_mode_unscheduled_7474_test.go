@@ -24,15 +24,17 @@ import (
 
 func modeUnscheduledCfg() *config.Config {
 	return &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", Enabled: true},
-			"auditor":    {Backend: "claude", Enabled: true},
-			"auditor-2":  {Backend: "claude", Enabled: true, ReplicaOf: "auditor", ReplicaIndex: 2, ReplicaCount: 2},
-			"janitor":    {Backend: "claude", Enabled: true},
-			"parked":     {Backend: "claude", Enabled: true},
-			"orphan":     {Backend: "claude", Enabled: true},
-			"helper":     {Backend: "claude", Enabled: true, OnDemand: true},
-			"mothballed": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", Enabled: true},
+				"auditor":    {Backend: "claude", Enabled: true},
+				"auditor-2":  {Backend: "claude", Enabled: true, ReplicaOf: "auditor", ReplicaIndex: 2, ReplicaCount: 2},
+				"janitor":    {Backend: "claude", Enabled: true},
+				"parked":     {Backend: "claude", Enabled: true},
+				"orphan":     {Backend: "claude", Enabled: true},
+				"helper":     {Backend: "claude", Enabled: true, OnDemand: true},
+				"mothballed": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "1h", "janitor": "2h"}},

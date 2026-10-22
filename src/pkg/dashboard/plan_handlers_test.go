@@ -47,7 +47,7 @@ func planServer(t *testing.T) (*Server, *beads.Store, *beads.Bead) {
 
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -314,7 +314,7 @@ func TestHandlePlanReject_BadState(t *testing.T) {
 	epic, _ := store.Create("undecomposed", beads.TypeEpic, beads.PriorityHigh, "architect", "")
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -392,7 +392,7 @@ func TestHandlePlanTree_NonEpicBead(t *testing.T) {
 	task, _ := store.Create("task", beads.TypeTask, beads.PriorityLow, "worker", "")
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -528,7 +528,7 @@ func TestHandlePlanList(t *testing.T) {
 func TestHandlePlanList_NoStores(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config: &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		Logger: slog.Default(),
 		Ctx:    context.Background(),
 	}

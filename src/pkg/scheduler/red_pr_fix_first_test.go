@@ -113,10 +113,12 @@ func TestAddRedPRFixFirst_Injection(t *testing.T) {
 
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner":  {Mode: "ISSUES_AND_PRS"},
-			"advisor":  {Mode: "ADVISORY"},
-			"outreach": {Mode: "ISSUES_AND_PRS"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":  {Mode: "ISSUES_AND_PRS"},
+				"advisor":  {Mode: "ADVISORY"},
+				"outreach": {Mode: "ISSUES_AND_PRS"},
+			},
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

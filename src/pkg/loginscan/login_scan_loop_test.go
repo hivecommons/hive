@@ -194,7 +194,9 @@ func loginScanLoopConfig(patterns []string, backends map[string]string) *config.
 		agents[name] = config.AgentConfig{Backend: backend}
 	}
 	return &config.Config{
-		Agents: agents,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: agents,
+		},
 		Governor: config.GovernorConfig{
 			Sensing: config.SensingConfig{LoginPatterns: patterns},
 		},

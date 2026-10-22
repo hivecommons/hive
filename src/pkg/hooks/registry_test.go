@@ -395,7 +395,9 @@ func TestCompileRejectsKickWithoutAgent(t *testing.T) {
 
 func TestCompileFromConfigRejectsKickUnknownAgent(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{"architect": {}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"architect": {}},
+		},
 		Hooks: []config.HookRule{{
 			Name: "kick-missing", On: string(TransitionStageCompleted), Action: string(ActionKick),
 			Params: map[string]string{"agent": "quality"},

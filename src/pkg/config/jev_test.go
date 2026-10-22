@@ -43,7 +43,7 @@ func TestJevConfigValidate(t *testing.T) {
 // TestValidateRejectsInvalidJevMode pins the load-time gate and its error text
 // (troubleshooting.md documents `agent <name>: invalid jev_mode`).
 func TestValidateRejectsInvalidJevMode(t *testing.T) {
-	cfg := &Config{Project: ProjectConfig{Org: "my-org"}, GitHub: GitHubConfig{Token: "t"}, Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude", JevMode: "always"}}}
+	cfg := &Config{Project: ProjectConfig{Org: "my-org"}, GitHub: GitHubConfig{Token: "t"}, AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {Enabled: true, Backend: "claude", JevMode: "always"}}}}
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), `agent scanner: invalid jev_mode "always"`) {
 		t.Fatalf("want jev_mode error, got %v", err)
@@ -74,7 +74,7 @@ func TestJevEnabledAndAssistEnabled(t *testing.T) {
 	if (AgentConfig{}).JevEnabled() || (AgentConfig{JevMode: JevModeOff}).JevEnabled() || !(AgentConfig{JevMode: JevModeAssist}).JevEnabled() {
 		t.Error("JevEnabled: only assist is on")
 	}
-	cfg := &Config{Agents: map[string]AgentConfig{"on": {JevMode: JevModeAssist}, "off": {}}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"on": {JevMode: JevModeAssist}, "off": {}}}}
 	if !cfg.JevAssistEnabled("on") || cfg.JevAssistEnabled("off") || cfg.JevAssistEnabled("missing") || (*Config)(nil).JevAssistEnabled("on") {
 		t.Error("JevAssistEnabled predicate wrong")
 	}

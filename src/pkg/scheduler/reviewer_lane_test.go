@@ -121,11 +121,13 @@ func reviewerTestScheduler(t *testing.T, acmmLevel int, fixture string) *Schedul
 	}
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			// An operator-added adjudicator: name is NOT "reviewer"; the ROLE
-			// is what routes it into the lane.
-			"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
-			"scanner":     {Mode: "ISSUES_AND_PRS"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				// An operator-added adjudicator: name is NOT "reviewer"; the ROLE
+				// is what routes it into the lane.
+				"adjudicator": {Role: "reviewer", Mode: "ISSUES_AND_PRS"},
+				"scanner":     {Mode: "ISSUES_AND_PRS"},
+			},
 		},
 	}
 	if acmmLevel > 0 {

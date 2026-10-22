@@ -33,8 +33,10 @@ func writeSkill(t *testing.T, dir, file, content string) {
 // schedulerWithSkills builds a Scheduler whose named agent declares skills.
 func schedulerWithSkills(agent string, skills []string) *Scheduler {
 	return New(&config.Config{
-		Agents: map[string]config.AgentConfig{
-			agent: {Skills: skills},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				agent: {Skills: skills},
+			},
 		},
 	}, slog.Default())
 }
@@ -100,8 +102,10 @@ func TestPrimeSkills_UsesAgentSpecDefaultSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := New(&config.Config{
-		Agents: map[string]config.AgentConfig{
-			"reviewer": {AgentSpec: specPath},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": {AgentSpec: specPath},
+			},
 		},
 	}, slog.Default())
 
@@ -119,8 +123,10 @@ func TestPrimeSkills_AgentSpecWithoutSkillsRevokesConfiguredSkills(t *testing.T)
 		t.Fatal(err)
 	}
 	s := New(&config.Config{
-		Agents: map[string]config.AgentConfig{
-			"reviewer": {AgentSpec: specPath, Skills: []string{"configured"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": {AgentSpec: specPath, Skills: []string{"configured"}},
+			},
 		},
 	}, slog.Default())
 
@@ -133,10 +139,12 @@ func TestPrimeSkills_MissingAgentSpecDoesNotFallbackToConfiguredSkills(t *testin
 	dir := useSkillsDir(t)
 	writeSkill(t, dir, "configured.md", "SHOULD NOT APPEAR")
 	s := New(&config.Config{
-		Agents: map[string]config.AgentConfig{
-			"reviewer": {
-				AgentSpec: filepath.Join(t.TempDir(), "missing.yaml"),
-				Skills:    []string{"configured"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": {
+					AgentSpec: filepath.Join(t.TempDir(), "missing.yaml"),
+					Skills:    []string{"configured"},
+				},
 			},
 		},
 	}, slog.Default())
@@ -256,8 +264,10 @@ func TestSubstituteTemplate_KnowledgeCarriesRepoSkillFallback(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Skills: []string{"verification"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Skills: []string{"verification"}},
+			},
 		},
 	}
 	cfg.Project.PrimaryRepo = "hive"

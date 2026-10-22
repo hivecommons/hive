@@ -108,10 +108,12 @@ func sandboxPostureLogger() (*slog.Logger, *bytes.Buffer) {
 func TestLogAgentSandboxPostureEmitsOneWarnPerWarning(t *testing.T) {
 	logger, buf := sandboxPostureLogger()
 	cfg := &config.Config{
-		AgentSandbox: config.AgentSandboxConfig{Enabled: true, Image: "ghcr.io/example/agent:latest"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
-			"quality": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			AgentSandbox: config.AgentSandboxConfig{Enabled: true, Image: "ghcr.io/example/agent:latest"},
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+				"quality": {},
+			},
 		},
 	}
 
@@ -133,7 +135,9 @@ func TestLogAgentSandboxPostureSilentOnCleanConfig(t *testing.T) {
 	logger, buf := sandboxPostureLogger()
 
 	logAgentSandboxPosture(logger, &config.Config{
-		Agents: map[string]config.AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {}},
+		},
 	})
 	logAgentSandboxPosture(logger, nil) // nil cfg is the pre-load window
 

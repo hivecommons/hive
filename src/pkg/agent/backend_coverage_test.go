@@ -241,9 +241,11 @@ func TestManagerBackendBinaryName_ConfiguredGatewayResolvesToClaude(t *testing.T
 
 func TestAcceptedBackendsAreLaunchableByConstruction(t *testing.T) {
 	g := config.GovernorConfig{
-		Gateways: []config.GatewayConfig{
-			{Name: "openrouter", Kind: config.GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1"},
-			{Name: "Corp-Watsonx", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			Gateways: []config.GatewayConfig{
+				{Name: "openrouter", Kind: config.GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1"},
+				{Name: "Corp-Watsonx", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+			},
 		},
 	}
 	m := NewManager(nil, discardLogger(), ProjectContext{})

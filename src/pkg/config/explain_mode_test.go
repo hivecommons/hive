@@ -27,8 +27,10 @@ func TestValidate_RejectsBadExplainMode(t *testing.T) {
 	c := &Config{
 		Project: ProjectConfig{Org: "my-org"},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", ExplainMode: "verbose"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", ExplainMode: "verbose"},
+			},
 		},
 	}
 	err := c.validate()
@@ -49,8 +51,10 @@ func TestValidate_AcceptsEveryExplainMode(t *testing.T) {
 		c := &Config{
 			Project: ProjectConfig{Org: "my-org"},
 			GitHub:  GitHubConfig{Token: "t"},
-			Agents: map[string]AgentConfig{
-				"scanner": {Backend: "claude", ExplainMode: mode},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{
+					"scanner": {Backend: "claude", ExplainMode: mode},
+				},
 			},
 		}
 		if err := c.validate(); err != nil {
@@ -149,7 +153,9 @@ func TestValidate_RejectsBadGovernorExplainMode(t *testing.T) {
 		Project:  ProjectConfig{Org: "my-org"},
 		GitHub:   GitHubConfig{Token: "t"},
 		Governor: GovernorConfig{ExplainMode: "verbose"},
-		Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}
 	err := c.validate()
 	if err == nil {
@@ -171,7 +177,9 @@ func TestValidate_AcceptsEveryGovernorExplainMode(t *testing.T) {
 			Project:  ProjectConfig{Org: "my-org"},
 			GitHub:   GitHubConfig{Token: "t"},
 			Governor: GovernorConfig{ExplainMode: mode},
-			Agents:   map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			AgentRuntimeConfig: AgentRuntimeConfig{
+				Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+			},
 		}
 		if err := c.validate(); err != nil {
 			t.Errorf("validate() rejected governor explain_mode %q: %v", mode, err)

@@ -23,7 +23,9 @@ func TestValidateSpektacularRecheckDiscoveryRejectsBadKind(t *testing.T) {
 	cfg := Config{
 		Project: ProjectConfig{Org: "org"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}
 	cfg.Runs.Spektacular.Recheck.Discovery = SpektacularRecheckDiscoveryConfig{
 		Enabled: true,
@@ -39,7 +41,9 @@ func TestValidateSpektacularRecheckDiscoveryRejectsDisallowedHost(t *testing.T) 
 	cfg := Config{
 		Project: ProjectConfig{Org: "org"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}
 	cfg.Variables.Security.HTTPAllowlist = []string{"allowed.example.com"}
 	cfg.Runs.Spektacular.Recheck.Discovery = SpektacularRecheckDiscoveryConfig{
@@ -56,7 +60,9 @@ func TestValidateSpektacularRecheckDiscoveryAcceptsAllowlistedSources(t *testing
 	cfg := Config{
 		Project: ProjectConfig{Org: "org"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents:  map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "claude"}},
+		},
 	}
 	cfg.Variables.Security.HTTPAllowlist = []string{"api.github.com", "standards.example.com"}
 	cfg.Runs.Spektacular.Recheck.Discovery = SpektacularRecheckDiscoveryConfig{

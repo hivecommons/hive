@@ -36,8 +36,10 @@ func TestSaveSkipsLivePVCLayersUnderTest(t *testing.T) {
 	// surfaced even though the PVC paths are (on CI) unwritable.
 	dir := t.TempDir()
 	cfg := &Config{
-		Project:    ProjectConfig{Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo"},
-		Agents:     map[string]AgentConfig{"scanner": {Backend: "copilot", Model: "m"}},
+		Project: ProjectConfig{Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Backend: "copilot", Model: "m"}},
+		},
 		SourcePath: filepath.Join(dir, "hive.yaml"),
 	}
 	if err := cfg.Save(); err != nil {

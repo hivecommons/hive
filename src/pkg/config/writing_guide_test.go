@@ -87,6 +87,8 @@ func validWritingGuideConfig() *Config {
 	return &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "token"},
-		Agents:  map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		},
 	}
 }

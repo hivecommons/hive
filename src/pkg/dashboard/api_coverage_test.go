@@ -79,8 +79,10 @@ func apiServerWithKnowledge(t *testing.T) (*Server, *Dependencies, *httptest.Ser
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
@@ -2995,8 +2997,10 @@ func TestHandleAgentConfigGet_CopilotBackend(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-4", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-4", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3036,8 +3040,10 @@ func TestHandleAgentConfigGet_CustomLaunchCmd(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "custom", Model: "m1", LaunchCmd: "/usr/bin/my-agent --special", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "custom", Model: "m1", LaunchCmd: "/usr/bin/my-agent --special", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3077,8 +3083,10 @@ func TestHandleAgentConfigGet_DisplayNameAndPauseCadence(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", DisplayName: "Bug Scanner", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", DisplayName: "Bug Scanner", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -3233,8 +3241,10 @@ func TestHandleAgentConfigGet_OffCadence(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{

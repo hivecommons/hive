@@ -30,6 +30,8 @@ You almost never write a full roster by hand: applying an ACMM level (below) gen
 
 The formal-verification quality-lane opt-in (`quality.formal`) also lives in the dashboard under Settings -> Features.
 
+In Go, `agents:` and the other runtime-owned blocks (`backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn`, and the `governor.{watchdog,litellm,vllm,llm-d,bob,trajectory,kick_limits,gateways,rotation,provider_budget}` keys) are grouped under `config.AgentRuntimeConfig` / `config.AgentRuntimeGovernorConfig` in `pkg/config/agent_config.go` — the configuration surface of the Crux agent runtime ([#13536](https://github.com/hivecommons/hive/issues/13536)). The grouping does not change where anything is written in `hive.yaml`; see [Agent-runtime blocks](operator-reference.md#agent-runtime-blocks-configagentruntimeconfig).
+
 ## Where configuration lives
 
 Hive's config is layered, and the layering is the point: **a file's location says who owns the setting.**

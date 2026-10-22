@@ -27,8 +27,10 @@ func formalQualityScheduler(t *testing.T, level int, enabled bool, role string) 
 		Project: config.ProjectConfig{
 			Org: "acme", Name: "Acme", PrimaryRepo: "widget", Repos: []string{"widget"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Role: role, KickTemplate: "custom-quality.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Role: role, KickTemplate: "custom-quality.md"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}

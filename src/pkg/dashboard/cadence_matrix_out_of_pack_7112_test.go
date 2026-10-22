@@ -34,17 +34,21 @@ func TestCadenceMatrixFollowsStatusAgents_7112(t *testing.T) {
 	linterCfg := config.AgentConfig{Backend: "unsloth-local", Enabled: false, DisplayName: "Linter"}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"review":     reviewCfg,
-			"linter":     linterCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"review":     reviewCfg,
+				"linter":     linterCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{

@@ -63,8 +63,10 @@ func TestSave_ReadOnlySourcePersistsRuntimeConfig(t *testing.T) {
 	cfg := &Config{
 		SourcePath: src,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 
@@ -113,8 +115,10 @@ func TestSave_ReadOnlySourceKubernetesWritesOverlay(t *testing.T) {
 	cfg := &Config{
 		SourcePath: src,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 	}
 	cfg.Agents["scanner"] = AgentConfig{Backend: "copilot", Model: "gpt-5", Enabled: true}
@@ -163,8 +167,10 @@ func TestSave_AllLayersUnwritableStillFails(t *testing.T) {
 	cfg := &Config{
 		SourcePath: src,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 	if err := cfg.Save(); err == nil {
@@ -181,8 +187,10 @@ func TestSave_WritableSourceUnaffected(t *testing.T) {
 	cfg := &Config{
 		SourcePath: src,
 		Project:    ProjectConfig{Org: "testorg", Repos: []string{"repo1"}},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 	if err := cfg.Save(); err != nil {

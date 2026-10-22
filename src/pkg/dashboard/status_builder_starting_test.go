@@ -15,9 +15,11 @@ import (
 // agent that is actually running.
 func TestBuildAgents_StartingFlagOnlyWhileNotRunning(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Enabled: true},
-			"quality": {Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Enabled: true},
+				"quality": {Enabled: true},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{

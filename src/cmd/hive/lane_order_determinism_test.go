@@ -50,7 +50,7 @@ func TestInitAgentConfigDrivenSystemsSortsLanes(t *testing.T) {
 		// exactly the state `quality` is in on the real level-4 pack.
 		"supervisor": {},
 	}
-	cfg := &config.Config{Agents: agents}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: agents}}
 	issue := github.Issue{Title: "please collide these lanes"}
 
 	const want = "aardvark"
@@ -71,9 +71,11 @@ func TestInitAgentConfigDrivenSystemsSortsLanes(t *testing.T) {
 func TestInitAgentConfigDrivenSystemsKeywordlessAgentsStayOutOfTheTable(t *testing.T) {
 	t.Cleanup(func() { classify.SetLanes(nil) })
 
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"aardvark": {},                                 // no keywords at all
-		"scanner":  {LaneKeywords: []string{"triage"}}, // the only real lane
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"aardvark": {},                                 // no keywords at all
+			"scanner":  {LaneKeywords: []string{"triage"}}, // the only real lane
+		},
 	}}
 	initAgentConfigDrivenSystems(cfg)
 

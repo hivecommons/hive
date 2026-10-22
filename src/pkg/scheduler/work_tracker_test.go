@@ -28,8 +28,10 @@ func workTrackerScheduler(t *testing.T, wsType, template string) *Scheduler {
 		Project: config.ProjectConfig{
 			Org: "acme", Name: "Acme", PrimaryRepo: "widget", Repos: []string{"acme/widget"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Role: "quality", Mode: "ISSUES_AND_PRS", KickTemplate: "custom-quality.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Role: "quality", Mode: "ISSUES_AND_PRS", KickTemplate: "custom-quality.md"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 	}

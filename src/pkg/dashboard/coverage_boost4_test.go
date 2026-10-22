@@ -406,8 +406,10 @@ func newDeepTestServer(t *testing.T) *Server {
 			Repos: []string{"testrepo"},
 		},
 		Data: config.DataConfig{AgentsDir: agentsDir},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+			},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",

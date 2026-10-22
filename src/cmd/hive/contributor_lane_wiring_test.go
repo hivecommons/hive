@@ -42,10 +42,12 @@ func TestContributorLaneReviewerConfigured(t *testing.T) {
 	if contributorLaneReviewerConfigured(nil) {
 		t.Fatal("nil config has no reviewer")
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"coder":    {Enabled: true, Role: "implementer"},
-		"disabled": {Enabled: false, Role: "reviewer"},
-		"paused":   {Enabled: true, Paused: true, Role: "reviewer"},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"coder":    {Enabled: true, Role: "implementer"},
+			"disabled": {Enabled: false, Role: "reviewer"},
+			"paused":   {Enabled: true, Paused: true, Role: "reviewer"},
+		},
 	}}
 	if contributorLaneReviewerConfigured(cfg) {
 		t.Fatal("disabled/paused reviewers must not count")
@@ -73,7 +75,7 @@ func TestContributorLaneVerdictFunc(t *testing.T) {
 	if v := contributorLaneVerdictFunc(noReviewer, nil)("acme/widget", 7, "sha7"); v.Configured {
 		t.Fatalf("no reviewer configured should be unconfigured: %+v", v)
 	}
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"critic": {Enabled: true, Role: "reviewer"}}}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"critic": {Enabled: true, Role: "reviewer"}}}}
 	if v := contributorLaneVerdictFunc(cfg, nil)("acme/widget", 7, "sha7"); !v.Configured || v.Approved {
 		t.Fatalf("missing artifact must fail closed: %+v", v)
 	}

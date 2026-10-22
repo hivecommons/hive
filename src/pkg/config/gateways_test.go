@@ -31,15 +31,17 @@ func TestResolveLiteLLMInferenceKeyMatchesEntitlement(t *testing.T) {
 
 	g := GovernorConfig{
 		// Legacy block points at the STALE file B.
-		LiteLLM: LiteLLMConfig{
-			Endpoint:   "https://litellm.example.com",
-			APIKeyFile: legacyKeyFile,
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{
+				Endpoint:   "https://litellm.example.com",
+				APIKeyFile: legacyKeyFile,
+			},
+			Gateways: []GatewayConfig{
+				{Name: "litellm", Kind: GatewayKindLiteLLM, Endpoint: "https://litellm.example.com", APIKeyFile: gatewayKeyFile},
+			},
 		},
 		// Explicit gateway named "litellm" points at the FRESH file A — this is
 		// what the entitlement/probe path resolves and validates.
-		Gateways: []GatewayConfig{
-			{Name: "litellm", Kind: GatewayKindLiteLLM, Endpoint: "https://litellm.example.com", APIKeyFile: gatewayKeyFile},
-		},
 	}
 
 	// Entitlement path (dashboard) resolves the gateway's key.
@@ -73,9 +75,11 @@ func TestResolveLiteLLMInferenceKeyLegacyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := GovernorConfig{
-		LiteLLM: LiteLLMConfig{
-			Endpoint:   "https://litellm.example.com",
-			APIKeyFile: legacyKeyFile,
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{
+				Endpoint:   "https://litellm.example.com",
+				APIKeyFile: legacyKeyFile,
+			},
 		},
 		// No Gateways configured.
 	}
@@ -88,10 +92,12 @@ func TestResolveLiteLLMInferenceKeyLegacyFallback(t *testing.T) {
 // single implicit gateway named "litellm" so existing agents route unchanged.
 func TestResolvedGatewaysBackCompat(t *testing.T) {
 	g := GovernorConfig{
-		LiteLLM: LiteLLMConfig{
-			Endpoint:     "https://litellm.example.com",
-			APIKeyEnv:    "HIVE_LITELLM_API_KEY",
-			DefaultModel: "gpt-4o",
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{
+				Endpoint:     "https://litellm.example.com",
+				APIKeyEnv:    "HIVE_LITELLM_API_KEY",
+				DefaultModel: "gpt-4o",
+			},
 		},
 	}
 	gws := g.ResolvedGateways()
@@ -126,11 +132,13 @@ func TestResolvedGatewaysEmpty(t *testing.T) {
 // case-insensitive; empty name returns the first (default).
 func TestResolveGatewayExplicit(t *testing.T) {
 	g := GovernorConfig{
-		LiteLLM: LiteLLMConfig{Endpoint: "https://legacy.example.com"}, // must be IGNORED when gateways present
-		Gateways: []GatewayConfig{
-			{Name: "openrouter", Kind: GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1", DefaultModel: "anthropic/claude-opus-4.8"},
-			{Name: "corp", Kind: GatewayKindLiteLLM, Endpoint: "https://litellm.internal:4000"},
-		},
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{Endpoint: "https://legacy.example.com"},
+			Gateways: []GatewayConfig{
+				{Name: "openrouter", Kind: GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1", DefaultModel: "anthropic/claude-opus-4.8"},
+				{Name: "corp", Kind: GatewayKindLiteLLM, Endpoint: "https://litellm.internal:4000"},
+			},
+		}, // must be IGNORED when gateways present
 	}
 	if got := g.ResolveGateway(""); got == nil || got.Name != "openrouter" {
 		t.Fatalf("empty name must return first gateway (openrouter), got %+v", got)
@@ -154,12 +162,16 @@ func TestGatewayNameValidAsBackend(t *testing.T) {
 	c := &Config{
 		Project: ProjectConfig{Org: "acme"},
 		GitHub:  GitHubConfig{Token: "x"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Backend: "openrouter"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Backend: "openrouter"},
+			},
 		},
 		Governor: GovernorConfig{
-			Gateways: []GatewayConfig{
-				{Name: "openrouter", Endpoint: "https://openrouter.ai/api/v1"},
+			AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+				Gateways: []GatewayConfig{
+					{Name: "openrouter", Endpoint: "https://openrouter.ai/api/v1"},
+				},
 			},
 		},
 	}

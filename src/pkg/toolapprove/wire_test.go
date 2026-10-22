@@ -19,7 +19,7 @@ func TestDeskFromConfigDisabledByDefault(t *testing.T) {
 	for name, cfg := range map[string]*config.Config{
 		"nil config":   nil,
 		"absent block": {},
-		"explicit off": {ToolApproval: config.ToolApprovalConfig{Enabled: false}},
+		"explicit off": {AgentRuntimeConfig: config.AgentRuntimeConfig{ToolApproval: config.ToolApprovalConfig{Enabled: false}}},
 	} {
 		desk, inbox, err := DeskFromConfig(cfg, nil, nil)
 		if err != nil {
@@ -35,12 +35,14 @@ func TestDeskFromConfigDisabledByDefault(t *testing.T) {
 func TestDeskFromConfigEnabledBuildsBoth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "inbox.json")
 	cfg := &config.Config{
-		ToolApproval: config.ToolApprovalConfig{
-			Enabled:   true,
-			InboxPath: path,
-			Rules: []config.ToolApprovalRule{
-				{Name: "hold-workflows", Expr: `request.file_path.startsWith(".github/workflows/")`, Action: "operator-approve", Priority: 10},
-				{Name: "green-deps", Expr: `request.checks_green && request.author == "dependabot[bot]"`, Action: "auto-approve"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			ToolApproval: config.ToolApprovalConfig{
+				Enabled:   true,
+				InboxPath: path,
+				Rules: []config.ToolApprovalRule{
+					{Name: "hold-workflows", Expr: `request.file_path.startsWith(".github/workflows/")`, Action: "operator-approve", Priority: 10},
+					{Name: "green-deps", Expr: `request.checks_green && request.author == "dependabot[bot]"`, Action: "auto-approve"},
+				},
 			},
 		},
 	}
@@ -72,9 +74,11 @@ func TestDeskFromConfigEnabledBuildsBoth(t *testing.T) {
 // running a fleet with a half-applied rule set.
 func TestDeskFromConfigRejectsMalformedRules(t *testing.T) {
 	cfg := &config.Config{
-		ToolApproval: config.ToolApprovalConfig{
-			Enabled: true,
-			Rules:   []config.ToolApprovalRule{{Name: "bad", Expr: "request.nope == 1", Action: "auto-approve"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			ToolApproval: config.ToolApprovalConfig{
+				Enabled: true,
+				Rules:   []config.ToolApprovalRule{{Name: "bad", Expr: "request.nope == 1", Action: "auto-approve"}},
+			},
 		},
 	}
 	desk, inbox, err := DeskFromConfig(cfg, nil, nil)

@@ -24,33 +24,41 @@ func TestWriteSurfaceEnforcedLanes(t *testing.T) {
 	}{
 		{
 			name: "nothing enforced by default",
-			cfg:  &config.Config{Agents: agents},
+			cfg:  &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: agents}},
 			want: nil,
 		},
 		{
 			name: "a listed lane carries its replicas",
-			cfg: &config.Config{Agents: agents, WriteSurface: config.WriteSurfaceConfig{
+			cfg: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: agents,
+			}, WriteSurface: config.WriteSurfaceConfig{
 				Enforce: []string{"scanner"},
 			}},
 			want: []string{"scanner", "scanner-2"},
 		},
 		{
 			name: "matching ignores case and surrounding space",
-			cfg: &config.Config{Agents: agents, WriteSurface: config.WriteSurfaceConfig{
+			cfg: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: agents,
+			}, WriteSurface: config.WriteSurfaceConfig{
 				Enforce: []string{" REVIEWER "},
 			}},
 			want: []string{"reviewer"},
 		},
 		{
 			name: "a star is published as a star, not expanded",
-			cfg: &config.Config{Agents: agents, WriteSurface: config.WriteSurfaceConfig{
+			cfg: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: agents,
+			}, WriteSurface: config.WriteSurfaceConfig{
 				Enforce: []string{"scanner", "*"},
 			}},
 			want: []string{"*"},
 		},
 		{
 			name: "a lane naming no configured agent enforces nothing",
-			cfg: &config.Config{Agents: agents, WriteSurface: config.WriteSurfaceConfig{
+			cfg: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: agents,
+			}, WriteSurface: config.WriteSurfaceConfig{
 				Enforce: []string{"typo-lane"},
 			}},
 			want: nil,
@@ -81,10 +89,12 @@ func TestWriteSurfaceEnforcedLanes(t *testing.T) {
 // re-derive "scanner-2 follows scanner" for itself.
 func TestPublishedEnforceListNamesReplicasIndividually(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":   {},
-			"scanner-2": {ReplicaOf: "scanner"},
-			"reviewer":  {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":   {},
+				"scanner-2": {ReplicaOf: "scanner"},
+				"reviewer":  {},
+			},
 		},
 		WriteSurface: config.WriteSurfaceConfig{Enforce: []string{"scanner"}},
 	}

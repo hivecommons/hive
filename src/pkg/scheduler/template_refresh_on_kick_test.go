@@ -50,8 +50,10 @@ func TestKickUsesLatestSavedTemplate(t *testing.T) {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Role: "quality", KickTemplate: "quality-advisory.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Role: "quality", KickTemplate: "quality-advisory.md"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: localDir},
 	}
@@ -99,8 +101,10 @@ func TestLoadNamedTemplatePrefersUserSavedOverride(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Project:  config.ProjectConfig{Org: "testorg", Name: "test"},
-		Agents:   map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Policies: config.PoliciesConfig{LocalDir: localDir},
 	}
 	s := New(cfg, slog.Default())
@@ -129,8 +133,10 @@ func TestLoadPromptTemplatePrefersUserSavedOverride(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Project:  config.ProjectConfig{Org: "testorg", Name: "test"},
-		Agents:   map[string]config.AgentConfig{},
+		Project: config.ProjectConfig{Org: "testorg", Name: "test"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Policies: config.PoliciesConfig{LocalDir: localDir},
 	}
 	s := New(cfg, slog.Default())

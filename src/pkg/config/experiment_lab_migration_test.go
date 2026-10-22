@@ -13,7 +13,9 @@ func experimentLabTestConfig() *Config {
 	return &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
-		Agents:  map[string]AgentConfig{"a": {Backend: "claude"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"a": {Backend: "claude"}},
+		},
 	}
 }
 

@@ -33,8 +33,10 @@ func heldPRCoordinationSchedulerWithIoscan(t *testing.T, level int, mode, failMo
 		Project: config.ProjectConfig{
 			Org: "acme", Name: "Acme", PrimaryRepo: "widget", Repos: []string{"acme/widget"},
 		},
-		Agents: map[string]config.AgentConfig{
-			"quality": {Role: "quality", Mode: mode, KickTemplate: "custom-quality.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"quality": {Role: "quality", Mode: mode, KickTemplate: "custom-quality.md"},
+			},
 		},
 		Policies: config.PoliciesConfig{LocalDir: dir},
 		Ioscan:   config.IoscanConfig{FailMode: failMode},

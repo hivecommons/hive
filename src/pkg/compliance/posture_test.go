@@ -252,12 +252,14 @@ func TestCheckAgentConfinement(t *testing.T) {
 
 	on := true
 	cfg := &config.Config{
-		AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-		Agents: map[string]config.AgentConfig{
-			"boxed":    {Enabled: true, Backend: "claude", Sandbox: &config.AgentSandboxOverride{Enabled: &on}},
-			"host":     {Enabled: true, Backend: "copilot"},
-			"nobknd":   {Enabled: true},
-			"disabled": {Enabled: false},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+			Agents: map[string]config.AgentConfig{
+				"boxed":    {Enabled: true, Backend: "claude", Sandbox: &config.AgentSandboxOverride{Enabled: &on}},
+				"host":     {Enabled: true, Backend: "copilot"},
+				"nobknd":   {Enabled: true},
+				"disabled": {Enabled: false},
+			},
 		},
 	}
 	r := runCheck(t, CheckAgentConfinement, postureTestDeps(cfg, nil))

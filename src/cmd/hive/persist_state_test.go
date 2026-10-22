@@ -59,24 +59,26 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 	cfg := &config.Config{
 		SourcePath: cfgPath,
 		Project:    config.ProjectConfig{Org: "testorg", Name: "testhive", Repos: []string{"repo"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {
-				Role:            "scanner",
-				Backend:         "claude",
-				Model:           "sonnet",
-				DisplayName:     "Scanner Agent",
-				Description:     "Finds actionable work",
-				Enabled:         true,
-				ClearOnKick:     true,
-				StaleTimeout:    staleTimeout,
-				RestartStrategy: "always",
-				LaunchCmd:       "hive-agent scanner",
-			},
-			"worker": {
-				Role:    "worker",
-				Backend: "claude",
-				Model:   "sonnet",
-				Enabled: true,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {
+					Role:            "scanner",
+					Backend:         "claude",
+					Model:           "sonnet",
+					DisplayName:     "Scanner Agent",
+					Description:     "Finds actionable work",
+					Enabled:         true,
+					ClearOnKick:     true,
+					StaleTimeout:    staleTimeout,
+					RestartStrategy: "always",
+					LaunchCmd:       "hive-agent scanner",
+				},
+				"worker": {
+					Role:    "worker",
+					Backend: "claude",
+					Model:   "sonnet",
+					Enabled: true,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
@@ -357,8 +359,10 @@ func TestPersistStateResolvesPathsThroughRuntimeSeam(t *testing.T) {
 	cfg := &config.Config{
 		SourcePath: cfgPath,
 		Project:    config.ProjectConfig{Org: "testorg", Name: "testhive", Repos: []string{"repo"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Role: "scanner", Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Role: "scanner", Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"surge": {Threshold: 20},

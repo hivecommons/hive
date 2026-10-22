@@ -102,7 +102,9 @@ func TestGitHubPromptAllowlist_SeedOnly(t *testing.T) {
 			AllowGitHubPrompt:     false,
 			GitHubPromptAllowlist: nil,
 		}},
-		Agents: map[string]AgentConfig{"scanner": {name: "scanner"}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {name: "scanner"}},
+		},
 	}
 	// An overlay that tries to enable the feature — its Variables must be ignored.
 	overlayAgents := map[string]AgentConfig{

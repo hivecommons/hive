@@ -33,7 +33,7 @@ func TestResolveWatsonxGateway(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Governor: config.GovernorConfig{Gateways: tc.gateways}}
+			cfg := &config.Config{Governor: config.GovernorConfig{AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{Gateways: tc.gateways}}}
 			got := ResolveWatsonxGateway(cfg)
 			if tc.want == "" {
 				if got != nil {

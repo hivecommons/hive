@@ -75,6 +75,10 @@ func collectYAMLKeys(prefix string, typ reflect.Type, keys map[string]struct{}) 
 		}
 		tag := field.Tag.Get("yaml")
 		name := strings.Split(tag, ",")[0]
+		if field.Anonymous && name == "" && strings.Contains(tag, ",inline") {
+			collectYAMLKeys(prefix, field.Type, keys)
+			continue
+		}
 		if name == "" || name == "-" || name == "inline" {
 			continue
 		}

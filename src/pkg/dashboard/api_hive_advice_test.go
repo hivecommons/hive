@@ -83,7 +83,7 @@ func TestBuildHiveAdvisorSignals(t *testing.T) {
 
 func TestStatusPayloadCarriesHiveAdvice(t *testing.T) {
 	s := newTestServer()
-	s.deps = &Dependencies{Config: &config.Config{Agents: map[string]config.AgentConfig{}}}
+	s.deps = &Dependencies{Config: &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}}}
 	payload := minimalPayload()
 	payload.Governor.Mode = "idle"
 	payload.Governor.Issues = 0

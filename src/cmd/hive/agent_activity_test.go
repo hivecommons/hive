@@ -14,8 +14,10 @@ import (
 // enabled scanner agent scheduled on a kicking cadence in the "busy" mode.
 func activityTestConfig() *config.Config {
 	return &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{

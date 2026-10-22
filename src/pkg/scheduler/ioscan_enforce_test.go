@@ -32,8 +32,10 @@ func newSchedulerWithIoscanFailMode(enabled bool, failMode string) *Scheduler {
 	e := enabled
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Role: "scanner"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Role: "scanner"},
+			},
 		},
 		Ioscan: config.IoscanConfig{Enabled: &e, FailMode: failMode},
 	}

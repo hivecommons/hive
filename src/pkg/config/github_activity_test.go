@@ -8,8 +8,10 @@ import (
 func TestGitHubActivityValidation(t *testing.T) {
 	base := Config{
 		Project: ProjectConfig{Org: "hivecommons"},
-		Agents:  map[string]AgentConfig{"worker": {Backend: "claude"}},
-		GitHub:  GitHubConfig{Token: "token"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"worker": {Backend: "claude"}},
+		},
+		GitHub: GitHubConfig{Token: "token"},
 		Notifications: NotificationsConfig{
 			Discord:        &DiscordConfig{FactoryWebhook: "https://discord.com/api/webhooks/one/two"},
 			GitHubActivity: &GitHubActivityConfig{Enabled: true},

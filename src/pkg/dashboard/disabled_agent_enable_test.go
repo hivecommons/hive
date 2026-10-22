@@ -34,9 +34,11 @@ func TestAgentConfigGetWorksForConfiguredDisabledAgent(t *testing.T) {
 }
 
 func TestConfiguredAgentsIncludesDisabledAgentsWithoutProcesses(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"running": {Enabled: true, SortOrder: 20},
-		"guide":   {Enabled: false, SortOrder: 10, DisplayName: "Guide", ModelOwner: config.FieldOwnerPack},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"running": {Enabled: true, SortOrder: 20},
+			"guide":   {Enabled: false, SortOrder: 10, DisplayName: "Guide", ModelOwner: config.FieldOwnerPack},
+		},
 	}}
 
 	agents := buildConfiguredAgents(cfg)
@@ -171,9 +173,11 @@ func TestConfiguredAgentsCarryResolvedMode(t *testing.T) {
 	level := 3
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"explicit": {Enabled: false, Mode: "ADVISORY"},
-			"default":  {Enabled: false},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"explicit": {Enabled: false, Mode: "ADVISORY"},
+				"default":  {Enabled: false},
+			},
 		},
 	}
 

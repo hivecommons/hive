@@ -24,16 +24,20 @@ func TestBuildAgentsWithHidden_RunningCustomAgentOutsideAnyPackVisible7099(t *te
 	reviewCfg := config.AgentConfig{Backend: "unsloth-local", Enabled: true, DisplayName: "Review"}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"review":     reviewCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"review":     reviewCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{

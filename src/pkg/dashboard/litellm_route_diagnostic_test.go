@@ -21,12 +21,14 @@ func TestInferenceRouteDiagnostic_ExplicitGatewayRouteMatchesGatewayTest(t *test
 	t.Setenv(config.LiteLLMEndpointEnv, "")
 	t.Setenv("HIVE_TEST_LITELLM_KEY", "sk-newkeyvalue")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		LiteLLM: config.LiteLLMConfig{Endpoint: "https://old-gateway.example", DefaultModel: "old-model"},
-		Gateways: []config.GatewayConfig{{
-			Name: "litellm", Kind: config.GatewayKindLiteLLM,
-			Endpoint: "https://litellm.cb.example", DefaultModel: "rits/zai-org/glm-5-3",
-			APIKeyEnv: "HIVE_TEST_LITELLM_KEY", KeyName: "mspreitz-cb-1",
-		}},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			LiteLLM: config.LiteLLMConfig{Endpoint: "https://old-gateway.example", DefaultModel: "old-model"},
+			Gateways: []config.GatewayConfig{{
+				Name: "litellm", Kind: config.GatewayKindLiteLLM,
+				Endpoint: "https://litellm.cb.example", DefaultModel: "rits/zai-org/glm-5-3",
+				APIKeyEnv: "HIVE_TEST_LITELLM_KEY", KeyName: "mspreitz-cb-1",
+			}},
+		},
 	}}
 
 	line := inferenceRouteDiagnostic(cfg, "litellm", "https://litellm.cb.example/", "sk-newkeyvalue")
@@ -56,8 +58,10 @@ func TestInferenceRouteDiagnostic_ExplicitGatewayRouteMatchesGatewayTest(t *test
 func TestInferenceRouteDiagnostic_LegacyTabWarnsWhenGatewayWinsRoute(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		LiteLLM:  config.LiteLLMConfig{Endpoint: "https://old-gateway.example"},
-		Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "https://litellm.cb.example"}},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			LiteLLM:  config.LiteLLMConfig{Endpoint: "https://old-gateway.example"},
+			Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "https://litellm.cb.example"}},
+		},
 	}}
 	line := inferenceRouteDiagnostic(cfg, "litellm", "https://old-gateway.example", "")
 	for _, want := range []string{
@@ -85,7 +89,9 @@ func TestInferenceRouteDiagnostic_KeyMismatchWarns(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "")
 	t.Setenv("HIVE_TEST_LITELLM_KEY", "sk-routekey")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		LiteLLM: config.LiteLLMConfig{Endpoint: "https://gw.example", APIKeyEnv: "HIVE_TEST_LITELLM_KEY"},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			LiteLLM: config.LiteLLMConfig{Endpoint: "https://gw.example", APIKeyEnv: "HIVE_TEST_LITELLM_KEY"},
+		},
 	}}
 	line := inferenceRouteDiagnostic(cfg, "litellm", "https://gw.example", "sk-testedkey")
 	wantRoute := shortKeyHash(config.APIKeySHA256("sk-routekey"))
@@ -110,13 +116,13 @@ func TestInferenceRouteDiagnostic_SourcesAndNoRoute(t *testing.T) {
 		t.Errorf("nil config: want empty, got %q", got)
 	}
 
-	local := &config.Config{Governor: config.GovernorConfig{LiteLLM: config.LiteLLMConfig{LocalProxy: true}}}
+	local := &config.Config{Governor: config.GovernorConfig{AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{LiteLLM: config.LiteLLMConfig{LocalProxy: true}}}}
 	if got := inferenceRouteDiagnostic(local, "", "", ""); !strings.Contains(got, "local_proxy") {
 		t.Errorf("local proxy source not named: %q", got)
 	}
 
 	t.Setenv(config.LiteLLMEndpointEnv, "https://from-env.example")
-	env := &config.Config{Governor: config.GovernorConfig{LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example"}}}
+	env := &config.Config{Governor: config.GovernorConfig{AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example"}}}}
 	got := inferenceRouteDiagnostic(env, "litellm", "", "")
 	if !strings.Contains(got, "POST https://from-env.example/v1/chat/completions") || !strings.Contains(got, config.LiteLLMEndpointEnv+" environment variable") {
 		t.Errorf("env source not named: %q", got)
@@ -128,7 +134,9 @@ func TestInferenceRouteDiagnostic_SourcesAndNoRoute(t *testing.T) {
 func TestInferenceRouteDiagnostic_NamedGatewayAndUnknownBackend(t *testing.T) {
 	t.Setenv("HIVE_TEST_OR_KEY", "sk-or-key")
 	cfg := &config.Config{Governor: config.GovernorConfig{
-		Gateways: []config.GatewayConfig{{Name: "openrouter", Kind: "openrouter", Endpoint: "https://openrouter.example/api/v1", DefaultModel: "x/y", APIKeyEnv: "HIVE_TEST_OR_KEY"}},
+		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+			Gateways: []config.GatewayConfig{{Name: "openrouter", Kind: "openrouter", Endpoint: "https://openrouter.example/api/v1", DefaultModel: "x/y", APIKeyEnv: "HIVE_TEST_OR_KEY"}},
+		},
 	}}
 	got := inferenceRouteDiagnostic(cfg, "openrouter", "https://openrouter.example/api/v1", "sk-or-key")
 	for _, want := range []string{`backend "openrouter"`, "POST https://openrouter.example/api/v1/chat/completions", "model x/y", `gateway "openrouter"`} {

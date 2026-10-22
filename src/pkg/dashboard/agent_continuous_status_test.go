@@ -11,8 +11,10 @@ import (
 )
 
 func TestAgentStatusCarriesContinuousBudgetAndCounters(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {Backend: "copilot", Enabled: true, Continuous: true},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {Backend: "copilot", Enabled: true, Continuous: true},
+		},
 	}, Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 		"idle":  {Threshold: 0, Cadences: map[string]config.Cadence{"scanner": "15m"}},
 		"quiet": {Threshold: 2, Cadences: map[string]config.Cadence{"scanner": "15m"}},
@@ -46,7 +48,9 @@ func TestAgentStatusCarriesContinuousBudgetAndCounters(t *testing.T) {
 
 func TestAgentStatusContinuousNotInMode(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{"scanner": {Backend: "copilot", Enabled: true}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "copilot", Enabled: true}},
+		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"busy":  {Cadences: map[string]config.Cadence{"scanner": "15m"}},
 			"surge": {Cadences: map[string]config.Cadence{"scanner": "continuous"}},

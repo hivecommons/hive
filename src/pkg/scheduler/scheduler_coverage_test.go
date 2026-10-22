@@ -625,9 +625,11 @@ func TestBuildArchitectMessage_TruncatesTitle(t *testing.T) {
 
 func TestBuildAgentListAndRoles_WithAgents(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", Model: "sonnet", DisplayName: "Scanner Agent", Enabled: true},
-			"supervisor": {Backend: "claude", Model: "opus", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", Model: "sonnet", DisplayName: "Scanner Agent", Enabled: true},
+				"supervisor": {Backend: "claude", Model: "opus", Enabled: true},
+			},
 		},
 		Project: config.ProjectConfig{Org: "org", Repos: []string{"r"}},
 	}
@@ -657,8 +659,10 @@ func TestBuildAgentListAndRoles_WithAgents(t *testing.T) {
 
 func TestBuildAgentListAndRoles_EmptyModel(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"worker": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"worker": {Backend: "claude", Enabled: true},
+			},
 		},
 		Project: config.ProjectConfig{Org: "org", Repos: []string{"r"}},
 	}
@@ -671,8 +675,10 @@ func TestBuildAgentListAndRoles_EmptyModel(t *testing.T) {
 
 func TestSubstituteTemplate_AgentListVars(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 		Project: config.ProjectConfig{
 			Org:   "org",

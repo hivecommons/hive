@@ -50,10 +50,12 @@ func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
 	level := 3
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "copilot", Enabled: true},
-			"telemetry":  {Backend: "copilot", Enabled: true},
-			"operations": {Backend: "copilot", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "copilot", Enabled: true},
+				"telemetry":  {Backend: "copilot", Enabled: true},
+				"operations": {Backend: "copilot", Enabled: true},
+			},
 		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{
 			"idle": {
@@ -325,9 +327,11 @@ func TestBuildBudget(t *testing.T) {
 
 func TestBuildCadenceMatrix(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude"},
-			"supervisor": {Backend: "claude"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude"},
+				"supervisor": {Backend: "claude"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -432,9 +436,11 @@ func TestBuildAgents(t *testing.T) {
 	}
 
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", Model: "sonnet", SortOrder: 20},
-			"supervisor": {Backend: "claude", Model: "opus", BeadRole: "supervisor", SortOrder: 10},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", Model: "sonnet", SortOrder: 20},
+				"supervisor": {Backend: "claude", Model: "opus", BeadRole: "supervisor", SortOrder: 10},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -463,23 +469,27 @@ func TestBuildAgents(t *testing.T) {
 
 func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"supervisor": {
-				ID:          "supervisor",
-				Backend:     "unsloth-local",
-				Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
-				Enabled:     true,
-				DisplayName: "Supervisor",
-				SortOrder:   10,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": {
+					ID:          "supervisor",
+					Backend:     "unsloth-local",
+					Model:       "unsloth/gemma-4-E4B-it-qat-GGUF",
+					Enabled:     true,
+					DisplayName: "Supervisor",
+					SortOrder:   10,
+				},
 			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:         "unsloth-local",
-				Kind:         config.GatewayKindCustom,
-				Endpoint:     "http://host.docker.internal:8888",
-				DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:         "unsloth-local",
+					Kind:         config.GatewayKindCustom,
+					Endpoint:     "http://host.docker.internal:8888",
+					DefaultModel: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+				}},
+			},
 		},
 	}
 
@@ -525,10 +535,12 @@ func TestBuildAgents_OffByCadence(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {Backend: "claude", SortOrder: 10},
-			"quality":    {Backend: "claude", SortOrder: 20},
-			"brainstorm": {Backend: "claude", OnDemand: true, SortOrder: 30},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {Backend: "claude", SortOrder: 10},
+				"quality":    {Backend: "claude", SortOrder: 20},
+				"brainstorm": {Backend: "claude", OnDemand: true, SortOrder: 30},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -563,8 +575,10 @@ func TestBuildAgents_OffByCadence(t *testing.T) {
 func TestBuildFrontendStatus(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -622,9 +636,11 @@ func TestBuildFrontendStatus(t *testing.T) {
 func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
-			"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+				"quality": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
@@ -655,8 +671,10 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 
 func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "claude-sonnet", Enabled: true},
+			},
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
@@ -695,8 +713,10 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 
 func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "copilot", Model: "gpt-5", Enabled: true},
+			},
 		},
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
@@ -813,8 +833,10 @@ func TestBuildAgents_WithOverrides(t *testing.T) {
 		},
 	}
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet"},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{},
@@ -834,8 +856,10 @@ func TestBuildAgents_WithOverrides(t *testing.T) {
 
 func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -918,7 +942,9 @@ func TestBuildReposGroupsFullRepoWorksourceItemsUnderBareConfigRepo(t *testing.T
 func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},
-		Agents:  map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
 				"idle": {Cadences: map[string]config.Cadence{"scanner": "15m"}},
@@ -1036,8 +1062,10 @@ func TestLoadStatsConfig_MissingFile(t *testing.T) {
 
 func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -1168,8 +1196,10 @@ func TestBuildHealth_NilClient_NoCached(t *testing.T) {
 
 func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 	cfg := &config.Config{
-		Agents: map[string]config.AgentConfig{
-			"scanner": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {},
+			},
 		},
 		Governor: config.GovernorConfig{
 			Modes: map[string]config.ModeConfig{
@@ -1344,15 +1374,17 @@ func TestBuildSecurity(t *testing.T) {
 		},
 		{
 			name: "empty agents map",
-			cfg:  &config.Config{Agents: map[string]config.AgentConfig{}},
+			cfg:  &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}},
 		},
 		{
 			name: "all sandboxed",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Agents: map[string]config.AgentConfig{
-					"scanner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"scanner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					},
 				},
 			},
 			wantTotal:     2,
@@ -1361,10 +1393,12 @@ func TestBuildSecurity(t *testing.T) {
 		{
 			name: "none sandboxed",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Agents: map[string]config.AgentConfig{
-					"scanner": {Enabled: true},
-					"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(false)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"scanner": {Enabled: true},
+						"planner": {Enabled: true, Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(false)}},
+					},
 				},
 			},
 			wantTotal: 2,
@@ -1372,14 +1406,16 @@ func TestBuildSecurity(t *testing.T) {
 		{
 			name: "mixed sandbox and review capabilities",
 			cfg: &config.Config{
-				AgentSandbox: config.AgentSandboxConfig{Enabled: true},
-				Review:       config.ReviewConfig{ReviewerAgents: []string{"explicit-reviewer"}},
-				Agents: map[string]config.AgentConfig{
-					"sandboxed-reviewer": {Enabled: true, Role: "code reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"explicit-reviewer":  {Enabled: true},
-					"sandboxed-planner":  {Enabled: true, Role: "planner", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
-					"disabled-reviewer":  {Enabled: false, Role: "reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+				AgentRuntimeConfig: config.AgentRuntimeConfig{
+					AgentSandbox: config.AgentSandboxConfig{Enabled: true},
+					Agents: map[string]config.AgentConfig{
+						"sandboxed-reviewer": {Enabled: true, Role: "code reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"explicit-reviewer":  {Enabled: true},
+						"sandboxed-planner":  {Enabled: true, Role: "planner", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+						"disabled-reviewer":  {Enabled: false, Role: "reviewer", Sandbox: &config.AgentSandboxOverride{Enabled: testBoolPtr(true)}},
+					},
 				},
+				Review: config.ReviewConfig{ReviewerAgents: []string{"explicit-reviewer"}},
 			},
 			wantTotal:         4,
 			wantSandboxed:     3,
@@ -1478,8 +1514,10 @@ func TestDashboardAgentReviewCapable(t *testing.T) {
 }
 
 func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"scanner": {ID: "scanner", Backend: "claude", Enabled: true},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"scanner": {ID: "scanner", Backend: "claude", Enabled: true},
+		},
 	}}
 	statuses := map[string]*agent.AgentProcess{
 		"scanner": {

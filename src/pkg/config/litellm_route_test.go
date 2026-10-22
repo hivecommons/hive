@@ -5,11 +5,13 @@ import "testing"
 func TestResolveLiteLLMRemoteRoute_ExplicitGatewayBeatsStaleLegacy(t *testing.T) {
 	t.Setenv(LiteLLMEndpointEnv, "https://env-old.example")
 	g := GovernorConfig{
-		LiteLLM: LiteLLMConfig{Endpoint: "https://yaml-old.example", DefaultModel: "old-model"},
-		Gateways: []GatewayConfig{{
-			Name: "litellm", Kind: GatewayKindLiteLLM,
-			Endpoint: " https://litellm.cb.ete.res.ibm.com ", DefaultModel: "rits/zai-org/glm-5-3",
-		}},
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM: LiteLLMConfig{Endpoint: "https://yaml-old.example", DefaultModel: "old-model"},
+			Gateways: []GatewayConfig{{
+				Name: "litellm", Kind: GatewayKindLiteLLM,
+				Endpoint: " https://litellm.cb.ete.res.ibm.com ", DefaultModel: "rits/zai-org/glm-5-3",
+			}},
+		},
 	}
 	ep, model, src := g.ResolveLiteLLMRemoteRoute("litellm", "")
 	if ep != "https://litellm.cb.ete.res.ibm.com" || model != "rits/zai-org/glm-5-3" || src != LiteLLMRouteGateway {
@@ -25,8 +27,11 @@ func TestResolveLiteLLMRemoteRoute_ExplicitGatewayBeatsStaleLegacy(t *testing.T)
 
 func TestResolveLiteLLMRemoteRoute_LegacySources(t *testing.T) {
 	g := GovernorConfig{
-		LiteLLM:  LiteLLMConfig{Endpoint: "https://yaml.example", DefaultModel: "yaml-model"},
-		Gateways: []GatewayConfig{{Name: "litellm", Kind: GatewayKindLiteLLM}}, // no endpoint → falls back
+		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
+			LiteLLM:  LiteLLMConfig{Endpoint: "https://yaml.example", DefaultModel: "yaml-model"},
+			Gateways: []GatewayConfig{{Name: "litellm", Kind: GatewayKindLiteLLM}},
+		},
+		// no endpoint → falls back
 	}
 	t.Setenv(LiteLLMEndpointEnv, "")
 	if ep, model, src := g.ResolveLiteLLMRemoteRoute("litellm", ""); ep != "https://yaml.example" || model != "yaml-model" || src != LiteLLMRouteLegacyYAML {

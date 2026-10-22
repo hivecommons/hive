@@ -56,7 +56,7 @@ func writeOverlayConfig(t *testing.T, overlays map[string]string) (configPath, a
 // validatableConfig returns a Config that clears every non-agent gate in
 // validate(), so the only thing a test's agents can trip is the agent loop.
 func validatableConfig(agents map[string]AgentConfig) *Config {
-	cfg := &Config{Agents: agents}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: agents}}
 	cfg.Project.Org = "my-org"
 	cfg.GitHub.Token = "ghp_tok"
 	return cfg
@@ -146,8 +146,10 @@ func TestLoadWithOverrides_BadOverlayDoesNotBlockGoodOverlay(t *testing.T) {
 // RejectInvalidAgentOverlays is the seam itself: bad entries out, good ones
 // through, base config untouched.
 func TestRejectInvalidAgentOverlays(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{
-		"supervisor": {Backend: "copilot"},
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{
+		Agents: map[string]AgentConfig{
+			"supervisor": {Backend: "copilot"},
+		},
 	}}
 	overlays := map[string]AgentConfig{
 		"supervisor": {Backend: "copilot", LaunchCmd: "bob --model auto", sourceFile: "/data/agent-configs/supervisor.yaml"},

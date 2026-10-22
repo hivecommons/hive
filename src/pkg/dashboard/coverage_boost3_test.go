@@ -838,10 +838,12 @@ func newFullServerWithAgents(t *testing.T) *Server {
 			Repos: []string{"testrepo"},
 		},
 		Data: config.DataConfig{AgentsDir: t.TempDir()},
-		Agents: map[string]config.AgentConfig{
-			"scanner":    {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
-			"reviewer":   {ID: "rev-001", Role: "reviewer", Backend: "claude", Model: "sonnet", DisplayName: "Reviewer", Enabled: true},
-			"supervisor": {ID: "sup-001", Role: "supervisor", Backend: "claude", Model: "opus", DisplayName: "Supervisor", Enabled: true, BeadRole: "supervisor"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner":    {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
+				"reviewer":   {ID: "rev-001", Role: "reviewer", Backend: "claude", Model: "sonnet", DisplayName: "Reviewer", Enabled: true},
+				"supervisor": {ID: "sup-001", Role: "supervisor", Backend: "claude", Model: "opus", DisplayName: "Supervisor", Enabled: true, BeadRole: "supervisor"},
+			},
 		},
 		GitHub:     config.GitHubConfig{Token: "ghp_test123456789"},
 		SourcePath: t.TempDir() + "/hive.yaml",

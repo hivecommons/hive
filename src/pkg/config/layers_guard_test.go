@@ -30,8 +30,10 @@ import (
 // which is exactly the bug #2361 fixed.
 func TestZeroAgentOverlayWithTombstonesIsValid(t *testing.T) {
 	overlay := &Config{
-		Project:       ProjectConfig{Org: "acme"},
-		Agents:        map[string]AgentConfig{},
+		Project: ProjectConfig{Org: "acme"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 		RemovedAgents: []string{"scanner", "guide"},
 	}
 
@@ -43,7 +45,9 @@ func TestZeroAgentOverlayWithTombstonesIsValid(t *testing.T) {
 
 	seed := &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents:  map[string]AgentConfig{"scanner": {}, "guide": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}, "guide": {}},
+		},
 	}
 	merged, prov := MergeLayers(seed, overlay)
 
@@ -64,8 +68,10 @@ func TestZeroAgentOverlayWithTombstonesIsValid(t *testing.T) {
 // is refused, and the next reload restores the agents.
 func TestSaveGuardAllowsAllTombstonedConfig(t *testing.T) {
 	c := &Config{
-		Project:       ProjectConfig{Org: "acme"},
-		Agents:        map[string]AgentConfig{},
+		Project: ProjectConfig{Org: "acme"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{},
+		},
 		RemovedAgents: []string{"scanner"},
 	}
 	if err := c.validateSaveGuard(); err != nil {
@@ -80,7 +86,9 @@ func TestSaveGuardAllowsAllTombstonedConfig(t *testing.T) {
 func TestMinimalButCompleteOverlayIsValid(t *testing.T) {
 	overlay := &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents:  map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 	}
 	if !OverlayIsPlausible(overlay) {
 		t.Errorf("a minimal but complete overlay was rejected: %q", overlayRejectReason(overlay))
@@ -93,7 +101,9 @@ func TestMinimalButCompleteOverlayIsValid(t *testing.T) {
 func TestOverlayWithoutOptionalBlocksIsValid(t *testing.T) {
 	overlay := &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents:  map[string]AgentConfig{"scanner": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"scanner": {}},
+		},
 		// No Policies, Data, Knowledge, Notifications, HiveID, GitHub, Hub.
 	}
 	if !OverlayIsPlausible(overlay) {
@@ -107,9 +117,11 @@ func TestOverlayWithoutOptionalBlocksIsValid(t *testing.T) {
 func TestPausedAgentsOverlayIsValid(t *testing.T) {
 	overlay := &Config{
 		Project: ProjectConfig{Org: "acme"},
-		Agents: map[string]AgentConfig{
-			"scanner": {Paused: true},
-			"guide":   {Paused: true},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {Paused: true},
+				"guide":   {Paused: true},
+			},
 		},
 	}
 	if !OverlayIsPlausible(overlay) {
@@ -124,7 +136,7 @@ func TestPausedAgentsOverlayIsValid(t *testing.T) {
 // TestTruncatedOverlayIsRejected: the case the guard exists for. A write
 // interrupted by SIGKILL can leave a file with no project.org.
 func TestTruncatedOverlayIsRejected(t *testing.T) {
-	overlay := &Config{Agents: map[string]AgentConfig{"scanner": {}}}
+	overlay := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"scanner": {}}}}
 	if OverlayIsPlausible(overlay) {
 		t.Fatal("an overlay with no project.org was accepted; a truncated write " +
 			"must not become the running config")
@@ -165,7 +177,7 @@ func TestRejectionReasonIsSpecific(t *testing.T) {
 		overlay *Config
 		want    string
 	}{
-		{"no org", &Config{Agents: map[string]AgentConfig{"a": {}}}, "project.org"},
+		{"no org", &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"a": {}}}}, "project.org"},
 		{"no agents", &Config{Project: ProjectConfig{Org: "acme"}}, "removed_agents"},
 	}
 	for _, tc := range cases {

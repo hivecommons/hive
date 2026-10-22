@@ -61,7 +61,7 @@ func (h *launchHarness) deps() bootLaunchDeps {
 
 func newLaunchBoot(t *testing.T, agents map[string]config.AgentConfig) *boot {
 	t.Helper()
-	cfg := &config.Config{Agents: agents}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: agents}}
 	cfg.Dashboard.Port = 8080
 	b, _ := newDepsTestBoot(t, cfg)
 	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})

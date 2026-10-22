@@ -35,7 +35,7 @@ func planIssueServer(t *testing.T) (*Server, *beads.Store) {
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -190,7 +190,7 @@ func TestHandlePlanFromIssue_WithAgentMgr_KickPath(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	logger := slog.Default()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}, ACMMLevel: acmmL5()}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"architect": {}}}, ACMMLevel: acmmL5()}
 	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 
@@ -238,7 +238,7 @@ func TestHandlePlanFromIssue_LevelGate(t *testing.T) {
 		}
 		srv := NewServer(0, slog.Default())
 		srv.deps = &Dependencies{
-			Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: level},
+			Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}, ACMMLevel: level},
 			Logger:     slog.Default(),
 			Ctx:        context.Background(),
 			BeadStores: map[string]*beads.Store{"architect": store},
@@ -306,7 +306,7 @@ func TestRequestArchitectDecompose_States(t *testing.T) {
 	store, _ := beads.NewStore(t.TempDir())
 	epic, _ := store.Create("e", beads.TypeEpic, beads.PriorityMedium, "architect", "gh-a/b#1")
 	logger := slog.Default()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}, ACMMLevel: acmmL5()}
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"architect": {}}}, ACMMLevel: acmmL5()}
 
 	newSrv := func(k planning.DecomposeKicker) *Server {
 		srv := NewServer(0, logger)
@@ -348,7 +348,7 @@ func TestHandlePlanFromIssue_PausedArchitectMessage(t *testing.T) {
 	store, _ := beads.NewStore(t.TempDir())
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -397,7 +397,7 @@ func TestPlanEpicStore_FallbackToAnyStore(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	// No "architect" store — planEpicStore must fall back to the only store.
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
+		Config:     &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{}}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"scanner": store},

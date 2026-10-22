@@ -21,8 +21,10 @@ import (
 func TestRestoreAgentRuntimeState_ReplaysPausedBy(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Repos: []string{"r"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Enabled: true},
+			},
 		},
 	}
 	statePath := filepath.Join(t.TempDir(), "hive-state.json")

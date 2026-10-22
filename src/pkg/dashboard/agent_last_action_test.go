@@ -27,7 +27,9 @@ func resetAgentLastActions(t *testing.T) {
 func lastActionAgentByName(t *testing.T, statuses map[string]*agent.AgentProcess, name string) FrontendAgent {
 	t.Helper()
 	cfg := &config.Config{
-		Agents:   map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
 	}
 	for n := range statuses {

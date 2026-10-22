@@ -81,8 +81,10 @@ func kickSizeScheduler(t *testing.T, maxIssues, maxPRs *int, mergeEligible, ciFa
 	cfg := &config.Config{
 		ACMMLevel: &level,
 		Project:   config.ProjectConfig{Org: "acme", PrimaryRepo: "console", Repos: []string{"acme/console", "acme/docs", "acme/hive"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Mode: "ISSUES_PRS_MERGE", KickTemplate: "scanner-automerge.md"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Mode: "ISSUES_PRS_MERGE", KickTemplate: "scanner-automerge.md"},
+			},
 		},
 	}
 	cfg.Governor.KickLimits = config.KickLimitsConfig{MaxIssues: maxIssues, MaxPRs: maxPRs}

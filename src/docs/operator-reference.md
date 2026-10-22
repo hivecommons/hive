@@ -195,6 +195,17 @@ Top-level YAML keys accepted by `config.Config`:
 | `sla` | Delivery SLA targets (`sla.targets.start_to_pr_h`, `pr_to_merge_h`, `open_to_merge_h`, hours; defaults 4 / 24 / 72) the dashboard's Throughput section colours its Delivery SLA spans against. | Metrics are derived from the lifecycle timeline; no extra GitHub calls. Also editable from **Settings → Thresholds**. See [Delivery SLA](#delivery-sla). |
 | `sentinel` | Suspicious-activity alerts: flags open PRs (any author) that touch sensitive files or look like security overrides, privilege escalation, or codebase damage. | Default ON; observe-and-alert only. See [Suspicious-activity alerts](#suspicious-activity-alerts-sentinel). |
 
+### Agent-runtime blocks (`config.AgentRuntimeConfig`)
+
+The keys the agent runtime owns — the part of Hive being carved out as **Crux** ([#13536](https://github.com/hivecommons/hive/issues/13536)) — are grouped in Go into two structs that `config.Config` and `config.GovernorConfig` embed with `yaml:",inline"`. The grouping is a code-organisation boundary only: every key keeps the position it has always had in `hive.yaml`, so no file needs to change and a `Save()` writes the same shape back.
+
+| Struct | Embedded in | YAML keys (unchanged position) |
+|---|---|---|
+| `AgentRuntimeConfig` (`pkg/config/agent_config.go`) | `Config` | `agents` (including the `agents.github_api_hourly_cap` scalar), `backends`, `providers`, `tool_approval`, `agent_sandbox`, `turn` |
+| `AgentRuntimeGovernorConfig` (`pkg/config/agent_config.go`) | `GovernorConfig` | `governor.watchdog`, `governor.litellm`, `governor.vllm`, `governor.llm-d`, `governor.bob`, `governor.trajectory`, `governor.kick_limits`, `governor.gateways`, `governor.rotation`, `governor.provider_budget` |
+
+Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through field promotion; only composite literals name the embedded struct (`config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: …}}`). `pkg/config/testdata/agent_runtime_golden.{yaml,json}` pins the parse of a representative file so the boundary cannot drift the schema.
+
 ## Notable fields
 
 | Field | Default / behavior | Operator note |

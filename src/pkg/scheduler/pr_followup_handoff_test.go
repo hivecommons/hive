@@ -37,9 +37,11 @@ func seedLiveHandoff(t *testing.T) string {
 func handoffTestScheduler() *Scheduler {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "test-org", Repos: []string{"test-org/console"}},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Mode: "ISSUES_AND_PRS"},
-			"advisor": {Mode: "ADVISORY"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Mode: "ISSUES_AND_PRS"},
+				"advisor": {Mode: "ADVISORY"},
+			},
 		},
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))

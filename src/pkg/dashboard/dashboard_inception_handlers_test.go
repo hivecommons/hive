@@ -15,7 +15,9 @@ func newMinimalServer(t *testing.T) *Server {
 	t.Helper()
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "testorg", Name: "test", PrimaryRepo: "testrepo"},
-		Agents:  map[string]config.AgentConfig{},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{},
+		},
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{

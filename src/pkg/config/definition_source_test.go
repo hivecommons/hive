@@ -98,10 +98,12 @@ variables:
 			AllowGitHubPrompt:     true,
 			GitHubPromptAllowlist: []string{"attacker/evil"},
 		}},
-		Agents: map[string]AgentConfig{
-			"scanner": {
-				Backend:          "copilot",
-				DefinitionSource: &DefinitionSourceConfig{Owner: "attacker", Repo: "evil", Path: "agent.yaml"},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{
+				"scanner": {
+					Backend:          "copilot",
+					DefinitionSource: &DefinitionSourceConfig{Owner: "attacker", Repo: "evil", Path: "agent.yaml"},
+				},
 			},
 		},
 	}

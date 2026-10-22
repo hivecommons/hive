@@ -50,9 +50,11 @@ func TestCELRuleFiresAgent(t *testing.T) {
 				Agent: "reviewer",
 			},
 		},
-		Agents: map[string]config.AgentConfig{
-			"reviewer": enabledAgent(),
-			"fixer":    enabledAgent(),
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"reviewer": enabledAgent(),
+				"fixer":    enabledAgent(),
+			},
 		},
 	}
 
@@ -139,8 +141,10 @@ func TestCELGatingRespectsPauseAndBudget(t *testing.T) {
 	t.Run("config-paused agent excluded", func(t *testing.T) {
 		cfg := &config.Config{
 			Triggers: []config.TriggerRule{rule},
-			Agents: map[string]config.AgentConfig{
-				"reviewer": {Enabled: true, Paused: true},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{
+					"reviewer": {Enabled: true, Paused: true},
+				},
 			},
 		}
 		engine := celEngineFor(cfg, celTestLogger())
@@ -154,7 +158,9 @@ func TestCELGatingRespectsPauseAndBudget(t *testing.T) {
 	t.Run("manager-paused agent excluded", func(t *testing.T) {
 		cfg := &config.Config{
 			Triggers: []config.TriggerRule{rule},
-			Agents:   map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			},
 		}
 		engine := celEngineFor(cfg, celTestLogger())
 		gov := newTestGovernor(cfg.Agents)
@@ -168,7 +174,9 @@ func TestCELGatingRespectsPauseAndBudget(t *testing.T) {
 	t.Run("budget-exhausted agent excluded", func(t *testing.T) {
 		cfg := &config.Config{
 			Triggers: []config.TriggerRule{rule},
-			Agents:   map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			},
 		}
 		engine := celEngineFor(cfg, celTestLogger())
 		gov := newTestGovernor(cfg.Agents)
@@ -184,7 +192,9 @@ func TestCELGatingRespectsPauseAndBudget(t *testing.T) {
 	t.Run("unknown agent excluded", func(t *testing.T) {
 		cfg := &config.Config{
 			Triggers: []config.TriggerRule{{Name: "r", Expr: `hasLabel(event.labels, "bug")`, Agent: "ghost"}},
-			Agents:   map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			AgentRuntimeConfig: config.AgentRuntimeConfig{
+				Agents: map[string]config.AgentConfig{"reviewer": enabledAgent()},
+			},
 		}
 		engine := celEngineFor(cfg, celTestLogger())
 		gov := newTestGovernor(cfg.Agents)
@@ -227,7 +237,9 @@ func TestCELMatchedAgentsNilSafe(t *testing.T) {
 	// Nil actionable with a real engine is still a no-op.
 	cfg := &config.Config{
 		Triggers: []config.TriggerRule{{Name: "r", Expr: "true", Agent: "a"}},
-		Agents:   map[string]config.AgentConfig{"a": enabledAgent()},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{"a": enabledAgent()},
+		},
 	}
 	engine := celEngineFor(cfg, celTestLogger())
 	if got := celMatchedAgents(engine, nil, cfg, nil, nil, celTestLogger()); got != nil {

@@ -64,8 +64,10 @@ func TestDeferredKickUntilFirstScanDeliversOnceWithSnapshot(t *testing.T) {
 		Project: config.ProjectConfig{
 			Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo", AIAuthor: "bot",
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			},
 		},
 	}
 	s := New(cfg, slog.Default())
@@ -139,8 +141,10 @@ func TestBuildAgentMessageWithActionable(t *testing.T) {
 		Project: config.ProjectConfig{
 			Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo", AIAuthor: "bot",
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {}, "quality": {}, "ci-maintainer": {}, "architect": {}, "outreach": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {}, "quality": {}, "ci-maintainer": {}, "architect": {}, "outreach": {},
+			},
 		},
 	}
 	s := New(cfg, slog.Default())
@@ -164,8 +168,10 @@ func TestBuildKickMessagesMultiAgent(t *testing.T) {
 		Project: config.ProjectConfig{
 			Org: "testorg", Repos: []string{"testrepo"}, PrimaryRepo: "testrepo", AIAuthor: "bot",
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {}, "quality": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {}, "quality": {},
+			},
 		},
 	}
 	s := New(cfg, slog.Default())
@@ -185,8 +191,10 @@ func TestBuildAgentMessageFallback(t *testing.T) {
 			PrimaryRepo: "testrepo",
 			AIAuthor:    "bot",
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "claude-sonnet-4-6"},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {Backend: "claude", Model: "claude-sonnet-4-6"},
+			},
 		},
 	}
 	s := New(cfg, slog.Default())
@@ -222,10 +230,12 @@ func TestBuildAgentMessageAllTypes(t *testing.T) {
 		Project: config.ProjectConfig{
 			Org: "org", Repos: []string{"repo"}, PrimaryRepo: "repo", AIAuthor: "bot",
 		},
-		Agents: map[string]config.AgentConfig{
-			"scanner": {}, "quality": {}, "ci-maintainer": {},
-			"architect": {}, "outreach": {}, "guide": {},
-			"supervisor": {}, "sec-check": {}, "strategist": {},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": {}, "quality": {}, "ci-maintainer": {},
+				"architect": {}, "outreach": {}, "guide": {},
+				"supervisor": {}, "sec-check": {}, "strategist": {},
+			},
 		},
 	}
 	s := New(cfg, slog.Default())

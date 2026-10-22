@@ -31,16 +31,20 @@ func TestBuildAgentsIncludesActiveAgentOutsideCurrentPack(t *testing.T) {
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"scanner":    ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"scanner":    ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{
@@ -95,15 +99,19 @@ func TestBuildAgentsWithHidden_RuntimePausedGhostNotResurrectedByConfigPass(t *t
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"scanner": ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"scanner": ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{
@@ -149,16 +157,20 @@ func TestBuildAgentsWithHidden_ReportsPackInactiveGhost(t *testing.T) {
 	}
 	cfg := &config.Config{
 		ACMMLevel: &level,
-		Agents: map[string]config.AgentConfig{
-			"supervisor": supervisorCfg,
-			"scanner":    ghostCfg,
+		AgentRuntimeConfig: config.AgentRuntimeConfig{
+			Agents: map[string]config.AgentConfig{
+				"supervisor": supervisorCfg,
+				"scanner":    ghostCfg,
+			},
 		},
 		Governor: config.GovernorConfig{
-			Gateways: []config.GatewayConfig{{
-				Name:     "unsloth-local",
-				Kind:     config.GatewayKindCustom,
-				Endpoint: "http://host.docker.internal:8888",
-			}},
+			AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
+				Gateways: []config.GatewayConfig{{
+					Name:     "unsloth-local",
+					Kind:     config.GatewayKindCustom,
+					Endpoint: "http://host.docker.internal:8888",
+				}},
+			},
 		},
 	}
 	statuses := map[string]*agent.AgentProcess{
