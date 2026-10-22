@@ -301,6 +301,31 @@ Use these only for recurring token-only one-liners; component recipes remain pre
   `--vendor-google` aliases.
 - Behavior hooks stay in `data-*`; classes describe appearance.
 
+### Long-content modals: `.modal-scroll` and the mobile sheet
+
+Any modal body that can run longer than the viewport (release notes / *What
+changed*, alerts, the export viewer, decision dialogs such as the L6 auto-merge
+notice, settings bodies) carries the shared `.modal-scroll` class and nothing
+else owns its `overflow`. The class gives the region `overflow-y: auto`,
+momentum scrolling, `overscroll-behavior: contain`, `scrollbar-gutter: stable`
+and a thin always-visible scrollbar where the platform draws one, plus a
+**scroll-end fade**: `hiveModalScrollInit` toggles `.is-scrollable-more`
+while content remains below the fold (scroll + resize + mutation observers,
+no timers) and clears it at the bottom, so iOS — which hides scrollbars until
+the user drags — still shows that there is more to read. `hiveWireDialog` and
+the scroll-lock observer wire it automatically; nothing per dialog.
+
+On phones (`max-width: 640px`, or a coarse pointer under 820px) a
+`.hive-dialog` that contains a `.modal-scroll` becomes a **full-screen sheet**
+(`.hive-dialog.modal-sheet`, added by `hiveModalSheetDecorate`): `100dvh`
+tall with `100vh` fallback, safe-area insets honoured via the
+`--safe-area-*` tokens, fixed title row with a ✕ sized to
+`--modal-sheet-close-size` (44px), the `.modal-scroll` body as the only
+scroller, and a fixed footer holding the primary action. Esc, backdrop tap,
+the focus trap and the body scroll lock behave as on desktop; desktop layout
+is unchanged apart from the affordance. Metrics come from the
+`--modal-scroll-*` / `--modal-sheet-*` tokens in `tokens.css`.
+
 ## Ratchet plan
 
 `pkg/dashboard/webstatic/style_ratchet_test.go`, modeled on

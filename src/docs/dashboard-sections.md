@@ -31,6 +31,8 @@ These words have a special meaning in Hive. Each entry explains them again the f
 - **Needs-human:** waiting on a person, for example for a decision or a review. It is also the name of a label.
 - **Merge-eligible:** a pull request that passed every check Hive uses before it may merge it.
 
+**Dialogs on a phone.** Any dialog with a long body — the **What changed** release notes after an upgrade, alerts, the export viewer, the Level 6 auto-merge notice, settings bodies — fills the whole screen on a phone: title and a ✕ at the top, the text scrolls in the middle, and the buttons stay fixed at the bottom. A soft fade at the bottom edge means there is more to read; it disappears when you reach the end. Esc, the ✕, the buttons and tapping the backdrop close it. On a desktop the same dialogs keep their usual size and only gain the fade and a thin scrollbar. See [Long-content modals](dashboard-design-system.md#long-content-modals-modal-scroll-and-the-mobile-sheet) for the convention.
+
 ## Overview
 
 How many issues and pull requests Hive is tracking right now, and how many of them it can work on.

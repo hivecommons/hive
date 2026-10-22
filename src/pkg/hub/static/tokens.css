@@ -144,6 +144,16 @@
   --ham-repo-tint-3: var(--green);
   --ham-repo-tint-4: var(--indigo);
   --ham-repo-tint-5: var(--orange);
+  /* Long-content modal scroll region (.modal-scroll) and its mobile sheet. */
+  --modal-scroll-fade-h: 40px;
+  --modal-scroll-fade: color-mix(in srgb, var(--panel-strong) 96%, transparent);
+  --modal-scrollbar-w: 6px;
+  --modal-sheet-close-size: 44px;
+  --modal-sheet-close-glyph: 22px;
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;
