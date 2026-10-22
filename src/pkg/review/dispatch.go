@@ -65,7 +65,9 @@ var ReviewDispatchStatePath = filepath.Join(DefaultDispatchStateDir, ReviewDispa
 var LegacyReviewDispatchStatePath = filepath.Join(outputschema.AgentReportDir, ReviewDispatchStateFile)
 
 type AgentCapability struct {
-	Name           string
+	Name string
+	// ReplicaOf is the base agent a derived replica was expanded from.
+	ReplicaOf      string
 	Enabled        bool
 	Paused         bool
 	OnDemand       bool
@@ -686,9 +688,19 @@ func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapa
 	if authorAgent == "" {
 		return reviewers
 	}
+	authorBase := authorAgent
+	for _, reviewer := range reviewers {
+		if reviewer.Name == authorAgent && reviewer.ReplicaOf != "" {
+			authorBase = reviewer.ReplicaOf
+		}
+	}
 	out := make([]AgentCapability, 0, len(reviewers))
 	for _, reviewer := range reviewers {
-		if reviewer.Name != authorAgent {
+		reviewerBase := reviewer.Name
+		if reviewer.ReplicaOf != "" {
+			reviewerBase = reviewer.ReplicaOf
+		}
+		if reviewer.Name != authorAgent && reviewerBase != authorBase {
 			out = append(out, reviewer)
 		}
 	}

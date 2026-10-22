@@ -1,0 +1,1 @@
+- Replica agents are now recognised as reviewer-capable on the dashboard when their base agent is a listed reviewer, and are no longer assigned to review a PR authored by their base agent or sibling replicas (#13551, #13552)

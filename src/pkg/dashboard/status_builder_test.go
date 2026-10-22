@@ -1488,6 +1488,19 @@ func TestDashboardAgentReviewCapable(t *testing.T) {
 			want:  true,
 		},
 		{
+			name:    "replica of allowed reviewer is review capable",
+			agent:   "security-reviewer-2",
+			cfg:     config.AgentConfig{Enabled: true, ReplicaOf: "security-reviewer"},
+			allowed: []string{"security-reviewer"},
+			want:    true,
+		},
+		{
+			name:    "replica of unlisted base is not review capable",
+			agent:   "worker-2",
+			cfg:     config.AgentConfig{Enabled: true, ReplicaOf: "worker"},
+			allowed: []string{"security-reviewer"},
+		},
+		{
 			name:  "paused agent is never review capable",
 			agent: "security-reviewer",
 			cfg:   config.AgentConfig{Enabled: true, Paused: true, Role: "reviewer"},

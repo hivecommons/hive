@@ -10306,6 +10306,7 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for name, ac := range cfg.EnabledAgents() {
 		agents = append(agents, review.AgentCapability{
 			Name:           name,
+			ReplicaOf:      ac.ReplicaOf,
 			Enabled:        true,
 			Paused:         ac.Paused || (agentMgr != nil && agentMgr.IsPaused(name)),
 			OnDemand:       ac.OnDemand,

@@ -472,3 +472,33 @@ func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
 		t.Fatal("non-review lane judged review-capable with no configured set")
 	}
 }
+
+func TestReviewersForPRExcludesAuthorFamily(t *testing.T) {
+	replica := func(name, base string) AgentCapability {
+		c := reviewer(name)
+		c.ReplicaOf = base
+		return c
+	}
+	all := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
+	tests := []struct {
+		name   string
+		author string
+		want   []string
+	}{
+		{name: "base author excludes its replicas", author: "alpha", want: []string{"beta"}},
+		{name: "replica author excludes base and sibling replicas", author: "alpha-2", want: []string{"beta"}},
+		{name: "unrelated author keeps others", author: "beta", want: []string{"alpha", "alpha-2", "alpha-3"}},
+		{name: "empty author keeps all", author: "", want: []string{"alpha", "alpha-2", "alpha-3", "beta"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, r := range reviewersForPR(all, tt.author) {
+				got = append(got, r.Name)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("reviewersForPR() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

@@ -714,7 +714,8 @@ func dashboardAgentReviewCapable(name string, a config.AgentConfig, allowed []st
 	}
 	if len(allowed) > 0 {
 		for _, n := range allowed {
-			if strings.TrimSpace(n) == name {
+			n = strings.TrimSpace(n)
+			if n == name || (a.ReplicaOf != "" && n == strings.TrimSpace(a.ReplicaOf)) {
 				return true
 			}
 		}
