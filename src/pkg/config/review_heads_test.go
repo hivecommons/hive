@@ -36,7 +36,7 @@ func TestReviewHeadAliasDefaultsToBackendModelSlug(t *testing.T) {
 }
 
 func TestExpandAgentReplicasMaterializesReviewHeads(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{"code-reviewer": reviewHeadsBase()}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"code-reviewer": reviewHeadsBase()}}}
 	if err := cfg.ExpandAgentReplicas(); err != nil {
 		t.Fatalf("ExpandAgentReplicas() error = %v", err)
 	}
@@ -80,7 +80,7 @@ func TestExpandAgentReplicasMaterializesReviewHeads(t *testing.T) {
 }
 
 func TestReviewHeadsAreStrippedOnSave(t *testing.T) {
-	cfg := &Config{Agents: map[string]AgentConfig{"code-reviewer": reviewHeadsBase()}}
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"code-reviewer": reviewHeadsBase()}}}
 	if err := cfg.ExpandAgentReplicas(); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestReviewHeadsValidation(t *testing.T) {
 			for k, v := range tc.other {
 				agents[k] = v
 			}
-			cfg := &Config{Agents: agents}
+			cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: agents}}
 			if err := cfg.ExpandAgentReplicas(); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
