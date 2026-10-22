@@ -152,6 +152,35 @@ concurrency:
 # changes, analysis failures). Every shard job still runs and reports; a lane
 # with nothing selected succeeds without testing, so `test` and `coverage`
 # never wait on a missing context. Push and scheduled runs are always full.
+#
+# Crux boundary filter (#13536), pull requests only, layered on the selection
+# above and consulted ONLY when it is `partial` (an `all` verdict from the
+# dependency analysis is never narrowed). .github/scripts/crux-scope.sh
+# classifies the diff against the Crux package set — pkg/agent/... and
+# pkg/{agentmode,agentparse,agentsmd,claude,sandbox,kubejob,toolapprove,
+# skillreg,inference,openrouter,watchdog,trajectory,logscrub,proxy} — as:
+#   crux-only  every change is inside the set: the agent slices run, the rest
+#              buckets keep only the selected Crux packages plus the
+#              always-on tree-scanning packages (internal/..., pkg/config,
+#              pkg/rotation), and the hub slices and the dashboard shuffle
+#              lane report success without testing. The inbound consumers of
+#              pkg/agent (dashboard, hub, cmd/hive, ...) are deliberately NOT
+#              run on such a PR; v2-ci.yml still builds and vets the whole
+#              tree, and the push/scheduled full runs are the behavioural net.
+#   none       no change touches the set: the agent slices report success
+#              without testing; everything else follows the selection.
+#   mixed      both sides changed: the selection is used unchanged.
+#   full       a fail-safe path changed — src/go.mod, src/go.sum,
+#              src/internal/**, src/pkg/config/**, .github/workflows/**,
+#              .github/scripts/**, src/scripts/** — or the diff could not be
+#              read: everything runs.
+# The verdict and the resulting per-lane run flags are computed once, in
+# list-packages, and every lane and the aggregate `test` job read the same
+# outputs: a lane may report success without testing ONLY when its run flag
+# is false, the aggregate prints that allowlist, and it still fails closed on
+# any shard result other than success (a GitHub-level `skipped` is never
+# accepted). HIVE_AFFECTED_TEST_SELECTION=off disables this filter together
+# with the selection.
 jobs:
   required-context-scope:
     name: required context scope
@@ -628,6 +657,8 @@ jobs:
       run-hub: ${{ steps.select.outputs.run-hub }}
       run-agent: ${{ steps.select.outputs.run-agent }}
       run-dashboard: ${{ steps.select.outputs.run-dashboard }}
+      # Crux boundary filter (#13536): crux-only | none | mixed | full.
+      crux-scope: ${{ steps.select.outputs.crux-scope }}
     defaults:
       run:
         working-directory: src
@@ -729,6 +760,7 @@ jobs:
           fi
           [ -f "$sel" ] || echo all > "$sel"
           mod=$(go list -m)
+          crux_scope=full
           if [ "$(head -n1 "$sel")" = all ]; then
             selection=full
             run_hub=true run_agent=true run_dashboard=true
@@ -736,6 +768,47 @@ jobs:
             selection=partial
             has() { grep -Fxq "$mod/$1" "$sel" && echo true || echo false; }
             run_hub=$(has pkg/hub) run_agent=$(has pkg/agent) run_dashboard=$(has pkg/dashboard)
+            # Crux boundary filter (#13536) — see the header comment. Only a
+            # partial selection is ever narrowed; the script answers `full`
+            # for every fail-safe path and for anything it cannot read, and
+            # `full` leaves the selection exactly as the dependency analysis
+            # computed it.
+            crux_scope=$(bash "$GITHUB_WORKSPACE/.github/scripts/crux-scope.sh" 'HEAD^1' HEAD) || crux_scope=full
+            case "$crux_scope" in
+              crux-only)
+                run_hub=false run_dashboard=false run_agent=true
+                # Rest buckets: the selected Crux packages plus the always-on
+                # tree-scanning packages (mirrors ALWAYS_PATTERNS in
+                # affected-go-packages.sh); a failure here falls back to the
+                # unnarrowed selection.
+                if go list ./pkg/agent/... ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
+                     ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg ./pkg/inference \
+                     ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory ./pkg/logscrub ./pkg/proxy \
+                     ./internal/... ./pkg/config ./pkg/rotation > ../crux-pkgs.txt 2>/dev/null \
+                   && [ -s ../crux-pkgs.txt ]; then
+                  grep -Fx -f ../crux-pkgs.txt "$sel" > "$sel.crux" || true
+                  echo "crux-only diff: narrowing $(grep -c . "$sel" || true) selected packages to $(grep -c . "$sel.crux" || true) Crux/always-on packages; hub slices and dashboard shuffle lane will not run"
+                  mv "$sel.crux" "$sel"
+                else
+                  echo "::warning::crux-only diff but go list of the Crux set failed; keeping the unnarrowed selection"
+                  crux_scope=mixed
+                fi
+                ;;
+              none)
+                # Drop pkg/agent from the selection too: the coverage job
+                # requires every selected package to have produced a result,
+                # and the agent slices are the only lane that tests it.
+                run_agent=false
+                grep -Fxv "$mod/pkg/agent" "$sel" > "$sel.nocrux" || true
+                mv "$sel.nocrux" "$sel"
+                echo "no Crux package changed: agent slices will not run"
+                ;;
+              mixed|full) ;;
+              *)
+                echo "::warning::unexpected crux-scope verdict '$crux_scope'; treating as mixed"
+                crux_scope=mixed
+                ;;
+            esac
           fi
           {
             echo "selection=$selection"
@@ -743,6 +816,7 @@ jobs:
             echo "run-hub=$run_hub"
             echo "run-agent=$run_agent"
             echo "run-dashboard=$run_dashboard"
+            echo "crux-scope=$crux_scope"
           } >> "$GITHUB_OUTPUT"
           {
             echo "## Go test selection"
@@ -750,12 +824,12 @@ jobs:
             if [ "$selection" = full ]; then
               echo "Full suite."
             else
-              echo "Affected packages only ($(grep -c . "$sel" || true)); hub=$run_hub agent=$run_agent dashboard-shuffle=$run_dashboard."
+              echo "Affected packages only ($(grep -c . "$sel" || true)); crux-scope=$crux_scope; hub=$run_hub agent=$run_agent dashboard-shuffle=$run_dashboard."
               echo ""
               sed 's/^/- /' "$sel"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "selection=$selection hub=$run_hub agent=$run_agent dashboard=$run_dashboard"
+          echo "selection=$selection crux-scope=$crux_scope hub=$run_hub agent=$run_agent dashboard=$run_dashboard"
 
       - name: Partition packages into balanced buckets
         id: partition
@@ -1283,6 +1357,10 @@ jobs:
           RUN_TESTS: ${{ needs.required-context-scope.outputs.run-tests }}
           SCOPE_RESULT: ${{ needs.required-context-scope.result }}
           SELECTION: ${{ needs.list-packages.outputs.selection }}
+          CRUX_SCOPE: ${{ needs.list-packages.outputs.crux-scope }}
+          RUN_HUB: ${{ needs.list-packages.outputs.run-hub }}
+          RUN_AGENT: ${{ needs.list-packages.outputs.run-agent }}
+          RUN_DASHBOARD: ${{ needs.list-packages.outputs.run-dashboard }}
         run: |
           set -euo pipefail
 
@@ -1300,6 +1378,19 @@ jobs:
           # Affected-package selection step in each shard — so the fail-closed
           # result check below is unchanged by selection.
           echo "Go test selection: ${SELECTION:-<missing>} (partial = affected packages only on this PR; push and scheduled runs are always full)"
+          # Crux boundary filter (#13536): the lanes allowed to report success
+          # without testing are exactly those whose run flag list-packages set
+          # to false. Print that allowlist here so the verdict is auditable
+          # from the aggregate log; a lane absent from it that did not test
+          # would have failed its own selection step logic, and any shard
+          # result other than success still fails this job below.
+          if [ "${SELECTION:-}" = partial ]; then
+            allow=()
+            [ "${RUN_HUB:-true}" = false ] && allow+=(test-hub)
+            [ "${RUN_AGENT:-true}" = false ] && allow+=(test-agent)
+            [ "${RUN_DASHBOARD:-true}" = false ] && allow+=(test-dashboard-shuffle)
+            echo "Crux scope: ${CRUX_SCOPE:-<missing>}; lanes allowed to succeed without testing: ${allow[*]:-<none>}"
+          fi
 
           shard_names=(
             list-packages
