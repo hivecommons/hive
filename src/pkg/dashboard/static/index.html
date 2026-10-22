@@ -1461,6 +1461,36 @@
     .ham-active-ico { display: none; }
     @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
+    /* Row actions: a left gutter holds the select checkbox and the ⋯ kebab
+       (shown on hover/focus, the checkbox always once anything is
+       selected); the context menu is a fixed, viewport-clamped menu; the
+       selection bar sits above the list. Tokens only (ADR-0018). */
+    #activity-monitor-panel { position: relative; padding-left: var(--ham-gutter); }
+    .ham-row { position: relative; }
+    .ham-row:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--r-sm); }
+    .ham-row.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
+    .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-5); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
+    .ham-sel, .ham-kebab { appearance: none; -webkit-appearance: none; margin: 0; padding: 0; width: var(--ham-tool-size); height: var(--ham-tool-size); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1; cursor: pointer; opacity: 0; transition: opacity var(--ham-tool-fade-ms); }
+    .ham-row:hover .ham-sel, .ham-row:hover .ham-kebab, .ham-row:focus-within .ham-sel, .ham-row:focus-within .ham-kebab, .ham-row:focus-visible .ham-sel, .ham-row:focus-visible .ham-kebab, .ham-has-sel .ham-sel, .ham-row.ham-selected .ham-sel { opacity: 1; }
+    @media (hover: none) { .ham-sel, .ham-kebab { opacity: 1; } }
+    .ham-sel:hover, .ham-kebab:hover { color: var(--text); border-color: var(--accent); }
+    .ham-sel[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface-0); }
+    .ham-sel[aria-checked="true"]::before { content: '✓'; font-weight: var(--fw-bold); }
+    .ham-menu { position: fixed; z-index: 9000; min-width: 14em; max-width: min(22em, calc(100vw - 2 * var(--sp-3))); padding: var(--sp-1); margin: 0; background: var(--panel); border: var(--line-width) solid var(--line-strong); border-radius: var(--r); box-shadow: var(--shadow-raised); font-size: var(--fs-sm); color: var(--text); }
+    .ham-menu-head { padding: var(--sp-2) var(--sp-3); font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ham-menu-sep { height: var(--line-width); margin: var(--sp-1) 0; background: var(--line-subtle); }
+    .ham-menu-item { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); width: 100%; padding: var(--sp-2) var(--sp-3); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+    .ham-menu-item:hover, .ham-menu-item:focus-visible { background: var(--panel-strong); outline: none; }
+    .ham-menu-item[aria-disabled="true"] { color: var(--text-faint); cursor: default; }
+    .ham-menu-item[aria-disabled="true"]:hover { background: transparent; }
+    .ham-menu-item.ham-menu-danger { color: var(--red); }
+    .ham-menu-item .ham-menu-more { color: var(--text-faint); }
+    .ham-submenu { display: none; margin: 0 0 0 var(--sp-3); padding-left: var(--sp-2); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-menu-item[aria-expanded="true"] + .ham-submenu { display: block; }
+    .ham-selbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: 0 0 var(--sp-2); padding: var(--sp-2) var(--sp-3); border: var(--line-width) solid color-mix(in srgb, var(--accent) 45%, var(--line-subtle)); border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); font-size: var(--fs-xs); }
+    .ham-selbar[hidden] { display: none; }
+    .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }
+    .ham-selbar .ham-chip[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
     @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } }
     @media (max-width: 1100px) {
       /* Keep the aligned progress strip compact; put its active step in a
@@ -6930,6 +6960,7 @@
       </div>
       <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
       <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
+      <div class="ham-selbar" id="activity-monitor-selbar" role="toolbar" aria-label="Selected rows" hidden></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
       <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
@@ -13808,7 +13839,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
-      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}">
+      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           <div class="ham-row-head">
             ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
           </div>
@@ -14017,7 +14048,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             <span class="ham-title ham-no-issue-t">${esc(li.text)}</span>
           </div>`;
       }
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
+      return `<div class="ham-row" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}">
+        ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
           ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), leadHtml, stageTrackerChipsHtml(shown))}
         </div>
@@ -14837,6 +14869,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
       if (!visible.length) {
         _stageTrackerMoves = {};
+        stageTrackerSelectionSync(el, []);
         const emptyHtml = `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
         if (el.querySelector('[data-ham-key]')) {
           stageTrackerReconcile(el, [], { effect, hidden: document.hidden });
@@ -14855,6 +14888,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           : { key: stageTrackerItemKey(grouping ? e.item : e), html: stageTrackerRowHtml(grouping ? e.item : e, stages, ctx) }));
       const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
       if (rec.deferred) stageTrackerScheduleSettle();
+      // Selection is keyed on the row, never baked into its HTML, so a kept
+      // node stays selected across the refresh and a departed row leaves it.
+      stageTrackerSelectionSync(el, rows.map(r => r.key));
       // Moves play once, on the render that follows the payload; a filter
       // or paging re-render of the same payload does not replay them.
       if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }
@@ -14885,6 +14921,491 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         renderStageTracker(JSON.parse(text));
         dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) { /* keep the previous render */ }
+    }
+
+    /* ---- Row actions: context menu + multi-select -------------------------
+       A right-click (or the ⋯ kebab, Shift+F10, the context-menu key) on a
+       row opens an in-app menu of the actions that apply to that row's
+       state. The checkbox in the left gutter selects rows (Shift+click for
+       a range, Cmd/Ctrl+click to toggle); the selection bar above the list
+       carries the actions valid for every selected row and greys out the
+       rest with the reason. Selection is keyed on the row's item key, so
+       the ~1 s reconcile keeps it; rows that leave the list drop out of it.
+       Every action goes through an existing dashboard endpoint (hold,
+       send-to-human, rescan) or the decision endpoint, which records the
+       same /hive approve|decision a maintainer would — nothing merges. */
+    const STAGE_TRACKER_DECISION_STAGES = [45, 85];
+    const STAGE_TRACKER_SEL_ACTIONS = ['hold', 'release', 'retry', 'needs-human', 'copy'];
+    const STAGE_TRACKER_MENU_MARGIN = 4;
+    const STAGE_TRACKER_MENU_FAIL_LINES = 3;
+    const STAGE_TRACKER_ACTION_LABELS = {
+      'decide:approve': 'Approve direction', 'decide:direction': 'Send back to the hive',
+      'decide:close-superseded': 'Close as superseded', 'decide:close-wontfix': "Close as won't-fix",
+      hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'needs-human': 'Mark needs-human',
+      open: 'Open on GitHub', copy: 'Copy link',
+    };
+    const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
+    const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
+    var _stageTrackerSel = new Set();
+    var _stageTrackerSelAnchor = '';
+    var _stageTrackerMenu = null;
+
+    function stageTrackerRefOf(item) { return (item.repo || '') + '#' + (Number(item.number) || 0); }
+    // Pure: the gutter controls of a row. Selection state is never written
+    // here (the reconcile keys rows on their HTML); stageTrackerApplySelection
+    // sets aria-checked / .ham-selected on the live node.
+    function stageTrackerRowToolsHtml(item) {
+      const ref = stageTrackerRefOf(item);
+      return `<span class="ham-row-tools"><button type="button" class="ham-sel" role="checkbox" aria-checked="false" aria-label="Select ${esc(ref)} (Shift+click for a range)" data-action="hamSelectClick" data-arg-types="e,t" data-stop="1" data-prevent="1"></button><button type="button" class="ham-kebab" aria-label="Actions for ${esc(ref)}" aria-haspopup="menu" data-action="hamRowMenu" data-arg-types="e,t" data-stop="1" data-prevent="1">⋯</button></span>`;
+    }
+    // Pure: the next selection after a click on `key`. Shift extends from
+    // the anchor over the rows' current order (Cmd/Ctrl+Shift keeps what was
+    // selected outside the range); a plain or Cmd/Ctrl click toggles the row
+    // and moves the anchor.
+    function stageTrackerSelectionNext(sel, anchor, keys, key, mods) {
+      mods = mods || {};
+      const next = new Set(mods.shift && mods.meta ? sel : []);
+      if (mods.shift && anchor && keys.indexOf(anchor) >= 0 && keys.indexOf(key) >= 0) {
+        const a = keys.indexOf(anchor), b = keys.indexOf(key);
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(keys[i]);
+        return { sel: next, anchor };
+      }
+      sel.forEach(k => next.add(k));
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return { sel: next, anchor: key };
+    }
+    // Pure: keep only the keys still rendered.
+    function stageTrackerSelectionPrune(sel, keys) {
+      const present = new Set(keys);
+      const next = new Set();
+      sel.forEach(k => { if (present.has(k)) next.add(k); });
+      return next;
+    }
+    function stageTrackerApplySelection(el, sel) {
+      let any = false;
+      for (const n of Array.from(el.children || [])) {
+        const key = n.dataset && n.dataset.hamKey;
+        if (!key || key === STAGE_TRACKER_HEADER_KEY) continue;
+        const on = sel.has(key);
+        if (on) any = true;
+        if (on) n.classList.add('ham-selected'); else n.classList.remove('ham-selected');
+        const cb = typeof n.querySelector === 'function' ? n.querySelector('.ham-sel') : null;
+        if (cb) cb.setAttribute('aria-checked', on ? 'true' : 'false');
+      }
+      if (any) el.classList.add('ham-has-sel'); else el.classList.remove('ham-has-sel');
+      return any;
+    }
+    function stageTrackerRowKeys(el) {
+      return Array.from(el.children || []).map(n => n.dataset && n.dataset.hamKey).filter(k => k && k !== STAGE_TRACKER_HEADER_KEY);
+    }
+    // After a render: drop keys whose rows left, paint the rest, refresh the bar.
+    function stageTrackerSelectionSync(el, keys) {
+      _stageTrackerSel = stageTrackerSelectionPrune(_stageTrackerSel, keys);
+      if (_stageTrackerSelAnchor && keys.indexOf(_stageTrackerSelAnchor) < 0) _stageTrackerSelAnchor = '';
+      stageTrackerApplySelection(el, _stageTrackerSel);
+      stageTrackerRenderSelBar();
+      stageTrackerWireRowActions(el);
+    }
+    function stageTrackerItemByKey(d, key) {
+      if (!d || !Array.isArray(d.items)) return null;
+      for (const it of d.items) if (stageTrackerItemKey(it) === key) return it;
+      for (const it of d.items) {
+        for (const lp of (Array.isArray(it.linked_prs) ? it.linked_prs : [])) {
+          const pr = { repo: it.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [] };
+          if (stageTrackerItemKey(pr) === key) return pr;
+        }
+      }
+      return null;
+    }
+    function stageTrackerItemsForKeys(keys) {
+      return keys.map(k => stageTrackerItemByKey(_stageTracker, k)).filter(Boolean);
+    }
+    // What the signed-in viewer may do on this repo. Hold permission is
+    // looked up lazily (the server answers 403 either way); needs-human is
+    // merger/owner only.
+    function stageTrackerActionCtx(repo) {
+      const role = window._hiveRole || 'read';
+      const owner = dashboardRoleAtLeast(role, 'owner');
+      const user = !!window._hiveUser || owner;
+      if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
+      const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger') };
+    }
+    // Pure: the decision choices for one item. Approve / direction act on a
+    // parked issue (045); a PR at 085 can only be closed.
+    function stageTrackerDecideOptions(item, ctx) {
+      const enabled = ctx.canHold !== false && !!ctx.user;
+      const why = enabled ? '' : STAGE_TRACKER_WHY_WRITE;
+      const out = [];
+      if (item.kind === 'issue') {
+        out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
+        out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
+      }
+      out.push({ id: 'decide:close-superseded', label: 'Close as superseded…', enabled, why, danger: true });
+      out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
+      return out;
+    }
+    // Pure: the actions that apply to one row in its current state.
+    function stageTrackerRowActions(item, ctx) {
+      ctx = ctx || {};
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const has = m => mods.indexOf(m) >= 0;
+      const write = ctx.canHold !== false;
+      const out = [];
+      if (has('needs-decision') || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(item.stage) || 0) >= 0) {
+        out.push({ id: 'decide', label: 'Decide…', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, submenu: stageTrackerDecideOptions(item, ctx) });
+      }
+      out.push(has('hold')
+        ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
+        : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
+      out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
+      if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
+      out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
+      out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
+      return out;
+    }
+    function stageTrackerFlatActions(actions) {
+      const flat = {};
+      for (const a of actions) {
+        flat[a.id] = a;
+        for (const s of (a.submenu || [])) flat[s.id] = s;
+      }
+      return flat;
+    }
+    // Pure: the actions for a selection — each enabled only when it applies
+    // to, and is allowed on, every item; otherwise disabled with the first
+    // reason. Open is per-row only; Copy copies every link.
+    function stageTrackerSelectionActions(items, ctxOf) {
+      const per = items.map(it => ({ it, flat: stageTrackerFlatActions(stageTrackerRowActions(it, typeof ctxOf === 'function' ? ctxOf(it.repo) : ctxOf)) }));
+      const judge = id => {
+        for (const p of per) {
+          const a = p.flat[id];
+          if (!a) return { enabled: false, why: 'Not applicable to ' + stageTrackerRefOf(p.it) };
+          if (!a.enabled) return { enabled: false, why: a.why + ' (' + stageTrackerRefOf(p.it) + ')' };
+        }
+        return { enabled: items.length > 0, why: items.length ? '' : 'Nothing selected' };
+      };
+      const decideIds = ['decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
+      const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
+      const out = [Object.assign({ id: 'decide', label: 'Decide…', submenu }, submenu.some(s => s.enabled) ? { enabled: true, why: '' } : { enabled: false, why: submenu[0].why })];
+      for (const id of STAGE_TRACKER_SEL_ACTIONS) out.push(Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'needs-human' ? '…' : id === 'copy' ? 's' : '') }, judge(id)));
+      return out;
+    }
+    function stageTrackerMenuItemHtml(a) {
+      const dis = a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`;
+      if (a.submenu) {
+        return `<button type="button" role="menuitem" class="ham-menu-item" data-ham-act="${esc(a.id)}" aria-haspopup="menu" aria-expanded="false" tabindex="-1"${dis}>${esc(a.label)}<span class="ham-menu-more" aria-hidden="true">▸</span></button><div class="ham-submenu" role="menu" aria-label="${esc(a.label)}">${a.submenu.map(stageTrackerMenuItemHtml).join('')}</div>`;
+      }
+      return `${a.sep ? '<div class="ham-menu-sep" role="separator"></div>' : ''}<button type="button" role="menuitem" class="ham-menu-item${a.danger ? ' ham-menu-danger' : ''}" data-ham-act="${esc(a.id)}" tabindex="-1"${dis}>${esc(a.label)}${a.hint ? `<span class="ham-menu-more">${esc(a.hint)}</span>` : ''}</button>`;
+    }
+    // Pure: the menu markup (roles menu / menuitem, the Decide group as a
+    // nested menu toggled by its item).
+    function stageTrackerMenuHtml(actions, head) {
+      return `<div class="ham-menu" role="menu" aria-label="Row actions" tabindex="-1">${head ? `<div class="ham-menu-head">${esc(head)}</div>` : ''}${actions.map(stageTrackerMenuItemHtml).join('')}</div>`;
+    }
+    // Pure: place the menu at the pointer, flipped/clamped to stay on screen.
+    function stageTrackerMenuPosition(x, y, w, h, vw, vh) {
+      const m = STAGE_TRACKER_MENU_MARGIN;
+      let left = x, top = y;
+      if (left + w + m > vw) left = Math.max(m, Math.min(x - w, vw - w - m));
+      if (top + h + m > vh) top = Math.max(m, Math.min(y - h, vh - h - m));
+      return { left: Math.max(m, left), top: Math.max(m, top) };
+    }
+    function stageTrackerMenuItems(menu) {
+      return Array.from(menu.querySelectorAll('[role="menuitem"]')).filter(b => {
+        const sub = b.closest('.ham-submenu');
+        return !sub || (sub.previousElementSibling && sub.previousElementSibling.getAttribute('aria-expanded') === 'true');
+      });
+    }
+    function stageTrackerMenuFocus(menu, dir, from) {
+      const items = stageTrackerMenuItems(menu).filter(b => b.getAttribute('aria-disabled') !== 'true');
+      if (!items.length) { menu.focus(); return; }
+      let i = items.indexOf(from);
+      if (dir === 'first') i = 0; else if (dir === 'last') i = items.length - 1;
+      else i = (i + dir + items.length) % items.length;
+      items[i].focus();
+    }
+    function stageTrackerCloseMenu(refocus) {
+      const m = _stageTrackerMenu;
+      if (!m) return;
+      _stageTrackerMenu = null;
+      document.removeEventListener('pointerdown', m.onAway, true);
+      document.removeEventListener('keydown', m.onKey, true);
+      window.removeEventListener('resize', m.onAway);
+      window.removeEventListener('scroll', m.onAway, true);
+      if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+      if (refocus && m.restore && typeof m.restore.focus === 'function' && document.contains(m.restore)) m.restore.focus();
+    }
+    // Open the menu for `items` at (x, y) — or below `anchor` — and run the
+    // picked action on them.
+    function stageTrackerOpenMenu(items, at) {
+      stageTrackerCloseMenu(false);
+      if (!items.length) return;
+      const actions = items.length === 1 ? stageTrackerRowActions(items[0], stageTrackerActionCtx(items[0].repo)) : stageTrackerSelectionActions(items, stageTrackerActionCtx);
+      const head = items.length === 1 ? stageTrackerRefOf(items[0]) + (items[0].title ? ' · ' + items[0].title : '') : items.length + ' selected';
+      const tpl = document.createElement('template');
+      tpl.innerHTML = stageTrackerMenuHtml(actions, head);
+      const el = tpl.content.firstElementChild;
+      document.body.appendChild(el);
+      let x = at.x, y = at.y;
+      if (at.anchor && typeof at.anchor.getBoundingClientRect === 'function') { const r = at.anchor.getBoundingClientRect(); x = r.left; y = r.bottom; }
+      const pos = stageTrackerMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
+      el.style.setProperty('left', pos.left + 'px');
+      el.style.setProperty('top', pos.top + 'px');
+      const m = { el, items, restore: at.restore || at.anchor || null };
+      m.onAway = e => { if (e.type !== 'pointerdown' || !el.contains(e.target)) stageTrackerCloseMenu(false); };
+      m.onKey = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stageTrackerCloseMenu(true); return; }
+        if (!el.contains(e.target)) return;
+        const b = e.target.closest('[role="menuitem"]');
+        switch (e.key) {
+          case 'ArrowDown': e.preventDefault(); stageTrackerMenuFocus(el, 1, b); break;
+          case 'ArrowUp': e.preventDefault(); stageTrackerMenuFocus(el, -1, b); break;
+          case 'Home': e.preventDefault(); stageTrackerMenuFocus(el, 'first'); break;
+          case 'End': e.preventDefault(); stageTrackerMenuFocus(el, 'last'); break;
+          case 'ArrowRight': if (b && b.getAttribute('aria-haspopup') === 'menu' && b.getAttribute('aria-disabled') !== 'true') { e.preventDefault(); b.setAttribute('aria-expanded', 'true'); stageTrackerMenuFocus(el, 1, b); } break;
+          case 'ArrowLeft': { const sub = b && b.closest('.ham-submenu'); if (sub && sub.previousElementSibling) { e.preventDefault(); sub.previousElementSibling.setAttribute('aria-expanded', 'false'); sub.previousElementSibling.focus(); } break; }
+          case 'Tab': stageTrackerCloseMenu(true); break;
+        }
+      };
+      el.addEventListener('click', e => {
+        const b = e.target.closest('[data-ham-act]');
+        if (!b || b.getAttribute('aria-disabled') === 'true') return;
+        e.preventDefault(); e.stopPropagation();
+        const act = b.dataset.hamAct;
+        if (b.getAttribute('aria-haspopup') === 'menu') {
+          const open = b.getAttribute('aria-expanded') === 'true';
+          b.setAttribute('aria-expanded', open ? 'false' : 'true');
+          if (!open) stageTrackerMenuFocus(el, 1, b);
+          return;
+        }
+        stageTrackerCloseMenu(true);
+        stageTrackerDoAction(m.items, act);
+      });
+      document.addEventListener('pointerdown', m.onAway, true);
+      document.addEventListener('keydown', m.onKey, true);
+      window.addEventListener('resize', m.onAway);
+      window.addEventListener('scroll', m.onAway, true);
+      _stageTrackerMenu = m;
+      if (at.expandDecide) { const d = el.querySelector('[data-ham-act="decide"]'); if (d && d.getAttribute('aria-disabled') !== 'true') d.setAttribute('aria-expanded', 'true'); }
+      stageTrackerMenuFocus(el, 'first');
+    }
+    // The row (or nested PR) an event happened on, as the items a menu acts
+    // on: a selected row with company stands for the whole selection.
+    function stageTrackerMenuTargets(target) {
+      const sub = target && target.closest ? target.closest('[data-ham-sub-key]') : null;
+      if (sub) return { items: stageTrackerItemsForKeys([sub.dataset.hamSubKey]), restore: sub.closest('.ham-row') };
+      const row = target && target.closest ? target.closest('.ham-row[data-ham-key]') : null;
+      if (!row) return null;
+      const key = row.dataset.hamKey;
+      const keys = _stageTrackerSel.has(key) && _stageTrackerSel.size > 1 ? stageTrackerRowKeys(row.parentNode).filter(k => _stageTrackerSel.has(k)) : [key];
+      return { items: stageTrackerItemsForKeys(keys), restore: row };
+    }
+    function stageTrackerWireRowActions(el) {
+      if (!el || !el.dataset || el.dataset.hamWired === '1' || typeof el.addEventListener !== 'function') return;
+      el.dataset.hamWired = '1';
+      el.addEventListener('contextmenu', e => {
+        if (e.shiftKey) return; // Shift+right-click keeps the browser's own menu
+        const t = stageTrackerMenuTargets(e.target);
+        if (!t || !t.items.length) return;
+        e.preventDefault();
+        stageTrackerOpenMenu(t.items, { x: e.clientX, y: e.clientY, restore: t.restore });
+      });
+      el.addEventListener('keydown', e => {
+        const row = e.target.closest ? e.target.closest('.ham-row[data-ham-key]') : null;
+        if (!row) return;
+        if ((e.shiftKey && e.key === 'F10') || e.key === 'ContextMenu') {
+          const t = stageTrackerMenuTargets(e.target);
+          if (!t || !t.items.length) return;
+          e.preventDefault();
+          stageTrackerOpenMenu(t.items, { anchor: row, restore: row });
+          return;
+        }
+        if (e.key === ' ' && e.target === row) {
+          e.preventDefault();
+          stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
+        }
+      });
+      // Cmd/Ctrl- or Shift-click anywhere on a row (not on its links or
+      // buttons) selects it too.
+      el.addEventListener('click', e => {
+        if (!(e.metaKey || e.ctrlKey || e.shiftKey)) return;
+        if (e.target.closest('a, button, input, select, textarea')) return;
+        const row = e.target.closest ? e.target.closest('.ham-row[data-ham-key]') : null;
+        if (!row) return;
+        e.preventDefault();
+        stageTrackerSelect(row.dataset.hamKey, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey });
+      });
+    }
+    function stageTrackerSelect(key, mods) {
+      const el = document.getElementById('activity-monitor-panel');
+      if (!el || !key) return;
+      const next = stageTrackerSelectionNext(_stageTrackerSel, _stageTrackerSelAnchor, stageTrackerRowKeys(el), key, mods);
+      _stageTrackerSel = next.sel;
+      _stageTrackerSelAnchor = next.anchor;
+      stageTrackerApplySelection(el, _stageTrackerSel);
+      stageTrackerRenderSelBar();
+    }
+    function hamSelectClick(e, btn) {
+      const row = btn && btn.closest ? btn.closest('.ham-row[data-ham-key]') : null;
+      if (row) stageTrackerSelect(row.dataset.hamKey, { shift: !!(e && e.shiftKey), meta: !!(e && (e.metaKey || e.ctrlKey)) });
+    }
+    function hamRowMenu(e, btn) {
+      const t = stageTrackerMenuTargets(btn);
+      if (!t || !t.items.length) return;
+      stageTrackerOpenMenu(t.items, { anchor: btn, restore: btn });
+    }
+    function hamSelClear() {
+      _stageTrackerSel = new Set();
+      _stageTrackerSelAnchor = '';
+      const el = document.getElementById('activity-monitor-panel');
+      if (el) stageTrackerApplySelection(el, _stageTrackerSel);
+      stageTrackerRenderSelBar();
+    }
+    function hamSelAction(id, btn) {
+      if (btn && btn.getAttribute('aria-disabled') === 'true') return;
+      const el = document.getElementById('activity-monitor-panel');
+      const items = stageTrackerItemsForKeys(el ? stageTrackerRowKeys(el).filter(k => _stageTrackerSel.has(k)) : []);
+      if (!items.length) return;
+      if (id === 'decide') { stageTrackerOpenMenu(items, { anchor: btn, restore: btn, expandDecide: true }); return; }
+      stageTrackerDoAction(items, id);
+    }
+    // Pure: the selection bar — count, Clear, and the shared actions
+    // (disabled ones keep their tooltip, so aria-disabled rather than disabled).
+    function stageTrackerSelBarHtml(items, actions) {
+      if (!items.length) return '';
+      const btn = a => `<button type="button" class="ham-chip" data-action="hamSelAction" data-arg0="${esc(a.id)}" data-arg-types="s,t"${a.enabled ? '' : ` aria-disabled="true" title="${esc(a.why || '')}"`}>${esc(a.label)}</button>`;
+      return `<span class="ham-sel-count">${items.length} selected</span><button type="button" class="ham-chip" data-action="hamSelClear">Clear</button>${actions.map(btn).join('')}`;
+    }
+    function stageTrackerRenderSelBar() {
+      const bar = document.getElementById('activity-monitor-selbar');
+      if (!bar) return;
+      const el = document.getElementById('activity-monitor-panel');
+      const items = stageTrackerItemsForKeys(el ? stageTrackerRowKeys(el).filter(k => _stageTrackerSel.has(k)) : []);
+      if (!items.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+      bar.hidden = false;
+      const html = stageTrackerSelBarHtml(items, stageTrackerSelectionActions(items, stageTrackerActionCtx));
+      if (bar.innerHTML !== html) bar.innerHTML = html;
+    }
+    function stageTrackerActionLabel(id) { return STAGE_TRACKER_ACTION_LABELS[id] || id; }
+    // Pure: which endpoint an action hits for one item. `once` marks a
+    // hive-wide call made one time per batch.
+    function stageTrackerActionRequest(item, id, payload) {
+      payload = payload || {};
+      const p = repoParts(item.repo);
+      const n = Number(item.number) || 0;
+      if (!p.owner || !p.repo || !n) return null;
+      const seg = encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo);
+      const type = item.kind === 'pr' ? 'pr' : 'issue';
+      switch (id) {
+        case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
+        case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
+        case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
+      }
+      if (id.indexOf('decide:') === 0) return { url: '/api/repos/' + seg + '/items/' + n + '/decision', body: { decision: id.slice('decide:'.length), comment: payload.comment || '', type } };
+      return null;
+    }
+    // Pure: one line for the result toast.
+    function stageTrackerActionSummary(label, results) {
+      const n = results.length;
+      const fails = results.filter(r => !r.ok);
+      const ok = n - fails.length;
+      let msg = label + ': ' + ok + '/' + n + ' done';
+      const debounced = results.some(r => r.ok && r.data && (r.data.status === 'debounced' || r.data.status === 'in-progress'));
+      if (debounced) msg += ' (a rescan was already running — the next one is queued by the hive)';
+      if (fails.length) {
+        msg += '. Failed: ' + fails.slice(0, STAGE_TRACKER_MENU_FAIL_LINES).map(r => stageTrackerRefOf(r.item) + ' — ' + r.error).join('; ');
+        if (fails.length > STAGE_TRACKER_MENU_FAIL_LINES) msg += '; +' + (fails.length - STAGE_TRACKER_MENU_FAIL_LINES) + ' more';
+      }
+      return { msg, type: fails.length ? 'error' : 'success' };
+    }
+    function stageTrackerProgressToast(label, n) {
+      const el = showToast('', 'info', true);
+      const text = document.createTextNode('');
+      if (el) el.appendChild(text);
+      return {
+        update(i, item) { text.nodeValue = label + ' ' + (i + 1) + '/' + n + ' — ' + stageTrackerRefOf(item) + '…'; },
+        done(msg, type) { if (el) dismissToast(el, msg, type); else showToast(msg, type); },
+      };
+    }
+    function stageTrackerAfterActions() {
+      _stageTrackerEtag = '';
+      _stageTrackerSig = '';
+      fetchStageTracker();
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+    // Run one action over the items in order, one request each (a hive-wide
+    // one once), reporting progress and the per-row outcome.
+    async function stageTrackerRunActions(items, id, payload) {
+      const label = stageTrackerActionLabel(id);
+      const prog = stageTrackerProgressToast(label, items.length);
+      const results = [];
+      const once = {};
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        prog.update(i, it);
+        const req = stageTrackerActionRequest(it, id, payload);
+        if (!req) { results.push({ item: it, ok: false, error: 'not applicable' }); continue; }
+        if (req.once && once[req.url]) { results.push({ item: it, ok: true, data: once[req.url] }); continue; }
+        try {
+          const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+          if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+          if (req.once) once[req.url] = data;
+          results.push({ item: it, ok: true, data });
+        } catch (e) {
+          results.push({ item: it, ok: false, error: e && e.message ? e.message : 'network error' });
+        }
+      }
+      const sum = stageTrackerActionSummary(label, results);
+      prog.done(sum.msg, sum.type);
+      stageTrackerAfterActions();
+      return results;
+    }
+    // What an action needs from the operator first (in-app dialogs only);
+    // null = cancelled.
+    async function stageTrackerActionPayload(items, id) {
+      const refs = items.map(stageTrackerRefOf).join(', ');
+      const who = window._hiveUser || 'you';
+      switch (id) {
+        case 'decide:approve':
+          return (await hiveConfirm({ title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
+        case 'decide:direction': {
+          const v = await hivePrompt({ title: 'Send back to the hive', label: 'Direction for the hive on ' + refs + ' (recorded as "/hive decision …")', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' });
+          return v == null ? null : { comment: v };
+        }
+        case 'decide:close-superseded':
+        case 'decide:close-wontfix': {
+          const v = await hivePrompt({ title: stageTrackerActionLabel(id), label: 'Comment for ' + refs + ' (optional)', placeholder: 'Why this is closed', confirmLabel: 'Close' });
+          return v == null ? null : { comment: v };
+        }
+        case 'needs-human': {
+          const v = await hivePrompt({ title: 'Mark needs-human', label: 'Why does ' + refs + ' need a human? (optional)', placeholder: 'Reason', confirmLabel: 'Mark' });
+          return v == null ? null : { comment: v };
+        }
+      }
+      return {};
+    }
+    async function stageTrackerDoAction(items, id) {
+      if (!items.length) return;
+      if (id === 'open') {
+        for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
+        return;
+      }
+      if (id === 'copy') {
+        const text = items.map(it => it.url).filter(Boolean).join('\n');
+        try {
+          if (!navigator.clipboard) throw new Error('clipboard unavailable');
+          await navigator.clipboard.writeText(text);
+          showToast(items.length > 1 ? 'Copied ' + items.length + ' links' : 'Link copied', 'success');
+        } catch (e) { showToast('Could not copy: ' + (e && e.message ? e.message : 'clipboard unavailable'), 'error'); }
+        return;
+      }
+      const payload = await stageTrackerActionPayload(items, id);
+      if (payload == null) return;
+      await stageTrackerRunActions(items, id, payload);
     }
 
     /* ---- Activity monitor sounds (#13275) ---------------------------------

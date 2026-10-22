@@ -414,6 +414,8 @@ func TestStageTrackerMotionRowStamp(t *testing.T) {
 		jsFunc(t, html, "stageTrackerColMap"),
 		jsFunc(t, html, "stageTrackerColMoves"),
 		jsFunc(t, html, "stageTrackerMoveAttrs"),
+		jsFunc(t, html, "stageTrackerRefOf"),
+		jsFunc(t, html, "stageTrackerRowToolsHtml"),
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
 	}, "\n") + `
@@ -501,6 +503,8 @@ func TestStageTrackerMotionPreviewSample(t *testing.T) {
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsFunc(t, html, "stageTrackerShortAgo"),
+		jsFunc(t, html, "stageTrackerRefOf"),
+		jsFunc(t, html, "stageTrackerRowToolsHtml"),
 		jsFunc(t, html, "stageTrackerRowHtml"),
 		jsFunc(t, html, "stageTrackerPRIssueSlot"),
 		jsFunc(t, html, "stageTrackerItemKey"),

@@ -154,6 +154,10 @@
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
+  /* Tracker row actions: the select/kebab gutter and its hover fade. */
+  --ham-gutter: 1.75em;
+  --ham-tool-size: 1.1em;
+  --ham-tool-fade-ms: var(--duration-fast);
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;
