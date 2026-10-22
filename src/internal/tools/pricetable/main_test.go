@@ -73,8 +73,6 @@ func writeFixtureTable(t *testing.T) string {
 	return path
 }
 
-func fileFetch(ctx context.Context, source string) ([]byte, error) { return os.ReadFile(source) }
-
 func fixedNow() time.Time { return time.Date(2026, 2, 4, 12, 0, 0, 0, time.UTC) }
 
 func TestParseOpenRouter(t *testing.T) {
