@@ -4583,6 +4583,11 @@ func (h *ContributeWSHub) cleanupLoop() {
 				if c.profile != nil {
 					username = c.profile.GitHubUsername
 				}
+				// Hub-initiated close: without this the relay_disconnected row falls
+				// back to reason=client. c.mu is already held, so set it inline.
+				if stale && c.auditCloseReason == "" {
+					c.auditCloseReason = "heartbeat_timeout"
+				}
 				c.mu.Unlock()
 				if stale {
 					h.logger.Info("[contribute-ws] cleanup: removing stale connection", "username", username, "conn", id)
