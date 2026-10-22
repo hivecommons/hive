@@ -206,6 +206,10 @@ func isRoutingAlias(normalizedID string) bool {
 // must match model ids the same way the price table does.
 func NormalizeModelID(model string) string { return normalizeModelID(model) }
 
+// IsRoutingAlias is the exported form of isRoutingAlias. Pass the output of
+// NormalizeModelID.
+func IsRoutingAlias(normalizedID string) bool { return isRoutingAlias(normalizedID) }
+
 func normalizeModelID(model string) string {
 	id := strings.TrimSpace(strings.ToLower(model))
 	if id == "" {

@@ -44,12 +44,10 @@ func costRecordingModelKey(model string) string {
 	return tokens.NormalizeModelID(model)
 }
 
+// costRecordingIsAlias reports whether a normalized key is a routing alias
+// ("auto", "default") rather than a real model; it shares the tokens rule.
 func costRecordingIsAlias(key string) bool {
-	switch key {
-	case "", "auto", "default":
-		return true
-	}
-	return false
+	return tokens.IsRoutingAlias(key)
 }
 
 // costRecording builds the recording block from the current status, the
