@@ -362,3 +362,54 @@ assert.ok(Math.abs(spread - (40 * 23 + 10000 + 40)) < 1e-6, 'spread spend matche
 		t.Fatalf("cost discontinuity JS failed: %v\n%s", err, out)
 	}
 }
+
+// TestCostPriceMapKeepsEveryModelEverSeen pins that costPriceMap takes each
+// model's $/token from the newest snapshot that still lists THAT model — not
+// from the newest snapshot alone. The token summary only lists the models of
+// the sessions currently on disk, so after a backend/model change the latest
+// snapshot may name only today's helper model; pricing from it alone put every
+// historical model at $0 and the chart of a $17K history summed to $15.
+func TestCostPriceMapKeepsEveryModelEverSeen(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost price-map behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const H = 3600e3;
+const t0 = Date.UTC(2026, 9, 1);
+// An expensive model ran for two hours ($100/h at $0.01/token), then only a
+// cheap helper model is left in the summary ($0.000001/token).
+const hist = [
+  { timestamp: t0,         usd: 0,      models: { opus: { i: 0, o: 0, usd: 0 } } },
+  { timestamp: t0 + 1 * H, usd: 100,    models: { opus: { i: 10000, o: 0, usd: 100 } } },
+  { timestamp: t0 + 2 * H, usd: 200,    models: { opus: { i: 20000, o: 0, usd: 200 } } },
+  { timestamp: t0 + 3 * H, usd: 200.01, models: { mini: { i: 10000, o: 0, usd: 0.01 } } },
+  { timestamp: t0 + 4 * H, usd: 200.02, models: { mini: { i: 20000, o: 0, usd: 0.02 } } },
+];
+const rate = costPriceMap(hist);
+assert.ok(Math.abs(rate.opus - 0.01) < 1e-12, 'opus keeps the rate from the last snapshot that listed it: ' + rate.opus);
+assert.ok(Math.abs(rate.mini - 0.000001) < 1e-15, 'mini priced from the newest snapshot: ' + rate.mini);
+// The whole-history spend must include the expensive model's $200, not just
+// the helper's cents. (The opus → mini hand-over itself is a counter DROP,
+// so only the increments on either side of it count: 100 + 100 + 0.01.)
+const spend = costSpendBetween(hist, rate, t0, t0 + 4 * H, costDiscontinuityCeiling(hist, rate));
+assert.ok(Math.abs(spend - 200.01) < 1e-9, 'spend should price historical models: ' + spend);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost price-map JS failed: %v\n%s", err, out)
+	}
+}

@@ -12390,7 +12390,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function costRunRateUnit(win) {
       return win.bucket === 'hour' ? { ms: COST_HOUR_MS, label: '/hr' } : { ms: COST_DAY_MS, label: '/day' };
     }
-    // priceMap: current $/token per model from the newest snapshot that has one.
+    // priceMap: $/token per model, each taken from the NEWEST snapshot that
+    // still carries that model. The newest snapshot alone is not enough: the
+    // token summary only lists the models of the sessions currently on disk, so
+    // after a backend or model change the latest snapshot may name only
+    // today's cheap helper model, and every historical model would then be
+    // priced at $0 and vanish from the chart (observed: a $17K history whose
+    // chart summed to $15 because the last snapshot listed only gpt-4o-mini).
     function costPriceMap(hist) {
       const rate = {};
       for (let i = hist.length - 1; i >= 0; i--) {
@@ -12401,7 +12407,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const toks = (m.i || 0) + (m.o || 0);
           if (rate[k] == null && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
         }
-        break;
       }
       return rate;
     }
