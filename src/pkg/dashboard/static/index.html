@@ -23731,31 +23731,38 @@ function burnAreaChart() {
     // live (#13484).
     function costCountAsOf(cost) {
       if (!cost) return '';
+      // count_error names why the attributed refresh failed or was partial
+      // so a stale / partial / fallback divisor is never a bare "—".
+      const err = cost.count_error ? ` — ${cost.count_error}` : '';
       if (cost.count_stale) {
         const since = cost.count_stale_since || cost.count_updated_at;
         const when = since ? ` since ${fmtOverviewStaleSince(since)}` : '';
         const why = cost.count_status && !/^stale/.test(cost.count_status) ? ` (${cost.count_status})` : (cost.count_status && /rate-limited/.test(cost.count_status) ? ' (GitHub rate-limited)' : '');
-        return `counts stale${when}${why}`;
+        return `counts stale${when}${why}${err}`;
+      }
+      if (cost.count_partial) {
+        const asOf = cost.count_updated_at ? ` as of ${fmtOverviewStaleSince(cost.count_updated_at)}` : '';
+        return `${cost.count_status || 'counts partial'}${asOf}${err}`;
       }
       return cost.count_updated_at ? `counts as of ${fmtOverviewStaleSince(cost.count_updated_at)}` : '';
     }
 
     function costCountLabel(cost, count, unitLabel, outcomeWindow) {
-      if (!cost || !cost.count_available) return 'counts unavailable (GitHub rate-limited)';
+      if (!cost || !cost.count_available) return cost && cost.count_status ? cost.count_status : 'counts unavailable (GitHub rate-limited)';
       const n = Number(count) || 0;
       const window = outcomeWindow ? ` ${outcomeWindow}` : '';
       const asOf = costCountAsOf(cost);
       return `total ÷ ${formatNumber(n, 'en-US')} ${unitLabel}${window}${asOf ? ` · ${asOf}` : ''}`;
     }
 
-    function costPerUnitDisplay(totalUSD, count, unitLabel, countsAvailable = true, countStatus = '') {
+    function costPerUnitDisplay(totalUSD, count, unitLabel, countsAvailable = true, countStatus = '', countError = '') {
       const total = Number(totalUSD) || 0;
       const n = Number(count) || 0;
       if (!(total > 0)) return { value: '—', title: 'no cost records yet' };
       if (!countsAvailable) return { value: '—', title: countStatus || 'counts unavailable (GitHub rate-limited)' };
       if (!(n > 0)) return { value: '—', title: `no ${unitLabel} yet` };
       const value = total / n;
-      const status = countStatus ? ` (${countStatus})` : '';
+      const status = countStatus ? ` (${countStatus}${countError ? ' — ' + countError : ''})` : (countError ? ` (${countError})` : '');
       return {
         value: fmtUSD(value),
         title: `${fmtUSD(total)} ÷ ${formatNumber(n, 'en-US')} ${unitLabel} = ${fmtUSD(value)}${status}. The headline total divided by this count — cost / PR and cost / issue share one total and are not additive.`,
@@ -24158,8 +24165,8 @@ function burnAreaChart() {
       // the single enforced budget.
       const launchTable = costLaunchTableHtml(lastLaunchCost);
       const allTimeCost = costAllTimeEstimate(est);
-      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'PRs merged by hive', cost.count_available, cost.count_status);
-      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'issues closed by hive', cost.count_available, cost.count_status);
+      const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'PRs merged by hive', cost.count_available, cost.count_status, cost.count_error);
+      const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'issues closed by hive', cost.count_available, cost.count_status, cost.count_error);
       const outcomeWindow = costOutcomeWindowLabel(cost, allTimeCost);
       const prCountLabel = costCountLabel(cost, cost.merged_prs, 'PRs merged by hive', outcomeWindow);
       const issueCountLabel = costCountLabel(cost, cost.closed_issues, 'issues closed by hive', outcomeWindow);
