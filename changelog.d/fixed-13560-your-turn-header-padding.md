@@ -1,0 +1,1 @@
+- Fixed the dashboard's "Your turn" inbox header ("YOUR TURN · N · M TO CLOSE") and its verb sub-headers ("INSPECT · N") sitting cramped against the card's rounded left edge: the inbox card now has a wider horizontal inset, and its header, sub-headers and rows share the same left inset; other cards' headers are unchanged (#13560).
