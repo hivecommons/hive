@@ -385,3 +385,28 @@ func (c *Client) reviewBacklogReRaiseComment(req ReviewRequest, p review.Perspec
 	fmt.Fprintf(&b, "\n\n%s\n", reviewBacklogFooter)
 	return b.String()
 }
+
+// reviewBacklogFoldedComment carries a whole finding onto an existing open
+// item the sink reused instead of creating one (hivecommons/hive#13604). The
+// twin is matched on the files it cites, not on the finding, so it often
+// describes a different problem; a bare "linked again" line would lose the
+// title, summary and evidence for good once the twin is closed. The
+// hive:review-backlog-link marker keyed on the finding key is kept so the
+// ledger and comment dedup are unchanged.
+func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspective, f outputschema.Finding, headSHA, fp, key string) string {
+	owner, repoName := c.splitRepo(req.Repo)
+	file := strings.TrimSpace(f.File)
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%s -->\n", reviewBacklogLinkMarker, key)
+	fmt.Fprintf(&b, "**Additional finding (folded in — same file, possibly a different problem).** Raised in the Hive review of PR #%d (%s) and folded into this issue because it cites `%s`, which this issue already covers. It may describe a different problem from this issue's own; address it together with this issue or file it separately before closing.\n\n", req.Number, reviewPRURL(owner, repoName, req.Number), file)
+	fmt.Fprintf(&b, "### %s\n\n", reviewBacklogIssueTitle(p, f))
+	fmt.Fprintf(&b, "- [ ] %s (`%s:%d`)\n\n", strings.TrimSpace(f.Title), file, f.Line)
+	fmt.Fprintf(&b, "Perspective: %s\n", p)
+	fmt.Fprintf(&b, "Severity: %s\n", reviewFindingSeverityLine(f))
+	fmt.Fprintf(&b, "Evidence: `%s:%d`", file, f.Line)
+	if link := reviewFindingPermalink(owner, repoName, headSHA, f); link != "" {
+		fmt.Fprintf(&b, " (%s)", link)
+	}
+	fmt.Fprintf(&b, "\nFinding: %s\n\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Title), strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
+	return b.String()
+}

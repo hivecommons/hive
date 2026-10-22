@@ -59,6 +59,9 @@ type reviewBacklogFiled struct {
 	key    string
 	url    string
 	title  string
+	// folded is true when the finding was appended to an existing open item
+	// instead of becoming its own (hivecommons/hive#13604).
+	folded bool
 }
 
 func newReviewBacklogLedger() *reviewBacklogLedger {
@@ -255,7 +258,10 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				continue
 			}
 			if ref.Reused && createErr == nil {
-				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogExistingLinkComment(req, key)); err != nil {
+				// hivecommons/hive#13604: the twin was matched on files, not
+				// on the finding, so the comment must carry the whole
+				// finding or it is lost when the twin closes.
+				if err := sink.AppendToItem(ctx, req.Repo, ref, c.reviewBacklogFoldedComment(req, report.Perspective, finding, headSHA, fp, key)); err != nil {
 					return err
 				}
 			}
@@ -287,7 +293,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 			}
 			ledger.PRDailyCount[dayKey]++
 			dailyRemaining--
-			filedIssues = append(filedIssues, reviewBacklogFiled{number: ref.Number, key: ref.Key, url: ref.URL, title: title})
+			filedIssues = append(filedIssues, reviewBacklogFiled{number: ref.Number, key: ref.Key, url: ref.URL, title: title, folded: ref.Reused})
 			if createErr != nil {
 				// The item exists but a follow-up step (Projects column,
 				// Jira status) failed: keep the ledger entry so a retry
@@ -385,10 +391,6 @@ func reviewBacklogIssueTitle(p review.Perspective, f outputschema.Finding) strin
 	return fmt.Sprintf("Review backlog (%s): %s", p, title)
 }
 
-func reviewBacklogExistingLinkComment(req ReviewRequest, key string) string {
-	return fmt.Sprintf("%s%s -->\nLinked again from the Hive review of PR #%d.", reviewBacklogLinkMarker, key, req.Number)
-}
-
 func reviewBacklogSummaryComment(issues []reviewBacklogFiled, cap int) string {
 	var b strings.Builder
 	b.WriteString(reviewBacklogSummaryMarker)
@@ -397,6 +399,11 @@ func reviewBacklogSummaryComment(issues []reviewBacklogFiled, cap int) string {
 		ref := issue.key
 		if ref == "" {
 			ref = fmt.Sprintf("#%d", issue.number)
+		}
+		if issue.folded {
+			// The item's own title describes another finding; say so
+			// rather than imply it is titled like this one (#13604).
+			ref += " (folded into an existing issue)"
 		}
 		if issue.url != "" {
 			fmt.Fprintf(&b, "- %s — %s (%s)\n", ref, issue.title, issue.url)

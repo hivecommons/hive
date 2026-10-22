@@ -137,6 +137,7 @@ type fakeBacklogSink struct {
 	appends []fakeBacklogAppend
 	failAt  int // 1-based create that fails; 0 = never
 	partial bool
+	reuse   bool // every create reports an existing open twin (Reused)
 }
 
 func (f *fakeBacklogSink) Destination() string { return f.dest }
@@ -144,7 +145,7 @@ func (f *fakeBacklogSink) Destination() string { return f.dest }
 func (f *fakeBacklogSink) CreateItem(_ context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
 	f.created = append(f.created, item)
 	n := len(f.created)
-	ref := ReviewBacklogRef{ID: fmt.Sprintf("id-%d", n), Key: fmt.Sprintf("ENG-%d", n), URL: fmt.Sprintf("https://tracker.test/ENG-%d", n)}
+	ref := ReviewBacklogRef{ID: fmt.Sprintf("id-%d", n), Key: fmt.Sprintf("ENG-%d", n), URL: fmt.Sprintf("https://tracker.test/ENG-%d", n), Reused: f.reuse}
 	if f.failAt == n {
 		if f.partial {
 			return ref, errors.New("set status failed")
@@ -657,9 +658,15 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 		t.Fatalf("created %d issues, want 0 (folded into the open agent twin)", created)
 	}
 	// The twin gets the consolidation comment carrying the finding, then the
-	// usual reused-item link comment; the PR gets its summary comment.
+	// reused-item link comment, which also carries the finding (#13604); the
+	// PR gets its summary comment.
 	if len(twinComments) != 2 || !strings.Contains(twinComments[0], "**Consolidated finding.**") || !strings.Contains(twinComments[0], "`pkg/a.go`") || !strings.HasPrefix(twinComments[1], reviewBacklogLinkMarker) {
 		t.Fatalf("comments on #41 = %q (all comments %v), want consolidation then link", twinComments, commentedOn)
+	}
+	for _, want := range []string{"Additional finding (folded in", "Review backlog (correctness): nit", "`pkg/a.go:3`", "minor"} {
+		if !strings.Contains(twinComments[1], want) {
+			t.Errorf("link comment on #41 missing %q:\n%s", want, twinComments[1])
+		}
 	}
 	if labelled != 1 {
 		t.Fatalf("labelled = %d, want the backlog labels ensured on #41", labelled)
@@ -671,6 +678,104 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 	rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(outputschema.Finding{Title: "nit", File: "pkg/a.go", Summary: "minor"}))
 	if !ok || rec.ItemNumber != 41 {
 		t.Fatalf("ledger record = %+v ok=%v, want the twin #41", rec, ok)
+	}
+}
+
+// hivecommons/hive#13604: a finding the sink folds into an existing open
+// twin must land there in full — title, file, summary, PR — under the
+// hive:review-backlog-link marker, and the PR summary must say the item was
+// folded rather than imply the twin carries this finding's title. Repeating
+// the same finding key appends nothing; the same fingerprint from another PR
+// still takes the short re-raise path.
+func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
+	withReviewBacklogState(t)
+	comments := map[int][]string{}
+	srv := prCommentServer(t, comments)
+	c := reviewTestClient(t, srv.URL)
+	c.SetReviewBacklog(func() (bool, int) { return true, 3 })
+	sink := &fakeBacklogSink{dest: config.ReviewBacklogLinear, reuse: true}
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{
+			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, Labels: []string{"nit"}, MaxPerPRPerDay: 5},
+			Sink:     sink,
+		}
+	})
+	ctx := context.Background()
+	day1 := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	finding := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is assigned and never read"}
+	pr5 := routingReport(t, 5, "abc", nit(finding.Title, "medium", finding.File, finding.Line, finding.Summary))
+	req5 := ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: pr5}
+	for i := 0; i < 2; i++ {
+		if err := c.fileOutOfScopeReviewBacklog(ctx, req5, day1); err != nil {
+			t.Fatalf("file PR 5 pass %d: %v", i, err)
+		}
+	}
+	if len(sink.created) != 1 || len(sink.appends) != 1 {
+		t.Fatalf("created=%d appends=%d, want one create folded into a twin and one comment (second pass is a no-op)", len(sink.created), len(sink.appends))
+	}
+	got := sink.appends[0]
+	if got.ref.Key != "ENG-1" || !got.ref.Reused {
+		t.Fatalf("append ref = %+v, want the reused ENG-1", got.ref)
+	}
+	key := reviewBacklogKey("o/r", 5, review.PerspectiveCorrectness, finding)
+	fp := ReviewFindingFingerprint(finding)
+	if !strings.HasPrefix(got.comment, reviewBacklogLinkMarker+key+" -->\n") {
+		t.Fatalf("folded comment does not start with the link marker for the finding key:\n%s", got.comment)
+	}
+	for _, want := range []string{
+		"**Additional finding (folded in — same file, possibly a different problem).**",
+		"PR #5 (https://github.com/o/r/pull/5)",
+		"### Review backlog (correctness): unused variable",
+		"- [ ] unused variable (`pkg/a.go:7`)",
+		"Perspective: correctness",
+		"Severity: medium (P2)",
+		"Evidence: `pkg/a.go:7` (https://github.com/o/r/blob/abc/pkg/a.go#L7)",
+		"Finding: unused variable",
+		"x is assigned and never read",
+		"Fingerprint: `" + fp + "`",
+		reviewBacklogFooter,
+	} {
+		if !strings.Contains(got.comment, want) {
+			t.Errorf("folded comment missing %q:\n%s", want, got.comment)
+		}
+	}
+	if strings.Contains(got.comment, "Linked again") {
+		t.Errorf("folded comment still uses the bare link line:\n%s", got.comment)
+	}
+	if len(comments[5]) != 1 || !strings.Contains(comments[5][0], "- ENG-1 (folded into an existing issue) — Review backlog (correctness): unused variable (https://tracker.test/ENG-1)") {
+		t.Fatalf("PR 5 summary comments = %q, want one line saying ENG-1 was folded", comments[5])
+	}
+
+	// Another PR raising the same fingerprint takes the re-raise path as
+	// before: no second create, one short re-raise comment on the twin.
+	pr6 := routingReport(t, 6, "def", nit("Unused  Variable", "medium", "./pkg/a.go", 42, "x is assigned\nand never read"))
+	if err := c.fileOutOfScopeReviewBacklog(ctx, ReviewRequest{Repo: "o/r", Number: 6, Agent: "reviewer", Report: pr6}, day1); err != nil {
+		t.Fatalf("file PR 6: %v", err)
+	}
+	if len(sink.created) != 1 || len(sink.appends) != 2 {
+		t.Fatalf("after re-raise created=%d appends=%d, want 1 and 2", len(sink.created), len(sink.appends))
+	}
+	reraise := sink.appends[1].comment
+	if !strings.HasPrefix(reraise, reviewBacklogReRaiseMarker+fp+" -->\n") || strings.Contains(reraise, "Additional finding") || strings.Contains(reraise, "- [ ]") {
+		t.Fatalf("re-raise comment changed shape:\n%s", reraise)
+	}
+}
+
+func TestReviewBacklogSummaryCommentMarksFoldedItems(t *testing.T) {
+	got := reviewBacklogSummaryComment([]reviewBacklogFiled{
+		{number: 7, key: "#7", url: "https://github.example/o/r/issues/7", title: "Review backlog (correctness): a"},
+		{number: 9, key: "#9", url: "https://github.example/o/r/issues/9", title: "Review backlog (correctness): b", folded: true},
+		{key: "ENG-3", title: "Review backlog (security): c", folded: true},
+	}, 10)
+	for _, want := range []string{
+		"- #7 — Review backlog (correctness): a (https://github.example/o/r/issues/7)\n",
+		"- #9 (folded into an existing issue) — Review backlog (correctness): b (https://github.example/o/r/issues/9)\n",
+		"- ENG-3 (folded into an existing issue) — Review backlog (security): c\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary missing %q:\n%s", want, got)
+		}
 	}
 }
 
