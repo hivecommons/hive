@@ -36,6 +36,10 @@ func TestQueuePRAutoMergeApprovesThenLabels(t *testing.T) {
 			sawReview = true
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "APPROVED"})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/statuses/head7":
+			// The default queued label is lgtm, which also binds a prow/lgtm status.
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1, "state": "success"})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/7/labels":
 			if !sawReview {
 				t.Fatal("label must not be applied before approval succeeds")
