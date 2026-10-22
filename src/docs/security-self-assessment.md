@@ -24,7 +24,7 @@ documents in the Hive repository:
 
 Where this document repeats a claim from those pages, it cites the same
 evidence rather than re-deriving it. Sections below cite `path:line` against
-the Hive repository's `v5` branch (`src/` prefix; commit `e6fb024e9` at time of
+the Hive repository's `v5` branch (`src/` prefix; commit `baa7dacc7` at time of
 writing) wherever a specific mechanism is asserted.
 
 ## Metadata
@@ -432,7 +432,10 @@ repository writes:
    (`/data/audit.jsonl`, `dashboard/audit.go:22`) regardless of the trailer
    toggle (`attribution.go:290-295`). This is the accountability substrate an
    operator or incident responder uses to answer "which agent/backend/model
-   produced this."
+   produced this." Delegated contributor-relay work is covered too: the hub
+   writes `relay_*` rows to the same log, and the `relay_audit_coverage`
+   compliance posture check fails if relays connected in the last 24h without
+   any being written.
 
 5. **ACMM autonomy-level gating** (`src/pkg/config/packs/level-{1..6}.yaml`,
    ADR-0003). A single human-selected level (L1–L6) maps deterministically to
@@ -474,7 +477,8 @@ repository writes:
   an exfiltration control and must not be read as one.** It sits on Hive's
   logging path, not on the agent's egress path, and it is pattern-based: an
   attacker who prompt-injects an agent into emitting a credential in base64,
-  hex, reversed, or split across tokens defeats it completely. The controls that do bear on that attack are elsewhere and are
+  hex, reversed, or split across tokens defeats it completely. The controls
+  that do bear on that attack are elsewhere and are
   also imperfect: mode-tiered token scoping means a low-tier agent has no
   code-write credential to leak in the first place; `ioscan`'s canary check
   at the proxy catches prompt contents reaching an outbound GitHub write,
@@ -571,13 +575,15 @@ project-level compliance signals:
   setuid/setgid binary, and checksum-verified tool downloads (tmux, ttyd,
   `gh`, goose, `su-exec`).
 - **No SBOM/provenance attestation** is attached to built images — explicitly
-  disabled (`sbom: false`, citing issue #3760). Release SBOMs are generated out-of-band as standalone SPDX JSON
+  disabled (`sbom: false`, citing issue #3760). Release SBOMs are generated
+  out-of-band as standalone SPDX JSON
   files and attached to the GitHub Release, so the published image manifests
   stay plain.
 - **Maintainer roster**: `OWNERS` lists **three** approvers/reviewers across
   three affiliations —
   Andy Anderson (@clubanderson, IBM), James Reilly (@hanthor, Universal
-  Blue) and Doug Baggett (@Danathar, independent). `OWNERS` is required to stay in sync with the
+  Blue) and Doug Baggett (@Danathar, independent). `OWNERS` is required to
+  stay in sync with the
   Maintainer Committee table in upstream `GOVERNANCE-HIVE.md`, and the file
   says so explicitly, calling drift "a governance drift bug, not a
   housekeeping detail."
@@ -692,7 +698,8 @@ Cross-referenced to the existing threat model:
    (LLM-judge) classifier layer is explicitly **fail-open on errors/timeouts
    by design** (`ioscan.md:26`, ADR-0008: *"Classifier failures and budget
    exhaustion fail open"*) so a reviewer outage cannot itself become a
-   scheduler outage — a deliberate availability/security tradeoff. The deterministic-rules floor and the
+   scheduler outage — a deliberate availability/security tradeoff. The
+   deterministic-rules floor and the
    hard-deny network relays for PR create/merge are the parts of the defense
    that do not depend on any model call succeeding; the semantic layer is
    explicitly the part that can silently degrade. `security-threat-model.md`
@@ -732,17 +739,17 @@ Cross-referenced to the existing threat model:
    policy, and key/cookie/session handling — and lists all three current
    maintainers on every entry. But the live `v5` branch protection requires
    **no** pull-request reviews, and "Require review from Code Owners" is not
-   enabled. Until it is, a change to the MITM proxy's deny-rule table — the control
-   this document credits as the thing an attacker cannot argue with — can
-   merge on green CI with no human security reviewer.
+   enabled. Until it is, a change to the MITM proxy's deny-rule table — the
+   control this document credits as the thing an attacker cannot argue
+   with — can merge on green CI with no human security reviewer.
 
-   **Why it is not simply turned on.** Hive is substantially self-hosting, and its own
-   agent fleet merges green PRs. Enabling required code-owner review with
-   broad coverage would halt that automation repository-wide. The intended
-   resolution is scoped enforcement over the security-critical paths in the
-   ownership file above, leaving ordinary code paths on the automated merge
-   path while making the human-review boundary enforceable for
-   security-critical changes.
+   **Why it is not simply turned on.** Hive is substantially self-hosting,
+   and its own agent fleet merges green PRs. Enabling required code-owner
+   review with broad coverage would halt that automation repository-wide.
+   The intended resolution is scoped enforcement over the security-critical
+   paths in the ownership file above, leaving ordinary code paths on the
+   automated merge path while making the human-review boundary enforceable
+   for security-critical changes.
 
    Until that ships, an evaluator should treat "the deny-rule table is
    enforced in code" as true and "the deny-rule table is protected from
