@@ -1,0 +1,719 @@
+{
+  "Project": {
+    "Org": "acme",
+    "Name": "widgets",
+    "Repos": [
+      "widgets"
+    ],
+    "AIAuthor": "",
+    "PrimaryRepo": "",
+    "OpenPRs": null,
+    "Forge": "",
+    "IssueFilter": {
+      "hard_suppress_labels": {},
+      "reporter_trust": {}
+    },
+    "CheckoutsDir": "",
+    "AgentsMdMaxBytes": 0,
+    "PausedRepos": null,
+    "WritingGuide": ""
+  },
+  "Policies": {
+    "Repo": "",
+    "Branch": "",
+    "Path": "",
+    "PollInterval": 300000000000,
+    "LocalDir": ""
+  },
+  "Agents": {
+    "scribe": {
+      "id": "scribe",
+      "backend": "bob",
+      "model": "ibm/granite-4",
+      "review_models": {},
+      "beads_dir": "/data/beads/scribe",
+      "replicas": 2,
+      "paused": true,
+      "clear_on_kick": true,
+      "bob": {
+        "session_label": "scribe-main"
+      },
+      "bob_display_name": "Scribe",
+      "role": "scribe",
+      "skills": [
+        "docs"
+      ],
+      "managed": false
+    },
+    "supervisor": {
+      "id": "supervisor",
+      "backend": "claude",
+      "model": "claude-sonnet-4-6",
+      "review_models": {},
+      "reasoning_effort": "high",
+      "beads_dir": "/data/beads/supervisor",
+      "enabled": true,
+      "replicas": 1,
+      "clear_on_kick": true,
+      "github_api_hourly_cap": 60,
+      "stale_timeout": 900,
+      "restart_strategy": "immediate",
+      "launch_cmd": "agent-launch.sh --backend claude --model claude-sonnet-4-6",
+      "display_name": "supervisor",
+      "bob": {},
+      "role": "coordinator",
+      "sort_order": 10,
+      "emoji": "👑",
+      "color": "#e74c3c",
+      "aliases": [
+        "su"
+      ],
+      "detect_keywords": [
+        "supervisor",
+        "sweep",
+        "monitor"
+      ],
+      "kick_template": "Supervise {{.Repo}}",
+      "include_repos": true,
+      "bead_role": "supervisor",
+      "mode": "full-autonomy",
+      "explain_mode": "brief",
+      "sandbox": {
+        "enabled": true,
+        "image": "ghcr.io/acme/sandbox:1",
+        "timeout_s": 1200,
+        "runtime": "job",
+        "job": {
+          "workspace_claim": "hive-data",
+          "resources": {},
+          "service_account": "hive-sandbox",
+          "env_from_secrets": [
+            "sandbox-env"
+          ],
+          "ttl_seconds": 600
+        }
+      },
+      "reentrant_turn": true,
+      "managed": false
+    }
+  },
+  "Governor": {
+    "Modes": {
+      "busy": {
+        "Threshold": 16,
+        "Cadences": {
+          "scribe": "pause",
+          "supervisor": "5m"
+        }
+      },
+      "idle": {
+        "Threshold": 0,
+        "Cadences": {
+          "scribe": "1h",
+          "supervisor": "15m"
+        }
+      }
+    },
+    "EvalIntervalS": 300,
+    "EvalIntervalMaxS": 1800,
+    "EvalIntervalWebhookS": 900,
+    "WebhookWakeDebounceS": 10,
+    "WebhookWakeMinGapS": 30,
+    "ConserveIntervalMultiplier": 2,
+    "OptionalSweepEveryNCycles": 1,
+    "ExplainMode": "",
+    "Labels": {
+      "Exempt": [
+        "nightly-tests",
+        "LFX",
+        "meta-tracker",
+        "auto-qa-tuning-report",
+        "adopters",
+        "changes-requested",
+        "waiting-on-author"
+      ],
+      "AutoMerge": "lgtm",
+      "Stage": {
+        "Enabled": null,
+        "Dwell": null,
+        "ContributorNudge": {
+          "Enabled": null,
+          "RenudgeInterval": ""
+        },
+        "PresenceWindow": "",
+        "ContributorGraceOnline": "",
+        "ContributorGraceOffline": "",
+        "Adoption": {
+          "Enabled": null,
+          "AfterOffline": "",
+          "AfterUnregistered": "",
+          "InPlace": null,
+          "StrictAttribution": null
+        },
+        "Stalled": {
+          "RequireQuiet": null
+        },
+        "DCO": {
+          "Required": null
+        },
+        "Engine": {
+          "Mode": ""
+        }
+      },
+      "Author": {
+        "Human": "",
+        "Clanker": "",
+        "Hive": ""
+      }
+    },
+    "Sensing": {
+      "GHRatePatterns": [
+        "API rate limit exceeded",
+        "secondary rate limit",
+        "403.*rate limit",
+        "You have exceeded a secondary rate",
+        "retry-after:[[:space:]]*[0-9]",
+        "gh: Resource not accessible",
+        "abuse detection mechanism"
+      ],
+      "CLIExcludePatterns": [
+        "You.re out of extra usage",
+        "out of extra usage",
+        "extra usage.*resets",
+        "resets [0-9]+(:[0-9]+)?[aApP][mM]"
+      ],
+      "LoginPatterns": [
+        "Please run /login",
+        "Not logged in",
+        "gh auth login",
+        "claude login",
+        "copilot auth login",
+        "gemini auth login",
+        "Enter Bob-Shell API Key",
+        "Paste your API key here"
+      ],
+      "TTLSeconds": 900,
+      "PullbackSeconds": 900
+    },
+    "Watchdog": {
+      "Mode": "enforce",
+      "Enabled": null,
+      "ProbeIntervalS": 45,
+      "Liveness": {
+        "StuckOverlayAfter": "10m",
+        "ShellPromptAfter": "3m"
+      },
+      "Restart": {
+        "Backoff": [
+          "30s",
+          "2m",
+          "10m"
+        ],
+        "CrashLoopAfter": 4,
+        "HealthyReset": "1h"
+      },
+      "Readiness": {
+        "NoProductionFor": "2h"
+      },
+      "AuthProbe": null
+    },
+    "Health": {
+      "DeprecatedHealthcheckInterval": 0,
+      "ModelLock": false
+    },
+    "Budget": {
+      "TotalTokens": 0,
+      "PeriodDays": 7,
+      "CriticalPct": 90,
+      "Coins": {
+        "bob": {
+          "tokens_per_coin": 500000,
+          "usd_per_coin": 0.5,
+          "label": "BC"
+        }
+      }
+    },
+    "Logging": {
+      "Dir": "/data/logs",
+      "MaxSizeMB": 50,
+      "MaxAgeDays": 7,
+      "MaxBackups": 10,
+      "Compress": true,
+      "Level": "info"
+    },
+    "LiteLLM": {
+      "Endpoint": "https://litellm.example.com",
+      "APIKeyEnv": "HIVE_LITELLM_API_KEY",
+      "APIKeyFile": "",
+      "DefaultModel": "gpt-4o",
+      "CABundle": "",
+      "LocalProxy": true
+    },
+    "VLLM": {
+      "api_key_header": "X-Api-Key",
+      "api_key_env": "HIVE_VLLM_KEY",
+      "api_key_file": "",
+      "endpoint": "http://vllm.inference.svc:8000"
+    },
+    "LLMD": {
+      "api_key_env": "",
+      "api_key_file": "",
+      "endpoint": "http://llmd.inference.svc:8000"
+    },
+    "Bob": {
+      "api_key_env": "HIVE_BOB_API_KEY",
+      "key_name": "bob-prod",
+      "session_prefix": "hive"
+    },
+    "backup": {},
+    "Trajectory": {
+      "Enabled": true,
+      "Endpoint": "https://judge.example.com",
+      "APIKeyEnv": "HIVE_JUDGE_KEY",
+      "APIKeyFile": "",
+      "IntervalS": 600,
+      "Model": "judge-small",
+      "TranscriptLines": 400,
+      "OnDivergence": "nudge",
+      "ExemptAgents": [
+        "scribe"
+      ]
+    },
+    "Replan": {
+      "Enabled": null,
+      "IntervalS": 0,
+      "StallThresholdS": 0,
+      "MaxReplans": 0
+    },
+    "kick_limits": {
+      "max_issues": 40,
+      "max_prs": 20
+    },
+    "Gateways": [
+      {
+        "name": "openrouter",
+        "kind": "openrouter",
+        "endpoint": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+        "default_model": "anthropic/claude-sonnet-4"
+      },
+      {
+        "name": "watsonx",
+        "kind": "watsonx",
+        "endpoint": "https://us-south.ml.cloud.ibm.com",
+        "api_key_env": "WATSONX_API_KEY",
+        "project_id": "proj-123",
+        "region": "us-south"
+      }
+    ],
+    "AttributionTrailer": null,
+    "first_timer_welcome": {},
+    "advisory": {
+      "max_findings": 10,
+      "show_all": false,
+      "staleness_days": 7,
+      "pr_autoclose": true,
+      "queue_health": {}
+    },
+    "project_observability": {},
+    "work_source": {
+      "type": "",
+      "github_projects": {
+        "project_number": 0
+      },
+      "linear": {},
+      "jira": {
+        "base_url": "",
+        "email": ""
+      },
+      "wavefront": {}
+    },
+    "acmm": {},
+    "rotation": {
+      "enabled": true,
+      "threshold_pct": 85,
+      "providers": {
+        "claude": {
+          "class": "subscription",
+          "backends": [
+            "claude"
+          ],
+          "monthly_allowance": 500
+        }
+      },
+      "headroom_source": "provider",
+      "agents": {
+        "supervisor": "premium"
+      }
+    },
+    "provider_budget": {
+      "probe_interval_s": 900
+    },
+    "fleet_report": {},
+    "claims": {},
+    "question_autoclose": {},
+    "review_gate": {}
+  },
+  "GitHub": {
+    "AppID": 12345,
+    "InstallationID": 67890,
+    "DocsInstallationID": 0,
+    "KeyFile": "",
+    "Token": "",
+    "agent_reserve_floor": 400,
+    "OAuthClientID": "",
+    "PRDetailTTLS": 0,
+    "Forge_": "",
+    "AppSlug": "",
+    "APIURL": "",
+    "APIReserve": 800,
+    "APICritical": 250,
+    "BaseURL": "",
+    "AppAuthoredPRs": null,
+    "AppSignedCommits": null,
+    "OAuthBaseURLOverride": "",
+    "OAuthAPIURLOverride": ""
+  },
+  "GitLab": {
+    "URL": "",
+    "TokenEnv": ""
+  },
+  "Gitea": {
+    "URL": "",
+    "TokenEnv": ""
+  },
+  "Notifications": {
+    "Ntfy": null,
+    "Slack": null,
+    "Discord": null,
+    "GitHubActivity": null
+  },
+  "Dashboard": {
+    "Port": 8080,
+    "AuthToken": "",
+    "AgentPollIntervalS": 10,
+    "AuthorizedUsers": null,
+    "AuthorizedUserNames": null,
+    "HubProxied": false,
+    "theme_overrides": {
+      "fonts": {
+        "ui": "",
+        "mono": ""
+      }
+    },
+    "issue_bands": {},
+    "stage_tracker": {}
+  },
+  "Data": {
+    "MetricsDir": "/data/metrics",
+    "LogsDir": "/data/logs",
+    "ClaudeSessionsDir": "/data/home/.claude/projects",
+    "CopilotSessionsDir": "/data/home/.copilot/session-state",
+    "BobSessionsDir": "/data/home/.bob",
+    "AgentsDir": "/data/agent-configs",
+    "SessionRetentionDays": null
+  },
+  "deployment": {},
+  "Knowledge": {
+    "Enabled": false,
+    "Engine": "",
+    "Layers": null,
+    "Vaults": null,
+    "GitSources": null,
+    "Documents": null,
+    "Connectors": null,
+    "Context7": {
+      "AutoImport": null
+    },
+    "Publish": {
+      "Connector": "",
+      "Layers": null,
+      "Root": "",
+      "IncludeTypes": null,
+      "DryRun": false,
+      "ProposeVia": ""
+    },
+    "Public": {
+      "Enabled": null,
+      "Tags": null
+    },
+    "Curator": {
+      "Enabled": null,
+      "Schedule": "",
+      "ExtractFrom": null,
+      "AutoPromoteThreshold": 0,
+      "PromoteFrom": "",
+      "PromoteTo": ""
+    },
+    "Primer": {
+      "MaxFacts": 0,
+      "Priority": null,
+      "MergeStrategy": "",
+      "MaxBytes": 0
+    },
+    "BeadSynthesizer": {
+      "Enabled": null,
+      "Schedule": "",
+      "MinConfidence": 0,
+      "TargetLayer": "",
+      "MaxFactsPerCycle": 0,
+      "VaultPath": "",
+      "RetentionPolicy": null,
+      "Publish": {
+        "enabled": false,
+        "repo": "",
+        "path": "",
+        "base_branch": "",
+        "mode": "",
+        "cadence": ""
+      },
+      "MaxAPICallsPerCycle": 0
+    },
+    "CodeMaps": {
+      "Enabled": null,
+      "Schedule": "",
+      "VaultPath": "",
+      "Layer": "",
+      "MaxBytes": 0,
+      "Repos": null
+    },
+    "AgentScopes": null
+  },
+  "Hub": {
+    "Enabled": false,
+    "URL": "https://hive.hivecommons.dev",
+    "IsPublic": true,
+    "SnapshotURL": "",
+    "DashboardURL": "",
+    "HiveType": "",
+    "ClusterID": "",
+    "AutoSnapshot": false,
+    "AutoUpgrade": false,
+    "AutoUpgradeMode": "",
+    "ContributeSuspended": false,
+    "ContributeWallEnabled": false,
+    "ContributeWallRetentionDays": 0,
+    "NPSEnabled": null,
+    "NPSRelayURL": "",
+    "ContributeTitlesMode": "deny",
+    "ContributeAuthorsMode": "deny",
+    "ContributeLabelsMode": "deny",
+    "ContributeAllowLabels": null,
+    "ContributeDenyLabels": null,
+    "ContributeNeedsDecisionLabel": null,
+    "ContributeAuditShareRequest": "",
+    "ContributeSkipLabels": [
+      "blocked",
+      "hive/already-done",
+      "tracking",
+      "epic",
+      "discussion",
+      "question",
+      "stage/045-needs-decision",
+      "needs-decision",
+      "needs-triage"
+    ],
+    "ContributeDenyTitles": [
+      "*dependency dashboard*",
+      "*renovate dashboard*",
+      "epic:*",
+      "epic(*"
+    ],
+    "ContributeDenyAuthors": [
+      "renovate[bot]",
+      "dependabot[bot]",
+      "mergeraptor[bot]"
+    ],
+    "ContributeAllowModels": null,
+    "ContributeRejectUnknownModels": false,
+    "ContributeMinReasoningEffort": "",
+    "ContributeRejectUnknownEffort": false,
+    "ContributeSkipAssignedToOthers": false,
+    "ContributeCooldownEnabled": null,
+    "ContributeCooldownHours": 0,
+    "ContributeCloseAlreadyDone": null,
+    "ContributeAlreadyDoneLabel": "",
+    "ContributeAlreadyDoneHoldDays": 0,
+    "ContributeAlreadyDoneUnverifiedHoldDays": 0,
+    "ContributeQueueOrder": null,
+    "ContributeQueueHold": null,
+    "ContributeQueueHoldReasons": null,
+    "ContributeRequireExplicitAccept": null,
+    "ContributeDelegatableRoles": null,
+    "contribute_announcement": {},
+    "DisabledRepos": null,
+    "DisabledTiers": null,
+    "TierLimits": {
+      "advisor": {
+        "max_per_hour": 0,
+        "max_per_day": 0,
+        "max_concurrent": 0
+      },
+      "contributor": {
+        "max_per_hour": 10,
+        "max_per_day": 50,
+        "max_concurrent": 2
+      },
+      "merger": {
+        "max_per_hour": 30,
+        "max_per_day": 200,
+        "max_concurrent": 5
+      },
+      "newcomer": {
+        "max_per_hour": 3,
+        "max_per_day": 10,
+        "max_concurrent": 1
+      },
+      "trusted": {
+        "max_per_hour": 30,
+        "max_per_day": 200,
+        "max_concurrent": 5
+      }
+    },
+    "SnapshotIntervalMin": 0
+  },
+  "backends": {
+    "allow": [
+      "claude",
+      "bob",
+      "copilot",
+      "gemini",
+      "goose",
+      "codex",
+      "aider"
+    ],
+    "deny": [
+      "litellm-legacy"
+    ]
+  },
+  "providers": {
+    "status": {
+      "enabled": true
+    }
+  },
+  "issues": {},
+  "contribute": {},
+  "HiveID": "",
+  "acmm_level": null,
+  "Variables": {
+    "Security": {
+      "AllowExec": false,
+      "AllowHTTP": false,
+      "HTTPAllowlist": null,
+      "ExecTimeoutS": 0,
+      "HTTPTimeoutS": 0,
+      "AllowGitHubPrompt": false,
+      "GitHubPromptAllowlist": null
+    },
+    "Defs": null
+  },
+  "otel": {},
+  "Tracing": {},
+  "tool_approval": {
+    "enabled": true,
+    "rules": [
+      {
+        "name": "deny-rm",
+        "expr": "tool == \"bash\" \u0026\u0026 args.contains(\"rm -rf\")",
+        "action": "deny",
+        "priority": 10
+      }
+    ],
+    "inbox_path": "/data/approvals"
+  },
+  "Mint": {
+    "Enabled": false,
+    "KeyPath": "",
+    "Issuer": "",
+    "MaxTTLSeconds": 0
+  },
+  "ioscan": {
+    "classifier": {}
+  },
+  "classifier": {},
+  "planning": {},
+  "quality": {},
+  "intent": {},
+  "sentinel": {},
+  "evidence": {
+    "complexity": {}
+  },
+  "compliance": {
+    "posture_checks": {}
+  },
+  "escalation": {},
+  "retro": {},
+  "jev": {},
+  "runs": {
+    "checkpoints": {},
+    "triage": {},
+    "spektacular": {
+      "recheck": {
+        "discovery": {}
+      }
+    },
+    "external": {
+      "flue": {
+        "enabled": false
+      },
+      "omp": {
+        "enabled": false
+      },
+      "vibe_kanban": {
+        "enabled": false
+      }
+    }
+  },
+  "swarm": {},
+  "autonomy": {},
+  "review": {
+    "contributor_prs": {},
+    "recommendations": {},
+    "plan_match": {},
+    "severity": {},
+    "backlog": {}
+  },
+  "auto_merge": {
+    "bot_takeover": {},
+    "trusted_authors": {},
+    "contributor_lane": {},
+    "contributor_tier": {}
+  },
+  "duplicate_sweep": {},
+  "good_first_issue": {},
+  "supersession_sweep": {},
+  "shared_ci_rerun": {},
+  "upstream_watch": {},
+  "agent_sandbox": {
+    "enabled": true,
+    "image": "ghcr.io/acme/sandbox:1",
+    "env_allowlist": [
+      "HOME",
+      "PATH"
+    ],
+    "network_mode": "none",
+    "timeout_s": 600,
+    "workspace_dir": "/data/sandbox",
+    "runtime": "podman"
+  },
+  "convergence": {},
+  "sla": {
+    "targets": {}
+  },
+  "write_surface": {},
+  "publication": {},
+  "release_sentinel": {},
+  "self_experiments": {
+    "scheduler": {}
+  },
+  "forgestate": {},
+  "classification": {
+    "review_bots": {}
+  },
+  "turn": {
+    "reentrant": {
+      "enabled": true
+    },
+    "pr_follow_up": {}
+  }
+}

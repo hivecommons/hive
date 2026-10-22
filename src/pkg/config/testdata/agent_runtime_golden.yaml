@@ -1,0 +1,164 @@
+# Representative hive.yaml exercising every agent-runtime key the
+# AgentRuntimeConfig refactor groups (hivecommons/hive#13536). The golden
+# JSON next to it was captured from the pre-refactor parse; the test asserts
+# the post-refactor parse is field-for-field identical.
+project:
+  name: widgets
+  org: acme
+  repos:
+    - acme/widgets
+agents:
+  github_api_hourly_cap: 120
+  supervisor:
+    id: supervisor
+    backend: claude
+    model: claude-sonnet-4-6
+    beads_dir: /data/beads/supervisor
+    enabled: true
+    clear_on_kick: true
+    stale_timeout: 900
+    restart_strategy: immediate
+    launch_cmd: "agent-launch.sh --backend claude --model claude-sonnet-4-6"
+    display_name: supervisor
+    role: coordinator
+    mode: full-autonomy
+    kick_template: "Supervise {{.Repo}}"
+    github_api_hourly_cap: 60
+    reasoning_effort: high
+    explain_mode: brief
+    reentrant_turn: true
+    sandbox:
+      enabled: true
+      image: ghcr.io/acme/sandbox:1
+      runtime: job
+      timeout_s: 1200
+      job:
+        workspace_claim: hive-data
+        service_account: hive-sandbox
+        env_from_secrets: [sandbox-env]
+        ttl_seconds: 600
+  scribe:
+    id: scribe
+    backend: bob
+    model: ibm/granite-4
+    beads_dir: /data/beads/scribe
+    enabled: false
+    paused: true
+    replicas: 2
+    bob:
+      session_label: scribe-main
+    bob_display_name: Scribe
+    skills: [docs]
+    variables:
+      tone:
+        type: static
+        value: terse
+backends:
+  allow: [claude, bob, copilot, gemini, goose, codex, aider]
+  deny: [litellm-legacy]
+providers:
+  status:
+    enabled: true
+tool_approval:
+  enabled: true
+  inbox_path: /data/approvals
+  rules:
+    - name: deny-rm
+      expr: 'tool == "bash" && args.contains("rm -rf")'
+      action: deny
+      priority: 10
+agent_sandbox:
+  enabled: true
+  image: ghcr.io/acme/sandbox:1
+  env_allowlist: [HOME, PATH]
+  network_mode: none
+  timeout_s: 600
+  workspace_dir: /data/sandbox
+  runtime: podman
+turn:
+  reentrant:
+    enabled: true
+    max_age: 2h
+governor:
+  eval_interval_s: 300
+  modes:
+    busy:
+      threshold: 16
+      supervisor: 5m
+      scribe: pause
+    idle:
+      threshold: 0
+      supervisor: 15m
+      scribe: 1h
+  watchdog:
+    mode: enforce
+    probe_interval_s: 45
+    liveness:
+      stuck_overlay_after: 10m
+      shell_prompt_after: 3m
+    restart:
+      backoff: [30s, 2m, 10m]
+      crash_loop_after: 4
+      healthy_reset: 1h
+    readiness:
+      no_production_for: 2h
+  litellm:
+    endpoint: https://litellm.example.com
+    api_key_env: HIVE_LITELLM_API_KEY
+    default_model: gpt-4o
+    local_proxy: true
+  vllm:
+    endpoint: http://vllm.inference.svc:8000
+    api_key_header: X-Api-Key
+    api_key_env: HIVE_VLLM_KEY
+  llm-d:
+    endpoint: http://llmd.inference.svc:8000
+  bob:
+    api_key_env: HIVE_BOB_API_KEY
+    key_name: bob-prod
+    session_prefix: hive
+  trajectory:
+    enabled: true
+    endpoint: https://judge.example.com
+    api_key_env: HIVE_JUDGE_KEY
+    interval_s: 600
+    model: judge-small
+    transcript_lines: 400
+    on_divergence: nudge
+    exempt_agents: [scribe]
+  kick_limits:
+    max_issues: 40
+    max_prs: 20
+  gateways:
+    - name: openrouter
+      kind: openrouter
+      endpoint: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+      default_model: anthropic/claude-sonnet-4
+    - name: watsonx
+      kind: watsonx
+      endpoint: https://us-south.ml.cloud.ibm.com
+      api_key_env: WATSONX_API_KEY
+      project_id: proj-123
+      region: us-south
+  rotation:
+    enabled: true
+    threshold_pct: 85
+    headroom_source: provider
+    providers:
+      claude:
+        class: subscription
+        backends: [claude]
+        monthly_allowance: 500
+    agents:
+      supervisor: premium
+  provider_budget:
+    probe_interval_s: 900
+github:
+  app_id: 12345
+  installation_id: 67890
+data:
+  logs_dir: /data/logs
+  agents_dir: /data/agent-configs
+dashboard:
+  port: 8080
