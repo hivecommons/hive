@@ -36,9 +36,11 @@ A single interactive advisor helps with repo setup and architecture decisions. G
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
 
-### L2 — Advisory (Instructed) (5 agents)
+### L2 — Advisory (Instructed) (6 agents)
 
-Agents observe and report findings as advisory beads on the dashboard and tracking issue. No GitHub issues or PRs created. Humans decide what to act on.
+Agents observe and report findings as advisory beads on the dashboard and tracking issue. No GitHub issues or PRs created. The reviewer is the review-first entry point: it posts COMMENT-only PR reviews (no approvals, no fixer agent, no auto-merge). Humans decide what to act on.
+
+Decision taken by hive: review is part of L2 proper (COMMENT-only); no L2.5 level — a new level would ripple through level enums, advisor and dashboard; keeping L2 triage+review preserves the review-first entry point the vote asked for.
 
 | Agent | Mode | Template |
 |-------|------|----------|
@@ -47,6 +49,7 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 | quality | advisory | `quality-advisory.md` |
 | guide | advisory | `guide-advisory.md` |
 | brainstorm | advisory | `brainstorm-advisory.md` |
+| reviewer | converse | `reviewer-queue.md` |
 
 ### L3 — Quality-Gated (Measured) (6 agents)
 
@@ -130,7 +133,7 @@ Existing autonomous lanes can open issues, create PRs, and auto-merge on green C
 4. **Mode escalation is per-agent.** At L4, some agents are measured (issues only) while others are holdgated (issues + PRs). The level defines the mix.
 5. **Knowledge priming works at all levels.** The `${KNOWLEDGE}` template variable injects relevant facts from git sources and wiki layers regardless of the agent's mode.
 6. **Brainstorm is always advisory.** It produces KB facts and beads, never GitHub issues or PRs. Its role evolves from inception (L1) to ongoing ideation (L2+), but its mode stays advisory at all levels.
-7. **Reviewer is L5/L6-only by default and never merges.** It joined the L5 and L6 rosters in [#8023](https://github.com/hivecommons/hive/issues/8023) at a 30-minute cadence in every governor mode. Below L5 no pack lists it, so an operator who wants repo-grounded PR review creates it by hand and a pack apply leaves that agent's mode, model, backend, and pause state alone. Its mode stays `ADVISORY` at both levels, including L6: it reads the queue, comments, and returns a verdict. `requires_human` or `reject` stops scanner eligibility only when `review.require_approval: true` requires same-head approval; the App auto-merge sweep does not read those verdicts. Use a hold or GitHub branch rule when merging must stop. See [Running at Level 6](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
+7. **Reviewer is in the L2, L5 and L6 packs and never merges.** It joined the L5 and L6 rosters in [#8023](https://github.com/hivecommons/hive/issues/8023) and the L2 roster in [#13574](https://github.com/hivecommons/hive/issues/13574) (review-first entry point, COMMENT-only), at a 30-minute cadence in every governor mode. At L1, L3 and L4 no pack lists it, so an operator who wants repo-grounded PR review creates it by hand and a pack apply leaves that agent's mode, model, backend, and pause state alone. Its mode stays `ADVISORY` at every level, including L6: it reads the queue, comments, and returns a verdict. `requires_human` or `reject` stops scanner eligibility only when `review.require_approval: true` requires same-head approval; the App auto-merge sweep does not read those verdicts. Use a hold or GitHub branch rule when merging must stop. See [Running at Level 6](running-at-level-6.md#does-the-hive-reviewer-stop-a-merge).
 8. **Telemetry and operations are L5/L6-only opt-in agents.** Below L5 they are absent from the pack roster and dashboard, do not spawn panes, and cannot be kicked. At L5–L6 they use a paused cadence in every governor mode until an operator opts in; they may open issues and PRs but never merge.
 
 ## ioscan hardening defaults per level
