@@ -32,6 +32,11 @@ const unparkDoneDecision = "the owner-only step is done; Hive re-checks it and c
 type unparkMenu struct {
 	// options are the lettered options the issue offers, in order.
 	options []string
+	// optionText maps an option letter to a one-line summary of it.
+	optionText map[string]string
+	// optionSource is the html_url of the hive comment the options came
+	// from; "" when they came from the issue body.
+	optionSource string
 	// recommended is the option the text recommends, or "" when none is named.
 	recommended string
 	// hasRecommendation is true when the issue states a recommendation.
@@ -49,7 +54,7 @@ type unparkMenu struct {
 // filed with `hive-open-issue issue --needs-decision` carries the owner-step
 // marker in its body; it is an owner step when it lists no options.
 func unparkMenuFromBody(issueBody string) unparkMenu {
-	m := unparkMenu{options: unparkOptionLabels(issueBody)}
+	m := unparkMenu{options: unparkOptionLabels(issueBody), optionText: unparkOptionTexts(issueBody)}
 	m.hasRecommendation = unparkMentionsRecommendation(issueBody)
 	if m.hasRecommendation {
 		m.recommended = unparkRecommendedOption(issueBody, m.options)
@@ -118,6 +123,8 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 		}
 		if opts := unparkOptionLabels(body); len(opts) > 0 {
 			m.options = opts
+			m.optionText = unparkOptionTexts(body)
+			m.optionSource = cm.GetHTMLURL()
 		}
 		if unparkMentionsRecommendation(body) {
 			m.hasRecommendation, recommendationSource = true, body
@@ -126,6 +133,22 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 	m.recommended = unparkRecommendedOption(recommendationSource, m.options)
 	m.ownerStep = ownerStep
 	return m
+}
+
+// summaryFor is the ": summary" suffix for an option bullet, or "".
+func (m unparkMenu) summaryFor(letter string) string {
+	if t := m.optionText[letter]; t != "" {
+		return ": " + t
+	}
+	return ""
+}
+
+// sourceLine points at the comment the options came from; "" for the body.
+func (m unparkMenu) sourceLine() string {
+	if m.optionSource == "" || len(m.options) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("The options are in [this comment](%s).\n", m.optionSource)
 }
 
 // bullets lists the commands for this menu with release execution disabled,
@@ -145,12 +168,12 @@ func (m unparkMenu) bulletsFor(releaseOnApprove bool) string {
 		fmt.Fprintf(&b, "- `/hive approve`: Hive creates release `%s` from `%s`\n", m.releaseStep.Tag, m.releaseStep.Target)
 		fmt.Fprintln(&b, "- `/hive decision <your instructions>`: go ahead, following your instructions")
 	case len(m.options) > 0 && m.recommended != "":
-		fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)\n", m.recommended)
+		fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)%s\n", m.recommended, m.summaryFor(m.recommended))
 		for _, opt := range m.options {
 			if opt == m.recommended {
 				continue
 			}
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
+			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
 		}
 	case len(m.options) > 0 && m.hasRecommendation:
 		// A recommendation is stated but names none of the listed options,
@@ -158,13 +181,13 @@ func (m unparkMenu) bulletsFor(releaseOnApprove bool) string {
 		// decision.
 		fmt.Fprintln(&b, "- `/hive approve`: go with the recommendation")
 		for _, opt := range m.options {
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
+			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
 		}
 	case len(m.options) > 0:
 		first := m.options[0]
-		fmt.Fprintf(&b, "- `/hive approve`: go with option %s\n", first)
+		fmt.Fprintf(&b, "- `/hive approve`: go with option %s%s\n", first, m.summaryFor(first))
 		for _, opt := range m.options[1:] {
-			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
+			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s%s\n", opt, opt, m.summaryFor(opt))
 		}
 	case m.hasRecommendation:
 		fmt.Fprintln(&b, "- `/hive approve`: go with the recommendation")
