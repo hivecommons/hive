@@ -4,7 +4,40 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/agentaudit"
 )
+
+// auditRelay records one relay lifecycle row in the existing audit log
+// (hivecommons/hive#13441): user is the contributor's GitHub login, agent the
+// contributor session identity, repo/target the task's repository and number.
+// kv is alternating key/value detail pairs; callers must never pass token
+// material. Client-supplied text must be sanitized with auditRelayText first.
+func (h *ContributeWSHub) auditRelay(c *ContributorConnection, action string, task *WSTaskAssign, kv ...any) {
+	if c == nil || c.profile == nil {
+		return
+	}
+	h.auditRelayAs(c.profile.GitHubUsername, identityOf(c), action, task, kv...)
+}
+
+// auditRelayAs is auditRelay for rows recorded before a connection exists
+// (relay_rejected), where only the profile is known.
+func (h *ContributeWSHub) auditRelayAs(user, agent, action string, task *WSTaskAssign, kv ...any) {
+	if h == nil || h.server == nil || h.server.audit == nil || user == "" {
+		return
+	}
+	repo, number := "", 0
+	if task != nil {
+		repo, number = task.Repo, task.Number
+		kv = append([]any{"task", task.TaskID}, kv...)
+	}
+	h.server.AuditLogRecord(user, action, agentaudit.FormatAuditDetail(agentaudit.Fields(kv...)), agent, repo, number)
+}
+
+// auditRelayText bounds relay-supplied free text before it lands in a detail.
+func auditRelayText(s string) string {
+	return sanitizeCapabilityField(sanitizeString(s))
+}
 
 // maybeRefreshToken re-mints a scoped GitHub token and pushes a token_refresh to
 // the relay once wsTokenRefreshPeriod has elapsed since the current task's token
@@ -159,8 +192,27 @@ func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string)
 	}
 	c.mu.Lock()
 	c.tokenMintedAt = time.Now()
+	task := c.currentTask
 	c.mu.Unlock()
+	h.auditTokenMinted(c, task, msg.TokenExpiresAt)
 	return nil
+}
+
+// auditTokenMinted records that an installation token was issued or re-minted
+// for a task and delivered to the relay. The row carries the expiry, the
+// installation id (the join key to GitHub's installation-token audit) and the
+// tier's permission scopes — never the token.
+func (h *ContributeWSHub) auditTokenMinted(c *ContributorConnection, task *WSTaskAssign, expiresAt string) {
+	if task == nil || c.profile == nil {
+		return
+	}
+	kv := []any{"expires_at", expiresAt, "scopes", strings.Join(relayTierPermissions(c.profile.TrustTier), "|")}
+	if h.server != nil && h.server.deps != nil && h.server.deps.GHAppAuth != nil {
+		if id := h.server.deps.GHAppAuth.InstallationID(); id != 0 {
+			kv = append(kv, "installation", id)
+		}
+	}
+	h.auditRelay(c, agentaudit.AuditRelayTokenMinted, task, kv...)
 }
 
 // requireExplicitAccept reports whether this hive is in the opt-in EXPLICIT

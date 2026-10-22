@@ -102,6 +102,53 @@ fleet self-report is filed for it (see `fleet-report.md`). Before this
 existed, a spoke served a wrong catalog for two days and the only record was a
 server log line.
 
+## Contributor relay rows
+
+The hub records the [contributor relay](contributor-relay.md)'s lifecycle in
+this same file (hivecommons/hive#13441); there is no separate file, store or
+endpoint. The rows are written from frames the hub already receives, so an
+unmodified relay needs no change. Unlike the rows above, the principal is the
+**contributor**, not a dashboard user: `user` is the contributor's GitHub login
+(within the pseudo-user contract above — a consumer that expects an OIDC actor
+key must accept a login here), `agent` is the contributor session identity
+(`<contributor id>` or `<contributor id>#<session>`), and task rows carry the
+task's `repo` and issue/PR `target`.
+
+| Action | Written when | `detail` keys |
+| --- | --- | --- |
+| `relay_connected` | The socket authenticated (`auth_ok` sent) | `backend`, `model`, `tier`, `relay_version` |
+| `relay_rejected` | A recognised contributor was refused at auth | `reason` (`revoked`, `model_not_accepted`, `effort_below_floor`, `role_claim_rejected`) |
+| `relay_disconnected` | The socket closed | `reason` (`client`, `heartbeat_timeout`, `server_shutdown`, `revoked`), `uptime_s`, `tasks` |
+| `relay_task_assigned` | A `task_assign` frame was sent | `task`, `generation`, `kind`, `mcp` |
+| `relay_task_accepted` | The relay's first `task_accepted` for the task it holds | `task` |
+| `relay_task_declined` | The relay declined an offered task in its preflight | `task`, `reason` |
+| `relay_token_minted` | An installation token was issued **or re-minted** for a task and sent to the relay (assignment, mid-task refresh, resume) | `task`, `expires_at`, `installation`, `scopes` |
+| `relay_mcp_lease_issued` / `relay_mcp_lease_revoked` | Reserved for the task-MCP lease lifecycle; the hub does not issue a task-MCP lease yet, so nothing writes these today | `task`, `expires_at` |
+| `relay_task_completed` | `task_complete` was accepted for the held task | `task`, `pr_url` (only a PR the hub verified), `verdict`, `duration_s`, `model` as the relay reported it |
+| `relay_task_failed` | `task_failed` was accepted for the held task | `task`, `class` (the normalised failure kind: `environment`, `task` or `unspecified`), `duration_s` |
+| `relay_task_revoked` | The hub took a task back: operator requeue or yank, or a resume refused by the admission gate | `task`, `reason` |
+| `relay_task_abandoned` | The task ended with no terminal frame: lease expired, or the socket dropped and the task was not re-adopted within the disconnect grace | `task`, `last_progress_at` (lease expiry only) |
+
+Things to know when you query them:
+
+- **Never a token.** `relay_token_minted` records when the credential was sent,
+  how long it lives and the installation it came from — `installation` is the
+  join key to GitHub's installation-token audit — but never the token itself.
+  Together with the task's terminal row it bounds the window in which a given
+  contributor could have written to GitHub.
+- **Sensitive.** `relay_token_minted` and `relay_task_revoked` are in the
+  sensitive-action vocabulary, so they count toward `sensitive_24h` and carry
+  `sensitive: true`. `relay_connected` is not: it fires on every reconnect.
+- **Not audited.** `task_progress`, heartbeat and `ping`/`pong` frames are
+  telemetry, not actions; they would evict operator actions from the 500-entry
+  ring. A connection that never identifies a contributor (missing or invalid
+  registration token) writes no row either.
+- **No remote address.** `relay_connected` omits the peer address; the reverse
+  proxy's access log has it.
+- **Volume.** Expect roughly 6–10 rows per contributor task, plus one
+  `relay_token_minted` per mid-task refresh on tasks that run past the token
+  refresh period.
+
 ## Rotation and retention
 
 Rotation is handled by lumberjack:

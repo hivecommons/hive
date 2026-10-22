@@ -73,6 +73,30 @@ const (
 	AuditLeaseStageEscalated = "lease_stage_escalated"
 )
 
+// Audit action names recorded by the hub for the ClankeR contributor relay
+// (hivecommons/hive#13441). The relay is a principal acting on the hub, so
+// these rows carry the contributor's GitHub login as the user and the
+// contributor session identity as the agent; task rows also carry the task's
+// repository and issue/PR number. Progress and heartbeat frames are telemetry
+// and are never audited. relay_token_minted and relay_task_revoked count
+// toward the dashboard's sensitive_24h; relay_connected does not, because it
+// fires on every reconnect. No row ever carries token material.
+const (
+	AuditRelayConnected       = "relay_connected"
+	AuditRelayRejected        = "relay_rejected"
+	AuditRelayDisconnected    = "relay_disconnected"
+	AuditRelayTaskAssigned    = "relay_task_assigned"
+	AuditRelayTaskAccepted    = "relay_task_accepted"
+	AuditRelayTaskDeclined    = "relay_task_declined"
+	AuditRelayTokenMinted     = "relay_token_minted"
+	AuditRelayMCPLeaseIssued  = "relay_mcp_lease_issued"
+	AuditRelayMCPLeaseRevoked = "relay_mcp_lease_revoked"
+	AuditRelayTaskCompleted   = "relay_task_completed"
+	AuditRelayTaskFailed      = "relay_task_failed"
+	AuditRelayTaskRevoked     = "relay_task_revoked"
+	AuditRelayTaskAbandoned   = "relay_task_abandoned"
+)
+
 // AuditSink receives agent lifecycle events for durable, queryable recording.
 //
 // It exists so audit emitters can feed the dashboard's audit store WITHOUT

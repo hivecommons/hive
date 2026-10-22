@@ -39,7 +39,8 @@ const (
 // pkg/dashboard/api_*.go (config_* and approval decisions),
 // pkg/dashboard/{api_auth,copilot_auth,claude_auth,backup_key,gateways}.go
 // (auth/key/gateway changes), pkg/agentaudit/agentaudit.go (agent, token and
-// lease actions), pkg/github/write_surface*.go (write refusals and signed
+// lease actions, plus the relay_token_minted / relay_task_revoked credential
+// boundaries of the contributor relay), pkg/github/write_surface*.go (write refusals and signed
 // commit reauthorship), and pkg/convergence/publish/publisher.go (publication
 // refusals). Keep it explicit so the collapsed Audit Log risk chip changes
 // only when a real audit action name is added or reclassified.
@@ -117,6 +118,8 @@ var auditSensitiveActions = map[string]bool{
 	"model_discovery_failed":                true,
 	"plan_approve":                          true,
 	"plan_reject":                           true,
+	"relay_task_revoked":                    true,
+	"relay_token_minted":                    true,
 	"run_stage_reset":                       true,
 	"signed_commit_reauthored":              true,
 	"tool_approval":                         true,
