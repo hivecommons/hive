@@ -39110,7 +39110,7 @@ function burnAreaChart() {
       // promptTemplateDirty/Value hold the Prompt Template tab's pending edit
       // (it has its own endpoint, so it is not a `dirty` section). Reset on every
       // open and on close, so Cancel/X/Escape discard it like any other field.
-      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, isCreate, initialTabOverride: initialTabOverride || null, initialSearch: initialSearch || '', promptTemplateDirty: false, promptTemplateValue: '' };
+      _configState = { type, agent: agentName || null, tab: null, data: {}, dirty: {}, initialSearch: initialSearch || '', isCreate, initialTabOverride: initialTabOverride || null, promptTemplateDirty: false, promptTemplateValue: '' };
       document.getElementById('config-overlay').classList.remove('hidden');
       hiveRememberModalOpen(document.getElementById('config-overlay'));
       const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
