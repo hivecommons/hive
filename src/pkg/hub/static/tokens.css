@@ -134,6 +134,9 @@
   --ham-move-flash-ms: 140ms;
   --ham-move-flash-gap-ms: 90ms;
   --ham-move-flash-count: 2;
+  /* A tracker row leaving the list (merged/closed) or arriving in it. */
+  --ham-move-exit-ms: 300ms;
+  --ham-move-enter-ms: 220ms;
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;
