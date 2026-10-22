@@ -312,7 +312,7 @@ the merge-eligibility gate all call.
 
 ## Review heads: several models per perspective
 
-`agents.<name>.review_heads` gives one base reviewer several model "heads" ([#13542](https://github.com/hivecommons/hive/issues/13542)). Each head is materialized like `replicas`: `<base>-<alias>-<n>` copies the base agent with only `backend` and `model` replaced, is stripped on save, and is provisioned at boot by the entrypoint. `alias` defaults to a slug of `<backend>-<model>` (without repeating the backend when the model already starts with it).
+`agents.<name>.review_heads` gives one base reviewer several model "heads" ([#13542](https://github.com/hivecommons/hive/issues/13542)). Each head is materialized like `replicas`: `<base>-<alias>-<n>` copies the base agent with only `backend` and `model` replaced, is stripped on save, and is provisioned at boot by the entrypoint. `alias` defaults to a slug of `<backend>-<model>` (without repeating the backend when the model already starts with it). The agent's Unix user and token group are `hive-<name>`, and group names are limited to 32 characters, so `<base>-<alias>-<n>` may be at most 27 characters; a longer name fails config load, so set a shorter `alias`.
 
 ```yaml
 agents:
@@ -321,7 +321,7 @@ agents:
     model: claude-sonnet-5-5
     role: reviewer
     review_heads:
-      - {backend: claude, model: claude-sonnet-5-5, replicas: 2}   # code-reviewer-claude-sonnet-5-5-1, -2
+      - {backend: claude, model: claude-sonnet-5-5, alias: sonnet, replicas: 2}   # code-reviewer-sonnet-1, -2
       - {backend: codex,  model: gpt-6-sol, alias: sol}            # code-reviewer-sol-1
 review:
   combined_perspectives: false

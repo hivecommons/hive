@@ -1978,7 +1978,9 @@ BASHRC
       # EACCES on the first agent's token.
       AGENT_TOKEN_GROUP="hive-${agent_name}"
       if ! getent group "$AGENT_TOKEN_GROUP" >/dev/null 2>&1; then
-        groupadd --system "$AGENT_TOKEN_GROUP" 2>/dev/null || true
+        if ! groupadd_err="$(groupadd --system "$AGENT_TOKEN_GROUP" 2>&1)"; then
+          echo "[entrypoint] ERROR: could not create group ${AGENT_TOKEN_GROUP} (${groupadd_err}): ${agent_name} cannot read its token"
+        fi
       fi
       usermod -aG "$AGENT_TOKEN_GROUP" "hive-${agent_name}" 2>/dev/null || true
       AGENT_TOKEN_FILE="/var/run/hive-metrics/agent-tokens/gh-token-${agent_name}.cache"
