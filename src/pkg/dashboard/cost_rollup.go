@@ -103,16 +103,19 @@ func costRollupDiscontinuityCeiling(incs []float64) float64 {
 // costRollupStepTokenBacked reports whether a positive $ step d from prev to
 // cur is explained by per-model token growth: the $ increase of the models
 // whose input or output counters grew in the step covers at least
-// costRollupTokenBackedRatio of d. Steps without per-model data on both sides
-// (legacy snapshots) are never token-backed.
+// costRollupTokenBackedRatio of d. A model absent from prev counts from zero:
+// the token summary lists only sessions still on disk, so a daily session
+// flush often brings back a model that had aged out of the previous snapshot.
+// Steps without per-model data on both sides (legacy snapshots) are never
+// token-backed.
 func costRollupStepTokenBacked(prev, cur *CostHistoryEntry, d float64) bool {
 	if len(prev.Models) == 0 || len(cur.Models) == 0 || !(d > 0) {
 		return false
 	}
 	var backed float64
 	for name, c := range cur.Models {
-		p, ok := prev.Models[name]
-		if !ok || (c.Input <= p.Input && c.Output <= p.Output) {
+		p := prev.Models[name]
+		if c.Input <= p.Input && c.Output <= p.Output {
 			continue
 		}
 		if du := c.USD - p.USD; du > 0 {
@@ -164,7 +167,7 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 			}
 			for name, cur := range e.Models {
 				p, ok := prev.Models[name]
-				if !ok {
+				if !ok && len(prev.Models) == 0 {
 					continue
 				}
 				if d := cur.Input - p.Input; d > 0 {

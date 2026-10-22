@@ -288,3 +288,64 @@ func TestCostRangeSummaryAndChartShareWindow(t *testing.T) {
 		t.Error("fixed-trailing-window costRunRate() should be gone")
 	}
 }
+
+// TestCostPriceMapKeepsModelsMissingFromNewestSnapshot pins #13498 and the
+// browser half of #13497: each model is priced from the newest snapshot that
+// still lists it, so a model that aged out of the token summary keeps its
+// rate, and a large daily session flush of such models is token-backed spend
+// that survives the $500 discontinuity ceiling.
+func TestCostPriceMapKeepsModelsMissingFromNewestSnapshot(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — cost price map behaviour was NOT executed by this run")
+	}
+	html := indexHTML(t)
+
+	script := "const assert = require('node:assert/strict');\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const T0 = Date.UTC(2026, 8, 16, 15, 0, 0);
+const M = 60e3;
+const snap = (t, mini, fable, opus) => {
+  const models = { mini: { i: mini, o: 0, usd: mini * 1e-6 } };
+  if (fable) models.fable = { i: fable, o: 0, usd: fable * 0.01 };
+  if (opus) models.opus = { i: opus, o: 0, usd: opus * 0.02 };
+  return { timestamp: t, usd: Object.values(models).reduce((s, m) => s + m.usd, 0), models };
+};
+const hist = [];
+// Ten ordinary $0.05 helper-model steps, five minutes apart.
+for (let i = 0; i <= 10; i++) hist.push(snap(T0 + i * 5 * M, i * 50000, 100000, 10000));
+// Daily flush five minutes later: +$1,816 = fable $1,561 + opus $255.
+hist.push(snap(T0 + 55 * M, 500000, 256100, 22750));
+// Newest snapshot: fable and opus aged out of the token summary.
+hist.push(snap(T0 + 60 * M, 550000, 0, 0));
+
+const rate = costPriceMap(hist);
+const approx = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, msg + ': ' + a + ' vs ' + b);
+approx(rate.mini, 1e-6, 'mini priced from the newest snapshot');
+approx(rate.fable, 0.01, 'fable priced from the newest snapshot that lists it');
+approx(rate.opus, 0.02, 'opus priced from the newest snapshot that lists it');
+
+const ceiling = costDiscontinuityCeiling(hist, rate);
+assert.equal(ceiling, COST_DISCONTINUITY_FLOOR_USD, 'the flush is above the $500 ceiling');
+approx(costSpendBetween(hist, rate, -Infinity, Infinity, ceiling), 0.5 + 1816, 'the token-backed flush is kept');
+const spans = costAccrualSpans(hist, rate);
+approx(costSpreadSpendBetween(spans, -Infinity, Infinity, ceiling), 0.5 + 1816, 'the chart keeps the flush');
+console.log('ok');
+`
+	cmd := exec.Command(node, "-e", script)
+	cmd.Env = append(cmd.Environ(), "TZ=UTC")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node cost price map check failed: %v\n%s", err, strings.TrimSpace(string(out)))
+	}
+}

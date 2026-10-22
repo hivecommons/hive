@@ -12301,7 +12301,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function costRunRateUnit(win) {
       return win.bucket === 'hour' ? { ms: COST_HOUR_MS, label: '/hr' } : { ms: COST_DAY_MS, label: '/day' };
     }
-    // priceMap: current $/token per model from the newest snapshot that has one.
+    // priceMap: $/token per model, each taken from the newest snapshot that
+    // still lists THAT model. The token summary only lists models of sessions
+    // still on disk, so stopping at the newest snapshot would price every
+    // model that has since aged out at $0.
     function costPriceMap(hist) {
       const rate = {};
       for (let i = hist.length - 1; i >= 0; i--) {
@@ -12312,7 +12315,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const toks = (m.i || 0) + (m.o || 0);
           if (rate[k] == null && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
         }
-        break;
       }
       return rate;
     }

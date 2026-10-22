@@ -143,7 +143,7 @@ func TestCostRollupFoldLifecycle(t *testing.T) {
 // lags the ring by more than one sample.
 func TestAppendCostHistoryFoldsRollup(t *testing.T) {
 	s := &Server{}
-	yesterday := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -1)
+	yesterday := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
 	s.costSeries().Seed([]CostHistoryEntry{
 		rollupSnap(yesterday, 1, 0, 0),
 		rollupSnap(yesterday.Add(time.Hour), 4, 0, 0),
@@ -197,6 +197,39 @@ func TestCostFoldDailyRollupsDiscardsTokensWithCorrection(t *testing.T) {
 	}
 }
 
+// A daily session flush worth far more than the $500 floor, arriving minutes
+// after the previous snapshot, is real spend (#13497): opus came back after
+// aging out of the previous snapshot and fable grew from an existing counter;
+// both count as token growth, so the whole step and its tokens are kept.
+func TestCostFoldDailyRollupsKeepsLargeDailyFlush(t *testing.T) {
+	day := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	snap := func(at time.Duration, mini, fable, opus int64) CostHistoryEntry {
+		models := map[string]CostModelSnap{
+			"mini":  {Input: mini, USD: float64(mini) * 1e-6},
+			"fable": {Input: fable, USD: float64(fable) * 0.01},
+		}
+		if opus > 0 {
+			models["opus"] = CostModelSnap{Input: opus, USD: float64(opus) * 0.02}
+		}
+		var usd float64
+		for _, m := range models {
+			usd += m.USD
+		}
+		return CostHistoryEntry{Timestamp: day.Add(at).UnixMilli(), USD: usd, Models: models}
+	}
+	var hist []CostHistoryEntry
+	for i := 0; i <= 10; i++ {
+		hist = append(hist, snap(time.Duration(i)*5*time.Minute, int64(i)*50_000, 100_000, 0))
+	}
+	// +$1,816 five minutes later: opus (absent before) +$1,561, fable +$255.
+	hist = append(hist, snap(55*time.Minute, 500_000, 125_500, 78_050))
+
+	r := costFoldDailyRollups(hist)["2026-09-16"]
+	if math.Abs(r.USD-1816.5) > 1e-6 || r.InputTokens != 500_000+25_500+78_050 {
+		t.Fatalf("day = %+v, want $1816.50 (ten $0.05 steps + the $1,816 flush) with the flush's tokens", r)
+	}
+}
+
 // Sub-cent increments do not drag the median down to zero.
 func TestCostRollupDiscontinuityCeilingIgnoresSubCentIncrements(t *testing.T) {
 	if c := costRollupDiscontinuityCeiling([]float64{0.001, 0.002, 0.003, 0.004, 40, 40, 40}); c != 800 {
@@ -213,7 +246,7 @@ func TestCostRollupDiscontinuityCeilingIgnoresSubCentIncrements(t *testing.T) {
 func TestCostRollupPartialRefoldOnlyRaises(t *testing.T) {
 	s := &Server{}
 	now := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
-	yesterday := now.Truncate(24 * time.Hour).AddDate(0, 0, -1)
+	yesterday := now.Truncate(24*time.Hour).AddDate(0, 0, -1)
 	day := yesterday.Format(costRollupDayLayout)
 	s.costSeries().Seed([]CostHistoryEntry{
 		rollupSnap(yesterday.Add(6*time.Hour), 1, 1000, 10),
