@@ -228,7 +228,7 @@ func (s *Server) handleCompliancePostureRun(w http.ResponseWriter, r *http.Reque
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), compliancePostureRunTimeout)
 	defer cancel()
-	run, err := s.postureRunner().Run(ctx, compliance.TriggerManual)
+	run, err := s.postureRunner().RunAs(ctx, compliance.TriggerManual, requestUser(r))
 	if errors.Is(err, compliance.ErrPostureRunInProgress) {
 		jsonError(w, "a posture run is already in progress", http.StatusConflict)
 		return
