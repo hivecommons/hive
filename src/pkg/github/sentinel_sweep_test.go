@@ -37,10 +37,15 @@ type sentinelFixture struct {
 	// timeline[num] is the PR's issue timeline as GitHub would render it
 	// (label events with actor and created_at, committed events with a
 	// committer date, head_ref_force_pushed events); absent means empty.
-	timeline  map[int][]map[string]any
-	filesHits int
-	listHits  int
-	getHits   []int
+	timeline map[int][]map[string]any
+	// checkSuites[sha] and statuses[sha] are the server-stamped created_at
+	// values of the check suites and commit statuses GitHub holds for that
+	// SHA; absent means none.
+	checkSuites map[string][]string
+	statuses    map[string][]string
+	filesHits   int
+	listHits    int
+	getHits     []int
 }
 
 // prByNumber returns the fixture PR with that number, or nil.
@@ -128,6 +133,24 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
 			return
+		}
+		if sha, rest, ok := strings.Cut(strings.TrimPrefix(p, "/repos/o/r/commits/"), "/"); ok && strings.HasPrefix(p, "/repos/o/r/commits/") && r.Method == http.MethodGet {
+			switch rest {
+			case "check-suites":
+				var suites []map[string]any
+				for i, at := range f.checkSuites[sha] {
+					suites = append(suites, map[string]any{"id": i + 1, "head_sha": sha, "created_at": at})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"total_count": len(suites), "check_suites": suites})
+				return
+			case "statuses":
+				out := []map[string]any{}
+				for i, at := range f.statuses[sha] {
+					out = append(out, map[string]any{"id": i + 1, "state": "success", "context": "ci", "created_at": at})
+				}
+				_ = json.NewEncoder(w).Encode(out)
+				return
+			}
 		}
 		switch {
 		case r.Method == http.MethodGet && p == "/repos/o/r/pulls":
@@ -415,7 +438,8 @@ func sentinelTimelineLabel(kind, actor, actorType, at string) map[string]any {
 }
 
 // sentinelTimelineCommit is a committed timeline entry for sha whose
-// committer date is at.
+// committer date is at. The date is whatever the committer's clock (or
+// GIT_COMMITTER_DATE) said, so the sweep must never read it as a push time.
 func sentinelTimelineCommit(sha, at string) map[string]any {
 	return map[string]any{
 		"event":     "committed",
@@ -424,92 +448,52 @@ func sentinelTimelineCommit(sha, at string) map[string]any {
 	}
 }
 
-// A maintainer's clearance on a head the sweep never alerted on (#13602):
-// the alert and marker are for head A, the PR is rebased to head B, and a
-// human removes the label with B already in place. The next sweep must not
-// re-label or post a new alert; it rewrites the hive's marker comment as
-// the alert for B so the clearance survives a restart (the #11686 path).
-// Every pass here starts a fresh client (empty sentinelHeads), the restart
-// case from the acceptance criteria.
-func TestSweepSentinelClearanceOnNewerHeadIsHonoured(t *testing.T) {
-	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
-	f := &sentinelFixture{
-		prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
-		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
-		labelExists:  true,
-		comments:     map[int][]string{9: {alertA}},
-		commentUsers: map[int][]string{9: {"hive[bot]"}},
-		timeline: map[int][]map[string]any{9: {
-			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
-			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
-			map[string]any{"event": "head_ref_force_pushed", "actor": map[string]string{"login": "renovate[bot]", "type": "Bot"}, "created_at": "2026-10-22T06:25:30Z"},
-			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
-		}},
-	}
-	srv := newSentinelServer(t, f)
-	defer srv.Close()
-	for pass := 0; pass < 2; pass++ {
-		c := newTestClient(t, srv, "o", []string{"o/r"})
-		c.SetAppBotLogin("hive[bot]")
-		res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-		if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
-			t.Fatalf("pass %d: clearance on newer head must stay quiet: res=%+v err=%v", pass, res, err)
-		}
-		if got := f.labels[9]; len(got) != 0 {
-			t.Fatalf("pass %d: label re-applied after maintainer removed it on the current head: %v", pass, got)
-		}
-		if len(f.comments[9]) != 1 {
-			t.Fatalf("pass %d: no new alert comment may be posted: %v", pass, f.comments[9])
-		}
-		if body := f.comments[9][0]; !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) || !strings.Contains(body, "@danathar removed the `sentinel-alert` label") {
-			t.Fatalf("pass %d: marker comment must be rewritten as the cleared alert for hB: %q", pass, body)
-		}
-	}
-
-	// A push after the clearance re-alerts: the security property.
-	f.mu.Lock()
-	f.prs[0] = sentinelPR(9, "eve", "hC")
-	f.timeline[9] = append(f.timeline[9], sentinelTimelineCommit("hC", "2026-10-22T19:00:00Z"))
-	f.mu.Unlock()
-	c := newTestClient(t, srv, "o", []string{"o/r"})
-	c.SetAppBotLogin("hive[bot]")
-	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
-	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
-		t.Fatalf("push after clearance must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+// sentinelTimelineForcePush is a head_ref_force_pushed timeline entry that
+// moved the head to sha at the server time at.
+func sentinelTimelineForcePush(sha, at string) map[string]any {
+	return map[string]any{
+		"event":      "head_ref_force_pushed",
+		"commit_id":  sha,
+		"actor":      map[string]string{"login": "renovate[bot]", "type": "Bot"},
+		"created_at": at,
 	}
 }
 
-// The label removal counts only when it postdates the latest push and was
-// made by a human who is not one of the hive's accounts. A removal before
-// the push to the current head, a removal by a hive account, and a
-// timeline with no push at all each leave the existing behaviour: the new
-// head is alerted on and labelled.
-func TestSweepSentinelClearanceOnNewerHeadRejected(t *testing.T) {
+// A maintainer's clearance on a head the sweep never alerted on (#13602):
+// the alert and marker are for head A, the PR moves to head B, and a human
+// removes the label with B already in place. The next sweep must not
+// re-label or post a new alert; it rewrites the hive's marker comment as
+// the alert for B so the clearance survives a restart (the #11686 path).
+// Every pass here starts a fresh client (empty sentinelHeads), the restart
+// case from the acceptance criteria. The push time of B is read only from
+// server-stamped signals: the force-push event naming B, or for an ordinary
+// push the earliest check suite or commit status GitHub created for B. The
+// committer date on B's commit is always later than the removal here, so a
+// sweep that trusted it would wrongly re-alert.
+func TestSweepSentinelClearanceOnNewerHeadIsHonoured(t *testing.T) {
 	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
 	cases := []struct {
-		name     string
-		timeline []map[string]any
+		name        string
+		timeline    []map[string]any
+		checkSuites map[string][]string
+		statuses    map[string][]string
 	}{
-		{"removed before the push", []map[string]any{
+		{"force push", []map[string]any{
 			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
-			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T02:00:00Z"),
-			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
-		}},
-		{"removed by a hive account", []map[string]any{
-			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
-			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
-			sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
-		}},
-		{"removed by another bot", []map[string]any{
-			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
-			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
-			sentinelTimelineLabel("unlabeled", "renovate[bot]", "Bot", "2026-10-22T18:19:00Z"),
-		}},
-		{"no push time known", []map[string]any{
-			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:30Z"),
 			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
-		}},
-		{"empty timeline", nil},
+		}, nil, nil},
+		{"ordinary push with check suite", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T06:25:31Z", "2026-10-22T06:25:30Z"}}, nil},
+		{"ordinary push with commit status", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T23:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, map[string][]string{"hB": {"2026-10-22T06:25:30Z"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -520,6 +504,117 @@ func TestSweepSentinelClearanceOnNewerHeadRejected(t *testing.T) {
 				comments:     map[int][]string{9: {alertA}},
 				commentUsers: map[int][]string{9: {"hive[bot]"}},
 				timeline:     map[int][]map[string]any{9: tc.timeline},
+				checkSuites:  tc.checkSuites,
+				statuses:     tc.statuses,
+			}
+			srv := newSentinelServer(t, f)
+			defer srv.Close()
+			for pass := 0; pass < 2; pass++ {
+				c := newTestClient(t, srv, "o", []string{"o/r"})
+				c.SetAppBotLogin("hive[bot]")
+				res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+				if err != nil || len(res.Flagged) != 0 || res.Skipped != 1 {
+					t.Fatalf("pass %d: clearance on newer head must stay quiet: res=%+v err=%v", pass, res, err)
+				}
+				if got := f.labels[9]; len(got) != 0 {
+					t.Fatalf("pass %d: label re-applied after maintainer removed it on the current head: %v", pass, got)
+				}
+				if len(f.comments[9]) != 1 {
+					t.Fatalf("pass %d: no new alert comment may be posted: %v", pass, f.comments[9])
+				}
+				if body := f.comments[9][0]; !strings.Contains(body, SentinelMarker+" hB") || !strings.Contains(body, sentinelAlertHeading) || !strings.Contains(body, "@danathar removed the `sentinel-alert` label") {
+					t.Fatalf("pass %d: marker comment must be rewritten as the cleared alert for hB: %q", pass, body)
+				}
+			}
+
+			// A push after the clearance re-alerts: the security property.
+			// The new commit carries a committer date from before the
+			// removal, as a contributor hiding a push behind the clearance
+			// would set it; only GitHub's check-suite timestamp counts.
+			f.mu.Lock()
+			f.prs[0] = sentinelPR(9, "eve", "hC")
+			f.timeline[9] = append(f.timeline[9], sentinelTimelineCommit("hC", "2026-10-22T02:00:00Z"))
+			if f.checkSuites == nil {
+				f.checkSuites = map[string][]string{}
+			}
+			f.checkSuites["hC"] = []string{"2026-10-22T19:00:00Z"}
+			f.mu.Unlock()
+			c := newTestClient(t, srv, "o", []string{"o/r"})
+			c.SetAppBotLogin("hive[bot]")
+			res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+			if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 || len(f.comments[9]) != 2 || !strings.Contains(f.comments[9][1], SentinelMarker+" hC") {
+				t.Fatalf("push after clearance must re-alert: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+			}
+		})
+	}
+}
+
+// The label removal counts only when it postdates a server-stamped push of
+// the current head and was made by a human who is not one of the hive's
+// accounts. A removal before the push, a removal by a hive account or
+// another bot, a head whose only "push time" is its own committer date, a
+// backdated commit pushed after the removal, and a force push of some
+// other SHA each leave the existing behaviour: the new head is alerted on
+// and labelled.
+func TestSweepSentinelClearanceOnNewerHeadRejected(t *testing.T) {
+	alertA := SentinelComment(DecideSentinelAction("sentinel-alert", SentinelAuthorTrust{}, false), "hA", "eve", []sentinel.Finding{{Rule: "sensitive_path", Summary: "OWNERS", Paths: []string{"OWNERS"}}})
+	cases := []struct {
+		name        string
+		timeline    []map[string]any
+		checkSuites map[string][]string
+		statuses    map[string][]string
+	}{
+		{"removed before the force push", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T02:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+		}, nil, nil},
+		{"removed before the check suite", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T02:00:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T06:25:00Z"}}, nil},
+		{"removed by a hive account", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "hive[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"removed by another bot", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "renovate[bot]", "Bot", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"committer date is not a push time", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"backdated commit pushed after the removal", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineCommit("hB", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, map[string][]string{"hB": {"2026-10-22T19:00:00Z"}}, map[string][]string{"hB": {"2026-10-22T19:00:01Z"}}},
+		{"force push of another sha", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineForcePush("hX", "2026-10-22T06:25:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"no push time known", []map[string]any{
+			sentinelTimelineLabel("labeled", "hive[bot]", "Bot", "2026-10-22T01:00:00Z"),
+			sentinelTimelineLabel("unlabeled", "danathar", "User", "2026-10-22T18:19:00Z"),
+		}, nil, nil},
+		{"empty timeline", nil, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &sentinelFixture{
+				prs:          []map[string]any{sentinelPR(9, "eve", "hB")},
+				files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+				labelExists:  true,
+				comments:     map[int][]string{9: {alertA}},
+				commentUsers: map[int][]string{9: {"hive[bot]"}},
+				timeline:     map[int][]map[string]any{9: tc.timeline},
+				checkSuites:  tc.checkSuites,
+				statuses:     tc.statuses,
 			}
 			srv := newSentinelServer(t, f)
 			defer srv.Close()

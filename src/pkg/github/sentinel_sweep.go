@@ -441,7 +441,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		// this head already in place. The second case is a clearance of
 		// this head, not of the one the marker names (#13602); re-alerting
 		// would make the maintainer remove the same label twice.
-		cleared, clearedBy, err := c.sentinelClearedAfterLatestPush(ctx, owner, repo, number, label)
+		cleared, clearedBy, err := c.sentinelClearedAfterLatestPush(ctx, owner, repo, number, head, label)
 		if err != nil {
 			return SentinelSweepEvent{}, false, err
 		}
