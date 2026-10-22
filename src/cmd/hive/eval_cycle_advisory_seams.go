@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
@@ -168,6 +169,10 @@ func (o advisoryPublishOutcome) String() string {
 	return fmt.Sprintf("advisoryPublishOutcome(%d)", int(o))
 }
 
+// archivedAdvisoryRepos remembers repos whose digest write was refused as
+// archived, so later cycles skip them instead of retrying and self-reporting.
+var archivedAdvisoryRepos sync.Map
+
 // publishAdvisoryDigest writes an already-rendered digest comment to its
 // configured route and records the outcome (#1927, #2353, #2575, #4167).
 //
@@ -237,6 +242,9 @@ func publishAdvisoryDigest(
 		recordError(advisoryIssueMissingError(route.primaryRepo, route.ensureErr))
 		return advisoryPublishFailed
 	}
+	if _, archived := archivedAdvisoryRepos.Load(route.primaryRepo); archived {
+		return advisoryPublishSkipped
+	}
 	err := deps.postGitHub(ctx, route.primaryRepo, route.issueNum, md)
 	if err == nil {
 		logger.Info("posted advisory digest", "repo", route.primaryRepo, "issue", route.issueNum, "findings", digest.TotalCount, "via", "app")
@@ -246,6 +254,12 @@ func publishAdvisoryDigest(
 			deps.onWriteProven(ctx)
 		}
 		return advisoryPublishPosted
+	}
+
+	if classifyAdvisoryPostError(err) == advisoryPostRepoArchived {
+		archivedAdvisoryRepos.Store(route.primaryRepo, struct{}{})
+		logger.Warn("advisory repo is archived and read-only, skipping digest posts", "repo", route.primaryRepo)
+		return advisoryPublishSkipped
 	}
 
 	// err.Error() is the same string logged below — log-safe, never key material.
