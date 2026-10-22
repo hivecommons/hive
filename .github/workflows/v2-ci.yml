@@ -851,6 +851,12 @@ jobs:
       - name: Proxy Tests
         run: cd proxy && npm ci && npm test
 
+      # src/pkg/dashboard/*.test.js are node:test helper suites that the
+      # dashboard/ npm test does not cover (#13566).
+      - name: Dashboard helper tests
+        working-directory: .
+        run: node --test src/pkg/dashboard/*.test.js
+
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for
       # node --check. It is a real .js file now; check it and its lib/ module
