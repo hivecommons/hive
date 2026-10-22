@@ -1156,7 +1156,13 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   cycle that follows plans against the patched item. No repository is
   re-enumerated. The read goes through the paced REST transport and is
   skipped outright while the API budget is `critical`; it refreshes the PR
-  detail cache, so the following cycle does not pay for it again.
+  detail cache, so the following cycle does not pay for it again. The
+  re-read is also remembered for
+  `dashboard.stage_tracker.webhook_refresh_replay_window_s` (default
+  `1800`) and re-applied to every status snapshot published meanwhile: an
+  eval cycle that enumerated the item *before* the close still publishes
+  from that enumeration minutes later, and without the replay its publish
+  put the closed row back until the next full enumeration.
   `dashboard.stage_tracker.webhook_refresh: false` turns the re-read off
   (deliveries then still invalidate caches and wake the loop, and wake
   cycles fall back to a full enumeration because nothing else patches the
@@ -1319,6 +1325,7 @@ dashboard:
   stage_tracker:
     webhook_refresh: true          # re-read the PR/issue a delivery names
     webhook_refresh_debounce_ms: 2000
+    webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

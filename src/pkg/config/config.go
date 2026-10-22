@@ -6218,11 +6218,32 @@ type DashboardStageTrackerConfig struct {
 	// the same item are coalesced before that one read is made, so a check
 	// fan-out costs one GET. 0 means the default (2000).
 	WebhookRefreshDebounceMS int `yaml:"webhook_refresh_debounce_ms,omitempty" json:"webhook_refresh_debounce_ms,omitempty"`
+	// WebhookRefreshReplayWindowS is how long, in seconds, a webhook re-read
+	// is remembered and re-applied to every status snapshot the governor
+	// publishes afterwards, so a cycle that enumerated the repository before
+	// the item closed cannot bring the row back when it publishes minutes
+	// later. Must cover the longest eval cycle. 0 means the default (1800).
+	WebhookRefreshReplayWindowS int `yaml:"webhook_refresh_replay_window_s,omitempty" json:"webhook_refresh_replay_window_s,omitempty"`
 }
 
 // defaultStageTrackerWebhookRefreshDebounce is the default
 // dashboard.stage_tracker.webhook_refresh_debounce_ms.
 const defaultStageTrackerWebhookRefreshDebounce = 2000 * time.Millisecond
+
+// defaultStageTrackerWebhookRefreshReplayWindow is the default
+// dashboard.stage_tracker.webhook_refresh_replay_window_s: the governor's
+// capped eval interval, so a snapshot enumerated at the start of the longest
+// cycle still has its webhook patches re-applied when it publishes.
+const defaultStageTrackerWebhookRefreshReplayWindow = 30 * time.Minute
+
+// StageTrackerWebhookRefreshReplayWindow is the effective
+// dashboard.stage_tracker.webhook_refresh_replay_window_s as a duration.
+func (c *Config) StageTrackerWebhookRefreshReplayWindow() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.WebhookRefreshReplayWindowS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.WebhookRefreshReplayWindowS) * time.Second
+	}
+	return defaultStageTrackerWebhookRefreshReplayWindow
+}
 
 // StageTrackerWebhookRefresh is the effective
 // dashboard.stage_tracker.webhook_refresh (default true).

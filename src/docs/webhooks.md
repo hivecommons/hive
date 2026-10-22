@@ -41,7 +41,7 @@ These are the acceptance criteria of #13373 and the tests that hold them.
 
 | Guarantee | How | Where |
 | --- | --- | --- |
-| **Closed on GitHub → gone within ≤ 10 s** | a `closed`/`merged` delivery triggers the confirming `GET`; the re-read removes the item from the activity monitor and the governor's snapshot; the debounce is `dashboard.stage_tracker.webhook_refresh_debounce_ms` (default `2000`) | `src/pkg/forgestate/webhook.go:34`, `src/pkg/github/webhook_item_patch.go:290` |
+| **Closed on GitHub → gone within ≤ 10 s** | a `closed`/`merged` delivery triggers the confirming `GET`; the re-read removes the item from the activity monitor and the governor's snapshot; the debounce is `dashboard.stage_tracker.webhook_refresh_debounce_ms` (default `2000`); the re-read is remembered for `dashboard.stage_tracker.webhook_refresh_replay_window_s` (default `1800`) and re-applied to every status snapshot published meanwhile, so an eval cycle that enumerated the item open before the close cannot bring the row back | `src/pkg/forgestate/webhook.go:34`, `src/pkg/github/webhook_item_patch.go:290` |
 | **Out-of-order deliveries are safe** | upserts compare `updated_at` (and head SHA for PRs); an older read never replaces a newer copy; a removal leaves a tombstone so a late "open" read cannot resurrect it | `src/pkg/forgestate/store.go:381` |
 | **403 mid-reconcile keeps last-good + `stale`** | a refused reconcile marks the repo `stale` and keeps the previous snapshot, patches included; counts are never published as zero | `src/pkg/forgestate/reconcile.go:143`, `src/pkg/github/enumerate_lastgood.go:39` |
 | **Own mutation visible before the next read** | write-through | `src/pkg/forgestate/writethrough.go:38` |
@@ -63,6 +63,7 @@ These are the acceptance criteria of #13373 and the tests that hold them.
 | `forgestate.freshness_bound_s` | `60` | maximum item age before merge/close/claim/kick re-reads it |
 | `forgestate.drift_threshold` | `0.05` | fraction of items a reconcile may find wrong before the interval shortens |
 | `dashboard.stage_tracker.webhook_refresh_debounce_ms` | `2000` | debounce of the single-item re-read a delivery queues |
+| `dashboard.stage_tracker.webhook_refresh_replay_window_s` | `1800` | how long a re-read is remembered and re-applied to every status snapshot the governor publishes, so a cycle that enumerated before the close cannot re-list the item |
 | health window | `2 × governor.eval_interval_s` (10 min at the defaults) | how recent the newest verified delivery must be for webhooks to count as healthy |
 | recovery hysteresis | `WebhookRecoveryHealthyWindows` = `2` | consecutive healthy windows required before the cadence returns to webhook mode after a degradation |
 

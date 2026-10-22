@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -300,18 +301,27 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 		s.statusMu.Unlock()
 		return
 	}
+	// Remembered before the lists are patched: a snapshot the governor is
+	// building right now (from the enumeration its cycle began with) still
+	// lists the item as it was, and will have these re-applied on publish.
+	s.rememberWebhookPatchesLocked(snaps, time.Now())
 	next := *cur
 	next.Repos = append([]FrontendRepo(nil), cur.Repos...)
 	changed := 0
 	for i := range next.Repos {
 		repo := &next.Repos[i]
 		name := overviewRepoName(*repo)
+		repoChanged := 0
 		for _, snap := range snaps {
 			if !strings.EqualFold(snap.Repo, name) && !strings.EqualFold(snap.Repo, repo.Name) {
 				continue
 			}
-			changed += patchFrontendRepoItem(repo, snap)
+			repoChanged += patchFrontendRepoItem(repo, snap)
 		}
+		if repoChanged > 0 {
+			recountRepoOpenItems(repo)
+		}
+		changed += repoChanged
 	}
 	if changed > 0 {
 		s.status = &next
@@ -320,6 +330,127 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 	if changed > 0 {
 		s.invalidateStageTrackerForWebhook()
 	}
+}
+
+// webhookPatchEntry is one remembered webhook re-read: the snapshot the GET
+// returned and when it was applied, for expiry.
+type webhookPatchEntry struct {
+	snap      github.WebhookItemSnapshot
+	appliedAt time.Time
+}
+
+// maxWebhookPatchEntries bounds the remembered re-reads whatever the replay
+// window: the oldest are forgotten first.
+const maxWebhookPatchEntries = 4096
+
+// webhookPatchReplayWindow is dashboard.stage_tracker.webhook_refresh_replay_window_s.
+func (s *Server) webhookPatchReplayWindow() time.Duration {
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		return s.deps.Config.StageTrackerWebhookRefreshReplayWindow()
+	}
+	return (*config.Config)(nil).StageTrackerWebhookRefreshReplayWindow()
+}
+
+// rememberWebhookPatchesLocked records snaps for replay (statusMu held).
+// The newest read of an item replaces the previous one, so a reopen after a
+// close is replayed as open; entries past the window or over the cap go.
+func (s *Server) rememberWebhookPatchesLocked(snaps []github.WebhookItemSnapshot, now time.Time) {
+	if s.webhookPatches == nil {
+		s.webhookPatches = map[string]webhookPatchEntry{}
+	}
+	for _, snap := range snaps {
+		if snap.Number <= 0 || snap.Repo == "" {
+			continue
+		}
+		s.webhookPatches[github.ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)] = webhookPatchEntry{snap: snap, appliedAt: now}
+	}
+	s.pruneWebhookPatchesLocked(now)
+}
+
+func (s *Server) pruneWebhookPatchesLocked(now time.Time) {
+	window := s.webhookPatchReplayWindow()
+	for key, e := range s.webhookPatches {
+		if now.Sub(e.appliedAt) > window {
+			delete(s.webhookPatches, key)
+		}
+	}
+	for len(s.webhookPatches) > maxWebhookPatchEntries {
+		oldestKey, oldest := "", time.Time{}
+		for key, e := range s.webhookPatches {
+			if oldestKey == "" || e.appliedAt.Before(oldest) {
+				oldestKey, oldest = key, e.appliedAt
+			}
+		}
+		delete(s.webhookPatches, oldestKey)
+	}
+}
+
+// replayWebhookPatchesLocked re-applies the remembered re-reads to status
+// (statusMu held) and reports how many list entries changed. A snapshot the
+// governor publishes was built from the enumeration its cycle started with,
+// so an item that closed mid-cycle is still listed open in it; the replay
+// takes it out again, as the live patch did minutes earlier. Monotonic: a
+// listed copy GitHub updated after the re-read (a reopen the next
+// enumeration saw) is left alone.
+func (s *Server) replayWebhookPatchesLocked(status *StatusPayload, now time.Time) int {
+	if status == nil || len(s.webhookPatches) == 0 {
+		return 0
+	}
+	s.pruneWebhookPatchesLocked(now)
+	changed := 0
+	for i := range status.Repos {
+		repo := &status.Repos[i]
+		name := overviewRepoName(*repo)
+		repoChanged := 0
+		for _, e := range s.webhookPatches {
+			snap := e.snap
+			if !strings.EqualFold(snap.Repo, name) && !strings.EqualFold(snap.Repo, repo.Name) {
+				continue
+			}
+			if held := frontendRepoItemUpdatedAt(*repo, snap.Number, snap.IsPR); !held.IsZero() && !snap.UpdatedAt.IsZero() && held.After(snap.UpdatedAt) {
+				continue
+			}
+			repoChanged += patchFrontendRepoItem(repo, snap)
+		}
+		if repoChanged > 0 {
+			recountRepoOpenItems(repo)
+		}
+		changed += repoChanged
+	}
+	return changed
+}
+
+// frontendRepoItemUpdatedAt is GitHub's updated_at on the listed copy of an
+// item, zero when the repo does not list it or the list has no timestamp.
+func frontendRepoItemUpdatedAt(repo FrontendRepo, number int, isPR bool) time.Time {
+	kind := "issue"
+	if isPR {
+		kind = "pr"
+	}
+	for _, it := range repoOpenItems(repo) {
+		if it.Kind != kind || it.Number != number {
+			continue
+		}
+		switch {
+		case it.Sidelined && isPR:
+			return it.WorkPR.UpdatedAt
+		case it.Sidelined:
+			return it.WorkIssue.UpdatedAt
+		case isPR:
+			return it.PR.pr.UpdatedAt
+		default:
+			return it.Issue.UpdatedAt
+		}
+	}
+	return time.Time{}
+}
+
+// recountRepoOpenItems makes the repo row's issue / PR totals follow its
+// patched item lists. Unlike reconcileRepoOpenItems it leaves the unlisted
+// remainder alone: an item a webhook took out was listed, not unlisted.
+func recountRepoOpenItems(r *FrontendRepo) {
+	counts := countOpenItems(repoOpenItems(*r))
+	r.Issues, r.PRs = counts.Issues, counts.PRs
 }
 
 // patchFrontendRepoItem rewrites every list entry of repo that names the
@@ -359,7 +490,12 @@ func patchFrontendRepoItem(repo *FrontendRepo, snap github.WebhookItemSnapshot) 
 		repo.OpenPrs = patch(repo.OpenPrs, func(raw any) (any, bool) { return patchPRAny(raw, snap) })
 		repo.HeldPrs = patch(repo.HeldPrs, func(raw any) (any, bool) { return patchPRAny(raw, snap) })
 		repo.NonActionablePrs = patch(repo.NonActionablePrs, func(raw any) (any, bool) { return patchWorkPRAny(raw, snap) })
-		return changed
+		if snap.Open() {
+			return changed
+		}
+		// GitHub's issues feed lists pull requests too; numbers are one
+		// namespace, so a same-numbered issue entry is that PR's copy and
+		// leaves with it rather than surfacing as an issue row.
 	}
 	repo.ActionableIssues = patch(repo.ActionableIssues, func(raw any) (any, bool) { return patchIssueAny(raw, snap) })
 	repo.HeldIssues = patch(repo.HeldIssues, func(raw any) (any, bool) { return patchIssueAny(raw, snap) })

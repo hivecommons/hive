@@ -638,3 +638,153 @@ func TestWebhookRefreshIgnoresPayloadStateAndTagsDelivery(t *testing.T) {
 		t.Fatal("open issue removed on the strength of the payload alone")
 	}
 }
+
+// A governor cycle publishes the snapshot it built from the enumeration it
+// began with. When a webhook re-read closed an item mid-cycle, that publish
+// still lists the item open; the remembered re-read is replayed so the row
+// does not come back (pluk#313: closed by a human, re-listed 4s later by the
+// in-flight cycle, gone again only when the next cycle re-enumerated).
+func TestUpdateStatusReplaysWebhookPatchesOverStaleSnapshot(t *testing.T) {
+	now := time.Date(2026, 10, 22, 2, 46, 0, 0, time.UTC)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return now }))
+	s, _ := stageTrackerFixture(t, now)
+	// A second fixture is the cycle-local snapshot the governor is still
+	// holding: same enumeration, PR 101 and issue 8 open.
+	staleOwner, _ := stageTrackerFixture(t, now)
+	stale := staleOwner.status
+	// The fixture never ran reconcileRepoOpenItems; counts follow the lists.
+	before := countOpenItems(repoOpenItems(stale.Repos[0]))
+	prsBefore, issuesBefore := before.PRs, before.Issues
+
+	closedAt := now.Add(-4 * time.Second)
+	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{
+		{Repo: "acme/console", Number: 101, IsPR: true, State: "closed", Title: "Fix redirect", UpdatedAt: closedAt},
+		{Repo: "acme/console", Number: 8, IsPR: false, State: "closed", Title: "Flaky test", UpdatedAt: closedAt},
+	})
+	s.statusMu.RLock()
+	live := s.status
+	s.statusMu.RUnlock()
+	for _, it := range s.buildStageTracker(live, s.stageStore, now).Items {
+		if (it.Kind == "pr" && it.Number == 101) || (it.Kind == "issue" && it.Number == 8) {
+			t.Fatalf("webhook close must drop %s #%d from the live tracker", it.Kind, it.Number)
+		}
+	}
+	if live.Repos[0].PRs != prsBefore-1 || live.Repos[0].Issues != issuesBefore-1 {
+		t.Fatalf("live counts prs=%d issues=%d, want %d/%d", live.Repos[0].PRs, live.Repos[0].Issues, prsBefore-1, issuesBefore-1)
+	}
+
+	// The in-flight cycle now publishes its stale snapshot.
+	s.UpdateStatus(stale)
+	s.statusMu.RLock()
+	published := s.status
+	s.statusMu.RUnlock()
+	if published != stale {
+		t.Fatal("the stale snapshot must still publish (the epoch guard is not what drops the row)")
+	}
+	for _, it := range s.buildStageTracker(published, s.stageStore, now).Items {
+		if (it.Kind == "pr" && it.Number == 101) || (it.Kind == "issue" && it.Number == 8) {
+			t.Fatalf("stale publish resurrected %s #%d", it.Kind, it.Number)
+		}
+	}
+	if published.Repos[0].PRs != prsBefore-1 || published.Repos[0].Issues != issuesBefore-1 {
+		t.Fatalf("replayed counts prs=%d issues=%d, want %d/%d", published.Repos[0].PRs, published.Repos[0].Issues, prsBefore-1, issuesBefore-1)
+	}
+	if published.Repos[0].UnlistedPRs != stale.Repos[0].UnlistedPRs {
+		t.Fatal("a replayed removal is not an unlisted item")
+	}
+	// Other rows are untouched.
+	trackerItem(t, s.buildStageTracker(published, s.stageStore, now), "pr", 102)
+}
+
+// The replay is monotonic: a listed copy GitHub updated after the re-read
+// (the next enumeration saw the item reopened) wins over the remembered close.
+func TestReplayWebhookPatchesKeepsNewerListedCopy(t *testing.T) {
+	now := time.Date(2026, 10, 22, 2, 46, 0, 0, time.UTC)
+	t.Cleanup(github.ResetWebhookTrackerForTestWithClock(func() time.Time { return now }))
+	s, _ := stageTrackerFixture(t, now)
+	closedAt := now.Add(-10 * time.Minute)
+	s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{
+		{Repo: "acme/console", Number: 101, IsPR: true, State: "closed", UpdatedAt: closedAt},
+	})
+
+	fresh, _ := stageTrackerFixture(t, now)
+	next := fresh.status
+	reopened := next.Repos[0].OpenPrs[0].(FrontendPR)
+	if reopened.Number != 101 {
+		t.Fatalf("fixture order changed: first open PR is #%d", reopened.Number)
+	}
+	reopened.UpdatedAt = closedAt.Add(2 * time.Minute)
+	next.Repos[0].OpenPrs = append([]any{reopened}, next.Repos[0].OpenPrs[1:]...)
+	s.UpdateStatus(next)
+	s.statusMu.RLock()
+	published := s.status
+	s.statusMu.RUnlock()
+	trackerItem(t, s.buildStageTracker(published, s.stageStore, now), "pr", 101)
+}
+
+// Remembered re-reads expire after the replay window and are capped.
+func TestWebhookPatchMemoryExpiresAndCaps(t *testing.T) {
+	now := time.Date(2026, 10, 22, 2, 46, 0, 0, time.UTC)
+	cfg := &config.Config{}
+	cfg.Dashboard.StageTracker.WebhookRefreshReplayWindowS = 60
+	s := &Server{deps: &Dependencies{Config: cfg}}
+	if s.webhookPatchReplayWindow() != time.Minute {
+		t.Fatalf("window = %s", s.webhookPatchReplayWindow())
+	}
+	s.rememberWebhookPatchesLocked([]github.WebhookItemSnapshot{
+		{Repo: "acme/console", Number: 1, IsPR: true, State: "closed"},
+		{Repo: "acme/console", Number: 0, IsPR: true, State: "closed"},
+		{Repo: "", Number: 2, IsPR: true, State: "closed"},
+	}, now)
+	if len(s.webhookPatches) != 1 {
+		t.Fatalf("remembered %d entries, want 1 (invalid keys skipped)", len(s.webhookPatches))
+	}
+	s.rememberWebhookPatchesLocked([]github.WebhookItemSnapshot{
+		{Repo: "acme/console", Number: 1, IsPR: true, State: "open"},
+	}, now.Add(30*time.Second))
+	if e := s.webhookPatches[github.ItemPatchKey("acme/console", 1, true)]; e.snap.State != "open" || len(s.webhookPatches) != 1 {
+		t.Fatalf("newest read must replace: %+v (n=%d)", e, len(s.webhookPatches))
+	}
+	s.pruneWebhookPatchesLocked(now.Add(91 * time.Second))
+	if len(s.webhookPatches) != 0 {
+		t.Fatalf("entry past the window must expire, have %d", len(s.webhookPatches))
+	}
+
+	snaps := make([]github.WebhookItemSnapshot, 0, maxWebhookPatchEntries+5)
+	for i := 1; i <= maxWebhookPatchEntries+5; i++ {
+		snaps = append(snaps, github.WebhookItemSnapshot{Repo: "acme/console", Number: i, IsPR: true, State: "closed"})
+	}
+	s.rememberWebhookPatchesLocked(snaps[:5], now)
+	s.rememberWebhookPatchesLocked(snaps[5:], now.Add(time.Second))
+	if len(s.webhookPatches) != maxWebhookPatchEntries {
+		t.Fatalf("cap: %d entries, want %d", len(s.webhookPatches), maxWebhookPatchEntries)
+	}
+	for i := 1; i <= 5; i++ {
+		if _, ok := s.webhookPatches[github.ItemPatchKey("acme/console", i, true)]; ok {
+			t.Fatalf("oldest entry #%d must be evicted first", i)
+		}
+	}
+	status := &StatusPayload{Repos: []FrontendRepo{{Name: "console", Full: "acme/console"}}}
+	if n := s.replayWebhookPatchesLocked(status, now.Add(time.Second)); n != 0 {
+		t.Fatalf("replay onto a repo that lists none of them changes %d, want 0", n)
+	}
+}
+
+func TestStageTrackerWebhookRefreshReplayWindowConfig(t *testing.T) {
+	var nilCfg *config.Config
+	if nilCfg.StageTrackerWebhookRefreshReplayWindow() != 30*time.Minute {
+		t.Fatalf("nil config default = %s", nilCfg.StageTrackerWebhookRefreshReplayWindow())
+	}
+	cfg := &config.Config{}
+	if cfg.StageTrackerWebhookRefreshReplayWindow() != 30*time.Minute {
+		t.Fatalf("zero config default = %s", cfg.StageTrackerWebhookRefreshReplayWindow())
+	}
+	cfg.Dashboard.StageTracker.WebhookRefreshReplayWindowS = 90
+	if cfg.StageTrackerWebhookRefreshReplayWindow() != 90*time.Second {
+		t.Fatal("explicit window must win")
+	}
+	cfg.Dashboard.StageTracker.WebhookRefreshReplayWindowS = -1
+	if cfg.StageTrackerWebhookRefreshReplayWindow() != 30*time.Minute {
+		t.Fatal("negative window falls back to the default")
+	}
+}

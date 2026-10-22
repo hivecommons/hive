@@ -115,8 +115,13 @@ type Server struct {
 	// patches its tracker row (webhook_tracker_refresh.go); built lazily.
 	webhookRefresh     *webhookTrackerRefresher
 	webhookRefreshOnce sync.Once
-	sidebar            interface{}
-	sidebarMu          sync.RWMutex
+	// webhookPatches remembers the webhook re-reads applied to the status
+	// snapshot so UpdateStatusIfFresh can re-apply them to a snapshot the
+	// governor built from an older enumeration (webhook_tracker_refresh.go).
+	// Guarded by statusMu.
+	webhookPatches map[string]webhookPatchEntry
+	sidebar        interface{}
+	sidebarMu      sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -2519,6 +2524,10 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	}
 	version, commit := fleetReportBuildInfo()
 	s.AttachFleetReport(status, version, commit, !s.FleetReportFilesUpstream())
+	// The governor built this snapshot from the enumeration its cycle began
+	// with; webhook re-reads that landed since (a PR closed mid-cycle) are
+	// re-applied so the publish cannot bring a gone row back.
+	s.replayWebhookPatchesLocked(status, time.Now())
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
 	status.StatusStaleDrops = s.statusStaleDrops
