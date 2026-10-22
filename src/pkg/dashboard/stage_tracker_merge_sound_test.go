@@ -124,8 +124,9 @@ func TestStageTrackerMergeSoundWiring(t *testing.T) {
 		`data-input-action="stageTrackerSetVolume"`,
 		`function hamSoundToggle() { stageTrackerSetSoundOn(!_stageTrackerSoundOn); }`,
 		`window.AudioContext || window.webkitAudioContext`,
-		`if (_stageTrackerAudioCtx.state === 'suspended')`,
-		`if (ctx.state === 'suspended') { stageTrackerSoundPrime(); return false; }`,
+		`if (ctx.state === 'running') return stageTrackerScheduleVoices(ctx, voice, count, gain, startOffsetS);`,
+		`stageTrackerResumeContext(ctx, STAGE_TRACKER_AUTO_RESUME_MS).then(`,
+		`() => stageTrackerSoundPrime());`,
 		`high.type = 'highpass';`,
 		`data[i] = snap + sizzle * env;`,
 		`ctx.createBufferSource()`,
@@ -478,10 +479,23 @@ func TestStageTrackerSoundSelection(t *testing.T) {
 		jsFunc(t, html, "stageTrackerClipVoice"),
 		jsFunc(t, html, "stageTrackerVoiceFor"),
 		jsFunc(t, html, "stageTrackerGainFor"),
+		jsConstLine(t, html, "STAGE_TRACKER_GESTURE_RESUME_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_AUTO_RESUME_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_BLOCKED_MSG"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_UNSUPPORTED_MSG"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOUND_PLAYING_LABEL"),
+		jsConstLine(t, html, "STAGE_TRACKER_ZAP_S"),
+		jsConstLine(t, html, "STAGE_TRACKER_BUZZ_S"),
+		jsFunc(t, html, "stageTrackerResumeContext"),
+		jsFunc(t, html, "stageTrackerScheduleVoices"),
 		jsFunc(t, html, "stageTrackerPlayVoices"),
+		jsFunc(t, html, "stageTrackerPlayOnGesture"),
+		jsFunc(t, html, "stageTrackerPlayingState"),
+		jsFunc(t, html, "stageTrackerScheduleSound"),
 		jsFunc(t, html, "stageTrackerPlaySound"),
 		jsFunc(t, html, "stageTrackerPlayZap"),
 		jsFunc(t, html, "stageTrackerPlayBuzz"),
+		jsFunc(t, html, "stageTrackerSoundLengthS"),
 		jsFunc(t, html, "stageTrackerSoundGate"),
 		jsFunc(t, html, "stageTrackerSetVolume"),
 		jsFunc(t, html, "stageTrackerSetSoundOn"),
@@ -584,7 +598,8 @@ setTimeout(() => {
     assert.strictEqual(stageTrackerSoundGate(), false, 'hidden tab is silent');
     document.hidden = false;
 
-    // Suspended context: nothing scheduled, caller told so.
+    // Suspended context without a working resume(): nothing scheduled
+    // synchronously, caller told so.
     fakeCtx.state = 'suspended';
     assert.strictEqual(stageTrackerPlayZap(1), false);
     // No context at all.
