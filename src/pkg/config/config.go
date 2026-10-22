@@ -3639,7 +3639,9 @@ type LabelsConfig struct {
 	// projects have used `lgtm` for exactly this decision for years, and a
 	// hive that hard-codes its own name either collides with that or forces
 	// every managed repo to grow a second label meaning the same thing.
-	// Defaults to DefaultAutoMergeLabel.
+	// Defaults to DefaultAutoMergeLabel. With Prow's commit binding, Hive
+	// binds `lgtm` via the `prow/lgtm` status; alternatively choose a
+	// distinct label such as `hive/auto-merge`.
 	AutoMerge string `yaml:"automerge"`
 	// Stage configures the hive-owned stage/NN-* pipeline labels
 	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
