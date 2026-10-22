@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 func TestBuildCostRecording_StaleWhenAgentModelsStopGrowing(t *testing.T) {
@@ -120,5 +122,20 @@ assert.ok(costRecordingNoticeText({stale: true, agent_models: ['a','b','c','d','
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("cost recording notice JS failed: %v\n%s", err, out)
+	}
+}
+
+func TestCostRecordingModelKeyMatchesTokensNormalizer(t *testing.T) {
+	for _, in := range []string{
+		"anthropic/claude-sonnet-5.5",
+		"bedrock/us.anthropic.claude-sonnet-4-6-20250514-v1:0",
+		"Claude Sonnet__5.5:free",
+	} {
+		if got, want := costRecordingModelKey(in), tokens.NormalizeModelID(in); got != want {
+			t.Errorf("costRecordingModelKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if a, b := costRecordingModelKey("anthropic/claude-sonnet-5.5"), costRecordingModelKey("claude-sonnet-5-5"); a != b {
+		t.Errorf("prefixed %q != bare %q", a, b)
 	}
 }
