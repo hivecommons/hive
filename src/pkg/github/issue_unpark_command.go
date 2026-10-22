@@ -1171,6 +1171,13 @@ var unparkHTMLCommentPattern = regexp.MustCompile(`<!--.*?(-->|$)`)
 // is untrusted: HTML comments are removed so no hive marker can be laundered
 // into the hive-authored notice, and @mentions are defanged so quoting the
 // option notifies nobody.
+//
+// Invariant: the byte offsets below mirror unparkOptionLetter and
+// unparkBoldOptionLetter, which have already validated the line's shape by
+// the time the guard on the first line passes. "Option X" lines yield a rest
+// starting at the single-byte letter; bold lines are "**X" after trimming
+// list markers, so b[2:] is the letter and rest[1:] skips it. Change those
+// parsers and this slicing together.
 func unparkOptionSummary(line string) string {
 	if unparkOptionLetter(line) == "" {
 		return ""

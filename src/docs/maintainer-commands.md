@@ -55,6 +55,11 @@ labels) is never handled by these commands.
 
 The "What to reply" notice lists the lettered options (`Option A:`,
 `**A.** …`) the issue body offers, or the newest Hive comment that lists them.
+Each option bullet ends with `: <summary>`, the rest of the option's first
+line with whitespace collapsed, HTML comments and `@mentions` removed, and cut
+to 160 characters with a trailing `…`. When the options came from a comment
+rather than the body, the notice opens with
+`The options are in [this comment](<url>).` so a reader can find them.
 `/hive approve` picks the recommended option when the text names one, else the
 first option. When there are no options and no recommendation, the notice
 offers only `/hive decision <your instructions>`.
