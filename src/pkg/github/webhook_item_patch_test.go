@@ -138,6 +138,46 @@ func TestApplyWebhookItem_BucketMovesAndUnknownPatchesInPlace(t *testing.T) {
 	}
 }
 
+// A PR that moves bucket on a webhook keeps the closing references its
+// previous row carried: the single REST read cannot see them, and the
+// re-bucketed row must not render "no linked issue" until the next
+// reconcile tick (hivecommons/hive#13448).
+func TestApplyWebhookItem_RebucketedPRKeepsLinkedIssues(t *testing.T) {
+	linked := []PRLinkedIssue{{Number: 1, Repo: "org/repo", Title: "one"}}
+	r := patchFixture()
+	r.PRs.Items[0].LinkedIssues = linked
+
+	// Actionable -> draft (sidelined WorkPR row).
+	draft := &RepoWorkPR{Repo: "org/repo", Number: 10, Bucket: "draft", Draft: true}
+	if !r.ApplyWebhookItem(WebhookItemSnapshot{Repo: "org/repo", Number: 10, IsPR: true, State: "open", Draft: true,
+		Patch: WebhookItemPatch{Bucket: WebhookBucketSidelined, WorkPR: draft}}) {
+		t.Fatal("expected a move")
+	}
+	got := r.WorkDetailsByRepo["org/repo"].PRs
+	if len(got) != 1 || len(got[0].LinkedIssues) != 1 || got[0].LinkedIssues[0].Number != 1 {
+		t.Fatalf("sidelined row lost linked issues: %+v", got)
+	}
+	if draft.LinkedIssues != nil {
+		t.Fatal("the caller's patch must not be mutated")
+	}
+
+	// Draft -> ready (actionable PullRequest row).
+	ready := &PullRequest{Repo: "org/repo", Number: 10, State: "open"}
+	r.ApplyWebhookItem(WebhookItemSnapshot{Repo: "org/repo", Number: 10, IsPR: true, State: "open",
+		Patch: WebhookItemPatch{Bucket: WebhookBucketActionable, PR: ready}})
+	if r.PRs.Count != 1 || len(r.PRs.Items[0].LinkedIssues) != 1 || r.PRs.Items[0].LinkedIssues[0].Number != 1 {
+		t.Fatalf("actionable row lost linked issues: %+v", r.PRs.Items)
+	}
+
+	// A read that already carries closing references wins over the old row.
+	fresh := []PRLinkedIssue{{Number: 2, Repo: "org/repo"}}
+	r.ApplyWebhookItem(WebhookItemSnapshot{Repo: "org/repo", Number: 10, IsPR: true, State: "open",
+		Patch: WebhookItemPatch{Bucket: WebhookBucketActionable, PR: &PullRequest{Repo: "org/repo", Number: 10, State: "open", LinkedIssues: fresh}}})
+	if li := r.PRs.Items[0].LinkedIssues; len(li) != 1 || li[0].Number != 2 {
+		t.Fatalf("fresh linked issues overwritten: %+v", li)
+	}
+}
+
 // FetchWebhookItemSnapshot classifies the single read for the governor:
 // one GET, no list call, and the bucket follows the same label gates as
 // the full enumeration.

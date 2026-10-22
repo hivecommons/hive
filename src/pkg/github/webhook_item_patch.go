@@ -358,6 +358,9 @@ func (r *ActionableResult) applyWebhookItem(snap WebhookItemSnapshot) bool {
 		return wasListed
 	}
 	p := snap.Patch
+	if snap.IsPR {
+		p = p.withLinkedIssues(prev.linkedIssues)
+	}
 	added := false
 	switch p.Bucket {
 	case WebhookBucketActionable:
@@ -447,15 +450,49 @@ func (r *ActionableResult) restoreUnknown(snap WebhookItemSnapshot, prev removed
 	return true
 }
 
+// withLinkedIssues returns the patch with known carried onto its PR and
+// WorkPR rows when the single read left them without closing references.
+// The webhook re-read is one REST GET and cannot see GitHub's
+// closingIssuesReferences (those come from the per-repo GraphQL query in
+// EnrichReviewSignalsAndWorkPRs), so a PR that moves bucket keeps the linked
+// issues the previous row had instead of rendering "no linked issue" until
+// the next reconcile tick (hivecommons/hive#13448). The rows are copied, so
+// the caller's patch is never mutated.
+func (p WebhookItemPatch) withLinkedIssues(known []PRLinkedIssue) WebhookItemPatch {
+	if len(known) == 0 {
+		return p
+	}
+	if p.PR != nil && len(p.PR.LinkedIssues) == 0 {
+		pr := *p.PR
+		pr.LinkedIssues = known
+		p.PR = &pr
+	}
+	if p.WorkPR != nil && len(p.WorkPR.LinkedIssues) == 0 {
+		w := *p.WorkPR
+		w.LinkedIssues = known
+		p.WorkPR = &w
+	}
+	return p
+}
+
 // removedItem is what removeItem took out, so restoreUnknown can put it back.
+// linkedIssues is the first non-empty closing-reference list seen on any
+// removed PR row, carried onto the re-bucketed row by applyWebhookItem.
 type removedItem struct {
-	repoKey   string
-	issue     *Issue
-	pr        *PullRequest
-	prHeld    bool
-	hold      *HoldItem
-	workIssue *RepoWorkIssue
-	workPR    *RepoWorkPR
+	repoKey      string
+	issue        *Issue
+	pr           *PullRequest
+	prHeld       bool
+	hold         *HoldItem
+	workIssue    *RepoWorkIssue
+	workPR       *RepoWorkPR
+	linkedIssues []PRLinkedIssue
+}
+
+func (rem *removedItem) noteLinkedIssues(li []PRLinkedIssue) {
+	if len(rem.linkedIssues) == 0 && len(li) > 0 {
+		rem.linkedIssues = li
+	}
 }
 
 // repoKeyFor finds the TotalByRepo / WorkDetailsByRepo key matching repo
@@ -485,9 +522,23 @@ func (r *ActionableResult) removeItem(repo string, number int, isPR bool) (remov
 	rem := removedItem{repoKey: r.repoKeyFor(repo)}
 	found := false
 	if isPR {
-		r.PRs.Items = filterPRs(r.PRs.Items, repo, number, func(pr PullRequest) { cp := pr; rem.pr = &cp; found = true })
-		r.PRs.Held = filterPRs(r.PRs.Held, repo, number, func(pr PullRequest) { cp := pr; rem.pr = &cp; rem.prHeld = true; found = true })
-		r.PRs.StaleDrafts = filterPRs(r.PRs.StaleDrafts, repo, number, func(PullRequest) { found = true })
+		r.PRs.Items = filterPRs(r.PRs.Items, repo, number, func(pr PullRequest) {
+			cp := pr
+			rem.pr = &cp
+			rem.noteLinkedIssues(pr.LinkedIssues)
+			found = true
+		})
+		r.PRs.Held = filterPRs(r.PRs.Held, repo, number, func(pr PullRequest) {
+			cp := pr
+			rem.pr = &cp
+			rem.prHeld = true
+			rem.noteLinkedIssues(pr.LinkedIssues)
+			found = true
+		})
+		r.PRs.StaleDrafts = filterPRs(r.PRs.StaleDrafts, repo, number, func(pr PullRequest) {
+			rem.noteLinkedIssues(pr.LinkedIssues)
+			found = true
+		})
 		r.Hold.Items = filterHold(r.Hold.Items, repo, number, "pr", func(h HoldItem) { cp := h; rem.hold = &cp; found = true })
 		if d, ok := r.WorkDetailsByRepo[rem.repoKey]; ok {
 			var kept []RepoWorkPR
@@ -495,6 +546,7 @@ func (r *ActionableResult) removeItem(repo string, number int, isPR bool) (remov
 				if sameItem(w.Repo, w.Number, repo, number) {
 					cp := w
 					rem.workPR = &cp
+					rem.noteLinkedIssues(w.LinkedIssues)
 					found = true
 					continue
 				}
