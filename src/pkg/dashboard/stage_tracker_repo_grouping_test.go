@@ -84,6 +84,8 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
 		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_VIAS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SOFT_LINK_TIP"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),

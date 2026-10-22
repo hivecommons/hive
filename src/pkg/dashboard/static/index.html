@@ -1401,6 +1401,8 @@
     .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
     .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
     .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
+    /* Issue slot naming an issue the PR only refers to (`Refs #N`, a `(#N, part 1)` title): a muted "refs" chip tells it from a closing link. */
+    .ham-issue-refs-chip { flex: 0 0 auto; margin-left: var(--sp-1); font-style: italic; }
     /* Repo chip before the number: monospace, tinted per repo from the
        --ham-repo-tint-N palette (slot = string hash), muted for the primary
        repo; a button that sets the Repo filter. Owner/repo rides its title. */
@@ -13425,6 +13427,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // could not resolve (the issue is closed and unreadable, or of unknown state).
     const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
     const STAGE_TRACKER_UNTITLED_ISSUE = '(title unavailable)';
+    // linked_issues[].via values that mark a reference link (`Refs #N`, a
+    // `(#N, part 1)` title, a first-paragraph mention) rather than a
+    // closing one; the issue slot draws these under a "refs" chip.
+    const STAGE_TRACKER_SOFT_LINK_VIAS = ['refs', 'title', 'mention'];
+    const STAGE_TRACKER_SOFT_LINK_TIP = 'Referenced by the PR (Refs #N / title), not closed by it';
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // 015 triage-needed: actionable but no maintainer has looked at it yet.
@@ -13955,7 +13962,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
-            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
+            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.soft ? ` <span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
@@ -14368,15 +14375,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the "no linked issue" placeholder when its body names none. A closed
     // issue whose title the server could not resolve shows the muted
     // STAGE_TRACKER_CLOSED_ISSUE_TITLE placeholder, never a blank.
+    // A link the server tagged with a soft `via` (refs / title / mention —
+    // the PR works towards the issue without closing it) carries soft: true
+    // so the row draws a "refs" chip beside it; a closing link never does.
     function stageTrackerPRIssueSlot(item) {
       const linked = (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0);
+      const soft = li => STAGE_TRACKER_SOFT_LINK_VIAS.indexOf(li.via || '') >= 0;
       const open = linked.find(li => Number(li.number) === Number(item.nested_under)) || linked.find(li => li.listed || (li.state || '') === 'open');
-      if (open) return { number: Number(open.number), title: open.title || '', url: open.url || '' };
+      if (open) {
+        const slot = { number: Number(open.number), title: open.title || '', url: open.url || '' };
+        if (soft(open)) slot.soft = true;
+        return slot;
+      }
       const li = linked.find(l => (l.state || '') === 'closed') || linked[0];
       if (li) {
         const closed = (li.state || '') === 'closed';
         const title = li.title || '';
-        return { number: Number(li.number), title: title, url: li.url || '', closed: closed, placeholder: !title && closed ? STAGE_TRACKER_CLOSED_ISSUE_TITLE : (!title ? STAGE_TRACKER_UNTITLED_ISSUE : '') };
+        const slot = { number: Number(li.number), title: title, url: li.url || '', closed: closed, placeholder: !title && closed ? STAGE_TRACKER_CLOSED_ISSUE_TITLE : (!title ? STAGE_TRACKER_UNTITLED_ISSUE : '') };
+        if (soft(li)) slot.soft = true;
+        return slot;
       }
       return { number: 0, text: 'no linked issue' };
     }

@@ -940,6 +940,14 @@ type PullRequest struct {
 	CommentCount      int             `json:"comment_count,omitempty"`
 	ReviewThreadCount int             `json:"review_thread_count,omitempty"`
 	LinkedIssues      []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// ReferencedIssues are the same-repo issues the PR's own title and body
+	// refer to (PRReferencedIssues: closing keywords GitHub did not derive,
+	// `Refs #N`, `(#N, part 1)` titles, first-paragraph mentions), each
+	// tagged with its Via. Read from the list payload, no extra call. The
+	// activity monitor falls back to them when LinkedIssues is empty so a
+	// PR that works towards an issue still sits on its row, drawn as a
+	// soft link.
+	ReferencedIssues []PRLinkedIssue `json:"referenced_issues,omitempty"`
 }
 
 // PRLinkedIssue is an issue GitHub reports a PR will close on merge
@@ -951,6 +959,9 @@ type PRLinkedIssue struct {
 	Repo   string `json:"repo,omitempty"`
 	State  string `json:"state,omitempty"`
 	URL    string `json:"url,omitempty"`
+	// Via is how the link was found: "" for GitHub's closing reference,
+	// else one of the PRLinkVia* values (pr_reference_links.go).
+	Via string `json:"via,omitempty"`
 }
 type PRReworkStats struct {
 	ReviewRounds        int       `json:"review_rounds,omitempty"`
@@ -1927,6 +1938,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					BaseRef:             prBaseRef(pr),
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
+					ReferencedIssues:    PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 				})
 			} else {
 				sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Held draft"))
@@ -1959,6 +1971,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					ReviewClass:        ClassifyReviewClass(pr.GetTitle(), labels),
 					RequestedReviewers: reqLogins,
 					RequestedTeams:     reqTeams,
+					ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 				})
 			}
 			continue
@@ -2016,6 +2029,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			BaseRef:            prBaseRef(pr),
 			RequestedReviewers: reqLogins,
 			RequestedTeams:     reqTeams,
+			ReferencedIssues:   PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 		})
 	}
 
@@ -4100,6 +4114,9 @@ type RepoWorkPR struct {
 	// monitor. Stamped by EnrichReviewSignalsAndWorkPRs, not by the
 	// enumeration.
 	LinkedIssues []PRLinkedIssue `json:"linked_issues,omitempty"`
+	// ReferencedIssues mirrors PullRequest.ReferencedIssues; stamped by the
+	// enumeration, which has the body.
+	ReferencedIssues []PRLinkedIssue `json:"referenced_issues,omitempty"`
 }
 
 // Work-detail buckets for sidelined PRs (RepoPRBreakdown field names).
@@ -4124,6 +4141,9 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 		URL:            pr.GetHTMLURL(),
 		Bucket:         bucket,
 		Reason:         reason,
+		// The list payload carries the body, so the soft issue links cost
+		// no extra call.
+		ReferencedIssues: PRReferencedIssues(pr.GetTitle(), pr.GetBody(), repo, pr.GetNumber()),
 	}
 }
 
