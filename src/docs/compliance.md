@@ -51,7 +51,7 @@ the cited publication for the authoritative requirement.
 - Each profile is a **subset** of its framework, not a full checklist. A
   control missing from a profile is not "passed": it is simply not mapped.
   Passing every row here says nothing about the controls that are absent.
-- `AC-2.ELIG` is a Hive-specific row, not a NIST control identifier. It marks
+- `ELIG-1` is a Hive-specific row, not a NIST control identifier. It marks
   the US-persons/location eligibility conditions that FedRAMP assessors ask
   about under AC-2 and AC-3.
 - The mapping of a setting to a control is a plausibility judgement by the
