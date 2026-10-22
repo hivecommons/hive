@@ -230,10 +230,10 @@ func TestEvaluateRuntimeEvidenceReEmitsUntilPostedAndRecovers(t *testing.T) {
 	if !strings.Contains(rec.Recoveries[0].Body, "panic_recovered") {
 		t.Fatalf("recovery body = %q", rec.Recoveries[0].Body)
 	}
-	// Runtime evidence must not leak into the hive-code-defect trigger.
+	// Runtime evidence only ever files under the runtime-error trigger.
 	for _, r := range first.Reports {
-		if r.Trigger == TriggerHiveDefect {
-			t.Fatalf("runtime evidence produced a defect report: %#v", r)
+		if r.Trigger != TriggerRuntimeError {
+			t.Fatalf("runtime evidence produced a non-runtime report: %#v", r)
 		}
 	}
 }
@@ -341,6 +341,9 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassGitHubAppTokenMintFailed, message: "github app token mint failed: POST /app/installations/123/access_tokens: 401"},
 		{class: ClassUnexpectedHub5xx, message: "hub heartbeat returned HTTP 503"},
 		{class: ClassUnclassifiedRepeated, message: "weird error from somewhere"},
+		{class: ClassAgentStall, message: "agent stalled after kick: 3 continue nudges sent without the pane moving"},
+		{class: ClassAgentCrashLoop, message: "agent crash loop: 5 failures within the backoff window"},
+		{class: ClassCIPollNudge, message: "ci-poll nudge: agent polling ci 4 times since last kick"},
 	}
 	seen := map[string]bool{}
 	for _, tc := range cases {
@@ -406,6 +409,102 @@ func TestRuntimeClassThresholdValues(t *testing.T) {
 	}
 	if got := Classes[ClassUnexpectedHub5xx].MinCount; got != hub5xxStreak {
 		t.Fatalf("unexpected_http_5xx_from_hub MinCount = %d, want %d", got, hub5xxStreak)
+	}
+	// The folded hive-code-defect triggers (#13470) keep the thresholds the
+	// dashboard synthesis used: three unrecovered stall nudges, one watchdog
+	// crash-loop latch, one CI-poll nudge per 24h window.
+	if s := Classes[ClassAgentStall]; s.MinCount != AgentStallNudgeStreak || AgentStallNudgeStreak != 3 || s.Severity != "medium" || s.Component != "agent-runtime" {
+		t.Fatalf("agent_stall = %+v", s)
+	}
+	if s := Classes[ClassAgentCrashLoop]; s.MinCount != 1 || s.Severity != "high" || s.Component != "agent-runtime" {
+		t.Fatalf("agent_crash_loop = %+v", s)
+	}
+	if s := Classes[ClassCIPollNudge]; s.MinCount != 1 || s.Window != 24*time.Hour || s.Severity != "low" {
+		t.Fatalf("ci_poll_nudge = %+v", s)
+	}
+}
+
+// The three folded classes behave like every other self-report: the stall
+// streak files once at the threshold, a recovery clears it so the next
+// streak starts from zero, the fingerprint ignores the per-event numbers and
+// the diagnostics are scrubbed.
+func TestFoldedDefectClassesThresholdDedupAndScrubbing(t *testing.T) {
+	now, advance := fakeClock(time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC))
+	tr := NewRuntimeTracker(now)
+	msg := func(n int) string {
+		return fmt.Sprintf("agent stalled after kick: %d continue nudge(s) sent without the pane moving (last kick 2026-10-21T11:58:00Z, 2m0s ago; pane frozen at hash deadbeefcafe)", n)
+	}
+	for i := 1; i < AgentStallNudgeStreak; i++ {
+		tr.Observe(ClassAgentStall, "scanner", msg(i), "agent=scanner lane=scanner token ghp_abcdefghijklmnopqrstuvwxyz123456")
+		advance(time.Minute)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("stall below the streak produced evidence: %#v", ev)
+	}
+	tr.Observe(ClassAgentStall, "scanner", msg(3), "agent=scanner lane=scanner token ghp_abcdefghijklmnopqrstuvwxyz123456")
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Count != 3 || ev[0].Agent != "scanner" || ev[0].Class != ClassAgentStall {
+		t.Fatalf("stall evidence = %#v", ev)
+	}
+	if strings.Contains(ev[0].Diagnostics, "ghp_abcdefghijklmnopqrstuvwxyz123456") || !strings.Contains(ev[0].Diagnostics, "lane=scanner") {
+		t.Fatalf("stall diagnostics not scrubbed / lost context: %q", ev[0].Diagnostics)
+	}
+	if !strings.Contains(ev[0].Message, "continue nudge") {
+		t.Fatalf("stall message lost its context: %q", ev[0].Message)
+	}
+	// Per-event numbers (count, kick time, pane hash) never fork the issue.
+	if RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(3)), "v5") != RuntimeFingerprint(ClassAgentStall, NormalizeMessage(msg(7)), "v5") {
+		t.Fatal("stall fingerprint varies with the nudge count")
+	}
+	// Two agents stalling are two conditions on one fingerprint, not two issues.
+	tr.Observe(ClassAgentStall, "quality", msg(3), "")
+	tr.Observe(ClassAgentStall, "quality", msg(4), "")
+	tr.Observe(ClassAgentStall, "quality", msg(5), "")
+	if ev := tr.Evidence(); len(ev) != 2 {
+		t.Fatalf("expected one condition per agent, got %#v", ev)
+	}
+	// Recovery clears the streak; a single new nudge is not a report.
+	tr.Clear(ClassAgentStall, "scanner")
+	tr.Observe(ClassAgentStall, "scanner", msg(1), "")
+	for _, e := range tr.Evidence() {
+		if e.Agent == "scanner" {
+			t.Fatalf("stall streak survived a recovery: %#v", e)
+		}
+	}
+
+	// Crash loop: the watchdog latch is the threshold; one observation files.
+	tr.Observe(ClassAgentCrashLoop, "quality", "agent crash loop: 5 failures within the backoff window", "agent=quality class=crash failures=5 cap=5")
+	var crash []Evidence
+	for _, e := range tr.Evidence() {
+		if e.Class == ClassAgentCrashLoop {
+			crash = append(crash, e)
+		}
+	}
+	if len(crash) != 1 || crash[0].Severity != "high" || crash[0].Count != 1 {
+		t.Fatalf("crash-loop evidence = %#v", crash)
+	}
+	tr.Clear(ClassAgentCrashLoop, "quality")
+
+	// CI-poll nudge: one per window; the 24h window keeps a stale nudge from
+	// resurfacing after the evidence TTL.
+	tr.Observe(ClassCIPollNudge, "scanner", "ci-poll nudge: agent polling ci 4 times since last kick", "")
+	found := false
+	for _, e := range tr.Evidence() {
+		if e.Class == ClassCIPollNudge {
+			found = true
+			if e.Window != 24*time.Hour || e.Severity != "low" {
+				t.Fatalf("ci-poll evidence = %#v", e)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("ci-poll nudge did not qualify on first observation")
+	}
+	advance(25 * time.Hour)
+	for _, e := range tr.Evidence() {
+		if e.Class == ClassCIPollNudge {
+			t.Fatalf("stale ci-poll nudge still reported: %#v", e)
+		}
 	}
 }
 

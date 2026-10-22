@@ -151,14 +151,14 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 		hive = report.InstanceID
 	}
 	if opts.SeenCommentAllowed {
-		body := report.Body
-		if report.Trigger == fleetreport.TriggerRuntimeError {
-			var ev fleetreport.Evidence
-			if len(report.Evidence) > 0 {
-				ev = report.Evidence[0]
-			}
-			body = fleetreport.SeenComment(report.Fingerprint, hive, opts.Version, opts.Cluster, ev, opts.now())
+		// Every trigger joins with the short "also seen" comment (#13470);
+		// re-posting the whole report body as a comment was the legacy
+		// ACMM-shortfall behaviour and buried the thread.
+		var ev fleetreport.Evidence
+		if len(report.Evidence) > 0 {
+			ev = report.Evidence[0]
 		}
+		body := fleetreport.SeenComment(report.Fingerprint, hive, opts.Version, opts.Cluster, ev, opts.now())
 		if err := c.CreateIssueComment(ctx, repo, num, body); err != nil {
 			return out, fmt.Errorf("commenting on fleet report: %w", err)
 		}
@@ -169,19 +169,20 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 			c.logger.Warn("fleet report: could not add +1 reaction", "issue", num, "error", err)
 		}
 	}
-	if report.Trigger == fleetreport.TriggerRuntimeError {
-		if !ghIssueHasLabel(existing, fleetreport.LabelSelfReport) {
-			if err := c.EnsureIssueLabel(ctx, repo, fleetreport.LabelSelfReport, "d93f0b", "Filed or joined automatically by a hive self-report"); err == nil {
-				_ = c.AddLabels(ctx, repo, num, []string{fleetreport.LabelSelfReport})
-			}
+	// Identity enrichment applies to every trigger (#13470): the self-report
+	// label so the join-first search finds the issue, and the Affected-hives
+	// block naming this hive, its owners and repos.
+	if !ghIssueHasLabel(existing, fleetreport.LabelSelfReport) {
+		if err := c.EnsureIssueLabel(ctx, repo, fleetreport.LabelSelfReport, "d93f0b", "Filed or joined automatically by a hive self-report"); err == nil {
+			_ = c.AddLabels(ctx, repo, num, []string{fleetreport.LabelSelfReport})
 		}
-		entry := fleetreport.AffectedHive{Hive: hive, Name: report.HiveName, URL: report.SpokeURL, Instance: report.InstanceID, Owners: report.Owners, OwnersHidden: report.OwnersHidden, Last: opts.now()}
-		if newBody, changed := fleetreport.UpdateAffected(existing.GetBody(), entry, report.Repos, opts.SeenCommentAllowed); changed {
-			if _, _, err := c.client.Issues.Edit(ctx, owner, name, num, &gh.IssueRequest{Body: gh.Ptr(logscrub.ScrubString(newBody))}); err != nil {
-				c.logger.Warn("fleet report: could not update affected-hives block", "issue", num, "error", err)
-			} else {
-				out.BodyUpdated = true
-			}
+	}
+	entry := fleetreport.AffectedHive{Hive: hive, Name: report.HiveName, URL: report.SpokeURL, Instance: report.InstanceID, Owners: report.Owners, OwnersHidden: report.OwnersHidden, Last: opts.now()}
+	if newBody, changed := fleetreport.UpdateAffected(existing.GetBody(), entry, report.Repos, opts.SeenCommentAllowed); changed {
+		if _, _, err := c.client.Issues.Edit(ctx, owner, name, num, &gh.IssueRequest{Body: gh.Ptr(logscrub.ScrubString(newBody))}); err != nil {
+			c.logger.Warn("fleet report: could not update affected-hives block", "issue", num, "error", err)
+		} else {
+			out.BodyUpdated = true
 		}
 	}
 	c.recordWriteAudit(AuditActionFleetReportPosted, hiveWriteMeta(),
@@ -236,6 +237,28 @@ func (c *Client) firstIssueMatching(ctx context.Context, query string) (*gh.Issu
 		return issue, nil
 	}
 	return nil, nil
+}
+
+// PostFleetReportRollup posts an ACMM-shortfall roll-up comment on the open
+// self-report issue it folds onto (#13470). It is the same write as a
+// cleared comment: one comment, no label or body edit, never a close.
+func (c *Client) PostFleetReportRollup(ctx context.Context, repo string, issueNumber int, report fleetreport.Report) error {
+	if c == nil || c.client == nil {
+		return ErrNoGitHubClient
+	}
+	if issueNumber <= 0 {
+		return fmt.Errorf("fleet report roll-up issue number is required")
+	}
+	if strings.TrimSpace(repo) == "" {
+		repo = fleetReportRepo
+	}
+	if err := c.CreateIssueComment(ctx, repo, issueNumber, report.Body); err != nil {
+		return err
+	}
+	c.recordWriteAudit(AuditActionFleetReportPosted, hiveWriteMeta(),
+		WriteTarget{Repo: repo, Number: issueNumber},
+		"outcome", auditOutcomeCommented, "fingerprint", report.Fingerprint, "rollup_of", report.RollupOf)
+	return nil
 }
 
 // PostFleetReportCleared posts the one-time "cleared on <hive>" comment.

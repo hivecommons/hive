@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"io"
 	"log/slog"
 	"strings"
@@ -428,6 +429,8 @@ func TestDeadAgentRestartWithExponentialBackoff(t *testing.T) {
 }
 
 func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
+	tr := fleetreport.NewRuntimeTracker(nil)
+	fleetreport.SetDefaultTrackerForTest(t, tr)
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -463,6 +466,12 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	if !alerter.has(crashLoopAlertID("a1")) {
 		t.Fatal("crash loop must raise a dashboard alert")
 	}
+	// The latch is the agent_crash_loop self-report (#13470): one evidence
+	// entry naming the agent with the classifier detail as diagnostics.
+	ev := crashLoopEvidence(tr)
+	if len(ev) != 1 || ev[0].Agent != "a1" || ev[0].Count != 1 || !strings.Contains(ev[0].Diagnostics, "agent=a1") || !strings.Contains(ev[0].Diagnostics, "failures=") {
+		t.Fatalf("crash-loop self-report evidence = %#v", ev)
+	}
 
 	// Escalation is latched AND the agent is now paused: further ticks are
 	// observation-only.
@@ -471,9 +480,24 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	if fleet.pauseCount() != 1 || fleet.restartCount() != 2 {
 		t.Fatal("latched crash loop must not pause or restart again")
 	}
+	if ev := crashLoopEvidence(tr); len(ev) != 1 || ev[0].Count != 1 {
+		t.Fatalf("latched crash loop re-observed on later sweeps: %#v", ev)
+	}
+}
+
+func crashLoopEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
+	var out []fleetreport.Evidence
+	for _, e := range tr.Evidence() {
+		if e.Class == fleetreport.ClassAgentCrashLoop {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func TestHealthyWindowResetsFailuresAndClearsAlert(t *testing.T) {
+	tr := fleetreport.NewRuntimeTracker(nil)
+	fleetreport.SetDefaultTrackerForTest(t, tr)
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -524,6 +548,9 @@ func TestHealthyWindowResetsFailuresAndClearsAlert(t *testing.T) {
 	}
 	if alerter.has(crashLoopAlertID("a1")) {
 		t.Fatal("recovery must clear the crash loop alert")
+	}
+	if ev := crashLoopEvidence(tr); len(ev) != 0 {
+		t.Fatalf("recovery must clear the crash-loop self-report: %#v", ev)
 	}
 }
 
@@ -1042,6 +1069,8 @@ func TestObserveModeTakesNoAction(t *testing.T) {
 // TestObserveModeRecordsCrashLoopWithoutPausing covers the terminal decision:
 // the entry an operator reads to decide whether to enable heal.
 func TestObserveModeRecordsCrashLoopWithoutPausing(t *testing.T) {
+	tr := fleetreport.NewRuntimeTracker(nil)
+	fleetreport.SetDefaultTrackerForTest(t, tr)
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -1066,6 +1095,9 @@ func TestObserveModeRecordsCrashLoopWithoutPausing(t *testing.T) {
 	r.mu.Unlock()
 	if looping {
 		t.Fatal("observe mode must not latch CrashLooping — latching would suppress the evidence observe exists to produce")
+	}
+	if ev := crashLoopEvidence(tr); len(ev) != 0 {
+		t.Fatalf("observe mode must not self-report a crash loop it did not latch (would inflate per sweep): %#v", ev)
 	}
 	entries := alerter.auditsFor(auditActionPause + observedSuffix)
 	if len(entries) != 1 {

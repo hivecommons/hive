@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 // Fleet is the reconciler's window onto the agent manager. Implemented by
@@ -545,6 +547,9 @@ func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cl
 		r.audit(auditActionHealthyReset,
 			fmt.Sprintf("continuously ready for %v; failure counter cleared (was %d, crash_looping=%v)",
 				r.settings.HealthyReset, rec.Failures, rec.CrashLooping), name)
+		if rec.CrashLooping {
+			fleetreport.Clear(fleetreport.ClassAgentCrashLoop, name)
+		}
 		rec.Failures = 0
 		rec.CrashLooping = false
 		rec.BackoffUntil = time.Time{}
@@ -601,6 +606,11 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 		rec.CrashLooping = true
 		r.logger.Error("watchdog: crash loop, escalating to pause",
 			"agent", name, "failures", rec.Failures, "class", string(cls.Class))
+		// Self-report (#13470, was the hive-code-defect "agent crash loop"
+		// counter): the latch fires once per episode and the healthy-window
+		// reset below clears it, so the fleet issue tracks real episodes.
+		fleetreport.Observe(fleetreport.ClassAgentCrashLoop, name, reason,
+			fmt.Sprintf("agent=%s %s backoff_ladder=%v healthy_reset=%s", name, detail, r.settings.Backoff, r.settings.HealthyReset))
 		if r.alerter != nil {
 			r.alerter.AddSystemAlert(crashLoopAlertID(name), severityError,
 				fmt.Sprintf("Agent %q is crash-looping (%d failed restarts) and has been paused by the watchdog. Investigate, then resume it from the dashboard.", name, rec.Failures))

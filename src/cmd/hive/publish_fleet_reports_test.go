@@ -83,6 +83,11 @@ func TestPublishFleetReports_PostsReportAndRecordsState(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues/7/reactions":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		// Every join enriches the issue (#13470): label + Affected block.
+		case strings.Contains(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": fleetreport.LabelSelfReport})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.String())
 			http.NotFound(w, r)

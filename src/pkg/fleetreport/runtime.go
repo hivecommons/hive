@@ -14,9 +14,8 @@ import (
 )
 
 // TriggerRuntimeError is the fleet-report trigger for the "unusual runtime
-// error" allow-list below (hivecommons/hive#11868). Unlike the two older
-// triggers it needs no ACMM shortfall and no component allowlist: the class
-// itself is the attribution.
+// error" allow-list below (hivecommons/hive#11868). Unlike the ACMM-shortfall
+// trigger it needs no unmet criterion: the class itself is the attribution.
 const TriggerRuntimeError = "runtime-error"
 
 // Runtime error classes. Each is an explicit allow-list entry: an error site
@@ -34,6 +33,14 @@ const (
 	ClassGitHubAppTokenMintFailed = "github_app_token_mint_failed"
 	ClassUnexpectedHub5xx         = "unexpected_http_5xx_from_hub"
 	ClassUnclassifiedRepeated     = "unclassified_error_repeated"
+	// ClassAgentStall, ClassAgentCrashLoop and ClassCIPollNudge replace the
+	// retired hive-code-defect trigger (hivecommons/hive#13470): the harness
+	// counters that used to be synthesised into a bare "Fleet report: …
+	// hive-code defect" issue are now observed at the hook site that owns
+	// them, so the report carries kick/pane context like every other class.
+	ClassAgentStall     = "agent_stall"
+	ClassAgentCrashLoop = "agent_crash_loop"
+	ClassCIPollNudge    = "ci_poll_nudge"
 )
 
 const (
@@ -51,6 +58,16 @@ const (
 	// condition is cleared on the next accepted request) make it reportable,
 	// so a single blip during a hub rollout is not filed upstream.
 	hub5xxStreak = 3
+	// AgentStallNudgeStreak is how many "continue" nudges an inference agent
+	// must swallow without the pane moving before the stall is reportable; a
+	// single nudge is the designed self-recovery working. A recovery (the pane
+	// moved after a nudge) clears the condition, so the count is consecutive
+	// unrecovered nudges — the same bar the retired dashboard synthesis
+	// applied as StallNudges − StallRecoveries.
+	AgentStallNudgeStreak = 3
+	// ciPollNudgeWindow is the window a CI-poll nudge report claims: the
+	// harness caps the nudge at one per kick, so recurrence is per day.
+	ciPollNudgeWindow = 24 * time.Hour
 	// runtimeEventTTL bounds how long a condition that is never cleared keeps
 	// producing evidence; anything older is dropped on the next snapshot.
 	runtimeEventTTL = 24 * time.Hour
@@ -94,6 +111,9 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubAppTokenMintFailed: {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
 	ClassUnexpectedHub5xx:         {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
 	ClassUnclassifiedRepeated:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow},
+	ClassAgentStall:               {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
+	ClassAgentCrashLoop:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
+	ClassCIPollNudge:              {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
 }
 
 // IsKnownClass reports whether class is on the allow-list.
@@ -474,6 +494,26 @@ func SeenMarker(fp, hive string) string {
 	return fmt.Sprintf("%shive=%s fp=%s -->", SelfReportSeenMarkerPrefix, labelValue(hive), safeToken(fp))
 }
 
+// SelfReportLabels is the label set every hive-filed report carries: the
+// fleet-report / self-report / origin / kind / triage labels that exist in
+// the report repo, plus the per-report severity, trigger and (when set)
+// class. Sorted so bodies and tests are stable.
+func SelfReportLabels(trigger, severity, class string) []string {
+	labels := []string{LabelFleetReport, LabelSelfReport, LabelOriginSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(severity), "trigger:" + labelValue(trigger)}
+	if strings.TrimSpace(class) != "" {
+		labels = append(labels, "class:"+labelValue(class))
+	}
+	sort.Strings(labels)
+	return labels
+}
+
+// CoreSelfReportLabels is the subset of SelfReportLabels that is known to
+// exist in the report repo; a creator that cannot create labels falls back
+// to it rather than filing an unlabelled issue.
+func CoreSelfReportLabels() []string {
+	return []string{LabelFleetReport, LabelSelfReport, LabelOriginSelfReport, LabelKindBug, LabelNeedsTriage}
+}
+
 // BuildRuntimeReport renders a runtime-error report. hive is the display
 // identity (hub slug for hosted spokes, anonymous instance otherwise); the
 // owner logins come from obs.Owners unless obs.OwnersHidden.
@@ -481,23 +521,13 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if strings.TrimSpace(hive) == "" {
 		hive = instance
 	}
-	labels := []string{LabelFleetReport, LabelSelfReport, LabelOriginSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
-	sort.Strings(labels)
+	labels := SelfReportLabels(TriggerRuntimeError, ev.Severity, ev.Class)
 	title := fmt.Sprintf("[selfreport] %s: %s", ev.Class, ShortMessage(ev.Message))
 	var b strings.Builder
 	fmt.Fprintf(&b, "<!-- hive-fleet-fingerprint:%s -->\n<!-- hive-fleet-instance:%s -->\n%s\n\n", fp, instance, SelfReportMarker(fp, hive))
 	fmt.Fprintf(&b, "A hive hit an unusual runtime error (class `%s`) and is reporting it so the same defect across the fleet lands in one issue.\n\n", ev.Class)
 	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
-	fmt.Fprintf(&b, "| hive | %s |\n", hive)
-	name, spokeURL := NormalizeHiveName(obs.HiveName), NormalizeSpokeURL(obs.SpokeURL)
-	fmt.Fprintf(&b, "| %s | %s |\n", HiveNameField, emptyDash(name))
-	fmt.Fprintf(&b, "| %s | %s |\n", SpokeField, SpokeLink(name, hive, spokeURL))
-	fmt.Fprintf(&b, "| anonymous instance | %s |\n", instance)
-	fmt.Fprintf(&b, "| owner(s) | %s |\n", OwnerMentions(obs.Owners, obs.OwnersHidden))
-	fmt.Fprintf(&b, "| hive version | %s |\n", version)
-	fmt.Fprintf(&b, "| hive commit | %s |\n", commit)
-	fmt.Fprintf(&b, "| cluster | %s |\n", emptyDash(safeToken(obs.Cluster)))
-	fmt.Fprintf(&b, "| mode | %s |\n", emptyDash(safeToken(obs.Mode)))
+	name, spokeURL := writeIdentityRows(&b, obs, hive, instance, version, commit)
 	fmt.Fprintf(&b, "| component | %s |\n", ev.Component)
 	fmt.Fprintf(&b, "| scope | %s |\n", emptyDash(ev.Agent))
 	fmt.Fprintf(&b, "| message | %s |\n", emptyDash(strings.ReplaceAll(ev.Message, "|", "\\|")))
@@ -515,15 +545,39 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if itemRepo != "" {
 		repos = NormalizeRepos(append(append([]string(nil), watched...), itemRepo))
 	}
-	owners := NormalizeLogins(obs.Owners)
-	if obs.OwnersHidden {
-		owners = nil
-	}
+	owners := reportOwners(obs)
 	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Name: name, URL: spokeURL, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1, Last: now}}, Repos: repos, Seen: 1}.Render())
 	if ev.Diagnostics != "" {
 		fmt.Fprintf(&b, "\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>\n", ev.Diagnostics)
 	}
 	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, HiveName: name, SpokeURL: spokeURL, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
+}
+
+// writeIdentityRows writes the WHO rows of an evidence table — hive, hive
+// name, spoke link, anonymous instance, owner(s), version, commit, cluster,
+// mode — and returns the normalised hive name and spoke URL. Every hive-filed
+// report shares them (#13211, #12529, #13470).
+func writeIdentityRows(b *strings.Builder, obs Observation, hive, instance, version, commit string) (name, spokeURL string) {
+	fmt.Fprintf(b, "| hive | %s |\n", hive)
+	name, spokeURL = NormalizeHiveName(obs.HiveName), NormalizeSpokeURL(obs.SpokeURL)
+	fmt.Fprintf(b, "| %s | %s |\n", HiveNameField, emptyDash(name))
+	fmt.Fprintf(b, "| %s | %s |\n", SpokeField, SpokeLink(name, hive, spokeURL))
+	fmt.Fprintf(b, "| anonymous instance | %s |\n", instance)
+	fmt.Fprintf(b, "| owner(s) | %s |\n", OwnerMentions(obs.Owners, obs.OwnersHidden))
+	fmt.Fprintf(b, "| hive version | %s |\n", version)
+	fmt.Fprintf(b, "| hive commit | %s |\n", commit)
+	fmt.Fprintf(b, "| cluster | %s |\n", emptyDash(safeToken(obs.Cluster)))
+	fmt.Fprintf(b, "| mode | %s |\n", emptyDash(safeToken(obs.Mode)))
+	return name, spokeURL
+}
+
+// reportOwners is the owner login list a report names: obs.Owners
+// normalised, or nil when the operator hid them.
+func reportOwners(obs Observation) []string {
+	if obs.OwnersHidden {
+		return nil
+	}
+	return NormalizeLogins(obs.Owners)
 }
 
 // maxReposInTable bounds the repos / owners cells of the evidence table; the

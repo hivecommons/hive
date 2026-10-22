@@ -72,6 +72,11 @@ func TestEnsureFleetReportCommentsAndReactsOnFingerprintMatch(t *testing.T) {
 			reactions.Add(1)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		// Every join now enriches the issue (#13470): label + Affected block.
+		case strings.Contains(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": fleetreport.LabelSelfReport})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -376,6 +381,71 @@ func TestPostFleetReportClearedCommentsOnConfiguredRepo(t *testing.T) {
 	}
 	var nilClient *Client
 	if err := nilClient.PostFleetReportCleared(context.Background(), "", 1, "x"); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client err=%v", err)
+	}
+}
+
+// An ACMM-shortfall report that matches an existing issue by fingerprint
+// gets the same treatment as a self-report (#13470): the short "also seen"
+// comment rather than a re-post of the whole body, the hive/selfreport
+// label, and an Affected-hives entry naming the hive and its owners.
+func TestEnsureFleetReportWithOptionsEnrichesACMMJoin(t *testing.T) {
+	existing := map[string]any{"number": 9, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/9", "body": "Fleet report: merge blocks Merge success rate\n\nfull body", "user": map[string]any{"login": "hive-bot"}}
+	f := &selfReportFakeGitHub{t: t, fingerprintHit: &existing}
+	srv := httptest.NewServer(f.handler())
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := fleetreport.Report{
+		Fingerprint: "fp-acmm", Trigger: fleetreport.TriggerACMMShortfall, Criterion: "merge-success-rate",
+		Title: "Fleet report: merge blocks Merge success rate [hosted-aslom]", Body: "## Fleet report\n\nlong evidence body that must not be re-posted",
+		Labels:     fleetreport.SelfReportLabels(fleetreport.TriggerACMMShortfall, "high", ""),
+		Evidence:   []fleetreport.Evidence{{Component: "merge", ErrorClass: "structurally unmergeable hive PR", Count: 3, Window: time.Hour}},
+		InstanceID: "inst-aslom", Owners: []string{"alice"}, Repos: []string{"acme/widgets"}, HiveName: "Aslom", SpokeURL: "https://aslom.hive.example",
+	}
+	opts := selfReportTestOptions()
+	opts.JoinExisting = false
+	res, err := c.EnsureFleetReportWithOptions(context.Background(), report, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Created || !res.Joined || !res.Commented || res.Number != 9 || f.creates.Load() != 0 {
+		t.Fatalf("result = %#v creates=%d", res, f.creates.Load())
+	}
+	if len(f.comments) != 1 || strings.Contains(f.comments[0], "long evidence body") || !strings.Contains(f.comments[0], "hive:selfreport-seen hive=hosted-aslom fp=fp-acmm") || !strings.Contains(f.comments[0], "Also seen on **hosted-aslom**") {
+		t.Fatalf("comments = %q", f.comments)
+	}
+	if !strings.Contains(strings.Join(f.labelsAdded, ","), fleetreport.LabelSelfReport) {
+		t.Fatalf("hive/selfreport not added on ACMM join: %v", f.labelsAdded)
+	}
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], "Affected hives (1):") || !strings.Contains(f.bodyPatches[0], "@alice") || !strings.Contains(f.bodyPatches[0], "acme/widgets") || !res.BodyUpdated {
+		t.Fatalf("body patches = %q", f.bodyPatches)
+	}
+}
+
+func TestPostFleetReportRollupCommentsOnTargetIssue(t *testing.T) {
+	var path, body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.Method + " " + r.URL.Path
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		body, _ = req["body"].(string)
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	report := fleetreport.Report{Fingerprint: "fp-acmm", RollupOf: "fp-self", Trigger: fleetreport.TriggerACMMShortfall, Body: "ACMM shortfall rolled up"}
+	if err := c.PostFleetReportRollup(context.Background(), "acme/fork", 21, report); err != nil || path != "POST /repos/acme/fork/issues/21/comments" || body != "ACMM shortfall rolled up" {
+		t.Fatalf("err=%v path=%q body=%q", err, path, body)
+	}
+	if err := c.PostFleetReportRollup(context.Background(), "", 22, report); err != nil || path != "POST /repos/hivecommons/hive/issues/22/comments" {
+		t.Fatalf("default repo: err=%v path=%q", err, path)
+	}
+	if err := c.PostFleetReportRollup(context.Background(), "", 0, report); err == nil {
+		t.Fatal("roll-up without a target issue number must fail")
+	}
+	var nilClient *Client
+	if err := nilClient.PostFleetReportRollup(context.Background(), "", 1, report); !errors.Is(err, ErrNoGitHubClient) {
 		t.Fatalf("nil client err=%v", err)
 	}
 }

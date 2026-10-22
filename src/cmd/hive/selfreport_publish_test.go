@@ -25,6 +25,8 @@ type fakeSelfReportWriter struct {
 	ensures   []github.FleetReportOptions
 	cleared   []int
 	recovered []int
+	rollups   []int
+	rollupMsg []string
 	lookup    func(fp string) (github.FleetReportResult, bool, error)
 }
 
@@ -43,6 +45,12 @@ func (f *fakeSelfReportWriter) PostFleetReportCleared(_ context.Context, _ strin
 		return errors.New("not a cleared comment: " + body)
 	}
 	f.cleared = append(f.cleared, n)
+	return nil
+}
+
+func (f *fakeSelfReportWriter) PostFleetReportRollup(_ context.Context, _ string, n int, report fleetreport.Report) error {
+	f.rollups = append(f.rollups, n)
+	f.rollupMsg = append(f.rollupMsg, report.Body)
 	return nil
 }
 
@@ -190,13 +198,52 @@ func TestPublishFleetReportsHonoursClosedCooldownAndClearedComment(t *testing.T)
 	if !srv.FleetReportState().Open["fp-r"].Recovered {
 		t.Fatal("recovery not recorded")
 	}
-	// Legacy triggers keep the old recovery (comment + close-if-owner) path.
+	// ACMM shortfalls keep the recovery (comment + close-if-owner) path.
 	srv.UpdateFleetReportState(func(st *fleetreport.State) {
-		st.Open["fp-d"] = fleetreport.OpenIssue{Number: 3, OpenedByHive: true, Trigger: fleetreport.TriggerHiveDefect, PostedAt: now}
+		st.Open["fp-d"] = fleetreport.OpenIssue{Number: 3, OpenedByHive: true, Trigger: fleetreport.TriggerACMMShortfall, Criterion: "green-ci-streak", PostedAt: now}
 	})
-	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: "fp-d", Trigger: fleetreport.TriggerHiveDefect, Body: "r"}}}, deps)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: "fp-d", Trigger: fleetreport.TriggerACMMShortfall, Criterion: "green-ci-streak", Body: "r"}}}, deps)
 	if len(w.recovered) != 1 || w.recovered[0] != 3 {
-		t.Fatalf("legacy recovery = %v", w.recovered)
+		t.Fatalf("acmm recovery = %v", w.recovered)
+	}
+}
+
+// An ACMM shortfall that Evaluate rolled up onto this hive's open
+// self-report (#13470) is posted as one comment on that issue, never as a
+// new issue, and its state entry points at the self-report.
+func TestPublishFleetReportsRollsUpOntoOpenSelfReport(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		t.Fatal("a roll-up must not reach the create/join writer")
+		return github.FleetReportResult{}, nil
+	}}
+	deps := selfReportDeps(w, &now)
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open["fp-self"] = fleetreport.OpenIssue{Number: 21, URL: "https://github.com/hivecommons/hive/issues/21", OpenedByHive: true, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassAgentStall, Component: "agent-runtime", PostedAt: now}
+	})
+	report := fleetreport.Report{Fingerprint: "fp-acmm", Trigger: fleetreport.TriggerACMMShortfall, Criterion: "green-ci-streak", RollupOf: "fp-self", Body: "rolled up", Evidence: []fleetreport.Evidence{{Component: "agent-runtime"}}}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{report}}, deps)
+	if len(w.rollups) != 1 || w.rollups[0] != 21 || w.rollupMsg[0] != "rolled up" {
+		t.Fatalf("rollups=%v msgs=%v", w.rollups, w.rollupMsg)
+	}
+	got := srv.FleetReportState().Open["fp-acmm"]
+	if got.Number != 21 || got.OpenedByHive || !got.Joined || got.RollupOf != "fp-self" || got.Component != "agent-runtime" || got.Trigger != fleetreport.TriggerACMMShortfall {
+		t.Fatalf("state = %+v", got)
+	}
+	if len(srv.FleetReportState().Filings) != 0 {
+		t.Fatal("a roll-up must not count as a new filing")
+	}
+
+	// A target that has no issue number yet is skipped, not created.
+	w2 := &fakeSelfReportWriter{ensure: w.ensure}
+	srv2 := selfReportTestServer(t)
+	srv2.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open["fp-self"] = fleetreport.OpenIssue{Trigger: fleetreport.TriggerRuntimeError, Component: "agent-runtime"}
+	})
+	publishFleetReportsWith(context.Background(), slog.Default(), srv2, &fleetreport.Result{Reports: []fleetreport.Report{report}}, selfReportDeps(w2, &now))
+	if len(w2.rollups) != 0 || srv2.FleetReportState().Open["fp-acmm"].Number != 0 {
+		t.Fatalf("rollup without a target number: rollups=%v state=%+v", w2.rollups, srv2.FleetReportState().Open["fp-acmm"])
 	}
 }
 

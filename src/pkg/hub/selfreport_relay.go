@@ -323,8 +323,9 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		// hive/selfreport only: the hive/<id> provenance label is retired
 		// (hivecommons/hive#12539); the seen marker above names the hive.
 		_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{selfReportRelayLabel})
-		// Only hive-filed runtime-error issues carry the block; the hub never
-		// appends one to an observation or ACMM report.
+		// Every hive-filed report (runtime-error and ACMM shortfall, #13470)
+		// carries the block; observation issues do not, and the hub never
+		// appends one to them.
 		if strings.Contains(existing.Body, fleetreport.AffectedBlockStart) {
 			if newBody, changed := fleetreport.UpdateAffected(existing.Body, s.selfReportAffectedEntry(req, time.Now()), req.Repos, true); changed {
 				if err := patchHubGitHubIssueBody(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, newBody); err != nil && s.logger != nil {
@@ -372,8 +373,13 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	}
 	res, status, err := postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, labels)
 	if err != nil && status == http.StatusUnprocessableEntity {
-		// Unknown labels: retry without them rather than lose the report.
-		res, _, err = postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, nil)
+		// Unknown labels: retry with the label set that is known to exist
+		// rather than lose the report — and never with none at all, which is
+		// how hivecommons/hive#13465 landed unlabelled (#13470).
+		res, status, err = postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, selfReportFallbackLabels(req.Class))
+		if err != nil && status == http.StatusUnprocessableEntity {
+			res, _, err = postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, []string{selfReportRelayLabel})
+		}
 	}
 	if err != nil {
 		release()
@@ -387,6 +393,17 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		s.logger.Info("selfreport relay: created issue", "hive", req.HiveID, "issue", res.Number, "class", req.Class)
 	}
 	writeSelfReportRelayResponse(w, http.StatusCreated, selfReportRelayResponse{OK: true, Number: res.Number, URL: res.URL})
+}
+
+// selfReportFallbackLabels is the create retry's label set when the spoke's
+// full set was rejected: the core self-report labels plus the observation
+// label for observation reports. All of them exist in the report repo.
+func selfReportFallbackLabels(class string) []string {
+	labels := fleetreport.CoreSelfReportLabels()
+	if class == selfReportObservationClass {
+		labels = append(labels, selfReportObservationLabel)
+	}
+	return labels
 }
 
 // selfReportObservationBelongsToHive reads the evidence field emitted by

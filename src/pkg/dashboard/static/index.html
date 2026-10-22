@@ -23717,8 +23717,8 @@ function burnAreaChart() {
         r = r || {};
         const evidence = Array.isArray(r.evidence) ? r.evidence : [];
         const ev = evidence[0] || null;
-        const trigger = r.trigger || (r.criterion ? 'acmm-shortfall' : 'hive-code-defect');
-        const subject = r.criterion || trigger;
+        const trigger = r.trigger || (r.criterion ? 'acmm-shortfall' : 'runtime-error');
+        const subject = r.criterion || r.class || trigger;
         const title = recovered ? 'Recovered: ' : '';
         // A recovery carries no evidence by construction (fleetreport.go
         // RecoveryReport builds it from fingerprint/instance/criterion/trigger
@@ -23730,7 +23730,7 @@ function burnAreaChart() {
         if (recovered) {
           detail = r.criterion
             ? `No longer observing the ACMM shortfall for ${escapeHtml(r.criterion)}.`
-            : 'No longer observing the reported hive-code defect.';
+            : 'No longer observing the reported runtime condition.';
         } else if (ev) {
           const periodic = ev.periodicity ? `; periodic ${escapeHtml(ev.periodicity)}` : '';
           const where = ev.window ? ` in ${escapeHtml(ev.window)}` : '';
@@ -23744,13 +23744,13 @@ function burnAreaChart() {
           <span class="mark">${recovered ? '✓' : i + 1}</span>
           <div class="crit-body"><div class="crit-name">${title}${escapeHtml(subject)}</div>
           ${detail ? `<div class="crit-detail">${detail}</div>` : ''}
-          <div class="crit-cmp">trigger: ${escapeHtml(trigger)}${fp ? `; fingerprint ${escapeHtml(fp.slice(0, 12))}…` : ''}</div></div>
+          <div class="crit-cmp">trigger: ${escapeHtml(trigger)}${r.rollup_of ? '; rolls up onto open self-report' : ''}${fp ? `; fingerprint ${escapeHtml(fp.slice(0, 12))}…` : ''}</div></div>
         </li>`;
       };
       const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
       const recoveryHtml = recoveries.map((r, i) => mk(r, i, true)).join('');
       section.style.display = '';
-      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale">Persistent ACMM shortfalls, hive-code defect symptoms and unusual runtime errors. Reports contain shape-only scrubbed evidence.</span></div>${selfReports.html}<ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale">Persistent ACMM shortfalls and hive-owned runtime conditions (stalls, crash loops, kick failures, panics). Reports contain shape-only scrubbed evidence.</span></div>${selfReports.html}<ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
       applySectionCollapse('fleet-report-section');
     }
 

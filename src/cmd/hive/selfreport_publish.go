@@ -56,6 +56,7 @@ type selfReportWriter interface {
 	EnsureFleetReportWithOptions(ctx context.Context, report fleetreport.Report, opts github.FleetReportOptions) (github.FleetReportResult, error)
 	PostFleetReportRecovery(ctx context.Context, issueNumber int, report fleetreport.Report, closeIfOwner bool) error
 	PostFleetReportCleared(ctx context.Context, repo string, issueNumber int, body string) error
+	PostFleetReportRollup(ctx context.Context, repo string, issueNumber int, report fleetreport.Report) error
 	FleetReportIssue(ctx context.Context, fingerprint string) (github.FleetReportResult, bool, error)
 }
 
@@ -243,10 +244,36 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 					}
 				}
 			}
+		} else if report.RollupOf != "" {
+			// An ACMM shortfall folding onto this hive's open self-report
+			// (#13470): one comment there, no new issue. The target is the
+			// self-report's own state entry; without a number there is
+			// nothing to comment on yet and the next cycle retries.
+			target := state.Open[report.RollupOf]
+			if target.Number <= 0 {
+				continue
+			}
+			if deps.gh != nil {
+				err = deps.gh.PostFleetReportRollup(ctx, deps.repo, target.Number, report)
+			} else if deps.relay != nil {
+				// The hub joins by fingerprint; sending the target's makes it
+				// comment on the self-report rather than create an issue.
+				_, err = deps.relay(ctx, selfReportRelayRequest{
+					HiveID: deps.hiveSlug, Fingerprint: report.RollupOf, Class: report.Class, Title: report.Title, Body: report.Body,
+					Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
+					InstanceID: report.InstanceID, Repos: report.Repos, Owners: report.Owners, OwnersHidden: report.OwnersHidden,
+					HiveName: report.HiveName, SpokeURL: report.SpokeURL,
+				})
+			} else {
+				err = errSelfReportNoDirectWriter
+			}
+			if err == nil {
+				write = github.FleetReportResult{Number: target.Number, URL: target.URL, Joined: true, Commented: true}
+			}
 		} else {
 			opts := github.FleetReportOptions{
 				Repo: deps.repo, HiveSlug: deps.hiveSlug, Version: deps.version, Cluster: deps.cluster,
-				Now: deps.now, JoinExisting: report.Trigger == fleetreport.TriggerRuntimeError, SeenCommentAllowed: seenAllowed,
+				Now: deps.now, JoinExisting: true, SeenCommentAllowed: seenAllowed,
 			}
 			// The cap and gap apply to NEW issues only; joining never counts.
 			// We cannot know before the search whether this will be a create, so
@@ -305,6 +332,10 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			o.BodyHash = fleetreport.StableBodyHash(report.Body)
 			o.PostedAt = now.UTC()
 			o.Class, o.Trigger, o.Deferred = report.Class, report.Trigger, ""
+			o.RollupOf = report.RollupOf
+			if len(report.Evidence) > 0 {
+				o.Component = report.Evidence[0].Component
+			}
 			if write.Commented || created {
 				o.LastSeenCommentAt = now.UTC()
 			}

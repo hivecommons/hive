@@ -21,10 +21,6 @@ import (
 // knowledge.SetBaseDirForTest convention.
 var fleetReportStatePath = "/data/fleet-report-state.json"
 
-// fleetStallNudgeMinEvents mirrors fleetreport's unexported periodicMinEvents:
-// the recurrence bar before a stall nudge count becomes evidence.
-const fleetStallNudgeMinEvents = 3
-
 // SetFleetReportStatePathForTest redirects fleet-report state persistence to
 // path for the lifetime of t.
 func SetFleetReportStatePathForTest(t interface {
@@ -245,43 +241,13 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		}
 		out = append(out, fleetreport.Evidence{Component: component, Agent: fault.Name, ErrorClass: errClass, Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
 	}
-	for _, a := range status.Agents {
-		// An agent blocked on inference (auth, quota, provider outage) is an
-		// operator/upstream condition, not a hive code defect; the runtime
-		// tracker reports genuine hive-side classes separately.
-		// a.Restarts is a cumulative process restart counter that every cadence
-		// kick increments, so it cannot distinguish a crash loop from healthy
-		// scheduled cycling. Only an explicit crash state is evidence here.
-		if strings.Contains(strings.ToLower(a.State), "crash") {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent crash loop", Count: maxInt(1, a.Restarts), Severity: "high", Attributable: true})
-			continue
-		}
-		// a.StallNudges is a cumulative since-boot counter of harness "continue"
-		// nudges, so a single nudge is the designed self-recovery working, not a
-		// hive defect, and the count has no window. Nudges after which the pane
-		// moved again (a.StallRecoveries) are self-recovery and are excluded.
-		// Report a stall only while the agent currently reads as stalled or once
-		// unrecovered nudges recur.
-		unrecovered := maxInt(0, a.StallNudges-a.StallRecoveries)
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || unrecovered >= fleetStallNudgeMinEvents {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, unrecovered), Severity: "medium", Attributable: true})
-		}
-		// #9673: the harness backstop nudges an agent that keeps polling CI
-		// on its own PR, but a nonzero count here means the nudge fired at
-		// least once and is worth fleet-level visibility even though the
-		// per-kick cap keeps any single incident from repeating.
-		if a.CIPollNudges > 0 {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "CI-poll nudge", Count: a.CIPollNudges, Window: 24 * time.Hour, Severity: "low", Attributable: true})
-		}
-	}
+	// Agent stalls, crash loops and CI-poll nudges used to be synthesised
+	// here from the status payload's bare counters into a standalone
+	// hive-code-defect report. They are runtime-tracker classes now
+	// (agent_stall, agent_crash_loop, ci_poll_nudge; #13470), observed at
+	// the hook site that owns each counter with the kick/pane context the
+	// counter alone never carried, so they arrive via DefaultTracker above.
 	return out
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (s *Server) MarkFleetReportPosted(fp string, number int, url string, openedByHive bool, body string) {

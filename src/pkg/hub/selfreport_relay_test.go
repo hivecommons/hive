@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -683,5 +684,65 @@ func TestSelfReportHiveIdentityFallsBackToRegistryAndPlaceholder(t *testing.T) {
 	}
 	if name, u := s.selfReportHiveIdentity(selfReportRelayRequest{HiveID: "h9"}, nil); name != "" || u != "" {
 		t.Fatalf("unknown hive = %q %q", name, u)
+	}
+}
+
+// When GitHub rejects the spoke's label set (422: unknown label), the relay
+// retries with the core self-report labels and finally hive/selfreport
+// alone — never with no labels, which is how hivecommons/hive#13465 landed
+// unlabelled (#13470).
+func TestHubSelfReportIngestCreateRetriesWithKnownLabelsNeverNone(t *testing.T) {
+	resetSelfReportRate(t)
+	var mu sync.Mutex
+	var labelSets [][]string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/search/issues":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{}})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			var payload struct {
+				Labels []string `json:"labels"`
+			}
+			raw, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(raw, &payload)
+			mu.Lock()
+			labelSets = append(labelSets, payload.Labels)
+			n := len(labelSets)
+			mu.Unlock()
+			if n < 3 {
+				http.Error(w, `{"message":"Validation Failed"}`, http.StatusUnprocessableEntity)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 43, "html_url": "https://github.com/hivecommons/hive/issues/43"})
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusTeapot)
+		}
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := strings.Replace(selfReportValidBody, `"labels":["fleet-report","hive/selfreport"]`, `"labels":["fleet-report","hive/selfreport","class:agent-stall","severity:medium"]`, 1)
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(labelSets) != 3 {
+		t.Fatalf("create attempts = %d, want 3: %v", len(labelSets), labelSets)
+	}
+	core := strings.Join(fleetreport.CoreSelfReportLabels(), ",")
+	if strings.Join(labelSets[1], ",") != core {
+		t.Fatalf("second attempt labels = %v, want core set %q", labelSets[1], core)
+	}
+	if len(labelSets[2]) != 1 || labelSets[2][0] != selfReportRelayLabel {
+		t.Fatalf("final attempt labels = %v, want just %s", labelSets[2], selfReportRelayLabel)
+	}
+	for i, ls := range labelSets {
+		if len(ls) == 0 {
+			t.Fatalf("attempt %d sent no labels", i+1)
+		}
+	}
+	obs := selfReportFallbackLabels(selfReportObservationClass)
+	if !strings.Contains(strings.Join(obs, ","), selfReportObservationLabel) {
+		t.Fatalf("observation fallback labels = %v", obs)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
@@ -900,8 +901,29 @@ func creditStallRecoveryLocked(agent *AgentProcess, paneHash string) {
 	}
 	if agent.lastInferKickPane != "" && paneHash != agent.lastInferKickPane {
 		agent.StallRecoveries++
+		fleetreport.Clear(fleetreport.ClassAgentStall, agent.Name)
 	}
 	agent.stallNudgeSent = false
+}
+
+// stallNudgeTailLines bounds the pane excerpt attached to an agent_stall
+// self-report as scrubbed diagnostics.
+const stallNudgeTailLines = 15
+
+// observeStallNudgeLocked self-reports a swallowed "continue" nudge
+// (#13470): the tracker applies the AgentStallNudgeStreak threshold and a
+// recovery (creditStallRecoveryLocked / the pane moving after a nudge)
+// clears the condition, so the count is consecutive unrecovered nudges.
+// Numbers and timestamps in the message are normalised out of the
+// fingerprint, so one issue per hive version collects every agent. Caller
+// holds m.mu.
+func observeStallNudgeLocked(agent *AgentProcess, pane string, now time.Time) {
+	sinceKick := now.Sub(agent.lastInferKickAt).Round(time.Minute)
+	msg := fmt.Sprintf("agent stalled after kick: %d continue nudge(s) sent without the pane moving (last kick %s, %s ago; pane frozen at hash %s)",
+		agent.StallNudges, agent.lastInferKickAt.UTC().Format(time.RFC3339), roundDurationForHumans(sinceKick), agent.lastInferKickPane)
+	diag := fmt.Sprintf("agent=%s lane=%s backend=%s stall_nudges=%d stall_recoveries=%d kick_stall_timeout=%s\n--- pane tail (%d lines) ---\n%s",
+		agent.Name, agent.Config.Role, effectiveBackend(agent), agent.StallNudges, agent.StallRecoveries, inferenceKickStallTimeout, stallNudgeTailLines, paneTail(pane, stallNudgeTailLines))
+	fleetreport.Observe(fleetreport.ClassAgentStall, agent.Name, msg, diag)
 }
 
 // nudgeIfKickStalled watches an inference agent after a kick and corrects
@@ -957,6 +979,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		agent.stallNudgeSent = true
 		agent.StallNudges++
 		totalNudges := agent.StallNudges
+		observeStallNudgeLocked(agent, pane, now)
 		m.mu.Unlock()
 
 		m.logger.Warn("inference agent stalled after kick, sending continue nudge",
@@ -973,6 +996,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		// The pane moved after a stall nudge: the nudge recovered the stall.
 		agent.StallRecoveries++
 		agent.stallNudgeSent = false
+		fleetreport.Clear(fleetreport.ClassAgentStall, agent.Name)
 	}
 
 	// The pane moved since the kick — the CLI consumed it and the response
@@ -1361,7 +1385,21 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	m.mu.Lock()
 	agent.ciPollNudgeSent = true
 	agent.CIPollNudges++
+	totalCIPollNudges := agent.CIPollNudges
+	lane := agent.Config.Role
+	var sinceKick time.Duration
+	if agent.LastKick != nil {
+		sinceKick = time.Since(*agent.LastKick).Round(time.Minute)
+	}
 	m.mu.Unlock()
+
+	// Self-report (#13470, was the hive-code-defect "CI-poll nudge" counter):
+	// the harness caps the nudge at one per kick, so every observation is a
+	// distinct kick the agent spent polling its own CI.
+	fleetreport.Observe(fleetreport.ClassCIPollNudge, agent.Name,
+		fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
+		fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s\n--- pane tail (%d lines) ---\n%s",
+			agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
 
 	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
 	m.tmuxSendLiteralForAgent(agent, ciPollNudgeMessage)

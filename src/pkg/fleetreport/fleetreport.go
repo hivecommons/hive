@@ -23,8 +23,10 @@ import (
 
 const (
 	TriggerACMMShortfall = "acmm-shortfall"
-	TriggerHiveDefect    = "hive-code-defect"
 	TriggerObservation   = "observation"
+	// legacyTriggerHiveDefect is the retired standalone "hive-code defect"
+	// trigger (#13470); it survives only to recognise old state entries.
+	legacyTriggerHiveDefect = "hive-code-defect"
 
 	PersistentUnmetEpochs = 2
 	DefaultEvidenceWindow = 10 * time.Minute
@@ -150,6 +152,12 @@ type OpenIssue struct {
 	Trigger      string `json:"trigger,omitempty"`
 	BodyHash     string `json:"body_hash,omitempty"`
 	Class        string `json:"class,omitempty"`
+	// Component is the hive component the issue is about; an ACMM shortfall
+	// on the same component rolls up onto an open self-report instead of
+	// filing its own issue (#13470). RollupOf is set on the shortfall's own
+	// entry when it did: Number/URL then name the self-report issue.
+	Component string `json:"component,omitempty"`
+	RollupOf  string `json:"rollup_of,omitempty"`
 	// Joined is true when this hive added itself to an issue it did not open.
 	Joined bool `json:"joined,omitempty"`
 	// PostedAt is when this hive last wrote (create/comment) to the issue.
@@ -173,6 +181,11 @@ type Report struct {
 	Trigger     string     `json:"trigger"`
 	Evidence    []Evidence `json:"evidence"`
 	Recovered   bool       `json:"recovered,omitempty"`
+	// RollupOf, when set, names the fingerprint of this hive's open
+	// self-report that this ACMM-shortfall report rolls up onto: the
+	// publisher posts Body as a comment there instead of filing a standalone
+	// issue (#13470).
+	RollupOf string `json:"rollup_of,omitempty"`
 	// Class and Hive are set for runtime-error and observation reports.
 	Class string `json:"class,omitempty"`
 	Hive  string `json:"hive,omitempty"`
@@ -292,8 +305,11 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		sort.Strings(res.OperatorCriteria)
 	}
 
+	now := obs.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
 	active := map[string]bool{}
-	coveredByACMM := map[string]bool{}
 	for key, name := range unmetKeys {
 		if len(state.Criteria[key].Epochs) < PersistentUnmetEpochs {
 			continue
@@ -305,7 +321,6 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			fp := Fingerprint(ev.ErrorClass, ev.Component, version, key)
 			report := BuildReport(obs, key, name, ev, fp, instance, version, commit)
 			active[fp] = true
-			coveredByACMM[evidenceKey(ev)] = true
 			open := state.Open[fp]
 			wasRecovered := open.Recovered
 			if wasRecovered {
@@ -318,6 +333,19 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			if open.Trigger == "" {
 				open.Trigger = TriggerACMMShortfall
 			}
+			open.Component = report.Evidence[0].Component
+			if open.Number == 0 || open.RollupOf != "" {
+				// No standalone issue yet (or already rolled up): if this hive
+				// has an open self-report about the same component on this
+				// version, the shortfall is one more symptom of that defect
+				// and rolls up onto it rather than opening a second, thinner
+				// issue. A roll-up whose target closed starts over standalone.
+				if target, ok := OpenSelfReportFor(state, ev.Component); ok {
+					report = RollupReport(report, target, obs.HiveSlug, instance, version)
+				} else if open.RollupOf != "" {
+					open = OpenIssue{Criterion: open.Criterion, Trigger: open.Trigger, Component: open.Component}
+				}
+			}
 			state.Open[fp] = open
 			if dryRun || wasRecovered || open.Number == 0 || open.BodyHash != StableBodyHash(report.Body) {
 				res.Reports = append(res.Reports, report)
@@ -325,32 +353,6 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		}
 	}
 
-	for _, ev := range obs.Evidence {
-		if ev.Class != "" || !ev.Attributable || !isHiveCodeEvidence(ev) || coveredByACMM[evidenceKey(ev)] {
-			continue
-		}
-		fp := DefectFingerprint(ev.ErrorClass, ev.Component, ev.Agent, version)
-		report := BuildDefectReport(obs, ev, fp, instance, version, commit)
-		active[fp] = true
-		open := state.Open[fp]
-		wasRecovered := open.Recovered
-		if wasRecovered {
-			open.Recovered = false
-			open.BodyHash = ""
-		}
-		if open.Trigger == "" {
-			open.Trigger = TriggerHiveDefect
-		}
-		state.Open[fp] = open
-		if dryRun || wasRecovered || open.Number == 0 || open.BodyHash != StableBodyHash(report.Body) {
-			res.Reports = append(res.Reports, report)
-		}
-	}
-
-	now := obs.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
 	for _, ev := range obs.Evidence {
 		if ev.Class == "" || !IsKnownClass(ev.Class) {
 			continue
@@ -366,6 +368,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		}
 		open.Trigger = TriggerRuntimeError
 		open.Class = ev.Class
+		open.Component = ev.Component
 		state.Open[fp] = open
 		// A runtime report is re-emitted while the hive has not yet written
 		// to an issue for it; once posted, the publisher owns the once-per-24h
@@ -376,6 +379,12 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 	}
 
 	for fp, open := range state.Open {
+		if openTrigger(open) == legacyTriggerHiveDefect {
+			// Retired trigger (#13470): forget the entry so the state file
+			// does not carry dead fingerprints forever.
+			delete(state.Open, fp)
+			continue
+		}
 		if open.Recovered || active[fp] {
 			continue
 		}
@@ -385,8 +394,6 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			if _, stillUnmet := unmetKeys[open.Criterion]; !stillUnmet {
 				res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Criterion: open.Criterion, Trigger: trigger}))
 			}
-		case TriggerHiveDefect:
-			res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Trigger: trigger}))
 		case TriggerRuntimeError:
 			res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Trigger: trigger, Class: open.Class, Hive: obs.HiveSlug}))
 		}
@@ -508,73 +515,86 @@ func observationCell(value string) string {
 	return value
 }
 
+// BuildReport renders an ACMM-shortfall report. It carries the same identity
+// rows, label set and Affected-hives block as a runtime-error report so a
+// maintainer can see WHO is affected and the join path can enrich it (#13470).
 func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidence, fingerprint, instance, version, commit string) Report {
-	criterionLabel := "criterion:" + criterionKey
-	componentLabel := "component:" + labelValue(ev.Component)
-	severityLabel := "severity:" + labelValue(ev.Severity)
-	versionLabel := "version:" + labelValue(version)
-	instanceLabel := "instance:" + instance
-	triggerLabel := "trigger:" + TriggerACMMShortfall
-	labels := []string{"fleet-report", componentLabel, severityLabel, versionLabel, instanceLabel, criterionLabel, triggerLabel}
+	hive := strings.TrimSpace(obs.HiveSlug)
+	if hive == "" {
+		hive = instance
+	}
+	labels := SelfReportLabels(TriggerACMMShortfall, ev.Severity, "")
+	labels = append(labels, "criterion:"+criterionKey)
 	sort.Strings(labels)
 	title := fmt.Sprintf("Fleet report: %s blocks %s [%s]", ev.Component, criterionName, fingerprint)
-	body := fmt.Sprintf(`<!-- hive-fleet-fingerprint:%s -->
-<!-- hive-fleet-instance:%s -->
-
-A spoke reports that a hive-attributable condition is preventing it from satisfying an ACMM criterion.
-
-## Evidence
-
-| Field | Value |
-|---|---|
-| anonymous instance | %s |
-| hive version | %s |
-| hive commit | %s |
-| mode | %s |
-| ACMM level | L%d |
-| unmet criterion | %s (%s) |
-| component | %s |
-| agent/lane | %s / %s |
-| error class | %s |
-| count + window | %s |
-| detected periodicity | %s |
-| self-recovered | no |
-`, fingerprint, instance, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, criterionName, criterionKey, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
-	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Evidence: []Evidence{ev}, HiveState: obs.HiveState}
+	var b strings.Builder
+	fmt.Fprintf(&b, "<!-- hive-fleet-fingerprint:%s -->\n<!-- hive-fleet-instance:%s -->\n%s\n\n", fingerprint, instance, SelfReportMarker(fingerprint, hive))
+	b.WriteString("A spoke reports that a hive-attributable condition is preventing it from satisfying an ACMM criterion.\n\n")
+	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
+	name, spokeURL := writeIdentityRows(&b, obs, hive, instance, version, commit)
+	fmt.Fprintf(&b, "| ACMM level | L%d |\n", obs.ACMMLevel)
+	fmt.Fprintf(&b, "| unmet criterion | %s (%s) |\n", criterionName, criterionKey)
+	fmt.Fprintf(&b, "| component | %s |\n", ev.Component)
+	fmt.Fprintf(&b, "| agent/lane | %s / %s |\n", emptyDash(ev.Agent), emptyDash(ev.Lane))
+	fmt.Fprintf(&b, "| error class | %s |\n", ev.ErrorClass)
+	fmt.Fprintf(&b, "| count + window | %s |\n", countWindow(ev.Count, ev.Window))
+	fmt.Fprintf(&b, "| detected periodicity | %s |\n", emptyDash(ev.Periodicity))
+	repos := NormalizeRepos(obs.Repos)
+	fmt.Fprintf(&b, "| repos | %s |\n", repoListCell(repos))
+	fmt.Fprintf(&b, "| owners | %s |\n", repoListCell(OwnersOf(repos)))
+	b.WriteString("| self-recovered | no |\n\n")
+	owners := reportOwners(obs)
+	// No timestamps in the body: an ACMM report is re-emitted only when its
+	// body changes, so the hive's last-seen is left to the join path.
+	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Name: name, URL: spokeURL, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1}}, Repos: repos, Seen: 1}.Render())
+	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Hive: hive, HiveName: name, SpokeURL: spokeURL, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
 }
 
-func BuildDefectReport(obs Observation, ev Evidence, fingerprint, instance, version, commit string) Report {
-	componentLabel := "component:" + labelValue(ev.Component)
-	severityLabel := "severity:" + labelValue(ev.Severity)
-	versionLabel := "version:" + labelValue(version)
-	instanceLabel := "instance:" + instance
-	triggerLabel := "trigger:" + TriggerHiveDefect
-	labels := []string{"fleet-report", componentLabel, severityLabel, versionLabel, instanceLabel, triggerLabel}
-	sort.Strings(labels)
-	title := fmt.Sprintf("Fleet report: %s hive-code defect [%s]", ev.Component, fingerprint)
-	body := fmt.Sprintf(`<!-- hive-fleet-fingerprint:%s -->
-<!-- hive-fleet-instance:%s -->
+// OpenSelfReportFor finds this hive's open runtime-error self-report about
+// component: an entry with an issue number, not recovered, not found closed.
+// Ties resolve to the lowest fingerprint so the choice is stable across
+// cycles.
+func OpenSelfReportFor(st State, component string) (string, bool) {
+	want := strings.ToLower(strings.TrimSpace(component))
+	if want == "" {
+		return "", false
+	}
+	best := ""
+	for fp, open := range st.Open {
+		if open.Trigger != TriggerRuntimeError || open.Number <= 0 || open.Recovered || !open.ClosedAt.IsZero() {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(open.Component)) != want {
+			continue
+		}
+		if best == "" || fp < best {
+			best = fp
+		}
+	}
+	return best, best != ""
+}
 
-A spoke reports a symptom attributable to hive's own code paths. No ACMM shortfall is required for this trigger.
-
-## Evidence
-
-| Field | Value |
-|---|---|
-| trigger | %s |
-| anonymous instance | %s |
-| hive version | %s |
-| hive commit | %s |
-| mode | %s |
-| ACMM level | L%d |
-| component | %s |
-| agent/lane | %s / %s |
-| error class | %s |
-| count + window | %s |
-| detected periodicity | %s |
-| self-recovered | no |
-`, fingerprint, instance, TriggerHiveDefect, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
-	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Trigger: TriggerHiveDefect, Evidence: []Evidence{ev}, HiveState: obs.HiveState}
+// RollupReport turns an ACMM-shortfall report into a roll-up onto the open
+// self-report target: Body becomes the short comment the publisher posts
+// there and RollupOf names the target fingerprint. The report's own
+// fingerprint, criterion and labels are kept so state bookkeeping is
+// unchanged. The body carries no timestamp so an unchanged shortfall is not
+// re-posted every cycle.
+func RollupReport(report Report, target, hive, instance, version string) Report {
+	if strings.TrimSpace(hive) == "" {
+		hive = instance
+	}
+	var ev Evidence
+	if len(report.Evidence) > 0 {
+		ev = report.Evidence[0]
+	}
+	var b strings.Builder
+	b.WriteString(SeenMarker(report.Fingerprint, hive))
+	fmt.Fprintf(&b, "\nACMM shortfall rolled up from **%s** (%s): `%s` (%s) is blocking criterion `%s` — %s. Folded onto this self-report because it is about the same component on the same version; no standalone `Fleet report:` issue was filed.",
+		labelValue(hive), displayVersion(version), ev.Component, emptyDash(ev.ErrorClass), report.Criterion, countWindow(ev.Count, ev.Window))
+	report.Body = safeText(b.String())
+	report.RollupOf = target
+	return report
 }
 
 func RecoveryReport(open OpenIssue, report Report) Report {
@@ -583,8 +603,7 @@ func RecoveryReport(open OpenIssue, report Report) Report {
 	return report
 }
 
-// recoverySubject names what stopped being observed. A hive-code defect has no
-// ACMM criterion attached, so naming one would render an empty reference.
+// recoverySubject names what stopped being observed.
 func recoverySubject(report Report) string {
 	if criterion := strings.TrimSpace(report.Criterion); criterion != "" {
 		return fmt.Sprintf("this spoke no longer observes the ACMM shortfall for `%s`.", criterion)
@@ -592,16 +611,11 @@ func recoverySubject(report Report) string {
 	if report.Trigger == TriggerRuntimeError {
 		return fmt.Sprintf("this hive no longer observes runtime error class `%s`.", report.Class)
 	}
-	return "this spoke no longer observes the reported hive-code defect."
+	return "this spoke no longer observes the reported condition."
 }
 
 func Fingerprint(errorClass, component, version, criterion string) string {
 	h := sha256.Sum256([]byte(strings.Join([]string{strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(version)), strings.ToLower(strings.TrimSpace(criterion))}, "|")))
-	return hex.EncodeToString(h[:])[:24]
-}
-
-func DefectFingerprint(errorClass, component, agent, version string) string {
-	h := sha256.Sum256([]byte(strings.Join([]string{TriggerHiveDefect, strings.ToLower(strings.TrimSpace(errorClass)), strings.ToLower(strings.TrimSpace(component)), strings.ToLower(strings.TrimSpace(agent)), strings.ToLower(strings.TrimSpace(version))}, "|")))
 	return hex.EncodeToString(h[:])[:24]
 }
 
@@ -623,24 +637,10 @@ func isBenign(e ErrorEvent) bool {
 	return strings.Contains(class, "i/o timeout") && (strings.Contains(component, "read") || strings.Contains(component, "keepalive"))
 }
 
-func evidenceKey(ev Evidence) string {
-	return strings.Join([]string{strings.ToLower(strings.TrimSpace(ev.Component)), strings.ToLower(strings.TrimSpace(ev.Agent)), strings.ToLower(strings.TrimSpace(ev.Lane)), strings.ToLower(strings.TrimSpace(ev.ErrorClass))}, "\x00")
-}
-
-func isHiveCodeEvidence(ev Evidence) bool {
-	component := strings.ToLower(strings.TrimSpace(ev.Component))
-	if component == "" || strings.Contains(component, "fleet-report") || strings.Contains(component, "reporting") {
-		return false
-	}
-	owned := []string{"proxy", "scheduler", "request-watcher", "watcher", "dashboard", "agent-runtime", "agent-lifecycle", "backend-auth", "inference-gateway", "merge", "pr-title", "github-client"}
-	for _, prefix := range owned {
-		if strings.Contains(component, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
+// openTrigger is the trigger of a persisted entry; entries written before
+// the field existed were ACMM shortfalls when they carried a criterion, and
+// hive-code-defect issues (a trigger retired by #13470) otherwise — those are
+// left alone rather than recovered under a trigger that no longer exists.
 func openTrigger(open OpenIssue) string {
 	if open.Trigger != "" {
 		return open.Trigger
@@ -648,7 +648,7 @@ func openTrigger(open OpenIssue) string {
 	if open.Criterion != "" {
 		return TriggerACMMShortfall
 	}
-	return TriggerHiveDefect
+	return legacyTriggerHiveDefect
 }
 
 func periodicity(events []ErrorEvent) string {

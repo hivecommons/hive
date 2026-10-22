@@ -38,7 +38,7 @@ The same settings are exposed in the dashboard under Settings → Governor →
 "Self-Reported Issues" (owner role) and over
 `GET`/`PUT /api/config/governor/fleet-report`.
 
-## The four triggers
+## The three triggers
 
 A report is only ever built from evidence marked **attributable** — evidence
 the hive believes points at hive's own behaviour rather than at your repos,
@@ -56,22 +56,30 @@ and here is the hive-attributable reason why". A shortfall with no attributable
 evidence is treated as an **operator** concern instead — it is surfaced to you
 on the dashboard and is not reported upstream.
 
-### `hive-code-defect`
+**Roll-up onto an open self-report**
+([#13470](https://github.com/hivecommons/hive/issues/13470)). When this hive
+already has an open `[selfreport]` issue about the same component (its
+`runtime-error` state entry is open and not recovered), the shortfall does
+not file its own `Fleet report:` issue. It posts one short comment on that
+self-report instead — "ACMM shortfall rolled up from **<hive>**: `<component>`
+is holding `<criterion>` unmet (<count>)" — and its state entry points at the
+self-report. The roll-up is re-posted only when its text changes; once the
+self-report is closed, the shortfall files standalone as before.
 
-Fires on attributable evidence pointing at a component on hive's own
-allowlist — `proxy`, `scheduler`, `request-watcher`, `watcher`, `dashboard`,
-`agent-runtime`, `agent-lifecycle`, `backend-auth`, `inference-gateway`,
-`merge`, `pr-title`, `github-client` — with **no ACMM shortfall required**. A
-crash loop in hive's own scheduler is worth reporting whether or not it has
-dragged an ACMM criterion down yet.
+### Retired: `hive-code-defect`
 
-The allowlist is what keeps this trigger narrow: evidence from a component that
-is not recognisably hive's own code does not qualify. Reporting components
-(anything matching `fleet-report` or `reporting`) are excluded outright, so the
-reporter cannot report on itself.
-
-Evidence already covered by an `acmm-shortfall` report in the same pass is
-skipped, so one underlying fault does not file two issues.
+Until [#13470](https://github.com/hivecommons/hive/issues/13470) a third
+trigger synthesised "agent stall", "agent crash loop" and "CI-poll nudge"
+evidence from bare dashboard counters (`StallNudges`, `Restarts`,
+`CIPollNudges`) and filed it as `Fleet report: … hive-code defect` issues with
+no identity, owners, spoke link or diagnostics — nobody could act on them
+(hivecommons/hive#13465 is the canonical example; over 14 days 12 of 18 such
+reports were closed by the bot itself and about a third reached a fix,
+against about 82% for self-reports). Those conditions are now `runtime-error`
+classes (`agent_stall`, `agent_crash_loop`, `ci_poll_nudge`, below), observed
+at the moment the agent manager or watchdog sees them, with the kick/pane
+context attached. A persisted state entry for the retired trigger is pruned
+on the next evaluation; nothing is filed or recovered under it.
 
 ### `runtime-error`
 
@@ -88,6 +96,9 @@ title is `[selfreport] <class>: <short message>`.
 | `model_discovery_degraded` | model discovery has been failing for >1h (excluded, audit-log only: copilot serving the HTTP catalog because the SDK helper is absent (#11868), and copilot `Not authenticated` because the operator has not completed the dashboard Copilot Login (#12947), and copilot `not licensed to use Copilot` 403s, a seat problem on the reporting hive (#13206)) | medium |
 | `inference_auth_failed` | 401/403 from an inference backend (LiteLLM, Copilot) | high |
 | `advisory_post_failed` | the advisory digest could not be posted (rate-limit skips excluded) | medium |
+| `agent_stall` | ≥3 consecutive "continue" nudges sent to one agent after a kick without the pane moving; a credited stall recovery (the pane moves before the next kick) clears the streak. Message carries the nudge count, last kick time and frozen pane hash; diagnostics carry agent, lane, backend, counters and a scrubbed 15-line pane tail (#13470, was the hive-code-defect "agent stall") | medium |
+| `agent_crash_loop` | the watchdog latches an agent as crash-looping and pauses it (acting mode only — observe mode would re-count every sweep); the healthy-window reset clears it. Diagnostics carry the classifier detail, failure count/cap, backoff ladder and healthy-reset window (#13470, was "agent crash loop") | high |
+| `ci_poll_nudge` | the harness sent an agent the stop-polling-CI nudge (at most one per kick); one per 24h window, message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail (#13470, was "CI-poll nudge") | low |
 
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
@@ -115,14 +126,15 @@ open issue body for the detector fingerprint before creating or commenting.
 
 ## Exactly what leaves the hive
 
-Each report carries:
+Each report — `acmm-shortfall` and `runtime-error` alike, since
+[#13470](https://github.com/hivecommons/hive/issues/13470) — carries:
 
 | Field | Value |
 |---|---|
 | hive | the hub-assigned hive id on a hub-managed spoke; the anonymous instance digest otherwise |
-| hive name, spoke | `runtime-error` only, hub-managed spokes only (hivecommons/hive#13211): the hive's display name and a markdown link (name → dashboard URL) — see [Which hive](#which-hive); `—` when unknown |
+| hive name, spoke | hub-managed spokes only (hivecommons/hive#13211): the hive's display name and a markdown link (name → dashboard URL) — see [Which hive](#which-hive); `—` when unknown |
 | anonymous instance | first **16 hex characters of the SHA-256** of your hive ID |
-| owner(s) | the GitHub login(s) of the hive's owner(s) — `dashboard.authorized_users` entries with the owner role plus the device-flow operator — as `@login`; `(anonymous)` when `include_owners: false` (`runtime-error` only) |
+| owner(s) | the GitHub login(s) of the hive's owner(s) — `dashboard.authorized_users` entries with the owner role plus the device-flow operator — as `@login`; `(anonymous)` when `include_owners: false` |
 | hive version, commit | build stamp, short commit |
 | mode | the hive's mode |
 | ACMM level | e.g. `L3` |
@@ -131,7 +143,7 @@ Each report carries:
 | error class | the classified error, not the raw message |
 | count + window | how many occurrences, over what window |
 | detected periodicity | if the failures look periodic |
-| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and repo owners](#repositories-and-repo-owners) |
+| repos, owners | the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and repo owners](#repositories-and-repo-owners) |
 | repo, ref | `runtime-error` only: the item the error was scoped to, when the class carries one (today `advisory_post_failed` → the digest's repo); `—` otherwise |
 | self-recovered | `no` on a report, `yes` on a recovery |
 
@@ -146,15 +158,20 @@ content — and is kept out of the body, so moving trends never make an open
 report look changed. It is omitted when the hive has no snapshot in the last
 7 days.
 
-The same fields appear as issue labels (`fleet-report`, `component:…`,
-`severity:…`, `version:…`, `instance:…`, `trigger:…`, and `criterion:…` for
-shortfalls). Observation issues additionally carry `hive-observation` and
+Every report carries the same label set: `fleet-report`, `hive/selfreport`,
+`origin/selfreport`, `kind/bug`, `needs-triage`, `severity:…`, `trigger:…`,
+plus `class:…` for runtime errors and `criterion:…` for shortfalls. The
+per-instance `component:…`/`version:…`/`instance:…` labels are gone — the
+report repo rejected them and the retry used to drop *every* label
+(hivecommons/hive#13465 landed with none). If GitHub rejects a label set the
+hub relay retries with the core five, then with `hive/selfreport` alone, never
+with none. Observation issues additionally carry `hive-observation` and
 `observation:<kind>`.
 
 ### What it does not send
 
-- Legacy ACMM, hive-code-defect, and runtime reports send only an anonymous
-  instance digest; the raw hive id never leaves the hive for those triggers.
+- A hive that is not hub-managed sends only an anonymous instance digest;
+  the raw hive id, name and spoke URL never leave it.
 - Observation reports use the hub-provided hive id/slug and project
   organization metadata required for maintainer triage, but never send watched
   repository names, issue numbers, or file paths.
@@ -177,6 +194,10 @@ fingerprint:
 - **Found** → it adds a comment and a 👍 reaction instead of opening a
   duplicate. The reaction is how "N hives see this" gets counted.
 - **Not found** → it opens one issue.
+
+- **Found** → the hive adds itself the way a self-report does (#13470): the
+  short `Also seen on …` comment (not a re-post of the whole body), the
+  `hive/selfreport` label, and its line in the `Affected hives` block below.
 
 For `runtime-error` reports the hive goes further and **joins first**. If no
 fingerprint match exists it looks for an open issue labelled
@@ -230,8 +251,8 @@ seen_count: 4
 ### Which hive
 
 So a maintainer can tell **which** hive a report came from — and open it —
-without translating a hub id through the hives listing, a `runtime-error`
-report carries the hive's display name and dashboard URL
+without translating a hub id through the hives listing, every report
+carries the hive's display name and dashboard URL
 (hivecommons/hive#13211), both in the evidence table:
 
 ```
@@ -272,7 +293,7 @@ an `open` link cell:
 ### Repositories and repo owners
 
 So a maintainer can tell whether a fleet issue is confined to one project or
-one org, a `runtime-error` report names the repositories the reporting hive
+one org, every report names the repositories the reporting hive
 serves (hivecommons/hive#12338). The evidence table carries the hive's own
 view; the affected block carries the union across every hive that has
 reported, re-derived idempotently on each join:
@@ -339,7 +360,9 @@ confirm the fix.
 
 Report state lives at `/data/fleet-report-state.json`: the per-criterion epoch
 history that drives the two-epoch threshold, and the open-issue records
-(number, URL, whether the hive opened it, body hash, recovery flag). Deleting
+(number, URL, whether the hive opened it, component, body hash, recovery
+flag, and for a rolled-up shortfall the fingerprint of the self-report it
+commented on). Deleting
 it resets the epoch counters and makes the hive forget which upstream issues
 are already open, so a persisting condition can file again.
 
