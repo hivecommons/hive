@@ -114,20 +114,21 @@ func TestReportMarkdown(t *testing.T) {
 
 func TestPostureHistoryCSV(t *testing.T) {
 	run := exportRun(attestNow, map[string]PostureStatus{PostureCatalogue()[0].ID: PostureFail})
+	run.TriggeredBy = "alice"
 	run.Results[0].Detail = "=HYPERLINK(\"x\")"
 	run.Results[0].EvidenceRefs = []string{"a", "b"}
 	rows, err := csv.NewReader(strings.NewReader(string(PostureHistoryCSV([]PostureRun{run})))).ReadAll()
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(rows) != 2 || rows[0][0] != "run_at" {
+	if len(rows) != 2 || rows[0][2] != "triggered_by" {
 		t.Fatalf("rows = %v", rows)
 	}
-	if rows[1][4] != "fail" || rows[1][5] != "false" || rows[1][8] != "a b" {
+	if rows[1][2] != "alice" || rows[1][5] != "fail" || rows[1][6] != "false" || rows[1][9] != "a b" {
 		t.Fatalf("row = %v", rows[1])
 	}
-	if !strings.HasPrefix(rows[1][7], "'=") {
-		t.Fatalf("formula not neutralised: %q", rows[1][7])
+	if !strings.HasPrefix(rows[1][8], "'=") {
+		t.Fatalf("formula not neutralised: %q", rows[1][8])
 	}
 }
 
@@ -138,7 +139,7 @@ func TestAttestationsCSV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if len(rows) != 2 || rows[1][2] != "alice" || rows[1][4] != "'+1, fine" {
+	if len(rows) != 2 || rows[0][2] != "attester" || rows[1][2] != "alice" || rows[1][4] != "'+1, fine" {
 		t.Fatalf("rows = %v", rows)
 	}
 }

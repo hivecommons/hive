@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -60,7 +61,7 @@ func seedPostureRuns(t *testing.T, s *Server, ats ...time.Time) {
 		if i%2 == 1 {
 			st = compliance.PostureFail
 		}
-		run := compliance.PostureRun{At: at, Trigger: compliance.TriggerSchedule, Results: []compliance.Result{{CheckID: id, Title: "t", At: at, Status: st, Pass: st == compliance.PosturePass, Detail: "d"}}}
+		run := compliance.PostureRun{At: at, Trigger: compliance.TriggerSchedule, TriggeredBy: "hive:scheduler", Results: []compliance.Result{{CheckID: id, Title: "t", At: at, Status: st, Pass: st == compliance.PosturePass, Detail: "d"}}}
 		if err := s.postureRunner().History().Append(run); err != nil {
 			t.Fatalf("append: %v", err)
 		}
@@ -310,6 +311,7 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 	s := complianceTestServer()
 	s.deps.Config.HiveID = "hive-a"
 	now := time.Now().UTC()
+	complianceEvidenceNow = func() time.Time { return now }
 	seedPostureRuns(t, s, now.Add(-2*time.Hour), now.Add(-time.Hour))
 	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`"}`, true)
 	if rr.Code != http.StatusCreated {
@@ -329,14 +331,21 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 				Controls compliance.Report    `json:"controls"`
 			}
 			mustDecodeComplianceJSON(t, body, &got)
-			if got.Meta.Kind != "controls" || got.Meta.HiveID != "hive-a" || len(got.Controls.Controls) == 0 {
+			if got.Meta.Kind != "controls" || got.Meta.HiveID != "hive-a" || got.Meta.SourceSystem != "Hive" || got.Meta.GeneratedBy != "alice" || len(got.Controls.Controls) == 0 {
 				t.Fatalf("controls export = %+v", got.Meta)
+			}
+			if len(got.Meta.Profiles) != 1 || got.Meta.Profiles[0].ID != "soc2-type2" || got.Meta.Profiles[0].Version == "" {
+				t.Fatalf("profile versions = %+v", got.Meta.Profiles)
+			}
+			if len(got.Meta.Attesters) != 1 || got.Meta.Attesters[0] != "alice" || len(got.Meta.Retention) < 2 {
+				t.Fatalf("attesters/retention = %v / %v", got.Meta.Attesters, got.Meta.Retention)
+			}
+			if !got.Meta.GeneratedAt.Equal(now) || !got.Meta.Since.Equal(now.Add(-complianceDefaultExportWindow)) || !got.Meta.Until.Equal(now) {
+				t.Fatalf("export period = %s [%s, %s)", got.Meta.GeneratedAt, got.Meta.Since, got.Meta.Until)
 			}
 		}},
 		{name: "controls md", query: "kind=controls&format=md", contentType: "text/markdown; charset=utf-8", ext: "md", check: func(t *testing.T, body []byte) {
-			if !strings.Contains(string(body), "# Compliance control-mapping report") || !strings.Contains(string(body), "`hive-a`") {
-				t.Fatalf("md = %s", body)
-			}
+			assertComplianceMarkdownManifest(t, body)
 		}},
 		{name: "posture json", query: "kind=posture&since=24h", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got struct {
@@ -355,10 +364,10 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			}
 		}},
 		{name: "posture csv", query: "kind=posture&format=csv", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
-			rows, err := csv.NewReader(strings.NewReader(string(body))).ReadAll()
-			if err != nil || len(rows) != 3 {
-				t.Fatalf("csv rows = %d, %v", len(rows), err)
-			}
+			assertComplianceCSVManifest(t, body, "posture", 2)
+		}},
+		{name: "posture csv empty range", query: "kind=posture&format=csv&since=2020-01-01&until=2020-01-02", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
+			assertComplianceCSVManifest(t, body, "posture", 0)
 		}},
 		{name: "audit json", query: "kind=audit&since=1h", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got struct {
@@ -393,14 +402,12 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 			}
 		}},
 		{name: "attestations csv", query: "kind=attestations&format=csv", contentType: "text/csv; charset=utf-8", ext: "csv", check: func(t *testing.T, body []byte) {
-			if !strings.Contains(string(body), "soc2-type2") {
-				t.Fatalf("csv = %s", body)
-			}
+			assertComplianceCSVManifest(t, body, "attestations", 1)
 		}},
 		{name: "bundle", query: "kind=bundle", contentType: "application/json", ext: "json", check: func(t *testing.T, body []byte) {
 			var got map[string]json.RawMessage
 			mustDecodeComplianceJSON(t, body, &got)
-			for _, k := range []string{"meta", "controls", "posture", "audit", "config", "attestations"} {
+			for _, k := range []string{"meta", "manifest", "controls", "posture", "audit", "config", "attestations"} {
 				if _, ok := got[k]; !ok {
 					t.Fatalf("bundle missing %q", k)
 				}
@@ -428,6 +435,9 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 				t.Fatal("export not audited")
 			}
 			tc.check(t, rr.Body.Bytes())
+			if tc.contentType == "application/json" {
+				assertComplianceJSONManifest(t, rr.Body.Bytes())
+			}
 		})
 	}
 }
@@ -508,6 +518,106 @@ func mustDecodeComplianceJSON(t *testing.T, body []byte, v any) {
 	t.Helper()
 	if err := json.Unmarshal(body, v); err != nil {
 		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+}
+
+func assertComplianceJSONManifest(t *testing.T, body []byte) {
+	t.Helper()
+	var envelope map[string]json.RawMessage
+	mustDecodeComplianceJSON(t, body, &envelope)
+	var manifest complianceExportManifest
+	mustDecodeComplianceJSON(t, envelope["manifest"], &manifest)
+	if manifest.Algorithm != "sha256" || len(manifest.Entries) < 2 {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	for _, entry := range manifest.Entries {
+		raw, ok := envelope[entry.Name]
+		if !ok {
+			t.Fatalf("manifest entry %q has no payload", entry.Name)
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, raw); err != nil {
+			t.Fatalf("compact %s: %v", entry.Name, err)
+		}
+		if got := sha256Hex(compact.String()); got != entry.SHA256 || compact.Len() != entry.Bytes {
+			t.Fatalf("%s manifest = %s/%d, want %s/%d", entry.Name, entry.SHA256, entry.Bytes, got, compact.Len())
+		}
+	}
+}
+
+func assertComplianceCSVManifest(t *testing.T, body []byte, kind string, evidenceRows int) {
+	t.Helper()
+	rows, err := csv.NewReader(bytes.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatalf("parse CSV: %v", err)
+	}
+	if len(rows) != evidenceRows+2 || rows[0][0] != "record_type" || rows[1][0] != "metadata" {
+		t.Fatalf("CSV envelope rows = %v", rows)
+	}
+	const metadataColumns = 12
+	var meta complianceExportMeta
+	mustDecodeComplianceJSON(t, []byte(rows[1][10]), &meta)
+	if meta.HiveID != "hive-a" || meta.SourceSystem != "Hive" || meta.GeneratedBy != "alice" || len(meta.Profiles) != 1 || len(meta.Attesters) != 1 {
+		t.Fatalf("CSV metadata = %+v", meta)
+	}
+	var manifest complianceExportManifest
+	mustDecodeComplianceJSON(t, []byte(rows[1][11]), &manifest)
+	domainRows := make([][]string, 0, evidenceRows+1)
+	domainRows = append(domainRows, rows[0][metadataColumns:])
+	for _, row := range rows[2:] {
+		if row[0] != "evidence" {
+			t.Fatalf("CSV record type = %q", row[0])
+		}
+		domainRows = append(domainRows, row[metadataColumns:])
+	}
+	var evidence bytes.Buffer
+	writer := csv.NewWriter(&evidence)
+	writer.WriteAll(domainRows)
+	want := map[string]string{
+		"meta": sha256Hex(rows[1][10]),
+		kind:   sha256Hex(evidence.String()),
+	}
+	for _, entry := range manifest.Entries {
+		if entry.SHA256 != want[entry.Name] {
+			t.Fatalf("%s CSV manifest hash = %q, want %q", entry.Name, entry.SHA256, want[entry.Name])
+		}
+		delete(want, entry.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("CSV manifest missing entries: %v", want)
+	}
+}
+
+func assertComplianceMarkdownManifest(t *testing.T, body []byte) {
+	t.Helper()
+	const marker = "\n## Evidence export metadata\n\n```json\n"
+	start := bytes.Index(body, []byte(marker))
+	if start < 0 || !bytes.HasSuffix(body, []byte("\n```\n")) {
+		t.Fatalf("Markdown manifest missing: %s", body)
+	}
+	report := body[:start]
+	raw := body[start+len(marker) : len(body)-len("\n```\n")]
+	var envelope struct {
+		Meta     complianceExportMeta     `json:"meta"`
+		Manifest complianceExportManifest `json:"manifest"`
+	}
+	mustDecodeComplianceJSON(t, raw, &envelope)
+	metaRaw, err := json.Marshal(envelope.Meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"meta":     sha256Hex(string(metaRaw)),
+		"controls": sha256Hex(string(report)),
+	}
+	for _, entry := range envelope.Manifest.Entries {
+		if entry.SHA256 != want[entry.Name] {
+			t.Fatalf("%s Markdown manifest hash = %q, want %q", entry.Name, entry.SHA256, want[entry.Name])
+		}
+		delete(want, entry.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("Markdown manifest missing entries: %v", want)
 	}
 }
 

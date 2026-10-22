@@ -347,17 +347,33 @@ range.
 | `kind` | Formats | Contents |
 |---|---|---|
 | `controls` | `json` (default), `md` | The control-mapping report: the evaluated status above, stamped with the hive id, generation time and each profile's name and version |
-| `posture` | `json` (default), `csv` | Every posture run in the range, plus per-check series in JSON. The CSV has one row per check result |
+| `posture` | `json` (default), `csv` | Every posture run in the range, including its schedule/manual trigger and `triggered_by` identity, plus per-check series in JSON. The CSV has one `evidence` row per check result |
 | `audit` | `json` | The audit log entries in the range, from the current file and rotated backups. Rotation is size-triggered, so `covered_from` reports the oldest entry actually found. If it is later than `since`, the log no longer holds the start of the range |
 | `config` | `json` | The effective config with secrets redacted (the same redaction as the config export) and the `sha256` of exactly the `effective` bytes. Use the hash to tie a report to one configuration |
-| `attestations` | `json` (default), `csv` | Attestations recorded in the range |
+| `attestations` | `json` (default), `csv` | Attestations recorded in the range; CSV names the owner in the `attester` column |
 | `bundle` | `json` | All of the above in one file |
 
-JSON exports carry a `meta` object (`kind`, `disclaimer`, `hive_id`,
-`generated_at`, `since`, `until`). CSV cells that start with `=`, `+`, `-`
-or `@` are prefixed with `'` so a spreadsheet does not run them as formulas.
-PDF output is not offered. Bulk review-evidence bundles depend on the
-per-PR bundles from #11058 and will join the exports when that lands.
+Every format carries export metadata: `kind`, the non-certification
+`disclaimer`, `hive_id`, `source_system`, the authenticated `generated_by`
+owner, `generated_at`, the `[since, until)` period, selected profile ids and
+versions, attester identities found in that period, and source-retention
+statements. `generated_by` records chain of custody for the download; it is
+not itself an attestation.
+
+Every export also carries a SHA-256 manifest. JSON manifests hash the compact
+JSON bytes of `meta` and each included top-level evidence section. Markdown
+appends a JSON metadata block whose manifest hashes the report before that
+block and the compact metadata JSON. CSV starts with a `metadata` row followed
+by `evidence` rows; its manifest hashes the compact metadata JSON and the
+domain-only CSV (the kind-specific header and evidence rows, with LF line
+endings). This excludes the manifest itself and avoids a self-referential
+digest while protecting both provenance and evidence. CSV metadata is also
+available as named columns, including `profile_versions`, `attesters`,
+`retention` and the exact compact `metadata` JSON used for its hash. CSV cells
+that start with `=`, `+`, `-` or `@` are prefixed with `'` so a spreadsheet
+does not run them as formulas. PDF output is not offered. Bulk review-evidence
+bundles depend on the per-PR bundles from #11058 and will join the exports when
+that lands.
 
 **Posture history.** `GET /api/compliance/posture/history?since=&until=`
 returns the posture history for the range as one series per check:

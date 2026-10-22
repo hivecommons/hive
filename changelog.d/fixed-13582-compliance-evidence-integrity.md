@@ -1,0 +1,1 @@
+- Compliance evidence exports now include SHA-256 manifests, coverage and retention metadata, selected profile versions, attester identities, and the authenticated export or posture-run actor ([#13582](https://github.com/hivecommons/hive/issues/13582)).

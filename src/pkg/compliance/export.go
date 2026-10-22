@@ -141,11 +141,11 @@ func writeCSV(rows [][]string) []byte {
 
 // PostureHistoryCSV renders runs as CSV, one row per check result.
 func PostureHistoryCSV(runs []PostureRun) []byte {
-	rows := [][]string{{"run_at", "trigger", "check_id", "title", "status", "pass", "control_ids", "detail", "evidence_refs"}}
+	rows := [][]string{{"run_at", "trigger", "triggered_by", "check_id", "title", "status", "pass", "control_ids", "detail", "evidence_refs"}}
 	for _, run := range runs {
 		for _, res := range run.Results {
 			rows = append(rows, []string{
-				run.At.UTC().Format(time.RFC3339), run.Trigger, res.CheckID, res.Title, string(res.Status),
+				run.At.UTC().Format(time.RFC3339), run.Trigger, run.TriggeredBy, res.CheckID, res.Title, string(res.Status),
 				strconv.FormatBool(res.Pass), strings.Join(res.ControlIDs, " "), res.Detail, strings.Join(res.EvidenceRefs, " "),
 			})
 		}
@@ -155,7 +155,7 @@ func PostureHistoryCSV(runs []PostureRun) []byte {
 
 // AttestationsCSV renders attestations as CSV.
 func AttestationsCSV(items []Attestation) []byte {
-	rows := [][]string{{"framework", "reviewed_on", "by", "at", "note"}}
+	rows := [][]string{{"framework", "reviewed_on", "attester", "at", "note"}}
 	for _, a := range items {
 		rows = append(rows, []string{a.Framework, a.ReviewedOn, a.By, a.At.UTC().Format(time.RFC3339), a.Note})
 	}

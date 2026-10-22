@@ -535,8 +535,8 @@ func TestPostureRunnerTransitions(t *testing.T) {
 		transitions = append(transitions, prev.CheckID+":"+string(prev.Status)+"->"+string(cur.Status))
 	}
 
-	run, err := r.Run(context.Background(), TriggerManual)
-	if err != nil || run.Trigger != TriggerManual || run.Summary != (PostureSummary{Pass: 1, Fail: 1}) || !run.At.Equal(postureNow) {
+	run, err := r.RunAs(context.Background(), TriggerManual, "alice")
+	if err != nil || run.Trigger != TriggerManual || run.TriggeredBy != "alice" || run.Summary != (PostureSummary{Pass: 1, Fail: 1}) || !run.At.Equal(postureNow) {
 		t.Fatalf("run = %+v err=%v", run, err)
 	}
 	if len(transitions) != 0 {

@@ -19,12 +19,14 @@ const (
 	TriggerManual   = "manual"
 )
 
-// PostureRun is one pass over every check.
+// PostureRun is one pass over every check. TriggeredBy identifies the person
+// who requested a manual pass or the Hive scheduler for an automatic pass.
 type PostureRun struct {
-	At      time.Time      `json:"at"`
-	Trigger string         `json:"trigger"`
-	Summary PostureSummary `json:"summary"`
-	Results []Result       `json:"results"`
+	At          time.Time      `json:"at"`
+	Trigger     string         `json:"trigger"`
+	TriggeredBy string         `json:"triggered_by"`
+	Summary     PostureSummary `json:"summary"`
+	Results     []Result       `json:"results"`
 }
 
 // MaxPostureHistoryRuns bounds the history independently of the retention
@@ -272,8 +274,18 @@ func NewPostureRunner(checks []PostureCheck, history *PostureHistory, deps func(
 // History returns the runner's history store.
 func (r *PostureRunner) History() *PostureHistory { return r.history }
 
-// Run performs one pass now. It refuses to overlap a pass already running.
+// Run performs one pass now with the default identity for its trigger. It
+// refuses to overlap a pass already running.
 func (r *PostureRunner) Run(ctx context.Context, trigger string) (PostureRun, error) {
+	triggeredBy := "hive:scheduler"
+	if trigger == TriggerManual {
+		triggeredBy = "local"
+	}
+	return r.RunAs(ctx, trigger, triggeredBy)
+}
+
+// RunAs performs one pass attributed to triggeredBy.
+func (r *PostureRunner) RunAs(ctx context.Context, trigger, triggeredBy string) (PostureRun, error) {
 	if !r.running.TryLock() {
 		return PostureRun{}, ErrPostureRunInProgress
 	}
@@ -282,7 +294,7 @@ func (r *PostureRunner) Run(ctx context.Context, trigger string) (PostureRun, er
 	r.history.SetRetention(deps.Config.Compliance.PostureHistoryRetentionOrDefault())
 	prev, hadPrev := r.history.Latest()
 	results := RunPostureChecks(ctx, r.checks, deps)
-	run := PostureRun{At: deps.Now().UTC(), Trigger: trigger, Summary: SummarizePosture(results), Results: results}
+	run := PostureRun{At: deps.Now().UTC(), Trigger: trigger, TriggeredBy: triggeredBy, Summary: SummarizePosture(results), Results: results}
 	if err := r.history.Append(run); err != nil && r.OnPersistError != nil {
 		r.OnPersistError(err)
 	}
