@@ -411,6 +411,14 @@ if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
   _deny surface_allowlist "'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands (deny-by-default, #3840); permitted: issue/pr, search, run list|view|watch, release list|view, label list|create, repo view|list|fork|clone, api — if genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh."
 fi
 
+# `gh run watch` blocks for the whole CI wait and every refresh is an API
+# call; the stop-polling nudge (ci_poll_nudge, #13587/#13594) only advised, so
+# agents kept looping. Refuse it outright — awaiting-ci means leave the PR and
+# move on; the automerge sweep handles green PRs.
+if [ "$subcmd" = "run" ] && [ "$action" = "watch" ]; then
+  _deny ci_watch_blocked "'gh run watch' is not allowed: do not wait on CI. Push, leave the PR as is (awaiting-ci) and move to the next work-list item; the automerge sweep handles green PRs. Check status at most once with 'gh pr checks'."
+fi
+
 # ── Write-surface enforcement in the sandbox (hivecommons/hive#9587, #9772) ──
 #
 # A lane the operator lists under write_surface.enforce has the audited relays
