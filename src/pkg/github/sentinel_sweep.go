@@ -434,6 +434,24 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 		// where it is durable: the marker comment itself.
 		return SentinelSweepEvent{}, false, nil
 	}
+	if decision.Block && !hasAlertLabel && !posted {
+		// No marker for this head: either it is new and owes an alert, or
+		// the head moved (a Renovate rebase, say) between the alert and the
+		// maintainer's review, and the maintainer removed the label with
+		// this head already in place. The second case is a clearance of
+		// this head, not of the one the marker names (#13602); re-alerting
+		// would make the maintainer remove the same label twice.
+		cleared, clearedBy, err := c.sentinelClearedAfterLatestPush(ctx, owner, repo, number, label)
+		if err != nil {
+			return SentinelSweepEvent{}, false, err
+		}
+		if cleared {
+			if err := c.recordSentinelClearance(ctx, owner, repo, number, label, clearedBy, SentinelComment(decision, head, author, findings)); err != nil {
+				return SentinelSweepEvent{}, false, err
+			}
+			return SentinelSweepEvent{}, false, nil
+		}
+	}
 	if !decision.Block {
 		body := SentinelComment(decision, head, author, findings)
 		if hasAlertLabel {
