@@ -646,7 +646,9 @@
   "jev": {},
   "runs": {
     "checkpoints": {},
-    "triage": {},
+    "triage": {
+      "clarity_gate": {}
+    },
     "spektacular": {
       "recheck": {
         "discovery": {}
