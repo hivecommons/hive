@@ -262,6 +262,14 @@ issue/spec and PR body before asking, and to cite the answer
 
 ## Reviewer selection
 
+**Settings → Features → Review Gate → Reviewers** lists every configured agent with its
+engine and model as a pick-list bound to `review.reviewer_agents`; it shows how many agents
+are review-capable under the current selection and, when **Fan out to multiple reviewers**
+is on, warns if they all run on one engine (multi-model review needs reviewers on at least
+two engines) and notes when **Review every perspective in one session** is also on, since
+combined mode dispatches only the first eligible reviewer. The same section carries the
+fan-out toggle and **Max parallel reviews**.
+
 An agent is considered review-capable if it is enabled, not paused, and not on-demand,
 **and** one of the following is true:
 
@@ -271,7 +279,8 @@ An agent is considered review-capable if it is enabled, not paused, and not on-d
    the agent's name, `role`, `aliases`, `lane_keywords`, or `detect_keywords`.
 
 The dashboard security summary (`GET /api/security`) exposes a `reviewCapableAgents`
-count. If `review.require_approval` is true and that count is zero, the dashboard
+count, and `GET /api/config/review` carries a `reviewer_candidates` list (name, backend,
+model, `available`, `keyword_match`, `review_capable`) that the Reviewers pick-list renders. If `review.require_approval` is true and that count is zero, the dashboard
 shows a warning:
 
 > Review approval is required, but no enabled review-capable agents were detected.

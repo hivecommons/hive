@@ -703,3 +703,81 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 		t.Fatalf("invalid write mutated config: %+v", s.deps.Config.AutoMerge.ContributorLane)
 	}
 }
+
+// review.reviewer_agents is picked from a list of configured agents in
+// Settings → Features → Review Gate → Reviewers (hivecommons/hive#13460). The
+// review GET carries every agent with its engine and eligibility so the
+// dialog can show who reviews today and warn when a fan-out would run on a
+// single engine.
+func TestReviewConfigGet_ReviewerCandidates(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.Agents["reviewer-copilot"] = config.AgentConfig{Backend: "copilot", Model: "gpt-5", Enabled: true}
+	s.deps.Config.Agents["paused-reviewer"] = config.AgentConfig{Backend: "codex", Enabled: true, Paused: true}
+	s.deps.Config.Agents["off"] = config.AgentConfig{Backend: "claude", Enabled: false}
+	s.deps.Config.Review.ReviewerAgents = []string{"scanner", "paused-reviewer"}
+
+	rec := doGetNoRole(s, "/api/config/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET review: expected 200, got %d", rec.Code)
+	}
+	var got struct {
+		Candidates []reviewerCandidate `json:"reviewer_candidates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byName := map[string]reviewerCandidate{}
+	var order []string
+	for _, c := range got.Candidates {
+		byName[c.Name] = c
+		order = append(order, c.Name)
+	}
+	if strings.Join(order, ",") != "off,paused-reviewer,reviewer-copilot,scanner" {
+		t.Fatalf("candidates not in name order: %v", order)
+	}
+	cases := map[string]reviewerCandidate{
+		"scanner":          {Backend: "claude", Model: "sonnet", Enabled: true, Available: true, KeywordMatch: false, ReviewCapable: true},
+		"reviewer-copilot": {Backend: "copilot", Model: "gpt-5", Enabled: true, Available: true, KeywordMatch: true, ReviewCapable: false},
+		"paused-reviewer":  {Backend: "codex", Enabled: true, Available: false, KeywordMatch: false, ReviewCapable: false},
+		"off":              {Backend: "claude", Enabled: false, Available: false, KeywordMatch: false, ReviewCapable: false},
+	}
+	for name, want := range cases {
+		want.Name = name
+		if got := byName[name]; got != want {
+			t.Errorf("%s: got %+v, want %+v", name, got, want)
+		}
+	}
+
+	// Empty allow-list: the keyword scan decides.
+	s.deps.Config.Review.ReviewerAgents = nil
+	for _, c := range reviewerCandidates(s.deps.Config) {
+		if c.ReviewCapable != c.KeywordMatch {
+			t.Errorf("%s: with no allow-list review_capable (%v) must equal keyword_match (%v)", c.Name, c.ReviewCapable, c.KeywordMatch)
+		}
+	}
+	if got := reviewerCandidates(nil); len(got) != 0 {
+		t.Fatalf("nil config: expected empty list, got %v", got)
+	}
+
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		`id="rv-reviewer-agents"`,
+		`rv.reviewer_candidates`,
+		`class="rv-reviewer-on"`,
+		`markDirty('review', 'reviewer_agents', names)`,
+		`id="rv-reviewer-engine-warn"`,
+		`id="rv-reviewer-combined-note"`,
+		`data-section="review" data-key="fan_out"`,
+		`data-section="review" data-key="combined_perspectives"`,
+		`markDirty('review','max_parallel_reviews'`,
+		`refreshReviewerAgentSummary()`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Review Gate reviewer control piece %q", want)
+		}
+	}
+}

@@ -1,0 +1,1 @@
+- Settings → Features → Review Gate → Reviewers now picks `review.reviewer_agents` from the hive's configured agents, showing each agent's engine/model, the review-capable count, a warning when fan-out would run every review on a single engine, and a note when combined-perspective mode limits fan-out to the first reviewer; `GET /api/config/review` gains `reviewer_candidates`.

@@ -38786,6 +38786,9 @@ function burnAreaChart() {
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
+        // Review Gate → Reviewers: the eligibility summary and engine warning
+        // are derived from the rendered rows and the fan-out/combined switches.
+        if (tabId === 'Features') refreshReviewerAgentSummary();
         if (tabId === 'Appearance') loadThemeConfig();
         if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
@@ -46970,6 +46973,23 @@ function burnAreaChart() {
       const rb = (_configState.data || {}).review_bots;
       const rbLogins = rb && Array.isArray(rb.logins) ? rb.logins : [];
       const rvAgents = Array.isArray(rv.reviewer_agents) ? rv.reviewer_agents : [];
+      const rvCandidates = Array.isArray(rv.reviewer_candidates) ? rv.reviewer_candidates : [];
+      const rvCanEdit = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      // Names in reviewer_agents that no configured agent carries: still shown
+      // so a stale entry is visible and removable rather than silently kept.
+      const rvUnknownAgents = rvAgents.filter(n => !rvCandidates.some(c => c.name === n));
+      const rvCandidateRow = (c) => {
+        const engine = [c.backend, c.model].filter(Boolean).join(' / ') || 'engine not set';
+        const state = !c.available ? (c.enabled ? 'paused or on-demand' : 'disabled') : (c.keyword_match ? 'review keyword' : '');
+        return `<label class="rv-reviewer-row" data-reviewer="${esc(c.name)}" data-engine="${esc(c.backend || '')}" data-available="${c.available ? '1' : '0'}" data-keyword="${c.keyword_match ? '1' : '0'}" style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.78rem;padding:4px 0;cursor:pointer;${c.available ? '' : 'opacity:0.6'}">
+            <input type="checkbox" class="rv-reviewer-on" ${rvAgents.includes(c.name) ? 'checked' : ''}${rvCanEdit ? '' : ' disabled'} data-change-action="gh74">
+            <code>${esc(c.name)}</code><span style="color:var(--muted)">&mdash; ${esc(engine)}</span>${state ? `<span style="font-size:var(--fs-xs);color:var(--muted)">(${esc(state)})</span>` : ''}
+          </label>`;
+      };
+      const rvUnknownRow = (n) => `<label class="rv-reviewer-row" data-reviewer="${esc(n)}" data-engine="" data-available="0" data-keyword="0" style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.78rem;padding:4px 0;cursor:pointer;opacity:0.6">
+            <input type="checkbox" class="rv-reviewer-on" checked${rvCanEdit ? '' : ' disabled'} data-change-action="gh74">
+            <code>${esc(n)}</code><span style="font-size:var(--fs-xs);color:var(--muted)">(not a configured agent)</span>
+          </label>`;
       const rvBuiltin = Array.isArray(rv.builtin_perspectives) ? rv.builtin_perspectives : [];
       const rvSelected = Array.isArray(rv.perspectives) ? rv.perspectives : [];
       const rvPrompts = (rv.perspective_prompts && typeof rv.perspective_prompts === 'object') ? rv.perspective_prompts : {};
@@ -47158,8 +47178,9 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fan_out ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fan_out"></div>
-            <span class="config-toggle-label">Fan out to multiple reviewers in parallel ${yamlHint('review.fan_out')} ${settingHelpMark('review-swarm', 'configuration', 'Fan out to multiple reviewers in parallel', `Runs the configured reviewer agents concurrently instead of one after another, bounded by Max parallel reviews. Faster on PRs with several reviewers, at the cost of more agents running at once.`)}</span>
+            <span class="config-toggle-label">Fan out to multiple reviewers ${yamlHint('review.fan_out')} ${settingHelpMark('review-swarm', 'reviewer-selection', 'Fan out to multiple reviewers', `Send each perspective to every eligible reviewer so PRs get independent reviews from different agents/models, running concurrently and bounded by Max parallel reviews. This is the switch that makes multi-model review happen: pick the reviewers under Reviewers below. Off, one reviewer takes each perspective.`)}</span>
           </div>
+          <p class="config-help" style="margin:var(--sp-1) var(--sp-0) var(--sp-0)">Send each perspective to every eligible reviewer so PRs get independent reviews from different agents/models.</p>
           <div class="config-field" style="margin-top:10px">
             <label>Max parallel reviews ${yamlHint('review.max_parallel_reviews')} ${settingHelpMark('review-swarm', 'configuration', 'Max parallel reviews', `Caps how many reviewer agents run concurrently when fan-out is on. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${rv.max_parallel_reviews || ''}" placeholder="3" data-change-action="gh73">
@@ -47188,9 +47209,15 @@ function burnAreaChart() {
             <p style="font-size:var(--fs-xs);color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">A new perspective needs focus text before it can be saved. Names: lowercase letters, digits, single dashes.</p>
           </div>
           <div class="config-subgroup">Reviewers</div>
-          <div class="config-field">
-            <label>Reviewer agents ${settingHelpMark('review-swarm', 'configuration', 'Reviewer agents', `Comma-separated agent names that review each PR, e.g. reviewer, security-reviewer.`)}</label>
-            <input type="text" value="${esc(rvAgents.join(', '))}" placeholder="reviewer, security-reviewer" data-change-action="gh74">
+          <div class="config-field" id="rv-reviewer-agents">
+            <label>Reviewer agents ${yamlHint('review.reviewer_agents')} ${settingHelpMark('review-swarm', 'reviewer-selection', 'Reviewer agents', `The agents that review each PR. Empty means any enabled agent whose name, role, aliases or keywords contain &quot;review&quot;. Ticking one or more agents makes this an explicit allow-list and the keyword scan is skipped. Disabled, paused and on-demand agents never review even when ticked. Each agent shows its engine and model: pick agents on different engines for multi-model review.`)}</label>
+            <p class="config-help" style="margin:var(--sp-0) var(--sp-0) var(--sp-2)">Empty = any enabled agent whose name, role or keywords contain &quot;review&quot;. Pick agents on different engines for multi-model review.</p>
+            <div class="rv-reviewer-list" style="padding:6px 10px;border:1px solid var(--border);border-radius:var(--r)">
+              ${rvCandidates.length || rvUnknownAgents.length ? rvCandidates.map(rvCandidateRow).join('') + rvUnknownAgents.map(rvUnknownRow).join('') : '<span style="font-size:0.78rem;color:var(--muted)">No agents are configured on this hive yet.</span>'}
+            </div>
+            <p class="config-help" id="rv-reviewer-summary" style="margin:var(--sp-2) var(--sp-0) var(--sp-0)"></p>
+            <p class="am-trusted-authors-note" id="rv-reviewer-engine-warn" hidden>⚠️ Only one engine will review &mdash; add a reviewer on a different engine for independent review.</p>
+            <p class="am-trusted-authors-note" id="rv-reviewer-combined-note" hidden>Combined mode (&quot;Review every perspective in one session&quot;) sends the whole review to the <em>first</em> eligible reviewer only, so fan-out does not give you a second opinion while it is on. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-swarm.md#reviewer-selection" target="_blank" rel="noopener noreferrer">Reviewer selection</a>.</p>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.all_authors ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="all_authors"></div>
@@ -49157,6 +49184,51 @@ function burnAreaChart() {
       if (!el || el.classList.contains('disabled') || el.dataset.disabled === 'true') return;
       const isOn = el.classList.toggle('on');
       markDirty(section, key, isOn);
+      if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+    }
+
+    // Reviewer agents pick-list (Settings → Features → Review Gate →
+    // Reviewers, #13460). The checked rows become review.reviewer_agents; an
+    // empty selection means "keyword scan", mirroring the server.
+    function markDirtyReviewerAgents() {
+      const names = Array.from(document.querySelectorAll('#rv-reviewer-agents .rv-reviewer-row'))
+        .filter(row => { const cb = row.querySelector('.rv-reviewer-on'); return cb && cb.checked; })
+        .map(row => row.dataset.reviewer).filter(Boolean);
+      markDirty('review', 'reviewer_agents', names);
+      refreshReviewerAgentSummary();
+    }
+
+    // reviewerAgentEligibility mirrors dashboardAgentReviewCapable: an
+    // available agent is eligible when it is ticked, or when nothing is
+    // ticked and it matches the "review" keyword scan.
+    function reviewerAgentEligibility(rows) {
+      const ticked = rows.filter(r => r.checked);
+      const eligible = (ticked.length ? ticked : rows.filter(r => r.keyword)).filter(r => r.available);
+      const engines = new Set(eligible.map(r => r.engine).filter(Boolean));
+      return { explicit: ticked.length > 0, eligible, engines };
+    }
+
+    function refreshReviewerAgentSummary() {
+      const root = document.getElementById('rv-reviewer-agents');
+      if (!root) return;
+      const rows = Array.from(root.querySelectorAll('.rv-reviewer-row')).map(row => {
+        const cb = row.querySelector('.rv-reviewer-on');
+        return { checked: !!(cb && cb.checked), engine: row.dataset.engine || '', available: row.dataset.available === '1', keyword: row.dataset.keyword === '1' };
+      });
+      const { explicit, eligible, engines } = reviewerAgentEligibility(rows);
+      const isOn = key => { const sw = document.querySelector(`.config-toggle-switch[data-section="review"][data-key="${key}"]`); return !!(sw && sw.classList.contains('on')); };
+      const fanOut = isOn('fan_out');
+      const combined = isOn('combined_perspectives');
+      const summary = root.querySelector('#rv-reviewer-summary');
+      if (summary) {
+        const n = eligible.length;
+        const e = engines.size;
+        summary.textContent = `${n} review-capable agent${n === 1 ? '' : 's'} ${explicit ? 'selected' : 'by keyword'} on ${e} engine${e === 1 ? '' : 's'}.`;
+      }
+      const warn = root.querySelector('#rv-reviewer-engine-warn');
+      if (warn) warn.hidden = !(fanOut && eligible.length > 0 && engines.size < 2);
+      const note = root.querySelector('#rv-reviewer-combined-note');
+      if (note) note.hidden = !(fanOut && combined);
     }
 
     /* Sentinel dirty-tracking: the security PUT takes a nested `sentinel`
@@ -53109,7 +53181,7 @@ function burnAreaChart() {
       gh71: function (event, A) { markDirty('auto-merge','max_merges',Number(this.value)||0); },
       gh72: function (event, A) { markDirty('auto-merge','required_checks',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
       gh73: function (event, A) { markDirty('review','max_parallel_reviews',Number(this.value)||0); },
-      gh74: function (event, A) { markDirty('review','reviewer_agents',this.value.split(',').map(s=>s.trim()).filter(Boolean)); },
+      gh74: function (event, A) { markDirtyReviewerAgents(); },
       gh81: function (event, A) { markDirty('review','max_perspectives_per_pr',Number(this.value)||0); },
       // Perspectives and their prompts are staged together on every change:
       // the server validates them as a pair (a custom perspective is only
