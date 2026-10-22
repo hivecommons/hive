@@ -93,7 +93,7 @@ func TestSweepLegacyFleetReportIssuesClosesBotStandaloneOnly(t *testing.T) {
 	if len(closes) != 1 || closes[0] != "/repos/hivecommons/hive/issues/1 closed/not_planned" {
 		t.Fatalf("closes = %v", closes)
 	}
-	if len(comments) != 1 || !strings.HasPrefix(comments[0], "/repos/hivecommons/hive/issues/1 "+legacyFleetReportCloseMarker) || !strings.Contains(comments[0], "#13470") || !strings.Contains(comments[0], "[selfreport]") {
+	if len(comments) != 1 || !strings.HasPrefix(comments[0], "/repos/hivecommons/hive/issues/1/comments "+legacyFleetReportCloseMarker) || !strings.Contains(comments[0], "#13470") || !strings.Contains(comments[0], "[selfreport]") {
 		t.Fatalf("comments = %v", comments)
 	}
 	if len(events) != 1 || events[0].Number != 1 || events[0].Author != "hivecommons-hive[bot]" || events[0].Repo != fleetReportRepo {

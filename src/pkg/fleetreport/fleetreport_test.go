@@ -246,13 +246,24 @@ func TestEvaluateSuppressesUnchangedEnabledReport(t *testing.T) {
 	}
 }
 
-func TestReportTitleIncludesFingerprintForCreateDedupe(t *testing.T) {
+// The standalone title carried the fingerprint so exact-title dedupe could
+// not merge distinct reports. A shortfall now opens a `[selfreport]` tracker
+// like a runtime report does: the fingerprint lives in the body marker (the
+// hub and joiner search on it), the title is human-readable and shared, so
+// other hives hitting the same component and criterion join the same issue.
+func TestReportTitleIsSelfReportTrackerWithFingerprintInBody(t *testing.T) {
 	obs := Observation{HiveID: "hive-a", Version: "4.0.0", Commit: "abcdef1", Mode: "busy", ACMMLevel: 3}
 	ev := Evidence{Component: "agent-runtime", ErrorClass: "agent stall", Count: 3, Window: time.Hour, Severity: "medium", Attributable: true}
 	fp := Fingerprint(ev.ErrorClass, ev.Component, "4.0.0", "green-ci-streak")
 	report := BuildReport(obs, "green-ci-streak", "green CI streak", ev, fp, AnonymousInstanceID(obs.HiveID), "4.0.0", "abcdef1")
-	if !strings.Contains(report.Title, fp) {
-		t.Fatalf("title %q must include fingerprint %q so CreateIssue title dedupe cannot merge distinct reports", report.Title, fp)
+	if report.Title != "[selfreport] acmm-shortfall: agent-runtime blocks green CI streak" {
+		t.Fatalf("title = %q", report.Title)
+	}
+	if IsLegacyStandaloneTitle(report.Title) || strings.Contains(report.Title, fp) {
+		t.Fatalf("title %q must not be the retired standalone format", report.Title)
+	}
+	if !strings.Contains(report.Body, "<!-- hive-fleet-fingerprint:"+fp+" -->") {
+		t.Fatalf("body must carry the fingerprint marker: %s", report.Body)
 	}
 }
 

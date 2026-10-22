@@ -776,9 +776,12 @@ func legacySelfReportGitHubScript(t *testing.T, trackerHit bool) (http.HandlerFu
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
-			raw, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
 			mu.Lock()
-			comments = append(comments, string(raw))
+			comments = append(comments, payload.Body)
 			mu.Unlock()
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
