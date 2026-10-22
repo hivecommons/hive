@@ -16,10 +16,14 @@ type RepoPolicy struct {
 	LabelDriven           bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
 	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
 	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
-	LabelDrivenApprovalLabels []string             `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
-	ACMMLevel                 *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
-	ACMMPinned                bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
-	ACMMLastAutomatic         *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	LabelDrivenApprovalLabels []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	// LabelDrivenSupersedeParkActors overrides
+	// project.label_driven_supersede_park_actors for this repo
+	// (hivecommons/hive#13605). Only read when LabelDriven is set.
+	LabelDrivenSupersedeParkActors []string             `yaml:"label_driven_supersede_park_actors,omitempty" json:"label_driven_supersede_park_actors,omitempty"`
+	ACMMLevel                      *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
+	ACMMPinned                     bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
+	ACMMLastAutomatic              *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
 	// CompanionRepos lists sibling repositories (bare or org-qualified) this
 	// repo's tooling expects checked out beside it under the agent workspace
 	// root, at <root>/<org>/<companion> (hivecommons/hive#13059). Agents are
@@ -141,6 +145,23 @@ func (c *Config) LabelDrivenTrustedBots() []string {
 		return append([]string(nil), DefaultLabelDrivenTrustedBots...)
 	}
 	return normalizeLabelList(c.Project.LabelDrivenTrustedBots)
+}
+
+// LabelDrivenSupersedeParkActors returns the automation logins whose park
+// labels a later trusted acceptance on repo supersedes and removes
+// (hivecommons/hive#13605), or nil when repo is not label-driven. A
+// label-driven repo resolves its own repo_policies override first, then
+// project.label_driven_supersede_park_actors. The default is empty: Hive
+// removes only the park labels it added itself.
+func (c *Config) LabelDrivenSupersedeParkActors(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || !rp.LabelDriven {
+		return nil
+	}
+	if rp.LabelDrivenSupersedeParkActors != nil {
+		return normalizeLabelList(rp.LabelDrivenSupersedeParkActors)
+	}
+	return normalizeLabelList(c.Project.LabelDrivenSupersedeParkActors)
 }
 
 func normalizeLabelList(in []string) []string {
@@ -332,7 +353,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.CompanionRepos) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
 }
 
 // CompanionReposFor returns the org-qualified companion repositories

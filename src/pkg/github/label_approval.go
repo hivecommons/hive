@@ -16,8 +16,10 @@ import (
 // On a repo with project.repo_policies[].label_driven set, the organisation's
 // own acceptance label (`triage/accepted` unless configured) approves work for
 // the hive the way `/hive approve` does: Hive records the approval
-// (`approved-direction`), removes the park labels it added itself, and leaves
-// every other label to the organisation's people and bots. Nothing in this
+// (`approved-direction`), removes the park labels it added itself (plus those
+// of any lifecycle bot the repo lists in SupersedeParkActors,
+// hivecommons/hive#13605), and leaves every other label to the organisation's
+// people and bots. Nothing in this
 // file runs for a repo that has not opted in: every entry point first asks the
 // policy callback, and a nil callback or a false answer is a no-op.
 
@@ -33,6 +35,13 @@ type LabelApprovalPolicy struct {
 	// TrustedBots are bot logins whose label additions count: the
 	// organisation's command bot has already applied its own authorisation.
 	TrustedBots []string
+	// SupersedeParkActors are automation logins (a repo's lifecycle bot, for
+	// example) whose park labels a later trusted acceptance supersedes
+	// (hivecommons/hive#13605): such a label is removed with the acceptance
+	// instead of withholding it. Empty keeps the rule that Hive removes only
+	// the park labels it added itself. Labels containing "hold" are never
+	// superseded.
+	SupersedeParkActors []string
 }
 
 // Enabled reports whether the policy maps at least one label to approval.
@@ -50,6 +59,21 @@ func (p LabelApprovalPolicy) hasLabel(name string) bool {
 func (p LabelApprovalPolicy) trustedBot(login string) bool {
 	for _, b := range p.TrustedBots {
 		if strings.EqualFold(strings.TrimSpace(b), strings.TrimSpace(login)) {
+			return true
+		}
+	}
+	return false
+}
+
+// supersedesParkActor reports whether a park label last added by login may be
+// removed by a later trusted acceptance (hivecommons/hive#13605).
+func (p LabelApprovalPolicy) supersedesParkActor(login string) bool {
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return false
+	}
+	for _, b := range p.SupersedeParkActors {
+		if strings.EqualFold(strings.TrimSpace(b), login) {
 			return true
 		}
 	}
@@ -259,6 +283,10 @@ type labelApprovalFinding struct {
 	// `needs-human` (unparkRemovableLabels). The approval is still recorded,
 	// but the issue is not released while one is present.
 	KeptParkLabels []string
+	// SupersededParkLabels are park labels an account listed in
+	// LabelApprovalPolicy.SupersedeParkActors added before the acceptance;
+	// the acceptance removes them (hivecommons/hive#13605).
+	SupersededParkLabels []labelAttribution
 	// BlockingParkLabels are park labels whose newest addition was not by the
 	// hive (a person, another bot, or unreadable). While any is present the
 	// acceptance withholds approval (R3, A4, A29).
@@ -356,6 +384,10 @@ func (c *Client) evaluateLabelApproval(ctx context.Context, owner, repo string, 
 			continue
 		}
 		switch {
+		case ok && !c.isHiveAccount(ev.Actor) && policy.supersedesParkActor(attr.Actor) && !ev.At.After(f.At):
+			// A listed lifecycle bot parked the issue before the trusted
+			// acceptance: the acceptance supersedes it (hivecommons/hive#13605).
+			f.SupersededParkLabels = append(f.SupersededParkLabels, attr)
 		case !ok || !c.isHiveAccount(ev.Actor):
 			f.BlockingParkLabels = append(f.BlockingParkLabels, attr)
 		case isUnparkKeptLabel(name):
@@ -408,15 +440,43 @@ func (c *Client) markerAuthorTrusted(user *gh.User) bool {
 	return c.isHiveAccount(user)
 }
 
+// removableParkLabels lists the park labels an acceptance removes: the
+// hive's own, then those a listed lifecycle bot added before it
+// (hivecommons/hive#13605).
+func (f labelApprovalFinding) removableParkLabels() []string {
+	out := append([]string(nil), f.HiveParkLabels...)
+	for _, a := range f.SupersededParkLabels {
+		out = append(out, a.Label)
+	}
+	return out
+}
+
 // renderLabelApprovalReply is the comment posted when an acceptance acts on a
 // parked issue (R7). No line starts with a bot command (R18): the labels are
 // quoted inline.
 func renderLabelApprovalReply(f labelApprovalFinding, removed []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Approved via `%s`, added by @%s (%s).", f.Label, f.Actor, f.TrustReason)
-	if len(removed) > 0 {
-		fmt.Fprintf(&b, " Removed Hive's own park labels %s and applied `%s`.", quoteLabels(removed), HumanAckLabel)
-	} else {
+	superseded := map[string]labelAttribution{}
+	for _, a := range f.SupersededParkLabels {
+		superseded[a.Label] = a
+	}
+	var own, bot []string
+	for _, l := range removed {
+		if a, ok := superseded[l]; ok {
+			bot = append(bot, a.String())
+		} else {
+			own = append(own, l)
+		}
+	}
+	switch {
+	case len(own) > 0 && len(bot) > 0:
+		fmt.Fprintf(&b, " Removed Hive's own park labels %s and %s, superseded by the acceptance as this repository's configuration allows, and applied `%s`.", quoteLabels(own), strings.Join(bot, ", "), HumanAckLabel)
+	case len(own) > 0:
+		fmt.Fprintf(&b, " Removed Hive's own park labels %s and applied `%s`.", quoteLabels(own), HumanAckLabel)
+	case len(bot) > 0:
+		fmt.Fprintf(&b, " Removed %s, superseded by the acceptance as this repository's configuration allows, and applied `%s`.", strings.Join(bot, ", "), HumanAckLabel)
+	default:
 		fmt.Fprintf(&b, " `%s` is applied; no label Hive added before the acceptance remained to remove.", HumanAckLabel)
 	}
 	var kept []string

@@ -980,6 +980,12 @@ type ProjectConfig struct {
 	LabelDrivenApprovalLabels  []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
 	LabelDrivenTrustOrgMembers *bool    `yaml:"label_driven_trust_org_members,omitempty" json:"label_driven_trust_org_members,omitempty"`
 	LabelDrivenTrustedBots     []string `yaml:"label_driven_trusted_bots,omitempty" json:"label_driven_trusted_bots,omitempty"`
+	// LabelDrivenSupersedeParkActors are automation logins (a lifecycle bot
+	// such as github-actions[bot]) whose park labels a later trusted
+	// acceptance removes on label-driven repos (hivecommons/hive#13605).
+	// Empty (the default) keeps Hive from removing any park label it did not
+	// add. Per-repo override: repo_policies[].label_driven_supersede_park_actors.
+	LabelDrivenSupersedeParkActors []string `yaml:"label_driven_supersede_park_actors,omitempty" json:"label_driven_supersede_park_actors,omitempty"`
 }
 
 const (

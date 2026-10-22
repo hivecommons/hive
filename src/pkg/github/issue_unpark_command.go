@@ -502,7 +502,7 @@ func (c *Client) tryLabelApproval(ctx context.Context, displayRepo, owner, repo 
 	if !parked && labelPresent(labels, HumanAckLabel) {
 		return false, nil
 	}
-	for _, label := range f.HiveParkLabels {
+	for _, label := range f.removableParkLabels() {
 		if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
 			return false, err
 		}

@@ -9765,9 +9765,10 @@ func labelApprovalPolicyResolver(cfg *config.Config) func(repo string) (github.L
 			return github.LabelApprovalPolicy{}, false
 		}
 		return github.LabelApprovalPolicy{
-			Labels:          labels,
-			TrustOrgMembers: cfg.LabelDrivenTrustOrgMembers(),
-			TrustedBots:     cfg.LabelDrivenTrustedBots(),
+			Labels:              labels,
+			TrustOrgMembers:     cfg.LabelDrivenTrustOrgMembers(),
+			TrustedBots:         cfg.LabelDrivenTrustedBots(),
+			SupersedeParkActors: cfg.LabelDrivenSupersedeParkActors(repo),
 		}, true
 	}
 }

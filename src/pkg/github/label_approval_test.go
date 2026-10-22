@@ -601,3 +601,127 @@ func TestSweepLabelDrivenHiveApproveLiftsHiveNeedsHuman(t *testing.T) {
 		t.Fatalf("reply must list needs-human among the removed labels, got %v", rec.posted[42])
 	}
 }
+
+// laSupersedePolicy lists the lifecycle bot whose park labels a later
+// trusted acceptance supersedes (hivecommons/hive#13605).
+func laSupersedePolicy() LabelApprovalPolicy {
+	p := laPolicy()
+	p.SupersedeParkActors = []string{laOtherBot}
+	return p
+}
+
+// A listed lifecycle bot's needs-human added before a trusted acceptance is
+// removed with the acceptance, the issue is released, and the comment says
+// whose label went (hivecommons/hive#13605).
+func TestSweepLabelApprovalSupersedesLifecycleBotParkLabel(t *testing.T) {
+	issue := laIssue(43, "needs-human", "needs-decision", "triage/accepted")
+	c, rec := laServer(t, []unparkWireIssue{issue})
+	rec.timelines[43] = []unparkWireTimelineEvent{
+		labeledAt(1, laOtherBot, "needs-human", laBase),
+		labeledAt(2, laHive, "needs-decision", laBase.Add(time.Minute)),
+		labeledAt(3, laTriager, "triage/accepted", laBase.Add(2*time.Minute)),
+	}
+	result := laSweep(t, c, true, laPolicyFn(laSupersedePolicy(), true))
+	if len(result.LabelApproved) != 1 {
+		t.Fatalf("expected one label approval, got %+v", result.LabelApproved)
+	}
+	ev := result.LabelApproved[0]
+	if ev.Pending || !ev.Released {
+		t.Fatalf("expected a released approval, got %+v", ev)
+	}
+	if got := strings.Join(rec.removed[43], ","); got != "needs-decision,needs-human" {
+		t.Fatalf("removed = %q, want needs-decision,needs-human", got)
+	}
+	if len(rec.added[43]) != 1 || rec.added[43][0] != HumanAckLabel {
+		t.Fatalf("added = %v, want %s", rec.added[43], HumanAckLabel)
+	}
+	if len(rec.posted[43]) != 1 {
+		t.Fatalf("expected one comment, got %v", rec.posted[43])
+	}
+	body := rec.posted[43][0]
+	for _, want := range []string{"`needs-decision`", "`needs-human` (added by @" + laOtherBot + ")", "superseded by the acceptance", "now released"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "withheld") {
+		t.Errorf("a superseded park label must not withhold approval:\n%s", body)
+	}
+}
+
+// The four park-label situations around a listed lifecycle bot: only its
+// label added before the acceptance is superseded. A person's label, an
+// unlisted bot's label, and a listed bot's label added after the acceptance
+// still block exactly as before, as does every label with the list empty.
+func TestSweepLabelApprovalSupersedeParkActorsCases(t *testing.T) {
+	cases := []struct {
+		name     string
+		actor    string
+		parkedAt time.Time
+		policy   LabelApprovalPolicy
+		released bool
+	}{
+		{"listed bot before acceptance", laOtherBot, laBase, laSupersedePolicy(), true},
+		{"listed bot after acceptance", laOtherBot, laBase.Add(time.Hour), laSupersedePolicy(), false},
+		{"person", laWriter, laBase, laSupersedePolicy(), false},
+		{"unlisted bot", laProwBot, laBase, laSupersedePolicy(), false},
+		{"list empty", laOtherBot, laBase, laPolicy(), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := laIssue(44, "needs-human", "triage/accepted")
+			c, rec := laServer(t, []unparkWireIssue{issue})
+			rec.timelines[44] = []unparkWireTimelineEvent{
+				labeledAt(1, tc.actor, "needs-human", tc.parkedAt),
+				labeledAt(2, laTriager, "triage/accepted", laBase.Add(time.Minute)),
+			}
+			result := laSweep(t, c, true, laPolicyFn(tc.policy, true))
+			if len(result.LabelApproved) != 1 {
+				t.Fatalf("expected one label approval event, got %+v", result.LabelApproved)
+			}
+			ev := result.LabelApproved[0]
+			if tc.released {
+				if ev.Pending || !ev.Released {
+					t.Fatalf("expected a released approval, got %+v", ev)
+				}
+				if got := strings.Join(rec.removed[44], ","); got != "needs-human" {
+					t.Fatalf("removed = %q, want needs-human", got)
+				}
+				if len(rec.added[44]) != 1 || rec.added[44][0] != HumanAckLabel {
+					t.Fatalf("added = %v, want %s", rec.added[44], HumanAckLabel)
+				}
+				return
+			}
+			if !ev.Pending || ev.Released {
+				t.Fatalf("expected a pending approval, got %+v", ev)
+			}
+			if len(rec.removed[44]) != 0 || len(rec.added[44]) != 0 {
+				t.Fatalf("a blocking park label must change no labels: removed=%v added=%v", rec.removed[44], rec.added[44])
+			}
+			if len(rec.posted[44]) != 1 || !strings.Contains(rec.posted[44][0], "`needs-human` (added by @"+tc.actor+")") || !strings.Contains(rec.posted[44][0], "withheld") {
+				t.Fatalf("expected the existing pending comment naming the blocker, got %v", rec.posted[44])
+			}
+		})
+	}
+}
+
+// A hold label added by a listed lifecycle bot is never superseded.
+func TestSweepLabelApprovalNeverSupersedesHold(t *testing.T) {
+	issue := laIssue(45, "needs-decision", "hold", "triage/accepted")
+	c, rec := laServer(t, []unparkWireIssue{issue})
+	rec.timelines[45] = []unparkWireTimelineEvent{
+		labeledAt(1, laHive, "needs-decision", laBase),
+		labeledAt(2, laOtherBot, "hold", laBase.Add(time.Minute)),
+		labeledAt(3, laTriager, "triage/accepted", laBase.Add(2*time.Minute)),
+	}
+	result := laSweep(t, c, true, laPolicyFn(laSupersedePolicy(), true))
+	if len(result.LabelApproved) != 1 {
+		t.Fatalf("expected one label approval, got %+v", result.LabelApproved)
+	}
+	if got := strings.Join(rec.removed[45], ","); got != "needs-decision" {
+		t.Fatalf("removed = %q, want only needs-decision (hold must stay)", got)
+	}
+	if len(rec.posted[45]) != 1 || !strings.Contains(rec.posted[45][0], "`hold` (added by @"+laOtherBot+")") || !strings.Contains(rec.posted[45][0], "Left in place") {
+		t.Fatalf("expected the comment to list hold as left in place, got %v", rec.posted[45])
+	}
+}

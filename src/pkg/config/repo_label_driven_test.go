@@ -123,3 +123,65 @@ project:
 		t.Error("a per-repo approval label override must not be pruned as empty")
 	}
 }
+
+// project.label_driven_supersede_park_actors (hivecommons/hive#13605) names
+// the automation accounts whose park labels a later trusted acceptance
+// removes. It defaults to empty, resolves only on label-driven repos, and a
+// per-repo list overrides the project one.
+func TestLabelDrivenSupersedeParkActorsResolve(t *testing.T) {
+	var cfg Config
+	raw := []byte(`
+project:
+  org: projectbluefin
+  repos: [common, chairlift, printer, other]
+  label_driven_supersede_park_actors: ["github-actions[bot]", " "]
+  repo_policies:
+    - repo: common
+      label_driven: true
+    - repo: chairlift
+      label_driven: true
+      label_driven_supersede_park_actors: ["lifecycle[bot]"]
+    - repo: printer
+      label_driven: true
+      label_driven_supersede_park_actors: []
+    - repo: other
+      auto_merge: false
+`)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cases := map[string][]string{
+		"common":    {"github-actions[bot]"},
+		"chairlift": {"lifecycle[bot]"},
+		"printer":   {},
+		"other":     nil,
+		"unlisted":  nil,
+	}
+	for repo, want := range cases {
+		got := cfg.LabelDrivenSupersedeParkActors(repo)
+		if len(got) != len(want) {
+			t.Errorf("LabelDrivenSupersedeParkActors(%q) = %v, want %v", repo, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("LabelDrivenSupersedeParkActors(%q)[%d] = %q, want %q", repo, i, got[i], want[i])
+			}
+		}
+	}
+
+	var defaults Config
+	if err := yaml.Unmarshal([]byte("project:\n  org: o\n  repos: [r]\n  repo_policies:\n    - repo: r\n      label_driven: true\n"), &defaults); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := defaults.LabelDrivenSupersedeParkActors("r"); len(got) != 0 {
+		t.Errorf("supersede park actors must default to empty, got %v", got)
+	}
+	var nilCfg *Config
+	if nilCfg.LabelDrivenSupersedeParkActors("r") != nil {
+		t.Error("nil config must return nil without panicking")
+	}
+	if repoPolicyHasNoOverrides(RepoPolicy{Repo: "r", LabelDrivenSupersedeParkActors: []string{"x"}}) {
+		t.Error("a per-repo supersede list must not be pruned as empty")
+	}
+}

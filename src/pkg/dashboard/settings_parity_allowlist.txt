@@ -347,6 +347,7 @@ project.issue_filter.reporter_trust.trusted_logins[] # TODO #11854
 project.issue_filter.reporter_trust.untrusted_require_labels[] # TODO #11854
 project.issue_filter.require_labels[] # TODO #11854
 project.label_driven_approval_labels[] # TODO #11854
+project.label_driven_supersede_park_actors[] # TODO #11854
 project.label_driven_trust_org_members # TODO #11854
 project.label_driven_trusted_bots[] # TODO #11854
 project.open_prs # TODO #11854
@@ -368,6 +369,7 @@ project.repo_policies[].auto_merge # TODO #11854
 project.repo_policies[].companion_repos[] # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
+project.repo_policies[].label_driven_supersede_park_actors[] # TODO #11854
 project.repo_policies[].repo # TODO #11854
 project.repo_policies[].reporter_trust_hold # TODO #11854
 project.repo_policies[].self_authorization_hold # TODO #11854

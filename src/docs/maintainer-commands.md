@@ -145,10 +145,12 @@ project:
   label_driven_approval_labels: [triage/accepted]   # default
   label_driven_trust_org_members: true              # default (Prow's rule)
   label_driven_trusted_bots: [kubestellar-prow[bot]]   # default
+  # label_driven_supersede_park_actors: ["github-actions[bot]"]   # default empty
   repo_policies:
     - repo: projectbluefin/common
       label_driven: true
       # label_driven_approval_labels: [accepted]    # optional per-repo list
+      # label_driven_supersede_park_actors: ["github-actions[bot]"]   # optional per-repo list
 ```
 
 This is strictly opt-in (hivecommons/hive#11313). Repositories without
@@ -171,6 +173,21 @@ On an opted-in repository the un-park sweep:
 - never removes a park label a person added, nor `hold` / `do-not-merge`. When
   one of those is present the issue stays parked and Hive posts one
   "accepted, but still held by …" note naming the labels.
+
+#### Lifecycle bots that park every new issue
+
+Some repositories run a lifecycle bot that adds `needs-human` to every new
+issue and never removes it; Hive's rule of removing only its own park labels
+would then keep an accepted issue parked forever
+([#13605](https://github.com/hivecommons/hive/issues/13605)). List that bot in
+`label_driven_supersede_park_actors` (project-wide, or per repo under
+`repo_policies[]`) and a trusted acceptance added **after** the bot's park
+label supersedes it: Hive removes the label, says so in the release comment
+("`needs-human` (added by @github-actions[bot]), superseded by the acceptance
+as this repository's configuration allows"), and releases the issue. A park
+label added by a person, by an unlisted bot, or by a listed bot *after* the
+acceptance still blocks exactly as before, and `hold` / `do-not-merge` are
+never superseded. The list is empty by default.
 
 Parked issues are still filtered from enumeration, and Hive may still add
 `stage/045-needs-decision` with a comment asking the question. (Owner
@@ -210,6 +227,7 @@ them; the table states every effect in one place.
 | `stage/045-needs-decision` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
 | `stage/045-needs-decision` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
 | `needs-human` added by Hive | Removed on `/hive approve` / `/hive decision` / `/fixed` — the maintainer's answer to the hive's own ask ([#13075](https://github.com/hivecommons/hive/issues/13075)); kept on label approval; removed when the issue closes | Parked → no sign-off | n/a |
+| `needs-human` added by a bot listed in `label_driven_supersede_park_actors` before the acceptance ([#13605](https://github.com/hivecommons/hive/issues/13605)) | Removed on label approval, named in the release comment; added after the acceptance it is kept like a person's | Parked → no sign-off | n/a |
 | `needs-human` added by a person (or unreadable timeline) | Kept on a label-driven repo: the lifecycle bot owns it, and only a person removes it; the issue stays derived at 045 and out of the agent queue. (Elsewhere `/hive approve` / `/hive decision` / `/fixed` lift it whoever added it — [docs#419](https://github.com/hivecommons/docs/issues/419).) | Parked → no sign-off | n/a |
 | retired `needs-decision` / `needs-direction` ([#12683](https://github.com/hivecommons/hive/issues/12683)) | Migrated by the issue stage reconciler: `stage/045-needs-decision` added, retired label removed; a person's retired label therefore becomes a Hive-added 045 and `/hive approve` can clear it | Parked → no sign-off | n/a |
 | `hold`, `do-not-merge` | Kept; issue stays parked (unchanged) | Hold (unchanged) | n/a |

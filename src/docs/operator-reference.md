@@ -223,6 +223,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `project.label_driven_approval_labels` | `["triage/accepted"]` | Labels whose trusted addition approves an issue on every label-driven repo without its own list. Ignored by repos without `label_driven: true`. Dashboard: Settings → Repos → "Default approval labels". |
 | `project.label_driven_trust_org_members` | `true` | Whether a public member of the repo's owning org who applies an approval label is trusted (Prow's own rule). Dashboard: Settings → Repos → "trust public org members". |
 | `project.label_driven_trusted_bots` | `["kubestellar-prow[bot]"]` | Bot logins whose label additions count as a trusted triager (Prow command bots relaying `/triage accepted`). `github-actions[bot]` is not in the default because it is the shared identity of every workflow in the repo, including ones triggered by untrusted events; operators whose Prow emulation runs as `github-actions[bot]` must add it explicitly per deployment. Dashboard: Settings → Repos → "Trusted bots". |
+| `project.label_driven_supersede_park_actors` | `[]` (off) | Automation logins (for example a lifecycle bot running as `github-actions[bot]`) whose park labels a later trusted acceptance supersedes on label-driven repos: Hive removes the label, says so in the release comment, and releases the issue ([#13605](https://github.com/hivecommons/hive/issues/13605)). Park labels added by people, by unlisted bots, or by a listed bot after the acceptance still block; `hold` is never superseded. Per-repo override: `project.repo_policies[].label_driven_supersede_park_actors`. |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
@@ -277,6 +278,10 @@ behaves exactly as before. With it set:
   `approved-direction`, without requiring a `/hive` comment. Park labels a
   person added, and `hold` / `do-not-merge`, are left alone and keep the issue
   parked; Hive posts one "accepted, but still held by …" note per acceptance.
+  A park label added by a lifecycle bot listed in
+  `label_driven_supersede_park_actors` before the acceptance is removed too
+  ([#13605](https://github.com/hivecommons/hive/issues/13605)); the list is
+  empty by default.
 - `pr_self_authorization` counts that label as human sign-off, the same way it
   counts `approved-direction`.
 - `/hive approve` and `/hive decision` on such a repo may also be issued by
