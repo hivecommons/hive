@@ -46,6 +46,14 @@ func ConfigLeaves(repoRoot string) ([]Leaf, error) {
 			defer delete(seenStack, key)
 		}
 		for _, field := range st.Fields.List {
+			if yamlInline(field) {
+				// Embedded structs tagged `yaml:",inline"` flatten into the
+				// parent; inline maps are catch-alls with no fixed leaves.
+				if inlineStruct(field.Type, structs) {
+					walk(field.Type, prefix)
+				}
+				continue
+			}
 			tagName, ok := yamlName(field)
 			if !ok {
 				continue
@@ -148,6 +156,41 @@ func collectStructs(fset *token.FileSet, dir string, structs map[string]*ast.Str
 		}
 		return nil
 	})
+}
+
+func inlineStruct(expr ast.Expr, structs map[string]*ast.StructType) bool {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		_, ok := structs[t.Name]
+		return ok
+	case *ast.StarExpr:
+		return inlineStruct(t.X, structs)
+	case *ast.SelectorExpr:
+		_, ok := structs[t.Sel.Name]
+		return ok
+	case *ast.StructType:
+		return true
+	}
+	return false
+}
+
+func yamlInline(f *ast.Field) bool {
+	if f.Tag == nil {
+		return false
+	}
+	tag := strings.Trim(f.Tag.Value, "`")
+	for _, part := range strings.Split(tag, " ") {
+		if !strings.HasPrefix(part, "yaml:\"") {
+			continue
+		}
+		v := strings.TrimSuffix(strings.TrimPrefix(part, "yaml:\""), "\"")
+		for _, opt := range strings.Split(v, ",")[1:] {
+			if opt == "inline" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func yamlName(f *ast.Field) (string, bool) {
