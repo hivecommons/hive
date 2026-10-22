@@ -429,11 +429,13 @@ func TestPlanReviewDispatch_PlanMatchCarriesPlanWave(t *testing.T) {
 // materialises, still maps to its base so the family stays excluded
 // (hivecommons/hive#13552).
 func TestReviewAuthorBaseUsesFullConfiguredAgentSet(t *testing.T) {
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{
-		"alpha":   {Enabled: true},
-		"alpha-2": {Enabled: true, ReplicaOf: "alpha"},
-		"alpha-3": {Enabled: false, ReplicaOf: "alpha"},
-		"beta":    {Enabled: true},
+	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{
+		Agents: map[string]config.AgentConfig{
+			"alpha":   {Enabled: true},
+			"alpha-2": {Enabled: true, ReplicaOf: "alpha"},
+			"alpha-3": {Enabled: false, ReplicaOf: "alpha"},
+			"beta":    {Enabled: true},
+		},
 	}}
 	if _, ok := cfg.EnabledAgents()["alpha-3"]; ok {
 		t.Fatal("fixture: alpha-3 should be disabled")
