@@ -12386,6 +12386,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return picks.map(b => `<span>${esc(costBucketAxisLabel(b, win))}</span>`).join('');
     }
 
+    // Bar heights are a percentage of the chart; the tallest bar is 100 %.
+    // A bar with ANY recorded spend is drawn at least COST_BAR_MIN_SPEND_PCT
+    // tall: on a linear scale a $1 day beside a $1,000 day is 0.1 % — under a
+    // pixel at the chart's height — and read as "the day vanished" (observed
+    // the morning real-time Copilot recording started, #13492). A recorded $0
+    // (data, nothing spent) draws the COST_BAR_ZERO_PCT baseline so an
+    // all-zero window reads as "flat at zero" rather than missing.
+    const COST_BAR_MIN_SPEND_PCT = 6;
+    const COST_BAR_ZERO_PCT = 2;
+    function costBarHeightPct(b, max) {
+      if (!(b.spend > 0)) return b.hasData ? COST_BAR_ZERO_PCT : 0;
+      if (!(max > 0)) return COST_BAR_MIN_SPEND_PCT;
+      return Math.max(COST_BAR_MIN_SPEND_PCT, (b.spend / max) * 100);
+    }
+
     // costWindowRunRate: $ per ms = spend inside the window ÷ the part of the
     // window that has elapsed so far. null when nothing was spent or no time
     // has passed (the caller then omits the run-rate).
@@ -12554,48 +12569,101 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // costAccrualSpans: every POSITIVE increment in the WHOLE history, each
-    // tagged with the interval [from, to] it is presumed to have accrued over —
-    // i.e. from the previous observation to the one that revealed it. See the
-    // COST_ACCRUAL_* notes above for why observation time ≠ spend time.
+    // tagged with the interval [from, to] it is presumed to have accrued over.
+    // See the COST_ACCRUAL_* notes above for why observation time ≠ spend time.
+    //
+    // The interval is the stretch over which the counter that rose had been
+    // FLAT while the sampler stayed alive: from the snapshot at which that
+    // same counter last rose (or the first dense snapshot, or 24 h, whichever
+    // is nearest) to the snapshot that revealed the rise. Spend can only have
+    // been hiding while its counter sat still — the stretch before the
+    // previous rise was already accounted for by that rise. Without this
+    // bound every 5-minute increment of a LIVE counter (the proxy records
+    // Copilot usage as it happens, #13492) walked back over the whole dense
+    // 24 h and the first day of real-time recording was billed ~80 % to the
+    // day before it (observed: $860 on a day whose own record was $1.19).
+    //
+    // Flatness is judged per model, not on the summed total: a chatty cheap
+    // helper that moves the total every 5 minutes must not stop an expensive
+    // model's session flush — which arrives as one jump after hours of
+    // silence on ITS counter — from being spread back across those hours.
+    // Each aggregate step is therefore split across the models that rose,
+    // in proportion to their rise, so the total billed is exactly the
+    // aggregate step (what costSpendBetween and the server's rollup count)
+    // and only its placement differs. A model's first appearance has no flat
+    // stretch (it was absent, not still) and is billed to its observation
+    // interval. Snapshots recorded before per-model data existed carry one
+    // '$' counter.
     //
     // Deliberately walks the entire series rather than a window: an increment
     // observed just AFTER a bucket ends may still have accrued largely INSIDE
     // it, and one observed inside a bucket may have started well before it.
     // Windowing first would drop exactly the spans that need splitting.
     function costAccrualSpans(hist, rate) {
+      const priceModel = (k, m) => ((m.i || 0) + (m.o || 0)) * (rate[k] || 0);
       const pricedTok = (models) => {
         let s = 0;
-        for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
+        for (const k in models) s += priceModel(k, models[k]);
         return s;
       };
       const spans = [];
       // Timestamps of every usable snapshot, in order, so an increment can walk
       // back over the stretch the sampler was demonstrably alive.
       const stamps = [];
-      let prev = null, prevKind = null, peak = -Infinity;
+      // lastRise: per counter (model name, or '$' for usd-only snapshots), the
+      // snapshot at which it last rose — the start of its current flat stretch.
+      let lastRise = {};
+      let prev = null, prevModels = null, prevKind = null, peak = -Infinity;
       for (const e of (hist || [])) {
         const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
         if (kind == null) continue;
         const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
-        if (kind !== prevKind) peak = -Infinity;
-        if (prev != null && kind === prevKind && cur > prev) {
-          // Walk back while snapshots stayed dense: that is the stretch the hive
-          // was up and this spend could have been accruing. Stop at the first
-          // long silence (outage/restart) so spend never smears across dead air.
-          let from = e.timestamp;
-          for (let i = stamps.length - 1; i > 0; i--) {
-            if (stamps[i] - stamps[i - 1] > COST_ACCRUAL_LIVENESS_GAP_MS) break;
-            from = stamps[i - 1];
-            if (e.timestamp - from >= COST_ACCRUAL_MAX_SPREAD_MS) break;
+        if (kind !== prevKind) { peak = -Infinity; lastRise = {}; }
+        const prevStamp = stamps.length ? stamps[stamps.length - 1] : e.timestamp;
+        // Per-counter rises at this snapshot, used both to place this step and
+        // to advance each counter's flat-stretch start afterwards.
+        const rises = [];
+        if (prev != null && kind === prevKind) {
+          if (kind === 'u') {
+            if (cur > prev) rises.push({ k: '$', rise: cur - prev });
+          } else {
+            for (const k in e.models) {
+              const now = priceModel(k, e.models[k]);
+              const before = prevModels && prevModels[k] ? priceModel(k, prevModels[k]) : null;
+              if (before == null) { if (now > 0) rises.push({ k, rise: now, first: true }); }
+              else if (now > before) rises.push({ k, rise: now - before });
+            }
           }
-          from = Math.max(from, e.timestamp - COST_ACCRUAL_MAX_SPREAD_MS);
+        }
+        if (prev != null && kind === prevKind && cur > prev) {
+          const step = cur - prev;
           // gap is the observation interval (previous snapshot → this one),
           // which the discontinuity guard judges the step against; `from` is
           // the (liveness-bounded) accrual start and may be later.
-          spans.push({ amount: cur - prev, from, to: e.timestamp, gap: stamps.length ? e.timestamp - stamps[stamps.length - 1] : 0, restore: costStepRegainsGround(cur - prev, prev, cur, peak) });
+          const gap = stamps.length ? e.timestamp - prevStamp : 0;
+          const restore = costStepRegainsGround(step, prev, cur, peak);
+          // Walk back while snapshots stayed dense: that is the stretch the hive
+          // was up and this spend could have been accruing. Stop at the first
+          // long silence (outage/restart) so spend never smears across dead air.
+          let dense = e.timestamp;
+          for (let i = stamps.length - 1; i > 0; i--) {
+            if (stamps[i] - stamps[i - 1] > COST_ACCRUAL_LIVENESS_GAP_MS) break;
+            dense = stamps[i - 1];
+            if (e.timestamp - dense >= COST_ACCRUAL_MAX_SPREAD_MS) break;
+          }
+          dense = Math.max(dense, e.timestamp - COST_ACCRUAL_MAX_SPREAD_MS);
+          const riseTotal = rises.reduce((s, r) => s + r.rise, 0);
+          const parts = riseTotal > 0 ? rises : [{ k: '$', rise: step, first: true }];
+          const partTotal = riseTotal > 0 ? riseTotal : step;
+          for (const r of parts) {
+            const since = r.first ? prevStamp : (lastRise[r.k] != null ? lastRise[r.k] : dense);
+            const from = Math.max(dense, since);
+            spans.push({ amount: step * (r.rise / partTotal), step, from, to: e.timestamp, gap, restore });
+          }
         }
+        for (const r of rises) lastRise[r.k] = e.timestamp;
         if (cur > peak) peak = cur;
-        prev = cur; prevKind = kind;
+        prev = cur; prevModels = kind === 'm' ? e.models : null; prevKind = kind;
         stamps.push(e.timestamp);
       }
       return spans;
@@ -12606,11 +12674,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // bucket. An increment whose interval is shorter than
     // COST_ACCRUAL_MIN_SPREAD_MS is treated as a point event at its observation
     // time. Increments above `cap` are dropped as data corrections, exactly as
-    // in costSpendBetween.
+    // in costSpendBetween — judged on the whole aggregate step (`step`), not on
+    // the per-model part of it this span carries.
     function costSpreadSpendBetween(spans, t0, t1, cap) {
       let spend = 0;
       for (const s of (spans || [])) {
-        if (!costStepAllowed(s.amount, s.gap, cap, s.restore)) continue;
+        if (!costStepAllowed(s.step != null ? s.step : s.amount, s.gap, cap, s.restore)) continue;
         const span = s.to - s.from;
         if (span < COST_ACCRUAL_MIN_SPREAD_MS) {
           // Point event: bill it entirely to the bucket containing it.
@@ -12720,15 +12789,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body = `<div class="cost-trend-empty">No cost history recorded for this range — data accrues as agents run.</div>`;
       } else {
         const bars = buckets.map(b => {
-          // All-zero windows still draw a 2% baseline so the chart reads as
-          // "flat at zero" rather than missing (only axis labels visible).
           const span = `${formatDashboardDateTime(b.start)} → ${formatDashboardDateTime(b.end)}`;
           if (!b.hasData && b.start < now) {
             // Hatched full-height placeholder: no history at all here, which is
             // different from a recorded $0.
             return `<div class="cost-bar nodata" title="${esc(`${span}: no cost history recorded`)}"></div>`;
           }
-          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : (b.hasData ? 2 : 0);
+          const h = costBarHeightPct(b, max);
           const cls = b.spend > 0 ? 'cost-bar' : 'cost-bar zero';
           const tip = `${span}: ${fmtUSD(b.spend)}${b.rollup ? ' (includes daily rollup)' : ''}`;
           return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
