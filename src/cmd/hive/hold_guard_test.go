@@ -50,6 +50,7 @@ type holdGuardServer struct {
 	commits       map[int][]map[string]any // PR number -> commit list served
 	issueComments map[int][]map[string]any
 	issueEvents   map[int][]map[string]any
+	timeline      map[int][]map[string]any // PR number -> issue timeline (#13603 gate-lift provenance)
 	comments      []string
 	labels        []string
 
@@ -82,6 +83,13 @@ func (s *holdGuardServer) handler(t *testing.T) http.Handler {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events"):
 			number := pathIssueNumber(t, r.URL.Path)
 			_ = json.NewEncoder(w).Encode(s.issueEvents[number])
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/timeline"):
+			number := pathIssueNumber(t, r.URL.Path)
+			events := s.timeline[number]
+			if events == nil {
+				events = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(events)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			if s.failComments {
 				http.Error(w, `{"message":"boom"}`, http.StatusInternalServerError)
@@ -335,6 +343,122 @@ func TestEnforceHoldGuardDriftBlocksCommentsAndReholds(t *testing.T) {
 	}
 	if len(fake.comments) != 1 {
 		t.Fatalf("comments = %d, want no second comment on the approved lift", len(fake.comments))
+	}
+}
+
+// gateLiftTimeline builds the PR timeline the #13603 cases share: the PR was
+// held at c1, Renovate rebased it to r1 at 06:25, and the gate label was
+// removed at liftedAt by liftedBy.
+func gateLiftTimeline(gateLabel, liftedBy, liftedByType, liftedAt string) []map[string]any {
+	return []map[string]any{{
+		"event":      "labeled",
+		"label":      map[string]string{"name": gateLabel},
+		"actor":      map[string]string{"login": "kubestellar-hive[bot]", "type": "Bot"},
+		"created_at": "2026-10-22T05:00:00Z",
+	}, {
+		"event":     "committed",
+		"sha":       "r1",
+		"committer": map[string]string{"name": "mergeraptor[bot]", "date": "2026-10-22T06:25:00Z"},
+	}, {
+		"event":      "head_ref_force_pushed",
+		"actor":      map[string]string{"login": "mergeraptor[bot]", "type": "Bot"},
+		"created_at": "2026-10-22T06:25:01Z",
+	}, {
+		"event":      "unlabeled",
+		"label":      map[string]string{"name": gateLabel},
+		"actor":      map[string]string{"login": liftedBy, "type": liftedByType},
+		"created_at": liftedAt,
+	}}
+}
+
+// #13603: the PR was rebased while held, then a maintainer reviewed the
+// rebased head and lifted the gate. That lift covers the current head — no
+// integrity comment, no re-hold, snapshot cleared.
+func TestEnforceHoldGuardHumanLiftAfterRebaseAcceptsCurrentHead(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("r1", "mergeraptor[bot]", "chore(deps): update")},
+	}}
+	fake.timeline = map[int][]map[string]any{
+		7: gateLiftTimeline("sentinel-alert", "clubanderson", "User", "2026-10-22T18:19:00Z"),
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	client.SetSentinelAlertLabel("sentinel-alert")
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "mergeraptor[bot]"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "mergeraptor[bot]", HeadSHA: "r1"}), discardLogger())
+	if len(got) != 0 {
+		t.Fatalf("human lift after the rebase must reopen the merge lanes, got %v", got)
+	}
+	if len(fake.comments)+len(fake.labels) != 0 {
+		t.Fatalf("human lift after the rebase must not comment or re-hold, saw %v / %v", fake.comments, fake.labels)
+	}
+	if _, ok := store.Recorded("acme/widgets", 7); ok {
+		t.Fatal("human lift after the rebase must clear the snapshot")
+	}
+}
+
+// #13603 acceptance: a human lifted the gate, THEN the branch moved. That is
+// the attack the guard exists for — drift handling is unchanged.
+func TestEnforceHoldGuardPushAfterHumanLiftStillReholds(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("f1", "other-agent", "sneak")},
+	}}
+	fake.timeline = map[int][]map[string]any{
+		// Lift at 06:00, before the 06:25 rebase/force-push.
+		7: gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T06:00:00Z"),
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "f1"}), discardLogger())
+	if !got["widgets/7"] {
+		t.Fatalf("push after the human lift must still be re-review-gated, got %v", got)
+	}
+	if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
+	}
+	if rec, ok := store.Recorded("acme/widgets", 7); !ok || rec.HeadSHA != "f1" {
+		t.Fatalf("snapshot after drift = %+v, want re-armed at f1", rec)
+	}
+}
+
+// #13603 acceptance: a lift by one of the hive's own accounts (or any bot)
+// is never a human's review of the head — drift handling is unchanged.
+func TestEnforceHoldGuardHiveAccountLiftStillReholds(t *testing.T) {
+	for _, actor := range []struct{ login, typ string }{
+		{"kubestellar-hive[bot]", "Bot"},
+		{"renovate[bot]", "Bot"},
+	} {
+		t.Run(actor.login, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			fake := &holdGuardServer{commits: map[int][]map[string]any{
+				7: {ghCommit("r1", "mergeraptor[bot]", "chore(deps): update")},
+			}}
+			fake.timeline = map[int][]map[string]any{
+				7: gateLiftTimeline("hold", actor.login, actor.typ, "2026-10-22T18:19:00Z"),
+			}
+			client := newHoldGuardClient(t, fake)
+			client.SetAppBotLogin("kubestellar-hive[bot]")
+			cfg := escalationTestConfig()
+			store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "mergeraptor[bot]"}})
+
+			got := enforceHoldGuard(context.Background(), cfg, client, client,
+				actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "mergeraptor[bot]", HeadSHA: "r1"}), discardLogger())
+			if !got["widgets/7"] {
+				t.Fatalf("non-human lift must still be re-review-gated, got %v", got)
+			}
+			if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+				t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
+			}
+		})
 	}
 }
 

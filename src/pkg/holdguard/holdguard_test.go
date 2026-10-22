@@ -352,3 +352,29 @@ func TestEmptyPathStoreDoesNotWrite(t *testing.T) {
 		t.Fatal("path-less store must still track entries in memory")
 	}
 }
+
+func TestLiftCoversCurrentHead(t *testing.T) {
+	push := time.Date(2026, 10, 22, 6, 25, 0, 0, time.UTC)
+	after := push.Add(12 * time.Hour)
+	before := push.Add(-time.Hour)
+	cases := []struct {
+		name string
+		lift GateLift
+		want bool
+	}{
+		{"human lift after the rebase covers the head", GateLift{LiftedAt: after, LatestPushAt: push}, true},
+		{"human lift before a later push is drift", GateLift{LiftedAt: before, LatestPushAt: push}, false},
+		{"push at the exact lift instant is drift", GateLift{LiftedAt: push, LatestPushAt: push}, false},
+		{"hive account lift never covers", GateLift{LiftedAt: after, LatestPushAt: push, ActorIsHive: true}, false},
+		{"bot lift never covers", GateLift{LiftedAt: after, LatestPushAt: push, ActorIsBot: true}, false},
+		{"unknown lift time fails closed", GateLift{LatestPushAt: push}, false},
+		{"unknown push time fails closed", GateLift{LiftedAt: after}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := LiftCoversCurrentHead(tc.lift); got != tc.want {
+				t.Fatalf("LiftCoversCurrentHead(%+v) = %v, want %v", tc.lift, got, tc.want)
+			}
+		})
+	}
+}

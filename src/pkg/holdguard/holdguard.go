@@ -22,6 +22,12 @@
 //     EVERY merge lane re-gates, and the snapshot re-arms at the drifted head.
 //     A human lifting the re-applied hold after reading the evidence IS the
 //     fresh approval — that lift compares clean and the PR proceeds.
+//  4. Head moved, but a trusted human lifted the gate AFTER the branch's
+//     latest push (a rebase landed earlier during the hold, then the human
+//     reviewed the result and lifted) ⇒ the lift covered the current head
+//     (LiftCoversCurrentHead), so the entry clears like step 2 instead of
+//     re-holding the PR a human just reviewed (#13603). A push at or after
+//     the lift, or a lift by the hive or any bot, still takes step 3.
 //
 // Held-gated PRs must also stay mergeable, not just frozen (#10437): while a
 // PR is held, the hive may merge its base in with its own identity to clear a
@@ -397,6 +403,40 @@ func Diff(recorded Entry, currentHeadSHA string, current []Commit) Drift {
 	}
 	sort.Strings(d.NewAuthors)
 	return d
+}
+
+// GateLift is the evidence the guard reads about the event that lifted a
+// PR's hold gate, relative to the PR's latest head change (#13603).
+type GateLift struct {
+	// LiftedAt is when the gate label was removed. Zero means unknown.
+	LiftedAt time.Time
+	// LatestPushAt is when the PR's head last changed (newest commit, or the
+	// latest force-push). Zero means unknown.
+	LatestPushAt time.Time
+	// ActorIsHive reports that one of the hive's own accounts removed the
+	// label; the hive never approves for the human.
+	ActorIsHive bool
+	// ActorIsBot reports that a bot or GitHub App removed the label.
+	ActorIsBot bool
+}
+
+// LiftCoversCurrentHead reports whether the gate lift reviewed the PR's
+// current head: a trusted human (not a hive account, not a bot) removed the
+// gate label AFTER the PR's latest push, so the tree they saw when lifting is
+// the tree on the branch now. A rebase that happened earlier during the hold
+// is then not drift — the human reviewed its result (#13603).
+//
+// It fails closed: an unknown lift time or push time, or a lift by the hive
+// or any bot, never covers the head. A push at or after the lift is exactly
+// the attack the guard exists for and is never covered.
+func LiftCoversCurrentHead(lift GateLift) bool {
+	if lift.ActorIsHive || lift.ActorIsBot {
+		return false
+	}
+	if lift.LiftedAt.IsZero() || lift.LatestPushAt.IsZero() {
+		return false
+	}
+	return lift.LiftedAt.After(lift.LatestPushAt)
 }
 
 // shortSHA abbreviates a commit SHA for the drift comment.
