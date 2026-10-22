@@ -265,43 +265,114 @@ func TestDashboardCostAllTimePreservesLineageResets(t *testing.T) {
 	if err != nil {
 		t.Skip("node unavailable: cost lineage behavior was not executed")
 	}
-	raw, err := staticFS.ReadFile("static/index.html")
-	if err != nil {
-		t.Fatalf("reading embedded static/index.html: %v", err)
-	}
-	html := string(raw)
-	start := strings.Index(html, "    function costHist() {")
-	if start < 0 {
-		t.Fatal("cost history helper block not found")
-	}
-	end := strings.Index(html[start:], "    // Tiny inline sparkline")
-	if end < 0 {
-		t.Fatal("cost history helper block end not found")
-	}
-	block := html[start : start+end]
+	html := indexHTML(t)
 
-	script := `
-const assert = require('node:assert/strict');
-let _costHistory = [
+	// The headline is ONE estimator shared with the chart: persisted rollup
+	// days the ring no longer holds + positive, discontinuity-guarded
+	// increments inside the ring; the first snapshot's value is the opening
+	// balance only when the ring is the whole history. It must not double
+	// count the residual that survives a partial reset, must not change when
+	// the ring evicts a sample, and must take its "since" from the oldest
+	// rollup day.
+	script := "const assert = require('node:assert/strict');\n" +
+		"process.env.TZ = 'UTC';\n" +
+		"let _costHistory = [];\n" +
+		"let _lastCost = null;\n" +
+		"const localStorage = { _m: {}, getItem(k){ return k in this._m ? this._m[k] : null; }, setItem(k, v){ this._m[k] = String(v); } };\n" +
+		"function esc(s){ return String(s); }\n" +
+		"function fmtUSD(n){ return '$' + Number(n).toFixed(2); }\n" +
+		"function formatDashboardDateTime(v){ return new Date(v).toISOString(); }\n" +
+		"function renderSparkline(){ return ''; }\n" +
+		"function fmtSparkVal(v){ return String(v); }\n" +
+		"function capDashboardArray(a){ return a; }\n" +
+		costRangeScript(t, html) + "\n" +
+		`
+const H = 3600e3, D = 24 * H;
+// Ring is the whole history: opening balance 1000, then +13000, then a reset
+// to 5.40 (residual that must NOT be counted again), then +0.08.
+_costHistory = [
   { t: 1, usd: 1000 },
   { t: 2, usd: 14000 },
   { t: 3, usd: 5.40 },
   { t: 4, usd: 5.48 }
 ];
-` + block + `
 const currentLineage = costCurrentLineageHist(5.48);
 assert.deepEqual(currentLineage.map(e => e.usd), [5.40, 5.48]);
 
-const allTime = costAllTimeEstimate({ total_usd: 5.48, window_start: 3 });
-assert.equal(allTime.usd, 14005.48);
+let allTime = costAllTimeEstimate({ total_usd: 5.48, window_start: 3 });
+assert.ok(Math.abs(allTime.usd - 14000.08) < 1e-9, 'opening + increments, residual counted once: ' + allTime.usd);
 assert.equal(allTime.firstTimestamp, 1);
-assert.deepEqual(allTime.series.map(e => e.usd), [1000, 14000, 14005.4, 14005.48]);
+assert.equal(allTime.openingUSD, 1000);
+assert.deepEqual(allTime.series.map(e => Math.round(e.usd * 100) / 100), [1000, 14000, 14000, 14000.08]);
 assert.equal(allTime.resets.length, 1);
 assert.equal(allTime.resets[0].timestamp, 3);
 assert.equal(allTime.resets[0].previous, 14000);
 assert.equal(allTime.resets[0].next, 5.4);
-`
 
+// Partial reset: 13,964 → 5,058 (the old peak-sum added the 5,058 again).
+_costHistory = [ { t: 1, usd: 0 }, { t: 2, usd: 13964 }, { t: 3, usd: 5058 }, { t: 4, usd: 5100 } ];
+allTime = costAllTimeEstimate({ total_usd: 5100, window_start: 3 });
+assert.ok(Math.abs(allTime.usd - 14006) < 1e-9, 'partial reset residual not double counted: ' + allTime.usd);
+
+// Dip-and-regrow inside one lineage (console's shape): every regrowth is spend.
+_costHistory = [ { t: 1, usd: 0 }, { t: 2, usd: 100 }, { t: 3, usd: 60 }, { t: 4, usd: 100 }, { t: 5, usd: 160 } ];
+allTime = costAllTimeEstimate({ total_usd: 160, window_start: 1 });
+assert.ok(Math.abs(allTime.usd - 200) < 1e-9, 'regrowth after a dip counts: ' + allTime.usd);
+
+// Rollup days before the ring: the ring starts mid Oct 3 at 50; rollups for
+// Oct 1, 2 and 3 are frozen server-side. Oct 3's own in-ring steps are NOT
+// counted again (the ring takes over from the last Oct 3 snapshot) and the
+// first snapshot's 50 is NOT an opening balance (Oct 1–2 precede it).
+const oct1 = Date.UTC(2026, 9, 1), oct3 = Date.UTC(2026, 9, 3), oct4 = Date.UTC(2026, 9, 4);
+_lastCost = { daily_rollup: [
+  { day: '2026-10-01', cost_usd: 10, samples: 288 },
+  { day: '2026-10-02', cost_usd: 20, samples: 288 },
+  { day: '2026-10-03', cost_usd: 30, samples: 288 },
+] };
+_costHistory = [
+  { t: oct3 + 12 * H, usd: 50 },
+  { t: oct3 + 13 * H, usd: 70 },   // inside Oct 3: already in the rollup
+  { t: oct4 + 1 * H,  usd: 75 },   // Oct 4: ring
+  { t: oct4 + 2 * H,  usd: 80 },
+];
+allTime = costAllTimeEstimate({ total_usd: 80, window_start: oct3 });
+assert.ok(Math.abs(allTime.usd - 70) < 1e-9, 'rollups 60 + ring 10: ' + allTime.usd);
+assert.equal(allTime.firstTimestamp, oct1, 'since = oldest rollup day');
+assert.equal(allTime.rollupUSD, 60);
+assert.equal(allTime.openingUSD, 0);
+assert.equal(allTime.series[0].timestamp, oct1 + D);
+assert.equal(allTime.series[0].rollup, true);
+
+// Evicting the oldest ring sample does not move the figure or the date.
+_costHistory = _costHistory.slice(1);
+const after = costAllTimeEstimate({ total_usd: 80, window_start: oct3 });
+assert.ok(Math.abs(after.usd - 70) < 1e-9, 'stable under ring eviction: ' + after.usd);
+assert.equal(after.firstTimestamp, oct1);
+
+// A re-seed jump that RESTORES ground already counted (20,800 → 394 reset,
+// then 394 → 18,389 in one step) is a correction, not spend.
+_lastCost = null;
+_costHistory = [ { t: 1, usd: 0 }, { t: 2, usd: 20800 }, { t: 3, usd: 394 } ];
+const t0 = Date.UTC(2026, 9, 10);
+for (let i = 0; i < 40; i++) _costHistory.push({ t: t0 + i * 5 * 60e3, usd: 394 + i });
+_costHistory.push({ t: t0 + 40 * 5 * 60e3, usd: 18350 + 39 });
+allTime = costAllTimeEstimate({ total_usd: 18389, window_start: t0 });
+assert.ok(Math.abs(allTime.usd - (20800 + 39)) < 1e-9, 'restore step discarded: ' + allTime.usd);
+
+// The same-sized step to a NEW high is spend (a day's session flush on an
+// Opus-class hive, or days revealed after a sampling gap).
+_costHistory = [ { t: 1, usd: 0 } ];
+for (let i = 0; i < 40; i++) _costHistory.push({ t: t0 + i * 5 * 60e3, usd: 394 + i });
+_costHistory.push({ t: t0 + 40 * 5 * 60e3, usd: 18350 + 39 });
+allTime = costAllTimeEstimate({ total_usd: 18389, window_start: t0 });
+assert.ok(Math.abs(allTime.usd - 18389) < 1e-9, 'large step to a new high is spend: ' + allTime.usd);
+
+// Direct rule checks.
+assert.equal(costStepIsRestore(18000, 394, 18394, 20800, 500), true);
+assert.equal(costStepIsRestore(18000, 394, 18394, 10000, 500), false, 'lands above the old peak');
+assert.equal(costStepIsRestore(300, 394, 694, 20800, 500), false, 'below the ceiling is never a restore');
+assert.equal(costStepIsRestore(1320, 10984, 12304, 13346, 500), false, 'closes less than 80% of the gap');
+`
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("cost lineage JS failed: %v\n%s", err, out)

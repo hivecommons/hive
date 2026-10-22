@@ -11699,7 +11699,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const total = costAllTimeEstimate(_lastCost && _lastCost.estimated);
       const hist = total.series;
       const title = hist.length
-        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} lineage reset(s) preserved in the cumulative total` : 'recorded history samples'}`
+        ? `Estimated all-time cost over time — ${costRangeTitle(hist[0].timestamp, hist[hist.length - 1].timestamp, 0)}; ${total.resets.length ? `${total.resets.length} token-summary reset(s) noted; spend on both sides of each is counted once` : 'recorded history samples'}`
         : 'Estimated cost over time (last 30d) — vertical axis: cumulative USD, horizontal axis: date';
       return axisSparkSvg(hist, e => e.usd, e => e.timestamp, v => '$' + fmtSparkVal(v), 'var(--green)',
         title);
@@ -12063,32 +12063,134 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return hist;
     }
 
-    function costAllTimeEstimate(est) {
-      const hist = costHistWithCurrent(est);
+    // costLineageResets: the points where the cumulative token-summary
+    // estimate fell by more than COST_LINEAGE_RESET_FLOOR_USD AND to below half
+    // its previous value — a pod roll, a cleared session store, a backend
+    // change. Listed in the headline tooltip so a user can see why the live
+    // token summary restarted; the headline itself no longer depends on them.
+    function costLineageResets(hist) {
       const resets = [];
-      const series = [];
-      let offset = 0, prev = null, linePeak = 0, first = 0;
+      let prev = null;
       for (const e of hist) {
         const cur = Number(e.usd);
         if (!Number.isFinite(cur)) continue;
-        if (!first) first = e.timestamp;
         if (prev != null && prev - cur > COST_LINEAGE_RESET_FLOOR_USD && cur < prev * COST_LINEAGE_RESET_RATIO) {
-          offset += linePeak;
-          resets.push({ timestamp: e.timestamp, previous: prev, next: cur, preserved: offset });
-          linePeak = 0;
+          resets.push({ timestamp: e.timestamp, previous: prev, next: cur });
         }
-        if (cur > linePeak) linePeak = cur;
-        series.push({ ...e, usd: offset + linePeak });
         prev = cur;
       }
+      return resets;
+    }
+
+    // costRollupsBeforeRing: the persisted daily rollups (UTC days, raw from
+    // /api/cost) for days up to and including the UTC day of the first
+    // snapshot still in the ring. Those days were folded while the ring still
+    // covered them fully and are frozen server-side, so they are the
+    // authoritative record of spend the ring has since evicted. Returns the
+    // days ascending plus the instant from which the ring takes over.
+    function costRollupsBeforeRing(hist) {
+      const raw = (_lastCost && Array.isArray(_lastCost.daily_rollup)) ? _lastCost.daily_rollup : [];
+      const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+      const firstDay = hist.length ? utcDay(hist[0].timestamp) : null;
+      const days = [];
+      for (const r of raw) {
+        if (!r || typeof r.day !== 'string' || !(r.samples > 0)) continue;
+        if (firstDay != null && r.day > firstDay) continue;
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.day);
+        if (!m) continue;
+        const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        days.push({ day: r.day, start, end: start + COST_DAY_MS, spend: Number(r.cost_usd) || 0 });
+      }
+      days.sort((a, b) => a.start - b.start);
+      // The ring takes over from the LAST snapshot that still falls on the
+      // last rolled-up day, so the step into the next day is counted once (by
+      // the ring) and the rolled-up day's own steps are not counted twice.
+      let ringFrom = hist.length ? hist[0].timestamp : 0;
+      if (days.length && firstDay != null) {
+        const lastDay = days[days.length - 1].day;
+        for (const e of hist) {
+          if (utcDay(e.timestamp) > lastDay) break;
+          ringFrom = e.timestamp;
+        }
+      }
+      return { days, ringFrom, coversRingStart: days.some(d => firstDay != null && d.day < firstDay) };
+    }
+
+    // costAllTimeEstimate: the headline figure. ONE estimator shared with the
+    // trend chart and the server's daily rollup: persisted rollup days the ring
+    // no longer holds + the sum of positive step-to-step increments inside the
+    // ring (priced per model, discontinuity-guarded, so a restored or re-seeded
+    // counter is not billed as spend). When the ring IS the whole history the
+    // first snapshot's value is the spend accumulated before sampling began
+    // and is counted once as the opening balance.
+    //
+    // Replaces the old "sum of per-lineage peaks", which double counted the
+    // residual that survives a partial reset (a counter falling 13,964 → 5,058
+    // added the 5,058 again inside the next peak), missed spend inside a
+    // lineage that dipped and regrew, and changed whenever the ring evicted a
+    // sample — the "since …" date crept forward hour by hour.
+    function costAllTimeEstimate(est) {
+      const hist = costHistWithCurrent(est);
+      const roll = costRollupsBeforeRing(hist);
+      const rate = costPriceMap(hist);
+      const ceiling = costDiscontinuityCeiling(hist, rate);
+      const series = [];
+      let running = 0;
+      for (const d of roll.days) {
+        running += d.spend;
+        series.push({ timestamp: d.end, usd: running, rollup: true });
+      }
+      const opening = (!roll.coversRingStart && hist.length && Number.isFinite(Number(hist[0].usd))) ? Number(hist[0].usd) : 0;
+      running += opening;
+      let first = roll.days.length ? roll.days[0].start : (hist.length ? hist[0].timestamp : 0);
+      let prev = null, prevKind = null, prevVal = null, peak = -Infinity;
+      const pricedTok = (models) => {
+        let t = 0;
+        for (const k in models) { const m = models[k]; t += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
+        return t;
+      };
+      for (const e of hist) {
+        if (e.timestamp < roll.ringFrom) continue;
+        const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
+        if (kind == null) continue;
+        const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
+        if (prev != null && kind === prevKind && cur > prevVal) {
+          const inc = cur - prevVal;
+          if (!costStepIsRestore(inc, prevVal, cur, peak, ceiling)) running += inc;
+        }
+        series.push({ timestamp: e.timestamp, usd: running });
+        prev = e; prevKind = kind; prevVal = cur;
+        if (cur > peak) peak = cur;
+      }
       return {
-        usd: series.length ? series[series.length - 1].usd : 0,
+        usd: running,
         firstTimestamp: first,
         currentUSD: Number.isFinite(est && Number(est.total_usd)) ? Number(est.total_usd) : null,
         currentStart: est && est.window_start ? est.window_start : 0,
-        resets,
+        resets: costLineageResets(hist),
+        rollupUSD: roll.days.reduce((s, d) => s + d.spend, 0),
+        openingUSD: opening,
         series,
       };
+    }
+
+    // A large step is a RESTORE (a re-seeded counter regaining ground that
+    // was already counted) when it closes at least this fraction of the gap
+    // between the previous value and the highest value the counter has held.
+    const COST_RESTORE_GAP_FRACTION = 0.8;
+
+    // costStepIsRestore: is one positive step a data correction rather than
+    // spend? Only a step that is both abnormally large (above the chart's
+    // discontinuity ceiling) AND lands at or below a level the counter had
+    // already reached, closing most of the gap to it, is a restore — e.g. the
+    // observed 394 → 18,350 jump an hour after a 20,800 → 394 reset. A large
+    // step to a NEW high is spend however big (a day's session flush on an
+    // Opus-class hive, or several days revealed after a sampling gap), and a
+    // normal-sized step always counts.
+    function costStepIsRestore(inc, prev, cur, peak, ceiling) {
+      if (!(typeof ceiling === 'number') || !(inc > ceiling)) return false;
+      if (!Number.isFinite(peak) || !(cur <= peak)) return false;
+      return inc >= COST_RESTORE_GAP_FRACTION * (peak - prev);
     }
 
     function costCurrentLineageHist(currentUSD) {
