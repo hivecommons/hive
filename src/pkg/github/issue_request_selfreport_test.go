@@ -22,14 +22,14 @@ func TestIssueRequestStuckObservedAfterAttemptsAndClearedOnDrop(t *testing.T) {
 	boom := errors.New("repository owner/repo is a placeholder")
 
 	for i := 1; i < issueRequestStuckAttempts; i++ {
-		c.issueNoteFailure(path, clock, boom)
+		c.issueNoteFailure(path, "issue", clock, boom)
 		c.observeIssueRequestStuck(path, "owner/repo", "issue", boom, now)
 		now = now.Add(time.Minute)
 	}
 	if ev := tr.Evidence(); len(ev) != 0 {
 		t.Fatalf("below %d attempts produced evidence: %+v", issueRequestStuckAttempts, ev)
 	}
-	c.issueNoteFailure(path, clock, boom)
+	c.issueNoteFailure(path, "issue", clock, boom)
 	c.observeIssueRequestStuck(path, "owner/repo", "issue", boom, now)
 	ev := tr.Evidence()
 	if len(ev) != 1 || ev[0].Class != fleetreport.ClassIssueRequestStuck || ev[0].Agent != "placeholder-1.json" || ev[0].Repo != "owner/repo" {
@@ -55,13 +55,13 @@ func TestIssueRequestStuckObservedAfterAge(t *testing.T) {
 	c := &Client{}
 	path := filepath.Join(t.TempDir(), "old.json")
 	boom := errors.New("502")
-	c.issueNoteFailure(path, clock, boom)
+	c.issueNoteFailure(path, "comment", clock, boom)
 	c.observeIssueRequestStuck(path, "owner/repo", "comment", boom, now)
 	if ev := tr.Evidence(); len(ev) != 0 {
 		t.Fatalf("single fresh failure produced evidence: %+v", ev)
 	}
 	now = now.Add(issueRequestStuckAge)
-	c.issueNoteFailure(path, clock, boom)
+	c.issueNoteFailure(path, "comment", clock, boom)
 	c.observeIssueRequestStuck(path, "owner/repo", "comment", boom, now)
 	if ev := tr.Evidence(); len(ev) != 1 || ev[0].Class != fleetreport.ClassIssueRequestStuck {
 		t.Fatalf("aged request not reported: %+v", ev)

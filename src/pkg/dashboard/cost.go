@@ -96,6 +96,13 @@ type costResponse struct {
 	// reconciled against search hourly).
 	CountSource    string `json:"count_source,omitempty"`
 	CountAvailable bool   `json:"count_available"`
+	// CountPartial is set when the attributed count covers only some of the
+	// configured repos (the rest are still waiting on GitHub); CountError is
+	// why the latest attributed refresh failed or was partial, surfaced so
+	// the tile tooltip can say why instead of a bare "—" or a silent
+	// fallback to the merged-by-hive counter.
+	CountPartial bool   `json:"count_partial,omitempty"`
+	CountError   string `json:"count_error,omitempty"`
 	// DailyRollup is the per-UTC-day spend kept for ~2 years, ascending by
 	// day; the Cost section's chart uses it for buckets older than the
 	// 30-day snapshot ring (/api/cost/history). Empty until the first UTC
@@ -212,6 +219,8 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 		resp.CountStale = counts.Stale
 		resp.CountStaleSince = counts.StaleSince
 		resp.CountSource = counts.Source
+		resp.CountPartial = counts.Partial
+		resp.CountError = counts.Error
 		if counts.WindowStart != "" {
 			if t, err := time.Parse(time.RFC3339, counts.WindowStart); err == nil {
 				resp.CountWindowStart = t.UnixMilli()
@@ -219,6 +228,14 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		resp.CountStatus = "counts unavailable (GitHub rate-limited)"
+	}
+	if resp.CountError == "" && resp.CountBasis != "hive-attributed" {
+		// No attributed count is being served (fallback or nothing): say why
+		// the attributed refresh is failing.
+		resp.CountError = s.costCountError()
+		if resp.CountError != "" && !resp.CountAvailable {
+			resp.CountStatus = "counts unavailable (" + resp.CountError + ")"
+		}
 	}
 	if !resp.CountAvailable && resp.CountWindowStart == 0 {
 		resp.CountWindowStart = s.costCountWindowStart()
@@ -243,12 +260,12 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
+// costOutcomeCounts picks the divisor for the per-unit tiles: the collector's
+// hive-attributed count whenever one exists — fresh, stale or partial — and
+// the persisted merged-by-hive counter only when no attributed count has
+// ever been produced (at ACMM L5 humans merge every PR, so that fallback is
+// legitimately 0 and must not displace a stale attributed number).
 func (s *Server) costOutcomeCounts() *ghpkg.PRIssueCounts {
-	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
-		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 && !counts.Stale {
-			return counts
-		}
-	}
 	if s != nil && s.deps != nil && s.deps.MetricsCollector != nil {
 		if counts := s.deps.MetricsCollector.GetPRIssueCounts(); prIssueCountsTotal(counts) > 0 {
 			return counts
@@ -258,6 +275,13 @@ func (s *Server) costOutcomeCounts() *ghpkg.PRIssueCounts {
 		return counts
 	}
 	return nil
+}
+
+func (s *Server) costCountError() string {
+	if s == nil || s.deps == nil || s.deps.MetricsCollector == nil {
+		return ""
+	}
+	return s.deps.MetricsCollector.GetPRIssueCountError()
 }
 
 func (s *Server) persistedCostOutcomeCounts() *ghpkg.PRIssueCounts {

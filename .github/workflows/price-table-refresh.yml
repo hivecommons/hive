@@ -1,0 +1,199 @@
+name: Price table refresh
+
+# Keeps src/pkg/tokens/pricing.go — the hand-maintained per-model list-price
+# table behind /api/cost and the dashboard's Cost panel — reconciled with a
+# machine-readable source, instead of relying on someone noticing a vendor
+# price change.
+#
+# Weekly (and on demand) this runs `go run ./internal/tools/pricetable`, which
+# fetches OpenRouter's public model catalogue (https://openrouter.ai/api/v1/models,
+# no key), maps each catalogue id onto the table's normalised keys with the
+# same tokens.NormalizeModelID the dashboard uses, rewrites only the literals
+# that moved, bumps priceTableDate, and writes a markdown report of every
+# change plus every row OpenRouter does not list (those keep their value).
+#
+# A non-empty diff becomes ONE PR on bot/price-table-refresh (refreshed in
+# place on later runs). It is deliberately NOT auto-merged: a human compares
+# the report against the vendor's own page. No vendor HTML is scraped.
+#
+# The tool also bumps priceTableDate after 30 quiet days so the date keeps
+# meaning "last reconciled"; v2-ci.yml fails any PR when the table is more
+# than 60 days old, so a refresh that stops running is noticed within weeks.
+#
+# Credentials: checkout, push and `gh pr create` prefer TOPUP_PUSH_TOKEN when
+# set (the same optional fine-grained PAT cli-pin-bump.yml uses) so the PR
+# gets normal pull_request CI runs, and fall back to GITHUB_TOKEN otherwise.
+
+on:
+  schedule:
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Branch whose price table to refresh and to open the PR against'
+        type: string
+        default: v5
+      dry_run:
+        description: 'Report only; do not push a branch or open a PR'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: price-table-refresh-${{ inputs.base || 'v5' }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: ${{ inputs.base || 'v5' }}
+  HEAD_BRANCH: bot/price-table-refresh
+  SOURCE_URL: https://openrouter.ai/api/v1/models
+
+jobs:
+  refresh:
+    name: refresh model price table
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+
+      - name: Table age before refresh
+        working-directory: src
+        continue-on-error: true
+        run: go run ./internal/tools/pricetable --check-age 60
+
+      - name: Refresh the price table from OpenRouter
+        id: refresh
+        working-directory: src
+        run: |
+          set -euo pipefail
+          go run ./internal/tools/pricetable --source "$SOURCE_URL" --report "$RUNNER_TEMP/report.md" | tail -n 1
+          test -z "$(gofmt -l pkg/tokens/pricing.go)" || { echo "::error::pricing.go is not gofmt-clean after the refresh"; exit 1; }
+          if git diff --quiet -- pkg/tokens/pricing.go; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat -- pkg/tokens/pricing.go
+          fi
+          echo "date=$(sed -n 's/^const priceTableDate = "\(.*\)"$/\1/p' pkg/tokens/pricing.go)" >> "$GITHUB_OUTPUT"
+
+      # After a refresh the table is dated today; anything else means the tool
+      # did not do its job and this run should go red.
+      - name: Table age after refresh
+        working-directory: src
+        run: go run ./internal/tools/pricetable --check-age 60
+
+      - name: Nothing to do
+        if: steps.refresh.outputs.changed != 'true'
+        run: echo "Every list price OpenRouter publishes matches the table (dated ${{ steps.refresh.outputs.date }}); no PR."
+
+      - name: Dry run
+        if: steps.refresh.outputs.changed == 'true' && inputs.dry_run == true
+        run: |
+          echo "Dry run: the table would change as follows, but no branch or PR is created."
+          cat "$RUNNER_TEMP/report.md"
+          git --no-pager diff -- src/pkg/tokens/pricing.go
+
+      - name: Find the open refresh PR
+        if: steps.refresh.outputs.changed == 'true' && inputs.dry_run != true
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number --jq '.[0].number // empty')"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          [ -z "$number" ] || echo "will refresh open PR #${number}"
+
+      - name: Commit the refresh
+        if: steps.refresh.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          DATE: ${{ steps.refresh.outputs.date }}
+          PR_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$HEAD_BRANCH"
+          # One fragment per refresh; drop any earlier unmerged one on this branch.
+          git rm -q --ignore-unmatch 'changelog.d/changed-price-table-*.md' || true
+          changes="$(sed -n 's/^### Changes (\([0-9]*\)).*/\1/p' "$RUNNER_TEMP/report.md")"
+          if [ "${changes:-0}" -gt 0 ]; then
+            printf -- '- Refreshed the model list-price table from OpenRouter (%s rows moved; list prices as of %s); the Cost panel estimate now uses the new rates.\n' "$changes" "$DATE" \
+              > "changelog.d/changed-price-table-${DATE}.md"
+          else
+            printf -- '- Re-verified the model list-price table against OpenRouter (no rate moved; list prices as of %s).\n' "$DATE" \
+              > "changelog.d/changed-price-table-${DATE}.md"
+          fi
+          git add src/pkg/tokens/pricing.go changelog.d
+          {
+            echo "🌱 tokens: refresh model price table ${DATE}"
+            echo
+            echo "Automated refresh of src/pkg/tokens/pricing.go from OpenRouter's public"
+            echo "model catalogue by src/internal/tools/pricetable; see the PR body for"
+            echo "every rate that moved and every row that could not be verified."
+          } > "$RUNNER_TEMP/commit-msg.txt"
+          git commit -s -F "$RUNNER_TEMP/commit-msg.txt"
+          # With TOPUP_PUSH_TOKEN the PR is opened by that PAT's owner and the
+          # squash lands under their identity; add their sign-off so the DCO
+          # check on the landing commit passes (same reasoning as #11412 in
+          # cli-pin-bump.yml). Without the PAT the squash stays bot-authored.
+          if [ -n "$PR_TOKEN" ]; then
+            owner="$(GH_TOKEN="$PR_TOKEN" gh api user --jq '"\(.login) \(.id)"')"
+            login="${owner% *}"
+            id="${owner##* }"
+            if [ -z "$login" ] || [ -z "$id" ] || [ "$login" = "$id" ]; then
+              echo "::error::Could not resolve the TOPUP_PUSH_TOKEN owner; a PR it opens would squash to a mismatched sign-off."
+              exit 1
+            fi
+            git commit --amend --no-edit \
+              --trailer "Signed-off-by: ${login} <${id}+${login}@users.noreply.github.com>"
+          fi
+          git push --force origin "$HEAD_BRANCH"
+
+      - name: Open or refresh the PR
+        if: steps.refresh.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+          DATE: ${{ steps.refresh.outputs.date }}
+          EXISTING: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          title="🌱 tokens: refresh model price table ${DATE}"
+          {
+            cat "$RUNNER_TEMP/report.md"
+            echo
+            echo "### Review"
+            echo
+            echo "- [ ] Each changed rate matches the vendor's own price page (OpenRouter mirrors list price but can lag or round)"
+            echo "- [ ] Rows under *Not verifiable* still look right; add a sibling alias or update by hand if not"
+            echo
+            echo "Generated by [price-table-refresh](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) with \`go run ./internal/tools/pricetable\`; the branch is force-pushed by later runs until merged. Not auto-merged: a human reviews prices."
+          } > "$RUNNER_TEMP/pr-body.md"
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --add-label needs-human
+            echo "refreshed PR #${EXISTING}"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+              --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --label needs-human
+          fi
+
+      - name: Upload report
+        if: always() && steps.refresh.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: price-table-report
+          path: ${{ runner.temp }}/report.md
+          if-no-files-found: ignore

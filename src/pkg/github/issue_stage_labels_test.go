@@ -626,6 +626,9 @@ func TestSyncIssueStageLabels_CoveredIssueStaysAt040(t *testing.T) {
 	if !ok || rec.Stage != stagelabels.CoveredByPR || !strings.Contains(rec.Reason, "PR #40 covers it (PR at 100-merge-queue)") {
 		t.Fatalf("issue record %+v: must hold 040 with the PR's stage in the reason", rec)
 	}
+	if rec.CoveringPR != stagelabels.Key("acme/widgets", 40) {
+		t.Fatalf("covering PR = %q, want the sweep to remember acme/widgets#40 for the out-of-cycle fact path", rec.CoveringPR)
+	}
 }
 
 func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {

@@ -25,12 +25,21 @@ import (
 // "as of" date is deterministic and travels with the code. Update this string
 // whenever any price in modelPrices changes.
 //
+// This constant and the numeric literals in modelPrices are rewritten by
+// `go run ./internal/tools/pricetable`, which the weekly
+// price-table-refresh workflow runs against OpenRouter's public model
+// catalogue and turns into a reviewable PR. Keep every row as a plain
+// key: {Field: literal, ...} entry so the tool can parse and edit it in place;
+// rows OpenRouter does not list keep their hand-set value and are flagged in
+// the refresh report. CI fails when this date is more than 60 days old.
+//
 // Sources (list prices as of this date):
+//   - OpenRouter catalogue: https://openrouter.ai/api/v1/models (automated)
 //   - Anthropic Claude:    https://platform.claude.com/docs/en/about-claude/models/overview
 //   - OpenAI (GPT-5.x):    https://openai.com/api/pricing/
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-09-30"
+const priceTableDate = "2026-10-22"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -68,6 +77,9 @@ type ModelPrice struct {
 // published cached-input rate where one exists; cache writes fall back to the
 // input rate (these providers do not charge a separate cache-write premium the
 // way Anthropic does).
+//
+// The literals are authoritative; the inline comments record the tier a row
+// was added at and are not rewritten by the automated refresh.
 var modelPrices = map[string]ModelPrice{
 	// ---- Anthropic Claude (list prices per MTok) ----
 	// Opus 5.5: $4 in / $20 out; cache read $0.20 (0.05×), cache write $5
@@ -80,18 +92,18 @@ var modelPrices = map[string]ModelPrice{
 	"claude-opus-4-7": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"claude-opus-4-6": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"claude-opus-4-5": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
-	"claude-opus-4-1": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
+	"claude-opus-4-1": {InputPerMTok: 15.00, OutputPerMTok: 75.00, CacheReadPerMTok: 1.50, CacheWritePerMTok: 18.75},
 	// Fable 5: $10 in / $50 out; cache read $1.00, cache write $12.50.
 	"claude-fable-5": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
 	// Fable 5.1 is the same list tier as Fable 5 (#13488); without this entry it
 	// fell to tierBig at roughly half the real rate and was flagged estimated.
-	"claude-fable-5-1": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 1.00, CacheWritePerMTok: 12.50},
+	"claude-fable-5-1": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 0.25, CacheWritePerMTok: 12.50},
 	// Sonnet 5.5: $2 in / $10 out; cache read $0.20, cache write $2.50 (1.25×)
 	// — per the Claude Code 2.1.284 changelog ("$2/$10 per Mtok with
 	// $0.20/Mtok cache reads", #9804).
-	"claude-sonnet-5-5": {InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.50},
+	"claude-sonnet-5-5": {InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.10, CacheWritePerMTok: 2.50},
 	// Sonnet tier: $3 in / $15 out; cache read $0.30, cache write $3.75.
-	"claude-sonnet-5":   {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
+	"claude-sonnet-5":   {InputPerMTok: 2.00, OutputPerMTok: 10.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.50},
 	"claude-sonnet-4-6": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	"claude-sonnet-4-5": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	// Haiku tier: $1 in / $5 out; cache read $0.10, cache write $1.25.
@@ -100,19 +112,19 @@ var modelPrices = map[string]ModelPrice{
 	// ---- OpenAI GPT-5.x (Copilot/Codex model ids; representative list prices) ----
 	// GPT-5.x flagship: $1.25 in / $10 out; cached input $0.125.
 	"gpt-5-6": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-5": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-4": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
+	"gpt-5-5": {InputPerMTok: 5.00, OutputPerMTok: 30.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 5.00},
+	"gpt-5-4": {InputPerMTok: 2.50, OutputPerMTok: 15.00, CacheReadPerMTok: 0.25, CacheWritePerMTok: 2.50},
 	"gpt-5-3": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-2": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
+	"gpt-5-2": {InputPerMTok: 1.75, OutputPerMTok: 14.00, CacheReadPerMTok: 0.175, CacheWritePerMTok: 1.75},
 	// GPT-5.x mini tier: $0.25 in / $2 out; cached input $0.025.
-	"gpt-5-4-mini": {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
+	"gpt-5-4-mini": {InputPerMTok: 0.75, OutputPerMTok: 4.50, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
 	"gpt-5-mini":   {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	// Codex variants inherit the flagship GPT-5.x rate.
-	"gpt-5-6-sol":         {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-6-terra":       {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-6-luna":        {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
+	"gpt-5-6-sol":         {InputPerMTok: 4.00, OutputPerMTok: 20.00, CacheReadPerMTok: 0.40, CacheWritePerMTok: 5.00},
+	"gpt-5-6-terra":       {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.50},
+	"gpt-5-6-luna":        {InputPerMTok: 0.20, OutputPerMTok: 1.20, CacheReadPerMTok: 0.02, CacheWritePerMTok: 0.25},
 	"gpt-5-3-codex-spark": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
-	"gpt-5-3-codex":       {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
+	"gpt-5-3-codex":       {InputPerMTok: 1.75, OutputPerMTok: 14.00, CacheReadPerMTok: 0.175, CacheWritePerMTok: 1.75},
 
 	// ---- OpenAI GPT-6 (codex 0.159.0 catalog; published list prices from the
 	// pi.dev bundled catalog for the openai provider, verified 2026-09-30,
@@ -132,7 +144,7 @@ var modelPrices = map[string]ModelPrice{
 
 	// ---- DeepSeek (common LiteLLM/OpenRouter routing target) ----
 	// deepseek-chat / V3: $0.27 in / $1.10 out; cache hit $0.07.
-	"deepseek-chat": {InputPerMTok: 0.27, OutputPerMTok: 1.10, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.27},
+	"deepseek-chat": {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},
 	"deepseek-v3":   {InputPerMTok: 0.27, OutputPerMTok: 1.10, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.27},
 	// deepseek-reasoner / R1: $0.55 in / $2.19 out; cache hit $0.14.
 	"deepseek-reasoner": {InputPerMTok: 0.55, OutputPerMTok: 2.19, CacheReadPerMTok: 0.14, CacheWritePerMTok: 0.55},
@@ -140,14 +152,14 @@ var modelPrices = map[string]ModelPrice{
 
 	// ---- Meta Llama 3.3 70B (representative hosted list price) ----
 	"llama-3-3-70b":               {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
-	"llama-3-3-70b-instruct":      {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
+	"llama-3-3-70b-instruct":      {InputPerMTok: 0.10, OutputPerMTok: 0.32, CacheReadPerMTok: 0.10, CacheWritePerMTok: 0.10},
 	"meta-llama-3-3-70b-instruct": {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
 
 	// ---- Google Gemini Flash / Pro (representative list prices) ----
 	"gemini-flash-3-5": {InputPerMTok: 0.075, OutputPerMTok: 0.30, CacheReadPerMTok: 0.01875, CacheWritePerMTok: 0.075},
-	"gemini-2-5-flash": {InputPerMTok: 0.075, OutputPerMTok: 0.30, CacheReadPerMTok: 0.01875, CacheWritePerMTok: 0.075},
+	"gemini-2-5-flash": {InputPerMTok: 0.30, OutputPerMTok: 2.50, CacheReadPerMTok: 0.03, CacheWritePerMTok: 0.30},
 	"gemini-2-0-flash": {InputPerMTok: 0.075, OutputPerMTok: 0.30, CacheReadPerMTok: 0.01875, CacheWritePerMTok: 0.075},
-	"gemini-2-5-pro":   {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.31, CacheWritePerMTok: 1.25},
+	"gemini-2-5-pro":   {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
 	// Gemini 3 previews (offered by geminiStaticModels/geminiPinnedCLIModels,
 	// #9804). Pro: $2 in / $12 out (<=200K-token prompts; Google's published
 	// list price, 2026-09), cached input at the standard 0.1× rate. Flash:
@@ -156,15 +168,15 @@ var modelPrices = map[string]ModelPrice{
 	// writes fall back to the input rate per the header convention.
 	"gemini-3-pro-preview":    {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-flash-preview":  {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-7-flash":        {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-7-flash-high":   {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-7-flash-medium": {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-7-flash-low":    {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-6-flash":        {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-6-flash-high":   {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-6-flash-medium": {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-6-flash-low":    {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
-	"gemini-3-5-flash":        {InputPerMTok: 0.50, OutputPerMTok: 3.00, CacheReadPerMTok: 0.05, CacheWritePerMTok: 0.50},
+	"gemini-3-7-flash":        {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-7-flash-high":   {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-7-flash-medium": {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-7-flash-low":    {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-6-flash":        {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-6-flash-high":   {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-6-flash-medium": {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-6-flash-low":    {InputPerMTok: 0.75, OutputPerMTok: 3.75, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.75},
+	"gemini-3-5-flash":        {InputPerMTok: 1.50, OutputPerMTok: 9.00, CacheReadPerMTok: 0.15, CacheWritePerMTok: 1.50},
 	"gemini-3-1-pro-preview":  {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-high":     {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-low":      {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
@@ -172,12 +184,12 @@ var modelPrices = map[string]ModelPrice{
 	// ---- Other Copilot/AGY selectors with no separately published price ----
 	// These reuse the closest sibling tier so every offered dropdown value has
 	// a deterministic price entry instead of relying on the coarse fallback.
-	"grok-4-5":                 {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
-	"kimi-k3":                  {InputPerMTok: 0.60, OutputPerMTok: 2.50, CacheReadPerMTok: 0.15, CacheWritePerMTok: 0.60},
-	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 2.50, CacheReadPerMTok: 0.15, CacheWritePerMTok: 0.60},
+	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
+	"kimi-k3":                  {InputPerMTok: 0.239, OutputPerMTok: 11.936, CacheReadPerMTok: 0.21, CacheWritePerMTok: 0.239},
+	"kimi-k2-7-code":           {InputPerMTok: 0.6712, OutputPerMTok: 3.35, CacheReadPerMTok: 0.18, CacheWritePerMTok: 0.6712},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
-	"gpt-oss-120b-medium":      {InputPerMTok: 0.59, OutputPerMTok: 0.79, CacheReadPerMTok: 0.59, CacheWritePerMTok: 0.59},
+	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},
 }
 
 // normalizeModelID canonicalizes a model id so the price table can be keyed

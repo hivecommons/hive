@@ -294,6 +294,12 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if pr103.Stage != 50 || pr103.RegressedFrom != 100 || !hasMod(pr103, modRegressed) || pr103.AuthorKind != authorKindClanker || pr103.Lane != laneContributor {
 		t.Fatalf("pr103 = %+v", pr103)
 	}
+	if pr103.RegressedTo != 50 || pr103.RegressedReason != "contributor-lane:no-verdict" || pr103.RegressedAt == nil || !pr103.RegressedAt.Equal(now.Add(-10*time.Minute)) {
+		t.Fatalf("pr103 regression detail to=%d reason=%q at=%v, want the 100 → 050 hop", pr103.RegressedTo, pr103.RegressedReason, pr103.RegressedAt)
+	}
+	if h := pr103.History; len(h) != 2 || h[1].From != 100 || !h[1].Regressed || h[0].Regressed {
+		t.Fatalf("pr103 history = %+v, want the second hop marked as the 100 → 050 fall", h)
+	}
 
 	pr104 := trackerItem(t, resp, "pr", 104)
 	if pr104.Stage != 85 || pr104.StageSince != nil || len(pr104.History) != 0 || hasMod(pr104, modNeedsDecision) || pr104.Actor != "maintainer" {

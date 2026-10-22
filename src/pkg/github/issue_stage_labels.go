@@ -497,6 +497,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			store.Forget(key)
 		} else {
 			tr = store.Observe(key, stage, reason)
+			noteIssueCoveringPR(client, store, key, in, stage)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{Stage: stage}
 			if !covered && !awaitingChildren {
@@ -606,6 +607,25 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		logger.Warn("issue stage labels: persisting state failed", "error", err)
 	}
 	return res
+}
+
+// noteIssueCoveringPR mirrors stageengine's covering-PR note for the
+// sweep's own Observe (which runs whether or not a label write follows):
+// the ledger's claiming PR while the issue is at 040, nothing otherwise.
+func noteIssueCoveringPR(client *Client, store *stagelabels.Store, key string, in IssueStageInput, stage stagelabels.Stage) {
+	if stage != stagelabels.CoveredByPR {
+		store.SetCoveringPR(key, "")
+		return
+	}
+	if in.Claim == nil || in.Claim.PRNumber <= 0 {
+		return
+	}
+	prRepo := in.Claim.PRRepo
+	if prRepo == "" {
+		prRepo = in.Repo
+	}
+	owner, name := client.splitRepo(prRepo)
+	store.SetCoveringPR(key, stagelabels.Key(owner+"/"+name, in.Claim.PRNumber))
 }
 
 const mergedPRPartialStageMarker = "<!-- hive:issue-stage-merged-partial"

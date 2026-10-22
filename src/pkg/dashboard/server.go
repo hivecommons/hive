@@ -1318,6 +1318,18 @@ const overviewKPIHistoryMaxPoints = 96
 
 const sseRetryMs = 3000
 
+// sseKeepaliveInterval is how often an idle /api/events stream emits a
+// `keepalive` event. Status frames only flow when the eval cycle publishes,
+// so without this a connection dropped by a NAT/proxy idle timeout (or a
+// browser that resumed from sleep) looks identical to a quiet hive: the
+// browser's EventSource never fires onerror, the server never notices the
+// dead writer, and the tab keeps painting the last snapshot it received
+// while the "live" dot stays green. The keepalive gives the client a cadence
+// to watch (index.html sseStreamIdle) and gives the server a write that fails
+// on a dead socket so the slot in sseClients is freed. A var so tests can
+// shorten it.
+var sseKeepaliveInterval = 20 * time.Second
+
 // NewServer constructs a dashboard server with no auth token. It is
 // equivalent to NewServerWithAuth(port, "", logger).
 func NewServer(port int, logger *slog.Logger) *Server {
@@ -3633,10 +3645,19 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	s.statusMu.RUnlock()
 
+	keepalive := time.NewTicker(sseKeepaliveInterval)
+	defer keepalive.Stop()
 	for {
 		select {
 		case frame := <-ch:
-			_, _ = w.Write(frame)
+			if _, err := w.Write(frame); err != nil {
+				return
+			}
+			flusher.Flush()
+		case now := <-keepalive.C:
+			if _, err := fmt.Fprintf(w, "event: keepalive\ndata: %d\n\n", now.Unix()); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

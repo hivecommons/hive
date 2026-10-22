@@ -34,7 +34,17 @@ type PRIssueCounts struct {
 	// "forgestate" when they are the cache's webhook-maintained counters
 	// (reconciled against search hourly).
 	Source string `json:"source,omitempty"`
+	// Partial is set when some of the batched queries failed: the totals
+	// cover the repos whose queries succeeded and undercount the rest.
+	// Error carries the failure so the dashboard can say why instead of
+	// showing "—" (projectbluefin's 19-repo hive never produced a count).
+	Partial bool   `json:"partial,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
+
+// searchQueryMaxLen is GitHub's limit on a search query's length; repo
+// qualifiers are batched into as few queries as fit under it.
+const searchQueryMaxLen = 256
 
 // ComputePRIssueCounts fetches the hive-attributed number of merged pull
 // requests and closed issues for the given repo via the GitHub Search API. The
@@ -75,30 +85,69 @@ func (c *Client) ComputePRIssueCountsForReposSince(ctx context.Context, repos []
 		}, nil
 	}
 
-	var merged, closed int
+	day := ""
+	if !since.IsZero() {
+		day = since.UTC().Format("2006-01-02")
+	}
+	qualified := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		owner, repoName := c.splitRepo(repo)
-		mergedQualifier := fmt.Sprintf("repo:%s/%s type:pr is:merged", owner, repoName)
-		closedQualifier := fmt.Sprintf("repo:%s/%s type:issue is:closed", owner, repoName)
-		if !since.IsZero() {
-			day := since.UTC().Format("2006-01-02")
-			mergedQualifier += " merged:>=" + day
-			closedQualifier += " closed:>=" + day
-		}
-		repoMerged, err := c.searchAuthorTotal(ctx, mergedQualifier, author)
-		if err != nil {
-			return nil, fmt.Errorf("counting merged PRs for %s/%s: %w", owner, repoName, err)
-		}
-		merged += repoMerged
-
-		repoClosed, err := c.searchAuthorTotal(ctx, closedQualifier, author)
-		if err != nil {
-			return nil, fmt.Errorf("counting closed issues for %s/%s: %w", owner, repoName, err)
-		}
-		closed += repoClosed
+		qualified = append(qualified, "repo:"+owner+"/"+repoName)
 	}
 
-	return &PRIssueCounts{
+	var merged, closed int
+	var errs []error
+	failed := 0
+	count := func(kind string, qualifier string) (int, error) {
+		suffix := " type:" + kind
+		switch kind {
+		case "pr":
+			suffix += " is:merged"
+			if day != "" {
+				suffix += " merged:>=" + day
+			}
+		default:
+			suffix += " is:closed"
+			if day != "" {
+				suffix += " closed:>=" + day
+			}
+		}
+		return c.searchAuthorTotal(ctx, qualifier+suffix, author)
+	}
+	// One query per batch of repos (instead of one per repo) keeps a
+	// 19-repo hive inside search's 30 calls/minute; a batch that fails is
+	// recorded and the rest still count so a single refusal no longer
+	// discards everything.
+	batches := batchRepoQualifiers(qualified, searchQueryMaxLen-len(" type:issue is:closed closed:>=2006-01-02 ")-longestAuthorQualifier(author))
+	rateLimited := false
+	for _, batch := range batches {
+		for _, kind := range []string{"pr", "issue"} {
+			if rateLimited {
+				failed++
+				continue
+			}
+			total, err := count(kind, batch)
+			if err != nil {
+				failed++
+				errs = append(errs, fmt.Errorf("counting %s outcomes for %s: %w", kind, batch, err))
+				if isSearchRateLimit(err) {
+					rateLimited = true
+				}
+				continue
+			}
+			if kind == "pr" {
+				merged += total
+			} else {
+				closed += total
+			}
+		}
+	}
+	attempted := 2 * len(batches)
+	if failed == attempted && attempted > 0 {
+		return nil, errors.Join(errs...)
+	}
+
+	result := &PRIssueCounts{
 		MergedPRs:    merged,
 		ClosedIssues: closed,
 		UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
@@ -107,7 +156,58 @@ func (c *Client) ComputePRIssueCountsForReposSince(ctx context.Context, repos []
 		WindowStart:  windowStart,
 		Status:       "fresh",
 		Source:       "search",
-	}, nil
+	}
+	if failed > 0 {
+		result.Partial = true
+		result.Error = errors.Join(errs...).Error()
+		result.Status = fmt.Sprintf("partial: %d of %d search queries failed", failed, attempted)
+	}
+	return result, nil
+}
+
+// batchRepoQualifiers packs repo: qualifiers into space-separated groups
+// whose length stays under limit, so each group is one search query. A
+// qualifier longer than the limit on its own still gets its own group.
+func batchRepoQualifiers(qualifiers []string, limit int) []string {
+	var out []string
+	current := ""
+	for _, q := range qualifiers {
+		switch {
+		case current == "":
+			current = q
+		case len(current)+1+len(q) <= limit:
+			current += " " + q
+		default:
+			out = append(out, current)
+			current = q
+		}
+	}
+	if current != "" {
+		out = append(out, current)
+	}
+	return out
+}
+
+func longestAuthorQualifier(author string) int {
+	longest := 0
+	for _, q := range authorQualifiers(author) {
+		if len(q) > longest {
+			longest = len(q)
+		}
+	}
+	return longest
+}
+
+// isSearchRateLimit reports whether err is GitHub pacing us (primary or
+// secondary rate limit), in which case the remaining queries of this count
+// are skipped instead of each failing the same way.
+func isSearchRateLimit(err error) bool {
+	var rl *gh.RateLimitError
+	var abuse *gh.AbuseRateLimitError
+	if errors.As(err, &rl) || errors.As(err, &abuse) {
+		return true
+	}
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "rate limit")
 }
 
 // searchAuthorTotal returns the best total across the author qualifiers. A

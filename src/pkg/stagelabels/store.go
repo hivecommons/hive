@@ -137,6 +137,12 @@ type Record struct {
 	// They are trusted local evidence for in-place adoption attribution when
 	// the later GitHub commit object cannot link the commit to the App.
 	HivePushedHeads []string `json:"hive_pushed_heads,omitempty"`
+	// CoveringPR is the store key ("owner/repo#n") of the open pull request
+	// that put an issue at 040-covered-by-pr, as the last derivation knew
+	// it; empty at any other stage or when the covering PR was not named.
+	// An out-of-cycle fact (a claim, its release, a start mark) consults it
+	// so a PR that still covers the issue is not forgotten between sweeps.
+	CoveringPR string `json:"covering_pr,omitempty"`
 	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
 	// adoption: the adoption itself, then each hive push. Zero only on
 	// records written before it existed (hivecommons/hive#13040); the
@@ -295,6 +301,22 @@ func (r Record) DCO(head string) DCOState {
 
 // Regressed reports whether the item carries an unresolved regression.
 func (r Record) Regressed() bool { return r.RegressedFrom != None }
+
+// RegressionHop is the backward hop that opened the current regression:
+// the latest History entry that fell from RegressedFrom. ok is false when
+// the item is not regressed or the hop has aged out of History (the caller
+// falls back to RegressedAt and the current stage).
+func (r Record) RegressionHop() (hop Hop, ok bool) {
+	if !r.Regressed() {
+		return Hop{}, false
+	}
+	for i := len(r.History) - 1; i >= 0; i-- {
+		if h := r.History[i]; h.Regressed && h.From == r.RegressedFrom {
+			return h, true
+		}
+	}
+	return Hop{}, false
+}
 
 // RegressionCommentDue reports whether the regression comment for the
 // current regression still needs posting on head: not when it was already
@@ -1033,6 +1055,20 @@ func (s *Store) NoteAdoptDiffFence(key, reason string) {
 		return
 	}
 	r.AdoptDiffFence = reason
+	s.items[key] = r
+	s.dirty = true
+}
+
+// SetCoveringPR records (or, with an empty prKey, clears) the covering PR
+// of an issue the store knows. A no-op for an unknown key.
+func (s *Store) SetCoveringPR(key, prKey string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.CoveringPR == prKey {
+		return
+	}
+	r.CoveringPR = prKey
 	s.items[key] = r
 	s.dirty = true
 }

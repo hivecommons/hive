@@ -70,6 +70,10 @@ type MetricsCollector struct {
 	mttr          *ghpkg.MTTRResult
 	prIssueMu     sync.RWMutex
 	prIssueCounts *ghpkg.PRIssueCounts
+	// prIssueErr is why the last hive-attributed count refresh failed (or
+	// was partial), kept even when there are no counts to mark stale so
+	// /api/cost can say why the tile has no attributed figure.
+	prIssueErr string
 	// prIssueRefresh gates how often the PR/issue count searches run and
 	// rate-limits the failure log; see forgeCountCacheTTL.
 	prIssueRefresh forgeCountRefreshGate
@@ -421,10 +425,14 @@ func (mc *MetricsCollector) collectPRIssueCountsFromForge(ctx context.Context, f
 		}
 	}
 	out := fc.Outcomes(repos...)
-	if !out.Ready {
+	if !out.Ready && !out.Partial {
 		// No baseline yet (first reconcile refused): the disk-loaded
 		// last-good counts, if any, stay up and are marked stale.
-		mc.markPRIssueCountsStale(fmt.Errorf("%s", out.StaleReason))
+		reason := out.StaleReason
+		if reason == "" {
+			reason = fmt.Sprintf("no repo has a hive-attributed baseline yet (%d pending)", fc.ReconcilePending())
+		}
+		mc.markPRIssueCountsStale(fmt.Errorf("%s", reason))
 		return
 	}
 	windowStart := ""
@@ -443,6 +451,13 @@ func (mc *MetricsCollector) collectPRIssueCountsFromForge(ctx context.Context, f
 		Status:       "fresh",
 		Source:       "forgestate",
 	}
+	if out.Partial {
+		// Some repos are still waiting for their first reconcile pass; the
+		// total covers the rest and says so rather than showing "—".
+		result.Partial = true
+		result.Status = fmt.Sprintf("partial: %d of %d repos counted", out.ReposReady, out.ReposTotal)
+		result.Error = out.StaleReason
+	}
 	if out.Stale {
 		result.Stale = true
 		result.StaleSince = out.StaleSince.UTC().Format(time.RFC3339)
@@ -450,16 +465,41 @@ func (mc *MetricsCollector) collectPRIssueCountsFromForge(ctx context.Context, f
 		if strings.Contains(strings.ToLower(out.StaleReason), "rate") {
 			result.Status = "stale: GitHub rate-limited"
 		}
+		if out.Partial {
+			result.Status += fmt.Sprintf(" (partial: %d of %d repos counted)", out.ReposReady, out.ReposTotal)
+		}
+		result.Error = out.StaleReason
 	}
 	mc.storePRIssueCounts(result)
 }
 
 // storePRIssueCounts installs result as the current counts and persists it,
 // unless it is an all-zero answer while last-good counts exist: that is far
-// more often a refused query than a hive with no outcomes.
+// more often a refused query than a hive with no outcomes. A partial result
+// (some repos' queries failed) likewise never replaces a complete last-good
+// count; the cached count is served stale with the partial refresh as the
+// reason. Partial beats nothing, so it is installed when there is no
+// complete count to keep.
 func (mc *MetricsCollector) storePRIssueCounts(result *ghpkg.PRIssueCounts) {
 	mc.prIssueMu.Lock()
 	mc.prIssueRefresh.succeeded(mc.clock(), mc.effectiveForgeCountTTL())
+	mc.prIssueErr = result.Error
+	if result.Partial && mc.prIssueCounts != nil && !mc.prIssueCounts.Partial && prIssueCountsTotal(mc.prIssueCounts) > 0 {
+		mc.prIssueCounts.Stale = true
+		mc.prIssueCounts.Status = "stale: " + result.Status
+		mc.prIssueCounts.Error = result.Error
+		if mc.prIssueCounts.StaleSince == "" {
+			mc.prIssueCounts.StaleSince = time.Now().UTC().Format(time.RFC3339)
+		}
+		mc.prIssueMu.Unlock()
+		mc.logger.Warn("partial PR/issue counts kept out of a complete last-good count",
+			"merged_prs", result.MergedPRs,
+			"closed_issues", result.ClosedIssues,
+			"status", result.Status,
+			"error", result.Error,
+		)
+		return
+	}
 	if prIssueCountsTotal(result) == 0 && prIssueCountsTotal(mc.prIssueCounts) > 0 {
 		mc.prIssueCounts.Stale = true
 		mc.prIssueCounts.Status = "stale: zero response ignored"
@@ -567,9 +607,25 @@ func prIssueCountsTotal(c *ghpkg.PRIssueCounts) int {
 	return c.MergedPRs + c.ClosedIssues
 }
 
+// GetPRIssueCountError returns why the most recent hive-attributed count
+// refresh failed or was partial ("" when it succeeded). Unlike the counts
+// themselves it is recorded even when there is nothing cached, so the
+// dashboard can explain an empty tile.
+func (mc *MetricsCollector) GetPRIssueCountError() string {
+	if mc == nil {
+		return ""
+	}
+	mc.prIssueMu.RLock()
+	defer mc.prIssueMu.RUnlock()
+	return mc.prIssueErr
+}
+
 func (mc *MetricsCollector) markPRIssueCountsStale(err error) {
 	mc.prIssueMu.Lock()
 	defer mc.prIssueMu.Unlock()
+	if err != nil {
+		mc.prIssueErr = err.Error()
+	}
 	if prIssueCountsTotal(mc.prIssueCounts) == 0 {
 		return
 	}
@@ -579,6 +635,9 @@ func (mc *MetricsCollector) markPRIssueCountsStale(err error) {
 	}
 	mc.prIssueCounts.Stale = true
 	mc.prIssueCounts.Status = status
+	if err != nil {
+		mc.prIssueCounts.Error = err.Error()
+	}
 	if mc.prIssueCounts.StaleSince == "" {
 		mc.prIssueCounts.StaleSince = time.Now().UTC().Format(time.RFC3339)
 	}

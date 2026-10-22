@@ -41,7 +41,7 @@ func TestSettingsSectionRail(t *testing.T) {
 	for _, want := range []string{
 		`<div class="config-main">`,
 		`<nav class="config-rail" id="config-rail" aria-label="Sections in this tab" hidden></nav>`,
-		`<div class="config-body" id="config-body"></div>`,
+		`<div class="config-body modal-scroll" id="config-body"></div>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Settings modal markup missing %s", want)

@@ -197,6 +197,10 @@ type StageTrackerHop struct {
 	Slug   string    `json:"slug"`
 	At     time.Time `json:"at"`
 	Reason string    `json:"reason,omitempty"`
+	// From is the stage number left (0 on the first observation);
+	// Regressed marks the hop as a backward move.
+	From      int  `json:"from,omitempty"`
+	Regressed bool `json:"regressed,omitempty"`
 }
 
 // StageTrackerItem is one open issue or PR on the tracker.
@@ -250,8 +254,16 @@ type StageTrackerItem struct {
 	// regressed, hold, needs-human, needs-decision (stage/045 on an issue or
 	// stage/085 on a PR carried as a park signal), needs-rebase, blocked,
 	// draft.
-	Modifiers     []string `json:"modifiers"`
-	RegressedFrom int      `json:"regressed_from,omitempty"`
+	Modifiers []string `json:"modifiers"`
+	// RegressedFrom / RegressedTo / RegressedAt / RegressedReason narrate
+	// the unresolved regression behind the `regressed` modifier: the
+	// high-water stage the item fell from, the stage that fall landed on
+	// (the item may have fallen further since), when, and the reason
+	// recorded with the fall.
+	RegressedFrom   int        `json:"regressed_from,omitempty"`
+	RegressedTo     int        `json:"regressed_to,omitempty"`
+	RegressedAt     *time.Time `json:"regressed_at,omitempty"`
+	RegressedReason string     `json:"regressed_reason,omitempty"`
 	// SoakRemainingSeconds is, at 095 pre-merge-soak, how much of the lane's
 	// soak window was left as of the last sweep (the lane's
 	// `soaking(remaining=…)` reason aged by the time since it was recorded);
@@ -800,10 +812,33 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 	return joinClause("No stage recorded yet", clause), ""
 }
 
+// stageTrackerRegression fills the item's regression narration from the
+// record: the hop that opened the regression when History still has it,
+// else the record's fall time and current stage.
+func stageTrackerRegression(it *StageTrackerItem, rec stagelabels.Record) {
+	if !rec.Regressed() {
+		return
+	}
+	it.RegressedFrom = rec.RegressedFrom.Number()
+	if hop, ok := rec.RegressionHop(); ok {
+		it.RegressedTo = hop.Stage.Number()
+		it.RegressedReason = hop.Reason
+		at := hop.At
+		it.RegressedAt = &at
+		return
+	}
+	it.RegressedTo = rec.Stage.Number()
+	it.RegressedReason = rec.Reason
+	if !rec.RegressedAt.IsZero() {
+		at := rec.RegressedAt
+		it.RegressedAt = &at
+	}
+}
+
 func stageTrackerHistory(rec stagelabels.Record) []StageTrackerHop {
 	out := make([]StageTrackerHop, 0, len(rec.History))
 	for _, h := range rec.History {
-		out = append(out, StageTrackerHop{Number: h.Stage.Number(), Slug: h.Stage.Slug(), At: h.At, Reason: h.Reason})
+		out = append(out, StageTrackerHop{Number: h.Stage.Number(), Slug: h.Stage.Slug(), At: h.At, Reason: h.Reason, From: h.From.Number(), Regressed: h.Regressed})
 	}
 	if len(out) > stageTrackerHistoryMaxItems {
 		out = out[len(out)-stageTrackerHistoryMaxItems:]
@@ -905,7 +940,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			t := rec.EnteredAt
 			it.StageSince = &t
 			it.Reason = rec.Reason
-			it.RegressedFrom = rec.RegressedFrom.Number()
+			stageTrackerRegression(it, rec)
 			it.NudgeCount = rec.NudgeCount
 			if !rec.LastNudgeAt.IsZero() {
 				t2 := rec.LastNudgeAt

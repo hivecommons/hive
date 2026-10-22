@@ -27,6 +27,11 @@ type stageFactsServer struct {
 	isPR    bool
 	added   []string
 	removed []string
+	// prState / prMerged answer GET /pulls/N (the covering-PR re-read);
+	// prReads counts those reads.
+	prState  string
+	prMerged bool
+	prReads  int
 }
 
 func newStageFactsServer(t *testing.T, labels ...string) *stageFactsServer {
@@ -39,6 +44,17 @@ func newStageFactsServer(t *testing.T, labels ...string) *stageFactsServer {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/labels"):
 			_ = json.NewEncoder(w).Encode(wireLabelsOf(s.labels))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/"):
+			s.prReads++
+			state := s.prState
+			if state == "" {
+				state = "open"
+			}
+			body := map[string]any{"number": 8, "state": state, "merged": s.prMerged}
+			if s.prMerged {
+				body["merged_at"] = "2026-10-22T12:00:00Z"
+			}
+			_ = json.NewEncoder(w).Encode(body)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/issues/"):
 			body := map[string]any{"number": 7, "state": s.state, "labels": wireLabelsOf(s.labels), "user": map[string]any{"login": "dev"}}
 			if s.isPR {
