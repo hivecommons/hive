@@ -191,6 +191,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		r.recordAnomaly(f.Ref, tr.From, tr.To, want.Reason, a)
 	}
 	r.opts.Store.Observe(key, want.Stage, want.Reason)
+	noteCoveringPR(r.opts.Store, key, f, want.Stage)
 
 	if r.opts.Writer == nil {
 		return tr, nil
@@ -206,6 +207,22 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		return tr, fmt.Errorf("stage engine: write %s: %w", f.Ref, err)
 	}
 	return tr, nil
+}
+
+// noteCoveringPR keeps the issue record's memory of its covering PR in
+// step with the stage just observed: the named PR while the issue is at
+// 040-covered-by-pr, nothing at any other stage. A 040 whose PR the facts
+// did not name leaves whatever was remembered in place.
+func noteCoveringPR(store *stagelabels.Store, key string, f Facts, stage stagelabels.Stage) {
+	if store == nil || f.Issue == nil || f.Ref.Kind != stagelabels.IssueItem {
+		return
+	}
+	switch {
+	case stage != stagelabels.CoveredByPR:
+		store.SetCoveringPR(key, "")
+	case f.Issue.CoveringPR != nil && f.Issue.CoveringPR.Number > 0:
+		store.SetCoveringPR(key, f.Issue.CoveringPR.Key())
+	}
 }
 
 // shadowOnly is shadow mode without a comparator: the derivation is
@@ -248,6 +265,7 @@ func (r *reconciler) passThrough(ctx context.Context, f Facts, tr Transition) (T
 	prev, _ := r.opts.Store.Get(key)
 	tr.From, tr.To, tr.Reason = prev.Stage, legacy.Stage, legacy.Reason
 	r.opts.Store.Observe(key, legacy.Stage, legacy.Reason)
+	noteCoveringPR(r.opts.Store, key, f, legacy.Stage)
 	out, err := r.opts.Writer.Apply(ctx, f.Ref, f.Labels, legacy.Desired())
 	tr.Outcome = out
 	if err != nil {

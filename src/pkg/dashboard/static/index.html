@@ -13745,8 +13745,35 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         && (!range || range.to == null || sg.number <= range.to));
       if (!active) return '';
       const actor = active.cap ? '' : stageTrackerActorKind(item);
-      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + (actor ? ' · Next move: ' + actor : '');
+      const regressed = stageTrackerRegressionText(item, Date.now());
+      const text = active.short + (active.detour && active.detour.text !== active.short ? ' · ' + active.detour.text : '') + (actor ? ' · Next move: ' + actor : '') + (regressed ? ' · ' + regressed : '');
       return `<p class="ham-current-stage">${esc(text)}</p>`;
+    }
+
+    // "040 Covered by PR" — the stage code plus the strip word the payload
+    // names for it (the code alone when the stage table is not loaded yet).
+    function stageTrackerStageWord(n) {
+      const num = Number(n) || 0;
+      const st = ((_stageTracker && _stageTracker.stages) || []).find(s => Number(s.number) === num);
+      const code = String(num).padStart(3, '0');
+      return st && (st.short || st.label) ? code + ' ' + (st.short || st.label) : code;
+    }
+
+    // The regressed pill's explanation: which stage the item fell from and
+    // to, when, and the reason recorded with the fall — so "regressed" never
+    // needs a trip to the store to read. '' when the item is not regressed.
+    function stageTrackerRegressionText(item, nowMs) {
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const from = Number(item.regressed_from) || 0;
+      if (mods.indexOf('regressed') < 0 || !from) return '';
+      const cur = Number(item.stage) || 0;
+      const to = Number(item.regressed_to) || cur;
+      const atMs = Date.parse(item.regressed_at || '');
+      let text = 'regressed: ' + stageTrackerStageWord(from) + ' → ' + stageTrackerStageWord(to);
+      if (!isNaN(atMs)) text += ' at ' + agentNowClockTime(atMs, nowMs || Date.now());
+      if (item.regressed_reason) text += ' because ' + String(item.regressed_reason);
+      if (cur && cur !== to) text += ' · now ' + stageTrackerStageWord(cur);
+      return text;
     }
 
     // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
@@ -13767,6 +13794,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      const regressed = stageTrackerRegressionText(item, nowMs);
+      if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) lines.push('Trail: ' + trail);
       return lines.filter(Boolean).join('\n');
@@ -13781,7 +13810,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
       const recheckMs = recheck ? Date.parse(recheck[1]) : NaN;
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
-      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      // The regressed pill (lead or folded into "+1") explains itself on hover.
+      const regressed = stageTrackerRegressionText(item, Date.now());
+      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries

@@ -145,8 +145,11 @@ func (s *factSink) CoveredBy(ctx context.Context, issue Ref, pr Ref) error {
 }
 
 // Uncovered implements FactSink: the covering PR closed unmerged → 010.
+// The closed PR rides along so enrichment does not read the store's
+// memory of that same PR as a cover that still stands.
 func (s *factSink) Uncovered(ctx context.Context, issue Ref, pr Ref) error {
-	return s.submit(ctx, issueFacts(issue, IssueFacts{Bucket: BucketActionable}))
+	pr.Kind = stagelabels.PRItem
+	return s.submit(ctx, issueFacts(issue, IssueFacts{Bucket: BucketActionable, ClosedPR: &pr}))
 }
 
 // Parked implements FactSink: an agent (or a person) parked the item on a

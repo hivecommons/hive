@@ -124,6 +124,10 @@ type IssueFacts struct {
 	Stalled         bool
 	CoveringPR      *Ref
 	CoveringPRStage stagelabels.Stage // from the Store; None when unknown
+	// ClosedPR is the pull request whose unmerged close an Uncovered fact
+	// reports. The sink's enrichment never re-reads it as a still-open
+	// cover (stagelabels.Record.CoveringPR) for the issue.
+	ClosedPR *Ref
 }
 
 // ClaimFact is the live claim on an issue.
