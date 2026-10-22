@@ -2479,6 +2479,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
+	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	b.requestRelays = newRequestRelaySupervisor(b.ctx, func(ctx context.Context, client *github.Client) <-chan struct{} {
 		relaysDone := deps.startRequestRelays(ctx, client, requestRelays{
 			prOpen:    b.agentMgr.AuthorizePROpen,
@@ -9152,6 +9153,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {

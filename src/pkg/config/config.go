@@ -8855,6 +8855,14 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// RequireCurrentBase lists owner/repo names whose automerge sweeps only
+	// merge a PR head that already contains the current base branch tip.
+	// A head that is green but was tested against an older base is updated
+	// (GitHub update-branch, a merge commit) and merged once CI is green on
+	// the new head, so a semantic conflict with anything merged since shows
+	// up as red CI instead of a broken base. Empty (the default) keeps the
+	// previous behavior: a green head merges even if the base has moved.
+	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
 }
 
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.
@@ -9168,6 +9176,12 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 		}
 	}
 	return nil
+}
+
+// RequireCurrentBaseFor reports whether repo (owner/repo, matched
+// case-insensitively) is listed in auto_merge.require_current_base.
+func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
+	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
 // RequiredCheckSet returns the global config-declared required-status-check set

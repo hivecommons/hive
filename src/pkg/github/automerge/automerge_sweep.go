@@ -71,6 +71,9 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
+	// RequireCurrentBase returns the live auto_merge.require_current_base
+	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
+	RequireCurrentBase func(repo string) bool
 	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
@@ -180,6 +183,8 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
+	requireCurrentBase func(repo string) bool
+
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
@@ -245,6 +250,7 @@ func New(transport Transport, opts Options) *Engine {
 		reviewGate:                        opts.ReviewGate,
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
+		requireCurrentBase:                opts.RequireCurrentBase,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
@@ -1599,6 +1605,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted); stop {
+		return ev, reason, err
+	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, evaluatedHeadSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
@@ -2038,6 +2047,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, reason, err
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
+	}
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind"); stop {
+		return ev, reason, err
 	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))

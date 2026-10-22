@@ -1,0 +1,1 @@
+- Automerge can require a PR head to contain the current base before merging: repos listed in `auto_merge.require_current_base` get a green-but-stale head updated and re-tested instead of merged untested against newer base commits.
