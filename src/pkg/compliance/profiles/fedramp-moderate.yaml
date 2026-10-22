@@ -1,7 +1,9 @@
 # FedRAMP Moderate — Hive control mapping (hivecommons/hive#11082).
 #
-# A SUBSET of the baseline: families AC, AU, CM, IA, RA, SA and SI only. PE-3 and
-# PS-3 are listed not_covered so silence is not read as coverage.
+# A SUBSET of the baseline: mapped controls are in families AC, AU, CM, IA, RA, SA
+# and SI only. Relevant baseline controls Hive cannot evidence (AC-17, AU-9, CM-2,
+# SC-*, SR-* and others) are listed not_covered so silence is not read as coverage.
+# ELIG-1 is not a NIST identifier; it records an eligibility expectation.
 #
 # Control text below is a short paraphrase for orientation, NOT the standard's
 # wording; the authoritative text is the publication cited on each control.
@@ -35,12 +37,13 @@ controls:
       - setting_path: dashboard.authorized_users
         recommended: '2'
         evaluator: max_owners
-  - id: AC-2.ELIG
-    title: Personnel eligibility by location or citizenship
+  - id: ELIG-1
+    title: Personnel eligibility by location or citizenship (not a NIST control)
     text: >-
       Access is limited to people who meet geographic or citizenship requirements.
     citation: >-
-      NIST SP 800-53 Rev 5 AC-2, AC-3 (US-persons and similar eligibility conditions)
+      Not a NIST SP 800-53 identifier; FedRAMP-style US-persons eligibility conditions
+      relate to AC-2 and AC-3
     domain: Access control
     rationale: >-
       Hive cannot verify where a person is or their citizenship. Enforce eligibility
@@ -321,4 +324,175 @@ controls:
     rationale: >-
       Hiring and background screening are HR processes; no Hive setting can evidence
       them.
+    not_covered: true
+  - id: AC-8
+    title: System use notification
+    text: >-
+      A system use notification is displayed before access.
+    citation: NIST SP 800-53 Rev 5 AC-8 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      The dashboard does not present a configurable use banner; the notice belongs to the operator's identity provider or reverse proxy.
+    not_covered: true
+  - id: AC-17
+    title: Remote access
+    text: >-
+      Remote access is authorized, monitored and protected.
+    citation: NIST SP 800-53 Rev 5 AC-17 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Remote access paths (VPN, bastion, reverse proxy) are operator infrastructure; Hive only exposes its dashboard allowlist.
+    not_covered: true
+  - id: AU-8
+    title: Time stamps
+    text: >-
+      Audit records use synchronized system time.
+    citation: NIST SP 800-53 Rev 5 AU-8 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Logging & monitoring
+    rationale: >-
+      Clock synchronization is a property of the host; no Hive setting evidences it.
+    not_covered: true
+  - id: AU-9
+    title: Protection of audit information
+    text: >-
+      Audit information is protected from unauthorized access, change and deletion.
+    citation: NIST SP 800-53 Rev 5 AU-9 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Logging & monitoring
+    rationale: >-
+      Protection of the audit log files depends on host file permissions and backup controls outside Hive's settings.
+    not_covered: true
+  - id: CM-2
+    title: Baseline configuration
+    text: >-
+      A baseline configuration of the system is documented and maintained.
+    citation: NIST SP 800-53 Rev 5 CM-2 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Change management
+    rationale: >-
+      Baselines of the hosting environment are the operator's; Hive settings are not a full system baseline.
+    not_covered: true
+  - id: CM-7
+    title: Least functionality
+    text: >-
+      The system provides only essential capabilities.
+    citation: NIST SP 800-53 Rev 5 CM-7 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Change management
+    rationale: >-
+      Host and container hardening are outside what Hive settings can evidence.
+    not_covered: true
+  - id: CM-8
+    title: System component inventory
+    text: >-
+      An inventory of system components is maintained.
+    citation: NIST SP 800-53 Rev 5 CM-8 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Change management
+    rationale: >-
+      Hive does not maintain an authoritative inventory of host components.
+    not_covered: true
+  - id: CP-9
+    title: System backup
+    text: >-
+      Backups of system and user-level information are made and protected.
+    citation: NIST SP 800-53 Rev 5 CP-9 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Risk management
+    rationale: >-
+      Backup of hive state is an operator process; no Hive setting evidences it.
+    not_covered: true
+  - id: IA-8
+    title: Identification and authentication (non-organizational users)
+    text: >-
+      Non-organizational users are uniquely identified and authenticated.
+    citation: NIST SP 800-53 Rev 5 IA-8 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Authentication of outside contributors is performed by GitHub and the operator's identity provider, not Hive.
+    not_covered: true
+  - id: IR-4
+    title: Incident handling
+    text: >-
+      Incidents are handled through preparation, detection, analysis, containment and recovery.
+    citation: NIST SP 800-53 Rev 5 IR-4 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Incident response
+    rationale: >-
+      Incident handling is an organisational process; Hive escalation is a signal, not an incident-response program.
+    not_covered: true
+  - id: IR-6
+    title: Incident reporting
+    text: >-
+      Suspected incidents are reported to defined authorities within defined timeframes.
+    citation: NIST SP 800-53 Rev 5 IR-6 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Incident response
+    rationale: >-
+      Reporting obligations and channels are the operator's.
+    not_covered: true
+  - id: SC-7
+    title: Boundary protection
+    text: >-
+      Communications at system boundaries are monitored and controlled.
+    citation: NIST SP 800-53 Rev 5 SC-7 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Network boundaries are operator infrastructure outside Hive's settings.
+    not_covered: true
+  - id: SC-8
+    title: Transmission confidentiality and integrity
+    text: >-
+      Transmitted information is protected in confidentiality and integrity.
+    citation: NIST SP 800-53 Rev 5 SC-8 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Transport encryption is terminated by operator infrastructure; Hive settings do not evidence it.
+    not_covered: true
+  - id: SC-28
+    title: Protection of information at rest
+    text: >-
+      Information at rest is protected in confidentiality and integrity.
+    citation: NIST SP 800-53 Rev 5 SC-28 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Access control
+    rationale: >-
+      Disk and volume encryption belong to the host and storage provider.
+    not_covered: true
+  - id: SI-2
+    title: Flaw remediation
+    text: >-
+      System flaws are identified, reported and corrected.
+    citation: NIST SP 800-53 Rev 5 SI-2 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Vulnerability management
+    rationale: >-
+      Patching of the host and dependencies is an operator process; Hive settings do not evidence it.
+    not_covered: true
+  - id: SI-3
+    title: Malicious code protection
+    text: >-
+      Malicious code protection is implemented at system entry and exit points.
+    citation: NIST SP 800-53 Rev 5 SI-3 (not mappable to a Hive setting; listed so silence is not read as coverage)
+    domain: Vulnerability management
+    rationale: >-
+      Endpoint and malware protection are host-level controls outside Hive.
+    not_covered: true
+  - id: SR-2
+    title: Supply chain risk management plan
+    text: >-
+      A supply chain risk management plan is developed and maintained.
+    citation: NIST SP 800-53 Rev 5 SR-2 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Risk management
+    rationale: >-
+      Supply chain risk planning is an organisational document; Hive cannot evidence it.
+    not_covered: true
+  - id: SR-3
+    title: Supply chain controls and processes
+    text: >-
+      Supply chain controls protect against supply chain risks.
+    citation: NIST SP 800-53 Rev 5 SR-3 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Risk management
+    rationale: >-
+      Supplier selection and controls are organisational processes.
+    not_covered: true
+  - id: SR-11
+    title: Component authenticity
+    text: >-
+      Counterfeit or tampered components are detected and prevented.
+    citation: NIST SP 800-53 Rev 5 SR-11 (outside the AC/AU/CM/IA/RA/SA/SI subset or not mappable; listed so silence is not read as coverage)
+    domain: Risk management
+    rationale: >-
+      Hive settings do not verify component provenance; use the operator's artifact signing and provenance checks.
     not_covered: true

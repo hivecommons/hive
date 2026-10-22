@@ -321,3 +321,120 @@ controls:
       - setting_path: auto_merge.self_authored
         recommended: 'false'
         evaluator: equals
+  - id: A.5.23
+    title: Information security for use of cloud services
+    text: >-
+      Cloud services are acquired, used and exited according to security requirements.
+    citation: ISO/IEC 27001:2022 Annex A 5.23
+    domain: Risk management
+    rationale: >-
+      Cloud supplier governance is an organisational process.
+    not_covered: true
+  - id: A.5.28
+    title: Collection of evidence
+    text: >-
+      Procedures identify, collect and preserve evidence of security events.
+    citation: ISO/IEC 27001:2022 Annex A 5.28
+    domain: Incident response
+    rationale: >-
+      Forensic evidence handling is an organisational process.
+    not_covered: true
+  - id: A.8.3
+    title: Information access restriction
+    text: >-
+      Access to information is restricted per access control policy.
+    citation: ISO/IEC 27001:2022 Annex A 8.3
+    domain: Access control
+    rationale: >-
+      Data-level restriction inside the operator's systems is outside Hive's settings.
+    not_covered: true
+  - id: A.8.5
+    title: Secure authentication
+    text: >-
+      Secure authentication technologies and procedures are implemented.
+    citation: ISO/IEC 27001:2022 Annex A 8.5
+    domain: Access control
+    rationale: >-
+      Authentication is performed by GitHub and the operator's identity provider.
+    not_covered: true
+  - id: A.8.12
+    title: Data leakage prevention
+    text: >-
+      Data leakage prevention measures are applied to sensitive information.
+    citation: ISO/IEC 27001:2022 Annex A 8.12
+    domain: Access control
+    rationale: >-
+      Hive settings do not evidence data-loss prevention tooling.
+    not_covered: true
+  - id: A.8.13
+    title: Information backup
+    text: >-
+      Backup copies are maintained and tested.
+    citation: ISO/IEC 27001:2022 Annex A 8.13
+    domain: Risk management
+    rationale: >-
+      Backup of hive state is an operator process.
+    not_covered: true
+  - id: A.8.20
+    title: Networks security
+    text: >-
+      Networks and network devices are secured and controlled.
+    citation: ISO/IEC 27001:2022 Annex A 8.20
+    domain: Access control
+    rationale: >-
+      Network security is operator infrastructure.
+    not_covered: true
+  - id: A.8.21
+    title: Security of network services
+    text: >-
+      Security mechanisms and service levels of network services are identified.
+    citation: ISO/IEC 27001:2022 Annex A 8.21
+    domain: Access control
+    rationale: >-
+      Network service agreements are the operator's.
+    not_covered: true
+  - id: A.8.22
+    title: Segregation of networks
+    text: >-
+      Groups of services and users are segregated in networks.
+    citation: ISO/IEC 27001:2022 Annex A 8.22
+    domain: Access control
+    rationale: >-
+      Network segregation is operator infrastructure.
+    not_covered: true
+  - id: A.8.23
+    title: Web filtering
+    text: >-
+      Access to external websites is managed.
+    citation: ISO/IEC 27001:2022 Annex A 8.23
+    domain: Access control
+    rationale: >-
+      Egress filtering is operator infrastructure.
+    not_covered: true
+  - id: A.8.24
+    title: Use of cryptography
+    text: >-
+      Rules for effective use of cryptography are defined and implemented.
+    citation: ISO/IEC 27001:2022 Annex A 8.24
+    domain: Access control
+    rationale: >-
+      Cryptographic key and transport management are outside Hive's settings.
+    not_covered: true
+  - id: A.8.26
+    title: Application security requirements
+    text: >-
+      Security requirements are identified before developing or acquiring applications.
+    citation: ISO/IEC 27001:2022 Annex A 8.26
+    domain: Change management
+    rationale: >-
+      Requirements definition is an organisational process.
+    not_covered: true
+  - id: A.8.30
+    title: Outsourced development
+    text: >-
+      Outsourced system development is directed, monitored and reviewed.
+    citation: ISO/IEC 27001:2022 Annex A 8.30
+    domain: Change management
+    rationale: >-
+      Supplier oversight is an organisational process.
+    not_covered: true

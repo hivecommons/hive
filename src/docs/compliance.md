@@ -236,9 +236,10 @@ This page is the reference for what the registry evaluates.
 A **subset** of the NIST SP 800-53 Rev 5 Moderate baseline: the families AC,
 AU, CM, IA, RA, SA and SI. Control text is a short paraphrase, not NIST's
 wording; the authoritative text is NIST SP 800-53 Rev 5 and the FedRAMP
-baseline. PE-3 and PS-3 sit outside the subset and are listed `not_covered`
-so silence is not read as coverage, as are location/citizenship eligibility
-(AC-2.ELIG) and external service providers (SA-9). IA-2 is informational:
+baseline. Relevant controls Hive cannot evidence (for example AC-17, AU-9,
+CM-2, SC-7, SC-8, SC-28, CP-9, SR-*, PE-3 and PS-3) are listed `not_covered`
+so silence is not read as coverage, as are external service providers (SA-9)
+and location/citizenship eligibility (ELIG-1, a non-NIST identifier). IA-2 is informational:
 authentication happens at GitHub or the hub, Hive only holds the allowlist.
 Selecting this profile does not make a hive FedRAMP authorized, and Hive is
 not a FedRAMP authorization boundary. Generated from
@@ -249,7 +250,7 @@ not a FedRAMP authorization boundary. Generated from
 |---|---|---|---|---|---|
 | AC-2 — Account management | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` | The dashboard allowlist is the account roster; periodic review of it is the operator's process. |
 | AC-2 — Account management | Access control | `dashboard.authorized_users` | `2` | `max_owners` |  |
-| AC-2.ELIG — Personnel eligibility by location or citizenship | Access control | _not covered by Hive_ | — | — | Hive cannot verify where a person is or their citizenship. Enforce eligibility at the identity provider and the hosting region; Hive only records who is on the allowlist. |
+| ELIG-1 — Personnel eligibility by location or citizenship (not a NIST control) | Access control | _not covered by Hive_ | — | — | Hive cannot verify where a person is or their citizenship. Enforce eligibility at the identity provider and the hosting region; Hive only records who is on the allowlist. |
 | AC-3 — Access enforcement | Access control | `dashboard.authorized_users` | `non-empty` | `non_empty` |  |
 | AC-3 — Access enforcement | Access control | `auto_merge.trusted_authors.require_github_permission` | `true` | `equals` |  |
 | AC-5 — Separation of duties | Segregation of duties | `dashboard.authorized_users` | `1` | `min_mergers` |  |
@@ -290,6 +291,25 @@ not a FedRAMP authorization boundary. Generated from
 | SI-7 — Software, firmware and information integrity | Vulnerability management | `agent_sandbox.enabled` | `true` | `equals` |  |
 | PE-3 — Physical access control | Access control | _not covered by Hive_ | — | — | Hive is software on infrastructure the operator chooses; physical security belongs to the hosting provider. |
 | PS-3 — Personnel screening | Access control | _not covered by Hive_ | — | — | Hiring and background screening are HR processes; no Hive setting can evidence them. |
+| AC-8 — System use notification | Access control | _not covered by Hive_ | — | — | The dashboard does not present a configurable use banner; the notice belongs to the operator's identity provider or reverse proxy. |
+| AC-17 — Remote access | Access control | _not covered by Hive_ | — | — | Remote access paths (VPN, bastion, reverse proxy) are operator infrastructure; Hive only exposes its dashboard allowlist. |
+| AU-8 — Time stamps | Logging & monitoring | _not covered by Hive_ | — | — | Clock synchronization is a property of the host; no Hive setting evidences it. |
+| AU-9 — Protection of audit information | Logging & monitoring | _not covered by Hive_ | — | — | Protection of the audit log files depends on host file permissions and backup controls outside Hive's settings. |
+| CM-2 — Baseline configuration | Change management | _not covered by Hive_ | — | — | Baselines of the hosting environment are the operator's; Hive settings are not a full system baseline. |
+| CM-7 — Least functionality | Change management | _not covered by Hive_ | — | — | Host and container hardening are outside what Hive settings can evidence. |
+| CM-8 — System component inventory | Change management | _not covered by Hive_ | — | — | Hive does not maintain an authoritative inventory of host components. |
+| CP-9 — System backup | Risk management | _not covered by Hive_ | — | — | Backup of hive state is an operator process; no Hive setting evidences it. |
+| IA-8 — Identification and authentication (non-organizational users) | Access control | _not covered by Hive_ | — | — | Authentication of outside contributors is performed by GitHub and the operator's identity provider, not Hive. |
+| IR-4 — Incident handling | Incident response | _not covered by Hive_ | — | — | Incident handling is an organisational process; Hive escalation is a signal, not an incident-response program. |
+| IR-6 — Incident reporting | Incident response | _not covered by Hive_ | — | — | Reporting obligations and channels are the operator's. |
+| SC-7 — Boundary protection | Access control | _not covered by Hive_ | — | — | Network boundaries are operator infrastructure outside Hive's settings. |
+| SC-8 — Transmission confidentiality and integrity | Access control | _not covered by Hive_ | — | — | Transport encryption is terminated by operator infrastructure; Hive settings do not evidence it. |
+| SC-28 — Protection of information at rest | Access control | _not covered by Hive_ | — | — | Disk and volume encryption belong to the host and storage provider. |
+| SI-2 — Flaw remediation | Vulnerability management | _not covered by Hive_ | — | — | Patching of the host and dependencies is an operator process; Hive settings do not evidence it. |
+| SI-3 — Malicious code protection | Vulnerability management | _not covered by Hive_ | — | — | Endpoint and malware protection are host-level controls outside Hive. |
+| SR-2 — Supply chain risk management plan | Risk management | _not covered by Hive_ | — | — | Supply chain risk planning is an organisational document; Hive cannot evidence it. |
+| SR-3 — Supply chain controls and processes | Risk management | _not covered by Hive_ | — | — | Supplier selection and controls are organisational processes. |
+| SR-11 — Component authenticity | Risk management | _not covered by Hive_ | — | — | Hive settings do not verify component provenance; use the operator's artifact signing and provenance checks. |
 <!-- END GENERATED: compliance-profile fedramp-moderate -->
 
 ## ISO 27001 Annex A mapping
@@ -349,6 +369,19 @@ from `src/pkg/compliance/profiles/iso27001-annex-a.yaml`; do not edit by hand.
 | A.8.32 — Change management | Change management | `auto_merge.required_checks` | `non-empty` | `non_empty` |  |
 | A.8.32 — Change management | Change management | `auto_merge.human_merge_paths` | `non-empty` | `non_empty` |  |
 | A.8.32 — Change management | Change management | `auto_merge.self_authored` | `false` | `equals` |  |
+| A.5.23 — Information security for use of cloud services | Risk management | _not covered by Hive_ | — | — | Cloud supplier governance is an organisational process. |
+| A.5.28 — Collection of evidence | Incident response | _not covered by Hive_ | — | — | Forensic evidence handling is an organisational process. |
+| A.8.3 — Information access restriction | Access control | _not covered by Hive_ | — | — | Data-level restriction inside the operator's systems is outside Hive's settings. |
+| A.8.5 — Secure authentication | Access control | _not covered by Hive_ | — | — | Authentication is performed by GitHub and the operator's identity provider. |
+| A.8.12 — Data leakage prevention | Access control | _not covered by Hive_ | — | — | Hive settings do not evidence data-loss prevention tooling. |
+| A.8.13 — Information backup | Risk management | _not covered by Hive_ | — | — | Backup of hive state is an operator process. |
+| A.8.20 — Networks security | Access control | _not covered by Hive_ | — | — | Network security is operator infrastructure. |
+| A.8.21 — Security of network services | Access control | _not covered by Hive_ | — | — | Network service agreements are the operator's. |
+| A.8.22 — Segregation of networks | Access control | _not covered by Hive_ | — | — | Network segregation is operator infrastructure. |
+| A.8.23 — Web filtering | Access control | _not covered by Hive_ | — | — | Egress filtering is operator infrastructure. |
+| A.8.24 — Use of cryptography | Access control | _not covered by Hive_ | — | — | Cryptographic key and transport management are outside Hive's settings. |
+| A.8.26 — Application security requirements | Change management | _not covered by Hive_ | — | — | Requirements definition is an organisational process. |
+| A.8.30 — Outsourced development | Change management | _not covered by Hive_ | — | — | Supplier oversight is an organisational process. |
 <!-- END GENERATED: compliance-profile iso27001-annex-a -->
 
 ## Posture checks catalogue
@@ -497,7 +530,7 @@ rather than implying coverage:
   recovery testing, data life-cycle and processing-integrity controls, and the
   privacy programme. The generated table above gives the criterion-specific
   reason instead of allowing an omitted criterion to look covered. FedRAMP
-  AC-2.ELIG, SA-9, PE-3 and PS-3 and ISO 27001 A.5.1, A.5.19, A.5.24, A.5.30,
+  ELIG-1, SA-9, PE-3 and PS-3 and ISO 27001 A.5.1, A.5.19, A.5.24, A.5.30,
   A.6.1 and A.7.2 are likewise explicit.
 
 ## Related

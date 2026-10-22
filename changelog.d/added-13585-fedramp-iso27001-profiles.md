@@ -1,0 +1,1 @@
+- Extend the FedRAMP Moderate and ISO 27001 Annex A profiles with more baseline controls (listed `not_covered` where Hive cannot evidence them) and rename the non-NIST `AC-2.ELIG` row to `ELIG-1` ([#13585](https://github.com/hivecommons/hive/issues/13585)).

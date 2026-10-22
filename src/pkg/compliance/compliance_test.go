@@ -149,6 +149,27 @@ func TestShippedProfilesCoverTheirScope(t *testing.T) {
 			t.Errorf("%s: covered=%d not_covered=%d", id, covered, notCovered)
 		}
 	}
+	for _, tc := range []struct {
+		profile string
+		ids     []string
+	}{
+		{"fedramp-moderate", []string{"AC-17", "AU-8", "AU-9", "CM-2", "CM-7", "CM-8", "IA-8", "IR-4", "IR-6", "SC-7", "SC-8", "SC-28", "SI-2", "SI-3", "CP-9", "SR-2", "ELIG-1"}},
+		{"iso27001-annex-a", []string{"A.5.23", "A.5.28", "A.8.3", "A.8.5", "A.8.12", "A.8.13", "A.8.20", "A.8.21", "A.8.22", "A.8.23", "A.8.24", "A.8.26", "A.8.30"}},
+	} {
+		pp := mustProfile(t, tc.profile)
+		got := map[string]bool{}
+		for _, c := range pp.Controls {
+			got[c.ID] = c.NotCovered
+		}
+		if _, ok := got["AC-2.ELIG"]; ok {
+			t.Errorf("%s: AC-2.ELIG is not a NIST identifier", tc.profile)
+		}
+		for _, id := range tc.ids {
+			if nc, ok := got[id]; !ok || !nc {
+				t.Errorf("%s: %s must be present and not_covered", tc.profile, id)
+			}
+		}
+	}
 	fed := mustProfile(t, "fedramp-moderate")
 	have := map[string]bool{}
 	for _, c := range fed.Controls {
