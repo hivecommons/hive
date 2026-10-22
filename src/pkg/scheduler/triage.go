@@ -32,7 +32,11 @@ type runTriageFixRetirer interface {
 const triageCommentMarker = "<!-- hive-triage -->"
 
 func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
-	if s == nil || s.cfg == nil || !s.cfg.Runs.Triage.Enabled || len(issues) == 0 {
+	if s == nil || s.cfg == nil || len(issues) == 0 {
+		return issues
+	}
+	issues = s.applyClarityGate(issues)
+	if !s.cfg.Runs.Triage.Enabled || len(issues) == 0 {
 		return issues
 	}
 	admitter, commenter := s.runTriageDeps()

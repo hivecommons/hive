@@ -52,6 +52,10 @@ const (
 	// DefaultTriageMinBodyChars is the minimum useful issue body size before
 	// the run triage pass asks the reporter for more detail.
 	DefaultTriageMinBodyChars = 80
+	// DefaultClarityGateThreshold is the clarity score (0-100) below which
+	// the clarity gate parks an issue and asks its author for acceptance
+	// criteria instead of letting an agent claim it.
+	DefaultClarityGateThreshold = 60
 )
 
 // RunsConfig tunes long-running runs (spec, plan, implement stages on a lease).
@@ -143,6 +147,32 @@ type TriageConfig struct {
 	MinBodyChars int `yaml:"min_body_chars,omitempty" json:"min_body_chars,omitempty"`
 	// ClarifyComment controls posting the one-shot clarification comment. Nil defaults true.
 	ClarifyComment *bool `yaml:"clarify_comment,omitempty" json:"clarify_comment,omitempty"`
+	// ClarityGate parks a human-filed issue whose clarity score is below the
+	// threshold, asking its author concise questions before any agent claims
+	// it. Independent of Enabled. Default off.
+	ClarityGate ClarityGateConfig `yaml:"clarity_gate,omitempty" json:"clarity_gate,omitempty"`
+}
+
+// ClarityGateConfig is runs.triage.clarity_gate (hivecommons/hive#13577).
+type ClarityGateConfig struct {
+	// Enabled turns the gate on. Default false.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Threshold is the minimum clarity score (0-100) an issue needs to stay
+	// in the agent queue. Zero or negative means DefaultClarityGateThreshold;
+	// values above 100 are read as 100.
+	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+}
+
+// EffectiveThreshold is Threshold with the default and the 100 cap applied.
+func (g ClarityGateConfig) EffectiveThreshold() int {
+	switch {
+	case g.Threshold <= 0:
+		return DefaultClarityGateThreshold
+	case g.Threshold > 100:
+		return 100
+	default:
+		return g.Threshold
+	}
 }
 
 // SpektacularConfig is the opt-in for the Spektacular stage runner.

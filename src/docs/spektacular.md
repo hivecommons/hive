@@ -115,6 +115,41 @@ runs:
     clarify_comment: true
 ```
 
+### Clarity gate
+
+`runs.triage.clarity_gate` ([#13577](https://github.com/hivecommons/hive/issues/13577))
+pushes back on vague issues before an agent claims them. It is OFF by default
+and independent of `runs.triage.enabled`. When on, the scheduler scores every
+human-filed, unclaimed GitHub issue in the kick list, without a model call:
+
+| Signal | Points | Found when the body has |
+|---|---|---|
+| Goal | 25 | a goal/problem/summary heading, or a goal sentence (`should`, `expected`, `so that`, `fails`, …) |
+| Acceptance criteria | 35 | an `Acceptance criteria` / `Definition of done` / `Expected behavior` heading or line, or a `- [ ]` checklist |
+| Scope | 20 | a code span, a path or file name, or a scope word (`component`, `command`, `page`, `out of scope`, …) |
+| Detail | 20 | 300+ characters (10 at `min_body_chars` or more) |
+| Open choice | −30 | an unchosen `high/medium/low` list, an unfilled `<placeholder>`, `TBD`, `???`, `not sure if`, `or maybe` |
+
+An issue scoring under `threshold` (default 60, Settings → Features →
+Incoming issue triage → **Clarity threshold**) is withheld from the kick. Hive
+posts one comment carrying `<!-- hive:clarity-gate -->` with one short question
+per missing signal and adds the `needs-spec` hard-suppress label (the first
+label of `project.issue_filter.hard_suppress_labels.needs_spec`). The issue then
+derives `stage/045-needs-decision` ("parked on a person: needs-spec"), leaves
+enumeration and is refused by the claim gate. The marker is never posted twice.
+
+Removing `needs-spec` resumes the normal pipeline. The gate sees the marker and
+does not ask again, however the issue scores. Issues filed by Hive or an agent,
+issues already claimed and issues carrying `approved-direction` are not scored.
+
+```yaml
+runs:
+  triage:
+    clarity_gate:
+      enabled: false           # default
+      threshold: 60            # 0-100; 0 uses the default
+```
+
 ## What the runner does
 
 Every 30 seconds (the contribute hub's cleanup tick) the runner looks at every

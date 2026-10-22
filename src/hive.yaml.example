@@ -699,6 +699,9 @@ governor:
 #     fix_labels: [kind/bug, good first issue]
 #     min_body_chars: 80
 #     clarify_comment: true
+#     clarity_gate:          # park unclear human-filed issues with needs-spec and ask the author (#13577)
+#       enabled: false
+#       threshold: 60        # clarity score 0-100 an issue needs to stay in the agent queue
 #   spektacular:
 #     enabled: false
 #     binary: spektacular

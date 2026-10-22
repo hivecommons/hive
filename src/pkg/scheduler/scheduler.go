@@ -30,6 +30,7 @@ type Scheduler struct {
 	inflight             InflightLookup
 	runAdmitter          RunAdmitter
 	triageCommenter      TriageCommenter
+	clarity              clarityGateState
 	questionAutocloser   QuestionAutocloser
 	lifecycle            timeline.Recorder
 	scanned              bool
