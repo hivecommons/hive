@@ -89,6 +89,11 @@ type PostureDeps struct {
 	ReadFile    func(string) ([]byte, error)
 	// Window is the look-back of the merged-PR checks.
 	Window time.Duration
+	// RelayAuditRowsSince counts relay_* audit rows written at or after since.
+	RelayAuditRowsSince func(since time.Time) (int, error)
+	// RelayConnectedSince reports whether any relay connected at or after
+	// since, or is connected now.
+	RelayConnectedSince func(since time.Time) bool
 }
 
 func (d PostureDeps) withDefaults() PostureDeps {

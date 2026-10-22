@@ -15,16 +15,18 @@ import (
 
 // Posture check IDs. Stable: they key the history and the audit log.
 const (
-	CheckNonAuthorReview   = "non_author_review"
-	CheckOwnerAutoMerge    = "owner_not_auto_merge_author"
-	CheckAuditRetention    = "audit_retention"
-	CheckAgentConfinement  = "agent_confinement"
-	CheckSentinel          = "sentinel_enabled"
-	CheckNoConfigSecrets   = "no_secrets_in_config"
-	CheckDashboardAuth     = "dashboard_auth"
-	CheckHoldLabels        = "hold_labels_exist"
-	settingAuditRetention  = "audit.retention_days"
-	evidenceAuditRetention = "docs/audit-log.md#rotation-and-retention"
+	CheckNonAuthorReview    = "non_author_review"
+	CheckOwnerAutoMerge     = "owner_not_auto_merge_author"
+	CheckAuditRetention     = "audit_retention"
+	CheckAgentConfinement   = "agent_confinement"
+	CheckSentinel           = "sentinel_enabled"
+	CheckNoConfigSecrets    = "no_secrets_in_config"
+	CheckDashboardAuth      = "dashboard_auth"
+	CheckHoldLabels         = "hold_labels_exist"
+	CheckRelayAuditCoverage = "relay-audit-coverage"
+	relayAuditWindow        = 24 * time.Hour
+	settingAuditRetention   = "audit.retention_days"
+	evidenceAuditRetention  = "docs/audit-log.md#rotation-and-retention"
 )
 
 // Confinement tiers, most to least confined. T1: the agent runs in the
@@ -88,6 +90,12 @@ var postureChecks = []PostureCheck{
 		Title:      "Hold and needs-human labels exist on every repo",
 		ControlIDs: []string{"CC8.1", "CC7.3"},
 		Run:        checkHoldLabels,
+	},
+	{
+		ID:         CheckRelayAuditCoverage,
+		Title:      "Relay activity in the last 24h left relay_* rows in the audit log",
+		ControlIDs: []string{"CC7.2"},
+		Run:        checkRelayAuditCoverage,
 	},
 }
 
@@ -503,4 +511,23 @@ func checkNoConfigSecrets(_ context.Context, d PostureDeps) Result {
 		return failed(fmt.Sprintf("%d secret-looking value(s) in %d config file(s); move them to env or a mounted Secret", len(findings), scanned), findings)
 	}
 	return passed(fmt.Sprintf("no secret-looking values in %d config file(s)", scanned), nil)
+}
+
+func checkRelayAuditCoverage(_ context.Context, d PostureDeps) Result {
+	if d.RelayAuditRowsSince == nil || d.RelayConnectedSince == nil {
+		return skip("relay audit evidence unavailable (no hub audit log or relay registry)")
+	}
+	since := d.Now().Add(-relayAuditWindow)
+	refs := []string{"/data/audit.jsonl"}
+	rows, err := d.RelayAuditRowsSince(since)
+	if err != nil {
+		return errored(fmt.Sprintf("reading relay audit rows: %v", err))
+	}
+	if rows > 0 {
+		return passed(fmt.Sprintf("%d relay_* audit row(s) written in the last 24h", rows), refs)
+	}
+	if !d.RelayConnectedSince(since) {
+		return passed("no relay connected in the last 24h, so no relay_* audit rows were expected", refs)
+	}
+	return failed("relay(s) connected in the last 24h but no relay_* audit row was written", refs)
 }

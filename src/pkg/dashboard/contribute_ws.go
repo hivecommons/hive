@@ -933,6 +933,9 @@ type ContributeWSHub struct {
 	// upgrade path and from deferred cleanup, and must never contend with or
 	// re-enter h.mu.
 	pendingConns atomic.Int64
+	// lastRelayConnectNanos is when a relay last completed authentication;
+	// the relay-audit-coverage posture check reads it.
+	lastRelayConnectNanos atomic.Int64
 	// handlers tracks live HandleWS invocations so a caller (in practice:
 	// tests) can wait for hijacked websocket handlers to fully unwind.
 	// httptest's Server.Close does not wait for hijacked connections, so a
@@ -2911,6 +2914,7 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 
 	s.deliverPendingOperatorMessages()
 
+	h.lastRelayConnectNanos.Store(time.Now().UnixNano())
 	h.auditRelay(s.contributor, agentaudit.AuditRelayConnected, nil,
 		"backend", auditRelayText(msg.CLIBackend), "model", auditRelayText(msg.Model), "tier", profile.TrustTier,
 		"relay_version", auditRelayText(declared.RelayProtocolVersion))

@@ -92,8 +92,8 @@ func TestPostureCatalogueMapsToSOC2Controls(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	cat := PostureCatalogue()
-	if len(cat) != 8 || len(PostureChecks()) != len(cat) {
-		t.Fatalf("catalogue has %d checks, want 8", len(cat))
+	if len(cat) != 9 || len(PostureChecks()) != len(cat) {
+		t.Fatalf("catalogue has %d checks, want 9", len(cat))
 	}
 	for _, c := range cat {
 		if ids[c.ID] || c.Title == "" || len(c.ControlIDs) == 0 {
@@ -221,6 +221,30 @@ func TestCheckAuditRetention(t *testing.T) {
 	if len(r.EvidenceRefs) != 1 {
 		t.Fatalf("refs = %v", r.EvidenceRefs)
 	}
+}
+
+func TestCheckRelayAuditCoverage(t *testing.T) {
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, postureTestDeps(nil, nil)), PostureSkip, "relay audit evidence unavailable")
+
+	var gotSince time.Time
+	deps := func(rows int, rowsErr error, connected bool) PostureDeps {
+		d := postureTestDeps(nil, nil)
+		d.RelayAuditRowsSince = func(since time.Time) (int, error) { gotSince = since; return rows, rowsErr }
+		d.RelayConnectedSince = func(time.Time) bool { return connected }
+		return d
+	}
+
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(3, nil, true)), PosturePass, "3 relay_* audit row(s)")
+	if want := postureNow.Add(-24 * time.Hour); !gotSince.Equal(want) {
+		t.Fatalf("since = %v, want %v", gotSince, want)
+	}
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(0, nil, false)), PosturePass, "no relay connected")
+	r := runCheck(t, CheckRelayAuditCoverage, deps(0, nil, true))
+	wantStatus(t, r, PostureFail, "no relay_* audit row was written")
+	if len(r.EvidenceRefs) != 1 {
+		t.Fatalf("refs = %v", r.EvidenceRefs)
+	}
+	wantStatus(t, runCheck(t, CheckRelayAuditCoverage, deps(0, errors.New("boom"), true)), PostureError, "boom")
 }
 
 func TestCheckAgentConfinement(t *testing.T) {

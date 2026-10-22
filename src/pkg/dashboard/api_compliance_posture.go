@@ -86,6 +86,12 @@ func (s *Server) postureDeps() compliance.PostureDeps {
 	if gh != nil {
 		d.GitHub = postureGitHub{c: gh}
 	}
+	if s.audit != nil {
+		d.RelayAuditRowsSince = s.relayAuditRowsSince
+	}
+	if s.contributeHub != nil {
+		d.RelayConnectedSince = s.contributeHub.relayConnectedSince
+	}
 	return d
 }
 
@@ -234,4 +240,13 @@ func (s *Server) handleCompliancePostureRun(w http.ResponseWriter, r *http.Reque
 		"error", strconv.Itoa(run.Summary.Error),
 	), "")
 	jsonResponse(w, run)
+}
+
+// relayAuditRowsSince counts relay_* audit rows since the cutoff, preferring
+// the on-disk log (the ring is emptied by a restart).
+func (s *Server) relayAuditRowsSince(since time.Time) (int, error) {
+	if s.audit.HasOnDiskLog("") {
+		return len(s.audit.ActionsWithPrefixSince(since, "relay_", "")), nil
+	}
+	return len(s.audit.RecentWithPrefixSince(since, "relay_")), nil
 }

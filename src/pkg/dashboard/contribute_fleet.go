@@ -19,6 +19,15 @@ func (h *ContributeWSHub) ActiveCount() int {
 	return len(seen)
 }
 
+// relayConnectedSince reports whether a relay is connected now or finished
+// authenticating at or after since.
+func (h *ContributeWSHub) relayConnectedSince(since time.Time) bool {
+	if h.lastRelayConnectNanos.Load() >= since.UnixNano() {
+		return true
+	}
+	return h.ActiveCount() > 0
+}
+
 func (h *ContributeWSHub) ActiveSessionCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
