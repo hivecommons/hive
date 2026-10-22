@@ -9906,18 +9906,12 @@ func fullRepoName(repo, org string) string {
 // dispatcher sees it, so the relay judges reviewer-ness by the same rule.
 // An unknown lane has only its name to go on.
 func reviewAgentCapability(cfg *config.Config, agent string) review.AgentCapability {
-	cap := review.AgentCapability{Name: agent}
-	if cfg == nil {
-		return cap
+	if cfg != nil {
+		if ac, ok := cfg.Agents[agent]; ok {
+			return review.CapabilityFromConfig(agent, ac)
+		}
 	}
-	if ac, ok := cfg.Agents[agent]; ok {
-		cap.ReplicaOf = ac.ReplicaOf
-		cap.Role = ac.Role
-		cap.LaneKeywords = ac.LaneKeywords
-		cap.DetectKeywords = ac.DetectKeywords
-		cap.Aliases = ac.Aliases
-	}
-	return cap
+	return review.AgentCapability{Name: agent}
 }
 
 // installReviewRelaySettings gives a (possibly rebuilt) GitHub client the
@@ -10305,21 +10299,9 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	prs = prioritizeEventPRs(prs, activeReviewEvents.Load())
 	agents := make([]review.AgentCapability, 0, len(cfg.Agents))
 	for name, ac := range cfg.EnabledAgents() {
-		agents = append(agents, review.AgentCapability{
-			Name:           name,
-			ReplicaOf:      ac.ReplicaOf,
-			Enabled:        true,
-			Paused:         ac.Paused || (agentMgr != nil && agentMgr.IsPaused(name)),
-			OnDemand:       ac.OnDemand,
-			UsesKick:       ac.UsesGovernorKick(),
-			Role:           ac.Role,
-			LaneKeywords:   ac.LaneKeywords,
-			DetectKeywords: ac.DetectKeywords,
-			Aliases:        ac.Aliases,
-			Backend:        ac.Backend,
-			Model:          ac.Model,
-			ReviewModels:   ac.ReviewModels,
-		})
+		cap := review.CapabilityFromConfig(name, ac)
+		cap.Paused = cap.Paused || (agentMgr != nil && agentMgr.IsPaused(name))
+		agents = append(agents, cap)
 	}
 	reviewBotLogins := []string{}
 	if reviewBots.Enabled() {

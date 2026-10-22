@@ -1,6 +1,7 @@
 package review
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,12 @@ import (
 
 func reviewer(name string) AgentCapability {
 	return AgentCapability{Name: name, Enabled: true, UsesKick: true, Role: "reviewer"}
+}
+
+func replica(name, base string) AgentCapability {
+	c := reviewer(name)
+	c.ReplicaOf = base
+	return c
 }
 
 func dispatchPR(sha string) PullRequest {
@@ -474,11 +481,6 @@ func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
 }
 
 func TestReviewersForPRExcludesAuthorFamily(t *testing.T) {
-	replica := func(name, base string) AgentCapability {
-		c := reviewer(name)
-		c.ReplicaOf = base
-		return c
-	}
 	all := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
 	tests := []struct {
 		name   string
@@ -504,11 +506,6 @@ func TestReviewersForPRExcludesAuthorFamily(t *testing.T) {
 }
 
 func TestReviewersForPRResolvesAuthorBaseFromFullAgentSet(t *testing.T) {
-	replica := func(name, base string) AgentCapability {
-		c := reviewer(name)
-		c.ReplicaOf = base
-		return c
-	}
 	full := []AgentCapability{reviewer("alpha"), replica("alpha-2", "alpha"), replica("alpha-3", "alpha"), reviewer("beta")}
 	// The authoring replica alpha-2 was filtered out of the reviewer pool.
 	pool := []AgentCapability{full[0], full[2], full[3]}
@@ -518,5 +515,25 @@ func TestReviewersForPRResolvesAuthorBaseFromFullAgentSet(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "beta" {
 		t.Errorf("reviewersForPR() = %v, want [beta]", got)
+	}
+}
+
+func TestCapabilityFromConfigCarriesEveryField(t *testing.T) {
+	ac := config.AgentConfig{
+		ReplicaOf: "alpha", Enabled: true, Paused: true, OnDemand: true,
+		Role: "reviewer", LaneKeywords: []string{"lane"}, DetectKeywords: []string{"detect"},
+		Aliases: []string{"alias"}, Backend: "claude", Model: "opus",
+	}
+	got := CapabilityFromConfig("alpha-2", ac)
+	want := AgentCapability{
+		Name: "alpha-2", ReplicaOf: "alpha", Enabled: true, Paused: true, OnDemand: true,
+		UsesKick: ac.UsesGovernorKick(), Role: "reviewer", LaneKeywords: []string{"lane"},
+		DetectKeywords: []string{"detect"}, Aliases: []string{"alias"}, Backend: "claude", Model: "opus",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("CapabilityFromConfig() = %+v, want %+v", got, want)
+	}
+	if baseOf(got) != "alpha" || baseOf(reviewer("beta")) != "beta" {
+		t.Error("baseOf() did not resolve replica to base / base to itself")
 	}
 }

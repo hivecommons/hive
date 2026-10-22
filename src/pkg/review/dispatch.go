@@ -86,6 +86,38 @@ type AgentCapability struct {
 	ReviewModels config.ReviewModelsConfig
 }
 
+// CapabilityFromConfig builds the dispatcher's view of one configured lane
+// from its agents.<name> entry. Every site that hands an agent to the review
+// package goes through here so a field added to AgentCapability is populated
+// everywhere at once. Callers layer runtime state (an agent-manager pause) on
+// top of the result.
+func CapabilityFromConfig(name string, ac config.AgentConfig) AgentCapability {
+	return AgentCapability{
+		Name:           name,
+		ReplicaOf:      ac.ReplicaOf,
+		Enabled:        ac.Enabled,
+		Paused:         ac.Paused,
+		OnDemand:       ac.OnDemand,
+		UsesKick:       ac.UsesGovernorKick(),
+		Role:           ac.Role,
+		LaneKeywords:   ac.LaneKeywords,
+		DetectKeywords: ac.DetectKeywords,
+		Aliases:        ac.Aliases,
+		Backend:        ac.Backend,
+		Model:          ac.Model,
+		ReviewModels:   ac.ReviewModels,
+	}
+}
+
+// baseOf is the lane an agent's reviewer identity resolves to: the base agent
+// for a replica, otherwise the agent itself (config.AgentConfig.BaseName).
+func baseOf(a AgentCapability) string {
+	if a.ReplicaOf != "" {
+		return a.ReplicaOf
+	}
+	return a.Name
+}
+
 type DispatchOptions struct {
 	RequireApproval    bool
 	FanOut             bool
@@ -689,8 +721,8 @@ func leastLoadedReviewer(reviewers []AgentCapability, pending []PendingReview) A
 func agentBase(all []AgentCapability, name string) string {
 	name = strings.TrimSpace(name)
 	for _, a := range all {
-		if a.Name == name && a.ReplicaOf != "" {
-			return a.ReplicaOf
+		if a.Name == name {
+			return baseOf(a)
 		}
 	}
 	return name
@@ -706,11 +738,7 @@ func reviewersForPR(reviewers []AgentCapability, authorAgent, authorBase string)
 	}
 	out := make([]AgentCapability, 0, len(reviewers))
 	for _, reviewer := range reviewers {
-		reviewerBase := reviewer.Name
-		if reviewer.ReplicaOf != "" {
-			reviewerBase = reviewer.ReplicaOf
-		}
-		if reviewer.Name != authorAgent && reviewerBase != authorBase {
+		if reviewer.Name != authorAgent && baseOf(reviewer) != authorBase {
 			out = append(out, reviewer)
 		}
 	}
@@ -1253,7 +1281,7 @@ func reviewCapableAgents(opts DispatchOptions) []AgentCapability {
 // capable when its base agent is a listed reviewer.
 func ReviewCapable(a AgentCapability, reviewerAgents map[string]bool) bool {
 	if len(reviewerAgents) > 0 {
-		return reviewerAgents[a.Name] || (a.ReplicaOf != "" && reviewerAgents[a.ReplicaOf])
+		return reviewerAgents[a.Name] || reviewerAgents[baseOf(a)]
 	}
 	return hasReviewCapability(a)
 }
