@@ -84,12 +84,15 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives import acme.hive-profile --name acme-laptop
   hivectl hives session acme --label review
   hivectl hives activity
+  hivectl hives set acme --audit-level commands
+  hivectl hives audit --since 24h
   hivectl hives rename acme acme-prod
   hivectl hives remove acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
 	cmd.AddCommand(newHivesReposCommand(env))
 	cmd.AddCommand(newHivesActivityCommand(env))
+	cmd.AddCommand(newHivesAuditCommand(env))
 	cmd.AddCommand(newHivesTreeCommand(env))
 	cmd.AddCommand(newHivesPresetCommand(env))
 	cmd.AddCommand(newHivesHubCommand(env))
@@ -101,6 +104,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
 	cmd.AddCommand(newHivesSessionCommand(env))
 	cmd.AddCommand(newHivesMoveCommand(env))
 	cmd.AddCommand(newHivesStrategyCommand(env))
+	cmd.AddCommand(newHivesSetCommand(env))
 	cmd.AddCommand(newHivesEnabledCommand(env, false))
 	cmd.AddCommand(newHivesEnabledCommand(env, true))
 	cmd.AddCommand(newHivesWebCommand(env))

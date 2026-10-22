@@ -836,6 +836,9 @@ hivectl hives enable acme                                     # resume without r
 hivectl hives web                                             # loopback web UI for The Commons
 hivectl hives activity                                        # local completed-task history
 hivectl hives activity --clear                                # forget it; profiles untouched
+hivectl hives set acme --audit-level commands                 # off|lifecycle|commands|reasoning
+hivectl hives audit --task 1234                               # local audit story for one task
+hivectl hives audit --clear --level reasoning                 # drop stored reasons, keep rows
 hivectl hives rename acme acme-prod
 hivectl hives remove acme                                     # confirm, or --yes
 hivectl hives hub add commons --url https://hub.example.org   # track a hub
@@ -932,6 +935,15 @@ retained history (last 90 days, up to 1000 attempts), not lifetime totals; with
 no history it prints `unavailable (retention: …)` rather than zeros.
 `--clear` deletes that file only — profiles, consent and repository selection
 are unchanged. `-o json|yaml` prints the same rollup with `available`.
+
+`hivectl hives set <name> --audit-level <off|lifecycle|commands|reasoning>`
+chooses what the relay records locally for that hive (default `lifecycle`) and
+projects `HIVE_RELAY_AUDIT_LEVEL` aligned with `HIVE_HUB`. `hivectl hives audit
+[--since 24h|7d|<RFC 3339>] [--task <id>] [--level <level>] [--json]` reads the
+leveled stream in the same file — lifecycle events, GitHub-touching `gh`/`git`
+commands and, at `reasoning`, the assistant turn behind each command (see
+[contributor-relay.md](contributor-relay.md#local-audit-levels-hivectl-hives-audit)).
+`--clear --level reasoning` removes only the stored reasons. Nothing is uploaded.
 
 `~/.config/hive/contributor.env` becomes a **generated projection** of that
 file. The relay, `src/compose-contributor.yaml` and `just contribute-k8s` keep

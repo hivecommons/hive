@@ -83,10 +83,32 @@ or noise up a `gh` call or a git fetch). Consequences:
   recent-activity window, not an archive. The durable accountability record is
   [`/data/audit.jsonl`](audit-log.md).
 
+## Contributor-side counterpart: relay `command` rows
+
+Contributor-mode `gh` calls are not written here (see below). On a
+contributor's own machine the relay can record them instead, in its **local**
+`~/.config/hive/relay-activity.jsonl`, when the hive's audit level is
+`commands` or `reasoning`
+([contributor-relay.md](contributor-relay.md#local-audit-levels-hivectl-hives-audit),
+[#13456](https://github.com/hivecommons/hive/issues/13456)). Those rows reuse
+this log's `ts`/`op`/`cmd` keys so the two can be read with the same tools, and
+add the fields a contributor needs to reconstruct a task:
+
+```json
+{"v":2,"level":"commands","event":"command","ts":"2026-10-01T10:01:00.000Z","task_id":"1234","task_gen":1,"op":"git","cmd":"git push origin HEAD","cwd":".","exit":0,"duration_ms":812,"pid":4242,"capture":"shim","remote":"origin","refspec":"HEAD"}
+```
+
+Unlike this log, `cmd` there is **redacted before the row is built**
+(`--token`, `Authorization:` headers, `GH_TOKEN=`, `x-access-token:` URLs and
+the relay's secret patterns become `[redacted]`), the real exit status is
+recorded, and nothing leaves the machine. They are written by a `gh`/`git`
+`PATH` shim that the relay prepends only to the environment of the CLI it
+launches.
+
 ## What it does NOT capture
 
 - **Contributor-mode `gh` calls** - the gh-wrapper append runs only on the
-  non-contributor branch.
+  non-contributor branch; see the relay `command` rows above.
 - **Anything that bypasses the wrappers** - direct `curl` to the GitHub API,
   MCP GitHub tools, or a raw `gh` binary invoked outside the wrapper `PATH`
   shim writes no line here.

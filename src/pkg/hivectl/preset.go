@@ -205,6 +205,7 @@ var presetDeniedKeys = map[string]string{
 	"strategy":                     "local execution settings",
 	"commons_strategy":             "local execution settings",
 	"quota":                        "local execution settings",
+	"audit_level":                  "local execution settings",
 	"permission":                   "permission changes",
 	"permissions":                  "permission changes",
 	"allow":                        "permission changes",

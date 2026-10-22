@@ -94,7 +94,16 @@ func (s *ProfileStore) LoadRelayActivity() ([]RelayActivityRecord, int, error) {
 			continue
 		}
 		var record RelayActivityRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil || record.TaskID == "" || record.Outcome == "" || record.EndedAt.IsZero() {
+		err := json.Unmarshal([]byte(line), &record)
+		var probe struct {
+			Event string `json:"event"`
+		}
+		if err == nil && json.Unmarshal([]byte(line), &probe) == nil && probe.Event != "" {
+			// Lifecycle and command rows of the leveled audit stream
+			// (#13456) share the file; they are not attempts.
+			continue
+		}
+		if err != nil || record.TaskID == "" || record.Outcome == "" || record.EndedAt.IsZero() {
 			skipped++
 			continue
 		}

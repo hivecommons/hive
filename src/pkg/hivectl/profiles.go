@@ -81,6 +81,7 @@ var ErrHubNotFound = errors.New("no such tracked hub")
 // or a CI log. Redacted() is what the commands print.
 type Profile struct {
 	// Disabled pauses new work without forgetting credentials. Omitted means enabled.
+	// AuditLevel is the relay's local audit level (#13456); empty means lifecycle.
 	Disabled          bool                 `yaml:"disabled,omitempty" json:"disabled"`
 	Name              string               `yaml:"name" json:"name"`
 	Hub               string               `yaml:"hub" json:"hub"`
@@ -89,6 +90,7 @@ type Profile struct {
 	Session           string               `yaml:"session,omitempty" json:"session,omitempty"`
 	Backend           string               `yaml:"backend,omitempty" json:"backend,omitempty"`
 	Model             string               `yaml:"model,omitempty" json:"model,omitempty"`
+	AuditLevel        string               `yaml:"audit_level,omitempty" json:"audit_level,omitempty"`
 	AddedAt           time.Time            `yaml:"added_at,omitempty" json:"added_at,omitempty"`
 	Selection         *RepositorySelection `yaml:"selection,omitempty" json:"-"`
 }
@@ -415,6 +417,11 @@ func (set *ProfileSet) Validate() error {
 		}
 		if err := validateEnvValue("contributor_id", p.ContributorID); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
+		}
+		if p.AuditLevel != "" {
+			if err := ValidateAuditLevel(p.AuditLevel); err != nil {
+				return fmt.Errorf("profile %q: %w", p.Name, err)
+			}
 		}
 	}
 	presetIDs := map[string]bool{}
@@ -802,6 +809,7 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 		env.unset("HIVE_SESSION")
 	}
 	env.set("HIVE_COMMONS_STRATEGY", set.EffectiveCommonsStrategy())
+	projectAuditLevels(env, ordered)
 	scopes, err := set.RepositoryScopes()
 	if err != nil {
 		return err

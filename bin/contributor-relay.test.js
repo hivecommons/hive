@@ -316,6 +316,10 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // #13293: every terminal task frame now appends local activity; keep it in
   // the per-test scratch dir unless a test names its own file.
   process.env.HIVE_RELAY_ACTIVITY_FILE = path.join(tmpDir, 'relay-activity.jsonl');
+  // #13456: the leveled audit's shim/state/spool directory, and the default
+  // level unless a test asks for another one.
+  process.env.HIVE_RELAY_AUDIT_DIR = path.join(tmpDir, 'relay-audit');
+  delete process.env.HIVE_RELAY_AUDIT_LEVEL;
   process.env.HIVE_RELAY_STATUS_FILE = path.join(tmpDir, 'relay-status.json');
   if (env) Object.assign(process.env, env);
 
@@ -3917,11 +3921,17 @@ test('relay records last-seen hubs without registration tokens', () => {
   } finally { teardown(relay); }
 });
 
-// #13293: durable local activity — one record per terminal attempt.
-function readActivity(relay) {
+// #13293: durable local activity — one record per terminal attempt. Since
+// #13456 the same file also holds leveled audit rows (`event`); the terminal
+// rows are the ones without one.
+function readAuditRows(relay) {
   try {
     return fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
   } catch (_) { return []; }
+}
+
+function readActivity(relay) {
+  return readAuditRows(relay).filter(r => !r.event);
 }
 
 const ACTIVITY_TASK = { type: 'task_assign', task_id: 'act-1', task_gen: 3, kind: 'issue', repo: 'org/a', forge: 'github', host: 'github.com', number: 42, title: 'work', prompt: 'SECRET PROMPT TEXT', github_token: 'ghs_activitysecret' };
@@ -4047,6 +4057,355 @@ test('#13293 shutdown with a task in flight records a cancelled attempt', () => 
     assert.strictEqual(records[0].outcome, 'cancelled');
     assert.strictEqual(records[0].task_id, 'act-1');
   } finally { console.log = log; teardown(relay); }
+});
+
+// ---------------------------------------------------------------------------
+// #13456: leveled local audit — lifecycle rows, the commands shim, reasoning
+// binding, redaction and per-class caps.
+// ---------------------------------------------------------------------------
+const relayAudit = require('./lib/relay-audit.js');
+const RELAY_AUDIT_SHIM_PATH = path.join(__dirname, 'lib', 'relay-audit-shim.js');
+
+function auditScratch(prefix) {
+  const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');
+  fs.mkdirSync(scratchRoot, { recursive: true });
+  return fs.mkdtempSync(path.join(scratchRoot, prefix));
+}
+
+function quietly(fn) {
+  const log = console.log, err = console.error, warn = console.warn;
+  console.log = () => {}; console.error = () => {}; console.warn = () => {};
+  try { return fn(); } finally { console.log = log; console.error = err; console.warn = warn; }
+}
+
+test('#13456 audit levels parse as one value for every hive or one per hive, defaulting on a bad value', () => {
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('', 2).levels, ['lifecycle', 'lifecycle']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('commands', 2).levels, ['commands', 'commands']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv('off,reasoning', 2).levels, ['off', 'reasoning']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv(',commands', 2).levels, ['lifecycle', 'commands']);
+  assert.deepStrictEqual(relayAudit.auditLevelsFromEnv("'off,commands'", 2).levels, ['off', 'commands']);
+  for (const bad of ['verbose', 'off,commands,reasoning', 'off,typo']) {
+    const parsed = relayAudit.auditLevelsFromEnv(bad, 2);
+    assert.ok(parsed.error, `${bad} must report an error`);
+    assert.ok(parsed.levels.every(l => relayAudit.AUDIT_LEVELS.includes(l)), `${bad} must still yield valid levels`);
+  }
+  assert.ok(relayAudit.auditLevelAtLeast('reasoning', 'commands'));
+  assert.ok(relayAudit.auditLevelAtLeast('commands', 'lifecycle'));
+  assert.ok(!relayAudit.auditLevelAtLeast('lifecycle', 'commands'));
+  assert.ok(!relayAudit.auditLevelAtLeast('off', 'lifecycle'));
+
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'off,reasoning' } }));
+  try {
+    assert.deepStrictEqual(relay.getHubs().map(h => h.auditLevel), ['off', 'reasoning']);
+    assert.deepStrictEqual(relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'commands' }).map(h => h.auditLevel), ['commands', 'commands']);
+    const bad = quietly(() => relay.hubListFromEnv({ ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'loud' }));
+    assert.deepStrictEqual(bad.map(h => h.auditLevel), ['lifecycle', 'lifecycle'], 'a bad level must not stop the relay');
+  } finally { teardown(relay); }
+});
+
+test('#13456 lifecycle rows record the task story; terminal rows are unchanged and nothing secret is written', () => {
+  const dir = auditScratch('audit-life-');
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_MCP_CONFIG_FILE: path.join(dir, 'mcp.json'), HIVE_AGENT_CWD: dir } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify({ ...ACTIVITY_TASK, mcp: { url: 'https://hub-a.example/mcp', token: 'MCP-BEARER-SECRET' } }), hubs[0]);
+      relay.handleMessage(JSON.stringify({ type: 'token_refresh', github_token: 'ghs_renewedsecret0000' }), hubs[0]);
+      for (const status of ['blocked_on_human', 'blocked_on_human', 'working', 'blocked_on_human']) {
+        relay.sendTo(hubs[0], { type: 'task_progress', task_id: 'act-1', task_gen: 3, status });
+      }
+      relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', pr_url: 'https://github.com/org/a/pull/9' });
+    });
+    const rows = readAuditRows(relay);
+    assert.deepStrictEqual(rows.filter(r => r.event).map(r => r.event),
+      ['assigned', 'token_received', 'mcp_configured', 'token_renewed', 'blocked_on_human', 'blocked_on_human', 'pr_opened']);
+    for (const r of rows.filter(r => r.event)) {
+      assert.strictEqual(r.level, 'lifecycle');
+      assert.strictEqual(r.task_id, 'act-1');
+      assert.strictEqual(r.task_gen, 3);
+      assert.strictEqual(r.repository, 'github/github.com/org/a');
+      assert.ok(r.ts);
+    }
+    assert.deepStrictEqual(rows.filter(r => /^token_/.test(r.event)).map(r => r.token_gen), [1, 2]);
+    assert.strictEqual(rows.find(r => r.event === 'pr_opened').url, 'https://github.com/org/a/pull/9');
+    const terminal = readActivity(relay);
+    assert.strictEqual(terminal.length, 1);
+    assert.strictEqual(terminal[0].outcome, 'success');
+    assert.ok(!('event' in terminal[0]) && !('level' in terminal[0]), 'terminal rows keep the #13293 shape');
+    const raw = fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8');
+    for (const secret of ['SECRET PROMPT TEXT', 'ghs_activitysecret', 'ghs_renewedsecret', 'MCP-BEARER-SECRET', 'hub-a.example/mcp', 'tok-a']) {
+      assert.ok(!raw.includes(secret), `audit stream leaked ${secret}`);
+    }
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 audit level off keeps only the terminal rows', () => {
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'off' } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+      relay.sendTo(hubs[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed', pr_url: 'https://github.com/org/a/pull/9' });
+    });
+    const rows = readAuditRows(relay);
+    assert.deepStrictEqual(rows.map(r => r.outcome), ['success']);
+  } finally { teardown(relay); }
+});
+
+test('#13456 declined offers and revokes record their reason once', () => {
+  const relay = quietly(() => loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+      const offer = { type: 'task_assign', kind: 'issue', task_id: 'out', task_gen: 1, repo: 'org/z', forge: 'github', host: 'github.com', number: 7, prompt: 'SECRET PROMPT TEXT' };
+      relay.handleMessage(JSON.stringify(offer), hubs[1]);
+      relay.handleMessage(JSON.stringify(offer), hubs[1]);
+    });
+    const declined = readAuditRows(relay).filter(r => r.event === 'declined');
+    assert.strictEqual(declined.length, 1);
+    assert.strictEqual(declined[0].reason, 'out_of_contributor_scope');
+    assert.strictEqual(declined[0].task_id, 'out');
+  } finally { teardown(relay); }
+
+  const revoking = quietly(() => loadRelay({ env: MULTI_HUB_ENV }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(revoking);
+      revoking.setCliReady(true);
+      revoking.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      revoking.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+      revoking.handleMessage(JSON.stringify({ type: 'task_revoke', task_id: 'act-1', reason: 'hub restart with ghp_abcdefghijklmnop1234' }), hubs[0]);
+    });
+    const rows = readAuditRows(revoking);
+    const revoked = rows.find(r => r.event === 'revoked');
+    assert.ok(revoked, 'a revoke must leave a lifecycle row');
+    assert.ok(revoked.reason.startsWith('hub restart with '));
+    assert.ok(!revoked.reason.includes('ghp_abcdefghijklmnop1234'), 'reasons are redacted');
+    assert.deepStrictEqual(readActivity(revoking).map(r => r.outcome), ['cancelled']);
+  } finally { teardown(revoking); }
+});
+
+test('#13456 redaction strips tokens, auth headers, GH_TOKEN= and x-access-token URLs before a row exists', () => {
+  const patterns = relayAudit.compileSecretPatterns(relayAudit.serializeSecretPatterns([
+    { category: 'github-token', pattern: /(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}/g },
+  ]));
+  const args = relayAudit.redactAuditArgs('gh', [
+    'api', '-H', 'Authorization: token abc123', '--token', 'plain-secret', '--token=inline-secret',
+    'repos/org/a', '-f', 'body=see ghp_abcdefghijklmnopqrst', 'GH_TOKEN=envsecret',
+  ], patterns);
+  const joined = args.join(' ');
+  for (const leaked of ['abc123', 'plain-secret', 'inline-secret', 'ghp_abcdefghijklmnopqrst', 'envsecret']) {
+    assert.ok(!joined.includes(leaked), `leaked ${leaked}: ${joined}`);
+  }
+  assert.ok(joined.includes('Authorization: [redacted]'));
+  assert.ok(joined.includes('--token [redacted]'));
+  assert.ok(joined.includes('repos/org/a'), 'non-secret arguments survive');
+  const secret = relayAudit.redactAuditArgs('gh', ['secret', 'set', 'NAME', '--body', 'hunter2', '-b=hunter3'], patterns).join(' ');
+  assert.ok(!secret.includes('hunter2') && !secret.includes('hunter3'), secret);
+  assert.strictEqual(relayAudit.redactAuditText('https://x-access-token:ghs_zzzzzzzzzzzzzzzz@github.com/org/a.git', patterns),
+    'https://x-access-token:[redacted]@github.com/org/a.git');
+  assert.strictEqual(relayAudit.redactAuditText('https://user:pw@example.com/x', []), 'https://user:[redacted]@example.com/x');
+});
+
+test('#13456 only GitHub-touching commands are recorded; git reads only at reasoning (Q6)', () => {
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', ['pr', 'create']), 'commands');
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', ['--version']), null);
+  assert.strictEqual(relayAudit.auditCommandMinLevel('gh', []), null);
+  assert.strictEqual(relayAudit.auditCommandMinLevel('git', ['-C', 'repo', 'push', 'origin', 'HEAD:main']), 'commands');
+  for (const sub of ['fetch', 'clone', 'ls-remote', 'pull']) {
+    assert.strictEqual(relayAudit.auditCommandMinLevel('git', [sub, 'origin']), 'reasoning', sub);
+  }
+  for (const sub of ['status', 'commit', 'log', 'stash']) {
+    assert.strictEqual(relayAudit.auditCommandMinLevel('git', [sub]), null, sub);
+  }
+  const row = relayAudit.buildCommandRow({
+    op: 'git', args: ['-c', 'http.extraheader=AUTHORIZATION: basic Zm9vOmJhcg==', 'push', '--force-with-lease', 'https://x-access-token:ghs_pushsecret12345@github.com/org/a.git', 'HEAD:refs/heads/fix'],
+    patterns: [], state: { task_id: 't1', task_gen: 2, checkout: '/w/org/a' }, startedAt: Date.parse('2026-10-21T10:00:00Z'), durationMs: 812.4, exit: 0, cwd: '/w/org/a/sub', pid: 42,
+  });
+  assert.strictEqual(row.level, 'commands');
+  assert.strictEqual(row.event, 'command');
+  assert.strictEqual(row.op, 'git');
+  assert.strictEqual(row.cwd, 'sub');
+  assert.strictEqual(row.exit, 0);
+  assert.strictEqual(row.duration_ms, 812);
+  assert.strictEqual(row.capture, 'shim');
+  assert.strictEqual(row.remote, 'https://x-access-token:[redacted]@github.com/org/a.git');
+  assert.strictEqual(row.refspec, 'HEAD:refs/heads/fix');
+  assert.ok(!JSON.stringify(row).includes('ghs_pushsecret') && !JSON.stringify(row).includes('Zm9vOmJhcg'), JSON.stringify(row));
+  assert.ok(row.cmd.startsWith('git -c '), 'cmd follows the token-access.jsonl "<op> <args>" shape');
+});
+
+test('#13456 reasoning binds one preceding assistant turn, capped at 2 KiB with a marker', () => {
+  const row = { op: 'gh', cmd: 'gh pr create --title x', ts: '2026-10-21T10:00:05.000Z' };
+  const claude = relayAudit.parseTranscriptEntries('claude', [
+    JSON.stringify({ type: 'user', timestamp: '2026-10-21T09:59:00Z', message: { content: 'USER PROMPT TEXT' } }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T09:59:30Z', message: { content: [{ type: 'text', text: 'Older turn.' }] } }),
+    JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T10:00:04Z', message: { content: [
+      { type: 'text', text: 'Tests pass, so I will open the PR now.' },
+      { type: 'tool_use', id: 'toolu_1', input: { command: 'gh pr create --title x', description: 'Open PR' } },
+    ] } }),
+    'not json',
+  ]);
+  const bound = relayAudit.bindCommandReason(claude, row, { includeReason: true, patterns: [] });
+  assert.deepStrictEqual(bound, { tool_call_id: 'toolu_1', capture: 'shim+transcript', reason: 'Tests pass, so I will open the PR now.', reason_source: 'transcript' });
+  assert.ok(!JSON.stringify(claude).includes('USER PROMPT TEXT'), 'user turns are never parsed into entries');
+  assert.deepStrictEqual(relayAudit.bindCommandReason(claude, row, { includeReason: false }), { tool_call_id: 'toolu_1', capture: 'shim+transcript' },
+    'at commands level the transcript only reconciles');
+
+  const copilot = relayAudit.parseTranscriptEntries('copilot', [
+    JSON.stringify({ type: 'assistant.message', timestamp: '2026-10-21T10:00:01Z', data: { content: '', toolRequests: [{ toolCallId: 'call_9', arguments: { command: 'gh pr create --title x', description: 'Open the pull request' } }] } }),
+  ]);
+  assert.deepStrictEqual(relayAudit.bindCommandReason(copilot, row, { includeReason: true, patterns: [] }),
+    { tool_call_id: 'call_9', capture: 'shim+transcript', reason: 'Open the pull request', reason_source: 'tool_description' });
+  assert.deepStrictEqual(relayAudit.bindCommandReason([], row, { includeReason: true }), { reason_source: 'unavailable' });
+
+  const long = relayAudit.parseTranscriptEntries('claude', [JSON.stringify({ type: 'assistant', timestamp: '2026-10-21T10:00:00Z', message: { content: [{ type: 'text', text: 'é'.repeat(3000) }] } })]);
+  const capped = relayAudit.bindCommandReason(long, row, { includeReason: true, patterns: [] });
+  assert.ok(Buffer.byteLength(capped.reason, 'utf8') <= relayAudit.REASON_MAX_BYTES);
+  assert.ok(capped.reason.endsWith(relayAudit.TRUNCATION_MARKER));
+});
+
+test('#13456 per-class caps: command rows cannot evict lifecycle or terminal history', () => {
+  const now = Date.parse('2026-10-21T12:00:00Z');
+  const ts = new Date(now - 1000).toISOString();
+  const rows = [
+    { key: 'k1', task_id: 't1', outcome: 'success', ended_at: ts },
+    { v: 2, level: 'lifecycle', event: 'assigned', ts, task_id: 't1' },
+    ...Array.from({ length: 50 }, (_, i) => ({ v: 2, level: 'commands', event: 'command', ts, task_id: 't1', cmd: `gh api ${'x'.repeat(100)} ${i}` })),
+    { v: 2, level: 'lifecycle', event: 'pr_opened', ts, task_id: 't1' },
+  ];
+  const kept = relayAudit.pruneAuditRows(rows, { now, retentionDays: 90, maxTerminal: 10, maxLifecycle: 10, maxCommandBytes: 2000 });
+  assert.deepStrictEqual(kept.filter(r => r.event !== 'command').map(r => r.event || r.outcome), ['success', 'assigned', 'pr_opened']);
+  const commands = kept.filter(r => r.event === 'command');
+  assert.ok(commands.length > 0 && commands.length < 50, `command rows trimmed by bytes, got ${commands.length}`);
+  assert.ok(commands[commands.length - 1].cmd.endsWith(' 49'), 'the newest command rows are kept');
+  const old = relayAudit.pruneAuditRows([{ v: 2, event: 'assigned', ts: new Date(now - 91 * 86400000).toISOString() }], { now, retentionDays: 90, maxTerminal: 10, maxLifecycle: 10, maxCommandBytes: 2000 });
+  assert.deepStrictEqual(old, [], 'retention applies to leveled rows by ts');
+});
+
+test('#13456 commands level prefixes the shim PATH onto the CLI launch only, and only when asked', () => {
+  const plain = quietly(() => loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent' } }));
+  try {
+    assert.ok(!plain.launchCommandWithCwd('agy --x').includes('PATH='), 'the default level adds nothing to the launch');
+  } finally { teardown(plain); }
+  const relay = quietly(() => loadRelay({ backend: 'agy', env: { HIVE_AGENT_CWD: '/home/agent', HIVE_RELAY_AUDIT_LEVEL: 'commands' } }));
+  try {
+    const launched = relay.launchCommandWithCwd('agy --x');
+    assert.ok(launched.startsWith(`cd '/home/agent' && PATH='${relay.RELAY_AUDIT_SHIM_DIR}':"$PATH" agy --x`), launched);
+    for (const op of ['gh', 'git']) {
+      const file = path.join(relay.RELAY_AUDIT_SHIM_DIR, op);
+      const body = fs.readFileSync(file, 'utf8');
+      assert.ok(body.includes(RELAY_AUDIT_SHIM_PATH) && body.includes(`${op} "$@"`), body);
+      if (process.platform !== 'win32') assert.strictEqual(fs.statSync(file).mode & 0o777, 0o700);
+    }
+    const compound = quietly(() => relay.launchCommandWithCwd('a && b'));
+    assert.ok(!compound.includes('PATH='), 'a compound launch is left alone rather than half-prefixed');
+  } finally { teardown(relay); }
+});
+
+test('#13456 the shim runs the real binary untouched and spools one redacted row for the current task', () => {
+  if (process.platform === 'win32') return;
+  const { spawnSync } = require('child_process');
+  const dir = auditScratch('audit-shim-');
+  try {
+    const realDir = path.join(dir, 'real');
+    fs.mkdirSync(realDir);
+    fs.writeFileSync(path.join(realDir, 'gh'), '#!/bin/sh\necho "real gh $*"\nexit 3\n', { mode: 0o755 });
+    const stateFile = path.join(dir, 'state.json');
+    const spool = path.join(dir, 'spool.jsonl');
+    fs.writeFileSync(stateFile, JSON.stringify({ v: 1, level: 'commands', task_id: 't1', task_gen: 1, checkout: dir, spool, real: { gh: path.join(realDir, 'gh') }, secret_patterns: [] }));
+    const run = spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, stateFile, 'gh', 'pr', 'create', '--token', 'tok-secret'], { cwd: dir, encoding: 'utf8' });
+    assert.strictEqual(run.status, 3, 'the real exit status is returned unchanged');
+    assert.strictEqual(run.stdout.trim(), 'real gh pr create --token tok-secret', 'arguments reach the real binary unrewritten');
+    const rows = fs.readFileSync(spool, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].cmd, 'gh pr create --token [redacted]');
+    assert.strictEqual(rows[0].exit, 3);
+    assert.strictEqual(rows[0].cwd, '.');
+    assert.strictEqual(rows[0].task_id, 't1');
+    assert.strictEqual(fs.statSync(spool).mode & 0o777, 0o600);
+
+    // No current task, or a level below commands: run, but write nothing.
+    fs.rmSync(spool);
+    fs.writeFileSync(stateFile, JSON.stringify({ v: 1, level: 'lifecycle', task_id: 't1', spool, real: { gh: path.join(realDir, 'gh') } }));
+    assert.strictEqual(spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, stateFile, 'gh', 'pr', 'list'], { encoding: 'utf8' }).status, 3);
+    assert.ok(!fs.existsSync(spool));
+    // A missing state file is not an error either.
+    assert.strictEqual(spawnSync(process.execPath, [RELAY_AUDIT_SHIM_PATH, path.join(dir, 'nope.json'), 'gh', 'x'], { encoding: 'utf8', env: { ...process.env, PATH: realDir } }).status, 3);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 reasoning: the relay drains the spool into rows with identity, token generation and the stated reason', () => {
+  const dir = auditScratch('audit-reason-');
+  const sessions = path.join(dir, 'copilot-sessions');
+  fs.mkdirSync(path.join(sessions, 's1'), { recursive: true });
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'reasoning', HIVE_COPILOT_SESSIONS_DIR: sessions } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    });
+    const state = JSON.parse(fs.readFileSync(relay.RELAY_AUDIT_STATE_FILE, 'utf8'));
+    assert.strictEqual(state.level, 'reasoning');
+    assert.strictEqual(state.task_id, 'act-1');
+    assert.ok(!JSON.stringify(state).includes('ghs_activitysecret') && !JSON.stringify(state).includes('SECRET PROMPT'), 'the shim state carries no token or prompt');
+    const at = Date.now();
+    fs.writeFileSync(path.join(sessions, 's1', 'events.jsonl'), [
+      JSON.stringify({ type: 'user.message', timestamp: new Date(at - 3000).toISOString(), data: { content: 'SECRET PROMPT TEXT' } }),
+      JSON.stringify({ type: 'assistant.message', timestamp: new Date(at - 2000).toISOString(), data: { content: 'Pushing the fix branch before opening the PR.', toolRequests: [{ toolCallId: 'call_1', arguments: { command: 'git push origin fix' } }] } }),
+    ].join('\n') + '\n');
+    assert.ok(relayAudit.recordShimCommand({ state, op: 'git', args: ['push', 'origin', 'fix'], startedAt: at, durationMs: 10, exit: 0, cwd: state.checkout, pid: 7 }));
+    assert.ok(relayAudit.recordShimCommand({ state, op: 'git', args: ['fetch', 'origin'], startedAt: at, durationMs: 5, exit: 0, cwd: state.checkout, pid: 8 }));
+    assert.ok(!relayAudit.recordShimCommand({ state, op: 'git', args: ['status'], startedAt: at, durationMs: 1, exit: 0, cwd: state.checkout, pid: 9 }));
+    quietly(() => relay.sendTo(relay.getHubs()[0], { type: 'task_complete', task_id: 'act-1', task_gen: 3, result: 'completed' }));
+    const commands = readAuditRows(relay).filter(r => r.event === 'command');
+    assert.deepStrictEqual(commands.map(r => [r.level, r.cmd]), [['commands', 'git push origin fix'], ['reasoning', 'git fetch origin']]);
+    const push = commands[0];
+    assert.strictEqual(push.task_id, 'act-1');
+    assert.strictEqual(push.task_gen, 3);
+    assert.strictEqual(push.hub, relay.getHubs()[0].sourceURL);
+    assert.strictEqual(push.repository, 'github/github.com/org/a');
+    assert.strictEqual(push.token_gen, 1);
+    assert.strictEqual(push.remote, 'origin');
+    assert.strictEqual(push.refspec, 'fix');
+    assert.strictEqual(push.tool_call_id, 'call_1');
+    assert.strictEqual(push.capture, 'shim+transcript');
+    assert.strictEqual(push.reason, 'Pushing the fix branch before opening the PR.');
+    assert.strictEqual(push.reason_source, 'transcript');
+    assert.ok(!fs.existsSync(relay.RELAY_AUDIT_STATE_FILE), 'the shim state is removed when the task ends');
+    assert.ok(!fs.readFileSync(relay.RELAY_ACTIVITY_FILE, 'utf8').includes('SECRET PROMPT TEXT'));
+    assert.deepStrictEqual(readActivity(relay).map(r => r.outcome), ['success'], 'command rows never change activity counts');
+  } finally { teardown(relay); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('#13456 commands level never binds a reason and records the shim as the capture path', () => {
+  const relay = quietly(() => loadRelay({ env: { ...MULTI_HUB_ENV, HIVE_RELAY_AUDIT_LEVEL: 'commands' }, mode: 'headless', execFileResult: { defer: true } }));
+  try {
+    quietly(() => {
+      const { hubs } = attachHubSinks(relay);
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1' }), hubs[0]);
+      relay.handleMessage(JSON.stringify(ACTIVITY_TASK), hubs[0]);
+    });
+    const assigned = readAuditRows(relay).find(r => r.event === 'assigned');
+    assert.strictEqual(assigned.capture, 'shim');
+    const env = relay.headlessChildEnv();
+    assert.ok(String(env.PATH).startsWith(relay.RELAY_AUDIT_SHIM_DIR + path.delimiter), 'the headless child gets the shim PATH');
+    assert.notStrictEqual(env, process.env, 'the relay\'s own environment is not modified');
+    const state = JSON.parse(fs.readFileSync(relay.RELAY_AUDIT_STATE_FILE, 'utf8'));
+    relayAudit.recordShimCommand({ state, op: 'gh', args: ['pr', 'view', '1'], startedAt: Date.now(), durationMs: 3, exit: 0, cwd: state.checkout, pid: 1 });
+    relayAudit.recordShimCommand({ state, op: 'git', args: ['fetch'], startedAt: Date.now(), durationMs: 3, exit: 0, cwd: state.checkout, pid: 1 });
+    assert.strictEqual(relay.drainCommandSpool(relay.auditFactsForTask(relay.getCurrentTask())), 1, 'git fetch is a reasoning-only row (Q6)');
+    const [row] = readAuditRows(relay).filter(r => r.event === 'command');
+    assert.strictEqual(row.cmd, 'gh pr view 1');
+    assert.ok(!('reason' in row) && !('reason_source' in row));
+  } finally { teardown(relay); }
 });
 
 test('HIVE_HUB/HIVE_REGISTRATION_TOKEN comma lists parse into one hub per entry, matched by position', () => {

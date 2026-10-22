@@ -42,6 +42,9 @@ const http = require('http');
 const https = require('https');
 const { randomUUID } = require('crypto');
 const DEFAULT_NEEDS_DECISION_LABEL = 'needs-decision';
+// Leveled local audit (hivecommons/hive#13456): levels, redaction, the
+// commands shim's row shape and reasoning binding. See bin/lib/relay-audit.js.
+const relayAudit = require('./lib/relay-audit.js');
 const {
   parsePiModelSelection,
   redactPiCredentials,
@@ -187,6 +190,20 @@ let lastHubsSeenWrite = 0;
 const RELAY_ACTIVITY_FILE = process.env.HIVE_RELAY_ACTIVITY_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-activity.jsonl');
 const RELAY_ACTIVITY_MAX_ENTRIES = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_MAX_ENTRIES', 1000);
 const RELAY_ACTIVITY_RETENTION_DAYS = parsePositiveIntegerEnv('HIVE_RELAY_ACTIVITY_RETENTION_DAYS', 90);
+// #13456: the same file is a leveled audit stream. Each row class has its own
+// cap so chatty command rows can never evict lifecycle history or terminal
+// attempts: HIVE_RELAY_ACTIVITY_MAX_ENTRIES still bounds terminal attempts,
+// lifecycle rows have a row cap and command rows a byte cap.
+const RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES = parsePositiveIntegerEnv('HIVE_RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES', 10000);
+const RELAY_AUDIT_COMMANDS_MAX_BYTES = parsePositiveIntegerEnv('HIVE_RELAY_AUDIT_COMMANDS_MAX_BYTES', 4 * 1024 * 1024);
+// Owner-only working directory for the `commands` level: the gh/git shim
+// wrappers (bin/), the current task's capture state and the spool the shim
+// appends to. Nothing in it is a credential.
+const RELAY_AUDIT_DIR = process.env.HIVE_RELAY_AUDIT_DIR || path.join(CONTRIBUTOR_CONFIG_DIR, 'relay-audit');
+const RELAY_AUDIT_SHIM_DIR = path.join(RELAY_AUDIT_DIR, 'bin');
+const RELAY_AUDIT_STATE_FILE = path.join(RELAY_AUDIT_DIR, 'state.json');
+const RELAY_AUDIT_SPOOL_FILE = path.join(RELAY_AUDIT_DIR, 'commands.spool.jsonl');
+const RELAY_AUDIT_DRAIN_MS = 15000;
 const activityAttempts = new Map();
 const MCP_CONFIG_FILE = process.env.HIVE_MCP_CONFIG_FILE || path.join(CONTRIBUTOR_CONFIG_DIR, 'mcp.json');
 
@@ -1354,6 +1371,14 @@ function hubPublicURL(url) {
   return String(url || '').trim().replace(/\/api\/contribute\/ws\/?$/, '/contribute');
 }
 
+// One audit level per hub (#13456). Unlike the credential lists, a bad value
+// never stops the relay: it degrades to the default level with a warning.
+function auditLevelsFromEnv(env, count) {
+  const { levels, error } = relayAudit.auditLevelsFromEnv(env.HIVE_RELAY_AUDIT_LEVEL, count);
+  if (error) console.error(`WARNING: ${error}`);
+  return levels;
+}
+
 function disabledHubFlags(env, count) {
   const raw = String(env.HIVE_HUB_DISABLED || '').trim();
   if (!raw) return Array(count).fill(false); // legacy projections default to enabled
@@ -1454,6 +1479,8 @@ function makeHub(url, token, disabled = false, contributorId = '', repoScope = n
     contributorId,
     repoScope,
     scopeVersion,
+    // #13456: this hive's local audit level (HIVE_RELAY_AUDIT_LEVEL).
+    auditLevel: relayAudit.AUDIT_DEFAULT_LEVEL,
     scopeAckVersion: null,
     scopePending: repoScope !== null,
     scopeUnsupported: false,
@@ -1506,6 +1533,7 @@ const initiallyDisabledHubs = disabledHubFlags(process.env, rawHubList.length);
 const initialRepoScopes = repoScopesFromEnv(process.env, rawHubList.length);
 const initialScopeVersion = repoScopeVersionFromEnv(process.env, initialRepoScopes);
 const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || '', initialRepoScopes[i], initialScopeVersion));
+auditLevelsFromEnv(process.env, hubs.length).forEach((level, i) => { hubs[i].auditLevel = level; });
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
@@ -2142,6 +2170,7 @@ function sendTo(hub, msg) {
   // rationale. Everything else about the task is unchanged — it still runs,
   // still ticks locally, and still reports task_complete/ready when it ends.
   if (msg && HUB_OWNERSHIP_FRAMES.has(msg.type) && isLocalOnlyTaskId(msg.task_id)) return;
+  recordAuditForFrame(hub, msg);
   recordActivityForFrame(msg);
   // #6541: while the provider has refused this account on quota, do not ask for
   // work. Enforced HERE, at the one point every frame passes through, rather
@@ -2428,7 +2457,8 @@ function hubListFromEnv(env) {
   const disabled = disabledHubFlags(env, hubList.length);
   const scopes = repoScopesFromEnv(env, hubList.length);
   const scopeVersion = repoScopeVersionFromEnv(env, scopes);
-  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '', repoScope: scopes[i], scopeVersion }));
+  const auditLevels = auditLevelsFromEnv(env, hubList.length);
+  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '', repoScope: scopes[i], scopeVersion, auditLevel: auditLevels[i] }));
 }
 
 function stopHub(hub, reason) {
@@ -2490,6 +2520,8 @@ function reloadHubsFromProjection() {
       existing.sourceURL = hubPublicURL(entry.url);
       existing.contributorId = entry.contributorId || existing.contributorId;
       existing.disabled = entry.disabled;
+      // A running task keeps the level it started with; this applies next task.
+      existing.auditLevel = entry.auditLevel;
       if (existing.disabled) invalidateReadyRetry(existing, 'hive disabled');
       const scopeChanged = JSON.stringify(existing.repoScope) !== JSON.stringify(entry.repoScope) || existing.scopeVersion !== entry.scopeVersion;
       existing.repoScope = entry.repoScope;
@@ -2512,6 +2544,7 @@ function reloadHubsFromProjection() {
       return existing;
     }
     const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId, entry.repoScope, entry.scopeVersion);
+    hub.auditLevel = entry.auditLevel;
     connectHub(hub);
     return hub;
   });
@@ -2653,10 +2686,12 @@ function activityTaskFacts(hub, msg) {
 
 function noteTaskAttemptStart(hub, msg) {
   if (!msg || msg.task_id == null || isLocalOnlyTaskId(msg.task_id)) return;
-  activityAttempts.set(activityAttemptKey(msg.task_id, msg.task_gen), {
+  const facts = {
     ...activityTaskFacts(hub, msg),
     started_at: new Date().toISOString(),
-  });
+  };
+  activityAttempts.set(activityAttemptKey(msg.task_id, msg.task_gen), facts);
+  noteAuditTaskStart(hub, msg, facts);
 }
 
 // Terminal frames all pass through sendTo; a frame for an attempt this relay
@@ -2669,6 +2704,7 @@ function recordActivityForFrame(msg) {
   const facts = activityAttempts.get(key);
   if (!facts) return;
   activityAttempts.delete(key);
+  endCommandAudit(facts);
   appendTaskActivity(facts, msg.type === 'task_complete' ? 'success' : 'failure');
 }
 
@@ -2678,6 +2714,7 @@ function recordCancelledActivity(task) {
   const facts = activityAttempts.get(key);
   if (!facts) return;
   activityAttempts.delete(key);
+  endCommandAudit(facts);
   appendTaskActivity(facts, 'cancelled');
 }
 
@@ -2689,19 +2726,31 @@ function readActivityRecords() {
     if (!line.trim()) continue;
     try {
       const record = JSON.parse(line);
-      if (record && typeof record === 'object' && typeof record.key === 'string') records.push(record);
+      if (relayAudit.isAuditRow(record)) records.push(record);
     } catch (_) {}
   }
   return records;
 }
 
 function pruneActivityRecords(records, now = Date.now()) {
-  const cutoff = now - RELAY_ACTIVITY_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  const kept = records.filter(r => {
-    const ended = Date.parse(r.ended_at);
-    return !Number.isFinite(ended) || ended >= cutoff;
+  return relayAudit.pruneAuditRows(records, {
+    now,
+    retentionDays: RELAY_ACTIVITY_RETENTION_DAYS,
+    maxTerminal: RELAY_ACTIVITY_MAX_ENTRIES,
+    maxLifecycle: RELAY_AUDIT_LIFECYCLE_MAX_ENTRIES,
+    maxCommandBytes: RELAY_AUDIT_COMMANDS_MAX_BYTES,
   });
-  return kept.slice(Math.max(0, kept.length - RELAY_ACTIVITY_MAX_ENTRIES));
+}
+
+// writeActivityRecords is the store's one write path: 0700 directory, 0600
+// temp file, atomic rename. Throws; callers log and carry on.
+function writeActivityRecords(records) {
+  const dir = path.dirname(RELAY_ACTIVITY_FILE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const tmp = `${RELAY_ACTIVITY_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+  try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+  fs.renameSync(tmp, RELAY_ACTIVITY_FILE);
 }
 
 function appendTaskActivity(facts, outcome, now = Date.now()) {
@@ -2730,18 +2779,325 @@ function appendTaskActivity(facts, outcome, now = Date.now()) {
   try {
     const existing = readActivityRecords();
     if (existing.some(r => r.key === key)) return false;
-    const records = pruneActivityRecords([...existing, record], now);
-    const dir = path.dirname(RELAY_ACTIVITY_FILE);
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const tmp = `${RELAY_ACTIVITY_FILE}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, records.map(r => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
-    try { fs.chmodSync(tmp, 0o600); } catch (_) {}
-    fs.renameSync(tmp, RELAY_ACTIVITY_FILE);
+    writeActivityRecords(pruneActivityRecords([...existing, record], now));
     return true;
   } catch (e) {
     console.error(`WARNING: could not record task activity in ${RELAY_ACTIVITY_FILE}: ${e.message}`);
     return false;
   }
+}
+
+// ── Leveled local audit (hivecommons/hive#13456) ────────────────────────────
+//
+// Levels off < lifecycle (default) < commands < reasoning, per hive
+// (HIVE_RELAY_AUDIT_LEVEL, projected by `hivectl hives set <name>
+// --audit-level`). A task is audited at the level its hive had when the task
+// started. Terminal rows above are written at every level; everything below
+// is skipped at `off`. Capture only — nothing here is sent to any hive.
+
+function auditLevelForHub(hub) {
+  return (hub && relayAudit.normalizeAuditLevel(hub.auditLevel)) || relayAudit.AUDIT_DEFAULT_LEVEL;
+}
+
+// Lifecycle rows can arrive after a task's terminal frame (the exit sweep's
+// stash runs last), so facts outlive activityAttempts for a short while.
+const AUDIT_FACTS_MEMORY = 16;
+const auditTaskFacts = new Map();
+
+function rememberAuditFacts(facts) {
+  const key = activityAttemptKey(facts.task_id, facts.task_gen);
+  auditTaskFacts.delete(key);
+  auditTaskFacts.set(key, facts);
+  while (auditTaskFacts.size > AUDIT_FACTS_MEMORY) auditTaskFacts.delete(auditTaskFacts.keys().next().value);
+}
+
+function auditFactsForTask(task) {
+  if (!task || task.task_id == null) return null;
+  return auditTaskFacts.get(activityAttemptKey(String(task.task_id), task.task_gen)) || null;
+}
+
+// Identity only: the same fields a terminal row carries, never the payload.
+function auditIdentity(facts) {
+  return {
+    hub: facts.hub,
+    contributor_id: facts.contributor_id || undefined,
+    repository: facts.repository || undefined,
+    repo: facts.repo || undefined,
+    number: facts.number,
+    kind: facts.kind || undefined,
+    task_id: facts.task_id,
+    task_gen: facts.task_gen,
+  };
+}
+
+function auditText(value, maxBytes = 512) {
+  return relayAudit.truncateBytes(relayAudit.redactAuditText(sanitizeHubText(String(value == null ? '' : value)), RELAY_SECRET_PATTERNS), maxBytes);
+}
+
+// Events that describe a whole attempt are written once even when the frame
+// that triggers them is replayed; token renewals, holds and stashes repeat.
+const AUDIT_ONCE_PER_ATTEMPT = new Set(['assigned', 'declined', 'token_received', 'mcp_configured', 'pr_opened', 'revoked']);
+
+function appendAuditRows(rows, now = Date.now()) {
+  if (!rows.length) return false;
+  try {
+    const existing = readActivityRecords();
+    const fresh = rows.filter(row => !AUDIT_ONCE_PER_ATTEMPT.has(row.event) || !existing.some(r =>
+      r.event === row.event && r.hub === row.hub && r.contributor_id === row.contributor_id &&
+      r.task_id === row.task_id && r.task_gen === row.task_gen));
+    if (!fresh.length) return false;
+    writeActivityRecords(pruneActivityRecords([...existing, ...fresh], now));
+    return true;
+  } catch (e) {
+    console.error(`WARNING: could not record relay audit in ${RELAY_ACTIVITY_FILE}: ${e.message}`);
+    return false;
+  }
+}
+
+function recordLifecycleEvent(facts, event, fields = {}, now = Date.now()) {
+  if (!facts || facts.task_id == null) return false;
+  if (!relayAudit.auditLevelAtLeast(facts.audit_level, 'lifecycle')) return false;
+  return appendAuditRows([{
+    v: 2,
+    level: 'lifecycle',
+    event,
+    ts: new Date(now).toISOString(),
+    ...auditIdentity(facts),
+    ...fields,
+  }], now);
+}
+
+function noteAuditTaskStart(hub, msg, facts) {
+  facts.audit_level = auditLevelForHub(hub);
+  facts.token_gens = [];
+  rememberAuditFacts(facts);
+  const commands = relayAudit.auditLevelAtLeast(facts.audit_level, 'commands');
+  const headless = CONTRIBUTOR_MODE === MODE_HEADLESS;
+  if (commands && currentTask === msg) beginCommandAudit(facts);
+  recordLifecycleEvent(facts, 'assigned', {
+    backend: BACKEND,
+    // At `commands` and above, say whether the shim can see this task's
+    // commands, so an absence of command rows is distinguishable from
+    // "nothing ran" (the entrypoint's first launch predates the shim).
+    capture: commands ? ((headless || auditShimInPane) && facts.command_audit ? 'shim' : 'none') : undefined,
+  });
+  if (msg.github_token) noteAuditTokenEvent(facts, 'token_received');
+}
+
+function noteAuditTokenEvent(facts, event, now = Date.now()) {
+  if (!facts) return;
+  const gen = (facts.token_gens.length ? facts.token_gens[facts.token_gens.length - 1].gen : 0) + 1;
+  facts.token_gens.push({ at: now, gen });
+  recordLifecycleEvent(facts, event, { token_gen: gen }, now);
+}
+
+function auditTokenGenAt(facts, ts) {
+  const t = Date.parse(ts);
+  let gen;
+  for (const entry of (facts && facts.token_gens) || []) {
+    if (!Number.isFinite(t) || entry.at <= t) gen = entry.gen;
+  }
+  return gen;
+}
+
+// recordAuditForFrame turns outgoing frames into lifecycle rows. Called from
+// sendTo BEFORE recordActivityForFrame, while the attempt is still tracked.
+function recordAuditForFrame(hub, msg) {
+  if (!msg || msg.task_id == null || isLocalOnlyTaskId(msg.task_id)) return;
+  const key = activityAttemptKey(msg.task_id, msg.task_gen);
+  const tracked = activityAttempts.get(key);
+  // A task_failed for an attempt this relay never started is a rejection.
+  const declined = msg.type === 'task_declined' || (msg.type === 'task_failed' && !tracked && !auditFactsForTask(msg));
+  if (declined) {
+    const facts = {
+      hub: hub ? (hub.sourceURL || hubPublicURL(hub.url)) : '',
+      contributor_id: (hub && hub.contributorId) || '',
+      task_id: String(msg.task_id),
+      task_gen: msg.task_gen == null ? undefined : msg.task_gen,
+      audit_level: auditLevelForHub(hub),
+    };
+    recordLifecycleEvent(facts, 'declined', { reason: auditText(msg.reason || 'unspecified', 256) });
+    return;
+  }
+  const facts = tracked && auditFactsForTask(msg);
+  if (!facts) return;
+  if (msg.type === 'task_complete' && typeof msg.pr_url === 'string' && /^https:\/\//.test(msg.pr_url)) {
+    recordLifecycleEvent(facts, 'pr_opened', { url: auditText(msg.pr_url, 512) });
+  } else if (msg.type === 'task_progress') {
+    const blocked = msg.status === 'blocked_on_human';
+    if (blocked && !facts.blocked_on_human) recordLifecycleEvent(facts, 'blocked_on_human');
+    facts.blocked_on_human = blocked;
+  }
+}
+
+function recordCurrentTaskAuditEvent(event, fields) {
+  recordLifecycleEvent(auditFactsForTask(currentTask), event, fields);
+}
+
+// ── `commands` / `reasoning`: the gh/git PATH shim ──────────────────────────
+
+let auditShimInPane = false;
+let auditShimWarned = false;
+let auditDrainTimer = null;
+
+function anyHubAuditsCommands() {
+  return hubs.some(h => !h.disabled && relayAudit.auditLevelAtLeast(auditLevelForHub(h), 'commands'));
+}
+
+// installAuditShim writes the gh and git wrappers into RELAY_AUDIT_SHIM_DIR
+// (0700). Returns the directory, or '' when the shim cannot be installed — in
+// which case commands are simply not captured; the task is unaffected.
+function installAuditShim() {
+  const shim = path.join(__dirname, 'lib', 'relay-audit-shim.js');
+  try {
+    if (!fs.existsSync(shim)) return '';
+    fs.mkdirSync(RELAY_AUDIT_SHIM_DIR, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(RELAY_AUDIT_DIR, 0o700); fs.chmodSync(RELAY_AUDIT_SHIM_DIR, 0o700); } catch (_) {}
+    for (const op of ['gh', 'git']) {
+      const file = path.join(RELAY_AUDIT_SHIM_DIR, op);
+      const body = `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(shim)} ${shellQuote(RELAY_AUDIT_STATE_FILE)} ${op} "$@"\n`;
+      let current = null;
+      try { current = fs.readFileSync(file, 'utf8'); } catch (_) {}
+      if (current === body) continue;
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, body, { mode: 0o700 });
+      try { fs.chmodSync(tmp, 0o700); } catch (_) {}
+      fs.renameSync(tmp, file);
+    }
+    return RELAY_AUDIT_SHIM_DIR;
+  } catch (e) {
+    console.error(`WARNING: could not install the relay audit shim in ${RELAY_AUDIT_SHIM_DIR}: ${e.message} — commands will not be audited`);
+    return '';
+  }
+}
+
+// withAuditShimPath prefixes the CLI launch the relay types into the pane with
+// a PATH that starts at the shim directory. The assignment applies to that one
+// command — the pane's shell, shell rc files and the image are untouched.
+function withAuditShimPath(launchCmd) {
+  auditShimInPane = false;
+  if (!anyHubAuditsCommands()) return launchCmd;
+  if (/[;&|()`<>\n]/.test(launchCmd)) {
+    if (!auditShimWarned) console.error('WARNING: the CLI launch command is compound; commands-level audit cannot prefix its PATH and will record capture "none"');
+    auditShimWarned = true;
+    return launchCmd;
+  }
+  const dir = installAuditShim();
+  if (!dir) return launchCmd;
+  auditShimInPane = true;
+  return `PATH=${shellQuote(dir)}:"$PATH" ${launchCmd}`;
+}
+
+// headlessAuditEnv is the headless counterpart: the one-shot child's env.
+function headlessAuditEnv(env) {
+  const facts = auditFactsForTask(currentTask);
+  if (!facts || !facts.command_audit) return env;
+  const dir = installAuditShim();
+  if (!dir) return env;
+  return { ...env, PATH: [dir, env.PATH || ''].filter(Boolean).join(path.delimiter) };
+}
+
+function writeAuditState(state) {
+  fs.mkdirSync(RELAY_AUDIT_DIR, { recursive: true, mode: 0o700 });
+  const tmp = `${RELAY_AUDIT_STATE_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
+  try { fs.chmodSync(tmp, 0o600); } catch (_) {}
+  fs.renameSync(tmp, RELAY_AUDIT_STATE_FILE);
+}
+
+// beginCommandAudit tells the shim which task is current and at what level.
+// The state holds identifiers, paths and the redaction patterns — no token.
+function beginCommandAudit(facts) {
+  const dir = installAuditShim();
+  if (!dir) return;
+  const resolve = op => relayAudit.resolveRealBinary(op, null, process.env.PATH, dir);
+  try {
+    try { fs.unlinkSync(RELAY_AUDIT_SPOOL_FILE); } catch (_) {}
+    writeAuditState({
+      v: 1,
+      level: facts.audit_level,
+      task_id: facts.task_id,
+      task_gen: facts.task_gen,
+      checkout: taskCheckoutDir(facts.repo) || AGENT_CWD || TASK_WORKSPACE_DIR,
+      spool: RELAY_AUDIT_SPOOL_FILE,
+      real: { gh: resolve('gh'), git: resolve('git') },
+      secret_patterns: relayAudit.serializeSecretPatterns(RELAY_SECRET_PATTERNS),
+    });
+    facts.command_audit = true;
+  } catch (e) {
+    console.error(`WARNING: could not start command audit in ${RELAY_AUDIT_DIR}: ${e.message}`);
+    return;
+  }
+  if (auditDrainTimer) clearInterval(auditDrainTimer);
+  auditDrainTimer = setInterval(() => drainCommandSpool(facts), RELAY_AUDIT_DRAIN_MS);
+  if (typeof auditDrainTimer.unref === 'function') auditDrainTimer.unref();
+}
+
+function endCommandAudit(facts) {
+  if (!facts || !facts.command_audit) return;
+  drainCommandSpool(facts);
+  facts.command_audit = false;
+  if (auditDrainTimer) { clearInterval(auditDrainTimer); auditDrainTimer = null; }
+  try { fs.unlinkSync(RELAY_AUDIT_STATE_FILE); } catch (_) {}
+}
+
+// Transcript tail read for reconciliation/reasoning. Larger than the model
+// detector's window because tool output sits between turns; only assistant
+// text and tool calls survive parsing (relayAudit.parseTranscriptEntries).
+const AUDIT_TRANSCRIPT_TAIL_BYTES = 262144;
+
+function auditTranscriptFile() {
+  if (BACKEND === 'claude' || BACKEND === 'litellm') return newestByMtime(claudeTranscriptFiles());
+  if (BACKEND === 'copilot') return newestByMtime(copilotTranscriptFiles());
+  return null;
+}
+
+function loadAuditTranscriptEntries() {
+  try {
+    const file = auditTranscriptFile();
+    if (!file) return null;
+    return relayAudit.parseTranscriptEntries(BACKEND, readFileTail(file, AUDIT_TRANSCRIPT_TAIL_BYTES).split('\n'));
+  } catch (_) {
+    return null;
+  }
+}
+
+// drainCommandSpool moves the shim's rows into the store, adding the task's
+// identity, the token generation each command ran under and — at reasoning —
+// the agent's stated reason. Rows for any other task are dropped.
+function drainCommandSpool(facts, now = Date.now()) {
+  if (!facts) return 0;
+  const ingest = `${RELAY_AUDIT_SPOOL_FILE}.${process.pid}.ingest`;
+  try { fs.renameSync(RELAY_AUDIT_SPOOL_FILE, ingest); } catch (_) { return 0; }
+  let raw = '';
+  try { raw = fs.readFileSync(ingest, 'utf8'); } catch (_) {}
+  try { fs.unlinkSync(ingest); } catch (_) {}
+  const rows = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try { row = JSON.parse(line); } catch (_) { continue; }
+    if (!row || row.event !== relayAudit.COMMAND_EVENT || String(row.task_id) !== String(facts.task_id)) continue;
+    if (!relayAudit.auditLevelAtLeast(facts.audit_level, row.level)) continue;
+    rows.push(row);
+  }
+  if (!rows.length) return 0;
+  const reasoning = relayAudit.auditLevelAtLeast(facts.audit_level, 'reasoning');
+  const entries = loadAuditTranscriptEntries();
+  const out = rows.map(row => {
+    const bound = entries
+      ? relayAudit.bindCommandReason(entries, row, { includeReason: reasoning, patterns: RELAY_SECRET_PATTERNS })
+      : (reasoning ? { reason_source: 'unavailable' } : {});
+    return {
+      ...row,
+      ...auditIdentity(facts),
+      task_gen: facts.task_gen,
+      token_gen: auditTokenGenAt(facts, row.ts),
+      ...bound,
+    };
+  });
+  appendAuditRows(out, now);
+  return out.length;
 }
 
 function injectGhToken(token) {
@@ -2788,6 +3144,8 @@ function installTaskMCPConfig(mcp) {
     process.env.HIVE_MCP_CONFIG_FILE = MCP_CONFIG_FILE;
     process.env.MCP_CONFIG_FILE = MCP_CONFIG_FILE;
     console.log(`Task MCP config installed at ${MCP_CONFIG_FILE}`);
+    // The event only: the config itself (URL, bearer) is never audited.
+    recordCurrentTaskAuditEvent('mcp_configured');
   } catch (e) {
     console.error(`Failed to write Task MCP config ${MCP_CONFIG_FILE}: ${e.message} — continuing without remote MCP`);
   }
@@ -3141,9 +3499,9 @@ const NO_MODEL_FLAG_BACKENDS = ['goose', 'bob', 'openhands'];
 // the environment wins, so an operator can still pin it directly.
 function headlessChildEnv() {
   if (BACKEND === 'openhands' && MODEL && !process.env.LLM_MODEL) {
-    return { ...process.env, LLM_MODEL: MODEL };
+    return headlessAuditEnv({ ...process.env, LLM_MODEL: MODEL });
   }
-  return process.env;
+  return headlessAuditEnv(process.env);
 }
 
 // agy (Google's Antigravity CLI) REQUIRES --effort whenever --model is given:
@@ -3362,7 +3720,7 @@ function looksLikeModelName(m) {
 
 // detectClaudeModel: newest ~/.claude/projects/*/*.jsonl, latest assistant
 // turn's message.model (same source claude_scanner.go aggregates for cost).
-function detectClaudeModel() {
+function claudeTranscriptFiles() {
   const files = [];
   for (const d of fs.readdirSync(CLAUDE_PROJECTS_DIR, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
@@ -3371,7 +3729,11 @@ function detectClaudeModel() {
       if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
     }
   }
-  const newest = newestByMtime(files);
+  return files;
+}
+
+function detectClaudeModel() {
+  const newest = newestByMtime(claudeTranscriptFiles());
   if (!newest) return '';
   for (const obj of tailLinesReversed(newest)) {
     const m = obj && obj.message && obj.message.model;
@@ -3383,13 +3745,17 @@ function detectClaudeModel() {
 // detectCopilotModel: newest ~/.copilot/session-state/*/events.jsonl, latest
 // event carrying a model field (session.start selectedModel, per-tool model,
 // or shutdown currentModel — same fields copilot_scanner.go reads).
-function detectCopilotModel() {
+function copilotTranscriptFiles() {
   const files = [];
   for (const d of fs.readdirSync(COPILOT_SESSIONS_DIR, { withFileTypes: true })) {
     if (!d.isDirectory()) continue;
     files.push(path.join(COPILOT_SESSIONS_DIR, d.name, 'events.jsonl'));
   }
-  const newest = newestByMtime(files);
+  return files;
+}
+
+function detectCopilotModel() {
+  const newest = newestByMtime(copilotTranscriptFiles());
   if (!newest) return '';
   for (const obj of tailLinesReversed(newest)) {
     const data = (obj && obj.data) || {};
@@ -6436,9 +6802,10 @@ function checkTmuxPaneState() {
 // first stall recovery. Fall back to process.cwd() so an older entrypoint that
 // does not export the variable keeps its previous behaviour.
 function launchCommandWithCwd(launchCmd) {
+  const cmd = withAuditShimPath(launchCmd);
   const cwd = AGENT_CWD || process.cwd();
-  if (!cwd) return launchCmd;
-  return `cd ${shellQuote(cwd)} && ${launchCmd}`;
+  if (!cwd) return cmd;
+  return `cd ${shellQuote(cwd)} && ${cmd}`;
 }
 
 function relaunchCLI() {
@@ -6564,6 +6931,7 @@ function preserveTaskLeftovers(task, reason) {
       encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'],
     });
     console.log(`Set aside ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason} as git stash "${message}" — recover with 'git -C ${dir} stash list'`);
+    recordLifecycleEvent(auditFactsForTask(task), 'stash_leftover', { stash: auditText(message, 512), paths: paths.length });
   } catch (e) {
     console.error(`Could not stash the ${paths.length} uncommitted path(s) ${label} left in ${dir} after ${reason}: ${e.message} — a later task on ${task.repo} will start from a dirty tree`);
   }
@@ -9144,6 +9512,7 @@ function handleMessage(data, hub) {
         tokenRefreshFailedAt = null;
         lastTokenExpiryWarnAt = 0;
         console.log('GitHub token refreshed');
+        noteAuditTokenEvent(auditFactsForTask(currentTask), 'token_renewed');
       }
       break;
 
@@ -9207,6 +9576,7 @@ function handleMessage(data, hub) {
       // produced the utah leftovers, and it is the one path that clears
       // currentTask before stopping the agent.
       const revokedTask = currentTask;
+      recordLifecycleEvent(auditFactsForTask(revokedTask), 'revoked', { reason: auditText(msg.reason || 'unspecified', 256) });
       recordCancelledActivity(revokedTask);
       currentTask = null;
       currentTaskStartedAt = null;
@@ -9890,6 +10260,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     writeHubsSeenNow,
     appendTaskActivity,
     RELAY_ACTIVITY_FILE,
+    // Leveled local audit (#13456).
+    drainCommandSpool,
+    auditFactsForTask,
+    RELAY_AUDIT_STATE_FILE,
+    RELAY_AUDIT_SPOOL_FILE,
+    RELAY_AUDIT_SHIM_DIR,
     handleProfileSwitchSignal,
     hubs,
     HUBS_SEEN_FILE,
