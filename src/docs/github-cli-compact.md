@@ -82,6 +82,7 @@ The prose may be reworded; the codes are stable identifiers:
 | `agent_restriction` | wrapper | per-agent pattern rule in `/etc/hive/restrictions/<agent>.json` |
 | `contributor_auth` | wrapper | `gh auth` in contributor mode (#6659) |
 | `surface_allowlist` | wrapper | subcommand not on the deny-by-default allowlist (#3840) |
+| `ci_watch_blocked` | wrapper | blocking CI wait: `gh run watch` or `gh pr checks --watch` (#13587) |
 | `write_surface_enforce` | wrapper, proxy | direct write from a lane under `write_surface.enforce` (#9587) |
 | `author_identity_unresolved`, `author_mismatch` | wrapper | `--author` gate (#3072/#3982/#4044) |
 | `enumeration_disabled` | wrapper | `gh issue list` / `gh pr list` for staff agents |
