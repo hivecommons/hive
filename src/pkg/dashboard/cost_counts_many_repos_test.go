@@ -42,8 +42,9 @@ func (f *rateLimitedSearch) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.inWindow++
 	if f.inWindow > f.limit {
 		f.refused++
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.Header().Set("X-RateLimit-Reset", fmt.Sprint(now.Add(time.Minute).Unix()))
+		// No X-RateLimit-* headers: a primary-limit refusal with a reset
+		// would engage the process-wide pacing ledger for every later test
+		// in the binary (see ghpkg.ResetRateLimitPacingForTest).
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = io.WriteString(w, `{"message":"API rate limit exceeded for installation ID 1."}`)
 		return
@@ -75,6 +76,7 @@ func TestCostCountsManyReposUnderSearchRateLimit(t *testing.T) {
 	search := &rateLimitedSearch{now: now, limit: 30}
 	srv := httptest.NewServer(search)
 	defer srv.Close()
+	t.Cleanup(ghpkg.ResetRateLimitPacingForTest)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	repos := bluefinRepos()
@@ -171,6 +173,7 @@ func TestCostCountErrorSurfacedWhenNothingAttributedYet(t *testing.T) {
 	search := &rateLimitedSearch{now: now, limit: 0}
 	srv := httptest.NewServer(search)
 	defer srv.Close()
+	t.Cleanup(ghpkg.ResetRateLimitPacingForTest)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	repos := bluefinRepos()

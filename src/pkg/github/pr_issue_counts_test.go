@@ -176,8 +176,9 @@ func TestComputePRIssueCountsForRepos_RateLimitKeepsPartialResults(t *testing.T)
 	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls > 2 {
-			w.Header().Set("X-RateLimit-Remaining", "0")
-			w.Header().Set("X-RateLimit-Reset", "9999999999")
+			// No X-RateLimit-* headers: a primary-limit refusal with a reset
+			// would engage the process-wide pacing ledger for every later
+			// test in the binary (see ResetRateLimitPacingForTest).
 			w.WriteHeader(http.StatusForbidden)
 			w.Write([]byte(`{"message":"API rate limit exceeded for installation ID 1."}`))
 			return
@@ -186,6 +187,7 @@ func TestComputePRIssueCountsForRepos_RateLimitKeepsPartialResults(t *testing.T)
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
+	t.Cleanup(ResetRateLimitPacingForTest)
 
 	c := newTestClient(t, server, "projectbluefin", repos)
 	counts, err := c.ComputePRIssueCountsForReposSince(context.Background(), repos, "hivecommons-hive[bot]", time.Time{})
