@@ -15,8 +15,9 @@ import (
 
 // ClarityGateMarker tags the clarity gate's question comment. Its presence
 // on an issue means the author has been asked once; the gate never posts a
-// second one (hivecommons/hive#13577).
-const ClarityGateMarker = "<!-- hive:clarity-gate -->"
+// second one (hivecommons/hive#13577). github.SweepClarityGateResume reads it
+// back to lift the park once the author answers (hivecommons/hive#13588).
+const ClarityGateMarker = github.ClarityGateMarker
 
 // clarityGateTimeout bounds the GitHub calls the gate makes for one issue.
 const clarityGateTimeout = 30 * time.Second
@@ -206,6 +207,6 @@ func renderClarityGateComment(a classify.ClarityAssessment, threshold int, label
 	for _, q := range questions {
 		b.WriteString("- " + q + "\n")
 	}
-	fmt.Fprintf(&b, "\nHive has parked this issue with `%s` instead of claiming it. Please edit the issue body with the answers; once `%s` is removed, the issue goes back into the normal queue.\n", label, label)
+	fmt.Fprintf(&b, "\nHive has parked this issue with `%s` instead of claiming it. Please reply here with the answers (updating the issue body as well helps); once you reply, Hive removes `%s` and the issue goes back into the normal queue.\n", label, label)
 	return b.String()
 }

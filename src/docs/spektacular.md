@@ -138,7 +138,21 @@ label of `project.issue_filter.hard_suppress_labels.needs_spec`). The issue then
 derives `stage/045-needs-decision` ("parked on a person: needs-spec"), leaves
 enumeration and is refused by the claim gate. The marker is never posted twice.
 
-Removing `needs-spec` resumes the normal pipeline. The gate sees the marker and
+The issue resumes on its own once somebody answers
+([#13588](https://github.com/hivecommons/hive/issues/13588)). While the gate is
+on, a resume sweep (every 5 minutes, at most 10 issues per pass) looks at open
+issues carrying `needs-spec` and lifts it when all of these hold:
+
+- the issue has a `<!-- hive:clarity-gate -->` comment written by one of the
+  hive's own accounts (a pasted marker does not count);
+- the newest `needs-spec` label event is by the hive, so a `needs-spec` a
+  person added, with or without an older gate comment, is never lifted;
+- after both, the issue author, or a person other than the hive with write,
+  maintain or admin permission on the repo (checked live), commented.
+
+The sweep removes `needs-spec` and records the un-park on the stage engine, so
+the issue re-derives `stage/010-actionable` and re-enters the queue. Removing
+`needs-spec` by hand resumes it too. Either way the gate sees the marker and
 does not ask again, however the issue scores. Issues filed by Hive or an agent,
 issues already claimed and issues carrying `approved-direction` are not scored.
 

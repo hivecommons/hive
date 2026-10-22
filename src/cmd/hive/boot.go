@@ -222,6 +222,9 @@ type boot struct {
 	lastSharedCIRerunSweep time.Time
 	lastIssueUnparkSweep   time.Time
 	lastClosedIssueSweep   time.Time
+	// lastClarityResumeSweep gates runClarityGateResumeSweepIfDue
+	// (hivecommons/hive#13588).
+	lastClarityResumeSweep time.Time
 	lastSentinelSweep      time.Time
 	lastGFISweep           time.Time
 	// lastLegacyFleetReportSweep gates runLegacyFleetReportSweepIfDue
