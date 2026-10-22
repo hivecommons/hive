@@ -1427,8 +1427,17 @@
        strip); each effect is a self-contained block below. Colours and
        timing come from --ham-move-* (tokens.css); the duration scales by
        --ham-anim-scale so the settings preview can slow it down. Reduced
-       motion collapses every effect to .ham-rm-fade on the destination. */
-    .ham-strip-row { position: relative; --ham-anim-scale: 1; --ham-move-dur: calc(var(--ham-move-ms) * var(--ham-anim-scale)); }
+       motion collapses every effect to .ham-rm-fade on the destination.
+       Every move runs flash → move → land: the origin chevron first pulses
+       the active highlight --ham-move-flash-count times (each pulse
+       --ham-move-flash-ms lit, --ham-move-flash-gap-ms dark) while the
+       destination waits dimmed (.ham-pending); the effect then travels and
+       the destination lands lit. */
+    .ham-strip-row { position: relative; --ham-anim-scale: 1; --ham-move-dur: calc(var(--ham-move-ms) * var(--ham-anim-scale)); --ham-flash-dur: calc((var(--ham-move-flash-ms) + var(--ham-move-flash-gap-ms)) * var(--ham-anim-scale)); }
+    .ham-seg.ham-flash::after { content: ''; position: absolute; inset: 0; background: var(--amber); opacity: 0; animation: ham-flash var(--ham-flash-dur) ease-in-out var(--ham-flash-count, var(--ham-move-flash-count)) both; pointer-events: none; }
+    .ham-seg.ham-flash.soft::after { --ham-flash-peak: 0.45; }
+    @keyframes ham-flash { 0% { opacity: 0; } 12% { opacity: var(--ham-flash-peak, 0.85); } 52% { opacity: var(--ham-flash-peak, 0.85); } 64%, 100% { opacity: 0; } }
+    .ham-seg.active.ham-pending { opacity: 0.3; animation: none; transition: opacity calc(var(--ham-move-dur) * 0.3) ease-out; }
     .ham-anim-layer { position: absolute; inset: 0; pointer-events: none; overflow: visible; --ham-notch: 8px; }
     .ham-anim-ghost { position: absolute; top: 0; height: 18px; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-anim-ghost.first { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -13380,7 +13389,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MOTION_DEFAULT = 'wash';
     const STAGE_TRACKER_MOTION_NONE = 'none';
     const STAGE_TRACKER_MOTIONS = [
-      { id: 'none', key: '', label: 'None', desc: 'No movement effect; the lit chevron simply changes.' },
+      { id: 'none', key: '', label: 'None', desc: 'No flash, no movement effect; the lit chevron simply changes.' },
       { id: 'puck', key: 'A', label: 'Sliding puck', desc: 'The highlight glides from the old column to the new one and settles.' },
       { id: 'ripple', key: 'B', label: 'Ripple', desc: 'Each chevron between old and new flashes faintly in turn.' },
       { id: 'ghost', key: 'C', label: 'Ghost crossfade', desc: 'The old highlight fades out drifting in the travel direction while the new one fades in.' },
@@ -13389,6 +13398,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       { id: 'wash', key: 'F', label: 'Colour wash', desc: 'A soft band sweeps across the chevrons from old to new, leaving a brief afterglow.' },
     ];
     const STAGE_TRACKER_MOVE_MS = 450;
+    // Mirrors --ham-move-flash-ms / --ham-move-flash-gap-ms / --ham-move-flash-count.
+    const STAGE_TRACKER_FLASH_MS = 140;
+    const STAGE_TRACKER_FLASH_GAP_MS = 90;
+    const STAGE_TRACKER_FLASH_COUNT = 2;
     // A refresh that moves more rows than this is a reconciler sweep, not
     // movement worth following; the state still advances, nothing animates.
     const STAGE_TRACKER_MOTION_MAX_ROWS = 12;
@@ -13578,15 +13591,49 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     const STAGE_TRACKER_MOTION_FNS = { 'rm-fade': stageTrackerAnimRmFade, puck: stageTrackerAnimPuck, ripple: stageTrackerAnimRipple, ghost: stageTrackerAnimGhost, comet: stageTrackerAnimComet, bump: stageTrackerAnimBump, wash: stageTrackerAnimWash };
 
-    // Play one effect on a strip whose chevrons already show the new state.
+    // Pure: the phases one move plays. Every effect is preceded by the
+    // origin flash (two pulses; a single soft pulse under reduced motion)
+    // and reveals the destination either as the travel starts (effects
+    // that fade it in themselves) or when the travel lands. At 1× the
+    // whole sequence is 460 + 450 ms plus the landing glow, under 1.2 s.
+    function stageTrackerMovePlan(effect, scale) {
+      const s = scale > 0 ? scale : 1;
+      const soft = effect === 'rm-fade';
+      const flashes = soft ? 1 : STAGE_TRACKER_FLASH_COUNT;
+      const flashMs = Math.round((STAGE_TRACKER_FLASH_MS + STAGE_TRACKER_FLASH_GAP_MS) * flashes * s);
+      const moveMs = Math.round(STAGE_TRACKER_MOVE_MS * s);
+      const revealAtLand = effect === 'ripple' || effect === 'comet' || effect === 'wash';
+      return { flashes, soft, flashMs, moveMs, revealAtLand, totalMs: flashMs + moveMs };
+    }
+
+    // Play one move on a strip whose chevrons already show the new state:
+    // (1) flash the origin while the destination waits dimmed, (2) run the
+    // effect, (3) land with the destination lit. data-ham-phase on the
+    // strip names the current phase.
     function stageTrackerAnimateMove(strip, from, to, effect) {
       const fn = STAGE_TRACKER_MOTION_FNS[effect];
       if (!fn || !strip || from === to) return false;
       const dest = strip.children[to], src = strip.children[from];
       if (!dest || !src || dest.classList.contains('blank')) return false;
-      const layer = stageTrackerAnimLayer(strip);
-      layer.innerHTML = '';
-      fn(strip, from, to);
+      stageTrackerAnimLayer(strip).innerHTML = '';
+      const plan = stageTrackerMovePlan(effect, stageTrackerAnimScale(strip));
+      strip.dataset.hamPhase = 'flash';
+      dest.classList.add('ham-pending');
+      src.style.setProperty('--ham-flash-count', String(plan.flashes));
+      src.classList.add('ham-flash');
+      if (plan.soft) src.classList.add('soft');
+      stageTrackerAfter(src, 'animationend', plan.flashMs, () => {
+        src.classList.remove('ham-flash', 'soft');
+        src.style.removeProperty('--ham-flash-count');
+        strip.dataset.hamPhase = 'move';
+        if (!plan.revealAtLand) dest.classList.remove('ham-pending');
+        fn(strip, from, to);
+        setTimeout(() => {
+          dest.classList.remove('ham-pending');
+          strip.dataset.hamPhase = 'land';
+          stageTrackerAfter(dest, 'transitionend', plan.moveMs * 0.3, () => { if (strip.dataset.hamPhase === 'land') delete strip.dataset.hamPhase; });
+        }, plan.moveMs);
+      });
       return true;
     }
 
@@ -14524,7 +14571,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sample = { repo: 'hive/sample', number: 1, kind: 'issue', title: 'Sample item', url: '#', stage: STAGE_TRACKER_PREVIEW_STAGES[0], stage_since: '' };
       return `<section class="overview-settings-section" id="sts-motion" aria-labelledby="sts-motion-title">
           <div class="overview-settings-card-title" id="sts-motion-title">Movement animation</div>
-          <p class="sts-hint">Plays once on a row when its lit chevron moves to another column between refreshes, forwards or back. Every choice becomes a plain crossfade when the system asks for reduced motion.</p>
+          <p class="sts-hint">Plays once on a row when its lit chevron moves to another column between refreshes, forwards or back: the old chevron flashes twice, the chosen effect travels, and the new chevron lands lit. Under reduced motion every choice becomes one soft flash and a plain crossfade.</p>
           <ol class="sts-motion-list" role="radiogroup" aria-label="Movement animation">${opts}</ol>
           <div class="sts-sample" id="sts-sample" aria-label="Preview row">${stageTrackerHeaderHtml(stages)}${stageTrackerRowHtml(sample, stages, { nowMs: Date.now() })}</div>
           <div class="sts-row"><label><input type="checkbox" id="sts-rm-preview" data-change-action="stageTrackerRmPreview" data-arg-types="c"> Preview the reduced-motion fallback</label></div>

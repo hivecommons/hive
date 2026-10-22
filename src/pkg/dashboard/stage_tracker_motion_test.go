@@ -46,6 +46,18 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 		`.ham-seg.ham-rm-fade {`,
 		`.ham-puck {`, `.ham-seg.ham-ripple::after {`, `.ham-ghost-old {`, `.ham-comet {`, `.ham-seg.active.ham-bump {`, `.ham-seg.ham-wash::after {`,
 		`--ham-move-dur: calc(var(--ham-move-ms) * var(--ham-anim-scale));`,
+		`--ham-flash-dur: calc((var(--ham-move-flash-ms) + var(--ham-move-flash-gap-ms)) * var(--ham-anim-scale));`,
+		`.ham-seg.ham-flash::after {`,
+		`var(--ham-flash-count, var(--ham-move-flash-count))`,
+		`.ham-seg.ham-flash.soft::after {`,
+		`.ham-seg.active.ham-pending {`,
+		`function stageTrackerMovePlan(effect, scale)`,
+		`const STAGE_TRACKER_FLASH_MS = 140;`,
+		`const STAGE_TRACKER_FLASH_GAP_MS = 90;`,
+		`const STAGE_TRACKER_FLASH_COUNT = 2;`,
+		`strip.dataset.hamPhase = 'flash';`,
+		`strip.dataset.hamPhase = 'move';`,
+		`strip.dataset.hamPhase = 'land';`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing movement animation wiring %q", want)
@@ -72,10 +84,123 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 	if css := html[start:end]; strings.Contains(css, "#") || strings.Contains(css, "rgb(") || strings.Contains(css, "rgba(") {
 		t.Errorf("movement animation CSS must use tokens only, found a literal colour:\n%s", css)
 	}
-	for _, tok := range []string{"--ham-move-ms:", "--ham-move-ease:", "--ham-move-tint:", "--ham-move-tint-soft:"} {
+	// The JS mirrors of the timing tokens must agree with tokens.css.
+	for _, tok := range []string{"--ham-move-ms: 450ms;", "--ham-move-ease:", "--ham-move-tint:", "--ham-move-tint-soft:", "--ham-move-flash-ms: 140ms;", "--ham-move-flash-gap-ms: 90ms;", "--ham-move-flash-count: 2;"} {
 		if !strings.Contains(tokensCSS(t), tok) {
 			t.Errorf("tokens.css lacks %s", tok)
 		}
+	}
+}
+
+// TestStageTrackerMotionSequence drives stageTrackerAnimateMove with fake
+// timers and a stub DOM: every move is flash (origin pulses, destination
+// held dim) → move (the effect runs) → land (destination lit); the flash
+// is two pulses normally and one soft pulse under reduced motion; the
+// whole plan stays under 1.2 s at 1×; None never starts a sequence.
+func TestStageTrackerMotionSequence(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — movement sequence was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		jsConstLine(t, html, "STAGE_TRACKER_MOVE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_GAP_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_COUNT"),
+		jsFunc(t, html, "stageTrackerMovePlan"),
+		jsFunc(t, html, "stageTrackerAnimScale"),
+		jsFunc(t, html, "stageTrackerAnimLayer"),
+		jsFunc(t, html, "stageTrackerAfter"),
+		jsFunc(t, html, "stageTrackerAnimateMove"),
+	}, "\n") + `
+// -- fake timers: callbacks run in due order when flush() is called --
+let now = 0; const timers = [];
+global.setTimeout = (fn, ms) => { timers.push({ at: now + (ms || 0), fn }); return timers.length; };
+function flush() { timers.sort((a, b) => a.at - b.at); while (timers.length) { const t = timers.shift(); now = t.at; t.fn(); } }
+global.getComputedStyle = () => ({ getPropertyValue: () => '1' });
+global.document = { createElement() { return { className: '', setAttribute() {}, innerHTML: '' }; } };
+// -- stub DOM: a strip of 7 chevrons recording every class change --
+const trace = [];
+function seg(i) {
+  const set = new Set(i === 4 ? ['ham-seg', 'active'] : ['ham-seg', 'done']);
+  return { i, style: { props: {}, setProperty(k, v) { this.props[k] = v; }, removeProperty(k) { delete this.props[k]; } },
+    classList: { contains: c => set.has(c), add(...cs) { for (const c of cs) { set.add(c); trace.push('seg' + i + '+' + c); } }, remove(...cs) { for (const c of cs) { if (set.delete(c)) trace.push('seg' + i + '-' + c); } } },
+    addEventListener() {}, removeEventListener() {} };
+}
+function makeStrip() {
+  const row = { layer: null, querySelector() { return this.layer; }, appendChild(l) { this.layer = l; } };
+  return { children: Array.from({ length: 7 }, (_, i) => seg(i)), parentElement: row, dataset: {} };
+}
+const STAGE_TRACKER_MOTION_FNS = {};
+for (const id of ['rm-fade', 'puck', 'ripple', 'ghost', 'comet', 'bump', 'wash']) STAGE_TRACKER_MOTION_FNS[id] = (s, f, t) => trace.push('move:' + id + ':' + f + '>' + t);
+
+// plan: two pulses, one soft under reduced motion, under 1.2 s at 1×
+for (const id of ['puck', 'ripple', 'ghost', 'comet', 'bump', 'wash']) {
+  const p = stageTrackerMovePlan(id, 1);
+  assert.strictEqual(p.flashes, 2, id + ' flashes twice');
+  assert.strictEqual(p.soft, false);
+  assert.strictEqual(p.flashMs, (140 + 90) * 2);
+  assert.strictEqual(p.moveMs, 450);
+  assert.ok(p.totalMs <= 1200, id + ' total ' + p.totalMs + 'ms exceeds 1.2 s');
+}
+const rm = stageTrackerMovePlan('rm-fade', 1);
+assert.deepStrictEqual([rm.flashes, rm.soft, rm.flashMs, rm.revealAtLand], [1, true, 230, false]);
+assert.strictEqual(stageTrackerMovePlan('wash', 2).flashMs, 920, 'preview slow-down scales the flash');
+assert.deepStrictEqual(['ripple', 'comet', 'wash'].map(id => stageTrackerMovePlan(id, 1).revealAtLand), [true, true, true]);
+assert.deepStrictEqual(['puck', 'ghost', 'bump'].map(id => stageTrackerMovePlan(id, 1).revealAtLand), [false, false, false]);
+
+// advance 2 → 4 with the wash: flash ×2 on the origin, destination held, move, land
+let strip = makeStrip();
+assert.strictEqual(stageTrackerAnimateMove(strip, 2, 4, 'wash'), true);
+assert.strictEqual(strip.dataset.hamPhase, 'flash');
+assert.strictEqual(strip.children[2].style.props['--ham-flash-count'], '2', 'origin pulses twice');
+assert.deepStrictEqual(trace, ['seg4+ham-pending', 'seg2+ham-flash'], 'flash first: destination dimmed, origin flashing');
+assert.strictEqual(timers.length, 1, 'only the flash timer is armed; nothing moves yet');
+const phases = [];
+// run timers one at a time to watch the phase change
+function step() { timers.sort((a, b) => a.at - b.at); const t = timers.shift(); now = t.at; t.fn(); phases.push(strip.dataset.hamPhase); }
+step();
+assert.strictEqual(strip.dataset.hamPhase, 'move');
+assert.deepStrictEqual(trace.slice(2), ['seg2-ham-flash', 'move:wash:2>4'], 'then the effect runs; the wash reveals the destination only on landing');
+assert.ok(strip.children[4].classList.contains('ham-pending'), 'destination still held during the wash');
+step();
+assert.strictEqual(strip.dataset.hamPhase, 'land');
+assert.deepStrictEqual(trace.slice(4), ['seg4-ham-pending'], 'land: destination lit');
+assert.ok(now >= (140 + 90) * 2 + 450, 'landing is not before flash + move elapsed (' + now + 'ms)');
+step();
+assert.strictEqual(strip.dataset.hamPhase, undefined, 'phase marker cleared after landing');
+assert.deepStrictEqual(phases, ['move', 'land', undefined]);
+
+// regress 5 → 1 with the puck: same order; the puck reveals as the travel starts
+trace.length = 0; timers.length = 0; now = 0;
+strip = makeStrip();
+assert.strictEqual(stageTrackerAnimateMove(strip, 5, 1, 'puck'), true);
+assert.deepStrictEqual(trace, ['seg1+ham-pending', 'seg5+ham-flash']);
+flush();
+assert.deepStrictEqual(trace.slice(2), ['seg5-ham-flash', 'seg1-ham-pending', 'move:puck:5>1'], 'regress: flash → reveal → move');
+
+// reduced motion: one soft pulse, then the crossfade
+trace.length = 0; timers.length = 0; now = 0;
+strip = makeStrip();
+assert.strictEqual(stageTrackerAnimateMove(strip, 2, 4, 'rm-fade'), true);
+assert.strictEqual(strip.children[2].style.props['--ham-flash-count'], '1', 'one pulse under reduced motion');
+assert.deepStrictEqual(trace, ['seg4+ham-pending', 'seg2+ham-flash', 'seg2+soft']);
+flush();
+assert.deepStrictEqual(trace.slice(3), ['seg2-ham-flash', 'seg2-soft', 'seg4-ham-pending', 'move:rm-fade:2>4'], 'soft flash → crossfade');
+
+// None / unknown effect / no move: nothing starts
+trace.length = 0; timers.length = 0;
+strip = makeStrip();
+assert.strictEqual(stageTrackerAnimateMove(strip, 2, 4, ''), false, 'None never animates');
+assert.strictEqual(stageTrackerAnimateMove(strip, 4, 4, 'wash'), false, 'no column change, no sequence');
+assert.deepStrictEqual(trace, []);
+assert.strictEqual(timers.length, 0);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node movement sequence fixture failed: %v\n%s", err, out)
 	}
 }
 

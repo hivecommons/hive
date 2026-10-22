@@ -131,6 +131,9 @@
   --ham-move-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   --ham-move-tint: color-mix(in srgb, var(--brand) 38%, transparent);
   --ham-move-tint-soft: color-mix(in srgb, var(--brand) 22%, transparent);
+  --ham-move-flash-ms: 140ms;
+  --ham-move-flash-gap-ms: 90ms;
+  --ham-move-flash-count: 2;
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;
