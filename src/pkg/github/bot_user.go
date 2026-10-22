@@ -82,7 +82,9 @@ func (c *Client) resolveSelfLogin(ctx context.Context) string {
 			return ""
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, botUserLookupTimeout)
+	// A caller's cancellation must not abort the shared request or start the
+	// failure cooldown for unrelated waiters. Keep the lookup time-bounded.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), botUserLookupTimeout)
 	defer cancel()
 	// Only the caller that started the lookup performs network I/O. Waiters
 	// share its result without blocking cachedSelfLogin behind the request.
