@@ -14,18 +14,20 @@ import (
 // removal of a hold-gate label — any label the enumeration hold gate
 // recognizes (HoldLabels, the configured extra hold labels, the sentinel
 // alert label) — alongside the server-stamped time headSHA arrived on the
-// branch (#13603). The hold guard uses it to tell "a human reviewed and
-// lifted on the current head" from "the branch moved after the human lifted".
+// branch, when a force-push produced it (#13603). The hold guard uses it to
+// tell "a human reviewed and lifted on the current head" from "the branch
+// moved after the human lifted".
 //
 // ok is false when the timeline carries no gate removal. The head's arrival
-// time is taken from server-timestamped signals only, in this order: the
-// `head_ref_force_pushed` timeline event whose commit_id is headSHA
-// (event time), then the earliest check suite or commit status GitHub
-// created for headSHA (both stamped when the SHA first reaches the
-// repository). Commit committer dates are never used: git sets them
-// client-side, so a backdated commit pushed after the lift would otherwise
-// look covered. With neither signal the time is zero, which the guard reads
-// as unknown and fails closed on.
+// time comes only from the `head_ref_force_pushed` timeline event whose
+// commit_id is headSHA (GitHub stamps its created_at). Commit committer dates
+// are never used: git sets them client-side, so a backdated commit pushed
+// after the lift would otherwise look covered. Check suite / status times are
+// not used either: they are keyed by SHA, so a SHA pushed elsewhere in the
+// repository before the lift carries pre-lift times even when it reaches
+// this branch afterwards. For an ordinary push the time is zero; the guard
+// then relies on the head it observed itself while the PR was held
+// (holdguard.LiftCoversObservedHead) and otherwise fails closed.
 func (c *Client) LatestHoldGateLift(ctx context.Context, repo string, number int, headSHA string) (holdguard.GateLift, bool, error) {
 	if c == nil {
 		return holdguard.GateLift{}, false, ErrNoGitHubClient
@@ -86,67 +88,8 @@ func (c *Client) LatestHoldGateLift(ctx context.Context, repo string, number int
 	}
 	if !forcePushAt.IsZero() {
 		lift.LatestPushAt, lift.PushEvidence = forcePushAt, holdguard.PushEvidenceForcePush
-		return lift, true, nil
-	}
-	if headSHA != "" {
-		at, evidence, err := c.headFirstSeenAt(ctx, owner, repoName, headSHA)
-		if err != nil {
-			return holdguard.GateLift{}, false, err
-		}
-		lift.LatestPushAt, lift.PushEvidence = at, evidence
 	}
 	return lift, true, nil
-}
-
-// headFirstSeenAt returns the earliest server-stamped created_at GitHub
-// recorded for sha across its check suites and commit statuses, naming which
-// kind supplied it. Both are created when the SHA first arrives at the
-// repository, so the earliest one dates the push that brought it. Zero when
-// the SHA has neither.
-func (c *Client) headFirstSeenAt(ctx context.Context, owner, repo, sha string) (time.Time, string, error) {
-	var (
-		earliest time.Time
-		evidence string
-	)
-	note := func(at time.Time, kind string) {
-		if at.IsZero() {
-			return
-		}
-		if earliest.IsZero() || at.Before(earliest) {
-			earliest, evidence = at, kind
-		}
-	}
-	suiteOpts := &gh.ListCheckSuiteOptions{ListOptions: gh.ListOptions{PerPage: labelTimelinePageSize}}
-	for {
-		res, resp, err := c.client.Checks.ListCheckSuitesForRef(ctx, owner, repo, sha, suiteOpts)
-		if err != nil {
-			return time.Time{}, "", err
-		}
-		if res != nil {
-			for _, s := range res.CheckSuites {
-				note(s.GetCreatedAt().Time, holdguard.PushEvidenceCheckSuite)
-			}
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		suiteOpts.Page = resp.NextPage
-	}
-	statusOpts := &gh.ListOptions{PerPage: labelTimelinePageSize}
-	for {
-		statuses, resp, err := c.client.Repositories.ListStatuses(ctx, owner, repo, sha, statusOpts)
-		if err != nil {
-			return time.Time{}, "", err
-		}
-		for _, s := range statuses {
-			note(s.GetCreatedAt().Time, holdguard.PushEvidenceStatus)
-		}
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-		statusOpts.Page = resp.NextPage
-	}
-	return earliest, evidence, nil
 }
 
 // isHoldGateLabel reports whether a single label is one that puts a PR in the

@@ -24,14 +24,18 @@
 //     fresh approval — that lift compares clean and the PR proceeds.
 //  4. Head moved, but a trusted human lifted the gate AFTER the current head
 //     arrived (a rebase landed earlier during the hold, then the human
-//     reviewed the result and lifted) ⇒ the lift covered the current head
-//     (LiftCoversCurrentHead), so the entry clears like step 2 instead of
-//     re-holding the PR a human just reviewed (#13603). The head's arrival
-//     is dated only by a server-stamped signal (the force-push event that
-//     produced it, else the earliest check suite / status created for it);
-//     commit dates are client-set and never trusted. A push at or after the
-//     lift, a lift by the hive or any bot, or no server signal at all still
-//     takes step 3.
+//     reviewed the result and lifted) ⇒ the lift covered the current head,
+//     so the entry clears like step 2 instead of re-holding the PR a human
+//     just reviewed (#13603). That the head predates the lift is proven only
+//     by evidence the client cannot forge: the server-stamped
+//     `head_ref_force_pushed` event that produced it (LiftCoversCurrentHead),
+//     or the hive's own observation of that exact head on the PR while the
+//     gate was still on (LiftCoversObservedHead). Commit dates are
+//     client-set and never trusted, and SHA-keyed objects (check suites,
+//     statuses) are not used: a SHA pushed elsewhere before the lift carries
+//     pre-lift timestamps even if it reaches the branch after. A push the
+//     hive did not see while held, a lift by the hive or any bot, or no
+//     evidence at all still takes step 3.
 //
 // Held-gated PRs must also stay mergeable, not just frozen (#10437): while a
 // PR is held, the hive may merge its base in with its own identity to clear a
@@ -112,6 +116,12 @@ type Entry struct {
 	// merge-from-base succeeds — the conflict that earned the notice is
 	// gone, so a stale "can't merge" comment must not linger unexplained.
 	ConflictNoted bool `json:"conflict_noted,omitempty"`
+	// ObservedHeldHeadSHA is the latest head the hive itself observed on the
+	// PR while the hold gate was still on (#13603). A current head equal to
+	// it provably predates the gate lift, so a trusted human's lift reviewed
+	// it. Empty on records written before the field existed; those fail
+	// closed.
+	ObservedHeldHeadSHA string `json:"observed_held_head_sha,omitempty"`
 	// HeldAt is when the snapshot was first recorded.
 	HeldAt    time.Time `json:"held_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -181,7 +191,7 @@ func (s *Store) Snapshot(repo string, number int, headSHA string, commits []Comm
 		return false
 	}
 	now := s.now()
-	e := &Entry{HeadSHA: headSHA, HeldAt: now, UpdatedAt: now}
+	e := &Entry{HeadSHA: headSHA, ObservedHeldHeadSHA: headSHA, HeldAt: now, UpdatedAt: now}
 	e.CommitSHAs, e.Authors = commitSets(commits)
 	s.entries[key] = e
 	s.saveLocked()
@@ -189,11 +199,17 @@ func (s *Store) Snapshot(repo string, number int, headSHA string, commits []Comm
 }
 
 // Touch refreshes an entry's UpdatedAt so a long-standing hold is never aged
-// out by Prune while the PR is still visibly held. No-op for unknown PRs.
-func (s *Store) Touch(repo string, number int) {
+// out by Prune while the PR is still visibly held, and records headSHA as the
+// latest head observed while the gate was on (#13603). Call it only while the
+// PR is held. An empty headSHA keeps the previous observation. No-op for
+// unknown PRs.
+func (s *Store) Touch(repo string, number int, headSHA string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e := s.entries[Key(repo, number)]; e != nil {
+		if headSHA != "" {
+			e.ObservedHeldHeadSHA = headSHA
+		}
 		e.UpdatedAt = s.now()
 		s.saveLocked()
 	}
@@ -255,6 +271,7 @@ func (s *Store) ReArm(repo string, number int, headSHA string, commits []Commit)
 		s.entries[key] = e
 	}
 	e.HeadSHA = headSHA
+	e.ObservedHeldHeadSHA = headSHA
 	e.CommitSHAs, e.Authors = commitSets(commits)
 	e.Commented = false
 	e.UpdatedAt = now
@@ -282,6 +299,7 @@ func (s *Store) AdvanceHygiene(repo string, number int, headSHA string, commits 
 		return
 	}
 	e.HeadSHA = headSHA
+	e.ObservedHeldHeadSHA = headSHA
 	e.CommitSHAs, e.Authors = commitSets(commits)
 	e.ConflictNoted = false
 	e.UpdatedAt = s.now()
@@ -409,18 +427,10 @@ func Diff(recorded Entry, currentHeadSHA string, current []Commit) Drift {
 	return d
 }
 
-// Push-evidence kinds a GateLift.PushEvidence may carry: the server-stamped
-// signal that dated the current head's arrival (#13603).
-const (
-	// PushEvidenceForcePush: the `head_ref_force_pushed` timeline event that
-	// produced the current head (GitHub stamps its created_at).
-	PushEvidenceForcePush = "head_ref_force_pushed"
-	// PushEvidenceCheckSuite: the earliest check suite GitHub created for the
-	// head SHA when it first reached the repository.
-	PushEvidenceCheckSuite = "check_suite"
-	// PushEvidenceStatus: the earliest commit status created for the head SHA.
-	PushEvidenceStatus = "status"
-)
+// PushEvidenceForcePush is the GateLift.PushEvidence kind for the
+// `head_ref_force_pushed` timeline event that produced the current head
+// (GitHub stamps its created_at server-side) (#13603).
+const PushEvidenceForcePush = "head_ref_force_pushed"
 
 // GateLift is the evidence the guard reads about the event that lifted a
 // PR's hold gate, relative to the PR's latest head change (#13603).
@@ -428,13 +438,16 @@ type GateLift struct {
 	// LiftedAt is when the gate label was removed. Zero means unknown.
 	LiftedAt time.Time
 	// LatestPushAt is when the current head arrived on the branch, taken from
-	// a server-stamped signal only (see PushEvidence). Zero means unknown.
-	// Commit committer dates are never acceptable here: git sets them
-	// client-side, so a contributor could backdate a commit pushed after the
-	// lift and have the stale lift honoured on new code.
+	// the server-stamped force-push event that produced it. Zero means
+	// unknown (an ordinary push leaves no such event). Commit committer dates
+	// are never acceptable here: git sets them client-side, so a contributor
+	// could backdate a commit pushed after the lift and have the stale lift
+	// honoured on new code. SHA-keyed timestamps (check suites, statuses)
+	// are not either: they date the SHA's first arrival anywhere in the
+	// repository, not on this branch.
 	LatestPushAt time.Time
-	// PushEvidence names the server-stamped signal LatestPushAt came from
-	// (one of the PushEvidence* constants); empty when LatestPushAt is zero.
+	// PushEvidence names the signal LatestPushAt came from
+	// (PushEvidenceForcePush); empty when LatestPushAt is zero.
 	PushEvidence string
 	// ActorIsHive reports that one of the hive's own accounts removed the
 	// label; the hive never approves for the human.
@@ -452,8 +465,8 @@ type GateLift struct {
 // It fails closed: an unknown lift time or push time, or a lift by the hive
 // or any bot, never covers the head. A push at or after the lift is exactly
 // the attack the guard exists for and is never covered. Callers must supply
-// LatestPushAt from a server-stamped signal (force-push event, check suite or
-// status creation), never from a commit's committer date.
+// LatestPushAt from the server-stamped force-push event, never from a commit's
+// committer date or a SHA-keyed object.
 func LiftCoversCurrentHead(lift GateLift) bool {
 	if lift.ActorIsHive || lift.ActorIsBot {
 		return false
@@ -462,6 +475,25 @@ func LiftCoversCurrentHead(lift GateLift) bool {
 		return false
 	}
 	return lift.LiftedAt.After(lift.LatestPushAt)
+}
+
+// LiftCoversObservedHead reports whether a trusted human's gate lift covered
+// currentHeadSHA because the hive itself saw that exact head on the PR while
+// the gate was still on (rec.ObservedHeldHeadSHA) — the proof for an ordinary
+// push, which leaves no server-stamped force-push event (#13603). The head
+// the lift reviewed is then the head on the branch now; a head the hive never
+// observed while held may have arrived after the lift and is not covered.
+//
+// It fails closed: an unknown lift time, an empty current or observed head,
+// or a lift by the hive or any bot never covers the head.
+func LiftCoversObservedHead(lift GateLift, rec Entry, currentHeadSHA string) bool {
+	if lift.ActorIsHive || lift.ActorIsBot || lift.LiftedAt.IsZero() {
+		return false
+	}
+	if currentHeadSHA == "" || rec.ObservedHeldHeadSHA == "" {
+		return false
+	}
+	return currentHeadSHA == rec.ObservedHeldHeadSHA
 }
 
 // shortSHA abbreviates a commit SHA for the drift comment.

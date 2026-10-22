@@ -51,8 +51,8 @@ type holdGuardServer struct {
 	issueComments map[int][]map[string]any
 	issueEvents   map[int][]map[string]any
 	timeline      map[int][]map[string]any    // PR number -> issue timeline (#13603 gate-lift provenance)
-	checkSuites   map[string][]map[string]any // head SHA -> check suites (#13603 server-stamped arrival)
-	statuses      map[string][]map[string]any // head SHA -> commit statuses (#13603 server-stamped arrival)
+	checkSuites   map[string][]map[string]any // head SHA -> check suites (#13603: SHA-keyed, must not prove arrival)
+	statuses      map[string][]map[string]any // head SHA -> commit statuses (#13603: SHA-keyed, must not prove arrival)
 	comments      []string
 	labels        []string
 
@@ -468,8 +468,7 @@ func TestEnforceHoldGuardPushAfterHumanLiftStillReholds(t *testing.T) {
 
 // #13603 / maintainer decision: an ordinary (non-force) push after the human
 // lift whose commit carries a BACKDATED committer date must still re-hold.
-// The only acceptable arrival evidence is server-stamped: here the earliest
-// check suite for f1 was created after the lift.
+// The hive never observed f1 while held and no force-push event names it.
 func TestEnforceHoldGuardBackdatedCommitPushedAfterLiftStillReholds(t *testing.T) {
 	store := newTestHoldGuardStore(t)
 	fake := &holdGuardServer{commits: map[int][]map[string]any{
@@ -477,7 +476,7 @@ func TestEnforceHoldGuardBackdatedCommitPushedAfterLiftStillReholds(t *testing.T
 	}}
 	tl := gateLiftTimeline("hold", "clubanderson", "User", "2026-10-22T18:19:00Z")
 	// Ordinary push of f1 (no force-push event) with a committer date well
-	// before the lift; GitHub's check suite says it arrived after the lift.
+	// before the lift.
 	tl = append(tl, map[string]any{
 		"event":     "committed",
 		"sha":       "f1",
@@ -505,63 +504,100 @@ func TestEnforceHoldGuardBackdatedCommitPushedAfterLiftStillReholds(t *testing.T
 	}
 }
 
-// #13603: an ordinary push during the hold, dated by the server-side check
-// suite / status created for the head, followed by a human lift, is covered.
-func TestEnforceHoldGuardHumanLiftAfterOrdinaryPushAcceptsCurrentHead(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		suites   []map[string]any
-		statuses []map[string]any
-	}{
-		{"check suite", []map[string]any{{"id": 1, "head_sha": "p1", "created_at": "2026-10-22T06:30:00Z"}}, nil},
-		{"commit status", nil, []map[string]any{{"id": 1, "state": "pending", "created_at": "2026-10-22T06:30:00Z"}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := newTestHoldGuardStore(t)
-			fake := &holdGuardServer{commits: map[int][]map[string]any{
-				7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("p1", "strategist-bot", "docs: fix typo")},
-			}}
-			// No force-push for p1; its committer date is irrelevant.
-			fake.timeline = map[int][]map[string]any{7: {{
-				"event":      "labeled",
-				"label":      map[string]string{"name": "hold"},
-				"actor":      map[string]string{"login": "kubestellar-hive[bot]", "type": "Bot"},
-				"created_at": "2026-10-22T05:00:00Z",
-			}, {
-				"event":     "committed",
-				"sha":       "p1",
-				"committer": map[string]string{"name": "strategist-bot", "date": "2026-10-23T00:00:00Z"},
-			}, {
-				"event":      "unlabeled",
-				"label":      map[string]string{"name": "hold"},
-				"actor":      map[string]string{"login": "clubanderson", "type": "User"},
-				"created_at": "2026-10-22T18:19:00Z",
-			}}}
-			fake.checkSuites = map[string][]map[string]any{"p1": tc.suites}
-			fake.statuses = map[string][]map[string]any{"p1": tc.statuses}
-			client := newHoldGuardClient(t, fake)
-			client.SetAppBotLogin("kubestellar-hive[bot]")
-			cfg := escalationTestConfig()
-			store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+// ordinaryPushLiftTimeline is the timeline for an ordinary (non-force) push
+// of p1 followed by a human lift at 18:19: no event names p1 by a
+// server-stamped time, and its committer date is irrelevant.
+func ordinaryPushLiftTimeline() []map[string]any {
+	return []map[string]any{{
+		"event":      "labeled",
+		"label":      map[string]string{"name": "hold"},
+		"actor":      map[string]string{"login": "kubestellar-hive[bot]", "type": "Bot"},
+		"created_at": "2026-10-22T05:00:00Z",
+	}, {
+		"event":     "committed",
+		"sha":       "p1",
+		"committer": map[string]string{"name": "strategist-bot", "date": "2026-10-23T00:00:00Z"},
+	}, {
+		"event":      "unlabeled",
+		"label":      map[string]string{"name": "hold"},
+		"actor":      map[string]string{"login": "clubanderson", "type": "User"},
+		"created_at": "2026-10-22T18:19:00Z",
+	}}
+}
 
-			got := enforceHoldGuard(context.Background(), cfg, client, client,
-				actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "p1"}), discardLogger())
-			if len(got) != 0 {
-				t.Fatalf("human lift after the server-dated push must reopen the merge lanes, got %v", got)
-			}
-			if len(fake.comments)+len(fake.labels) != 0 {
-				t.Fatalf("human lift after the push must not comment or re-hold, saw %v / %v", fake.comments, fake.labels)
-			}
-			if _, ok := store.Recorded("acme/widgets", 7); ok {
-				t.Fatal("human lift after the push must clear the snapshot")
-			}
-		})
+// #13603: an ordinary push during the hold that the hive itself observed on
+// the PR while the gate was still on, followed by a human lift, is covered.
+func TestEnforceHoldGuardHumanLiftAfterOrdinaryPushAcceptsCurrentHead(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("p1", "strategist-bot", "docs: fix typo")},
+	}}
+	fake.timeline = map[int][]map[string]any{7: ordinaryPushLiftTimeline()}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+
+	_ = enforceHoldGuard(context.Background(), cfg, client, client,
+		heldActionable(github.HoldItem{Repo: "widgets", Number: 7, Type: "pr", HeadSHA: "c1"}), discardLogger())
+	_ = enforceHoldGuard(context.Background(), cfg, client, client,
+		heldActionable(github.HoldItem{Repo: "widgets", Number: 7, Type: "pr", HeadSHA: "p1"}), discardLogger())
+	if rec, ok := store.Recorded("acme/widgets", 7); !ok || rec.HeadSHA != "c1" || rec.ObservedHeldHeadSHA != "p1" {
+		t.Fatalf("snapshot = %+v ok=%v, want baseline c1 and observed held head p1", rec, ok)
+	}
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "p1"}), discardLogger())
+	if len(got) != 0 {
+		t.Fatalf("human lift on the head observed while held must reopen the merge lanes, got %v", got)
+	}
+	if len(fake.comments)+len(fake.labels) != 0 {
+		t.Fatalf("human lift on the observed head must not comment or re-hold, saw %v / %v", fake.comments, fake.labels)
+	}
+	if _, ok := store.Recorded("acme/widgets", 7); ok {
+		t.Fatal("human lift on the observed head must clear the snapshot")
 	}
 }
 
-// #13603: with no server-stamped arrival signal for the head (no force-push
-// event naming it, no check suite, no status) the guard fails closed even
-// though the commit's committer date predates the human lift.
+// #13603 review: check suites and statuses are keyed by SHA, not branch. A
+// SHA that already existed in the repository before the lift (scratch branch,
+// another PR) carries pre-lift created_at times even when it is fast-forwarded
+// onto the PR branch after the lift. The hive never saw it on the PR while
+// held, so it must re-hold rather than be accepted.
+func TestEnforceHoldGuardPreexistingSHAFastForwardedAfterLiftStillReholds(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan"), ghCommit("p1", "other-agent", "sneak")},
+	}}
+	fake.timeline = map[int][]map[string]any{7: ordinaryPushLiftTimeline()}
+	fake.checkSuites = map[string][]map[string]any{
+		"p1": {{"id": 1, "head_sha": "p1", "created_at": "2026-10-22T06:30:00Z"}},
+	}
+	fake.statuses = map[string][]map[string]any{
+		"p1": {{"id": 1, "state": "success", "created_at": "2026-10-22T06:30:00Z"}},
+	}
+	client := newHoldGuardClient(t, fake)
+	client.SetAppBotLogin("kubestellar-hive[bot]")
+	cfg := escalationTestConfig()
+
+	_ = enforceHoldGuard(context.Background(), cfg, client, client,
+		heldActionable(github.HoldItem{Repo: "widgets", Number: 7, Type: "pr", HeadSHA: "c1"}), discardLogger())
+
+	got := enforceHoldGuard(context.Background(), cfg, client, client,
+		actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "strategist-bot", HeadSHA: "p1"}), discardLogger())
+	if !got["widgets/7"] {
+		t.Fatalf("a pre-existing SHA fast-forwarded after the lift must still be re-review-gated, got %v", got)
+	}
+	if len(fake.comments) != 1 || len(fake.labels) != 1 || fake.labels[0] != holdguard.ReHoldLabel {
+		t.Fatalf("comments=%v labels=%v, want normal holdguard re-hold", fake.comments, fake.labels)
+	}
+	if rec, ok := store.Recorded("acme/widgets", 7); !ok || rec.HeadSHA != "p1" {
+		t.Fatalf("snapshot after drift = %+v, want re-armed at p1", rec)
+	}
+}
+
+// #13603: with no evidence the head predates the lift (no force-push event
+// naming it, never observed by the hive while held) the guard fails closed
+// even though the commit's committer date predates the human lift.
 func TestEnforceHoldGuardNoServerPushEvidenceFailsClosed(t *testing.T) {
 	store := newTestHoldGuardStore(t)
 	fake := &holdGuardServer{commits: map[int][]map[string]any{

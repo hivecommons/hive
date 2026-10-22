@@ -109,7 +109,9 @@ func enforceHoldGuard(
 		}
 		repo := fullRepoName(h.Repo, org)
 		if _, ok := store.Recorded(repo, h.Number); ok {
-			store.Touch(repo, h.Number)
+			// Still held: remember the head seen under the gate, the
+			// hive's own proof that it predates any later lift (#13603).
+			store.Touch(repo, h.Number, h.HeadSHA)
 			continue
 		}
 		if h.HeadSHA == "" {
@@ -161,10 +163,12 @@ func enforceHoldGuard(
 			// A trusted human who removed the gate label AFTER the current
 			// head arrived reviewed the head that is on the branch now; an
 			// earlier rebase during the hold is not drift to them (#13603).
-			// Arrival is dated by server-stamped signals only (force-push
-			// event, check suite / status creation) — never commit dates.
-			// Lookup failures and missing signals fail closed into the drift
-			// path below.
+			// The head predates the lift only by unforgeable evidence: the
+			// server-stamped force-push event that produced it, or the hive
+			// having seen this exact head while the gate was still on —
+			// never commit dates or SHA-keyed check suites / statuses.
+			// Lookup failures and missing evidence fail closed into the
+			// drift path below.
 			lift, found, err := ghClient.LatestHoldGateLift(ctx, pr.Repo, pr.Number, pr.HeadSHA)
 			if err != nil {
 				logger.Warn("hold guard: could not read gate-lift provenance; treating moved head as drift",
@@ -175,6 +179,13 @@ func enforceHoldGuard(
 					"repo", repo, "pr", pr.Number,
 					"recorded_head", rec.HeadSHA, "current_head", pr.HeadSHA,
 					"lifted_at", lift.LiftedAt, "head_arrived_at", lift.LatestPushAt, "push_evidence", lift.PushEvidence)
+				continue
+			} else if found && holdguard.LiftCoversObservedHead(lift, rec, pr.HeadSHA) {
+				store.Clear(repo, pr.Number)
+				logger.Info("hold guard: gate lifted by a human on the head the hive observed while held; head accepted",
+					"repo", repo, "pr", pr.Number,
+					"recorded_head", rec.HeadSHA, "current_head", pr.HeadSHA,
+					"lifted_at", lift.LiftedAt)
 				continue
 			}
 		}
