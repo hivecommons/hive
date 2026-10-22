@@ -14315,24 +14315,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // Resolves with ctx once it is running. Any other state ('suspended',
-    // Safari's 'interrupted', …) gets a resume(); the promise rejects when
-    // resume() throws or rejects, resolves without the context running, or
-    // does not settle within timeoutMs.
+    // Safari's 'interrupted', …) gets a resume() — called synchronously, so a
+    // caller inside a gesture handler keeps Safari's activation. The promise
+    // rejects when resume() throws or rejects, or when the context is not
+    // running within timeoutMs; a resume() that settles before the state
+    // flips (webkitAudioContext) is followed via statechange.
     function stageTrackerResumeContext(ctx, timeoutMs) {
       if (!ctx) return Promise.reject(new Error('no AudioContext'));
       if (ctx.state === 'running') return Promise.resolve(ctx);
       return new Promise((resolve, reject) => {
         let settled = false;
+        const onState = () => { if (ctx.state === 'running') finish(true); };
         const finish = (ok, err) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          if (typeof ctx.removeEventListener === 'function') ctx.removeEventListener('statechange', onState);
           if (ok) resolve(ctx); else reject(err || new Error('AudioContext did not resume'));
         };
         const timer = setTimeout(() => finish(false, new Error('AudioContext resume timed out')), timeoutMs);
+        if (typeof ctx.addEventListener === 'function') ctx.addEventListener('statechange', onState);
         let p;
         try { p = ctx.resume(); } catch (e) { p = Promise.reject(e); }
-        Promise.resolve(p).then(() => finish(ctx.state === 'running'), e => finish(false, e));
+        Promise.resolve(p).then(onState, e => finish(false, e));
       });
     }
 
@@ -14566,6 +14571,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return stageTrackerClipTx('readwrite', store => store.delete(kind));
     }
 
+    // decodeAudioData as a promise on every engine: older Safari only
+    // honours the callback form (its promise form rejects or returns nothing).
+    function stageTrackerDecodeAudioData(ctx, bytes) {
+      return new Promise((resolve, reject) => {
+        let p;
+        try { p = ctx.decodeAudioData(bytes, resolve, reject); } catch (e) { reject(e); return; }
+        if (p && typeof p.then === 'function') p.then(resolve, reject);
+      });
+    }
+
     // Decode every stored clip that has bytes but no buffer yet. A clip
     // that fails to decode is marked so the synth plays instead and the
     // modal says why.
@@ -14576,9 +14591,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const clip = _stageTrackerClips[kind];
         if (!clip || clip.buffer || clip.failed || clip.decoding || !clip.bytes) continue;
         clip.decoding = true;
-        let p;
-        try { p = ctx.decodeAudioData(clip.bytes.slice(0)); } catch (e) { p = Promise.reject(e); }
-        Promise.resolve(p).then(buf => { clip.buffer = buf; }, () => {
+        stageTrackerDecodeAudioData(ctx, clip.bytes.slice(0)).then(buf => { clip.buffer = buf; }, () => {
           clip.failed = true;
           showToast(STAGE_TRACKER_SOUND_KINDS[kind].label + ': "' + clip.name + '" could not be decoded — playing the built-in sound instead.', 'error');
         }).then(() => { clip.decoding = false; stageTrackerRenderSettings(); });

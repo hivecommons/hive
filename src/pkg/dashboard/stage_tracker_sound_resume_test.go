@@ -57,7 +57,8 @@ func TestStageTrackerSoundResumeWiring(t *testing.T) {
 
 // TestStageTrackerSoundResumeAsync runs the real play paths under node
 // against a fake AudioContext whose resume() is asynchronous, the way every
-// browser's is (and Safari's reports 'interrupted'). Asserts: a preview on a
+// browser's is — the Safari failure: synchronously stale 'suspended' or
+// 'interrupted', resumed only when resume() is awaited. Asserts: a preview on a
 // suspended context schedules its voices after resume() resolves and shows
 // "Playing…" meanwhile; an automatic play on a context that resumes quickly
 // plays exactly once; one that never resumes plays nothing and re-arms
@@ -103,6 +104,7 @@ func TestStageTrackerSoundResumeAsync(t *testing.T) {
 		jsFunc(t, html, "stageTrackerSoundLengthS"),
 		jsFunc(t, html, "stageTrackerPlayTest"),
 		jsFunc(t, html, "stageTrackerPreviewSound"),
+		jsFunc(t, html, "stageTrackerDecodeAudioData"),
 		"function stageTrackerZapVoice(ctx, out, at) { out.voices.push('zap@' + at); }",
 		"function stageTrackerBuzzVoice(ctx, out, at) { out.voices.push('buzz@' + at); }",
 		"function stageTrackerDecodeClips() { if (decodeThrows) throw new Error('decode exploded'); }",
@@ -248,6 +250,37 @@ const reset = () => { gains.length = 0; toasts.length = 0; _stageTrackerAudioCtx
   assert.strictEqual(await stageTrackerPreviewSound('merge', null), false);
   assert.strictEqual(toasts.length, 1);
   assert.deepStrictEqual(voices(), []);
+
+  // Safari (webkitAudioContext): resume() settles before the state flips —
+  // or returns nothing at all — and the state arrives via statechange.
+  reset();
+  const wk = stageTrackerAudioContext();
+  wk.handlers = {};
+  wk.addEventListener = (n, f) => { wk.handlers[n] = f; };
+  wk.removeEventListener = (n, f) => { if (wk.handlers[n] === f) delete wk.handlers[n]; };
+  wk.resume = () => { setTimeout(() => { wk.state = 'running'; wk.handlers.statechange && wk.handlers.statechange(); }, 5); return undefined; };
+  assert.strictEqual(await stageTrackerPreviewSound('merge', null), true, 'resume() returning undefined + statechange plays');
+  assert.deepStrictEqual(voices(), ['zap@0']);
+  assert.deepStrictEqual(toasts, []);
+  assert.deepStrictEqual(Object.keys(wk.handlers), [], 'statechange listener removed');
+  reset();
+  const early = stageTrackerAudioContext();
+  early.handlers = {};
+  early.addEventListener = (n, f) => { early.handlers[n] = f; };
+  early.removeEventListener = (n, f) => { if (early.handlers[n] === f) delete early.handlers[n]; };
+  early.resume = () => { setTimeout(() => { early.state = 'running'; early.handlers.statechange && early.handlers.statechange(); }, 10); return Promise.resolve(); };
+  assert.strictEqual(await stageTrackerPreviewSound('open', null), true, 'promise resolved while still suspended: waits for statechange');
+  assert.deepStrictEqual(voices(), ['buzz@0']);
+
+  // Old Safari decodeAudioData: callback form only, promise form returns
+  // undefined. The wrapper still yields a promise either way.
+  const cbOnly = { decodeAudioData(bytes, ok, fail) { setTimeout(() => (bytes.byteLength === 4 ? fail(new Error('bad')) : ok({ id: 'cb' })), 1); } };
+  assert.strictEqual((await stageTrackerDecodeAudioData(cbOnly, new ArrayBuffer(8))).id, 'cb');
+  await assert.rejects(stageTrackerDecodeAudioData(cbOnly, new ArrayBuffer(4)));
+  const promiseOnly = { decodeAudioData(bytes) { return Promise.resolve({ id: 'p' }); } };
+  assert.strictEqual((await stageTrackerDecodeAudioData(promiseOnly, new ArrayBuffer(8))).id, 'p');
+  const throwing = { decodeAudioData() { throw new Error('nope'); } };
+  await assert.rejects(stageTrackerDecodeAudioData(throwing, new ArrayBuffer(8)));
 
   // Clip decoding that throws cannot abort context creation.
   reset();
