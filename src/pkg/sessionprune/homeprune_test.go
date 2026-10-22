@@ -411,16 +411,16 @@ func TestPruneAgentSessionTrees(t *testing.T) {
 	tree := func(agent string) string {
 		return filepath.Join(root, agent, ".copilot", "session-state")
 	}
-	agedA := filepath.Join(tree("alpha"), "old")
-	freshA := filepath.Join(tree("alpha"), "new")
-	agedB := filepath.Join(tree("beta"), "old")
+	agedA := filepath.Join(tree("alpha"), "11111111-1111-4111-8111-111111111111")
+	freshA := filepath.Join(tree("alpha"), "22222222-2222-4222-8222-222222222222")
+	agedB := filepath.Join(tree("beta"), "33333333-3333-4333-8333-333333333333")
 	mkTree(t, agedA, old)
 	mkTree(t, freshA, recent)
 	mkTree(t, agedB, old)
 
 	// A bridged .copilot must not be followed into the shared tree.
 	shared := t.TempDir()
-	agedShared := filepath.Join(shared, "session-state", "old")
+	agedShared := filepath.Join(shared, "session-state", "44444444-4444-4444-8444-444444444444")
 	mkTree(t, agedShared, old)
 	if err := os.MkdirAll(filepath.Join(root, "gamma"), 0o755); err != nil {
 		t.Fatal(err)
