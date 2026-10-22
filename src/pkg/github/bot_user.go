@@ -63,24 +63,35 @@ func (c *Client) resolveSelfLogin(ctx context.Context) string {
 	if c == nil {
 		return ""
 	}
-	c.selfLoginMu.Lock()
-	if c.selfLogin != "" {
-		login := c.selfLogin
-		c.selfLoginMu.Unlock()
-		return login
-	}
-	if !c.selfLoginFailedAt.IsZero() && time.Since(c.selfLoginFailedAt) < selfLoginRetryAfter {
-		c.selfLoginMu.Unlock()
-		return ""
-	}
-	c.selfLoginMu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	for {
+		login, pending, lookup := c.selfLoginLookupState()
+		if lookup {
+			break
+		}
+		if pending == nil {
+			return login
+		}
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			return ""
+		}
+	}
+	// Release waiters even if the lookup panics. Result publication below
+	// unlocks first; pending remains owned by this caller until cleanup.
+	defer func() {
+		c.selfLoginMu.Lock()
+		defer c.selfLoginMu.Unlock()
+		close(c.selfLoginPending)
+		c.selfLoginPending = nil
+	}()
 	ctx, cancel := context.WithTimeout(ctx, botUserLookupTimeout)
 	defer cancel()
-	// The lock is not held across the network call so cachedSelfLogin stays
-	// non-blocking; concurrent first callers may each look up (last writer wins).
+	// Only the caller that started the lookup performs network I/O. Waiters
+	// share its result without blocking cachedSelfLogin behind the request.
 	user, _, err := c.client.Users.Get(ctx, "")
 	login := strings.TrimSpace(user.GetLogin())
 	c.selfLoginMu.Lock()
@@ -94,6 +105,24 @@ func (c *Client) resolveSelfLogin(ctx context.Context) string {
 	}
 	c.selfLogin = login
 	return login
+}
+
+// selfLoginLookupState returns a cached result, an in-flight lookup to wait
+// for, or lookup=true when this caller must resolve and publish the result.
+func (c *Client) selfLoginLookupState() (login string, pending <-chan struct{}, lookup bool) {
+	c.selfLoginMu.Lock()
+	defer c.selfLoginMu.Unlock()
+	if c.selfLogin != "" {
+		return c.selfLogin, nil, false
+	}
+	if !c.selfLoginFailedAt.IsZero() && time.Since(c.selfLoginFailedAt) < selfLoginRetryAfter {
+		return "", nil, false
+	}
+	if c.selfLoginPending != nil {
+		return "", c.selfLoginPending, false
+	}
+	c.selfLoginPending = make(chan struct{})
+	return "", nil, true
 }
 
 // cachedSelfLogin returns the resolved self-login without triggering a lookup.
