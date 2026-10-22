@@ -17,8 +17,14 @@ func TestStageTrackerSidelinedPRCarriesClosingReferences(t *testing.T) {
 	s.status.Repos[0].NonActionablePrs = []any{
 		github.RepoWorkPR{Repo: "acme/console", Number: 130, Title: "Draft fix", Draft: true, Bucket: "draft", Reason: "Draft",
 			LinkedIssues: []github.PRLinkedIssue{{Number: 8, Repo: "acme/console", State: "open"}}},
+		// Enrichment stamps every closing reference GitHub reports, including
+		// a cross-repository `Fixes other/repo#N`; the tracker's same-repo
+		// guard must drop it at render time, as it does for actionable PRs.
 		&github.RepoWorkPR{Repo: "acme/console", Number: 131, Title: "Exempt fix", Bucket: "filtered", Reason: "Exempt label",
-			LinkedIssues: []github.PRLinkedIssue{{Number: 10, State: "open", Title: "Not listed", URL: "https://github.com/acme/console/issues/10"}}},
+			LinkedIssues: []github.PRLinkedIssue{
+				{Number: 10, State: "open", Title: "Not listed", URL: "https://github.com/acme/console/issues/10"},
+				{Number: 44, Repo: "acme/other", State: "open", Title: "Cross-repo", URL: "https://github.com/acme/other/issues/44"},
+			}},
 	}
 	resp := s.buildStageTracker(s.status, store, now)
 	data, err := json.Marshal(resp)
@@ -43,5 +49,8 @@ func TestStageTrackerSidelinedPRCarriesClosingReferences(t *testing.T) {
 	exempt := trackerItem(t, resp, "pr", 131)
 	if exempt.NestedUnder != 0 || len(exempt.LinkedIssues) != 1 || exempt.LinkedIssues[0].Listed || exempt.LinkedIssues[0].State != "open" || exempt.LinkedIssues[0].Title != "Not listed" {
 		t.Fatalf("exempt links = %+v", exempt)
+	}
+	if exempt.LinkedIssues[0].Number != 10 {
+		t.Fatalf("cross-repo closing reference survived the same-repo guard: %+v", exempt.LinkedIssues)
 	}
 }
