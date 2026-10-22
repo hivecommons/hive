@@ -78,6 +78,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),
@@ -375,14 +377,25 @@ assert.ok(/<a class="ham-ref" href="https:\/\/x\/9"[^>]*>#9<\/a>/.test(row) && !
 assert.ok(prCol(row)[0].includes('<span class="ham-pr-num">#110</span>') && prCol(row)[0].includes('<span class="ham-pr-title">Fix sort</span>'), prCol(row)[0]);
 assert.ok(/<a class="ham-pr-ref"[^>]*title="Fix sort · Waiting for review/.test(row), 'row tooltip rides the PR link: ' + row);
 assert.strictEqual(titles(row, 'Fix sort'), 1);
-// A PR whose only linked issue GitHub reports closed: placeholder names it.
+// A PR whose only linked issue GitHub reports closed (a superseded PR whose
+// body still says Fixes #N): the issue slot keeps "#N title" as a link,
+// struck through under a "closed" chip, so the pairing reads at a glance.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', title: 'Usage on --help', url: 'https://x/13409' }] }, stages, ctx);
+assert.strictEqual(lead(row), '#13409 Usage on --help closed', lead(row));
+assert.ok(/<div class="ham-head-main ham-issue-closed">/.test(row) && /<a class="ham-ref" href="https:\/\/x\/13409"[^>]*>#13409<\/a>/.test(row), 'closed issue stays a link in a struck-through slot: ' + row);
+assert.ok(row.includes('<span class="ham-title" title="Usage on --help">Usage on --help</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), 'title then closed chip: ' + row);
+assert.ok(!row.includes('ham-no-issue-t') && !/<a class="ham-ref"[^>]*title=/.test(row) && prCol(row).length === 1 && prCol(row)[0].includes('#111'), row);
+// The same with no title resolvable: a muted "(closed issue)" placeholder, never a blank.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 111, kind: 'pr', title: 'Docs', stage: 95, linked_issues: [{ number: 13409, state: 'closed', url: 'https://x/13409' }] }, stages, ctx);
-assert.strictEqual(lead(row), 'linked issue #13409 closed', lead(row));
-assert.ok(row.includes('ham-no-issue-t') && prCol(row).length === 1 && prCol(row)[0].includes('#111'), row);
-// A linked issue of unknown state that is not listed still goes in the issue slot as a link.
+assert.strictEqual(lead(row), '#13409 (closed issue) closed', lead(row));
+assert.ok(row.includes('<span class="ham-title ham-no-issue-t">(closed issue)</span> <span class="ham-badge ham-issue-closed-chip">closed</span>'), row);
+// A linked issue of unknown state that is not listed still goes in the issue slot as a link, no chip; a missing title is said so.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 112, kind: 'pr', title: 'Fix', stage: 50, linked_issues: [{ number: 77, url: 'https://x/77' }] }, stages, ctx);
-assert.strictEqual(lead(row), '#77', lead(row));
+assert.strictEqual(lead(row), '#77 (title unavailable)', lead(row));
+assert.ok(!row.includes('ham-issue-closed'), 'no closed marker on an issue of unknown state: ' + row);
 assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, state: 'closed' }, { number: 6, state: 'open', title: 'T' }] }), { number: 6, title: 'T', url: '' }, 'an open linked issue beats a closed one');
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 4 }, { number: 5, state: 'closed', title: 'C', url: 'u' }] }), { number: 5, title: 'C', url: 'u', closed: true, placeholder: '' }, 'a known-closed issue beats one of unknown state');
+assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 5, state: 'closed' }] }), { number: 5, title: '', url: '', closed: true, placeholder: STAGE_TRACKER_CLOSED_ISSUE_TITLE });
 assert.deepStrictEqual(stageTrackerPRIssueSlot({}), { number: 0, text: 'no linked issue' });
 
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
@@ -562,6 +575,8 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
 		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_CLOSED_ISSUE_TITLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_UNTITLED_ISSUE"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_NEEDED"),
 		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_PRE_MERGE_SOAK"),

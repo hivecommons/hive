@@ -323,6 +323,10 @@ type Client struct {
 	// forgeState memoizes the advisory issue the attached ForgeState cache
 	// resolved (advisory_forgestate.go, hivecommons/hive#13378).
 	forgeState forgeStateBinding
+	// linkedIssueTitles remembers the title and state of issues PRs close
+	// that no open-items listing carries any more (linked_issue_titles.go).
+	// Zero value is ready to use.
+	linkedIssueTitles linkedIssueTitleCache
 	// reviewWake wakes the review-request watcher between ticks
 	// (review_request_wake.go). Zero value is ready to use.
 	reviewWake reviewRequestWaker
@@ -3599,6 +3603,45 @@ func (c *Client) IssueClosedAt(ctx context.Context, owner, repo string, number i
 		return time.Time{}, false, nil
 	}
 	return issue.GetClosedAt().Time, true, nil
+}
+
+// IssueSummary is the display triple of one issue or pull request:
+// what the activity tracker's issue slot needs for a closing reference
+// whose issue is no longer open (closed by an earlier PR, so absent from
+// every open-items listing, with only the number surviving from the PR's
+// closingIssuesReferences). State is lower-cased as on Issue.State.
+type IssueSummary struct {
+	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	State  string `json:"state,omitempty"`
+	URL    string `json:"url,omitempty"`
+}
+
+// IssueSummary reads one issue (or PR: the endpoint serves both) by number
+// and returns its title, state and URL. A 404 reports (zero, false, nil):
+// the reference names nothing readable, which the caller remembers for its
+// TTL rather than asking again. Any other error is returned.
+func (c *Client) IssueSummary(ctx context.Context, repo string, number int) (IssueSummary, bool, error) {
+	if c == nil {
+		return IssueSummary{}, false, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	issue, resp, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return IssueSummary{}, false, nil
+		}
+		return IssueSummary{}, false, fmt.Errorf("reading %s/%s#%d: %w", owner, name, number, err)
+	}
+	if issue == nil {
+		return IssueSummary{}, false, nil
+	}
+	return IssueSummary{
+		Number: issue.GetNumber(),
+		Title:  issue.GetTitle(),
+		State:  strings.ToLower(strings.TrimSpace(issue.GetState())),
+		URL:    issue.GetHTMLURL(),
+	}, true, nil
 }
 
 // SearchPRCount searches GitHub for PRs by author within an org.

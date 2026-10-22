@@ -492,9 +492,17 @@ display-only: no enumeration, review, hold, or merge gate reads any of them.
   a `🔗` badge that opens the first still-open one (else the first); the
   tooltip lists all. This is the PR-side mirror of the issue column's
   `linked_prs` badge, and like it comes only from the snapshot — the card
-  never infers or fetches relationships. The activity monitor's
-  [activity monitor](#hive-activity-monitor) uses `title` to name a linked issue
-  that is not itself listed in the snapshot.
+  never infers or fetches relationships. The
+  [activity monitor](#hive-activity-monitor) uses `title` and `state` to
+  name a linked issue that is not itself listed in the snapshot. A reference
+  that reaches the cycle with only its number — an older persisted snapshot,
+  or an issue already closed by an earlier PR while a superseded PR's body
+  still says `Fixes #N` — is completed after the review-signals pass
+  (`EnrichLinkedIssueTitles`, `pkg/github/linked_issue_titles.go`): from the
+  forgestate cache when it still holds the issue, else one targeted issue
+  read per issue, remembered for 24 hours (a failed read for one hour, a 404
+  for the full day), at most eight reads per cycle — never one per cycle per
+  issue.
 
 The extended request is tried first; a forge that rejects one of the added
 fields (an older GHE) is asked the decision-only query instead, so the review

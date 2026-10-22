@@ -1396,6 +1396,11 @@
     /* Issue slot of a PR row that has no open issue: muted placeholder. */
     .ham-no-issue .ham-kind-ico { opacity: 0.55; }
     .ham-no-issue-t { color: var(--text-faint); font-style: italic; }
+    /* Issue slot naming a closed issue (a superseded PR's `Fixes #N`): muted, struck through, under a "closed" chip. */
+    .ham-issue-closed .ham-kind-ico { opacity: 0.55; }
+    .ham-issue-closed .ham-ref, .ham-issue-closed .ham-title { color: var(--text-faint); text-decoration: line-through; }
+    .ham-issue-closed .ham-no-issue-t { text-decoration: none; }
+    .ham-issue-closed-chip { flex: 0 0 auto; margin-left: var(--sp-1); }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
@@ -13079,6 +13084,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     const STAGE_TRACKER_NEEDS_DECISION = 85;
     const STAGE_TRACKER_ISSUE_NEEDS_DECISION = 45;
+    // Issue-slot placeholders for a closing reference whose title the server
+    // could not resolve (the issue is closed and unreadable, or of unknown state).
+    const STAGE_TRACKER_CLOSED_ISSUE_TITLE = '(closed issue)';
+    const STAGE_TRACKER_UNTITLED_ISSUE = '(title unavailable)';
     // Where an issue parked on 045 (or a pre-045 085) lights: Actionable, the issue side.
     const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // 015 triage-needed: actionable but no maintainer has looked at it yet.
@@ -13460,10 +13469,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const li = stageTrackerPRIssueSlot(item);
         prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title, (title ? title + ' · ' : '') + stageTrackerTooltip(shown, nowMs))];
         leadHtml = li.number
-          ? `<div class="ham-head-main">
+          ? `<div class="ham-head-main${li.closed ? ' ham-issue-closed' : ''}">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}
             <a class="ham-ref" href="${esc(li.url || '#')}" target="_blank" rel="noopener">#${li.number}</a>
-            <span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>
+            ${li.title ? `<span class="ham-title" title="${esc(li.title)}">${esc(li.title)}</span>` : `<span class="ham-title ham-no-issue-t">${esc(li.placeholder)}</span>`}${li.closed ? ' <span class="ham-badge ham-issue-closed-chip">closed</span>' : ''}
           </div>`
           : `<div class="ham-head-main ham-no-issue">
             ${stageTrackerIcon('issue', 'ham-kind-ico')}
@@ -13756,17 +13765,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return n;
     }
 
-    // What a PR row's issue slot shows: the open issue the PR closes (number,
-    // title, url) when one is known, else { text } for the placeholder —
-    // "linked issue #N closed" when GitHub links it to an issue that is no
-    // longer open, "no linked issue" when its body names none.
+    // What a PR row's issue slot shows: the issue the PR closes (number,
+    // title, url) — an open one first, else the closed one GitHub links
+    // it to, with closed: true so the row draws it struck through under a
+    // "closed" chip (a superseded PR whose body still says `Fixes #N`
+    // pairs with an issue an earlier PR already fixed) — or { text } for
+    // the "no linked issue" placeholder when its body names none. A closed
+    // issue whose title the server could not resolve shows the muted
+    // STAGE_TRACKER_CLOSED_ISSUE_TITLE placeholder, never a blank.
     function stageTrackerPRIssueSlot(item) {
       const linked = (Array.isArray(item.linked_issues) ? item.linked_issues : []).filter(li => li && Number(li.number) > 0);
       const open = linked.find(li => Number(li.number) === Number(item.nested_under)) || linked.find(li => li.listed || (li.state || '') === 'open');
       if (open) return { number: Number(open.number), title: open.title || '', url: open.url || '' };
-      const closed = linked.filter(li => (li.state || '') === 'closed');
-      if (closed.length) return { number: 0, text: 'linked issue ' + closed.map(li => '#' + Number(li.number)).join(', ') + ' closed' };
-      if (linked.length) return { number: Number(linked[0].number), title: linked[0].title || '', url: linked[0].url || '' };
+      const li = linked.find(l => (l.state || '') === 'closed') || linked[0];
+      if (li) {
+        const closed = (li.state || '') === 'closed';
+        const title = li.title || '';
+        return { number: Number(li.number), title: title, url: li.url || '', closed: closed, placeholder: !title && closed ? STAGE_TRACKER_CLOSED_ISSUE_TITLE : (!title ? STAGE_TRACKER_UNTITLED_ISSUE : '') };
+      }
       return { number: 0, text: 'no linked issue' };
     }
 

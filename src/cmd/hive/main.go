@@ -7025,6 +7025,11 @@ func runEvalCycle(
 		// (hivecommons/hive#13421); one shared collector keeps the budget at
 		// one query per repo for both.
 		ghClient.EnrichReviewSignalsAndWorkPRs(ctx, actionable.PRs.StaleDrafts, actionable.WorkDetailsByRepo)
+		// A closing reference whose issue is already closed (a superseded
+		// PR's `Fixes #N`) has no open row to borrow a title from; fill it
+		// once per issue, from a long-lived memo, so the activity monitor
+		// never shows a bare "#N".
+		ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
 	}
 
 	// Publish the human-facing "what should I merge next?" digest. This reads
