@@ -67,6 +67,22 @@ const (
 // while keeping the directory finite.
 const issueRequestMaxAge = 24 * time.Hour
 
+// issueRequestMaxIdenticalFailures is the shorter give-up horizon for a
+// create ("issue" kind) that keeps failing with the IDENTICAL error string:
+// eight consecutive identical failures on the exponential backoff above is
+// roughly an hour, after which the same answer is not an outage, it is the
+// request. The request is quarantined (.failed) with the path in an ERROR log
+// so an operator finds it, instead of running out the 24h horizon.
+const issueRequestMaxIdenticalFailures = 8
+
+// issueReconcileMaxAttempts caps how many times one request may fail with the
+// mutation journal's needs-reconciliation refusal before it is treated as
+// permanent. The create path reconciles the journaled operation against the
+// repo's open issues on every attempt (reconcileIssueCreate); three attempts
+// that still cannot resolve it mean the lookup itself is failing, and the
+// request should be quarantined for an operator rather than retried blind.
+const issueReconcileMaxAttempts = 3
+
 // IssueRequest is the JSON an agent writes to IssueRequestDir. Kind selects the
 // operation: "issue" (default) creates an issue; "comment" posts a comment on
 // an existing issue or PR (Number required); "claim" marks an issue as taken by
@@ -180,6 +196,12 @@ type issueRetryState struct {
 	attempts int
 	nextTry  time.Time
 	firstTry time.Time
+	// lastErr and identical track the run of consecutive failures with the
+	// same error string; reconcileFailures counts the needs-reconciliation
+	// refusals. Both feed the shorter give-up horizons for a create.
+	lastErr           string
+	identical         int
+	reconcileFailures int
 }
 
 // StartIssueRequestWatcher runs the loop that executes issue/comment requests
@@ -277,9 +299,12 @@ func (c *Client) issueBackoffAllows(path string, nowFn func() time.Time) bool {
 	return !nowFn().Before(st.nextTry)
 }
 
-// issueNoteFailure records a failed attempt and returns true when the request
-// has exceeded its give-up horizon and should be quarantined.
-func (c *Client) issueNoteFailure(path string, nowFn func() time.Time, err error) bool {
+// issueNoteFailure records a failed attempt and returns a non-empty reason
+// when the request has exceeded a give-up horizon and should be quarantined:
+// the 24h age horizon for every kind; for a create also
+// issueRequestMaxIdenticalFailures consecutive identical errors and
+// issueReconcileMaxAttempts needs-reconciliation refusals.
+func (c *Client) issueNoteFailure(path, kind string, nowFn func() time.Time, err error) string {
 	c.issueRetryMu.Lock()
 	defer c.issueRetryMu.Unlock()
 	if c.issueRetries == nil {
@@ -292,6 +317,20 @@ func (c *Client) issueNoteFailure(path string, nowFn func() time.Time, err error
 		c.issueRetries[path] = st
 	}
 	st.attempts++
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	if msg == st.lastErr {
+		st.identical++
+	} else {
+		st.lastErr, st.identical = msg, 1
+	}
+	if errors.Is(err, effects.ErrNeedsReconciliation) {
+		st.reconcileFailures++
+	} else {
+		st.reconcileFailures = 0
+	}
 	backoff := issueRetryBase << uint(min(st.attempts-1, 30))
 	if backoff > issueRetryMax || backoff <= 0 {
 		backoff = issueRetryMax
@@ -300,7 +339,31 @@ func (c *Client) issueNoteFailure(path string, nowFn func() time.Time, err error
 		backoff = retryableGitHubDelay(err, now, backoff, issueRetryMax, issueRetryRateLimitMax)
 	}
 	st.nextTry = now.Add(backoff)
-	return now.Sub(st.firstTry) > issueRequestMaxAge
+	switch {
+	case now.Sub(st.firstTry) > issueRequestMaxAge:
+		return "request exceeded retry horizon"
+	case kind == "issue" && st.reconcileFailures >= issueReconcileMaxAttempts:
+		return fmt.Sprintf("mutation journal could not be reconciled after %d attempts", st.reconcileFailures)
+	case kind == "issue" && st.identical >= issueRequestMaxIdenticalFailures:
+		return fmt.Sprintf("request failed %d consecutive times with the identical error", st.identical)
+	}
+	return ""
+}
+
+// quarantineFailedIssueRequest parks a request that can never succeed as
+// <path>.failed with its result and ONE error log naming the path, so an
+// operator can find and read it (see docs/hive-open-issue.md, "Retries").
+func (c *Client) quarantineFailedIssueRequest(path string, req IssueRequest, kind, why string, resp IssueResponse, nowFn func() time.Time) {
+	if resp.At == "" {
+		resp.At = nowFn().UTC().Format(time.RFC3339)
+	}
+	resp.OK = false
+	c.writeIssueResult(path, resp)
+	_ = os.Rename(path, path+".failed")
+	c.issueClearRetry(path)
+	c.logger.Error("issue-request watcher: request cannot succeed, quarantined as .failed",
+		slog.String("path", path+".failed"), slog.String("repo", req.Repo), slog.String("kind", kind),
+		slog.String("agent", req.Agent), slog.String("why", why), slog.String("error", resp.Error))
 }
 
 func (c *Client) issueClearRetry(path string) {
@@ -392,6 +455,13 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.issueClearRetry(path)
 		c.logger.Warn("issue-request watcher: malformed request quarantined",
 			slog.String("path", path), slog.String("reason", shapeErr))
+		return
+	}
+	// The repository gate: an impossible, placeholder or out-of-scope repo
+	// can never be written to, so it is quarantined now rather than retried
+	// — still before authorization and before any GitHub call.
+	if err := c.validateIssueRequestRepo(req.Repo); err != nil {
+		c.quarantineFailedIssueRequest(path, req, kind, "repository refused", IssueResponse{Error: err.Error()}, nowFn)
 		return
 	}
 
@@ -688,13 +758,13 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	if err != nil {
 		resp.OK = false
 		resp.Error = err.Error()
+		if issueRequestFailureIsPermanent(err) {
+			c.quarantineFailedIssueRequest(path, req, kind, "permanent failure", resp, nowFn)
+			return
+		}
 		c.writeIssueResult(path, resp)
-		gaveUp := c.issueNoteFailure(path, nowFn, err)
-		if gaveUp {
-			_ = os.Rename(path, path+".failed")
-			c.issueClearRetry(path)
-			c.logger.Error("issue-request watcher: request exceeded retry horizon, quarantined",
-				slog.String("path", path), slog.String("repo", req.Repo), slog.String("error", err.Error()))
+		if why := c.issueNoteFailure(path, kind, nowFn, err); why != "" {
+			c.quarantineFailedIssueRequest(path, req, kind, why, resp, nowFn)
 			return
 		}
 		c.logger.Warn("issue-request watcher: request failed, will retry with backoff",
@@ -1276,16 +1346,28 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
 	res, found := c.priorBucketIssueCreate(ctx, claim)
 	if !found {
-		var err error
-		res, err = effects.Execute(ctx, c.mutationBoundary(), claim,
-			func(ctx context.Context) (effects.Result, error) {
-				var apiErr error
-				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, ghReq)
-				if apiErr != nil {
-					return effects.Result{}, apiErr
+		create := func(ctx context.Context) (effects.Result, error) {
+			var apiErr error
+			issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, ghReq)
+			if apiErr != nil {
+				if isDefiniteIssueRefusal(apiErr) {
+					// GitHub understood and refused: the issue certainly
+					// does not exist, so the journal must record NotApplied
+					// (retry authorized) rather than Unknown (reconcile
+					// first) — an Unknown left behind a 404 on a placeholder
+					// repo fenced eleven identical requests for hours.
+					return effects.Result{}, effects.NotApplied(apiErr)
 				}
-				return effects.Result{Provenance: issue.GetHTMLURL()}, nil
-			})
+				return effects.Result{}, apiErr
+			}
+			return effects.Result{Provenance: issue.GetHTMLURL()}, nil
+		}
+		boundary := c.mutationBoundary()
+		var err error
+		res, err = effects.Execute(ctx, boundary, claim, create)
+		if errors.Is(err, effects.ErrNeedsReconciliation) {
+			res, err = c.reconcileIssueCreate(ctx, boundary, claim, owner, repoName, title, body, create, err)
+		}
 		if err != nil {
 			return CreateIssueResult{}, fmt.Errorf("creating issue in %s/%s: %w", owner, repoName, err)
 		}
@@ -1309,6 +1391,55 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
 	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
+}
+
+// issueCreateUnknownTTL bounds how long an issue-create operation may sit
+// unresolved (Planned/Unknown) in the mutation journal when reconciliation
+// against GitHub keeps failing. Past it the entry is expired to NotApplied
+// so the next attempt may run; the open-issue scan that precedes every
+// create is the duplicate guard for that attempt. One hour outlasts any
+// single GitHub incident while bounding how long identical requests can be
+// fenced behind one ambiguous failure.
+const issueCreateUnknownTTL = time.Hour
+
+// reconcileIssueCreate resolves an issue create the mutation journal holds as
+// unresolved — an earlier attempt at the SAME logical operation errored
+// ambiguously (network, 5xx) or was never acknowledged — from authoritative
+// external state, then replays the create once. The authoritative state is
+// the repo's open-issue list (strongly consistent, the same scan createIssue
+// runs before every create): an open twin by subject means the earlier
+// attempt applied, and the journal records its URL without creating again;
+// no twin means it did not, and the create retries under a fresh attempt.
+//
+// When the lookup itself fails the journal is asked to expire the entry if
+// it is older than issueCreateUnknownTTL; a younger entry keeps the
+// needs-reconciliation refusal (still wrapping effects.ErrNeedsReconciliation
+// so the watcher counts the attempt and gives up after
+// issueReconcileMaxAttempts).
+func (c *Client) reconcileIssueCreate(ctx context.Context, boundary effects.Boundary, claim effects.Claim, owner, repoName, title, body string, create func(context.Context) (effects.Result, error), journalErr error) (effects.Result, error) {
+	found, lookupErr := c.scanOpenIssues(WithRESTCaller(ctx, "hive:reconcile_issue_create"), owner, repoName, title, body, nil)
+	if lookupErr != nil {
+		expired, expErr := effects.ExpireUnresolved(ctx, boundary, claim, issueCreateUnknownTTL)
+		if expErr != nil {
+			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
+		}
+		if !expired {
+			return effects.Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, lookupErr)
+		}
+		c.logger.Warn("CreateIssue: unresolved create could not be reconciled and was expired past TTL; retrying",
+			slog.String("repo", owner+"/"+repoName), slog.String("lookup_error", lookupErr.Error()))
+		return effects.Execute(ctx, boundary, claim, create)
+	}
+	state := effects.ExternalState{}
+	if existing := found.subject; existing != nil {
+		state = effects.ExternalState{Applied: true, Provenance: existing.GetHTMLURL()}
+	}
+	if recErr := effects.Reconcile(ctx, boundary, claim, state); recErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
+	}
+	c.logger.Info("CreateIssue: reconciled unresolved create against the repo's open issues",
+		slog.String("repo", owner+"/"+repoName), slog.Bool("applied", state.Applied), slog.String("url", state.Provenance))
+	return effects.Execute(ctx, boundary, claim, create)
 }
 
 // issueCreateIdempotencyWindow bounds how long the mutation journal treats a

@@ -64,7 +64,34 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
-| `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
+| `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
+
+### `--repo` is validated before anything is written
+
+Every shape checks `--repo` first, and a refusal exits `2` with the reason and
+writes **nothing** — including under `--dry-run`:
+
+- it must be `owner/name` (letters, digits, `-`, `_`, `.`), so `<owner>/<repo>`,
+  `just-a-name` and `a/b/c` are refused;
+- it must not be a documentation placeholder — `owner/repo`, `org/repo`,
+  `OWNER/REPO`, `example/…`, `your-org/…`, `my-org/…`, `acme/…`, `…/my-repo`,
+  `…/placeholder` and the like (case-insensitive); the one exception is a name
+  the hive has literally configured as a repo, which is then real whatever it
+  is called;
+- when `$HIVE_REPOS` is set (every agent sandbox exports it, comma-separated),
+  it must be one of the repos listed there — the hive's configured repo set.
+
+The watcher re-applies the same three checks server-side (an unqualified
+`owner/name`, a placeholder, or a repo outside the hive's primary + fleet set
+is quarantined `.failed` on the first tick, never retried), so a request that
+bypasses the script cannot loop either. Why this exists: on 2026-10-22 three
+agents "smoke-tested" the relay with `--repo owner/repo --title t --body b`.
+Eleven identical requests landed in the queue, the first create 404ed, the
+effect ledger recorded the operation as *Unknown*, and because all eleven
+shared one content-derived idempotency key every retry for three hours failed
+with "operation must be reconciled against authoritative external state"
+until an operator quarantined them by hand. Use `--dry-run` to test; name your
+real repo.
 
 Both `--flag value` and `--flag=value` forms work. Flags `gh` accepts but this
 path does not need — `--assignee`/`-a`, `--milestone`/`-m`, `--project`/`-p`,
@@ -281,6 +308,30 @@ doubling up to a 15-minute ceiling. A request that still hasn't succeeded
 after **24 hours** is given up on and quarantined (renamed `.failed`), so a
 persistently failing request cannot hammer the forge indefinitely and the
 queue directory cannot grow without bound.
+
+Not every failure is worth retrying, so the watcher classifies the error
+first (`src/pkg/github/issue_request_errors.go`):
+
+| Class | Errors | What the watcher does |
+|---|---|---|
+| **Permanent** | `--repo` not `owner/name`; a documentation placeholder (`owner/repo`, `org/repo`, `example/…`, …); a repo outside the hive's configured set; GitHub `404`/`410` (repo or issue does not exist or the App is not installed there); `422` validation; `401`; `403` that is **not** a rate limit | Quarantined **immediately** (renamed `.failed`, `.result.json` written next to it, one `ERROR` log naming the `.failed` path). No retry: the next tick cannot change any of these. |
+| **Transient** | `5xx`, network/timeouts, primary or secondary rate limits (`429`, `403` rate-limit), effect-ledger *Unknown* (`must be reconciled against authoritative external state`) | Retried with the exponential backoff above. For *Unknown* the watcher first **reconciles**: it re-lists the repo's open issues for one with the same title/origin marker and settles the ledger entry as applied (returns that issue) or not applied (creates). If the lookup itself keeps failing, an entry older than **1 hour** is expired so the create can proceed; after **3** consecutive reconciliation failures the request is given up. |
+
+Two further give-up rules shorten the 24-hour horizon for `kind: issue`
+creates: **3** consecutive `must be reconciled` failures, or **8** consecutive
+failures with the *identical* error string (the error text is not changing,
+so neither is the outcome) — either quarantines the request `.failed` with an
+`ERROR` log naming the file.
+
+**Where to look.** Quarantined requests sit in
+`/var/run/hive-metrics/issue-requests/` on the hive host as
+`<agent>-<nonce>.json.failed` (gave up / permanent error), `.bad` (malformed)
+or `.denied` (authorization), each with a `<agent>-<nonce>.result.json`
+carrying `ok: false` and the final `error`. Grep the hive log for
+`issue-request watcher: request cannot succeed, quarantined as .failed` to
+find them; the `ERROR` line names the path, the agent and the reason. Delete the `.failed` file once understood, or rename
+it back to `.json` to retry after fixing the cause (for a placeholder repo
+there is nothing to retry — tell the agent to use `--dry-run`).
 
 A request that is structurally invalid — missing required fields for its
 kind, or an unrecognized kind — is rejected before authorization or any API

@@ -597,7 +597,7 @@ func TestIssueRequestWatcher_LabelParkReportsFailureWhenStageDidNotLand(t *testi
 			dir := withIssueDir(t)
 
 			reqPath, err := WriteIssueRequest(dir, IssueRequest{
-				Kind: "label", Repo: "o/site", Number: 219, Agent: "scanner",
+				Kind: "label", Repo: "o/r", Number: 219, Agent: "scanner",
 				Labels: []string{NeedsDecisionStageLabel},
 			})
 			if err != nil {

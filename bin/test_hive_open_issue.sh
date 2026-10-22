@@ -81,10 +81,10 @@ check_exit "missing --repo exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --title 'T' --body 'B'
 
 check_exit "missing --title exits 2" 2 \
-  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo 'org/repo' --body 'B'
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo 'hiveorg/widgets' --body 'B'
 
 check_exit "missing --body exits 2" 2 \
-  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo 'org/repo' --title 'T'
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo 'hiveorg/widgets' --title 'T'
 
 check_exit "all required args missing exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT"
@@ -94,7 +94,7 @@ echo ""
 echo "--- Successful request file creation ---"
 
 mkdir -p "$REQ_DIR"
-run_script "testbot" --repo "org/myrepo" --title "Test title" --body "Test body content"
+run_script "testbot" --repo "hiveorg/mywidgets" --title "Test title" --body "Test body content"
 
 REQ_FILE="$(find_req testbot)"
 if [ -n "$REQ_FILE" ] && [ -f "$REQ_FILE" ]; then
@@ -102,7 +102,7 @@ if [ -n "$REQ_FILE" ] && [ -f "$REQ_FILE" ]; then
   PASS=$((PASS + 1))
 
   GOT_REPO="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['repo'])" "$REQ_FILE")"
-  check "JSON repo field" "org/myrepo" "$GOT_REPO"
+  check "JSON repo field" "hiveorg/mywidgets" "$GOT_REPO"
 
   GOT_TITLE="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['title'])" "$REQ_FILE")"
   check "JSON title field" "Test title" "$GOT_TITLE"
@@ -127,7 +127,7 @@ mkdir -p "$REQ_DIR"
 echo ""
 echo "--- Label accumulation ---"
 
-run_script "labelbot" --repo "org/repo" --title "Labels test" --body "body" \
+run_script "labelbot" --repo "hiveorg/widgets" --title "Labels test" --body "body" \
   --label "quality" --label "testing" --label "hold"
 
 REQ_FILE="$(find_req labelbot)"
@@ -143,7 +143,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # Comma-separated labels in a single --label flag
-run_script "commabot" --repo "org/repo" --title "Comma labels" --body "body" \
+run_script "commabot" --repo "hiveorg/widgets" --title "Comma labels" --body "body" \
   --label "quality,testing,hold"
 
 REQ_FILE="$(find_req commabot)"
@@ -162,7 +162,7 @@ mkdir -p "$REQ_DIR"
 echo ""
 echo "--- --parent flag ---"
 
-run_script "parentbot" --repo "org/repo" --title "Split child" --body "body Part of #100" \
+run_script "parentbot" --repo "hiveorg/widgets" --title "Split child" --body "body Part of #100" \
   --parent 100
 
 REQ_FILE="$(find_req parentbot)"
@@ -178,7 +178,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # Omitting --parent must not add the field at all (optional, not zero-valued).
-run_script "noparentbot" --repo "org/repo" --title "No parent" --body "body"
+run_script "noparentbot" --repo "hiveorg/widgets" --title "No parent" --body "body"
 
 REQ_FILE="$(find_req noparentbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -193,7 +193,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # --- Section 3c: --blocked-by flag ("blocked by" dependency links, #9839) ---
-run_script "blockedbot" --repo "org/repo" --title "Second child" --body "body; lands after #10" \
+run_script "blockedbot" --repo "hiveorg/widgets" --title "Second child" --body "body; lands after #10" \
   --blocked-by 10 --blocked-by "#11,12" --blocked-by=12
 
 REQ_FILE="$(find_req blockedbot)"
@@ -210,7 +210,7 @@ mkdir -p "$REQ_DIR"
 
 # A non-numeric blocker is refused before anything is written.
 set +e
-run_script "badblockedbot" --repo "org/repo" --title "Bad blocker" --body "body" --blocked-by "ten" >/dev/null 2>&1
+run_script "badblockedbot" --repo "hiveorg/widgets" --title "Bad blocker" --body "body" --blocked-by "ten" >/dev/null 2>&1
 BAD_RC=$?
 set -e
 check "--blocked-by refuses a non-numeric blocker (exit 2)" "2" "$BAD_RC"
@@ -220,7 +220,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # --- Section 3d: --close-on-merge flag (filing-time opt-in, #10304) ---
-run_script "closeonmergebot" --repo "org/repo" --title "Sweep finding" --body "found by reading the code" --close-on-merge
+run_script "closeonmergebot" --repo "hiveorg/widgets" --title "Sweep finding" --body "found by reading the code" --close-on-merge
 
 REQ_FILE="$(find_req closeonmergebot)"
 if [ -n "$REQ_FILE" ]; then
@@ -235,7 +235,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # A body that already carries the marker is left alone.
-run_script "closeonmergedupbot" --repo "org/repo" --title "Sweep finding 2" --body "Hive: Close-On-Merge" --close-on-merge
+run_script "closeonmergedupbot" --repo "hiveorg/widgets" --title "Sweep finding 2" --body "Hive: Close-On-Merge" --close-on-merge
 
 REQ_FILE="$(find_req closeonmergedupbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -250,7 +250,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # Without the flag the body is unchanged.
-run_script "nocloseonmergebot" --repo "org/repo" --title "Symptom bug" --body "it broke"
+run_script "nocloseonmergebot" --repo "hiveorg/widgets" --title "Symptom bug" --body "it broke"
 
 REQ_FILE="$(find_req nocloseonmergebot)"
 if [ -n "$REQ_FILE" ]; then
@@ -266,7 +266,7 @@ mkdir -p "$REQ_DIR"
 
 # The flag only applies to a create; a comment with it is refused.
 set +e
-run_script "closeonmergecommentbot" comment --repo "org/repo" 5 --body "x" --close-on-merge >/dev/null 2>&1
+run_script "closeonmergecommentbot" comment --repo "hiveorg/widgets" 5 --body "x" --close-on-merge >/dev/null 2>&1
 BAD_RC=$?
 set -e
 check "--close-on-merge on a non-create is refused (exit 2)" "2" "$BAD_RC"
@@ -276,7 +276,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # --- Section 3e: --needs-decision flag (relay-applied park label, #11215) ---
-run_script "needsdecisionbot" --repo "org/repo" --title "Pick A or B" --body "maintainer picks A or B" --needs-decision
+run_script "needsdecisionbot" --repo "hiveorg/widgets" --title "Pick A or B" --body "maintainer picks A or B" --needs-decision
 
 REQ_FILE="$(find_req needsdecisionbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -292,7 +292,7 @@ fi
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
-run_script "noneedsdecisionbot" --repo "org/repo" --title "Plain finding" --body "it broke"
+run_script "noneedsdecisionbot" --repo "hiveorg/widgets" --title "Plain finding" --body "it broke"
 
 REQ_FILE="$(find_req noneedsdecisionbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -307,7 +307,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 set +e
-run_script "needsdecisioncommentbot" comment --repo "org/repo" 5 --body "x" --needs-decision >/dev/null 2>&1
+run_script "needsdecisioncommentbot" comment --repo "hiveorg/widgets" 5 --body "x" --needs-decision >/dev/null 2>&1
 BAD_RC=$?
 set -e
 check "--needs-decision on a non-create is refused (exit 2)" "2" "$BAD_RC"
@@ -317,7 +317,7 @@ rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
 # --parent=value style also works.
-run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
+run_script "eqparentbot" --repo=hiveorg/widgets --title="Eq parent" --body="body" --parent=42
 
 REQ_FILE="$(find_req eqparentbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -338,7 +338,7 @@ echo "--- --body-file reading ---"
 BODY_FILE="$TMPDIR_ROOT/body.md"
 printf '## Issue\n\nDetailed body from file.' > "$BODY_FILE"
 
-run_script "filebot" --repo "org/repo" --title "File body" --body-file "$BODY_FILE"
+run_script "filebot" --repo "hiveorg/widgets" --title "File body" --body-file "$BODY_FILE"
 
 REQ_FILE="$(find_req filebot)"
 if [ -n "$REQ_FILE" ]; then
@@ -355,11 +355,11 @@ mkdir -p "$REQ_DIR"
 
 # --body-file with nonexistent file exits 2
 check_exit "--body-file with missing file exits 2" 2 \
-  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo "org/repo" --title "T" --body-file "/nonexistent/path.md"
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo "hiveorg/widgets" --title "T" --body-file "/nonexistent/path.md"
 
 # --body-file="-" reads from stdin
 STDIN_BODY="Body from stdin pipe"
-echo "$STDIN_BODY" | run_script "stdinbot" --repo "org/repo" --title "Stdin body" --body-file "-"
+echo "$STDIN_BODY" | run_script "stdinbot" --repo "hiveorg/widgets" --title "Stdin body" --body-file "-"
 
 REQ_FILE="$(find_req stdinbot)"
 if [ -n "$REQ_FILE" ]; then
@@ -377,12 +377,12 @@ mkdir -p "$REQ_DIR"
 echo ""
 echo "--- Equals-sign argument style ---"
 
-run_script "eqbot" --repo=org/eqrepo --title="Eq title" --body="Eq body" --label=eqlabel
+run_script "eqbot" --repo=hiveorg/eqwidgets --title="Eq title" --body="Eq body" --label=eqlabel
 
 REQ_FILE="$(find_req eqbot)"
 if [ -n "$REQ_FILE" ]; then
   GOT_REPO="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['repo'])" "$REQ_FILE")"
-  check "--repo=value style works" "org/eqrepo" "$GOT_REPO"
+  check "--repo=value style works" "hiveorg/eqwidgets" "$GOT_REPO"
   GOT_LABELS="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(json.dumps(d['labels']))" "$REQ_FILE")"
   check "--label=value style works" '["eqlabel"]' "$GOT_LABELS"
 else
@@ -398,7 +398,7 @@ echo ""
 echo "--- HIVE_AGENT default ---"
 
 env -u HIVE_AGENT bash "$MODIFIED_SCRIPT" \
-  --repo "org/repo" --title "Default agent" --body "body" 2>/dev/null
+  --repo "hiveorg/widgets" --title "Default agent" --body "body" 2>/dev/null
 
 REQ_FILE="$(find_req agent)"
 if [ -n "$REQ_FILE" ]; then
@@ -416,7 +416,7 @@ mkdir -p "$REQ_DIR"
 echo ""
 echo "--- Atomic write ---"
 
-run_script "atombot" --repo "org/repo" --title "Atomic" --body "body"
+run_script "atombot" --repo "hiveorg/widgets" --title "Atomic" --body "body"
 
 # The .tmp file should not remain after successful completion
 TMP_FILES=("$REQ_DIR"/*.tmp)
@@ -434,7 +434,7 @@ rm -rf "$REQ_DIR"
 echo ""
 echo "--- REQ_DIR auto-creation ---"
 
-run_script "mkdirbot" --repo "org/repo" --title "Mkdir" --body "body"
+run_script "mkdirbot" --repo "hiveorg/widgets" --title "Mkdir" --body "body"
 
 if [ -d "$REQ_DIR" ]; then
   echo "  PASS: REQ_DIR created automatically"
@@ -453,11 +453,11 @@ echo "--- claim kind ---"
 
 # claim requires --repo and a number
 check_exit "claim without number exits 2" 2 \
-  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" claim --repo "org/repo"
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" claim --repo "hiveorg/widgets"
 check_exit "claim without repo exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" claim 42
 
-run_script "claimbot" claim --repo "org/repo" 77
+run_script "claimbot" claim --repo "hiveorg/widgets" 77
 REQ_FILE="$(find_req claimbot)"
 if [ -n "$REQ_FILE" ]; then
   GOT_KIND="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['kind'])" "$REQ_FILE")"
@@ -473,7 +473,7 @@ fi
 
 # claim accepts a PR/issue URL as the number
 rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
-run_script "urlbot" claim --repo "org/repo" "https://github.com/org/repo/issues/91"
+run_script "urlbot" claim --repo "hiveorg/widgets" "https://github.com/org/repo/issues/91"
 REQ_FILE="$(find_req urlbot)"
 if [ -n "$REQ_FILE" ]; then
   GOT_NUM="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['number'])" "$REQ_FILE")"
@@ -500,44 +500,89 @@ case "$DRY_OUT" in *'"body": "placeholder"'*) check "dry-run shows the body" "ye
 # Short form, and the flag may come first (gh puts it anywhere).
 rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
 check_exit "-n short form exits 0" 0 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" -n --repo org/repo --title t --body b
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" -n --repo hiveorg/widgets --title t --body b
 check "-n writes no request" "" "$(find_req probebot)"
 
 # Dry run still validates: a malformed request is reported, not previewed.
 check_exit "dry-run without --body still exits 2" 2 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --dry-run --repo org/repo --title t
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --dry-run --repo hiveorg/widgets --title t
 
 # Every shape honours it.
 rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
 check_exit "dry-run comment exits 0" 0 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --dry-run --repo org/repo 5 --body "hi"
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --dry-run --repo hiveorg/widgets 5 --body "hi"
 check_exit "dry-run claim exits 0" 0 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" claim --dry-run --repo org/repo 5
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" claim --dry-run --repo hiveorg/widgets 5
 check_exit "dry-run close exits 0" 0 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" close --dry-run --repo org/repo 5
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" close --dry-run --repo hiveorg/widgets 5
 check "dry-run comment/claim/close write no request" "" "$(find_req probebot)"
 
 # Unknown flags are refused, never swallowed on the way to a write.
 rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
 UNK_EXIT=0
-UNK_OUT="$(env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b --edit-last 2>&1)" || UNK_EXIT=$?
+UNK_OUT="$(env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo hiveorg/widgets --title t --body b --edit-last 2>&1)" || UNK_EXIT=$?
 check "unknown flag exits 2" "2" "$UNK_EXIT"
 check "unknown flag writes no request" "" "$(find_req probebot)"
 case "$UNK_OUT" in *"unsupported flag: --edit-last"*"nothing was created"*) check "unknown flag is named in the error" "yes" "yes";; *) check "unknown flag is named in the error" "yes" "no: $UNK_OUT";; esac
 check_exit "unknown flag on comment exits 2" 2 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --repo org/repo 5 --body b --create-if-none
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" comment --repo hiveorg/widgets 5 --body b --create-if-none
 check_exit "unknown short flag exits 2" 2 \
-  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b -x
+  env HIVE_AGENT=probebot bash "$MODIFIED_SCRIPT" --repo hiveorg/widgets --title t --body b -x
 
 # The documented gh no-op flags stay tolerated (value-taking and =-form).
 rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
-run_script "tolbot" --repo org/repo --title t --body b --assignee @me --web --milestone=v1
+run_script "tolbot" --repo hiveorg/widgets --title t --body b --assignee @me --web --milestone=v1
 REQ_FILE="$(find_req tolbot)"
 if [ -n "$REQ_FILE" ]; then
   check "tolerated gh flags still create" "t" "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['title'])" "$REQ_FILE")"
 else
   echo "  FAIL: tolerated gh flags blocked the request"; FAIL=$((FAIL + 1))
 fi
+
+# --- repo gate: placeholder / out-of-scope repos are refused before any write ---
+echo ""
+echo "--- repo gate: placeholders and \$HIVE_REPOS scope ---"
+
+for bad in owner/repo org/repo OWNER/REPO example/project your-org/your-repo acme/widgets 'hiveorg/<repo>' 'just-a-name' 'a/b/c'; do
+  rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+  BAD_EXIT=0
+  BAD_OUT="$(env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" --repo "$bad" --title t --body b 2>&1)" || BAD_EXIT=$?
+  check "repo '$bad' exits 2" "2" "$BAD_EXIT"
+  check "repo '$bad' writes no request" "" "$(find_req gatebot)"
+  case "$BAD_OUT" in *"nothing was written"*) check "repo '$bad' says nothing was written" "yes" "yes";; *) check "repo '$bad' says nothing was written" "yes" "no: $BAD_OUT";; esac
+done
+
+# The placeholder refusal points the agent at --dry-run.
+PH_OUT="$(env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" --repo owner/repo --title t --body b 2>&1)" || true
+case "$PH_OUT" in *"placeholder"*"--dry-run"*) check "placeholder error mentions --dry-run" "yes" "yes";; *) check "placeholder error mentions --dry-run" "yes" "no: $PH_OUT";; esac
+
+# --dry-run does not bypass the gate.
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+check_exit "dry-run with placeholder repo exits 2" 2 \
+  env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" --dry-run --repo owner/repo --title t --body b
+check "dry-run with placeholder repo writes nothing" "" "$(find_req gatebot)"
+
+# Every shape is gated, not just create.
+check_exit "comment with placeholder repo exits 2" 2 \
+  env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" comment --repo org/repo 5 --body hi
+check_exit "claim with placeholder repo exits 2" 2 \
+  env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" claim --repo org/repo 5
+check_exit "close with placeholder repo exits 2" 2 \
+  env HIVE_AGENT=gatebot bash "$MODIFIED_SCRIPT" close --repo org/repo 5
+check "gated shapes write no request" "" "$(find_req gatebot)"
+
+# $HIVE_REPOS scopes the repo set (case-insensitive, whitespace tolerant).
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+check_exit "repo outside HIVE_REPOS exits 2" 2 \
+  env HIVE_AGENT=gatebot HIVE_REPOS="hiveorg/widgets,hiveorg/docs" bash "$MODIFIED_SCRIPT" --repo hiveorg/other --title t --body b
+check "repo outside HIVE_REPOS writes nothing" "" "$(find_req gatebot)"
+SCOPE_OUT="$(env HIVE_AGENT=gatebot HIVE_REPOS="hiveorg/widgets" bash "$MODIFIED_SCRIPT" --repo hiveorg/other --title t --body b 2>&1)" || true
+case "$SCOPE_OUT" in *"not in this hive's configured repo set"*) check "scope error names the repo set" "yes" "yes";; *) check "scope error names the repo set" "yes" "no: $SCOPE_OUT";; esac
+env HIVE_AGENT=scopebot HIVE_REPOS=" hiveorg/widgets , HiveOrg/Docs" bash "$MODIFIED_SCRIPT" --repo hiveorg/docs --title t --body b >/dev/null 2>&1 || true
+check "repo inside HIVE_REPOS (case-insensitive) is written" "1" "$(find "$REQ_DIR" -name 'scopebot-*.json' | wc -l | tr -d ' ')"
+# A placeholder-looking name that the hive has literally configured is real.
+env HIVE_AGENT=cfgbot HIVE_REPOS="org/repo" bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b >/dev/null 2>&1 || true
+check "configured placeholder-looking repo is accepted" "1" "$(find "$REQ_DIR" -name 'cfgbot-*.json' | wc -l | tr -d ' ')"
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="

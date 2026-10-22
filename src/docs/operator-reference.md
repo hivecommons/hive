@@ -310,6 +310,30 @@ hub-side PR preflight configuration. CI is the sole verdict for repository rules
 agents fix red checks on the open PR and push follow-up commits so the failure
 and repair stay visible in CI history.
 
+### Issue-request quarantine (`issue-requests/*.failed`)
+
+The issue-request watcher (the `hive-open-issue` relay) classifies each failure
+before deciding whether to retry. Permanent errors — a `--repo` that is not
+`owner/name`, a documentation placeholder such as `owner/repo`, a repo outside
+the hive's primary + fleet set, GitHub `404`/`410`/`422`/`401`, or a `403`
+that is not a rate limit — are quarantined on the first tick. Transient errors
+(`5xx`, network, rate limits, an effect-ledger entry left *Unknown*) back off
+exponentially; an *Unknown* ledger entry is reconciled against the repo's open
+issues and expired after one hour if the lookup keeps failing, and a `kind:
+issue` create is given up after 3 consecutive reconciliation failures or 8
+consecutive identical errors rather than the general 24-hour horizon.
+
+When a request is given up the watcher renames it
+`/var/run/hive-metrics/issue-requests/<agent>-<nonce>.json.failed`, writes
+`<agent>-<nonce>.result.json` with `ok: false` and the final `error`, and logs
+one `ERROR` — `issue-request watcher: request cannot succeed, quarantined as
+.failed` — naming the path, agent, repo and reason. Malformed requests land as
+`.bad`, authorization refusals as `.denied`. Delete a `.failed` file once
+understood, or rename it back to `.json` to retry after fixing the cause. A
+pile of `.failed` files from one agent with `repo: owner/repo` means that
+agent is smoke-testing the relay live: point it at `hive-open-issue --dry-run`.
+See [hive-open-issue.md](hive-open-issue.md#retries-and-what-happens-when-a-request-cant-be-fulfilled).
+
 For runtime precedence and provenance, see [config-layering.md](config-layering.md).
 
 ## App self-merge sweep (`auto_merge`)

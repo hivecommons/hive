@@ -150,6 +150,49 @@ func (b *Boundary) Reconcile(_ context.Context, claim effects.Claim, state effec
 	return err
 }
 
+// ExpireUnresolved implements effects.Expirer: when claim's journaled
+// operation is still Planned or Unknown and its last transition is older
+// than ttl, it is reconciled to NotApplied so the same logical operation may
+// be attempted again. A Known external observation (Reconcile) is always
+// preferred; this is for the case where none can be obtained and the entry
+// would otherwise fence every retry forever. Off mode journals nothing.
+func (b *Boundary) ExpireUnresolved(_ context.Context, claim effects.Claim, ttl time.Duration) (bool, error) {
+	if b == nil || ttl <= 0 {
+		return false, nil
+	}
+	executor := b.Executor
+	if b.Mode != nil {
+		executor.Mode = b.Mode()
+	}
+	if !JournalingEnabled(executor.Mode) {
+		return false, nil
+	}
+	if err := claim.Validate(); err != nil {
+		return false, fmt.Errorf("invalid mutation claim: %v", err)
+	}
+	if executor.Journal == nil {
+		return false, fmt.Errorf("mutation boundary requires a journal when mode is enabled")
+	}
+	id := boundaryEffect(claim).LogicalID()
+	op, ok := executor.Journal.Get(id)
+	if !ok || (op.Status != StatusPlanned && op.Status != StatusUnknown) {
+		return false, nil
+	}
+	now := executor.now()
+	if now.Sub(op.UpdatedAt) < ttl {
+		return false, nil
+	}
+	if _, err := executor.Journal.Reconcile(id, ExternalState{Known: true, Applied: false}, now); err != nil {
+		return false, err
+	}
+	if b.Logger != nil {
+		b.Logger.Warn("external mutation unresolved past TTL; expired to not-applied so a retry may proceed",
+			"repo", claim.Repo, "kind", claim.Kind, "target", claim.Target,
+			"status", op.Status, "age", now.Sub(op.UpdatedAt).String())
+	}
+	return true, nil
+}
+
 // LookupApplied implements effects.Lookup: it reports claim's journaled
 // provenance when the SAME logical ID Execute would derive is already
 // Applied. It reads only; it never acquires the ledger claim, journals an

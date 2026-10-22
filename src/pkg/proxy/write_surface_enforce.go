@@ -91,7 +91,7 @@ func WriteSurfaceGraphQLRefusal(enforced func(agent string) bool, agent string, 
 // write. It names the relay to use instead, so the agent reroutes rather than
 // hunting for a permissions bug.
 func WriteSurfaceEnforceReason(agent, kind string) string {
-	instead := "use the hive relays instead: `hive-open-pr` (open a PR), `hive-open-issue` (issue, comment, claim, label, close, request-review), `hive-review`, `hive-merge`, `hive-push-branch` (push a branch)"
+	instead := "use the hive relays instead: `hive-open-pr` (open a PR), `hive-open-issue` (issue, comment, claim, label, close, request-review), `hive-review`, `hive-merge`, `hive-push-branch` (push a branch). Live relay calls create REAL GitHub objects on a REAL repo: to check a relay works, use its `--dry-run` flag with your actual `--repo`, never a placeholder like `owner/repo`"
 	if kind == WriteSurfaceKindGitPush {
 		instead = "use `hive-push-branch --repo <owner/repo>` to push your branch, then `hive-open-pr` to open the PR"
 	}

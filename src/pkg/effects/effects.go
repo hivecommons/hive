@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -77,6 +78,32 @@ func Reconcile(ctx context.Context, boundary Boundary, claim Claim, state Extern
 		return nil
 	}
 	return r.Reconcile(ctx, claim, state)
+}
+
+// Expirer is implemented by boundaries that journal effects and can give up
+// on an operation left unresolved (Planned/Unknown) for longer than a TTL
+// when no authoritative observation is obtainable.
+type Expirer interface {
+	ExpireUnresolved(ctx context.Context, claim Claim, ttl time.Duration) (bool, error)
+}
+
+// ExpireUnresolved resolves claim's operation to not-applied when the
+// boundary journals it as unresolved and its last transition is older than
+// ttl, authorizing a retry. It reports whether anything was expired.
+// Boundaries that do not journal (nil, NoopBoundary) have nothing to expire.
+//
+// This is the escape hatch for an operation nothing can reconcile — the
+// external lookup itself keeps failing — so an unresolved entry can never
+// fence every identical request forever. Callers run their own duplicate
+// check (an open-issue scan, an open-PR-by-head lookup) before any retry, so
+// expiry trades a bounded chance of one duplicate for a guaranteed end to a
+// deadlock.
+func ExpireUnresolved(ctx context.Context, boundary Boundary, claim Claim, ttl time.Duration) (bool, error) {
+	e, ok := boundary.(Expirer)
+	if !ok {
+		return false, nil
+	}
+	return e.ExpireUnresolved(ctx, claim, ttl)
 }
 
 // Lookup is implemented by boundaries that journal effects and can report,
@@ -233,6 +260,10 @@ func (b LoggingBoundary) Execute(ctx context.Context, claim Claim, effect func(c
 
 func (b LoggingBoundary) Reconcile(ctx context.Context, claim Claim, state ExternalState) error {
 	return Reconcile(ctx, b.Next, claim, state)
+}
+
+func (b LoggingBoundary) ExpireUnresolved(ctx context.Context, claim Claim, ttl time.Duration) (bool, error) {
+	return ExpireUnresolved(ctx, b.Next, claim, ttl)
 }
 
 func (c Claim) Validate() error {

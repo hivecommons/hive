@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestClaimValidate(t *testing.T) {
@@ -179,5 +180,31 @@ func TestLoggingBoundaryNilNextRunsEffect(t *testing.T) {
 		func(context.Context) (Result, error) { return Result{Provenance: "direct"}, nil })
 	if err != nil || res.Provenance != "direct" {
 		t.Fatalf("Execute = %+v, %v", res, err)
+	}
+}
+
+type stubExpirer struct {
+	stubBoundary
+	expired bool
+	ttl     time.Duration
+}
+
+func (s *stubExpirer) ExpireUnresolved(_ context.Context, _ Claim, ttl time.Duration) (bool, error) {
+	s.ttl = ttl
+	return s.expired, nil
+}
+
+func TestExpireUnresolvedForwardsOnlyToExpirers(t *testing.T) {
+	claim := Claim{Repo: "o/r", Kind: KindIssueCreate, Target: "t"}
+	if expired, err := ExpireUnresolved(context.Background(), NoopBoundary{}, claim, time.Hour); err != nil || expired {
+		t.Fatalf("non-journaling boundary: (%v, %v), want (false, nil)", expired, err)
+	}
+	if expired, err := ExpireUnresolved(context.Background(), nil, claim, time.Hour); err != nil || expired {
+		t.Fatalf("nil boundary: (%v, %v), want (false, nil)", expired, err)
+	}
+	next := &stubExpirer{expired: true}
+	expired, err := LoggingBoundary{Next: next}.ExpireUnresolved(context.Background(), claim, time.Hour)
+	if err != nil || !expired || next.ttl != time.Hour {
+		t.Fatalf("LoggingBoundary must forward to its Next: (%v, %v, ttl=%s)", expired, err, next.ttl)
 	}
 }

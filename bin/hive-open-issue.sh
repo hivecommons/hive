@@ -61,7 +61,18 @@
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
-# created. A flag this shim does not understand is REFUSED (exit 2), never
+# created. USE IT TO TEST. A live call (no --dry-run) creates a real GitHub
+# issue/comment/label change under the hive's App identity that you cannot
+# undo yourself; never "smoke-test" the relay with a made-up repo or a
+# placeholder title. --repo is validated BEFORE anything is written: it must
+# be a real `owner/name` (letters, digits, `-`, `_`, `.`), must not be a
+# documentation placeholder (`owner/repo`, `org/repo`, `OWNER/REPO`,
+# `example/…`, `your-org/…`, `<owner>/<repo>` …), and when $HIVE_REPOS is set
+# must be one of the repos listed there (your hive's configured repo set).
+# Any of these exits 2 with the reason and writes nothing — including under
+# --dry-run. Live on 2026-10-22, eleven `owner/repo` smoke-test requests from
+# three agents cost the hive three hours of retries against a repository that
+# cannot exist. A flag this shim does not understand is REFUSED (exit 2), never
 # silently dropped: the original parser swallowed unknown flags, so an agent
 # probing its access with `gh issue create --dry-run` filed a real issue with
 # the body "placeholder" that its create-only token could not then edit,
@@ -254,6 +265,44 @@ else
     echo "hive-open-issue: comment requires --repo, a number (or URL), and --body" >&2
     exit 2
   fi
+fi
+
+# --repo gate (hivecommons/hive, live 2026-10-22). Mirrors the watcher's
+# validateIssueRequestRepo in src/pkg/github/issue_request_errors.go — keep
+# the placeholder lists in step. Every refusal writes nothing and exits 2, so
+# a probe with a made-up repo cannot leave a request the hive will retry.
+if ! [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "hive-open-issue: --repo must be owner/name (letters, digits, '-', '_', '.'), got '$REPO'; nothing was written. Name a real repo from \$HIVE_REPOS (${HIVE_REPOS:-unset})." >&2
+  exit 2
+fi
+REPO_OWNER_LC="$(printf '%s' "${REPO%%/*}" | tr '[:upper:]' '[:lower:]')"
+REPO_NAME_LC="$(printf '%s' "${REPO#*/}" | tr '[:upper:]' '[:lower:]')"
+REPO_IS_PLACEHOLDER=0
+case "$REPO_OWNER_LC" in
+  owner|org|organization|orgname|org-name|example|example-org|exampleorg|your-org|yourorg|your_org|your-organization|my-org|myorg|my_org|acme|user|username|placeholder) REPO_IS_PLACEHOLDER=1;;
+esac
+case "$REPO_NAME_LC" in
+  repo|repository|reponame|repo-name|your-repo|yourrepo|your_repo|your-repository|my-repo|myrepo|my_repo|example-repo|placeholder) REPO_IS_PLACEHOLDER=1;;
+esac
+REPO_IN_SCOPE=0
+if [ -n "${HIVE_REPOS:-}" ]; then
+  REPO_LC="$REPO_OWNER_LC/$REPO_NAME_LC"
+  IFS=',' read -r -a HIVE_REPO_LIST <<< "${HIVE_REPOS},${HIVE_REPO:-}"
+  for candidate in "${HIVE_REPO_LIST[@]}"; do
+    candidate="$(printf '%s' "$candidate" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+    [ -n "$candidate" ] || continue
+    if [ "$candidate" = "$REPO_LC" ]; then REPO_IN_SCOPE=1; break; fi
+  done
+fi
+# A placeholder is refused unless the hive has literally configured that
+# name as one of its repos (then it is real, whatever it is called).
+if [ "$REPO_IS_PLACEHOLDER" -eq 1 ] && [ "$REPO_IN_SCOPE" -eq 0 ]; then
+  echo "hive-open-issue: --repo '$REPO' is a documentation placeholder, not a repository; nothing was written. Name a real repo from \$HIVE_REPOS (${HIVE_REPOS:-unset}). To test this tool safely use --dry-run; a live call creates a real GitHub object." >&2
+  exit 2
+fi
+if [ -n "${HIVE_REPOS:-}" ] && [ "$REPO_IN_SCOPE" -eq 0 ]; then
+  echo "hive-open-issue: --repo '$REPO' is not in this hive's configured repo set (\$HIVE_REPOS=$HIVE_REPOS); nothing was written." >&2
+  exit 2
 fi
 
 AGENT="${HIVE_AGENT:-agent}"
