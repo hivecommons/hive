@@ -354,6 +354,13 @@ func complianceExportCSV(kind string, meta complianceExportMeta, evidence []byte
 	if len(rows) == 0 {
 		return nil, fmt.Errorf("%s CSV has no header", kind)
 	}
+	// Hash the domain CSV as it will be delivered, not the input bytes:
+	// csv.Reader normalises CRLF inside quoted cells to LF, so a verifier
+	// reconstructing the domain rows from the envelope must see the same bytes.
+	var domain bytes.Buffer
+	if err := csv.NewWriter(&domain).WriteAll(rows); err != nil {
+		return nil, fmt.Errorf("encoding %s CSV: %w", kind, err)
+	}
 	metaRaw, err := json.Marshal(meta)
 	if err != nil {
 		return nil, fmt.Errorf("encoding CSV metadata: %w", err)
@@ -362,7 +369,7 @@ func complianceExportCSV(kind string, meta complianceExportMeta, evidence []byte
 		Algorithm: "sha256",
 		Entries: []complianceExportManifestEntry{
 			newComplianceManifestEntry("meta", "application/json", metaRaw),
-			newComplianceManifestEntry(kind, "text/csv; line-endings=LF", evidence),
+			newComplianceManifestEntry(kind, "text/csv; line-endings=LF", domain.Bytes()),
 		},
 	}
 	manifestRaw, err := json.Marshal(manifest)

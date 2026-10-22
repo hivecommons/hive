@@ -313,7 +313,9 @@ func TestHandleComplianceExportKinds(t *testing.T) {
 	now := time.Now().UTC()
 	complianceEvidenceNow = func() time.Time { return now }
 	seedPostureRuns(t, s, now.Add(-2*time.Hour), now.Add(-time.Hour))
-	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`"}`, true)
+	// The CRLF inside the note exercises csv.Reader's quoted-cell newline
+	// normalisation; the manifest must hash the delivered (LF) bytes.
+	rr := complianceEvidenceRequest(t, s, http.MethodPost, "/api/compliance/attestations", `{"framework":"soc2-type2","reviewed_on":"`+now.Format("2006-01-02")+`","note":"a\r\nb"}`, true)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("seed attestation: %d %s", rr.Code, rr.Body.String())
 	}
