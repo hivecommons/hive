@@ -169,8 +169,15 @@ func (o advisoryPublishOutcome) String() string {
 	return fmt.Sprintf("advisoryPublishOutcome(%d)", int(o))
 }
 
-// archivedAdvisoryRepos remembers repos whose digest write was refused as
-// archived, so later cycles skip them instead of retrying and self-reporting.
+// Reasons a repo is permanently skipped for advisory digest posts.
+const (
+	advisorySkipArchived      = "archived"
+	advisorySkipNotAccessible = "not_accessible"
+)
+
+// archivedAdvisoryRepos remembers repos whose digest write was permanently
+// refused (archived or not accessible by the App), keyed to the skip reason,
+// so later cycles skip them instead of retrying and self-reporting.
 var archivedAdvisoryRepos sync.Map
 
 // publishAdvisoryDigest writes an already-rendered digest comment to its
@@ -256,10 +263,27 @@ func publishAdvisoryDigest(
 		return advisoryPublishPosted
 	}
 
-	if classifyAdvisoryPostError(err) == advisoryPostRepoArchived {
-		archivedAdvisoryRepos.Store(route.primaryRepo, struct{}{})
-		logger.Warn("advisory repo is archived and read-only, skipping digest posts", "repo", route.primaryRepo)
+	var movedErr *github.RepoMovedError
+	switch classifyAdvisoryPostError(err) {
+	case advisoryPostRepoArchived:
+		archivedAdvisoryRepos.Store(route.primaryRepo, advisorySkipArchived)
+		logger.Warn("advisory repo is archived and read-only, skipping digest posts", "repo", route.primaryRepo, "reason", advisorySkipArchived)
 		return advisoryPublishSkipped
+	case advisoryPostWriteForbidden:
+		if errors.As(err, &movedErr) {
+			break
+		}
+		// The App has no write access to this repo; retrying cannot fix it.
+		archivedAdvisoryRepos.Store(route.primaryRepo, advisorySkipNotAccessible)
+		logger.Warn("advisory repo is not writable by the App, skipping digest posts", "repo", route.primaryRepo, "reason", advisorySkipNotAccessible, "error", err)
+		if deps.recordWriteForbidden != nil {
+			deps.recordWriteForbidden(route.primaryRepo)
+		}
+		if deps.onWriteForbidden != nil {
+			deps.onWriteForbidden(ctx)
+		}
+		return advisoryPublishSkipped
+	default:
 	}
 
 	// err.Error() is the same string logged below — log-safe, never key material.

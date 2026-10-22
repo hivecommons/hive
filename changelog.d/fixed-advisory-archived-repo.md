@@ -1,1 +1,1 @@
-- Advisory digest posts to archived (read-only) repositories are no longer retried every cycle or self-reported as failures (#13570)
+- Advisory digest posts to archived (read-only) repositories (`403 Repository was archived`) or repositories the App cannot write to (`403 Resource not accessible by integration`) are no longer retried every cycle or self-reported as failures (#13570, #13564)

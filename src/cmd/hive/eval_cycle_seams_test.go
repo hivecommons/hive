@@ -497,6 +497,7 @@ func TestClassifyAdvisoryPostError(t *testing.T) {
 		{"403 rate limit is rate-limited, not write-forbidden", "403 API rate limit exceeded for installation ID 1", advisoryPostRateLimited},
 		{"secondary rate limit without a status code is rate-limited", "You have exceeded a secondary Rate Limit", advisoryPostRateLimited},
 		{"403 archived repository is permanent", "PATCH https://api.github.com/repos/o/r/issues/comments/1: 403 Repository was archived so is read-only. []", advisoryPostRepoArchived},
+		{"403 not accessible by integration is permanent", "POST https://api.github.com/repos/o/r/issues/2/comments: 403 Resource not accessible by integration []", advisoryPostWriteForbidden},
 		// 106a95fc: a 401 must reach the auth probe, not be swallowed.
 		{"401 bad credentials goes to the auth probe", "401 Bad credentials", advisoryPostAuthProbe},
 		{"resource not accessible without 403 goes to the auth probe", "Resource not accessible by integration", advisoryPostAuthProbe},
