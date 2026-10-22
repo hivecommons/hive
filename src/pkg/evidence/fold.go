@@ -21,12 +21,16 @@ import (
 // per-PR counts reconcile (hivecommons/hive#12516).
 type PR struct {
 	*Bundle
-	OpenedAt     time.Time
-	Merge        *MergeEvent
-	RevertOf     []string
-	FollowupOf   []string
-	RevertedBy   []string
-	FollowedUpBy []string
+	// ControlWindow folds the PR's assignment across heads. Conflicting or
+	// invalid assignments are unknown, not whichever head was written last.
+	ControlWindow   string
+	controlConflict bool
+	OpenedAt        time.Time
+	Merge           *MergeEvent
+	RevertOf        []string
+	FollowupOf      []string
+	RevertedBy      []string
+	FollowedUpBy    []string
 	// IssueReopens unions the issue_reopens of every record of the PR
 	// (hivecommons/hive#13241).
 	IssueReopens []IssueReopen
@@ -150,6 +154,14 @@ func FoldPRs(bundles []*Bundle, repo, kind string) map[string]*PR {
 			}
 			if opened.Before(p.OpenedAt) {
 				p.OpenedAt = opened
+			}
+		}
+		if arm := b.ControlWindow; arm != "" && !p.controlConflict {
+			if (arm != ControlWindowOn && arm != ControlWindowOff) || (p.ControlWindow != "" && p.ControlWindow != arm) {
+				p.ControlWindow = ""
+				p.controlConflict = true
+			} else {
+				p.ControlWindow = arm
 			}
 		}
 		if b.Merge != nil && (p.Merge == nil || b.Merge.At.After(p.Merge.At)) {

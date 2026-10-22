@@ -46,6 +46,9 @@ type EvidenceSummary struct {
 	// "all"), so a client can tell "not enough data" from "window too short".
 	AvailableWindows map[string]int              `json:"available_windows"`
 	Outcomes         map[string]EvidenceOutcomes `json:"outcomes_by_author_kind"`
+	// ControlArm is the descriptive within-repo on/off comparison; unassigned
+	// records are disclosed separately and no merge or dispatch gate reads it.
+	ControlArm EvidenceControl `json:"control_arm"`
 	// OutcomesByAuthorFamily is Outcomes keyed by the author's model family
 	// (claude / gpt / gemini / other, "human" for a person's PR, "unknown"
 	// for an agent whose model was not recorded) — hivecommons/hive#13243.
@@ -903,6 +906,7 @@ func buildEvidenceSummaryWindowHints(bundles []*evidence.Bundle, hints map[strin
 		resp.To = win.To.Format(time.RFC3339)
 	}
 	latest := evidenceLatestPerPR(bundles, hints, win, repo, kind)
+	resp.ControlArm = evidenceControl(latest)
 	keys := make([]string, 0, len(latest))
 	for k := range latest {
 		keys = append(keys, k)

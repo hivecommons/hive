@@ -25787,6 +25787,35 @@ function burnAreaChart() {
     // viewBox width of every .ev-svg; the stylesheet pins the rendered width
     // to the same px so labels keep the dashboard's font size (1 unit = 1px).
     const EV_SVG_W = 320;
+    // Report-only, within-repo on/off contrasts. The server guards each
+    // metric by its own denominator, not merely the number of tagged PRs.
+    function evControlArmHtml(control) {
+      control = control || {};
+      const repos = Array.isArray(control.by_repo) ? control.by_repo : [];
+      const minN = Math.max(20, Number(control.min_n) || 20);
+      const unassigned = Number(control.unassigned) || 0;
+      const note = `<div class="ev-note">Control arm: Hive dispatch on vs scheduled off, within repo. ${unassigned} PR(s) unassigned or conflicting; excluded, never inferred as on. Δ = on − off; withheld below n=${minN} in either metric denominator. Descriptive, not causal; assignment/collection rollout is not yet enabled.</div>`;
+      if (!repos.length) return note + '<div class="ev-note">No prospectively assigned control-window observations.</div>';
+      const metrics = [
+        ['merged_rate', 'Merged / known outcomes'], ['closed_rate', 'Closed / known outcomes'],
+        ['open_rate', 'Open / known outcomes'], ['reverted_14d_rate', 'Reverted / merged (14 d)'],
+        ['issue_reopened_14d_rate', 'Issue reopened / merged (14 d)'], ['ci_pass_rate', 'CI pass / settled CI'],
+        ['median_time_to_merge_hours', 'Median open → merge (hours)'],
+      ];
+      return note + repos.map((r) => {
+        const on = r.on || {}, off = r.off || {}, deltas = r.delta || {};
+        const rows = metrics.map(([key, label]) => {
+          const a = (on.metrics || {})[key] || {}, b = (off.metrics || {})[key] || {};
+          const hours = key === 'median_time_to_merge_hours';
+          const format = (v) => v == null ? '—' : hours ? Number(v).toFixed(1) : (Number(v) * 100).toFixed(1) + '%';
+          const d = deltas[key];
+          const delta = d == null || Number(a.n) < minN || Number(b.n) < minN ? 'withheld' : (Number(d) > 0 ? '+' : '') + (hours ? Number(d).toFixed(1) + ' h' : (Number(d) * 100).toFixed(1) + ' pp');
+          return `<tr><td>${label}</td><td>${format(a.value)} (n=${Number(a.n) || 0})</td><td>${format(b.value)} (n=${Number(b.n) || 0})</td><td>${delta}</td></tr>`;
+        }).join('');
+        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><table><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }).join('');
+    }
+
     function evOutcomesSvg(outcomes) {
       outcomes = outcomes || {};
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
@@ -26307,7 +26336,7 @@ function burnAreaChart() {
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
-        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
+        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
           `The self-reported series includes ${Number(dto.reviewer_calibration_legacy) || 0} legacy verdict(s) using the old verdict-based confidence. The derived series excludes verdicts without a recorded derived score; n counts only the selected series. Slopes pool perspectives and compare the endpoint rise per bin across bins with at least five known outcomes, using each series’ available records. Later CI results never rewrite a recorded derived score. This calibration panel plots merge and block rates. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
