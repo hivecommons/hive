@@ -30,6 +30,9 @@ func SetHeartbeatStateForTest(enabled bool, lastAttempt, lastSuccess time.Time) 
 func ResetHeartbeatStateForTest() {
 	SetHeartbeatStateForTest(false, time.Time{}, time.Time{})
 	lastGoodPayload.Lock()
+	// Invalidate any collect goroutine still running from an earlier test
+	// (same lock as its late store) so it cannot repopulate the cache.
+	heartbeatStateGeneration.Add(1)
 	lastGoodPayload.payload = nil
 	lastGoodPayload.Unlock()
 	// The collect-independent identity is process-global too. Clearing it keeps

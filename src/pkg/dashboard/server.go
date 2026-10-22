@@ -108,6 +108,9 @@ type Server struct {
 	// the status snapshot, served until its TTL lapses (stage_tracker.go).
 	stageTrackerCache   stageTrackerCache
 	stageTrackerCacheMu sync.Mutex
+	// evidenceHB is the background-refreshed evidence aggregate the hub
+	// heartbeat reads (evidence_heartbeat.go); zero value is ready to use.
+	evidenceHB evidenceHeartbeatCache
 	// stageTrackerServed flips once /api/stage-tracker has been built; it
 	// gates the SSE nudge UpdateStatusIfFresh sends after a publish.
 	stageTrackerServed bool

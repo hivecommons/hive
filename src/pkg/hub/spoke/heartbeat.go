@@ -1812,6 +1812,17 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 // is recovered and reported as a nil (skipped) payload rather than crashing
 // the heartbeat goroutine.
 func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout time.Duration, logger *slog.Logger) *HeartbeatPayload {
+	// Per-section recorder for this collect, found by TimedSection through
+	// currentCollectTimings. Cleared on return only if still ours (CAS), so a
+	// straggling collect never clears a successor's recorder.
+	timings := newCollectTimings()
+	currentCollectTimings.Store(timings)
+	defer currentCollectTimings.CompareAndSwap(timings, nil)
+	gen := heartbeatStateGeneration.Load()
+
+	// timedOut is set by the waiter before it gives up; the collect goroutine
+	// reads it after collect() returns to decide whether its payload is late.
+	var timedOut atomic.Bool
 	// Buffered so the collect goroutine can always complete its send and exit
 	// even after we have stopped waiting — prevents a permanent goroutine leak
 	// once the blocker (NFS) finally releases.
@@ -1825,7 +1836,21 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 				done <- nil
 			}
 		}()
-		done <- collect()
+		payload := collect()
+		if timedOut.Load() && payload != nil && storeLateGoodPayload(payload, gen) {
+			// Late but complete. A spoke whose collect takes 10–30 s EVERY
+			// beat never finishes inside the budget, so without this it never
+			// populates the last-good cache and sends the identity-only MINIMAL
+			// beat forever — the hub shows it with no stats at all. Caching the
+			// late result lets the NEXT beat send full (merely stale) stats.
+			publishHeartbeatIdentity(payload)
+			if logger != nil {
+				logger.Info("hub heartbeat collect finished after its budget; cached as last-good for the next beat",
+					"took", time.Since(timings.started).Round(time.Millisecond).String(),
+					"timeout", timeout.String())
+			}
+		}
+		done <- payload
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -1834,17 +1859,45 @@ func collectWithTimeout(ctx context.Context, collect StatusCollector, timeout ti
 	case payload := <-done:
 		return payload
 	case <-timer.C:
+		timedOut.Store(true)
 		if logger != nil {
 			// The CALLER decides what to do with a timed-out collect (send
 			// cached last-good stats, or skip on the first beats) — it logs the
-			// outcome. Here we only note the timeout itself.
+			// outcome. Here we only note the timeout itself, then name the
+			// sections that consumed the budget.
 			logger.Warn("hub heartbeat collect timed out; loop keeps ticking so liveness stays green",
 				"timeout", timeout.String())
+			logCollectTimeoutBreakdown(logger, timings, timeout)
 		}
 		return nil
 	case <-ctx.Done():
+		timedOut.Store(true)
 		return nil
 	}
+}
+
+// heartbeatStateGeneration is bumped by ResetHeartbeatStateForTest (under
+// lastGoodPayload's lock) so a collect goroutine that straggles past a reset
+// (tests release their wedged collectors in Cleanup) does not cache its late
+// payload into the next test's pristine state. Never changes in production.
+var heartbeatStateGeneration atomic.Uint64
+
+// storeLateGoodPayload is storeLastGoodPayload for a collect that finished
+// after its budget: it stores only if the heartbeat state has not been reset
+// since the collect began, checking and storing under one lock so a reset
+// cannot slip between the two. Reports whether it stored.
+func storeLateGoodPayload(p *HeartbeatPayload, gen uint64) bool {
+	c := clonePayload(p)
+	if c == nil {
+		return false
+	}
+	lastGoodPayload.Lock()
+	defer lastGoodPayload.Unlock()
+	if heartbeatStateGeneration.Load() != gen {
+		return false
+	}
+	lastGoodPayload.payload = c
+	return true
 }
 
 // storeLastGoodPayload caches a deep clone of a payload that collect() produced

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
@@ -15,27 +16,125 @@ import (
 // evidenceHeartbeatWindow is the look-back of the heartbeat evidence block.
 const evidenceHeartbeatWindow = 90 * 24 * time.Hour
 
+// evidenceHeartbeatRefreshInterval bounds how often the bundle tree under
+// ghpkg.ReviewEvidenceRoot is re-walked for the heartbeat. The block is a
+// 90-day aggregate, so a few minutes of lag is invisible on the hub; the
+// walk itself is what must never run on the beat path (see
+// evidenceHeartbeatCache).
+const evidenceHeartbeatRefreshInterval = 5 * time.Minute
+
+// evidenceHeartbeatCache holds the bundle-derived part of the heartbeat
+// evidence block and refreshes it on its own goroutine.
+//
+// WHY: the heartbeat collect has a 10 s budget. loadEvidenceBundles walks
+// and parses every bundle under the evidence root; on the hosted hive that
+// is ~22k directory entries and ~11.6k JSON files on NFSv3 /data, measured
+// at ~6 s for the walk alone and ~27 s to read every file — on EVERY beat,
+// because nothing cached it. The collect therefore never finished inside
+// its budget, the last-good cache never filled, and the spoke sent the
+// identity-only MINIMAL beat forever: the hub showed a healthy hive with
+// no stats. Reading a cached aggregate here costs microseconds; the walk
+// runs at most once per evidenceHeartbeatRefreshInterval, off the beat.
+type evidenceHeartbeatCache struct {
+	mu          sync.Mutex
+	block       *spoke.HeartbeatEvidence
+	refreshedAt time.Time
+	refreshing  bool
+	// done is closed when the most recently scheduled refresh completes; nil
+	// before the first. Tests wait on it instead of sleeping.
+	done chan struct{}
+}
+
+// snapshot returns the cached block (nil until the first refresh lands) and
+// starts a background refresh when the cache is stale and none is running.
+func (c *evidenceHeartbeatCache) snapshot(now time.Time, refresh func()) *spoke.HeartbeatEvidence {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	stale := c.refreshedAt.IsZero() || now.Sub(c.refreshedAt) >= evidenceHeartbeatRefreshInterval
+	if stale && !c.refreshing {
+		c.refreshing = true
+		c.done = make(chan struct{})
+		go refresh()
+	}
+	return c.block
+}
+
+// store records the outcome of a refresh. A nil block (unreadable bundles)
+// keeps the previous block so the hub keeps the summary it already stored
+// instead of seeing a false zero; refreshedAt advances either way so a
+// persistently failing root is retried once per interval, not every beat.
+func (c *evidenceHeartbeatCache) store(block *spoke.HeartbeatEvidence, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if block != nil {
+		c.block = block
+	}
+	c.refreshedAt = now
+	if c.refreshing {
+		c.refreshing = false
+		close(c.done)
+	}
+}
+
+// refreshDone returns the channel closed when the most recently scheduled
+// refresh finishes (already closed if it has), or nil before any refresh.
+func (c *evidenceHeartbeatCache) refreshDone() chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.done
+}
+
+// isRefreshing reports whether a refresh is currently running.
+func (c *evidenceHeartbeatCache) isRefreshing() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.refreshing
+}
+
 // EvidenceHeartbeat builds the evidence block of the hub heartbeat (#12114):
 // a 90-day summary of the review-evidence bundles behind
 // GET /api/evidence/summary, the self-authored auto-merge posture, and the
-// 24 h / 7 d hive state trends (#12339). It is read-only. It returns nil when
-// the bundles cannot be read, so the hub keeps the summary it already stored
-// instead of seeing a false zero.
+// 24 h / 7 d hive state trends (#12339). It is read-only and never walks the
+// bundle tree itself: the aggregate comes from evidenceHeartbeatCache, which
+// refreshes in the background. It returns nil until the first refresh has
+// landed (and on a nil server), so the hub keeps the summary it already
+// stored instead of seeing a false zero. The cheap, in-memory or single-file
+// fields (auto-merge posture, write counters, hive-state trends) are read live.
 func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
-	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
-	if err != nil {
+	if s == nil {
 		return nil
 	}
-	var selfMerge *bool
-	if s != nil && s.deps != nil && s.deps.Config != nil {
+	cached := s.evidenceHB.snapshot(time.Now(), s.refreshEvidenceHeartbeat)
+	if cached == nil {
+		return nil
+	}
+	out := *cached
+	if s.deps != nil && s.deps.Config != nil {
 		cfg := s.deps.Config
 		v := cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel)
-		selfMerge = &v
+		out.AutomergeSelfAuthored = &v
 	}
-	out := buildHeartbeatEvidence(bundles, time.Now().UTC(), selfMerge)
 	out.WriteCounters = heartbeatWriteCounters(loadEvidenceWriteCounters(writeCountersPath))
 	out.HiveState = s.hiveStateTrends()
-	return out
+	return &out
+}
+
+// refreshEvidenceHeartbeat is the background walk behind EvidenceHeartbeat:
+// load every bundle, fold, aggregate, store. Runs on its own goroutine.
+func (s *Server) refreshEvidenceHeartbeat() {
+	started := time.Now()
+	var block *spoke.HeartbeatEvidence
+	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
+	if err == nil {
+		block = buildHeartbeatEvidence(bundles, time.Now().UTC(), nil)
+	} else if s.logger != nil {
+		s.logger.Warn("heartbeat evidence refresh: bundles unreadable; keeping previous summary", "error", err)
+	}
+	took := time.Since(started)
+	if took > evidenceHeartbeatRefreshInterval && s.logger != nil {
+		s.logger.Warn("heartbeat evidence refresh outlived its interval", "took", took.Round(time.Millisecond).String(), "bundles", len(bundles))
+	}
+	s.evidenceHB.store(block, time.Now())
 }
 
 // heartbeatWriteCounters converts the proxy's per-tier totals (#12069) into
