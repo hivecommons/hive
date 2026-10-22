@@ -884,6 +884,12 @@ reaches a hive until you opt in for that hive:
 hivectl hives set <name> --share-audit <lifecycle|commands|reasoning>
 ```
 
+> **Availability.** The hub side described here (the `relay_task_attested`
+> row, the per-task store, the `audit_share_requested` advertisement) is in
+> place. The relay-side `--share-audit` flag lands with the v6 follow-up to
+> [#13458](https://github.com/hivecommons/hive/issues/13458); until it ships
+> no relay sends `audit_share`, and the hub simply stands ready for it.
+
 - **Never above capture.** The share level can never exceed the local capture
   level (`--audit-level`). The relay applies this rule, and the hub also
   enforces it: it clamps a share above the advertised `capture_level` and

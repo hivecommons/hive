@@ -34,7 +34,10 @@ does not understand.
 A hive can *ask* contributors to share their relay's local audit record
 (`hub.contribute_audit_share_request`, shown on `/contribute` before setup and
 advertised on `auth_ok`). Sharing is opt-in, per hive, with
-`hivectl hives set <name> --share-audit <lifecycle|commands|reasoning>`, and
+`hivectl hives set <name> --share-audit <lifecycle|commands|reasoning>` (the
+relay-side flag lands with the v6 follow-up to
+[#13458](https://github.com/hivecommons/hive/issues/13458); until then no relay
+sends `audit_share` and the hub is simply ready for it), and
 never above the relay's capture level. Trust tier, role grants and admission do
 **not** depend on it: a contributor who shares nothing is admitted exactly as
 before. Making a minimum share level an admission condition is an open
