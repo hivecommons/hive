@@ -14974,9 +14974,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (next.has(key)) next.delete(key); else next.add(key);
       return { sel: next, anchor: key };
     }
-    // Pure: keep only the keys still rendered.
+    // Pure: a row key that stands for an item — not the column header, not
+    // a group:owner/repo header — and so can be selected.
+    function stageTrackerSelectableKey(key) {
+      return !!key && key !== STAGE_TRACKER_HEADER_KEY && key.indexOf(STAGE_TRACKER_GROUP_KEY_PREFIX) !== 0;
+    }
+    // Pure: keep only the keys still rendered as selectable rows.
     function stageTrackerSelectionPrune(sel, keys) {
-      const present = new Set(keys);
+      const present = new Set(keys.filter(stageTrackerSelectableKey));
       const next = new Set();
       sel.forEach(k => { if (present.has(k)) next.add(k); });
       return next;
@@ -14985,7 +14990,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       let any = false;
       for (const n of Array.from(el.children || [])) {
         const key = n.dataset && n.dataset.hamKey;
-        if (!key || key === STAGE_TRACKER_HEADER_KEY) continue;
+        if (!stageTrackerSelectableKey(key)) continue;
         const on = sel.has(key);
         if (on) any = true;
         if (on) n.classList.add('ham-selected'); else n.classList.remove('ham-selected');
@@ -14996,7 +15001,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return any;
     }
     function stageTrackerRowKeys(el) {
-      return Array.from(el.children || []).map(n => n.dataset && n.dataset.hamKey).filter(k => k && k !== STAGE_TRACKER_HEADER_KEY);
+      return Array.from(el.children || []).map(n => n.dataset && n.dataset.hamKey).filter(stageTrackerSelectableKey);
     }
     // After a render: drop keys whose rows left, paint the rest, refresh the bar.
     function stageTrackerSelectionSync(el, keys) {

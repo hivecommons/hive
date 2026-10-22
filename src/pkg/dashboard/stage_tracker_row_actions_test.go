@@ -16,6 +16,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 	return strings.Join([]string{
 		"const assert = require('assert');",
 		jsConstLine(t, html, "STAGE_TRACKER_HEADER_KEY"),
+		jsConstLine(t, html, "STAGE_TRACKER_GROUP_KEY_PREFIX"),
 		jsConstLine(t, html, "STAGE_TRACKER_DECISION_STAGES"),
 		jsConstLine(t, html, "STAGE_TRACKER_SEL_ACTIONS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MENU_MARGIN"),
@@ -29,6 +30,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerItemKey"),
 		jsFunc(t, html, "stageTrackerRefOf"),
 		jsFunc(t, html, "stageTrackerRowToolsHtml"),
+		jsFunc(t, html, "stageTrackerSelectableKey"),
 		jsFunc(t, html, "stageTrackerSelectionNext"),
 		jsFunc(t, html, "stageTrackerSelectionPrune"),
 		jsFunc(t, html, "stageTrackerApplySelection"),
@@ -263,6 +265,15 @@ eq(r.sel, S('b', 'c', 'd', 'e'), 'a plain click toggles off');
 r = stageTrackerSelectionNext(S('a'), 'zz', keys, 'c', { shift: true });
 eq(r.sel, S('a', 'c'), 'a shift-click with no anchor in the list toggles'); assert.strictEqual(r.anchor, 'c');
 eq(stageTrackerSelectionPrune(S('a', 'b', 'x'), keys), S('a', 'b'), 'keys whose rows left are dropped');
+// Group-by-repo header rows share the keyed list but are never selectable.
+const grouped = ['group:o/r1', 'a', 'b', 'group:o/r2', 'c'];
+eq(stageTrackerSelectionPrune(S('a', 'group:o/r1', 'c', '__cols'), grouped), S('a', 'c'), 'group and column headers never survive a prune');
+assert.strictEqual(stageTrackerSelectableKey('group:o/r1'), false);
+assert.strictEqual(stageTrackerSelectableKey('__cols'), false);
+assert.strictEqual(stageTrackerSelectableKey(''), false);
+assert.strictEqual(stageTrackerSelectableKey('o/r#1:issue'), true);
+const rows = grouped.map(k => ({ dataset: { hamKey: k }, classList: { add() {}, remove() {} }, querySelector() { return null; } }));
+assert.deepStrictEqual(stageTrackerRowKeys({ children: rows }), ['a', 'b', 'c'], 'row keys skip group headers so a shift range cannot land on one');
 `)
 }
 
