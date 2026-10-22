@@ -19,13 +19,14 @@ import (
 // one was was to hover it, one at a time.
 //
 // The fix gives each card a drag handle on its right edge, stores the width
-// per repo in localStorage, reapplies it on every repaint (the grid HTML is
+// per repo in localStorage and reapplies it on every repaint (the grid HTML is
 // rebuilt each governor cycle, so a width set once on the node would not
-// survive the minute), and grows the pill title budget with the card — a
-// wider card with the same 50-character clip would gain nothing.
+// survive the minute). Pill titles now wrap inside the card instead of being
+// clipped to a character budget, so the width alone decides how much of a
+// title is readable.
 //
 // These tests pin the layout switch and the markup; TestRepoCardWidthStore
-// executes the width and truncation rules themselves.
+// executes the width rules themselves.
 
 // repoCardConstLine returns the whole `const NAME = ...;` line from
 // index.html, so the node-executed tests below run against the real constants
@@ -57,9 +58,6 @@ func TestRepoGridSizesItemsNotTracks(t *testing.T) {
 		"@media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }",
 		// A sized card keeps its width instead of sharing the row's slack.
 		".repo-card.repo-card-sized { flex-grow: 0; }",
-		// The title budget scales from the layout width, not a fixed 240px.
-		"const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);",
-		"function repoCardLayoutWidth(grid)",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
@@ -85,7 +83,7 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 		// hivecommons/hive#10968: the header wraps instead of letting the
 		// auto-merge toggle and swarm chip overlap a long repo name.
 		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
-		".repo-name a { flex: 1 1 6rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+		".repo-name a { flex: 1 1 12rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; white-space: normal; overflow-wrap: anywhere; }",
 		".repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }",
 		`<div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}"`,
 	} {
@@ -101,34 +99,6 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 	} {
 		if strings.Contains(html, gone) {
 			t.Errorf("repo card name can still be centred/clipped by the old header layout: %q", gone)
-		}
-	}
-}
-
-func TestRepoCardNameThemeCSSDoesNotRecenterHeader(t *testing.T) {
-	html := indexHTML(t)
-	for _, snippet := range []string{
-		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
-		".repo-name a { flex: 1 1 6rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
-	} {
-		if !strings.Contains(html, snippet) {
-			t.Fatalf("index.html base repo-name rule is missing %q", snippet)
-		}
-	}
-
-	repoNameBlockRE := regexp.MustCompile(`(?s)([^{}]*\.repo-name[^{}]*)\{([^{}]*)\}`)
-	centeringRE := regexp.MustCompile(`(?i)(text-align\s*:\s*center|justify-content\s*:\s*center|margin\s*:\s*0\s+auto)`)
-	for _, th := range config.DashboardThemeCatalog() {
-		css, err := config.DashboardThemeCSS(th)
-		if err != nil {
-			t.Fatalf("theme %s CSS: %v", th.ID, err)
-		}
-		for _, match := range repoNameBlockRE.FindAllStringSubmatch(css, -1) {
-			selector := strings.TrimSpace(match[1])
-			body := strings.TrimSpace(match[2])
-			if centeringRE.MatchString(body) {
-				t.Fatalf("built-in theme %s recenters repo card name in selector %q: %s", th.ID, selector, body)
-			}
 		}
 	}
 }
@@ -161,11 +131,8 @@ func TestRepoCardResizeHandleMarkup(t *testing.T) {
 	if !strings.Contains(html, "const cardW = repoCardWidth(cardRepo);") {
 		t.Error("renderRepos does not read the stored width for the card it is drawing")
 	}
-	// The pill title budget must follow the card width; a wider card with the
-	// same 50-character clip is the bug this issue is about.
-	if !strings.Contains(html, "const MAX_PILL_TITLE_LEN = pillTitleLimit(cardW || layoutW);") {
-		t.Error("pill titles are still cut to a fixed length regardless of card width")
-	}
+	// Titles wrap to the card width; a fixed character clip would make a
+	// wider card gain nothing, which is the bug this issue is about.
 	if strings.Contains(html, "const MAX_PILL_TITLE_LEN = 50;") {
 		t.Error("the fixed 50-character pill title clip is still in place")
 	}
@@ -211,10 +178,7 @@ func TestRepoCardResizeInteractionsAreWired(t *testing.T) {
 	}
 }
 
-// The width store and the truncation rule, EXECUTED. Pattern-matching them
-// would catch a rule that was changed and miss one that was always wrong —
-// and "the width survives a reload" is exactly a rule that has to be run to
-// be believed.
+// Execute the width-store rules against the real dashboard functions.
 func TestRepoCardWidthStore(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -225,13 +189,13 @@ func TestRepoCardWidthStore(t *testing.T) {
 	script.WriteString(repoCardWidthHarness)
 	for _, name := range []string{
 		"REPO_CARD_DEFAULT_W", "REPO_CARD_MIN_W", "REPO_CARD_MAX_W",
-		"REPO_CARD_WIDTH_KEY_PREFIX", "PILL_TITLE_BASE_LEN", "PILL_TITLE_MAX_LEN",
+		"REPO_CARD_WIDTH_KEY_PREFIX",
 	} {
 		script.WriteString(repoCardConstLine(t, html, name) + "\n")
 	}
 	for _, name := range []string{
 		"safeJsonParse", "repoCardWidthKey", "clampRepoCardWidth",
-		"repoCardWidths", "repoCardWidth", "setRepoCardWidth", "pillTitleLimit",
+		"repoCardWidths", "repoCardWidth", "setRepoCardWidth",
 	} {
 		script.WriteString(jsFunc(t, html, name) + "\n")
 	}
@@ -325,17 +289,34 @@ _store.set(REPO_CARD_WIDTH_KEY_PREFIX + 'hive-bold-hawk', 'null');
 check('a null store reads empty', Object.keys(repoCardWidths()).length === 0);
 _store.delete(REPO_CARD_WIDTH_KEY_PREFIX + 'hive-bold-hawk');
 
-// ── the pill title budget grows with the card ────────────────────────────
-// This is the half of the issue a wider card alone does not fix: the title
-// was cut to 50 characters before the CSS ellipsis ever saw it.
-check('default card keeps the old budget', pillTitleLimit(0) === PILL_TITLE_BASE_LEN);
-check('at the default width, unchanged', pillTitleLimit(REPO_CARD_DEFAULT_W) === PILL_TITLE_BASE_LEN);
-check('narrower than default does not cut further', pillTitleLimit(REPO_CARD_MIN_W) === PILL_TITLE_BASE_LEN);
-check('double width, double budget', pillTitleLimit(REPO_CARD_DEFAULT_W * 2) === PILL_TITLE_BASE_LEN * 2);
-check('budget grows monotonically', pillTitleLimit(600) > pillTitleLimit(400) && pillTitleLimit(400) > pillTitleLimit(300));
-check('budget is capped', pillTitleLimit(REPO_CARD_MAX_W) === PILL_TITLE_MAX_LEN);
-check('a widest card can hold a long title whole', pillTitleLimit(REPO_CARD_MAX_W) >= 200);
-
 if (fails) { console.log(fails + ' failure(s)'); process.exit(1); }
 console.log('ok');
 `
+
+func TestRepoCardNameThemeCSSDoesNotRecenterHeader(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
+		".repo-name a { flex: 1 1 12rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; white-space: normal; overflow-wrap: anywhere; }",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("index.html base repo-name rule is missing %q", snippet)
+		}
+	}
+
+	repoNameBlockRE := regexp.MustCompile(`(?s)([^{}]*\.repo-name[^{}]*)\{([^{}]*)\}`)
+	centeringRE := regexp.MustCompile(`(?i)(text-align\s*:\s*center|justify-content\s*:\s*center|margin\s*:\s*0\s+auto)`)
+	for _, th := range config.DashboardThemeCatalog() {
+		css, err := config.DashboardThemeCSS(th)
+		if err != nil {
+			t.Fatalf("theme %s CSS: %v", th.ID, err)
+		}
+		for _, match := range repoNameBlockRE.FindAllStringSubmatch(css, -1) {
+			selector := strings.TrimSpace(match[1])
+			body := strings.TrimSpace(match[2])
+			if centeringRE.MatchString(body) {
+				t.Fatalf("built-in theme %s recenters repo card name in selector %q: %s", th.ID, selector, body)
+			}
+		}
+	}
+}
