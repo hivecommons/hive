@@ -50,17 +50,23 @@ func TestStageEngineModeFollowsConfig(t *testing.T) {
 
 	syncStageEngineMode(cfg, client, logger)
 	sw := stageEngineReconciler(cfg, client, logger).(stageengine.ModeSwitch)
+	if got := sw.Mode(); got != stageengine.ModeEnforce {
+		t.Fatalf("default mode = %v, want enforce", got)
+	}
+
+	cfg.Governor.Labels.Stage.Engine.Mode = "shadow"
+	syncStageEngineMode(cfg, client, logger)
 	if got := sw.Mode(); got != stageengine.ModeShadow {
-		t.Fatalf("default mode = %v, want shadow", got)
+		t.Fatalf("mode after reload = %v, want shadow", got)
+	}
+	if st := stageEngineStatus(cfg, client, logger); st.Mode != "shadow" || st.LastMismatchExamples == nil {
+		t.Fatalf("status = %+v, want mode shadow with non-nil examples", st)
 	}
 
 	cfg.Governor.Labels.Stage.Engine.Mode = "enforce"
 	syncStageEngineMode(cfg, client, logger)
 	if got := sw.Mode(); got != stageengine.ModeEnforce {
 		t.Fatalf("mode after reload = %v, want enforce", got)
-	}
-	if st := stageEngineStatus(cfg, client, logger); st.Mode != "enforce" || st.LastMismatchExamples == nil {
-		t.Fatalf("status = %+v, want mode enforce with non-nil examples", st)
 	}
 	// The transition WARN itself is pinned in pkg/stageengine
 	// (TestModeSwitchHotReload); the process-wide engine keeps the logger

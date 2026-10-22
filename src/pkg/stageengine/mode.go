@@ -25,8 +25,9 @@ const (
 	ModeEnforce Mode = "enforce"
 )
 
-// DefaultMode is the mode a zero Options gets: shadow until the plan's
-// acceptance metrics are met.
+// DefaultMode is the mode a zero Options gets (library callers and tests
+// that pass no mode). A configured hive's default is
+// config.DefaultStageEngineMode (enforce), applied before Options is built.
 const DefaultMode = ModeShadow
 
 // Valid reports whether m is one of the three modes.

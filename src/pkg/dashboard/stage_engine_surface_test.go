@@ -40,20 +40,20 @@ func TestGovernorLabelsStageEngineModeRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["stageEngineMode"] != "shadow" {
-		t.Fatalf("default stageEngineMode = %v, want shadow", got["stageEngineMode"])
+	if got["stageEngineMode"] != "enforce" {
+		t.Fatalf("default stageEngineMode = %v, want enforce", got["stageEngineMode"])
 	}
-	if rec := doPut(s, "/api/config/governor/labels", map[string]any{"stage_engine_mode": " enforce "}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/governor/labels", map[string]any{"stage_engine_mode": " shadow "}); rec.Code != http.StatusOK {
 		t.Fatalf("labels PUT: %d — %s", rec.Code, rec.Body.String())
 	}
-	if got := s.deps.Config.Governor.Labels.Stage.Engine.Mode; got != "enforce" {
-		t.Fatalf("mode = %q, want enforce", got)
+	if got := s.deps.Config.Governor.Labels.Stage.Engine.Mode; got != "shadow" {
+		t.Fatalf("mode = %q, want shadow", got)
 	}
 	rec = doGet(s, "/api/config/governor")
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["stageEngineMode"] != "enforce" {
+	if got["stageEngineMode"] != "shadow" {
 		t.Fatalf("stageEngineMode after PUT = %v", got["stageEngineMode"])
 	}
 
@@ -63,7 +63,7 @@ func TestGovernorLabelsStageEngineModeRoundTrip(t *testing.T) {
 		"yamlHint('governor.labels.stage.engine.mode')",
 		`id="cfg-stage-engine-mode" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_engine_mode" data-arg-types="s,s,v"`,
 		"settingHelpMark('settings', 'labels', 'Central stage engine',",
-		"_configState.data.stageEngineMode || 'shadow'",
+		"_configState.data.stageEngineMode || 'enforce'",
 		"['off',", "['shadow',", "['enforce',",
 		"48h",
 	} {

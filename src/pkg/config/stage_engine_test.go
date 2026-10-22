@@ -8,12 +8,15 @@ import (
 )
 
 // governor.labels.stage.engine.mode (ADR-0025): off|shadow|enforce,
-// default shadow, validated at load so hivectl config catches a typo
+// default enforce, validated at load so hivectl config catches a typo
 // before the hive boots with it.
 func TestStageEngineModeConfig(t *testing.T) {
 	var zero StageEngineConfig
-	if zero.EffectiveMode() != stageengine.ModeShadow || zero.Validate() != nil {
-		t.Fatalf("zero value: mode %s err %v, want shadow/nil", zero.EffectiveMode(), zero.Validate())
+	if zero.EffectiveMode() != stageengine.ModeEnforce || zero.EffectiveMode() != DefaultStageEngineMode || zero.Validate() != nil {
+		t.Fatalf("zero value: mode %s err %v, want enforce/nil", zero.EffectiveMode(), zero.Validate())
+	}
+	if blank := (StageEngineConfig{Mode: "  "}); blank.EffectiveMode() != stageengine.ModeEnforce {
+		t.Fatalf("blank mode = %s, want the enforce default", blank.EffectiveMode())
 	}
 	for in, want := range map[string]stageengine.Mode{"off": stageengine.ModeOff, " Shadow ": stageengine.ModeShadow, "ENFORCE": stageengine.ModeEnforce} {
 		c := StageEngineConfig{Mode: in}

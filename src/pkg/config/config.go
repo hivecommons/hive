@@ -3727,7 +3727,7 @@ type StageLabelsConfig struct {
 
 // StageEngineConfig is governor.labels.stage.engine (ADR-0025).
 type StageEngineConfig struct {
-	// Mode is off, shadow or enforce (default shadow). shadow: the engine
+	// Mode is off, shadow or enforce (default enforce). shadow: the engine
 	// derives every item alongside the sweep's own derivation, writes the
 	// sweep's result and records where the two disagree
 	// (stage_shadow_mismatch_total). enforce: the engine's result is
@@ -3738,12 +3738,21 @@ type StageEngineConfig struct {
 	Mode string `yaml:"mode,omitempty"`
 }
 
-// EffectiveMode parses Mode; empty and unparsable values yield the default
-// (shadow), so a bad value never silently enforces.
+// DefaultStageEngineMode is what an unset governor.labels.stage.engine.mode
+// yields: enforce, since the ADR-0025 rollout gates held on hive's own spoke
+// (48 h shadow with zero mismatches, then 48 h clean enforce). Set the key to
+// shadow or off to opt out.
+const DefaultStageEngineMode = stageengine.ModeEnforce
+
+// EffectiveMode parses Mode. Unset yields DefaultStageEngineMode; an
+// unparsable value yields shadow, so a typo never silently enforces.
 func (c StageEngineConfig) EffectiveMode() stageengine.Mode {
+	if strings.TrimSpace(c.Mode) == "" {
+		return DefaultStageEngineMode
+	}
 	m, err := stageengine.ParseMode(c.Mode)
 	if err != nil {
-		return stageengine.DefaultMode
+		return stageengine.ModeShadow
 	}
 	return m
 }

@@ -1,0 +1,1 @@
+- `governor.labels.stage.engine.mode` now defaults to `enforce` (was `shadow`) after the ADR-0025 rollout gates held on hive's own spoke; an invalid value still falls back to `shadow`, and ADR-0025 is Accepted. Set `mode: shadow` or `off` to opt out. Part of #12999.

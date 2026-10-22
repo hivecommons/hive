@@ -1,6 +1,6 @@
 # ADR-0025: One stage engine derives and writes every `stage/*` label
 
-Status: Proposed
+Status: Accepted
 
 Implementation plan: [stage-engine-plan.md](../stage-engine-plan.md).
 Interfaces in this ADR are the contract parallel implementation PRs build
@@ -115,9 +115,10 @@ is computed from `Detail.Verdict`, `HumanApprover`/`HumanApprovalHead`,
 Package: `src/pkg/stageengine` (imports `stagelabels`, `authorkind`,
 `claims`; never `github` or `automerge`, which import it — adapters live on
 their side). Config: `governor.labels.stage.engine.mode: shadow | enforce`
-(short name `stage_engine.mode` in dashboards/logs; default `shadow` until
-the plan's acceptance metrics are met, then `enforce`; `off` keeps the legacy
-paths and exists only for rollback).
+(short name `stage_engine.mode` in dashboards/logs; default `enforce` since
+the plan's acceptance metrics held on hive's own spoke — it was `shadow`
+during the rollout; `off` keeps the legacy paths and exists only for
+rollback).
 
 ### Facts
 

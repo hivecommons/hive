@@ -164,7 +164,7 @@ is a runtime switch (`stageengine.ModeSwitch`) re-read before each sweep,
 report mode / mismatches / anomalies. The original scope follows.
 
 - `src/pkg/config`: `governor.labels.stage.engine.mode` (`off|shadow|enforce`,
-  default `shadow`); Settings → Labels tab exposes it; `hivectl config`
+  default `shadow` during the rollout, `enforce` since the default flip); Settings → Labels tab exposes it; `hivectl config`
   validation.
 - `cmd/hive` wiring: construct one `stageengine.New(Options{...})` with the
   `stageWriter`, `stagelabels.Shared()`, the adapters and the PR-A shadow
@@ -183,6 +183,15 @@ Rollout: ship with `shadow` on hive's own spoke; after 48 h with
 default. Rollback: set `mode: off` (legacy paths intact until PR-F).
 Files touched: ~8. Depends on: PR-A, PR-B, PR-C (PR-D is not required for
 shadow but is for the default flip).
+
+Default flip landed (hivecommons/hive#12999): an unset
+`governor.labels.stage.engine.mode` now yields `enforce`
+(`config.DefaultStageEngineMode`) after 48 h clean `enforce` on hive's spoke;
+an unparsable value still falls back to `shadow`, never `enforce`. A hive
+that wants the old behaviour sets `mode: shadow` (or `off` to roll back).
+`stageengine.DefaultMode` stays `shadow`: it is the library default for a
+caller that passes zero `Options` (tests, `Client.StageReconciler(store,
+nil, …)`), not the configured hive's default. ADR-0025 is Accepted.
 
 ## PR-F — move derivation in, delete legacy (follow-up, ≥48 h after enforce default)
 

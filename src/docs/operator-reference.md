@@ -614,11 +614,13 @@ logs one `WARN stage engine: mode changed` per transition.
 
 | mode | behaviour |
 |---|---|
-| `shadow` (default) | engine derives alongside the sweep; the sweep's derivation is written; every disagreement is counted and logged once per `(kind, legacy, engine)` |
-| `enforce` | engine's derivation is written; out-of-order transitions are rejected and counted as anomalies |
+| `shadow` | engine derives alongside the sweep; the sweep's derivation is written; every disagreement is counted and logged once per `(kind, legacy, engine)` |
+| `enforce` (default) | engine's derivation is written; out-of-order transitions are rejected and counted as anomalies |
 | `off` | rollback — the sweep's derivation is written verbatim, the engine is inert |
 
-Runbook:
+An unset mode is `enforce`. The runbook below is for a hive that opts back
+into `shadow` (for example to validate a deriver change) before returning to
+`enforce`:
 
 1. Run `shadow` for 48h. Watch `/api/status.stageEngine`
    (`mode`, `derivations`, `mismatches`, `anomalies`,

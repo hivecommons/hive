@@ -58,7 +58,7 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 
 func stageEngineConfiguredMode(cfg *config.Config) stageengine.Mode {
 	if cfg == nil {
-		return stageengine.DefaultMode
+		return config.DefaultStageEngineMode
 	}
 	return cfg.Governor.Labels.Stage.Engine.EffectiveMode()
 }

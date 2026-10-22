@@ -388,8 +388,8 @@ not read as the issue regressing.
 > | mode | who derives | who writes | counted |
 > |---|---|---|---|
 > | `off` | sweep (legacy) | sweep's derivation verbatim; engine inert | — |
-> | `shadow` (default) | both | sweep's derivation | `stage_shadow_mismatch_total{kind,legacy,engine}`, one log per distinct pair |
-> | `enforce` | engine | engine's derivation | `stage_transition_anomaly_total{kind,from,to}` for out-of-order moves |
+> | `shadow` | both | sweep's derivation | `stage_shadow_mismatch_total{kind,legacy,engine}`, one log per distinct pair |
+> | `enforce` (default) | engine | engine's derivation | `stage_transition_anomaly_total{kind,from,to}` for out-of-order moves |
 >
 > Mode, derivation / mismatch / anomaly counts and the last five mismatch
 > examples are on `/api/status.stageEngine` and in the activity tracker's
