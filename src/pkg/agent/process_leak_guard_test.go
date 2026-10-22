@@ -146,11 +146,21 @@ func findLeakedTestProcesses(stubDir string) []string {
 		"-L hleak" + pid + " ",
 		stubDir,
 	}
+	ownPgid := strconv.Itoa(syscall.Getpgrp())
 	var lines []string
 	for _, line := range bytes.Split(out, []byte("\n")) {
-		if s := strings.TrimSpace(string(line)); s != "" && !strings.Contains(s, "hive-agent-test-tmux-reaper") {
-			lines = append(lines, s)
+		s := strings.TrimSpace(string(line))
+		if s == "" || strings.Contains(s, "hive-agent-test-tmux-reaper") {
+			continue
 		}
+		// Processes in our own group are the test binary's transient
+		// children (e.g. a still-running trust watcher's `tmux -L ht<pid>
+		// capture-pane`), not orphans: the tmux server daemonizes into its
+		// own session/pgid and its pipe-pane children live there.
+		if f := strings.Fields(s); len(f) >= 2 && f[1] == ownPgid {
+			continue
+		}
+		lines = append(lines, s)
 	}
 	var leaked []string
 	pgids := map[string]bool{}
@@ -185,12 +195,17 @@ func killLeakedTestProcesses(lines []string) {
 		if len(fields) < 2 {
 			continue
 		}
-		if pgid, err := strconv.Atoi(fields[1]); err == nil && pgid > 1 && pgid != os.Getpid() {
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 1 || pid == os.Getpid() {
+			continue
+		}
+		// Only group-kill a tmux server's own group (it setsid()s, so pgid ==
+		// server pid); never our own group, which under `go test` is shared
+		// with the go command and the CI step shell.
+		if pgid, err := strconv.Atoi(fields[1]); err == nil && pgid > 1 && pgid == pid && pgid != syscall.Getpgrp() {
 			_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		}
-		if pid, err := strconv.Atoi(fields[0]); err == nil && pid > 1 {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
-		}
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }
 
