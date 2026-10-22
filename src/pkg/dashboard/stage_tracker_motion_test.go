@@ -58,6 +58,23 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 		`strip.dataset.hamPhase = 'flash';`,
 		`strip.dataset.hamPhase = 'move';`,
 		`strip.dataset.hamPhase = 'land';`,
+		// Keyed reconcile: the live refresh keeps row nodes instead of
+		// rebuilding the panel's innerHTML, so a move survives the next poll.
+		`const STAGE_TRACKER_EXIT_MS = 300;`,
+		`const STAGE_TRACKER_ENTER_MS = 220;`,
+		`const STAGE_TRACKER_SETTLE_MS = 1200;`,
+		`function stageTrackerReconcile(el, rows, opts)`,
+		`function stageTrackerRowExit(node, animate)`,
+		`function stageTrackerRowEnter(node)`,
+		`function stageTrackerRowSrcKey(html)`,
+		`function stageTrackerScheduleSettle()`,
+		`const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });`,
+		`if (rec.deferred) stageTrackerScheduleSettle();`,
+		`.ham-row.ham-leaving {`,
+		`.ham-row.ham-entering {`,
+		`@keyframes ham-row-exit {`,
+		`@keyframes ham-row-enter {`,
+		`@media (prefers-reduced-motion: reduce) { .ham-row.ham-leaving { animation-name: ham-row-exit-rm; } .ham-row.ham-entering { animation: none; } }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing movement animation wiring %q", want)
@@ -85,7 +102,7 @@ func TestStageTrackerMotionWiring(t *testing.T) {
 		t.Errorf("movement animation CSS must use tokens only, found a literal colour:\n%s", css)
 	}
 	// The JS mirrors of the timing tokens must agree with tokens.css.
-	for _, tok := range []string{"--ham-move-ms: 450ms;", "--ham-move-ease:", "--ham-move-tint:", "--ham-move-tint-soft:", "--ham-move-flash-ms: 140ms;", "--ham-move-flash-gap-ms: 90ms;", "--ham-move-flash-count: 2;"} {
+	for _, tok := range []string{"--ham-move-ms: 450ms;", "--ham-move-ease:", "--ham-move-tint:", "--ham-move-tint-soft:", "--ham-move-flash-ms: 140ms;", "--ham-move-flash-gap-ms: 90ms;", "--ham-move-flash-count: 2;", "--ham-move-exit-ms: 300ms;", "--ham-move-enter-ms: 220ms;"} {
 		if !strings.Contains(tokensCSS(t), tok) {
 			t.Errorf("tokens.css lacks %s", tok)
 		}
@@ -562,5 +579,206 @@ assert.strictEqual(activeShort(stageTrackerMotionSectionHtml('wash', stages)), '
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("node motion preview sample fixture failed: %v\n%s", err, out)
+	}
+}
+
+// TestStageTrackerMotionReconcile drives the keyed row reconcile with fake
+// timers and a stub DOM the way the live poll does (hivecommons/hive: the
+// hosted hive refreshes /api/stage-tracker about once a second and the old
+// innerHTML rebuild wiped every move mid-flight, leaving only its opening
+// flash). A poll whose payload moves one row swaps that row for a stamped
+// node and schedules the move plan; the next poll keeps the node and the
+// plan runs to its end; a row that leaves the payload gets the exit class
+// and stays in place until its collapse ends; a new row fades in; None, a
+// hidden tab and a sweep over the row cap skip the row motion.
+func TestStageTrackerMotionReconcile(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — reconcile was NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('assert');",
+		jsConstLine(t, html, "STAGE_TRACKER_MOVE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_GAP_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_FLASH_COUNT"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_MAX_ROWS"),
+		jsConstLine(t, html, "STAGE_TRACKER_EXIT_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ENTER_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_SETTLE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_HEADER_KEY"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_KEY"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_DEFAULT"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_NONE"),
+		jsConstBlock(t, html, "STAGE_TRACKER_MOTIONS"),
+		"var _stageTrackerRowSrc = new WeakMap(); var _stageTrackerSettleTimer = 0; var renders = 0; function renderStageTracker() { renders++; }",
+		jsFunc(t, html, "stageTrackerMotionSetting"),
+		jsFunc(t, html, "stageTrackerReducedMotion"),
+		jsFunc(t, html, "stageTrackerMotionEffect"),
+		jsFunc(t, html, "stageTrackerMovePlan"),
+		jsFunc(t, html, "stageTrackerAnimScale"),
+		jsFunc(t, html, "stageTrackerAnimLayer"),
+		jsFunc(t, html, "stageTrackerAfter"),
+		jsFunc(t, html, "stageTrackerAnimateMove"),
+		jsFunc(t, html, "stageTrackerAnimateMoves"),
+		jsFunc(t, html, "stageTrackerRowSrcKey"),
+		jsFunc(t, html, "stageTrackerRowHasMove"),
+		jsFunc(t, html, "stageTrackerRowAnimating"),
+		jsFunc(t, html, "stageTrackerRowNode"),
+		jsFunc(t, html, "stageTrackerRowSrcOf"),
+		jsFunc(t, html, "stageTrackerRowMotionOn"),
+		jsFunc(t, html, "stageTrackerRowExit"),
+		jsFunc(t, html, "stageTrackerRowEnter"),
+		jsFunc(t, html, "stageTrackerReconcile"),
+		jsFunc(t, html, "stageTrackerScheduleSettle"),
+	}, "\n") + `
+// -- fake timers -------------------------------------------------------
+let now = 0; const timers = [];
+global.setTimeout = (fn, ms) => { timers.push({ at: now + (ms || 0), fn }); return timers.length; };
+function flush() { timers.sort((a, b) => a.at - b.at); while (timers.length) { const t = timers.shift(); now = t.at; t.fn(); } }
+global.getComputedStyle = () => ({ getPropertyValue: () => '1' });
+global.localStorage = { getItem: () => null, setItem() {} };
+global.window = {};
+const moved = [];
+const STAGE_TRACKER_MOTION_FNS = { wash: (s, f, t) => moved.push(f + '>' + t) };
+
+// -- stub DOM ------------------------------------------------------------
+function classes() { const set = new Set(); return { set, contains: c => set.has(c), add(...cs) { cs.forEach(c => set.add(c)); }, remove(...cs) { cs.forEach(c => set.delete(c)); } }; }
+function base(tag) {
+  return { tag, parentNode: null, children: [], dataset: {}, classList: classes(), offsetHeight: 40,
+    style: { props: {}, setProperty(k, v) { this.props[k] = v; }, removeProperty(k) { delete this.props[k]; }, getPropertyValue(k) { return this.props[k] || ''; } },
+    addEventListener() {}, removeEventListener() {},
+    remove() { if (this.parentNode) { const c = this.parentNode.children; c.splice(c.indexOf(this), 1); this.parentNode = null; } },
+    insertBefore(n, ref) { n.remove(); const i = ref ? this.children.indexOf(ref) : this.children.length; this.children.splice(i, 0, n); n.parentNode = this; },
+    replaceChild(n, old) { const i = this.children.indexOf(old); n.remove(); this.children[i] = n; n.parentNode = this; old.parentNode = null; },
+    appendChild(n) { this.insertBefore(n, null); },
+    querySelector() { return null; }, querySelectorAll() { return []; } };
+}
+function seg(i, active) { const s = base('li'); s.classList.add('ham-seg', active ? 'active' : 'done'); s.i = i; return s; }
+// A row parsed from the builder's string: the strip's lit column and the
+// one-render move stamp are what the reconcile and the move plan read.
+function rowFrom(html) {
+  const row = base('div');
+  const stripRow = base('div'); stripRow.layer = null;
+  stripRow.querySelector = () => stripRow.layer; stripRow.appendChild = l => { stripRow.layer = l; };
+  const active = Number((/active=(\d)/.exec(html) || [])[1]);
+  const strip = base('ol'); strip.children = Array.from({ length: 7 }, (_, i) => seg(i, i === active)); strip.parentElement = stripRow;
+  const st = / data-ham-prev-col="(\d+)" data-ham-col="(\d+)"/.exec(html);
+  if (st) { strip.dataset.hamPrevCol = st[1]; strip.dataset.hamCol = st[2]; }
+  row.strip = strip; row.html = html;
+  row.querySelector = sel => (sel === '.ham-strip[data-ham-phase]' && strip.dataset.hamPhase ? strip : null);
+  return row;
+}
+global.document = { hidden: false, body: { classList: classes() },
+  createElement(tag) { if (tag === 'template') { const t = { content: {} }; Object.defineProperty(t, 'innerHTML', { set(v) { t.content.firstElementChild = rowFrom(v); } }); return t; } return { className: '', setAttribute() {}, innerHTML: '' }; } };
+const el = base('div');
+el.querySelectorAll = sel => { assert.strictEqual(sel, '.ham-strip[data-ham-prev-col]'); return el.children.map(r => r.strip).filter(s => s && s.dataset.hamPrevCol != null); };
+el.querySelector = sel => el.children.find(c => sel === '[data-ham-key]' ? !!c.dataset.hamKey : sel === '.ham-leaving' ? c.classList.contains('ham-leaving') : false) || null;
+
+const H = { key: STAGE_TRACKER_HEADER_KEY, html: '<div class="ham-cols">cols</div>' };
+const R = (n, active, since, stamp) => ({ key: 'a/b/pr#' + n, html: '<div class="ham-row"><ol class="ham-strip" aria-label="Pipeline progress"' + (stamp ? ' data-ham-prev-col="' + stamp[0] + '" data-ham-col="' + stamp[1] + '"' : '') + '>active=' + active + '</ol>since=' + (since || '1m') + '</div>' });
+const keys = () => el.children.map(c => (c.classList.contains('ham-leaving') ? '-' : '') + c.dataset.hamKey);
+const opts = () => ({ effect: stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion()), hidden: document.hidden });
+assert.strictEqual(opts().effect, 'wash', 'default effect is the colour wash');
+
+// First payload: every row enters, nothing animates (no previous list).
+let r = stageTrackerReconcile(el, [H, R(1, 2), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 0, replaced: 0, entered: 4, exited: 0, deferred: 0 });
+assert.deepStrictEqual(keys(), [STAGE_TRACKER_HEADER_KEY, 'a/b/pr#1', 'a/b/pr#2', 'a/b/pr#3']);
+assert.ok(el.children.every(c => !c.classList.contains('ham-entering')), 'the first render does not fade rows in');
+const n1 = el.children[1], n2 = el.children[2], n3 = el.children[3];
+
+// Same payload again (a filter/paging re-render, or a poll whose rows did
+// not change): every node is kept.
+r = stageTrackerReconcile(el, [H, R(1, 2), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 4, replaced: 0, entered: 0, exited: 0, deferred: 0 });
+assert.ok(el.children[1] === n1 && el.children[2] === n2 && el.children[3] === n3, 'unchanged rows keep their nodes');
+
+// A poll moves #1 from column 2 to 4 (the row builder stamps it) and the
+// sort puts it ahead of #2: the row is swapped for the stamped node, the
+// others are kept, and the move plan starts on the new strip.
+r = stageTrackerReconcile(el, [H, R(1, 4, '1m', [2, 4]), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 3, replaced: 1, entered: 0, exited: 0, deferred: 0 });
+const m1 = el.children[1];
+assert.notStrictEqual(m1, n1, 'the moved row is a fresh node');
+assert.strictEqual(m1.strip.dataset.hamPrevCol, '2');
+assert.strictEqual(stageTrackerAnimateMoves(el), 1, 'the stamped strip plays');
+assert.strictEqual(m1.strip.dataset.hamPhase, 'flash', 'the plan starts with the origin flash');
+assert.strictEqual(m1.strip.dataset.hamPrevCol, undefined, 'the stamp is consumed so a kept node never replays it');
+assert.ok(m1.strip.children[4].classList.contains('ham-pending') && m1.strip.children[2].classList.contains('ham-flash'));
+assert.strictEqual(timers.length, 1, 'the flash timer is armed');
+
+// The next poll (about a second later on the hosted hive) carries the same
+// rows unstamped: the animating node is kept, the plan is not interrupted.
+r = stageTrackerReconcile(el, [H, R(1, 4), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 4, replaced: 0, entered: 0, exited: 0, deferred: 0 });
+assert.strictEqual(el.children[1], m1, 'the mid-move node survives the refresh');
+assert.strictEqual(m1.strip.dataset.hamPhase, 'flash');
+assert.strictEqual(stageTrackerAnimateMoves(el), 0, 'nothing is stamped, nothing replays');
+
+// A poll that only ticks the row's "since" text while it is mid-move keeps
+// the node too and asks for one settle re-render.
+r = stageTrackerReconcile(el, [H, R(1, 4, '2m'), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 3, replaced: 0, entered: 0, exited: 0, deferred: 1 });
+assert.strictEqual(el.children[1], m1);
+stageTrackerScheduleSettle(); stageTrackerScheduleSettle();
+assert.strictEqual(timers.filter(t => t.at === now + STAGE_TRACKER_SETTLE_MS).length, 1, 'one settle timer however many refreshes deferred');
+flush();
+assert.strictEqual(m1.strip.dataset.hamPhase, undefined, 'the plan ran to its end: flash → move → land');
+assert.deepStrictEqual(moved, ['2>4'], 'the wash travelled once, from the old column to the new');
+assert.ok(!m1.strip.children[4].classList.contains('ham-pending'));
+assert.strictEqual(renders, 1, 'the settle re-render ran once');
+assert.strictEqual(_stageTrackerSettleTimer, 0);
+// ... and that re-render, with the move landed, swaps in the ticked row.
+r = stageTrackerReconcile(el, [H, R(1, 4, '2m'), R(2, 4), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 3, replaced: 1, entered: 0, exited: 0, deferred: 0 });
+
+// #2 leaves the payload (merged) and #4 arrives: #2 gets the exit class
+// and holds its place while it collapses, #4 fades in; the collapse ends
+// and only then is #2 gone.
+const gone = el.children[2];
+r = stageTrackerReconcile(el, [H, R(1, 4, '2m'), R(4, 1), R(3, 3)], opts());
+assert.deepStrictEqual(r, { kept: 3, replaced: 0, entered: 1, exited: 1, deferred: 0 });
+assert.ok(gone.classList.contains('ham-leaving'), 'the departed row carries the exit class');
+assert.strictEqual(gone.style.props['--ham-row-h'], '40px', 'the collapse starts from the measured height');
+assert.strictEqual(gone.parentNode, el, 'still in the list while it collapses');
+assert.deepStrictEqual(keys(), [STAGE_TRACKER_HEADER_KEY, 'a/b/pr#1', '-a/b/pr#2', 'a/b/pr#4', 'a/b/pr#3'], 'the collapsing row keeps its slot; the new row is laid out around it');
+const fresh = el.children[3];
+assert.ok(fresh.classList.contains('ham-entering'), 'the new row fades in');
+flush();
+assert.strictEqual(gone.parentNode, null, 'removed once the collapse ended');
+assert.ok(!fresh.classList.contains('ham-entering'));
+assert.deepStrictEqual(keys(), [STAGE_TRACKER_HEADER_KEY, 'a/b/pr#1', 'a/b/pr#4', 'a/b/pr#3']);
+
+// Row motion is off for None, a hidden tab, or a sweep over the row cap.
+assert.strictEqual(stageTrackerRowMotionOn('wash', false, 3), true);
+assert.strictEqual(stageTrackerRowMotionOn('', false, 3), false, 'None');
+assert.strictEqual(stageTrackerRowMotionOn('wash', true, 3), false, 'hidden tab');
+assert.strictEqual(stageTrackerRowMotionOn('wash', false, STAGE_TRACKER_MOTION_MAX_ROWS), true);
+assert.strictEqual(stageTrackerRowMotionOn('wash', false, STAGE_TRACKER_MOTION_MAX_ROWS + 1), false, 'a page change is not movement');
+const gone2 = el.children[1];
+r = stageTrackerReconcile(el, [H, R(4, 1), R(3, 3)], { effect: '', hidden: false });
+assert.deepStrictEqual(r, { kept: 3, replaced: 0, entered: 0, exited: 1, deferred: 0 });
+assert.strictEqual(gone2.parentNode, null, 'None removes the row at once');
+assert.ok(!gone2.classList.contains('ham-leaving'));
+assert.strictEqual(timers.length, 0, 'no exit timer under None');
+
+// Emptying the list: every row leaves; the header goes at once.
+r = stageTrackerReconcile(el, [], opts());
+assert.deepStrictEqual(r, { kept: 0, replaced: 0, entered: 0, exited: 3, deferred: 0 });
+assert.deepStrictEqual(keys(), ['-a/b/pr#4', '-a/b/pr#3'], 'the header never collapses; the rows do');
+flush();
+assert.deepStrictEqual(keys(), []);
+
+// The source key ignores the one-render stamp and nothing else.
+assert.strictEqual(stageTrackerRowSrcKey(R(1, 4, '1m', [2, 4]).html), R(1, 4).html);
+assert.notStrictEqual(stageTrackerRowSrcKey(R(1, 4, '2m').html), R(1, 4).html);
+assert.strictEqual(stageTrackerRowHasMove(R(1, 4, '1m', [2, 4]).html), true);
+assert.strictEqual(stageTrackerRowHasMove(R(1, 4).html), false);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node reconcile fixture failed: %v\n%s", err, out)
 	}
 }

@@ -1514,6 +1514,18 @@
     @keyframes ham-wash-glow { 0% { filter: brightness(1.45) saturate(1.2); } 100% { filter: brightness(1) saturate(1); } }
     @media (prefers-reduced-motion: reduce) { .ham-anim-layer { display: none; } }
     .ham-rm-preview .ham-anim-layer { display: none; }
+    /* Rows leaving the list (merged, closed, filtered away) collapse and
+       fade over --ham-move-exit-ms from their measured height (--ham-row-h,
+       set by stageTrackerRowExit); new rows fade in over --ham-move-enter-ms.
+       Reduced motion keeps only the fade. */
+    .ham-row.ham-leaving { overflow: hidden; pointer-events: none; animation: ham-row-exit var(--ham-move-exit-ms) var(--ham-move-ease) both; }
+    @keyframes ham-row-exit { 0% { opacity: 1; max-height: var(--ham-row-h); } 55% { opacity: 0; } 100% { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; } }
+    @keyframes ham-row-exit-rm { from { opacity: 1; } to { opacity: 0; } }
+    .ham-row.ham-entering { animation: ham-row-enter var(--ham-move-enter-ms) ease-out both; }
+    @keyframes ham-row-enter { from { opacity: 0; transform: translateY(calc(-1 * var(--sp-1))); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .ham-row.ham-leaving { animation-name: ham-row-exit-rm; } .ham-row.ham-entering { animation: none; } }
+    .ham-rm-preview .ham-row.ham-leaving { animation-name: ham-row-exit-rm; }
+    .ham-rm-preview .ham-row.ham-entering { animation: none; }
     /* Settings modal (gear on the card header): the Movement animation
        section reuses the Overview settings section styles and adds a radio
        list with one Preview button each plus a sample row the previews play on. */
@@ -13491,14 +13503,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     /* ---- Movement animation ------------------------------------------------
-       renderStageTracker() replaces the panel's innerHTML on every changed
-       payload, so there is no DOM continuity to watch; a move is detected from
-       data instead. Each payload is reduced to item key → column index
-       (stageTrackerColMap); keys whose column differs from the previous
-       payload's are moves (stageTrackerColMoves), the first payload never
-       animates. The pure row builder stamps data-ham-prev-col / data-ham-col
-       on the moved strips and stageTrackerAnimateMoves() plays the chosen
-       effect after setIfChanged. Detour stages share a column through
+       A move is detected from data, not DOM: each payload is reduced to item
+       key → column index (stageTrackerColMap); keys whose column differs from
+       the previous payload's are moves (stageTrackerColMoves), the first
+       payload never animates. The pure row builder stamps data-ham-prev-col /
+       data-ham-col on the moved strips and stageTrackerAnimateMoves() plays
+       the chosen effect after the render. renderStageTracker() does not
+       rebuild the panel's innerHTML (the hosted hive refreshes the payload
+       about once a second, which used to wipe a move mid-flight and leave
+       only its opening flash visible): stageTrackerReconcile() keys every
+       row on its item (data-ham-key), keeps unchanged and still-animating
+       rows' nodes, swaps changed ones, fades new rows in and collapses
+       departed rows out. Detour stages share a column through
        stageTrackerAnchor, so 050 → 070 is not a move; 110 (merged) is the
        cap column. */
     const STAGE_TRACKER_MOTION_KEY = 'hiveStageTrackerMotion';
@@ -13521,9 +13537,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // A refresh that moves more rows than this is a reconciler sweep, not
     // movement worth following; the state still advances, nothing animates.
     const STAGE_TRACKER_MOTION_MAX_ROWS = 12;
+    // Mirrors --ham-move-exit-ms / --ham-move-enter-ms.
+    const STAGE_TRACKER_EXIT_MS = 300;
+    const STAGE_TRACKER_ENTER_MS = 220;
+    // A row mid-move is kept across refreshes until its plan has landed
+    // (flash + move + landing glow stay under this at 1×); the deferred
+    // refresh runs then.
+    const STAGE_TRACKER_SETTLE_MS = 1200;
+    const STAGE_TRACKER_HEADER_KEY = '__cols';
     const STAGE_TRACKER_CAP_COLUMN = STAGE_TRACKER_PATH.length;
     var _stageTrackerCols = null;
     var _stageTrackerMoves = {};
+    var _stageTrackerRowSrc = typeof WeakMap === 'function' ? new WeakMap() : null;
+    var _stageTrackerSettleTimer = 0;
 
     // Pure: the strip column (0-based; STAGE_TRACKER_PATH.length = merged cap)
     // an item's stage lights, or -1 for an unknown stage.
@@ -13756,13 +13782,111 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // After a render: every strip the row builder flagged as moved plays the
     // effect the setting picks, unless the tab is hidden or too many moved.
     function stageTrackerAnimateMoves(root) {
+      if (!root) return 0;
       const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
-      if (!effect || !root || document.hidden) return 0;
       const strips = Array.from(root.querySelectorAll('.ham-strip[data-ham-prev-col]'));
-      if (!strips.length || strips.length > STAGE_TRACKER_MOTION_MAX_ROWS) return 0;
+      const play = !!effect && !document.hidden && strips.length > 0 && strips.length <= STAGE_TRACKER_MOTION_MAX_ROWS;
       let n = 0;
-      for (const strip of strips) if (stageTrackerAnimateMove(strip, Number(strip.dataset.hamPrevCol), Number(strip.dataset.hamCol), effect)) n++;
+      for (const strip of strips) {
+        if (play && stageTrackerAnimateMove(strip, Number(strip.dataset.hamPrevCol), Number(strip.dataset.hamCol), effect)) n++;
+        // The stamp is one render's worth; a kept node must not replay it.
+        delete strip.dataset.hamPrevCol; delete strip.dataset.hamCol;
+      }
       return n;
+    }
+
+    // -- keyed row reconcile ---------------------------------------------
+    // Pure: a row's source with the one-render move stamp removed, so the
+    // render after a move sees the same row and keeps its (animating) node.
+    function stageTrackerRowSrcKey(html) {
+      return String(html || '').replace(/ data-ham-prev-col="\d+" data-ham-col="\d+"/g, '');
+    }
+    // Pure: whether the stamped move attributes name this strip.
+    function stageTrackerRowHasMove(html) { return / data-ham-prev-col="\d+"/.test(String(html || '')); }
+    function stageTrackerRowAnimating(node) {
+      return !!(node && typeof node.querySelector === 'function' && node.querySelector('.ham-strip[data-ham-phase]'));
+    }
+    function stageTrackerRowNode(key, html) {
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      const node = tpl.content.firstElementChild;
+      node.dataset.hamKey = key;
+      if (_stageTrackerRowSrc) _stageTrackerRowSrc.set(node, stageTrackerRowSrcKey(html));
+      return node;
+    }
+    function stageTrackerRowSrcOf(node) { return _stageTrackerRowSrc ? _stageTrackerRowSrc.get(node) : undefined; }
+    function stageTrackerRaf2(fn) {
+      if (typeof requestAnimationFrame !== 'function') { fn(); return; }
+      requestAnimationFrame(() => requestAnimationFrame(fn));
+    }
+    // Pure: whether departures/arrivals play at all — None and a hidden
+    // tab never do; a sweep that turns over more rows than
+    // STAGE_TRACKER_MOTION_MAX_ROWS is a filter or page change, not movement.
+    function stageTrackerRowMotionOn(effect, hidden, turnover) {
+      return !!effect && !hidden && turnover <= STAGE_TRACKER_MOTION_MAX_ROWS;
+    }
+    // A row leaving the list: collapse + fade from its measured height, then
+    // remove. Without motion it is simply removed.
+    function stageTrackerRowExit(node, animate) {
+      if (!animate) { node.remove(); return; }
+      node.style.setProperty('--ham-row-h', (Number(node.offsetHeight) || 0) + 'px');
+      node.classList.add('ham-leaving');
+      stageTrackerAfter(node, 'animationend', STAGE_TRACKER_EXIT_MS, () => node.remove());
+    }
+    function stageTrackerRowEnter(node) {
+      node.classList.add('ham-entering');
+      stageTrackerAfter(node, 'animationend', STAGE_TRACKER_ENTER_MS, () => node.classList.remove('ham-entering'));
+    }
+    // Reconcile the panel with the rows a render produced ([{ key, html }],
+    // the column header first). Rows are matched on key: an unchanged row
+    // keeps its node (so an in-flight move is never interrupted), a row
+    // mid-move whose only change is incidental (its "since" text ticked)
+    // is kept too and a settle re-render is scheduled, a changed row is
+    // swapped for a fresh node, a new row fades in, a departed row
+    // collapses out. Returns the counts for tests.
+    function stageTrackerReconcile(el, rows, opts) {
+      opts = opts || {};
+      const old = {};
+      let leaving = 0;
+      for (const n of Array.from(el.children)) {
+        if (!n.dataset || !n.dataset.hamKey) { n.remove(); continue; }
+        if (n.classList.contains('ham-leaving')) { leaving++; continue; }
+        old[n.dataset.hamKey] = n;
+      }
+      const initial = !Object.keys(old).length && !leaving;
+      const seen = {};
+      let entering = 0, exiting = 0;
+      for (const r of rows) { seen[r.key] = true; if (!old[r.key]) entering++; }
+      for (const k of Object.keys(old)) if (!seen[k]) exiting++;
+      const animate = !initial && stageTrackerRowMotionOn(opts.effect, opts.hidden, entering + exiting);
+      const out = { kept: 0, replaced: 0, entered: 0, exited: 0, deferred: 0 };
+      // Departures first, so a collapsing row holds its place while the
+      // rows below it are laid out around it.
+      for (const k of Object.keys(old)) if (!seen[k]) { stageTrackerRowExit(old[k], animate && k !== STAGE_TRACKER_HEADER_KEY); out.exited++; }
+      let idx = 0;
+      const place = node => {
+        while (el.children[idx] && el.children[idx] !== node && el.children[idx].classList.contains('ham-leaving')) idx++;
+        if (el.children[idx] !== node) el.insertBefore(node, el.children[idx] || null);
+        idx++;
+      };
+      for (const r of rows) {
+        const prev = old[r.key];
+        const src = stageTrackerRowSrcKey(r.html);
+        const moved = stageTrackerRowHasMove(r.html);
+        if (prev && !moved && stageTrackerRowSrcOf(prev) === src) { place(prev); out.kept++; continue; }
+        if (prev && !moved && stageTrackerRowAnimating(prev)) { place(prev); out.deferred++; continue; }
+        const node = stageTrackerRowNode(r.key, r.html);
+        if (prev) { el.replaceChild(node, prev); out.replaced++; }
+        else { out.entered++; if (animate && r.key !== STAGE_TRACKER_HEADER_KEY) stageTrackerRowEnter(node); }
+        place(node);
+      }
+      return out;
+    }
+    // A refresh that found a row mid-move re-renders once the move has
+    // settled, so the row's incidental changes still land.
+    function stageTrackerScheduleSettle() {
+      if (_stageTrackerSettleTimer) return;
+      _stageTrackerSettleTimer = setTimeout(() => { _stageTrackerSettleTimer = 0; renderStageTracker(); }, STAGE_TRACKER_SETTLE_MS);
     }
 
     // What a PR row's issue slot shows: the issue the PR closes (number,
@@ -14107,12 +14231,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
       if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
+      const effect = stageTrackerMotionEffect(stageTrackerMotionSetting(), stageTrackerReducedMotion());
       if (!visible.length) {
-        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`);
+        _stageTrackerMoves = {};
+        const emptyHtml = `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`;
+        if (el.querySelector('[data-ham-key]')) {
+          stageTrackerReconcile(el, [], { effect, hidden: document.hidden });
+          // Departing rows collapse first; the empty line follows them out.
+          if (el.querySelector('.ham-leaving')) { setTimeout(() => { if (!el.querySelector('[data-ham-key]')) setIfChanged(el, emptyHtml); }, STAGE_TRACKER_EXIT_MS * 1.5); return; }
+        }
+        setIfChanged(el, emptyHtml);
         return;
       }
-      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, ctx)).join('');
-      setIfChanged(el, html);
+      const rows = [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]
+        .concat(page.rows.map(it => ({ key: stageTrackerItemKey(it), html: stageTrackerRowHtml(it, stages, ctx) })));
+      const rec = stageTrackerReconcile(el, rows, { effect, hidden: document.hidden });
+      if (rec.deferred) stageTrackerScheduleSettle();
       // Moves play once, on the render that follows the payload; a filter
       // or paging re-render of the same payload does not replay them.
       if (Object.keys(_stageTrackerMoves).length) { stageTrackerAnimateMoves(el); _stageTrackerMoves = {}; }
