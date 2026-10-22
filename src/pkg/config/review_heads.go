@@ -104,7 +104,7 @@ func reviewHeadAgentNames(baseAgents map[string]AgentConfig) (map[string]string,
 			seen[alias] = true
 			replicas := normalizeReplicaCount(h.Replicas)
 			if replicas < 1 || replicas > MaxAgentReplicas {
-				return nil, fmt.Errorf("agent %s: review_heads[%s]: replicas must be between 1 and %d", base, alias, MaxAgentReplicas)
+				return nil, fmt.Errorf("agent %s: review_heads[%d]: replicas must be between 1 and %d", base, i, MaxAgentReplicas)
 			}
 			for n := 1; n <= replicas; n++ {
 				name := ReviewHeadAgentName(base, h, n)
@@ -168,20 +168,70 @@ func (a AgentConfig) ReviewHeadKeys(base string) []string {
 	return keys
 }
 
+// reviewRoleToken is the substring that marks an agent as a reviewer when
+// review.reviewer_agents is empty. It mirrors review.hasReviewCapability
+// (src/pkg/review/dispatch.go), which the dispatcher applies to the same
+// fields; keep the two in step.
+const reviewRoleToken = "review"
+
+// reviewerAdmitted reports whether the dispatcher would hand review kicks to
+// the enabled agent name under this config's review.reviewer_agents: a
+// listed name, a replica or review head of a listed base, or — with no list
+// — an agent whose name, role, aliases or keywords carry the review token.
+// It mirrors review.ReviewCapable so config-time checks on review_heads see
+// the same reviewer set the planner does.
+func (c *Config) reviewerAdmitted(name string, ac AgentConfig) bool {
+	if len(c.Review.ReviewerAgents) > 0 {
+		listed := map[string]bool{}
+		for _, n := range c.Review.ReviewerAgents {
+			if n = strings.TrimSpace(n); n != "" {
+				listed[n] = true
+			}
+		}
+		return listed[name] || (ac.ReplicaOf != "" && listed[ac.ReplicaOf])
+	}
+	fields := append([]string{name, ac.Role}, ac.Aliases...)
+	fields = append(fields, ac.LaneKeywords...)
+	fields = append(fields, ac.DetectKeywords...)
+	for _, f := range fields {
+		if strings.Contains(strings.ToLower(f), reviewRoleToken) {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchedReviewerBases lists the enabled base agents the swarm hands
+// review kicks to: admitted by reviewerAdmitted, not paused or on-demand,
+// and kick-driven (the same filter as review.reviewCapableAgents), sorted.
+func (c *Config) dispatchedReviewerBases() []string {
+	var bases []string
+	for name, ac := range c.EnabledAgents() {
+		if ac.ReplicaOf != "" || ac.Paused || ac.OnDemand || !ac.UsesGovernorKick() {
+			continue
+		}
+		if c.reviewerAdmitted(name, ac) {
+			bases = append(bases, name)
+		}
+	}
+	sort.Strings(bases)
+	return bases
+}
+
 // ExpectedReviewHeads lists every head key the swarm dispatches each
-// perspective to: the review_heads of every enabled base agent, sorted, when
-// perspectives are split. Empty under combined_perspectives (heads are not
-// used there) or when no agent declares heads.
+// perspective to: the review_heads of every enabled base agent the
+// dispatcher admits as a reviewer, sorted, when perspectives are split. A
+// base review.reviewer_agents does not name is not dispatched, so its heads
+// are not expected either, and an all-approve aggregate never waits on
+// them. Empty under combined_perspectives (heads are not used there) or
+// when no admitted agent declares heads.
 func (c *Config) ExpectedReviewHeads() []string {
 	if c == nil || c.Review.CombinedPerspectives {
 		return nil
 	}
 	var keys []string
-	for name, ac := range c.EnabledAgents() {
-		if ac.ReplicaOf != "" {
-			continue
-		}
-		keys = append(keys, ac.ReviewHeadKeys(name)...)
+	for _, name := range c.dispatchedReviewerBases() {
+		keys = append(keys, c.Agents[name].ReviewHeadKeys(name)...)
 	}
 	sort.Strings(keys)
 	return keys
@@ -197,9 +247,13 @@ func (r ReviewConfig) EffectiveHeadMaxRetries() int {
 }
 
 // validateReviewHeads checks each head's backend is one the governor can
-// launch, and review.head_max_retries is not negative. Structural checks
-// (required fields, aliases, replicas, name collisions) run where the heads
-// are expanded, so a bad head fails config load the same way a bad
+// launch, review.head_max_retries is not negative, and that with split
+// perspectives the admitted reviewers either all declare review_heads or
+// none do. Head dispatch asks every perspective of every head and leaves
+// nothing for a plain reviewer lane alongside them, so a mixed set would
+// silently idle the lanes without heads (hivecommons/hive#13542). Structural
+// checks (required fields, aliases, replicas, name collisions) run where the
+// heads are expanded, so a bad head fails config load the same way a bad
 // replicas value does.
 func (c *Config) validateReviewHeads() error {
 	if c.Review.HeadMaxRetries < 0 {
@@ -216,6 +270,21 @@ func (c *Config) validateReviewHeads() error {
 				return fmt.Errorf("agent %s: review_heads[%d]: %w", name, i, err)
 			}
 		}
+	}
+	if c.Review.CombinedPerspectives {
+		return nil
+	}
+	var withHeads, without []string
+	for _, name := range c.dispatchedReviewerBases() {
+		if len(c.Agents[name].ReviewHeads) > 0 {
+			withHeads = append(withHeads, name)
+		} else {
+			without = append(without, name)
+		}
+	}
+	if len(withHeads) > 0 && len(without) > 0 {
+		return fmt.Errorf("review_heads: with review.combined_perspectives: false every reviewer must declare review_heads: %s do, %s do not; add review_heads to them or leave them out of review.reviewer_agents",
+			strings.Join(withHeads, ", "), strings.Join(without, ", "))
 	}
 	return nil
 }

@@ -489,7 +489,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 	if !opts.RequireApproval || !opts.FanOut {
 		return plan
 	}
-	reviewers, headsMode := dispatchReviewers(reviewCapableAgents(opts), opts.CombinedPerspectives)
+	heads, reviewers := dispatchReviewers(reviewCapableAgents(opts), opts.CombinedPerspectives)
 	maxParallel := opts.MaxParallelReviews
 	if maxParallel <= 0 {
 		maxParallel = DefaultMaxParallelReviews
@@ -588,12 +588,18 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		} else {
 			plan.expirePending(pr, opts, now)
 		}
-		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, prAuthorBase(pr, opts.Agents))
-		if len(prReviewers) == 0 || availableSlots <= 0 {
+		if availableSlots <= 0 {
 			continue
 		}
-		if headsMode {
-			availableSlots = plan.dispatchHeads(pr, prReviewers, opts, delivered, deliveredHeads, revisiting, availableSlots, now)
+		authorBase := prAuthorBase(pr, opts.Agents)
+		if prHeads := reviewersForPR(heads, pr.AuthorAgent, authorBase); len(prHeads) > 0 {
+			availableSlots = plan.dispatchHeads(pr, prHeads, opts, delivered, deliveredHeads, revisiting, availableSlots, now)
+		}
+		// Plain reviewers (none in a hive whose config passed
+		// validateReviewHeads with heads on) take the perspectives the heads
+		// left unasked, on the ordinary path.
+		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent, authorBase)
+		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
 		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List(), delivered)

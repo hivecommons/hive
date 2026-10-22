@@ -344,20 +344,22 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	// several verdicts, so each element is checked on its own: the dispatch is
 	// recorded per perspective, and a perspective nothing dispatched is refused
 	// here exactly as it would be for a single-object verdict.
-	ok, reason, dispatchHead, dispatchBodyDigest, hiveAuthored := c.verdictDispatchAuthorized(report, req)
-	if !ok {
+	auth := c.verdictDispatchAuthorized(report, req)
+	if !auth.OK {
 		c.logger.Warn("review-request watcher: verdict does not match a review dispatch, discarded",
 			slog.String("reviewed", fmt.Sprintf("%s#%d", req.Repo, req.Number)),
 			slog.String("perspective", string(report.Perspective)),
 			slog.String("agent", req.Agent),
-			slog.String("reason", reason))
+			slog.String("reason", auth.Reason))
 		return report, false
 	}
-	report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, dispatchHead, prHead)
-	report.HiveAuthored = hiveAuthored
-	// The review head comes from the dispatch record, never the reviewer's
-	// own JSON: a head cannot claim to be another head (hivecommons/hive#13542).
-	report.Head = dispatchReviewHead(report, req)
+	report.HeadSHA = c.canonicalVerdictHead(req, report.HeadSHA, auth.HeadSHA, prHead)
+	report.HiveAuthored = auth.HiveAuthored
+	// The review head comes from the dispatch record this verdict bound to,
+	// never the reviewer's own JSON: a head cannot claim to be another head,
+	// and an advisory admission carries none (hivecommons/hive#13542).
+	report.Head = auth.ReviewHead
+	dispatchBodyDigest := auth.BodyDigest
 	if review.ConcreteRemediationText(req.Body) {
 		report.ConcreteRemediation = true
 	}
@@ -425,13 +427,32 @@ func (c *Client) writeOneVerdict(ctx context.Context, req ReviewRequest, report 
 	return report, true
 }
 
-func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string, string, bool) {
+// verdictAuthorization is what admitting a verdict establishes about it:
+// whether it binds (and if not, why), and what the dispatch record it bound
+// to said about the PR head, the review body digest, whether the PR is hive-
+// authored, and the review head the perspective was dispatched to. An
+// advisory admission (no dispatch row) carries only what the report itself
+// claimed, and no review head.
+type verdictAuthorization struct {
+	OK           bool
+	Reason       string
+	HeadSHA      string
+	BodyDigest   string
+	HiveAuthored bool
+	ReviewHead   string
+}
+
+func verdictRefused(reason string) verdictAuthorization {
+	return verdictAuthorization{Reason: reason}
+}
+
+func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req ReviewRequest) verdictAuthorization {
 	state, err := review.LoadDispatchState("")
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return c.advisoryVerdictAuthorized(report, req)
 		}
-		return false, "dispatch_state_unavailable", "", "", false
+		return verdictRefused("dispatch_state_unavailable")
 	}
 	now := time.Now().UTC()
 	for _, p := range state.Pending {
@@ -439,9 +460,9 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 			continue
 		}
 		if c.sameVerdictAuthor(verdictAuthorAgent(p.AuthorAgent, report), req.Agent) {
-			return false, "author_self_approval", "", "", false
+			return verdictRefused("author_self_approval")
 		}
-		return true, "", p.HeadSHA, p.BodyDigest, strings.TrimSpace(p.AuthorAgent) != ""
+		return verdictAuthorization{OK: true, HeadSHA: p.HeadSHA, BodyDigest: p.BodyDigest, HiveAuthored: strings.TrimSpace(p.AuthorAgent) != "", ReviewHead: strings.TrimSpace(p.Head)}
 	}
 	cutoff := now.Add(-review.RecentDispatchTTL)
 	for _, r := range state.Recent {
@@ -452,9 +473,9 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 			continue
 		}
 		if c.sameVerdictAuthor(verdictAuthorAgent(r.AuthorAgent, report), req.Agent) {
-			return false, "author_self_approval", "", "", false
+			return verdictRefused("author_self_approval")
 		}
-		return true, "", r.HeadSHA, r.BodyDigest, strings.TrimSpace(r.AuthorAgent) != ""
+		return verdictAuthorization{OK: true, HeadSHA: r.HeadSHA, BodyDigest: r.BodyDigest, HiveAuthored: strings.TrimSpace(r.AuthorAgent) != "", ReviewHead: strings.TrimSpace(r.Head)}
 	}
 	// Queue-mode reviewer prompts can reach the relay through the ordinary
 	// PR-list comment path rather than a review-swarm dispatch. That still is
@@ -472,38 +493,18 @@ func (c *Client) verdictDispatchAuthorized(report review.PerspectiveReport, req 
 // recommends closing a PR, so the submitting lane must be one this hive
 // reviews with: any other lane that can reach the relay could otherwise
 // approve or veto any PR it did not author.
-func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) (bool, string, string, string, bool) {
+func (c *Client) advisoryVerdictAuthorized(report review.PerspectiveReport, req ReviewRequest) verdictAuthorization {
 	head := strings.TrimSpace(report.HeadSHA)
 	if head == "" {
-		return false, "missing_head_sha_without_dispatch", "", "", false
+		return verdictRefused("missing_head_sha_without_dispatch")
 	}
 	if !c.isReviewerAgent(req.Agent) {
-		return false, "non_reviewer_without_dispatch", "", "", false
+		return verdictRefused("non_reviewer_without_dispatch")
 	}
 	if c.sameVerdictAuthor(verdictAuthorAgent("", report), req.Agent) {
-		return false, "author_self_approval", "", "", false
+		return verdictRefused("author_self_approval")
 	}
-	return true, "", head, strings.TrimSpace(report.BodyDigest), false
-}
-
-// dispatchReviewHead is the review head of the dispatch record this verdict
-// binds to, or "" when it binds to none or the dispatch had no head.
-func dispatchReviewHead(report review.PerspectiveReport, req ReviewRequest) string {
-	state, err := review.LoadDispatchState("")
-	if err != nil {
-		return ""
-	}
-	for _, p := range state.Pending {
-		if pendingReviewMatchesVerdict(p, report, req) {
-			return strings.TrimSpace(p.Head)
-		}
-	}
-	for _, r := range state.Recent {
-		if recentReviewMatchesVerdict(r, report, req) {
-			return strings.TrimSpace(r.Head)
-		}
-	}
-	return ""
+	return verdictAuthorization{OK: true, HeadSHA: head, BodyDigest: strings.TrimSpace(report.BodyDigest)}
 }
 
 func pendingReviewMatchesVerdict(p review.PendingReview, report review.PerspectiveReport, req ReviewRequest) bool {

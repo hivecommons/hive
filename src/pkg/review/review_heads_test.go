@@ -199,3 +199,56 @@ func TestCombinedModeIgnoresHeads(t *testing.T) {
 		t.Fatalf("combined kicks = %+v, want one combined kick to the base", plan.ReviewKicks)
 	}
 }
+
+func TestHeadKicksCarryTheHeadModelAndStampPerHead(t *testing.T) {
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, headsOpts())
+	for _, k := range plan.ReviewKicks {
+		if k.ReviewModel == "" || !strings.Contains(k.Message, "review_model to \""+k.ReviewModel+"\"") {
+			t.Fatalf("head kick for %s does not tell the head to record its model %q:\n%s", k.Head, k.ReviewModel, k.Message)
+		}
+	}
+	// Two heads pending on the same perspective: each report is stamped with
+	// its own head's model, not the last-recorded one.
+	stamps := ModelStampsFromState(plan.State)
+	for _, tc := range []struct{ head, want string }{{"cr-sol", "gpt-6-sol"}, {"cr-sonnet", "claude-sonnet-5-5"}} {
+		report := PerspectiveReport{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness, Head: tc.head}
+		stamps.apply(&report)
+		if report.ReviewModel != tc.want {
+			t.Errorf("%s stamped review_model %q, want %q", tc.head, report.ReviewModel, tc.want)
+		}
+	}
+	plain := PerspectiveReport{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Perspective: PerspectiveCorrectness}
+	stamps.apply(&plain)
+	if plain.ReviewModel != "" {
+		t.Fatalf("report without a head took a head's stamp: %q", plain.ReviewModel)
+	}
+}
+
+func TestHeadsKeepPlainReviewersOnTheOrdinaryPath(t *testing.T) {
+	opts := headsOpts()
+	opts.Agents = append(headsFleet(), replica("cr-2", "cr"), reviewer("sec"))
+	opts.ReviewerAgents = []string{"cr", "sec"}
+	heads, others := dispatchReviewers(reviewCapableAgents(opts), false)
+	if len(heads) != 3 {
+		t.Fatalf("heads = %+v, want the three head replicas", heads)
+	}
+	if len(others) != 1 || others[0].Name != "sec" {
+		t.Fatalf("others = %+v, want only the lane without heads (base and its plain replica excluded)", others)
+	}
+	// Once the heads have taken every perspective, nothing is left for sec;
+	// a slot shortage that leaves a perspective unasked goes to sec next.
+	plan := PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 4 {
+		t.Fatalf("kicks = %d, want four head kicks", len(plan.ReviewKicks))
+	}
+	opts.MaxParallelReviews = 3
+	plan = PlanDispatch([]PullRequest{dispatchPR("sha1")}, Artifact{}, DispatchState{}, opts)
+	if len(plan.ReviewKicks) != 3 {
+		t.Fatalf("kicks = %d, want max_parallel_reviews", len(plan.ReviewKicks))
+	}
+	for _, k := range plan.ReviewKicks {
+		if k.Agent == "sec" {
+			t.Fatalf("sec took a slot ahead of the heads: %+v", plan.ReviewKicks)
+		}
+	}
+}

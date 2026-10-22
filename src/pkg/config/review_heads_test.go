@@ -145,3 +145,66 @@ func keys(m map[string]AgentConfig) []string {
 	}
 	return out
 }
+
+func reviewHeadsConfig(reviewerAgents []string, agents map[string]AgentConfig) *Config {
+	cfg := &Config{AgentRuntimeConfig: AgentRuntimeConfig{Agents: agents}}
+	cfg.Review.ReviewerAgents = reviewerAgents
+	return cfg
+}
+
+func TestExpectedReviewHeadsFollowReviewerAdmission(t *testing.T) {
+	base := reviewHeadsBase()
+	other := AgentConfig{ID: "security-reviewer", Backend: "codex", Model: "m", Enabled: true, Role: "reviewer",
+		ReviewHeads: []ReviewHead{{Backend: "codex", Model: "m", Alias: "sec"}}}
+	cfg := reviewHeadsConfig([]string{"code-reviewer"}, map[string]AgentConfig{"code-reviewer": base, "security-reviewer": other})
+	if err := cfg.ExpandAgentReplicas(); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(cfg.ExpectedReviewHeads(), ",")
+	if got != "code-reviewer-claude-sonnet-5-5,code-reviewer-sol" {
+		t.Fatalf("expected heads = %q; heads of a base reviewer_agents does not name must not be waited on", got)
+	}
+	cfg.Review.ReviewerAgents = nil
+	if got := cfg.ExpectedReviewHeads(); len(got) != 3 {
+		t.Fatalf("without reviewer_agents every reviewer base's heads are expected, got %v", got)
+	}
+	cfg.Review.CombinedPerspectives = true
+	if got := cfg.ExpectedReviewHeads(); got != nil {
+		t.Fatalf("combined perspectives expect heads: %v", got)
+	}
+}
+
+func TestReviewHeadsRejectMixedReviewerSet(t *testing.T) {
+	base := reviewHeadsBase()
+	plain := AgentConfig{ID: "security-reviewer", Backend: "codex", Model: "m", Enabled: true, Role: "reviewer"}
+	cfg := reviewHeadsConfig([]string{"code-reviewer", "security-reviewer"}, map[string]AgentConfig{"code-reviewer": base, "security-reviewer": plain})
+	if err := cfg.ExpandAgentReplicas(); err != nil {
+		t.Fatal(err)
+	}
+	err := cfg.validateReviewHeads()
+	if err == nil || !strings.Contains(err.Error(), "security-reviewer do not") {
+		t.Fatalf("mixed reviewers accepted: %v", err)
+	}
+	// Leaving the plain lane out of reviewer_agents, or running combined
+	// perspectives (heads unused), is fine.
+	cfg.Review.ReviewerAgents = []string{"code-reviewer"}
+	if err := cfg.validateReviewHeads(); err != nil {
+		t.Fatalf("heads-only reviewer set rejected: %v", err)
+	}
+	cfg.Review.ReviewerAgents = []string{"code-reviewer", "security-reviewer"}
+	cfg.Review.CombinedPerspectives = true
+	if err := cfg.validateReviewHeads(); err != nil {
+		t.Fatalf("combined perspectives rejected: %v", err)
+	}
+	// Without reviewer_agents the review token decides: a plain lane whose
+	// name carries it is still a mixed set.
+	cfg.Review.CombinedPerspectives = false
+	cfg.Review.ReviewerAgents = nil
+	if err := cfg.validateReviewHeads(); err == nil {
+		t.Fatal("mixed reviewers by review token accepted")
+	}
+	delete(cfg.Agents, "security-reviewer")
+	if err := cfg.validateReviewHeads(); err != nil {
+		t.Fatalf("heads-only set by review token rejected: %v", err)
+	}
+}

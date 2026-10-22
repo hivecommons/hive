@@ -14,30 +14,37 @@ import (
 // (perspective, head) pairs a PR head still needs, and planning one
 // record-only kick per pair.
 
-// dispatchReviewers splits the review-capable agents into the set this cycle
-// dispatches to. Agents derived from review_heads only review with split
-// perspectives (combined_perspectives off); there they are the whole set and
-// headsMode is true, and the bases that declare them are left for the
-// decision step. Otherwise heads are dropped and every other reviewer works
-// exactly as before.
-func dispatchReviewers(reviewers []AgentCapability, combined bool) ([]AgentCapability, bool) {
-	hasHeads := false
+// dispatchReviewers splits the review-capable agents into the heads this
+// cycle dispatches to and the plain reviewers that follow the ordinary path.
+// Agents derived from review_heads only review with split perspectives
+// (combined_perspectives off); there the bases that declare them, and those
+// bases' plain replicas, are left for the decision step and every other
+// reviewer stays on the ordinary path, so a lane without heads is never
+// silently dropped (config.validateReviewHeads rejects such a mix, since
+// head dispatch leaves it nothing to review). Under combined perspectives
+// heads are dropped and every other reviewer works exactly as before.
+func dispatchReviewers(reviewers []AgentCapability, combined bool) (heads, others []AgentCapability) {
+	declaring := map[string]bool{}
 	for _, r := range reviewers {
-		if r.ReviewHead != "" {
-			hasHeads = true
-			break
+		if r.HasReviewHeads {
+			declaring[r.Name] = true
+		}
+		if r.ReviewHead != "" && !combined {
+			heads = append(heads, r)
 		}
 	}
-	if !hasHeads {
-		return reviewers, false
-	}
-	out := make([]AgentCapability, 0, len(reviewers))
 	for _, r := range reviewers {
-		if (r.ReviewHead != "") == !combined {
-			out = append(out, r)
+		switch {
+		case r.ReviewHead != "":
+			continue
+		case len(heads) > 0 && (r.HasReviewHeads || declaring[baseOf(r)]):
+			// A head-declaring base and its plain replicas review only
+			// through their heads.
+			continue
 		}
+		others = append(others, r)
 	}
-	return out, !combined
+	return heads, others
 }
 
 // headGroups groups head reviewers by head key, returning the keys in order.
@@ -157,6 +164,8 @@ func (p *DispatchPlan) dispatchHeads(pr PullRequest, reviewers []AgentCapability
 			WritingGuideSection:  opts.WritingGuideSection,
 			ReviewBotLogins:      opts.ReviewBotLogins,
 			ReviewBotMinPriority: opts.ReviewBotMinPriority,
+			ReviewBackend:        reviewer.Backend,
+			ReviewModel:          reviewer.Model,
 		})
 		p.ReviewKicks = append(p.ReviewKicks, DispatchKick{Agent: reviewer.Name, Message: msg, PRRef: fmt.Sprintf("%s#%d", pr.Repo, pr.Number), Kind: "review", Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Head: m.Head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewBackend: reviewer.Backend, ReviewModel: reviewer.Model})
 		p.State.Pending = append(p.State.Pending, PendingReview{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA, BodyDigest: pr.BodyDigest, Perspective: m.Perspective, Agent: reviewer.Name, Head: m.Head, AuthorAgent: pr.AuthorAgent, AuthorModel: pr.AuthorModel, ReviewModel: strings.TrimSpace(reviewer.Model), Dispatched: now})

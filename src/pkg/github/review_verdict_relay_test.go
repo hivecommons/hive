@@ -735,11 +735,11 @@ func TestAdvisoryVerdictRejectsSiblingReplicaOfAuthor(t *testing.T) {
 	})
 	report := review.PerspectiveReport{Repo: "o/r", Number: 1, Perspective: review.PerspectiveCorrectness, HeadSHA: "abc123"}
 
-	if ok, reason, _, _, _ := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2"}); ok || reason != "author_self_approval" {
-		t.Fatalf("alpha-2 on alpha-authored PR: ok=%v reason=%q, want rejected author_self_approval", ok, reason)
+	if auth := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "alpha-2"}); auth.OK || auth.Reason != "author_self_approval" {
+		t.Fatalf("alpha-2 on alpha-authored PR: ok=%v reason=%q, want rejected author_self_approval", auth.OK, auth.Reason)
 	}
-	if ok, reason, _, _, _ := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "beta"}); !ok {
-		t.Fatalf("beta on alpha-authored PR rejected: %q", reason)
+	if auth := c.advisoryVerdictAuthorized(report, ReviewRequest{Repo: "o/r", Number: 1, Agent: "beta"}); !auth.OK {
+		t.Fatalf("beta on alpha-authored PR rejected: %q", auth.Reason)
 	}
 
 	reportDir := filepath.Join(dir, "reports")
