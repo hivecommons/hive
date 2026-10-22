@@ -11,7 +11,7 @@ import (
 func TestContributeYourAssignmentsCardWiring(t *testing.T) {
 	body := renderContributePage(t)
 	for _, want := range []string{
-		`id="cc-assign-card" data-ops-card="assignments" style="display:none`,
+		`id="cc-assign-card" data-ops-card="assignments" hidden>`,
 		`<h3>Your assignments</h3>`,
 		`id="cc-assign-body"`,
 		`function ccLoadAssignments(force)`,
@@ -19,6 +19,7 @@ func TestContributeYourAssignmentsCardWiring(t *testing.T) {
 		`indexOf('relay_')===0`,
 		`if(!r.ok)return null;`,
 		`function ccRenderAssignments(rows)`,
+		`card.hidden=false;`,
 		`try{ccLoadAssignments();}catch(e)`,
 	} {
 		if !strings.Contains(body, want) {

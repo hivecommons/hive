@@ -1055,8 +1055,11 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-mine-lbl{font-size:var(--fs-xs);letter-spacing:.03em;text-transform:uppercase;color:var(--text-muted);margin-top:3px}
 .cc-mine-sub{font-size:var(--fs-xs);color:var(--text-faint);margin-top:var(--sp-1)}
 /* Your assignments (#13454): the caller's own relay_* audit rows, read-only. */
-.cc-assign-list{list-style:none;margin:0;padding:var(--sp-4) 20px;max-height:280px;overflow-y:auto}
-.cc-assign-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line-subtle);font-size:.82rem}
+.cc-assign-card{margin-bottom:var(--sp-7)}
+.cc-assign-card[hidden]{display:none}
+.cc-assign-list{list-style:none;margin:0;padding:var(--sp-4) var(--sp-7);max-height:280px;overflow-y:auto}
+.cc-assign-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--sp-3);padding:var(--sp-2) 0;border-bottom:1px solid var(--line-subtle);font-size:var(--fs-base)}
+.cc-assign-note{padding:var(--sp-0) var(--sp-7) var(--sp-5);margin:var(--sp-0)}
 .cc-assign-row:last-child{border-bottom:none}
 .cc-assign-action{font-family:var(--font-mono,monospace);font-weight:600;color:var(--text)}
 .cc-assign-when{color:var(--text-faint);font-size:var(--fs-xs);margin-left:auto}
@@ -2269,10 +2272,10 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
      revoked, ...) whose user is the caller's GitHub login, read through
      GET /api/audit?contributor=<login>. Read-only, and role-gated by that endpoint:
      the card stays hidden for an anonymous viewer or a role the audit log refuses. -->
-<div class="ops-card" id="cc-assign-card" data-ops-card="assignments" style="display:none;margin-bottom:var(--sp-7)">
+<div class="ops-card cc-assign-card" id="cc-assign-card" data-ops-card="assignments" hidden>
 <div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Your assignments card" aria-pressed="false">⠿</button><h3>Your assignments</h3><span class="ops-card-count" id="cc-assign-count"></span></div>
 <ul class="cc-assign-list" id="cc-assign-body"><li class="ops-empty">Loading your assignments&hellip;</li></ul>
-<p class="ops-note" style="padding:0 20px 14px;margin:var(--sp-0)">The hub's audit trail of your relay sessions and tasks, newest first. Read-only.</p>
+<p class="ops-note cc-assign-note">The hub's audit trail of your relay sessions and tasks, newest first. Read-only.</p>
 </div>
 <div class="ops-card" id="cc-wall-card" data-ops-card="wall" style="display:none;margin-bottom:var(--sp-7)">
 <div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Contributor wall card" aria-pressed="false">⠿</button><h3>Contributor wall</h3><span class="ops-card-count" id="cc-wall-count"></span></div>
@@ -7453,7 +7456,7 @@ function ccRenderAssignments(rows){
       return '<li class="cc-assign-row"><span class="cc-assign-action">'+esc(e.action)+'</span>'+ref+when+detail+'</li>';
     }).join('');
   }
-  card.style.display='';
+  card.hidden=false;
 }
 // ccRenderMineMessage reveals the card carrying ONE sentence in place of the
 // tiles. The tier chip, sparkline and PR note are cleared alongside it: each of
