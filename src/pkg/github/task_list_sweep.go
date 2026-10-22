@@ -642,10 +642,23 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 	if len(refs) == 0 {
 		return nil
 	}
-	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs, partial, untouched)); err != nil {
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
 		return err
 	}
-	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
+	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, comments, renderRefsRemainderComment(refs, partial, untouched)); err != nil {
+		return err
+	}
+	// #13516: a maintainer answer recorded after a PR merged settles that
+	// PR's needs-human marker; only a PR merged after the answer re-parks.
+	answeredAt := c.lastMaintainerAcceptanceAt(comments)
+	unansweredNeedsHuman := false
+	for _, ref := range refs {
+		if ref.NeedsHuman && ref.MergedAt.After(answeredAt) {
+			unansweredNeedsHuman = true
+		}
+	}
+	if unansweredNeedsHuman && !hasIssueNeedsHumanLabel(labels) {
 		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueNeedsHumanLabel})
 		if err != nil {
 			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
@@ -660,11 +673,26 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 	return nil
 }
 
-func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo string, number int, desiredBody string) error {
-	comments, err := c.listIssueComments(ctx, owner, repo, number)
-	if err != nil {
-		return err
+// lastMaintainerAcceptanceAt returns when the hive last recorded a maintainer
+// answer on the issue: an accepted `/hive approve` / `/hive decision` reply or
+// a label-approval reply. It is zero when there is none.
+func (c *Client) lastMaintainerAcceptanceAt(comments []*gh.IssueComment) time.Time {
+	var latest time.Time
+	for _, cm := range comments {
+		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) {
+			continue
+		}
+		body := cm.GetBody()
+		accepted := strings.Contains(body, labelApprovalMarkerPrefix) ||
+			(strings.Contains(body, unparkReplyMarkerPrefix) && strings.Contains(body, unparkDecisionLinePrefix))
+		if accepted && cm.GetCreatedAt().Time.After(latest) {
+			latest = cm.GetCreatedAt().Time
+		}
 	}
+	return latest
+}
+
+func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo string, number int, comments []*gh.IssueComment, desiredBody string) error {
 	desiredPRs := sweepCommentPRNumbers(desiredBody)
 	for _, cm := range comments {
 		if cm == nil || !strings.Contains(cm.GetBody(), taskListSweepMarker) {
@@ -686,7 +714,7 @@ func (c *Client) ensureRefsRemainderComment(ctx context.Context, owner, repo str
 		}
 		return nil
 	}
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desiredBody)})
+	_, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desiredBody)})
 	if err != nil {
 		return fmt.Errorf("creating Refs remainder comment on %s/%s#%d: %w", owner, repo, number, err)
 	}
