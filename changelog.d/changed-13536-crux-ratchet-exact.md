@@ -1,0 +1,1 @@
+- The Crux boundary ratchet (`src/internal/testutil/crux_boundary_ratchet_test.go`) now fails closed when a per-package `agent.<Symbol>` or tmux baseline is above the measured count, so removed coupling must be locked in by lowering the baseline in the same change (RFC #13536). Internal test change only; no user-visible behaviour change.
