@@ -1054,6 +1054,10 @@ select.admin-act{min-width:0;max-width:100%%}
 .cc-mine-tile.is-pr .cc-mine-val{color:var(--cc-green)}
 .cc-mine-lbl{font-size:var(--fs-xs);letter-spacing:.03em;text-transform:uppercase;color:var(--text-muted);margin-top:3px}
 .cc-mine-sub{font-size:var(--fs-xs);color:var(--text-faint);margin-top:var(--sp-1)}
+/* Requested relay audit level (#13458): shown before the setup commands; toggled via the hidden attribute. */
+.cc-audit-share{margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid var(--cc-accent);border-radius:var(--r);padding:var(--sp-5) var(--sp-6);font-size:var(--fs-base);color:var(--text);line-height:1.5}
+.cc-audit-share strong{color:var(--text)}
+.cc-audit-share a{color:var(--cc-accent)}
 /* Your assignments (#13454): the caller's own relay_* audit rows, read-only. */
 .cc-assign-card{margin-bottom:var(--sp-7)}
 .cc-assign-card[hidden]{display:none}
@@ -1683,7 +1687,7 @@ select.admin-act{min-width:0;max-width:100%%}
 </div>
 <p style="color:var(--text-muted);margin-bottom:var(--sp-4)">Copy and paste these commands to get started:</p>
 <div id="onboarding-announcement" class="announcement-reverse" role="status"></div>
-<div id="onboarding-audit-share" role="note" style="display:none;margin-bottom:var(--sp-5);background:var(--surface-2);border:1px solid var(--line-strong);border-left:3px solid #58a6ff;border-radius:var(--r);padding:var(--sp-5) 14px;font-size:.85rem;color:var(--text);line-height:1.5"><strong style="color:var(--text)">This hive requests relay audit level <code class="level"></code>.</strong> It is a request, not an admission condition: your relay keeps its audit record on your machine and uploads nothing unless you opt in for this hive with <code>hivectl hives set &lt;name&gt; --share-audit <span class="level"></span></code> (never above your <code>--audit-level</code>). See <a href="https://github.com/hivecommons/hive/blob/{{HIVE_BRANCH}}/src/docs/contributor-relay.md#sharing-your-audit-record-with-a-hive---share-audit" target="_blank" rel="noopener" style="color:var(--cc-accent)">sharing your audit record</a>.</div>
+<div id="onboarding-audit-share" class="cc-audit-share" role="note" hidden><strong>This hive requests relay audit level <code class="level"></code>.</strong> It is a request, not an admission condition: your relay keeps its audit record on your machine and uploads nothing unless you opt in for this hive with <code>hivectl hives set &lt;name&gt; --share-audit <span class="level"></span></code> (never above your <code>--audit-level</code>). See <a href="https://github.com/hivecommons/hive/blob/{{HIVE_BRANCH}}/src/docs/contributor-relay.md#sharing-your-audit-record-with-a-hive---share-audit" target="_blank" rel="noopener">sharing your audit record</a>.</div>
 <div style="margin-top:var(--sp-6);background:var(--surface-0);border:1px solid var(--line-strong);border-radius:8px;padding:var(--sp-6);position:relative">
 <button id="copy-btn" class="hv-btn btn-primary btn-sm cc-copy-overlay">Copy</button>
 <pre id="copy-cmds" style="color:var(--text);font-size:.85rem;margin:var(--sp-0);overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
@@ -2751,9 +2755,9 @@ function ccLoadHelpLinks(){
 function ccSetAuditShareRequest(level){
   var box=document.getElementById('onboarding-audit-share');if(!box)return;
   level=String(level||'');
-  if(['lifecycle','commands','reasoning'].indexOf(level)<0){box.style.display='none';return;}
+  if(['lifecycle','commands','reasoning'].indexOf(level)<0){box.hidden=true;return;}
   box.querySelectorAll('.level').forEach(function(el){el.textContent=level;});
-  box.style.display='';
+  box.hidden=false;
 }
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
