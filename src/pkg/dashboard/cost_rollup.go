@@ -140,6 +140,19 @@ func costRollupStepAllowed(usd float64, gapMs int64, ceiling, ratePerMs float64)
 	return usd <= ratePerMs*float64(gapMs)
 }
 
+// costRollupRestoreGapFraction mirrors the UI's COST_RESTORE_GAP_FRACTION.
+const costRollupRestoreGapFraction = 0.8
+
+// costRollupStepRegainsGround reports whether a positive step lands at or
+// below a level the counter already reached and closes most of the gap to it
+// — the shape of a restore. A step to a new high is spend, however large.
+func costRollupStepRegainsGround(inc, prev, cur, peak float64) bool {
+	if math.IsInf(peak, -1) || cur > peak {
+		return false
+	}
+	return inc >= costRollupRestoreGapFraction*(peak-prev)
+}
+
 // costFoldDailyRollups folds a cumulative snapshot series into per-UTC-day
 // spend records. Increments are attributed to the day of the snapshot that
 // revealed them, so a day's first increment counts the growth since the last
@@ -162,6 +175,7 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 	rate := costRollupDiscontinuityRate(steps, hist[len(hist)-1].Timestamp-hist[0].Timestamp)
 
 	var prev *CostHistoryEntry
+	peak := math.Inf(-1)
 	for i := range hist {
 		e := &hist[i]
 		day := costRollupDay(e.Timestamp)
@@ -173,8 +187,13 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 			// A step discarded as a correction takes its token deltas with
 			// it: counting the tokens of a re-seed while dropping its dollars
 			// made 800M-token / $0 days (#13482).
-			if d > 0 && !costRollupStepAllowed(d, e.Timestamp-prev.Timestamp, ceiling, rate) {
+			// Only a restore (regained ground) can be a correction; a step to a
+			// new high is a session flush however large (#13497).
+			if d > 0 && costRollupStepRegainsGround(d, prev.USD, e.USD, peak) && !costRollupStepAllowed(d, e.Timestamp-prev.Timestamp, ceiling, rate) {
 				out[day] = r
+				if e.USD > peak {
+					peak = e.USD
+				}
 				prev = e
 				continue
 			}
@@ -195,6 +214,9 @@ func costFoldDailyRollups(hist []CostHistoryEntry) map[string]CostDailyRollup {
 			}
 		}
 		out[day] = r
+		if e.USD > peak {
+			peak = e.USD
+		}
 		prev = e
 	}
 	return out

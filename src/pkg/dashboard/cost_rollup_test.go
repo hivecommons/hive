@@ -35,12 +35,15 @@ func TestCostFoldDailyRollups(t *testing.T) {
 		rollupSnap(day2.Add(time.Hour), 5, 5000, 50),
 		rollupSnap(day2.Add(2*time.Hour), 7, 7000, 70),
 	)
-	// Day 3: a $5,000 restore in one step — a data correction, not spend —
-	// followed by an ordinary +1.
+	// Day 3: the counter climbs to $5,007 (a new high), drops back to $7
+	// (sessions aged out), and a $5,000 restore regains it in one step — a
+	// data correction, not spend — followed by an ordinary +1.
 	day3 := day2.AddDate(0, 0, 1)
 	hist = append(hist,
 		rollupSnap(day3, 5007, 7000, 70),
-		rollupSnap(day3.Add(time.Hour), 5008, 8000, 80),
+		rollupSnap(day3.Add(time.Hour), 7, 7000, 70),
+		rollupSnap(day3.Add(2*time.Hour), 5007, 7000, 70),
+		rollupSnap(day3.Add(3*time.Hour), 5008, 8000, 80),
 	)
 
 	got := costFoldDailyRollups(hist)
@@ -56,8 +59,8 @@ func TestCostFoldDailyRollups(t *testing.T) {
 		t.Errorf("day 2 = %+v, want $3 (1 carried over midnight + 2 after the drop) / 3 samples", d2)
 	}
 	d3 := got["2026-09-03"]
-	if d3.USD != 1 || d3.Samples != 2 {
-		t.Errorf("day 3 = %+v, want $1 (the $5000 restore is discarded) / 2 samples", d3)
+	if d3.USD != 5001 || d3.Samples != 4 {
+		t.Errorf("day 3 = %+v, want $5001 (the $5000 climb to a new high is spend, the $5000 restore is discarded, +$1) / 4 samples", d3)
 	}
 }
 
@@ -173,11 +176,13 @@ func TestCostFoldDailyRollupsKeepsGapExplainedSteps(t *testing.T) {
 	// 48 h × $382/h ≈ $18,300 of plausible accrual — real spend.
 	gapEnd := day1.Add(48 * time.Hour)
 	hist = append(hist, rollupSnap(gapEnd, last.USD+10000, 1_000_000, 10_000))
-	// Five minutes later another +$10,000: nothing can accrue that in 5 min
-	// ($382/h × 5 min ≈ $32) — correction, and its tokens go with it.
-	hist = append(hist, rollupSnap(gapEnd.Add(5*time.Minute), last.USD+20000, 900_000_000, 10_000))
+	// The counter then drops back and five minutes later regains +$10,000:
+	// nothing can accrue that in 5 min ($382/h × 5 min ≈ $32) and it lands on
+	// ground already reached — a restore, and its tokens go with it.
+	hist = append(hist, rollupSnap(gapEnd.Add(5*time.Minute), last.USD, 1_000_000, 10_000))
+	hist = append(hist, rollupSnap(gapEnd.Add(10*time.Minute), last.USD+10000, 900_000_000, 10_000))
 	// Then an ordinary +$40.
-	hist = append(hist, rollupSnap(gapEnd.Add(10*time.Minute), last.USD+20040, 900_001_000, 10_010))
+	hist = append(hist, rollupSnap(gapEnd.Add(15*time.Minute), last.USD+10040, 900_001_000, 10_010))
 
 	got := costFoldDailyRollups(hist)
 	d3 := got["2026-09-03"]
@@ -245,5 +250,21 @@ func TestCostWindowStartAnchorsOnOldestRollup(t *testing.T) {
 	}
 	if got := s.costCountWindowStart(); got != want.UnixMilli() {
 		t.Fatalf("count window start: want %d, got %d", want.UnixMilli(), got)
+	}
+}
+
+// A large positive step to a new high is a real session flush even when it is
+// well above the $500 floor and arrives at normal cadence (#13497).
+func TestCostFoldDailyRollupsKeepsLargeFlushToNewHigh(t *testing.T) {
+	day := time.Date(2026, 9, 16, 15, 0, 0, 0, time.UTC)
+	var hist []CostHistoryEntry
+	for i := 0; i < 10; i++ {
+		hist = append(hist, rollupSnap(day.Add(time.Duration(i)*5*time.Minute), float64(i)*0.05, int64(i*100), int64(i)))
+	}
+	last := hist[len(hist)-1]
+	hist = append(hist, rollupSnap(day.Add(45*time.Minute+5*time.Minute), last.USD+1816, 1_000_000, 5000))
+	got := costFoldDailyRollups(hist)["2026-09-16"]
+	if got.USD < 1816 {
+		t.Errorf("USD = %v, want the $1,816 flush kept", got.USD)
 	}
 }

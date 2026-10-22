@@ -12204,6 +12204,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // normal-sized step always counts.
     function costStepIsRestore(inc, prev, cur, peak, ceiling) {
       if (!(typeof ceiling === 'number') || !(inc > ceiling)) return false;
+      return costStepRegainsGround(inc, prev, cur, peak);
+    }
+
+    // costStepRegainsGround: the size-independent half of the restore test —
+    // the step lands at or below a level already reached and closes most of
+    // the gap to it. A step to a new high is never a restore.
+    function costStepRegainsGround(inc, prev, cur, peak) {
       if (!Number.isFinite(peak) || !(cur <= peak)) return false;
       return inc >= COST_RESTORE_GAP_FRACTION * (peak - prev);
     }
@@ -12473,18 +12480,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
         return s;
       };
-      const incs = [], gaps = [];
-      let prev = null, prevKind = null, prevTs = 0, sawWindow = false;
+      const incs = [], gaps = [], restores = [];
+      let prev = null, prevKind = null, prevTs = 0, sawWindow = false, peak = -Infinity, peakKind = null;
       for (const e of hist) {
-        if (e.timestamp < t0 || e.timestamp > t1) { if (e.timestamp > t1) break; continue; }
+        if (e.timestamp > t1) break;
         const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
         if (kind == null) continue;
         const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
+        if (kind !== peakKind) { peak = -Infinity; peakKind = kind; }
+        if (e.timestamp < t0) { if (cur > peak) peak = cur; continue; }
         sawWindow = true;
-        if (prev != null && kind === prevKind && cur > prev) { incs.push(cur - prev); gaps.push(e.timestamp - prevTs); }
+        if (prev != null && kind === prevKind && cur > prev) {
+          incs.push(cur - prev); gaps.push(e.timestamp - prevTs);
+          restores.push(costStepRegainsGround(cur - prev, prev, cur, peak));
+        }
+        if (cur > peak) peak = cur;
         prev = cur; prevKind = kind; prevTs = e.timestamp;
       }
-      return { incs, gaps, sawWindow };
+      return { incs, gaps, restores, sawWindow };
     }
 
     // costDiscontinuityRate: the plausible-spend rate ceiling in $/ms —
@@ -12514,7 +12527,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // under the fixed ceiling or within what the plausible rate could have
     // accrued over the gap. `cap` may be a number (fixed ceiling only, legacy
     // callers) or { ceiling, ratePerMs }.
-    function costStepAllowed(amount, gapMs, cap) {
+    function costStepAllowed(amount, gapMs, cap, restore) {
+      // Only a restore (regained ground) can be a correction; a step to a new
+      // high is a session flush however big (#13497).
+      if (restore === false) return true;
       const obj = !!(cap && typeof cap === 'object');
       const ceiling = obj ? cap.ceiling : cap;
       const c = (typeof ceiling === 'number') ? ceiling : Infinity;
@@ -12545,11 +12561,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Timestamps of every usable snapshot, in order, so an increment can walk
       // back over the stretch the sampler was demonstrably alive.
       const stamps = [];
-      let prev = null, prevKind = null;
+      let prev = null, prevKind = null, peak = -Infinity;
       for (const e of (hist || [])) {
         const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
         if (kind == null) continue;
         const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
+        if (kind !== prevKind) peak = -Infinity;
         if (prev != null && kind === prevKind && cur > prev) {
           // Walk back while snapshots stayed dense: that is the stretch the hive
           // was up and this spend could have been accruing. Stop at the first
@@ -12564,8 +12581,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // gap is the observation interval (previous snapshot → this one),
           // which the discontinuity guard judges the step against; `from` is
           // the (liveness-bounded) accrual start and may be later.
-          spans.push({ amount: cur - prev, from, to: e.timestamp, gap: stamps.length ? e.timestamp - stamps[stamps.length - 1] : 0 });
+          spans.push({ amount: cur - prev, from, to: e.timestamp, gap: stamps.length ? e.timestamp - stamps[stamps.length - 1] : 0, restore: costStepRegainsGround(cur - prev, prev, cur, peak) });
         }
+        if (cur > peak) peak = cur;
         prev = cur; prevKind = kind;
         stamps.push(e.timestamp);
       }
@@ -12581,7 +12599,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function costSpreadSpendBetween(spans, t0, t1, cap) {
       let spend = 0;
       for (const s of (spans || [])) {
-        if (!costStepAllowed(s.amount, s.gap, cap)) continue;
+        if (!costStepAllowed(s.amount, s.gap, cap, s.restore)) continue;
         const span = s.to - s.from;
         if (span < COST_ACCRUAL_MIN_SPREAD_MS) {
           // Point event: bill it entirely to the bucket containing it.
@@ -12633,9 +12651,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // is derived once from the full history and passed in; omit it to disable the
     // guard (kept optional so callers without full history stay correct).
     function costSpendBetween(hist, rate, t0, t1, ceiling) {
-      const { incs, gaps, sawWindow } = costPositiveIncrements(hist, rate, t0, t1);
+      const { incs, gaps, restores, sawWindow } = costPositiveIncrements(hist, rate, t0, t1);
       let spend = 0;
-      for (let i = 0; i < incs.length; i++) { if (costStepAllowed(incs[i], gaps[i], ceiling)) spend += incs[i]; }
+      for (let i = 0; i < incs.length; i++) { if (costStepAllowed(incs[i], gaps[i], ceiling, restores[i])) spend += incs[i]; }
       return sawWindow ? spend : null;
     }
 
