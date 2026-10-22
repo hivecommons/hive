@@ -37,6 +37,7 @@ type bootCollectorsDeps struct {
 	lookupTokenLogin       func(token, apiURL string) (string, error)
 	startContributeMetrics func(ctx context.Context, srv *dashboard.Server)
 	startCompliancePosture func(ctx context.Context, srv *dashboard.Server)
+	startCostHistory       func(ctx context.Context, srv *dashboard.Server)
 	readLastActionable     func() ([]byte, error)
 }
 
@@ -54,6 +55,7 @@ func defaultBootCollectorsDeps() bootCollectorsDeps {
 		},
 		startContributeMetrics: func(ctx context.Context, srv *dashboard.Server) { srv.StartContributeMetrics(ctx) },
 		startCompliancePosture: func(ctx context.Context, srv *dashboard.Server) { srv.StartCompliancePosture(ctx) },
+		startCostHistory:       func(ctx context.Context, srv *dashboard.Server) { srv.StartCostHistorySampler(ctx) },
 		readLastActionable:     func() ([]byte, error) { return os.ReadFile(lastActionablePath) },
 	}
 }

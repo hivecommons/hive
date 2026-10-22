@@ -101,6 +101,12 @@ type costResponse struct {
 	// 30-day snapshot ring (/api/cost/history). Empty until the first UTC
 	// day of snapshots has completed.
 	DailyRollup []CostDailyRollup `json:"daily_rollup"`
+	// AllTimeUSD is the headline all-time estimate: the sum of DailyRollup
+	// plus today's not-yet-rolled spend from the snapshot ring.
+	// AllTimeSince is the unix-millis start of the oldest rollup day (or the
+	// first snapshot before any day has rolled up).
+	AllTimeUSD   float64 `json:"all_time_usd"`
+	AllTimeSince int64   `json:"all_time_since,omitempty"`
 }
 
 // costModelEntry is one row of the estimated per-model / per-agent breakdown.
@@ -222,6 +228,7 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.CountWindowEnd = time.Now().UnixMilli()
 	resp.DailyRollup = s.CostDailyRollups()
+	resp.AllTimeUSD, resp.AllTimeSince = s.costAllTime(resp.Estimated)
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {

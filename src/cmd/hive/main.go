@@ -3089,6 +3089,11 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	if deps.startCompliancePosture != nil {
 		deps.startCompliancePosture(b.ctx, b.dashSrv)
 	}
+	// Cost/fact history sampler (#13483): snapshot every 5 minutes whether or
+	// not a browser is polling, so the 30-day ring has no viewer-shaped gaps.
+	if deps.startCostHistory != nil {
+		deps.startCostHistory(b.ctx, b.dashSrv)
+	}
 	b.refreshDashboard = func() {
 		// Capture the mutation epoch BEFORE reading any state: if a mutation
 		// (e.g. a restart-count or budget-window reset) lands while this

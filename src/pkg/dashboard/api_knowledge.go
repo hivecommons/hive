@@ -443,22 +443,42 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 	stats["vaults"] = s.deps.Knowledge.Vaults()
 	stats["git_sources"] = s.deps.Knowledge.GitSources()
 
-	if layers, ok := stats["layers"].([]map[string]interface{}); ok {
-		total := 0
-		for _, m := range layers {
-			if p, ok := m["total_pages"].(int); ok {
-				total += p
-			}
-		}
+	if total, ok := knowledgeFactTotal(stats); ok {
 		s.AppendFactHistory(total)
 	}
 
 	// Sample the estimated cost on the same cadence as the fact history so the
 	// cost sparkline shares the fact sparkline's timer (both throttled to
-	// ~5-min intervals). The figure is the same all-time cumulative estimated
-	// total that GET /api/cost returns; the per-agent map feeds the agent
-	// cards' spend-over-window display and the per-model map feeds the cost
-	// table's mini sparklines (unpriced models included — tokens still trend).
+	// ~5-min intervals). The server-side sampler (StartCostHistorySampler)
+	// keeps both histories populated when no browser is polling.
+	s.sampleCostHistory()
+
+	jsonResponse(w, stats)
+}
+
+// knowledgeFactTotal sums total_pages over the stats' layers; ok is false
+// when the stats carry no layer list.
+func knowledgeFactTotal(stats map[string]interface{}) (int, bool) {
+	layers, ok := stats["layers"].([]map[string]interface{})
+	if !ok {
+		return 0, false
+	}
+	total := 0
+	for _, m := range layers {
+		if p, ok := m["total_pages"].(int); ok {
+			total += p
+		}
+	}
+	return total, true
+}
+
+// sampleCostHistory records the estimated cost snapshot (throttled by the
+// cost ring to costHistoryMinIntervalMs). The figure is the same all-time
+// cumulative estimated total that GET /api/cost returns; the per-agent map
+// feeds the agent cards' spend-over-window display and the per-model map feeds
+// the cost table's mini sparklines and the rollup's token-backed step test
+// (unpriced models included — tokens still trend).
+func (s *Server) sampleCostHistory() {
 	est := s.estimatedCost()
 	perAgent := make(map[string]float64, len(est.ByAgent))
 	for _, row := range est.ByAgent {
@@ -473,8 +493,6 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.AppendCostHistoryFull(est.TotalUSD, perAgent, perModel)
-
-	jsonResponse(w, stats)
 }
 
 func (s *Server) handleKnowledgeGraph(w http.ResponseWriter, r *http.Request) {

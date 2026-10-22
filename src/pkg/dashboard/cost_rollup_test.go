@@ -154,3 +154,119 @@ func TestAppendCostHistoryFoldsRollup(t *testing.T) {
 		t.Fatalf("rollup after append = %+v, want yesterday at $3", got)
 	}
 }
+
+// A step above the discontinuity ceiling that the step's own per-model token
+// growth explains is real spend that accrued across a sampling gap and is
+// kept; an unexplained one is discarded together with its token increments.
+func TestCostFoldDailyRollupsKeepsTokenBackedGapSteps(t *testing.T) {
+	day := time.Date(2026, 9, 16, 0, 0, 0, 0, time.UTC)
+	var hist []CostHistoryEntry
+	for h := 0; h < 6; h++ {
+		hist = append(hist, rollupSnap(day.Add(time.Duration(h)*time.Hour), float64(h), int64(h*1000), int64(h*10)))
+	}
+	// 296 h gap: +$8,000 backed by +8M input tokens.
+	hist = append(hist, rollupSnap(day.Add(301*time.Hour), 8005, 8_005_000, 80_050))
+	// Unexplained $5,000 jump (price change / restore): no token growth.
+	hist = append(hist, rollupSnap(day.Add(302*time.Hour), 13005, 8_005_000, 80_050))
+	// The next step after the discarded one: ordinary +1 with tokens.
+	hist = append(hist, rollupSnap(day.Add(303*time.Hour), 13006, 8_006_000, 80_060))
+
+	got := costFoldDailyRollups(hist)
+	gapDay := costRollupDay(day.Add(301 * time.Hour).UnixMilli())
+	r := got[gapDay]
+	if r.USD != 8001 || r.InputTokens != 8_001_000 || r.OutputTokens != 80_010 {
+		t.Fatalf("gap day = %+v, want $8001 (token-backed $8000 kept, $5000 jump dropped) with matching tokens", r)
+	}
+}
+
+// A discarded step's token increments are discarded with its cost, so a day
+// never shows tokens with $0.
+func TestCostFoldDailyRollupsDiscardsTokensWithCorrection(t *testing.T) {
+	day := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	hist := []CostHistoryEntry{
+		{Timestamp: day.UnixMilli(), USD: 1, Models: map[string]CostModelSnap{"a": {Input: 100, USD: 1}, "b": {Input: 100, USD: 0}}},
+		{Timestamp: day.Add(time.Hour).UnixMilli(), USD: 2, Models: map[string]CostModelSnap{"a": {Input: 200, USD: 2}, "b": {Input: 100, USD: 0}}},
+		{Timestamp: day.Add(2 * time.Hour).UnixMilli(), USD: 3, Models: map[string]CostModelSnap{"a": {Input: 300, USD: 3}, "b": {Input: 100, USD: 0}}},
+		// $5,000 step mostly from model a's USD with no a-token growth; only
+		// the unpriced model b grew, which explains none of it.
+		{Timestamp: day.Add(3 * time.Hour).UnixMilli(), USD: 5003, Models: map[string]CostModelSnap{"a": {Input: 300, USD: 5003}, "b": {Input: 900, USD: 0}}},
+	}
+	r := costFoldDailyRollups(hist)["2026-09-01"]
+	if r.USD != 2 || r.InputTokens != 200 {
+		t.Fatalf("day = %+v, want $2 / 200 input tokens (the correction's tokens dropped too)", r)
+	}
+}
+
+// Sub-cent increments do not drag the median down to zero.
+func TestCostRollupDiscontinuityCeilingIgnoresSubCentIncrements(t *testing.T) {
+	if c := costRollupDiscontinuityCeiling([]float64{0.001, 0.002, 0.003, 0.004, 40, 40, 40}); c != 800 {
+		t.Errorf("ceiling = %v, want 800 (median of the non-trivial $40 increments × 20)", c)
+	}
+	if c := costRollupDiscontinuityCeiling([]float64{0.001, 0.002, 0.003}); !math.IsInf(c, 1) {
+		t.Errorf("only sub-cent increments → no ceiling, got %v", c)
+	}
+}
+
+// A stored day the ring no longer fully covers is raised (never lowered) when
+// the partial refold recovers more spend, e.g. a day folded under the old
+// discontinuity rule.
+func TestCostRollupPartialRefoldOnlyRaises(t *testing.T) {
+	s := &Server{}
+	now := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	yesterday := now.Truncate(24 * time.Hour).AddDate(0, 0, -1)
+	day := yesterday.Format(costRollupDayLayout)
+	s.costSeries().Seed([]CostHistoryEntry{
+		rollupSnap(yesterday.Add(6*time.Hour), 1, 1000, 10),
+		rollupSnap(yesterday.Add(7*time.Hour), 2, 2000, 20),
+		rollupSnap(yesterday.Add(8*time.Hour), 3, 3000, 30),
+		rollupSnap(yesterday.Add(20*time.Hour), 2003, 2_003_000, 20_030),
+	})
+	s.costRollup = map[string]CostDailyRollup{day: {Day: day, USD: 2, Samples: 3}}
+	s.foldCostRollups(now)
+	if got := s.CostDailyRollups(); len(got) != 1 || got[0].USD != 2002 {
+		t.Fatalf("rollups = %+v, want yesterday raised to $2002", got)
+	}
+	s.costRollup = map[string]CostDailyRollup{day: {Day: day, USD: 5000, Samples: 288}}
+	s.foldCostRollups(now)
+	if got := s.CostDailyRollups(); len(got) != 1 || got[0].USD != 5000 {
+		t.Fatalf("rollups = %+v, want the larger stored $5000 kept", got)
+	}
+}
+
+// /api/cost's all_time_usd is the persisted rollups plus today's un-rolled
+// spend, anchored to the oldest rollup day, and does not change when the ring
+// evicts old snapshots.
+func TestCostAllTimeFromDailyRollup(t *testing.T) {
+	s := covCServer(t)
+	now := time.Now().UTC()
+	today := now.Truncate(24 * time.Hour)
+	old := today.AddDate(0, 0, -100).Format(costRollupDayLayout)
+	s.SeedCostDailyRollups([]CostDailyRollup{{Day: old, USD: 1000, Samples: 288}})
+	s.costSeries().Seed([]CostHistoryEntry{
+		rollupSnap(today, 5, 5000, 50),
+		rollupSnap(today.Add(time.Minute), 7, 7000, 70),
+	})
+
+	rec := doGet(s, "/api/cost")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/cost = %d", rec.Code)
+	}
+	var body struct {
+		AllTimeUSD   float64 `json:"all_time_usd"`
+		AllTimeSince int64   `json:"all_time_since"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode /api/cost: %v", err)
+	}
+	wantSince, _ := costRollupDayStart(old)
+	if body.AllTimeUSD != 1002 || body.AllTimeSince != wantSince {
+		t.Fatalf("all_time = $%v since %d, want $1002 since %d", body.AllTimeUSD, body.AllTimeSince, wantSince)
+	}
+
+	// Ring eviction leaves the rollup-backed total and its start alone.
+	s.costSeries().Seed(nil)
+	usd, since := s.costAllTime(s.estimatedCost())
+	if usd != 1000 || since != wantSince {
+		t.Fatalf("after eviction all_time = $%v since %d, want $1000 since %d", usd, since, wantSince)
+	}
+}

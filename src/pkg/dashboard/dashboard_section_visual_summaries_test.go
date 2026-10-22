@@ -268,3 +268,81 @@ assert.equal(allTime.resets[0].next, 5.4);
 		t.Fatalf("cost lineage JS failed: %v\n%s", err, out)
 	}
 }
+
+// With a server that reports all_time_usd (daily rollups + today's partial),
+// the headline is that figure anchored to all_time_since: reset residuals are
+// not double counted and ring eviction neither shrinks the total nor moves the
+// "since" date (#13481).
+func TestDashboardCostAllTimeFromDailyRollup(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: cost all-time behavior was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	start := strings.Index(html, "    function costHist() {")
+	if start < 0 {
+		t.Fatal("cost history helper block not found")
+	}
+	end := strings.Index(html[start:], "    // Tiny inline sparkline")
+	if end < 0 {
+		t.Fatal("cost history helper block end not found")
+	}
+	block := html[start : start+end]
+
+	script := `
+const assert = require('node:assert/strict');
+let _costHistory = [
+  { t: 10, usd: 1000 },
+  { t: 20, usd: 3000 },
+  { t: 30, usd: 500 },
+  { t: 40, usd: 600 }
+];
+` + block + `
+const cost = { all_time_usd: 5000, all_time_since: 5 };
+const allTime = costAllTimeEstimate({ total_usd: 600, window_start: 30 }, cost);
+assert.equal(allTime.usd, 5000);
+assert.equal(allTime.firstTimestamp, 5);
+assert.deepEqual(allTime.series.map(e => e.usd), [2900, 4900, 4900, 5000]);
+assert.equal(allTime.resets.length, 1);
+
+_costHistory = _costHistory.slice(2);
+const evicted = costAllTimeEstimate({ total_usd: 600, window_start: 30 }, cost);
+assert.equal(evicted.usd, 5000);
+assert.equal(evicted.firstTimestamp, 5);
+
+// Older servers without all_time_usd keep the lineage peak-sum fallback.
+assert.equal(costAllTimeEstimate({ total_usd: 600 }, {}).usd, 600);
+`
+
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cost all-time JS failed: %v\n%s", err, out)
+	}
+}
+
+// The trend chart mirrors the rollup's discontinuity rule: only steps that are
+// not token-backed are judged against the ceiling, and sub-cent increments do
+// not collapse its median (#13482).
+func TestDashboardCostDiscontinuityKeepsTokenBackedSteps(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	for _, snippet := range []string{
+		"const COST_DISCONTINUITY_MIN_INC_USD = 0.01;",
+		"v >= COST_DISCONTINUITY_MIN_INC_USD && v < COST_DISCONTINUITY_FLOOR_USD",
+		"backed: kind === 'm'",
+		"if (!s.backed && s.amount > ceil) continue;",
+		"if (backed[i] || inc <= cap) spend += inc;",
+		"costAllTimeEstimate(est, cost)",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("index.html is missing %q", snippet)
+		}
+	}
+}

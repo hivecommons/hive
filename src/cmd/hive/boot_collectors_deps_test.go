@@ -33,6 +33,7 @@ type bootCollectorsFake struct {
 	lookupErr      error
 	contributeSrv  *dashboard.Server
 	postureSrv     *dashboard.Server
+	costHistSrv    *dashboard.Server
 	actionable     []byte
 	actionableErr  error
 }
@@ -54,6 +55,7 @@ func newBootCollectorsFake() *bootCollectorsFake {
 		},
 		startContributeMetrics: func(_ context.Context, srv *dashboard.Server) { f.contributeSrv = srv },
 		startCompliancePosture: func(_ context.Context, srv *dashboard.Server) { f.postureSrv = srv },
+		startCostHistory:       func(_ context.Context, srv *dashboard.Server) { f.costHistSrv = srv },
 		readLastActionable:     func() ([]byte, error) { return f.actionable, f.actionableErr },
 	}
 	return f
@@ -114,6 +116,9 @@ func TestBootCollectorsWithStartsEveryCollectorAndPersistsOnPVC(t *testing.T) {
 	}
 	if f.postureSrv != b.dashSrv {
 		t.Fatal("compliance posture checks not started on the boot's dashboard server")
+	}
+	if f.costHistSrv != b.dashSrv {
+		t.Fatal("cost history sampler not started on the boot's dashboard server")
 	}
 	if len(f.lookups) != 0 {
 		t.Fatalf("configured ai_author must skip the token lookup, got %v", f.lookups)
