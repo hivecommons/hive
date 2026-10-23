@@ -1335,8 +1335,26 @@ func (m *Manager) SendGitHubAPIBudgetNudge(name, message string) {
 // before this pattern was added, since neither contains "run" or "checks".
 var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)\b|pr checks\b|pr view\b[^` + "\n" + `]*\bstatusCheckRollup\b|pr status\b)`)
 
+// ciPollProhibitionRe matches the tail of text that precedes a command name
+// when the command is being forbidden rather than run ("no `gh run watch`",
+// "do not run gh pr checks"). The kick prompt and policy text quote the
+// polling commands exactly this way.
+var ciPollProhibitionRe = regexp.MustCompile("(?i)\\b(?:no|not|never|don't|avoid|without)\\s+(?:\\w+\\s+)?[`'\"]*$")
+
+// countCIPollCommands counts CI-status commands in pane, skipping mentions
+// that are prohibitions quoted from the kick prompt or policy: those landed
+// in the pane right after the kick and read as poll commands issued 0s in.
 func countCIPollCommands(pane string) int {
-	return len(ciPollCommandRe.FindAllStringIndex(stripExplainLines(pane), -1))
+	pane = stripExplainLines(pane)
+	n := 0
+	for _, loc := range ciPollCommandRe.FindAllStringIndex(pane, -1) {
+		lineStart := strings.LastIndex(pane[:loc[0]], "\n") + 1
+		if ciPollProhibitionRe.MatchString(pane[lineStart:loc[0]]) {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // nudgeIfPollingCI tells an agent that keeps polling CI within one kick to
