@@ -933,6 +933,48 @@ someone re-runs it. The shared-CI rerun sweep
 |---|---|---|
 | `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
 
+## Red-main circuit breaker (`red_main_threshold`)
+
+When a required check has been red on a repository's default branch for more
+than N hours, PRs opened against it will be red too, and the PR that fixes
+main is the only one that matters. Every ~10 minutes the hive reads each
+active repo's default branch tip (`src/pkg/github/red_main.go`): the required
+checks (config, classic branch protection and rulesets) that concluded red,
+the failing run, the files its annotations name, and an open
+`[shared-ci] <check> failing across <owner/repo>` tracking issue. A check is
+dated from the first time it was seen red since it was last green. Once it has
+been red for **more than** the threshold:
+
+- **Fix-main PRs rank first** in the review queue. A PR fixes main when it has
+  the `fixes-main` label, OR closes the tracking issue (`Fixes #N`), OR its
+  changed files overlap the failing check (a file the failing run's
+  annotations name or one in the same directory, or a workflow under
+  `.github/workflows/`). A PR whose own checks pass while main fails is
+  marked *confirmed*, but passing checks alone never make a PR a fix.
+- **New PR opening pauses in that repo.** `hive-open-pr` refuses the request
+  with gate `red-main` and a message naming the check, the run and the fix PR,
+  unless the request itself fixes main (it names the tracking issue in
+  `--issues` or closes it in its title/body). Existing PRs keep going and
+  issue filing is unaffected; agents are told the same in their kick.
+- **The repo card** shows `main red since <time> on <check>; fix: #N waiting
+  on <who>`.
+
+Everything lifts automatically on the first sweep that sees the check green.
+A repo whose required-check set or check runs cannot be read keeps its last
+observation (a read error neither trips nor clears the breaker). Trust levels,
+the trusted-merger definition and the self-merge floor are unchanged.
+
+The threshold defaults to `6h`. Set it hive-wide under `project` and override
+it per repository; the value is a positive Go duration.
+
+```yaml
+project:
+  red_main_threshold: 8h              # hive-wide; unset means 6h
+  repo_policies:
+    - repo: dakota-iso
+      red_main_threshold: 2h          # this repository only
+```
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel evaluates open PRs in the watched repos — human, bot, or agent —

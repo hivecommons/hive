@@ -2484,6 +2484,12 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 				r.PausedAt = rp.At.UTC().Format(time.RFC3339)
 			}
 		}
+		if actionable != nil {
+			if fact := github.RedMainFactFor(actionable.RedMain, full); fact != nil {
+				r.RedMain = fact
+				r.RedMainLine = fact.CardLine()
+			}
+		}
 		watchKey := repoName
 		wc, watched := cfg.UpstreamWatch.Repos[watchKey]
 		if !watched {

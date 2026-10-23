@@ -71,6 +71,13 @@ type ProjectConfig struct {
 	// keeps the lane default of 60 minutes. repo_policies[].merge_front_timeout
 	// overrides it per repo. See RepoMergeFrontTimeout in repo_policy.go.
 	MergeFrontTimeout string `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
+	// RedMainThreshold is the hive-wide red-main circuit breaker threshold
+	// (hivecommons/hive#13630) as a Go duration: once a required check has
+	// been red on a repo's default branch for longer, fix-main PRs rank
+	// first and new PR opening pauses in that repo until it is green.
+	// Empty means 6h; repo_policies[].red_main_threshold overrides it per
+	// repo. See RepoRedMainThreshold in repo_policy.go.
+	RedMainThreshold string `yaml:"red_main_threshold,omitempty" json:"red_main_threshold,omitempty"`
 	// WritingGuide is the hive owner's instruction for how the issues, PRs and
 	// reviews its agents write should READ — length, structure, register — as
 	// free text (hivecommons/hive#7667). It is rendered into every default

@@ -34,6 +34,7 @@ import (
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -1166,7 +1167,12 @@ type FrontendRepo struct {
 	PausedBy    string `json:"pausedBy,omitempty"`
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
-	AutoMerge   bool   `json:"autoMerge"`
+	// RedMain is the repo's red-main circuit breaker fact (#13630) and
+	// RedMainLine its card summary: "main red since <time> on <check>; fix:
+	// #N waiting on <who>". Empty while the default branch is green.
+	RedMain     *redmain.Fact `json:"redMain,omitempty"`
+	RedMainLine string        `json:"redMainLine,omitempty"`
+	AutoMerge   bool          `json:"autoMerge"`
 	// MergeStrategy is the repo's merge_strategy (direct or hive-serialized).
 	MergeStrategy string `json:"mergeStrategy"`
 	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):

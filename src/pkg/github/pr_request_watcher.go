@@ -415,6 +415,15 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Red-main circuit breaker (#13630): while a required check has been red
+	// on the repo's default branch past its threshold, a new PR would be red
+	// too, so only a PR that fixes main opens. Existing PRs never come
+	// through here and issue filing is a separate relay; both keep going.
+	if reason := c.redMainPRRequestRefusal(req, nowFn()); reason != "" {
+		c.rejectPRRequest(path, req, "red-main", reason, nowFn)
+		return
+	}
+
 	// Cheap local body checks first — before anything that spends API quota.
 	// An empty body, or a body missing the reference to its declared
 	// originating issue, is lost content (the observed failure: hive-open-pr

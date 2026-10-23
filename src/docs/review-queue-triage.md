@@ -65,6 +65,9 @@ governed repos - the actionable list and the held list - whoever opened it.
 The order is computed, never asked of a model, and is total and deterministic
 for the same inputs:
 
+0. **Fixes red main** - while a repo's default branch has had a required
+   check red past its threshold, the PRs that fix it rank ahead of everything
+   else ([red-main circuit breaker](operator-reference.md#red-main-circuit-breaker-red_main_threshold)).
 1. **Triage class** - T0 fixes, then T1 refactors/docs/unclassified, then T2
    tests.
 2. **Confidence band** from the review swarm's 0-5 score

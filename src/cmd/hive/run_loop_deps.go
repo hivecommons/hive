@@ -93,6 +93,7 @@ func defaultRunLoopDeps() runLoopDeps {
 			if !decision.SkipUnstick {
 				runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
 				runSharedCIRerunSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSharedCIRerunSweep, b.logger)
+				runRedMainSweepIfDue(b.ctx, b.ghClient, &b.lastRedMainSweep, b.logger)
 			}
 			if decision.SkipOptional {
 				return

@@ -7566,6 +7566,9 @@ func runEvalCycle(
 	// onto the snapshot so last-actionable.json carries them next to
 	// review_class. Additive only: Items and Held keep their order, and
 	// nothing that gates work reads the stamp.
+	// Red-main circuit breaker (#13630): stamp each red default branch and
+	// the PRs that fix it before ranking, so those PRs rank first.
+	ghClient.StampRedMain(actionable, github.CachedPRChangedPaths, time.Now())
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
 	// Only the reconcile pass publishes the snapshot: a cached cycle works

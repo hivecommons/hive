@@ -97,6 +97,8 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// pause taken in the dashboard narrows the very next enumeration and
 	// automerge sweep without a restart.
 	client.SetRepoPausedFunc(b.cfg.IsRepoPaused)
+	// Red-main circuit breaker threshold (#13630), live per repo.
+	client.SetRedMainThresholdFunc(b.cfg.RepoRedMainThreshold)
 	// Per-repo custom agents (#6204). A live predicate over the shared
 	// config, so the hive-open-pr / hive-merge / hive-open-issue relays
 	// refuse an out-of-scope request without a restart.

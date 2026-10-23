@@ -100,8 +100,14 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateMergeFrontTimeout(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.MergeFrontTimeout); err != nil {
 			return err
 		}
+		if err := ValidateRedMainThreshold(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.RedMainThreshold); err != nil {
+			return err
+		}
 	}
 	if err := ValidateMergeFrontTimeout("project", c.Project.MergeFrontTimeout); err != nil {
+		return err
+	}
+	if err := ValidateRedMainThreshold("project", c.Project.RedMainThreshold); err != nil {
 		return err
 	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -200,6 +201,12 @@ type ReviewQueueEntry struct {
 	// the dashboard's replacement for the retired stage/regressed label
 	// (hivecommons/hive#12534).
 	Stage *ReviewQueueStage `json:"stage,omitempty"`
+	// FixesMain is set when the PR fixes its repo's red default branch
+	// (red-main circuit breaker, hivecommons/hive#13630); such PRs rank
+	// ahead of every other PR. FixesMainVia names the signal (label,
+	// tracking-issue, file-overlap).
+	FixesMain    bool   `json:"fixes_main,omitempty"`
+	FixesMainVia string `json:"fixes_main_via,omitempty"`
 }
 
 // ReviewQueueStage is ReviewQueueEntry.Stage.
@@ -308,6 +315,10 @@ type ReviewQueueOptions struct {
 	// a default-configured engine.
 	StageDwell               map[string]time.Duration
 	StageStalledRequireQuiet *bool
+	// RedMain is the per-repo red-main facts (ActionableResult.RedMain);
+	// PRs that fix a red default branch rank first. nil means no repo is
+	// red, and ReviewQueueFromActionable fills it from the snapshot.
+	RedMain map[string]*redmain.Fact
 	// Now is the reference time for ages. Zero means time.Now().
 	Now time.Time
 }
@@ -346,7 +357,8 @@ func reviewQueueHiveAuthored(pr PullRequest, aiAuthor string) bool {
 	return aiAuthor != "" && author == strings.ToLower(strings.TrimSpace(aiAuthor))
 }
 
-// BuildReviewQueue ranks prs into the review queue: by triage class (T0 fix >
+// BuildReviewQueue ranks prs into the review queue: PRs that fix a red
+// default branch first (FixesMain, hivecommons/hive#13630), then by triage class (T0 fix >
 // T1 refactor/docs/unclassified > T2 tests), then confidence band (safe >
 // needs attention, including unreviewed > do not merge), then CI (green >
 // pending > red), then age (oldest first), then repo and number so the order
@@ -373,6 +385,9 @@ func BuildReviewQueue(prs []PullRequest, opts ReviewQueueOptions) []ReviewQueueE
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		a, b := entries[i], entries[j]
+		if a.FixesMain != b.FixesMain {
+			return a.FixesMain
+		}
 		if ra, rb := reviewRank(a.Class), reviewRank(b.Class); ra != rb {
 			return ra < rb
 		}
@@ -413,6 +428,22 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 	}
 	if !pr.CreatedAt.IsZero() && now.After(pr.CreatedAt) {
 		e.AgeHours = int(now.Sub(pr.CreatedAt).Hours())
+	}
+
+	if fact := RedMainFactFor(opts.RedMain, full); fact != nil {
+		var fixPaths []string
+		if opts.ChangedPaths != nil {
+			fixPaths = opts.ChangedPaths(full, pr.Number, pr.HeadSHA)
+		}
+		if fix, ok := RedMainFixPR(fact, pr, fixPaths); ok {
+			e.FixesMain = true
+			e.FixesMainVia = fix.Via
+			reason := fmt.Sprintf("fixes red main (%s red since %s; via %s)", fact.Check, fact.Since.UTC().Format(time.RFC3339), fix.Via)
+			if fix.Confirmed {
+				reason += "; confirmed: its checks pass while main fails"
+			}
+			e.Reasons = append(e.Reasons, reason)
+		}
 	}
 
 	var paths []string
@@ -574,6 +605,9 @@ func ReviewQueueFromActionable(actionable *ActionableResult, opts ReviewQueueOpt
 		held[ReviewQueueKey(reviewQueueFullRepo(pr.Repo, opts.Org), pr.Number)] = true
 	}
 	opts.Held = held
+	if opts.RedMain == nil {
+		opts.RedMain = actionable.RedMain
+	}
 	return BuildReviewQueue(prs, opts)
 }
 

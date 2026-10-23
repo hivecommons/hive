@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/redmain"
 )
 
 // RepoPolicy records optional per-repository policy overrides. It is separate
@@ -25,6 +27,11 @@ type RepoPolicy struct {
 	// MergeFrontTimeout overrides project.merge_front_timeout for this repo's
 	// serialized lane (hivecommons/hive#12952): a Go duration such as "2h".
 	MergeFrontTimeout string `yaml:"merge_front_timeout,omitempty" json:"merge_front_timeout,omitempty"`
+	// RedMainThreshold overrides project.red_main_threshold for this repo
+	// (hivecommons/hive#13630): how long a required check may stay red on
+	// the default branch before the red-main circuit breaker trips. A Go
+	// duration such as "6h".
+	RedMainThreshold string `yaml:"red_main_threshold,omitempty" json:"red_main_threshold,omitempty"`
 	// LabelDrivenSupersedeParkActors overrides
 	// project.label_driven_supersede_park_actors for this repo
 	// (hivecommons/hive#13605). Only read when LabelDriven is set.
@@ -391,7 +398,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && rp.RedMainThreshold == "" && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
@@ -454,6 +461,38 @@ func (c *Config) RepoMergeFrontTimeout(repo string) time.Duration {
 		}
 	}
 	return parseMergeFrontTimeout(c.Project.MergeFrontTimeout)
+}
+
+// ValidateRedMainThreshold accepts "" (unset) or a positive Go duration.
+func ValidateRedMainThreshold(field, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+		return fmt.Errorf("%s: invalid red_main_threshold %q (must be a positive duration such as 6h or 90m)", field, value)
+	}
+	return nil
+}
+
+// RepoRedMainThreshold returns how long a required check may stay red on
+// repo's default branch before the red-main circuit breaker trips
+// (hivecommons/hive#13630): the repo_policies override, else
+// project.red_main_threshold, else redmain.DefaultThreshold (6h). An
+// unparsable or non-positive value counts as unset.
+func (c *Config) RepoRedMainThreshold(repo string) time.Duration {
+	if c == nil {
+		return redmain.DefaultThreshold
+	}
+	if rp, ok := c.RepoPolicyFor(repo); ok {
+		if d := parseMergeFrontTimeout(rp.RedMainThreshold); d > 0 {
+			return d
+		}
+	}
+	if d := parseMergeFrontTimeout(c.Project.RedMainThreshold); d > 0 {
+		return d
+	}
+	return redmain.DefaultThreshold
 }
 
 func parseMergeFrontTimeout(raw string) time.Duration {

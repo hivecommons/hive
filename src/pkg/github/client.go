@@ -23,6 +23,7 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/redmain"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -221,6 +222,11 @@ type Client struct {
 	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
 	sharedCIRerunSeen map[string]sharedCIRerunSeen
 	sharedCIRerunMu   sync.Mutex
+	// redMain is the red-main circuit breaker state (red_main.go,
+	// hivecommons/hive#13630). Guarded by redMainMu.
+	redMain redMainState
+	// redMainMu guards redMain.
+	redMainMu sync.Mutex
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -1136,6 +1142,11 @@ type ActionableResult struct {
 	// it, since GeneratedAt then says nothing about an item's age. Keyed by
 	// ItemPatchKey.
 	ItemPatches map[string]ItemPatchMeta `json:"item_patches,omitempty"`
+	// RedMain holds, per "owner/repo", the red-main fact for every repo
+	// whose default branch has had a required check red for longer than its
+	// threshold, with the open PRs detected as fixing it (StampRedMain,
+	// hivecommons/hive#13630). Absent when every default branch is green.
+	RedMain map[string]*redmain.Fact `json:"red_main,omitempty"`
 }
 
 // ItemPatchMeta is the audit record of one webhook-driven upsert.

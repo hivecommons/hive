@@ -237,6 +237,7 @@ type boot struct {
 	lastDuplicateSweep     time.Time
 	lastSupersessionSweep  time.Time
 	lastSharedCIRerunSweep time.Time
+	lastRedMainSweep       time.Time
 	lastIssueUnparkSweep   time.Time
 	lastClosedIssueSweep   time.Time
 	lastSentinelSweep      time.Time
