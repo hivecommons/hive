@@ -106,7 +106,7 @@ func cleanBeadSynthPublishPath(p string) (string, error) {
 // title yields no slug. It uses the same slug as the local vault file, so a
 // re-synthesized fact updates the same file.
 func (p *BeadSynthPublisher) FilePath(f ExtractedFact) string {
-	slug := strings.ReplaceAll(slugify(f.Title), "/", "_")
+	slug := strings.ReplaceAll(vaultFileSlug(f.Title), "/", "_")
 	if slug == "" {
 		return ""
 	}

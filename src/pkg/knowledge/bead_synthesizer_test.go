@@ -1652,3 +1652,33 @@ func TestWriteFactToVault_EmitsGraphTriples(t *testing.T) {
 		t.Errorf("expected child-a and child-b in triples, got %v", objects)
 	}
 }
+
+func TestVaultFileSlug_BoundsLongTitles(t *testing.T) {
+	long := strings.Repeat("workflow tier token perms ", 12)
+	tests := []struct {
+		name      string
+		title     string
+		unchanged bool
+	}{
+		{"short title unchanged", "Short Bead Title", true},
+		{"300-char title bounded", long[:300], false},
+		{"very long title bounded", strings.Repeat("a", 1000), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := vaultFileSlug(tt.title)
+			if len(got)+len(".md.tmp") > 255 || len(got) > maxVaultSlugLen {
+				t.Fatalf("slug too long: %d", len(got))
+			}
+			if got != vaultFileSlug(tt.title) {
+				t.Fatal("slug not deterministic")
+			}
+			if tt.unchanged && got != slugify(tt.title) {
+				t.Fatalf("short slug changed: %q", got)
+			}
+		})
+	}
+	if vaultFileSlug(long[:300]+"x") == vaultFileSlug(long[:300]+"y") {
+		t.Fatal("distinct long titles collided")
+	}
+}

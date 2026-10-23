@@ -2,6 +2,8 @@ package knowledge
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -537,7 +539,7 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 		return fmt.Errorf("creating vault dir: %w", err)
 	}
 
-	slug := slugify(fact.Title)
+	slug := vaultFileSlug(fact.Title)
 	filename := strings.ReplaceAll(slug+".md", "/", "_")
 	path := filepath.Join(dir, filename)
 
@@ -1183,4 +1185,20 @@ func ParseSynthSchedule(schedule string) time.Duration {
 	default:
 		return time.Duration(beadSynthDefaultScheduleHours) * time.Hour
 	}
+}
+
+// maxVaultSlugLen keeps "<slug>.md.tmp" well under the 255-byte NAME_MAX.
+const maxVaultSlugLen = 200
+
+// vaultFileSlug slugs a title for use as a vault filename. Slugs within the
+// limit are unchanged; longer ones are truncated with a short hash suffix of
+// the full slug so distinct long titles stay distinct.
+func vaultFileSlug(title string) string {
+	slug := slugify(title)
+	if len(slug) <= maxVaultSlugLen {
+		return slug
+	}
+	sum := sha256.Sum256([]byte(slug))
+	suffix := hex.EncodeToString(sum[:])[:8]
+	return strings.TrimRight(slug[:maxVaultSlugLen-len(suffix)-1], "-") + "-" + suffix
 }
