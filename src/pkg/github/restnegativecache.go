@@ -90,7 +90,7 @@ func (t *rest404NegativeCacheTransport) RoundTrip(req *http.Request) (*http.Resp
 	resp, err := t.inner.RoundTrip(req)
 	if ok && err == nil && resp != nil && resp.StatusCode == http.StatusNotFound {
 		t.cache.put(key, ttl, caller)
-		slog.Warn("github REST 404 cached; suppressing repeated fetches", "caller", caller, "target", label, "kind", kind, "ttl", ttl.String())
+		slog.Debug("github REST 404 cached; suppressing repeated fetches", "caller", caller, "target", label, "kind", kind, "ttl", ttl.String())
 	}
 	return resp, err
 }

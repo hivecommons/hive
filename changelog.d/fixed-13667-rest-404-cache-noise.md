@@ -1,0 +1,1 @@
+- GitHub REST negative-cache hits no longer log at Warn, so suppressed 404 refetches stop surfacing as repeated-error self-reports (#13667).
