@@ -578,13 +578,10 @@ const (
 	stageReasonDecisionRequested    = stageengine.StageReasonDecisionRequested
 )
 
-func classifyCIReason(reason string) ciReasonKind    { return stageengine.ClassifyCIReason(reason) }
-func normalizeStageDetail(d stageDetail) stageDetail { return stageengine.NormalizeStageDetail(d) }
-func verdictBlocks(d stageDetail) bool               { return stageengine.VerdictBlocks(d) }
-func verdictNeedsHuman(d stageDetail) bool           { return stageengine.VerdictNeedsHuman(d) }
-func trustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
-	return stageengine.TrustedHumanApprovedRequiresHuman(d, head)
-}
+func classifyCIReason(reason string) ciReasonKind      { return stageengine.ClassifyCIReason(reason) }
+func normalizeStageDetail(d stageDetail) stageDetail   { return stageengine.NormalizeStageDetail(d) }
+func verdictBlocks(d stageDetail) bool                 { return stageengine.VerdictBlocks(d) }
+func verdictNeedsHuman(d stageDetail) bool             { return stageengine.VerdictNeedsHuman(d) }
 func fixingStage(o stageObservation) stagelabels.Stage { return stageengine.FixingStage(o) }
 func classifyStage(o stageObservation) stageVerdict    { return stageengine.ClassifyStage(o) }
 func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
