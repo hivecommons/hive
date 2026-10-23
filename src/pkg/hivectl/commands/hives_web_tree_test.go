@@ -544,3 +544,40 @@ func TestCommonsTreePublicDiscoveryAndOutage(t *testing.T) {
 		})
 	}
 }
+
+// Opening the page (discover=1) stages nothing; only the explicit accept=1
+// request stages the new repositories of followed Hives, and neither saves.
+func TestCommonsTreeAcceptStagesNewRepositoriesOnlyOnRequest(t *testing.T) {
+	const added = "github/github.com/org/added"
+	set := twoHives()
+	for i := range set.Profiles {
+		set.Profiles[i].Selection = &hivectl.RepositorySelection{Mode: hivectl.SelectionSelected, Repositories: []string{webTreeRepo}, FollowNewRepositories: i == 0}
+	}
+	repos := map[string]hivectl.TreeRepositorySnapshot{
+		"acme":  {Discovery: hivectl.TreeComplete, Repositories: []string{webTreeRepo, added}},
+		"other": {Discovery: hivectl.TreeComplete, Repositories: []string{webTreeRepo, added}},
+	}
+	store := hivectl.NewProfileStore(t.TempDir())
+	if err := store.Save(set); err != nil {
+		t.Fatal(err)
+	}
+	handler := newCommonsWebServer(&hivesDeps{store: store}, "secret").(*commonsWebServer)
+	handler.discover = func(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot) {
+		return nil, repos
+	}
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	before := treeFile(t, store.Path())
+
+	opened := treeCall(t, server, "/api/tree?discover=1", nil, commonsTreeEdit{}, http.StatusOK)
+	if len(opened.Diff.Auto) != 0 || !opened.Diff.Empty() {
+		t.Fatalf("opening the page staged %+v", opened.Diff)
+	}
+	accepted := treeCall(t, server, "/api/tree?discover=1&accept=1", nil, commonsTreeEdit{}, http.StatusOK)
+	if len(accepted.Diff.Auto) != 1 || accepted.Diff.Auto[0].Subscription != "acme" || accepted.Diff.Auto[0].Repository != added {
+		t.Fatalf("accept=1 staged %+v, want only %s on the followed Hive acme", accepted.Diff.Auto, added)
+	}
+	if !bytes.Equal(treeFile(t, store.Path()), before) {
+		t.Fatal("staging new repositories wrote to the store")
+	}
+}

@@ -279,3 +279,39 @@ func TestHivesPresetRefreshUnavailablePreservesState(t *testing.T) {
 		})
 	}
 }
+
+// Additions applied because the Hive is followed are marked Auto; additions the
+// user confirmed with --yes were chosen by hand and are not.
+func TestHivesPresetRefreshMarksFollowedAdditionsAuto(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		follow bool
+		stdin  string
+		args   []string
+		want   []string
+	}{
+		{name: "followed", follow: true, stdin: "n\n", want: []string{presetRepoB}},
+		{name: "confirmed by hand", args: []string{"--yes"}, want: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHivesHarness(t)
+			d := newPresetDiscovery(t, presetRepoA)
+			h.seed(t, presetHives(d.server.URL, nil))
+			path := writePreset(t, "version: 1\nname: p\nhives:\n  - url: "+d.server.URL+"\n    repositories: all-current\n")
+			adopt := []string{"hives", "preset", "adopt", path, "--yes"}
+			if tc.follow {
+				adopt = append(adopt, "--follow-new-repos")
+			}
+			if err := h.run(t, "", adopt...); err != nil {
+				t.Fatal(err)
+			}
+			d.repos = []string{presetRepoB}
+			if err := h.run(t, tc.stdin, append([]string{"hives", "preset", "refresh"}, tc.args...)...); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.profiles(t).Profiles[0].Selection.Auto; !reflect.DeepEqual(got, tc.want) && len(got)+len(tc.want) != 0 {
+				t.Fatalf("Auto = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
