@@ -71,7 +71,7 @@ func (f *fakeClarityForge) IssueLabelEverApplied(ctx context.Context, repo strin
 	return slices.Contains(f.applied[clarityKey(repo, number)], label), nil
 }
 
-func clarityGateScheduler(t *testing.T, enabled bool, forge *fakeClarityForge) *Scheduler {
+func clarityGateScheduler(t *testing.T, enabled bool, forge TriageCommenter) *Scheduler {
 	t.Helper()
 	cfg := &config.Config{Runs: config.RunsConfig{Triage: config.TriageConfig{ClarityGate: config.ClarityGateConfig{Enabled: enabled}}}}
 	s := New(cfg, slog.Default())
