@@ -26,6 +26,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -475,6 +476,15 @@ type IoscanConfig struct {
 	// explicit `canaries: false`. Read via CanariesEnabled(), never dereferenced
 	// raw.
 	Canaries *bool `yaml:"canaries,omitempty" json:"canaries,omitempty"`
+	// BlockAt is the per-surface severity at which an injection or dangerous
+	// finding in text by an UNTRUSTED author is withheld from the kick
+	// (hivecommons/hive#6685). Keys are ioscan surfaces (issue_body, comment,
+	// pr_body, review); values are low/medium/high/critical. A surface left
+	// out sits at the default, medium, so any rule that fires withholds the
+	// text. Text by a trusted author (the hive's own identities, repo owners
+	// and members) always uses the high line regardless of this map. Read via
+	// Policy(), which also validates the keys and values.
+	BlockAt map[string]string `yaml:"block_at,omitempty" json:"block_at,omitempty"`
 	// Classifier enables the optional LLM-judge semantic prompt-injection
 	// classifier. It defaults off so hives that only use deterministic rules
 	// make no model calls and see zero behavior change.
@@ -528,6 +538,12 @@ func (c IoscanConfig) FailClosedAtLevel(level int) bool {
 		return false
 	}
 	return strings.EqualFold(IoscanFailModeForLevel(level), ioscanFailModeClosed)
+}
+
+// Policy resolves block_at into the ioscan severity matrix. An empty map is
+// the shipped default (medium on every surface for untrusted authors).
+func (c IoscanConfig) Policy() (ioscan.Policy, error) {
+	return ioscan.ParsePolicy(c.BlockAt)
 }
 
 // CanariesEnabled reports whether per-kick exfiltration canaries are active.

@@ -126,13 +126,14 @@ func (s *Scheduler) formatIssueListWithPolicy(issues []github.Issue) (string, bo
 		// title/label is redacted/annotated rather than injected raw, and the block
 		// is recorded to the dashboard audit log. Disabled → strict no-op
 		// passthrough. Default is now ON (fail-safe).
-		title, verdict := s.enforceIssueTextVerdict(issue.Title)
+		src := issueSource(issue)
+		title, verdict := s.enforceTextFrom(issue.Title, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
 		const maxTitleRunes = 60
 		if runes := []rune(title); len(runes) > maxTitleRunes {
 			title = string(runes[:maxTitleRunes])
 		}
-		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels)
+		labels, labelsFailClosed := s.enforceLabelsWithPolicy(issue.Labels, src)
 		failClosed = failClosed || labelsFailClosed
 		b.WriteString(fmt.Sprintf("  %dm %s %s [%s] %s\n",
 			issue.AgeMinutes, issueDisplayRef(issue), issuePriorityMarker(issue),
@@ -662,20 +663,21 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		// classification routing, and an attacker controls both the title and their
 		// own fork/login. Gate both through ioscan: a blocked value is redacted
 		// rather than injected raw. Disabled → strict no-op. Default is now ON.
-		title, titleVerdict := s.enforceIssueTextVerdict(pr.Title)
+		src := prSource(pr)
+		title, titleVerdict := s.enforceTextFrom(pr.Title, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && titleVerdict.HasCriticalInjection())
 		const maxPRTitleRunes = 70
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		author, authorVerdict := s.enforceIssueTextVerdict(pr.Author)
+		author, authorVerdict := s.enforceTextFrom(pr.Author, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && authorVerdict.HasCriticalInjection())
 		annotationText, skip := s.prReviewAnnotation(pr, agentName)
 		if skip {
 			continue
 		}
 		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText
-		annotation, annotationVerdict := s.enforceIssueTextVerdict(annotationText)
+		annotation, annotationVerdict := s.enforceTextFrom(annotationText, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))
 	}

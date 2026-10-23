@@ -62,7 +62,13 @@ func (s *Server) enforcePlanIssueBody(r *http.Request, text string) (string, boo
 	if s.deps == nil || s.deps.Config == nil || !s.deps.Config.Ioscan.IsEnabled() {
 		return text, true
 	}
-	sanitized, v := ioscan.EnforceInput(text)
+	// The issue author is unknown at this point, so the body is scanned as an
+	// untrusted issue body under the configured severity matrix.
+	policy, err := s.deps.Config.Ioscan.Policy()
+	if err != nil {
+		policy = ioscan.DefaultPolicy()
+	}
+	sanitized, v := ioscan.EnforceInputFrom(text, ioscan.Source{Surface: ioscan.SurfaceIssueBody}, policy)
 	if v.Blocked {
 		s.auditFromRequest(r, "ioscan_block", auditDetail("context", "plan_from_issue", "findings", strconv.Itoa(len(v.Findings))), planning.ArchitectAgentName)
 	}

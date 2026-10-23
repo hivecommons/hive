@@ -15,6 +15,8 @@ by default.
   secret-shaped strings. These rules always run when `ioscan` is enabled.
 * **Withholds matched text.** Text that trips a rule is replaced with
   `[ioscan: content withheld — ...]`. The original never reaches the agent.
+  How strong a match has to be depends on who wrote the text and where.
+  See [Block thresholds](#block-thresholds).
 * **Reads a thread as one unit.** Where Hive hands an agent several
   comments from the same issue or PR, it scans them one at a time and then
   once more joined in order. A payload split across two comments matches on
@@ -34,7 +36,7 @@ by default.
 ## What it does not do
 
 Rules match specific phrasings. A measured test against 43 attack payloads
-withheld 51% and let 49% reach the agent; paraphrased instructions and most
+withheld 67% and let 33% reach the agent; paraphrased instructions and most
 encodings got through. Details and numbers:
 [ioscan-red-team.md](ioscan-red-team.md). The control that stops a persuaded
 agent from merging code is the network proxy, which denies pull-request
@@ -47,6 +49,11 @@ ioscan:
   enabled: true          # default true
   fail_mode: open        # default: open at ACMM L1–L4, closed at L5–L6
   canaries: true         # default true
+  block_at:              # per-surface line for untrusted authors
+    issue_body: medium   # default medium on every surface
+    comment: medium
+    pr_body: medium
+    review: medium
   classifier:
     enabled: false       # default false
     model: ""            # empty uses the governor's default model
@@ -62,6 +69,36 @@ ioscan:
   operator clears it.
 * `fail_mode` and the classifier are owner-only settings, shown in the
   dashboard under Governor Config → Security.
+* `block_at` is set in the hive config file. A typo in a surface name or a
+  severity is a config error at load time, never a silent default.
+
+## Block thresholds
+
+Every rule has a severity: low, medium, high or critical. Text is withheld
+when a finding reaches the line for its surface and author. The four
+surfaces are `issue_body` (issue title, body and labels), `comment`,
+`pr_body` (PR title, body and author login) and `review` (review bodies and
+inline review-thread comments).
+
+| Author | Line | What it means |
+|---|---|---|
+| Untrusted (anyone else) | `block_at` for the surface, default **medium** | Any injection or dangerous-instruction rule that fires withholds the text. |
+| Trusted | **high**, always | Only a strong match withholds the text. |
+
+A critical finding withholds text on every line. A secret-shaped string
+below critical never withholds input on its own; it is reported, not acted
+on.
+
+Trusted means the hive's own identities, GitHub Apps and bot accounts, and
+for pull requests a repository owner or member. Collaborators, contributors
+and unknown authors are untrusted. Review-bot threads are always untrusted,
+because the bot quotes text written by anyone.
+
+Why the default moved to medium: in the red-team test, 19% of attacks
+matched a rule that was recorded and then handed to the agent anyway. The
+medium line withholds those. The cost is more withheld text from strangers
+when a rule misfires; raise one surface at a time with `block_at` if that
+happens on your hive.
 
 ## Related checks that do not depend on ioscan
 

@@ -61,21 +61,35 @@ func (tv ThreadVerdict) Blocked() bool {
 	return false
 }
 
-// ScanThread scans segments individually and as a bounded, ordered thread.
+// ScanThread scans segments individually and as a bounded, ordered thread
+// under the legacy fixed block line.
 func (s *Scanner) ScanThread(segments []string) ThreadVerdict {
+	return s.scanThread(segments, func(f []Finding) bool { return blockedInput(f) })
+}
+
+// ScanThreadFrom is ScanThread with the block line taken from the policy for
+// the thread's source. Every segment of one thread shares the source: a PR's
+// review threads are all SurfaceReview, an issue's comments all SurfaceComment.
+func (s *Scanner) ScanThreadFrom(segments []string, src Source, p Policy) ThreadVerdict {
+	threshold := p.Threshold(src.Surface, src.TrustedAuthor)
+	return s.scanThread(segments, func(f []Finding) bool { return blockedInputAt(f, threshold) })
+}
+
+func (s *Scanner) scanThread(segments []string, blocked func([]Finding) bool) ThreadVerdict {
 	tv := ThreadVerdict{
 		Segments: make([]Verdict, len(segments)),
 		Withheld: make([]bool, len(segments)),
 	}
 	normalized := make([]string, len(segments))
 	for i, seg := range segments {
-		tv.Segments[i] = s.ScanInput(seg)
+		findings := s.collect(seg)
+		tv.Segments[i] = Verdict{Findings: findings, Blocked: blocked(findings)}
 		tv.Withheld[i] = tv.Segments[i].Blocked
 		normalized[i] = normalizeUnicodeSteganography(seg).scanText
 	}
 	start := threadWindowStart(normalized, DefaultThreadMaxSegments, DefaultThreadMaxBytes)
 	findings, touched := crossSegmentFindings(normalized[start:])
-	tv.Thread = Verdict{Findings: findings, Blocked: blockedInput(findings)}
+	tv.Thread = Verdict{Findings: findings, Blocked: blocked(findings)}
 	if tv.Thread.Blocked {
 		for i := range touched {
 			tv.Withheld[start+i] = tv.Withheld[start+i] || touched[i]
@@ -88,12 +102,26 @@ func (s *Scanner) ScanThread(segments []string) ThreadVerdict {
 // NewScanner().ScanThread.
 func ScanThread(segments []string) ThreadVerdict { return NewScanner().ScanThread(segments) }
 
+// ScanThreadFrom is the package-level convenience equivalent to
+// NewScanner().ScanThreadFrom.
+func ScanThreadFrom(segments []string, src Source, p Policy) ThreadVerdict {
+	return NewScanner().ScanThreadFrom(segments, src, p)
+}
+
 // EnforceThread is EnforceInput for an ordered thread: each withheld segment is
 // replaced with the redaction marker naming the rules that fired, including
 // the cross-segment rules when the segment carried part of a split payload.
 // Segments that pass are returned byte-identical.
 func EnforceThread(segments []string) ([]string, ThreadVerdict) {
-	tv := ScanThread(segments)
+	return enforceThread(segments, ScanThread(segments))
+}
+
+// EnforceThreadFrom is EnforceThread under the policy for the thread's source.
+func EnforceThreadFrom(segments []string, src Source, p Policy) ([]string, ThreadVerdict) {
+	return enforceThread(segments, ScanThreadFrom(segments, src, p))
+}
+
+func enforceThread(segments []string, tv ThreadVerdict) ([]string, ThreadVerdict) {
 	out := make([]string, len(segments))
 	for i, seg := range segments {
 		if !tv.Withheld[i] {

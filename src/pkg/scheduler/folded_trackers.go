@@ -47,7 +47,7 @@ func (s *Scheduler) formatFoldedTrackersNote(issues []github.Issue) string {
 			b.WriteString(fmt.Sprintf("  … and %d more\n", len(trackers)-i))
 			break
 		}
-		title, _ := s.enforceIssueTextVerdict(issue.Title)
+		title, _ := s.enforceTextFrom(issue.Title, issueSource(issue))
 		b.WriteString(fmt.Sprintf("  %s — %s\n", issueDisplayRef(issue), title))
 	}
 	return b.String()

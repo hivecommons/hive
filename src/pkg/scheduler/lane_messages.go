@@ -69,7 +69,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if runes := []rune(title); len(runes) > maxPRTitleRunes {
 			title = string(runes[:maxPRTitleRunes])
 		}
-		annotation, _ := s.enforceIssueTextVerdict(prKickAnnotation(pr, "scanner"))
+		annotation, _ := s.enforceTextFrom(prKickAnnotation(pr, "scanner"), prSource(pr))
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), annotation, title))
 	}
 

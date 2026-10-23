@@ -3,6 +3,8 @@ package scheduler
 import (
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 // enforceLabelsWithPolicy is the seam every kick builder calls before joining
@@ -14,7 +16,7 @@ import (
 func TestEnforceLabelsDisabledReturnsInputUnchanged(t *testing.T) {
 	s := newSchedulerWithIoscan(false)
 	labels := []string{"bug", blockingTitle}
-	got, _ := s.enforceLabelsWithPolicy(labels)
+	got, _ := s.enforceLabelsWithPolicy(labels, ioscan.Source{Surface: ioscan.SurfaceIssueBody})
 	if len(got) != 2 || got[0] != "bug" || got[1] != blockingTitle {
 		t.Fatalf("disabled ioscan must be a strict no-op: got %v", got)
 	}
@@ -22,7 +24,7 @@ func TestEnforceLabelsDisabledReturnsInputUnchanged(t *testing.T) {
 
 func TestEnforceLabelsEmptyInput(t *testing.T) {
 	s := newSchedulerWithIoscan(true)
-	if got, _ := s.enforceLabelsWithPolicy(nil); len(got) != 0 {
+	if got, _ := s.enforceLabelsWithPolicy(nil, ioscan.Source{Surface: ioscan.SurfaceIssueBody}); len(got) != 0 {
 		t.Fatalf("nil labels: got %v, want empty", got)
 	}
 }
@@ -30,7 +32,7 @@ func TestEnforceLabelsEmptyInput(t *testing.T) {
 func TestEnforceLabelsRedactsMaliciousKeepsBenign(t *testing.T) {
 	s := newSchedulerWithIoscan(true)
 	labels := []string{"good-first-issue", blockingTitle, "quality"}
-	got, _ := s.enforceLabelsWithPolicy(labels)
+	got, _ := s.enforceLabelsWithPolicy(labels, ioscan.Source{Surface: ioscan.SurfaceIssueBody})
 	if len(got) != len(labels) {
 		t.Fatalf("labels dropped: got %d, want %d (%v)", len(got), len(labels), got)
 	}

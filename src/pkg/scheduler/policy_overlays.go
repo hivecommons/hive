@@ -380,7 +380,7 @@ func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) st
 	if err != nil {
 		return message
 	}
-	section := formatReviewThreadFixDataScanned(data, s.cfg.BaseAgentName(agentName), s.reviewBotsResolveAfterFix(), s.enforceThread)
+	section := formatReviewThreadFixDataScanned(data, s.cfg.BaseAgentName(agentName), s.reviewBotsResolveAfterFix(), s.reviewThreadEnforcer())
 	if section == "" {
 		return message
 	}
@@ -506,6 +506,11 @@ func formatReviewThreadFixDataScanned(data []byte, agent string, resolveAfterFix
 	return b.String()
 }
 
+// reviewThreadEnforcer binds enforceThread to the review surface.
+func (s *Scheduler) reviewThreadEnforcer() threadEnforcer {
+	return func(segments []string) ([]string, bool) { return s.enforceThread(segments, reviewSource) }
+}
+
 // scanReviewThreadPR runs one PR's title and thread bodies through enforce as
 // an ordered conversation and returns a copy with withheld text replaced. The
 // input is never mutated: the report is shared with other readers.
@@ -579,7 +584,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			limit = maxHeldPRsPerRepoPerKick
 		}
 		for _, item := range items[:limit] {
-			title, verdict := s.enforceIssueTextVerdict(item.Title)
+			title, verdict := s.enforceTextFrom(item.Title, prSource(heldPRs[fmt.Sprintf("%s#%d", item.Repo, item.Number)]))
 			failClosed = failClosed || (s.ioscanFailClosed() && verdict.HasCriticalInjection())
 			const maxHeldPRTitleRunes = 70
 			if runes := []rune(title); len(runes) > maxHeldPRTitleRunes {
