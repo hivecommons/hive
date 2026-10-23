@@ -1,6 +1,9 @@
 package policies
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"os"
 	"path/filepath"
 	"testing"
@@ -266,5 +269,38 @@ func TestReconcileSeededDefaultsManifestSaveFailure(t *testing.T) {
 
 	if _, err := os.ReadFile(filepath.Join(dir, "scanner.md")); err != nil {
 		t.Fatalf("templates were not seeded despite manifest failure: %v", err)
+	}
+}
+
+// TestReconcileSeededDefaultsWarnsOnceForUnrecordedDivergence: a stable
+// divergence with no seed record warns once, stays quiet on unchanged
+// re-runs, and warns again when the file content changes.
+func TestReconcileSeededDefaultsWarnsOnceForUnrecordedDivergence(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scanner.md")
+	if err := os.WriteFile(path, []byte("# legacy copy\n"), 0o644); err != nil {
+		t.Fatalf("pre-place file: %v", err)
+	}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	warns := func() int { return strings.Count(buf.String(), "no seed record") }
+
+	for i := 0; i < 2; i++ {
+		if err := ReconcileSeededDefaults(dir, logger); err != nil {
+			t.Fatalf("ReconcileSeededDefaults run %d: %v", i, err)
+		}
+	}
+	if got := warns(); got != 1 {
+		t.Fatalf("warnings after unchanged re-run = %d, want 1", got)
+	}
+
+	if err := os.WriteFile(path, []byte("# legacy copy, edited\n"), 0o644); err != nil {
+		t.Fatalf("edit file: %v", err)
+	}
+	if err := ReconcileSeededDefaults(dir, logger); err != nil {
+		t.Fatalf("ReconcileSeededDefaults after edit: %v", err)
+	}
+	if got := warns(); got != 2 {
+		t.Fatalf("warnings after content change = %d, want 2", got)
 	}
 }
