@@ -15064,7 +15064,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
       stageTrackerSyncToolbar(f);
-      const ctx = { nowMs, stages, moves: _stageTrackerMoves, needsHumanLabels: stageTrackerNeedsHumanLabels(d) };
+      const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      ctx.needsHumanLabels = stageTrackerNeedsHumanLabels(d);
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);

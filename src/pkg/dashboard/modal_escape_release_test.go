@@ -75,6 +75,7 @@ function closeWelcomeDialog() {}
 function closeConfigDialog() {}
 function closeOverviewChartSettings() {}
 function closeStageTrackerSettings() {}
+function closeStageTrackerLabelDialog() {}
 function closeACMMDialog() {}
 function closeNousConfig() {}
 function cancelGHLogin() {}
