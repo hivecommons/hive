@@ -3,8 +3,13 @@ package github
 import "strings"
 
 // RendersAsTracker is the display-only tracker predicate, not a parent-close signal.
+// It uses the same trackerTaskListMin threshold as isTracker to ensure consistency.
 func RendersAsTracker(isTracker bool, labels []string, progress *IssueChildren) bool {
-	return isTracker || progress != nil || issueHasLabel(labels, PartiallyAddressedLabel)
+	// Render as tracker if the issue meets the isTracker predicate (which includes
+	// title/label markers and 3+ task-list items), or if it has PartiallyAddressedLabel.
+	// Note: progress.Total reflects all task-list items regardless of threshold;
+	// only show the chip if it meets the same threshold as isTracker.
+	return isTracker || issueHasLabel(labels, PartiallyAddressedLabel)
 }
 
 // TrackerTaskProgress counts issue-delegating checklist entries, not ordinary

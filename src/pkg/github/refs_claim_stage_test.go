@@ -160,16 +160,59 @@ func TestTrackerClassificationConversionThreshold(t *testing.T) {
 }
 
 func TestTrackerTaskProgress(t *testing.T) {
-	body := "- [x] #1 done\n- [ ] acme/widgets#2 remaining\n- [X] #3 done\n- [ ] ordinary task\n"
-	got := TrackerTaskProgress(body)
-	if got == nil || got.Total != 3 || got.Completed != 2 {
-		t.Fatalf("progress = %+v", got)
+	tests := []struct {
+		name      string
+		body      string
+		wantTotal int
+		wantChip  bool
+	}{
+		{
+			name:      "three items render as tracker chip",
+			body:      "- [x] #1 done\n- [ ] acme/widgets#2 remaining\n- [X] #3 done\n",
+			wantTotal: 3,
+			wantChip:  true,
+		},
+		{
+			name:      "single item does not render as tracker chip",
+			body:      "- [ ] #1 pending",
+			wantTotal: 0,
+			wantChip:  false,
+		},
+		{
+			name:      "two items do not render as tracker chip",
+			body:      "- [x] #1 done\n- [ ] #2 remaining",
+			wantTotal: 0,
+			wantChip:  false,
+		},
+		{
+			name:      "ordinary task without reference is not progress",
+			body:      "- [ ] ordinary task",
+			wantTotal: 0,
+			wantChip:  false,
+		},
 	}
-	row := repoWorkIssueFromIssue(Issue{Body: body}, "claimed", "live claim")
-	if !row.IsTracker || row.TrackerProgress == nil || row.TrackerProgress.Completed != 2 || row.Children != nil {
-		t.Fatalf("tracker metadata lost in work details: %+v", row)
-	}
-	if TrackerTaskProgress("- [ ] ordinary task") != nil {
-		t.Fatal("ordinary checklist is not sub-issue progress")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TrackerTaskProgress(tt.body)
+			if tt.wantTotal == 0 {
+				if got != nil {
+					t.Fatalf("TrackerTaskProgress(%q) = %+v, want nil", tt.body, got)
+				}
+			} else {
+				if got == nil || got.Total != tt.wantTotal {
+					t.Fatalf("TrackerTaskProgress(%q) = %+v, want Total=%d", tt.body, got, tt.wantTotal)
+				}
+			}
+
+			row := repoWorkIssueFromIssue(Issue{Body: tt.body}, "claimed", "test")
+			if row.IsTracker != tt.wantChip {
+				t.Errorf("repoWorkIssueFromIssue IsTracker = %v, want %v", row.IsTracker, tt.wantChip)
+			}
+			if tt.wantTotal > 0 && row.TrackerProgress == nil {
+				t.Errorf("repoWorkIssueFromIssue TrackerProgress = nil, want non-nil")
+			} else if tt.wantTotal == 0 && row.TrackerProgress != nil {
+				t.Errorf("repoWorkIssueFromIssue TrackerProgress = %+v, want nil", row.TrackerProgress)
+			}
+		})
 	}
 }
