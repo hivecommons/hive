@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -238,11 +239,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 						"Copilot CLI rejected model %q from --model and is running %q instead; update this agent's model",
 						requested, running,
 					)
-					m.logger.Warn("copilot CLI substituted the configured model",
-						"agent", agent.Name,
-						"requested_model", requested,
-						"running_model", running,
-					)
+					m.logCopilotModelFallback(agent, requested, running)
 				}
 			}
 
@@ -667,4 +664,22 @@ func (m *Manager) claimRateLimitRelaunch(agent *AgentProcess, now time.Time) boo
 	agent.lastRateLimitRestart = now
 	m.lastRateLimitRelaunch = now
 	return true
+}
+
+// logCopilotModelFallback logs a Copilot CLI model substitution at Warn once
+// per (requested, running) tuple and at Debug afterwards. The warned tuple
+// survives relaunches (the CLI substitutes identically every launch), so a
+// persistently-wrong config does not re-warn each restart (#13659).
+func (m *Manager) logCopilotModelFallback(agent *Agent, requested, running string) {
+	tuple := requested + "\x00" + running
+	level := slog.LevelDebug
+	if agent.copilotModelFallbackWarned != tuple {
+		agent.copilotModelFallbackWarned = tuple
+		level = slog.LevelWarn
+	}
+	m.logger.Log(context.Background(), level, "copilot CLI substituted the configured model",
+		"agent", agent.Name,
+		"requested_model", requested,
+		"running_model", running,
+	)
 }

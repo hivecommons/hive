@@ -309,6 +309,9 @@ type AgentProcess struct {
 	// alongside LastError on every (re)launch so a corrected model re-arms
 	// detection.
 	copilotModelFallbackRequested string
+	// copilotModelFallbackWarned is the "requested\x00running" tuple already
+	// logged at Warn; unlike the field above it survives relaunches.
+	copilotModelFallbackWarned string
 	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
 	// not clear the login prompt. The restart is a falsifiable theory — "a valid
 	// token exists, the agent just has not picked it up yet" — and this is what
