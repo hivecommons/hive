@@ -129,7 +129,7 @@ soak-gated promotion workflow. Structural changes were gated by public
   ([#5691](https://github.com/hivecommons/hive/issues/5691),
   [RFC doc](https://github.com/hivecommons/hive/blob/v5/docs/rfc-5691-constellation.md),
   [#5796](https://github.com/hivecommons/hive/pull/5796)).
-- **Per-repo policy scoping.** Proposed — awaiting maintainer sign-off on [#6208](https://github.com/hivecommons/hive/issues/6208): use one repo-scoped policy model for pause, per-repo agents, and per-repo ACMM/onboarding; hive-wide ACMM remains the ceiling, and repo overrides only narrow scope.
+- **Per-repo policy scoping.** Decided on [#6208](https://github.com/hivecommons/hive/issues/6208) (closed 2026-09-09): one repo-scoped policy model for pause ([#6211](https://github.com/hivecommons/hive/issues/6211)) and per-repo agents ([#6215](https://github.com/hivecommons/hive/issues/6215)) is accepted and shipped — see [repo pause](src/docs/repo-pause.md) and [per-repo agents](src/docs/per-repo-agents.md); per-repo ACMM levels were **not** accepted (#6111 on hold, #6235 declined). Hive-wide ACMM remains the ceiling.
 - **Commons contributor-onboarding health.** Gap, not yet a workstream —
   the public Commons join funnel (`just contribute-tui` →
   `contribute-setup` → join a listed hive → working relay) currently has
@@ -370,9 +370,11 @@ and `docker.yml`'s `v6` rows still only ever publish `edge`, never
 `candidate`/`stable`. So promoting `v6` past `edge` remains gated, but it is
 now a **deliberate, unflipped GA gate** guarded against misfiring, not a
 bug blocking the path. The readiness-runbook gap is resolved
-([#9200](https://github.com/hivecommons/hive/issues/9200), closed). Tracked
-together in [#9227](https://github.com/hivecommons/hive/issues/9227), open
-pending a maintainer go/no-go on flipping the gate.
+([#9200](https://github.com/hivecommons/hive/issues/9200), closed). The
+rollup tracker [#9227](https://github.com/hivecommons/hive/issues/9227) was
+closed 2026-10-03 as consolidated; the go/no-go on flipping the gate now
+lives on the v6 epic's GA-cut checklist
+([#7563](https://github.com/hivecommons/hive/issues/7563)).
 
 ## Hosted Hive Hub
 

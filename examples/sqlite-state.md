@@ -104,7 +104,7 @@ This separation means:
 
 ## Connecting to Copilot CLI skills
 
-If your AI agent is Claude Code, you can use [Copilot CLI skills](https://docs.github.com/en/copilot/customizing-copilot/adding-custom-instructions-for-github-copilot) (`.claude/commands/*.md`) as the policy delivery mechanism instead of raw markdown files in memory.
+If your AI agent is Claude Code, you can use [Copilot CLI skills](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions) (`.claude/commands/*.md`) as the policy delivery mechanism instead of raw markdown files in memory.
 
 The skill file reads the SQLite DB and executes the fix loop:
 

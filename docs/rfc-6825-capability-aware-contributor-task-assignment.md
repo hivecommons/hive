@@ -22,9 +22,10 @@ Related design: [RFC #5698: Backend capacity, model inventory, pacing, and place
 > whose status line reads "accepted design" — this one deliberately does not.
 >
 > **Branch note.** The design targets v5, and its sibling RFCs live on `v5`.
-> This copy lands on `v4` because that is the branch day-to-day work targets;
-> `v5` is topped up from it by the forward-port sync described in
-> [v5-sync-policy.md](../src/docs/v5-sync-policy.md). The links below point at
+> This copy originally landed on `v4` (then the day-to-day branch) and reached
+> `v5` through the forward-port sync described in
+> [v5-sync-policy.md](../src/docs/v5-sync-policy.md); `v5` is now the active
+> development branch and `v4` is feature-frozen. The links below point at
 > `v5` blobs and a pinned v5 commit on purpose: they are the code the proposal
 > was written against.
 

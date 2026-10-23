@@ -210,7 +210,7 @@ all four:
    hub's **My Hives** page the version pill reads `stable (v5)`; if it reads
    `stable (<short digest>)` the hub could not attribute the digest to a tracked
    branch, and if it reads `stable (?)` the channel tag did not resolve at all
-   (see [release-channels.md](release-channels.md#the-version-pill-stable-v4)).
+   (see [release-channels.md](release-channels.md#the-version-pill-stable-v5)).
    Record which hive reported it.
 
 3. **The gate works unassisted.** The next scheduled `promote-stable.yml` run

@@ -280,7 +280,7 @@ An agent is considered review-capable if it is enabled, not paused, and not on-d
 2. **Keyword scan** — the string `review` (case-insensitive) appears in any of:
    the agent's name, `role`, `aliases`, `lane_keywords`, or `detect_keywords`.
 
-The dashboard security summary (`GET /api/security`) exposes a `reviewCapableAgents`
+The dashboard security section (the `security` block of `GET /api/config/governor`) exposes a `reviewCapableAgents`
 count, and `GET /api/config/review` carries a `reviewer_candidates` list (name, backend,
 model, `available`, `keyword_match`, `review_capable`) that the Reviewers pick-list renders. If `review.require_approval` is true and that count is zero, the dashboard
 shows a warning:

@@ -38,9 +38,10 @@ Operator actions:
 - Contributor relays should use `wss://hive.hivecommons.dev/contribute` for
   hosted-hub registrations.
 
-The current v4 compiled fallback for `hub.url`/`HIVE_HUB_PUBLIC_URL` still names
-the legacy hostname, so do not rely on leaving these values unset during the
-cutover.
+The v4 compiled fallback for `hub.url`/`HIVE_HUB_PUBLIC_URL` names the legacy
+hostname; v5 builds default both to `https://hive.hivecommons.dev`
+(`src/pkg/config/config.go`, `src/pkg/hub/saas_auth.go`). Set the values
+explicitly anyway so the hostname does not depend on which line a spoke runs.
 
 ### Before upgrading
 
@@ -137,4 +138,4 @@ the `agents[].acmm` field replaced the former `agents[].tier` field.
 ---
 
 *This document is maintained by the strategist agent and project maintainers.
-Last updated: 2026-09-22. Tracking issue: [#5554](https://github.com/hivecommons/hive/issues/5554).*
+Last updated: 2026-10-23. Tracking issue: [#5554](https://github.com/hivecommons/hive/issues/5554).*

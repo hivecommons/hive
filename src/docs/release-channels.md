@@ -48,11 +48,11 @@ The hive's image is set to `ghcr.io/hivecommons/hive:stable` (via kubectl for re
 
 Because a channel tag is a moving (mutable) tag, a channel-tracking hive gets the same floating-tag auto-upgrade treatment as a `-latest` branch tag: upgrades roll the pod but keep the `:stable` image string rather than pinning a SHA ([#3757](https://github.com/hivecommons/hive/pull/3757)).
 
-## The version pill: `stable (v4)`
+## The version pill: `stable (v5)`
 
 A channel is a moving pointer, so the dashboard shows what it currently points at. The pill on a channel-tracking hive reads, for example:
 
-- `stable (v4)` — the channel currently resolves to a build of branch `v4`;
+- `stable (v5)` — the channel currently resolves to a build of branch `v5`;
 - `stable (49e53e6)` — the channel resolves to a digest the hub could not attribute to a tracked branch (short digest shown);
 - `stable (?)` — the channel tag could not be resolved on GHCR at all.
 
@@ -87,7 +87,7 @@ The hive's tracked channel is stored hub-side in the per-hive metadata record (`
 
 ## Spoke navbar badge
 
-A spoke running a channel image shows both delivery dimensions in its own dashboard version badge: for example, `a1b2c3d · stable (v4) · floating`. The linked short SHA identifies the running build, `stable (v4)` identifies the release channel and built-from branch, and `floating` confirms that the Deployment follows a mutable tag. `candidate` and `edge` are displayed the same way when reported by the backend. A branch tag such as `v5-latest` renders as `a1b2c3d · v5 · floating`, while a SHA tag or digest pin renders as `a1b2c3d · v5 · pinned`.
+A spoke running a channel image shows both delivery dimensions in its own dashboard version badge: for example, `a1b2c3d · stable (v5) · floating`. The linked short SHA identifies the running build, `stable (v5)` identifies the release channel and built-from branch, and `floating` confirms that the Deployment follows a mutable tag. `candidate` and `edge` are displayed the same way when reported by the backend. A branch tag such as `v5-latest` renders as `a1b2c3d · v5 · floating`, while a SHA tag or digest pin renders as `a1b2c3d · v5 · pinned`.
 
 The tooltip includes the running SHA, channel when present, built-from branch, authoritative Deployment image ref, and tracking mode. The spoke derives both channel and tracking mode server-side from its cached in-cluster Deployment image lookup; browser code does not infer mutability from tag strings. If the Deployment cannot be read (for example, during a plain `docker run`) or its image ref is malformed, the badge says `tracking unknown` and the API does not expose the untrusted ref. This preserves the distinction between unknown provenance and an intentional pin. The channel portion was introduced by [#3762](https://github.com/hivecommons/hive/pull/3762); the tracking detail is specified by [#6321](https://github.com/hivecommons/hive/issues/6321).
 

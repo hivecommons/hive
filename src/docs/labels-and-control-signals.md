@@ -908,7 +908,7 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      `in-place-stalled` second takeovers): the App PR's body opens with
      `<!-- hive:carried-fence reason=<contributor-lane:…> from=#<n> -->`
      and a **Merge stays manual** paragraph. Every App merge lane
-     (self-authored, trusted-author, `/hive merge`-queued) refuses a PR
+     (self-authored, trusted-author, `hive-merge`-queued) refuses a PR
      carrying that marker once it is green, with the carried
      `contributor-lane:*` reason, so it routes to 085 like a contributor PR
      with the same diff; `/hive approve` says so too. The hive's own

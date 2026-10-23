@@ -1,7 +1,7 @@
 # CEL-based agent triggers
 
 The `triggers:` config key lets an operator declare CEL ([Common Expression
-Language](https://github.com/google/cel-spec)) rules that decide when an
+Language](https://github.com/cel-expr/cel-spec)) rules that decide when an
 agent should be kicked for an incoming event — issue opened, issue labeled,
 PR opened, a comment posted, and so on — without writing code.
 

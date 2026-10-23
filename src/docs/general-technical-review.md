@@ -1,7 +1,7 @@
 # General Technical Review — Hive
 
 This document answers the CNCF [General Technical Review
-questions](https://github.com/cncf/toc/blob/main/toc_subprojects/project-reviews-subproject/general-technical-questions.md)
+questions](https://github.com/cncf/toc/blob/main/operations/project-reviews/general-technical-questions.md)
 (v1.0.1) for the `hivecommons/hive` project, following that template's exact
 question wording and section order. It is written from, and cited against,
 this repository at `v4` (`src/` prefix for source and most docs).
@@ -153,7 +153,7 @@ REST + Server-Sent Events for the dashboard/hub surface — no GraphQL is expose
 
 ##### Describe the project defaults
 
-Selected defaults from `src/pkg/config/config.go` `applyDefaults()` (`config.go:4765-5063`) and `src/docs/operator-reference.md`: dashboard port `3002` (`defaultDashboardPort`); governor eval interval `300s` (`defaultEvalIntervalS`); per-agent `replicas` default `1`, `enabled` default `true`, `clear_on_kick` default `true`; `hub.url` has a compiled legacy fallback of `https://hive.kubestellar.io` with `hub.is_public: true` if unset, but hosted-hub operators should explicitly set it to `https://hive.hivecommons.dev` during the cutover; token-budget period `7` days at a `90%` critical threshold; auto-merge label default `"lgtm"`. Minimum required config for the process to start at all (enforced by `Config.Validate`): `project.org`, at least one repo, one GitHub credential (`github.token`, `github.app_id`, or `github.forge`), and at least one agent (`src/docs/operator-reference.md` "Minimum required configuration").
+Selected defaults from `src/pkg/config/config.go` `applyDefaults()` (`config.go:6799-7177`) and `src/docs/operator-reference.md`: dashboard port `3002` (`defaultDashboardPort`); governor eval interval `300s` (`defaultEvalIntervalS`); per-agent `replicas` default `1`, `enabled` default `true`, `clear_on_kick` default `true`; `hub.url` defaults to `https://hive.hivecommons.dev` with `hub.is_public: true` if unset (v4 builds still fall back to the legacy `https://hive.kubestellar.io`); token-budget period `7` days at a `90%` critical threshold; auto-merge label default `"lgtm"`. Minimum required config for the process to start at all (enforced by `Config.Validate`): `project.org`, at least one repo, one GitHub credential (`github.token`, `github.app_id`, or `github.forge`), and at least one agent (`src/docs/operator-reference.md` "Minimum required configuration").
 
 ##### Outline any additional configurations from default to make reasonable use of the project
 

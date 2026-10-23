@@ -157,7 +157,7 @@ The hub now compares those lists and reports any repo claimed by more than one s
     "repoOverlaps": [
       {
         "host": "github.com",
-        "repo": "tunaos/docs",
+        "repo": "tuna-os/docs",
         "hives": [
           { "id": "h-hive", "name": "hive" },
           { "id": "h-reef", "name": "reef" }
@@ -173,8 +173,8 @@ Matching is deliberate about what counts as the same repo, because two spokes ar
 
 | Compared | Rule |
 |---|---|
-| `docs`, `tunaos/docs`, `https://github.com/tunaos/docs.git` | the same repo — bare, owner-qualified and URL forms all resolve to `owner/repo` |
-| `TunaOS/Docs` vs `tunaos/docs` | the same repo — GitHub owner/repo names are case-insensitive |
+| `docs`, `tuna-os/docs`, `https://github.com/tuna-os/docs.git` | the same repo — bare, owner-qualified and URL forms all resolve to `owner/repo` |
+| `Tuna-OS/Docs` vs `tuna-os/docs` | the same repo — GitHub owner/repo names are case-insensitive |
 | `acme/ui` on `github.com` vs on `github.ibm.com` | **different** repos — the GitHub host is part of the identity |
 | a spoke listing its own primary repo in `repos[]` | one claim, not a conflict with itself |
 | a repo with no owner (no `org` recorded) | ignored — inventing an owner would invent conflicts between unrelated repos that share a name |

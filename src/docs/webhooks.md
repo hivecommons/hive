@@ -25,8 +25,8 @@ Three writers feed one snapshot per repository; everything else reads it.
 
 Where they live:
 
-- Reconcile — the governor's `EnumerateActionable` pass (`src/pkg/github/client.go:1433` records the newest `updated_at` it listed, see [fallback](#fallback-when-webhooks-degrade)) and the ForgeState `Reconcile` writer (`src/pkg/forgestate/reconcile.go:18`), whose per-repo `interval` shortens while drift is high (`src/pkg/forgestate/reconcile.go:156`).
-- Webhook patch — the legacy snapshot's `ApplyWebhookItem` (`src/pkg/github/webhook_item_patch.go:290`) fed by `FetchWebhookItemSnapshot` (`src/pkg/github/webhook_item_refresh.go:73`), and ForgeState's `ApplyWebhook` (`src/pkg/forgestate/webhook.go:34`) with its `supersedes` monotonic check (`src/pkg/forgestate/store.go:381`).
+- Reconcile — the governor's `EnumerateActionable` pass (`src/pkg/github/client.go:1430` records the newest `updated_at` it listed, see [fallback](#fallback-when-webhooks-degrade)) and the ForgeState `Reconcile` writer (`src/pkg/forgestate/reconcile.go:18`), whose per-repo `interval` shortens while drift is high (`src/pkg/forgestate/reconcile.go:18`).
+- Webhook patch — the legacy snapshot's `ApplyWebhookItem` (`src/pkg/github/webhook_item_patch.go:291`) fed by `FetchWebhookItemSnapshot` (`src/pkg/github/webhook_item_refresh.go:75`), and ForgeState's `ApplyWebhook` (`src/pkg/forgestate/webhook.go:38`) with its `supersedes` monotonic check (`src/pkg/forgestate/store.go:400`).
 - Write-through — ForgeState's `WriteThrough` (`src/pkg/forgestate/writethrough.go:38`).
 
 Between reconciles the picture is kept current by patches; a cadence tick
@@ -41,13 +41,13 @@ These are the acceptance criteria of #13373 and the tests that hold them.
 
 | Guarantee | How | Where |
 | --- | --- | --- |
-| **Closed on GitHub → gone within ≤ 10 s** | a `closed`/`merged` delivery triggers the confirming `GET`; the re-read removes the item from the activity monitor and the governor's snapshot; the debounce is `dashboard.stage_tracker.webhook_refresh_debounce_ms` (default `2000`); the re-read is remembered for `dashboard.stage_tracker.webhook_refresh_replay_window_s` (default `1800`) and re-applied to every status snapshot published meanwhile, so an eval cycle that enumerated the item open before the close cannot bring the row back | `src/pkg/forgestate/webhook.go:34`, `src/pkg/github/webhook_item_patch.go:290` |
-| **Out-of-order deliveries are safe** | upserts compare `updated_at` (and head SHA for PRs); an older read never replaces a newer copy; a removal leaves a tombstone so a late "open" read cannot resurrect it | `src/pkg/forgestate/store.go:381` |
-| **403 mid-reconcile keeps last-good + `stale`** | a refused reconcile marks the repo `stale` and keeps the previous snapshot, patches included; counts are never published as zero | `src/pkg/forgestate/reconcile.go:143`, `src/pkg/github/enumerate_lastgood.go:39` |
+| **Closed on GitHub → gone within ≤ 10 s** | a `closed`/`merged` delivery triggers the confirming `GET`; the re-read removes the item from the activity monitor and the governor's snapshot; the debounce is `dashboard.stage_tracker.webhook_refresh_debounce_ms` (default `2000`); the re-read is remembered for `dashboard.stage_tracker.webhook_refresh_replay_window_s` (default `1800`) and re-applied to every status snapshot published meanwhile, so an eval cycle that enumerated the item open before the close cannot bring the row back | `src/pkg/forgestate/webhook.go:38`, `src/pkg/github/webhook_item_patch.go:291` |
+| **Out-of-order deliveries are safe** | upserts compare `updated_at` (and head SHA for PRs); an older read never replaces a newer copy; a removal leaves a tombstone so a late "open" read cannot resurrect it | `src/pkg/forgestate/store.go:400` |
+| **403 mid-reconcile keeps last-good + `stale`** | a refused reconcile marks the repo `stale` and keeps the previous snapshot, patches included; counts are never published as zero | `src/pkg/forgestate/reconcile.go:146`, `src/pkg/github/enumerate_lastgood.go:39` |
 | **Own mutation visible before the next read** | write-through | `src/pkg/forgestate/writethrough.go:38` |
-| **Freshness bound before irreversible actions** | merge, close, claim and kick re-read an item older than `DecisionFreshnessBound` (`60s`) and refuse outright while the repo's share is stale (`irreversible action deferred`) | `src/pkg/github/decision_freshness.go:15`, `src/pkg/forgestate/store.go:315` |
-| **Startup gate** | the first governor decision pass waits for a full reconcile of every repo (`WaitReady`); a cold cache whose fetch failed is published stale, never empty | `src/pkg/forgestate/store.go:301` |
-| **Drift detection** | each reconcile diffs cache vs API into `forgestate_drift`; above `drift_threshold` the repo's reconcile interval shortens (the dashboard warning of #13373 follows once a reader wires the metric) | `src/pkg/forgestate/reconcile.go:121`, `src/pkg/forgestate/metrics.go:13` |
+| **Freshness bound before irreversible actions** | merge, close, claim and kick re-read an item older than `DecisionFreshnessBound` (`60s`) and refuse outright while the repo's share is stale (`irreversible action deferred`) | `src/pkg/github/decision_freshness.go:15`, `src/pkg/forgestate/store.go:334` |
+| **Startup gate** | the first governor decision pass waits for a full reconcile of every repo (`WaitReady`); a cold cache whose fetch failed is published stale, never empty | `src/pkg/forgestate/store.go:320` |
+| **Drift detection** | each reconcile diffs cache vs API into `forgestate_drift`; above `drift_threshold` the repo's reconcile interval shortens (the dashboard warning of #13373 follows once a reader wires the metric) | `src/pkg/forgestate/reconcile.go:58`, `src/pkg/forgestate/metrics.go:13` |
 | **Provenance** | tracker rows carry `fetched_at` and source (`webhook` / `reconcile`); the overview shows `stale · as of HH:MM` instead of zeros | [operator-reference.md](operator-reference.md#polling-cadence-vs-webhook-patch-vs-reconcile) |
 
 ## Configuration and defaults
@@ -72,7 +72,7 @@ Defaults: `src/pkg/config/config.go:7192` (`DefaultEvalIntervalWebhookS`,
 `src/pkg/config/forgestate.go:8` (`DefaultForgeStateReconcileInterval`,
 `DefaultForgeStateFreshnessBound`, `DefaultForgeStateDriftThreshold`),
 `src/pkg/github/webhook_cache.go:14` (`DefaultWebhookHealthWindow`, replaced
-by `SetWebhookHealthWindow` at `src/pkg/github/webhook_cache.go:95` once the
+by `SetWebhookHealthWindow` at `src/pkg/github/webhook_cache.go:102` once the
 governor loop publishes 2 × `eval_interval_s`), and
 `src/pkg/github/webhook_mode.go:34` (`WebhookRecoveryHealthyWindows`). The
 effective tick is composed in `webhookAwareEvalInterval`
