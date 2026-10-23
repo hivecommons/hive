@@ -251,6 +251,14 @@ the activity signal the hub reports.
   lane with nothing to adjudicate: they are reported
   `Producing=True / IdleNotScheduled` with the reason, and a not-producing
   alert raised before the suppression began is cleared on the next reconcile.
+- The window is never shorter than the agent's own cadence (#13817). A lane
+  the governor kicks once a day cannot be expected to show evidence every 6h;
+  for an agent with a periodic cadence the threshold is
+  `max(no_production_for, period + period/4)` — 30h for a daily lane — and the
+  condition reports `Producing=True / WithinCadence` with the cadence named
+  once the configured window has passed. Silence past the widened threshold
+  with queued work still degrades to `Producing=False`. Continuous, paused and
+  on-demand cadences have no period and keep the configured window.
 - The shared-`$HOME` 0600 permission clobber (RFC failure mode 3) was fixed
   at the source by the `umask 007` launch change (#4668) and is not
   re-implemented here.

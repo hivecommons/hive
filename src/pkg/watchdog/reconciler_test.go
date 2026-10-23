@@ -1583,3 +1583,98 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 	}
 	t.Fatal(msg)
 }
+
+// periodFleet is a fakeFleet that also implements KickPeriodReporter.
+type periodFleet struct {
+	*fakeFleet
+	period time.Duration
+	ok     bool
+}
+
+func (f *periodFleet) KickPeriod(string) (time.Duration, bool) { return f.period, f.ok }
+
+// #13817: the no-production window must never be shorter than the agent's
+// own cadence. A daily dedupe lane that produced during its last kick is on
+// schedule, not "alive but not producing", for the whole day after.
+func TestProducingWindowWidensToCadencePeriod(t *testing.T) {
+	clock := newFakeClock()
+
+	newFleet := func(age time.Duration, period time.Duration, ok bool) *periodFleet {
+		f := newFakeFleet("a1")
+		f.setObs("a1", readyObs())
+		f.setQueued(12)
+		f.mu.Lock()
+		f.production["a1"] = clock.Now().Add(-age)
+		f.mu.Unlock()
+		return &periodFleet{fakeFleet: f, period: period, ok: ok}
+	}
+
+	t.Run("silence shorter than a daily cadence is within cadence", func(t *testing.T) {
+		fleet := newFleet(7*time.Hour, 24*time.Hour, true)
+		alerter := newFakeAlerter()
+		r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionTrue || p.Reason != "WithinCadence" {
+			t.Fatalf("Producing = %+v, want True/WithinCadence", p)
+		}
+		if !strings.Contains(p.Message, "cadence 24h0m0s widens the 6h0m0s window to 30h0m0s") {
+			t.Errorf("message must explain the widened window, got %q", p.Message)
+		}
+		if alerter.has(producingAlertID("a1")) {
+			t.Fatal("a daily lane 7h after its kick must not raise a not-producing alert")
+		}
+	})
+
+	t.Run("silence past cadence plus slack is still a fault", func(t *testing.T) {
+		fleet := newFleet(31*time.Hour, 24*time.Hour, true)
+		alerter := newFakeAlerter()
+		r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionFalse || p.Reason != "NoRecentProduction" {
+			t.Fatalf("Producing = %+v, want False/NoRecentProduction", p)
+		}
+		if !strings.Contains(p.Message, "(threshold 30h0m0s)") || !strings.Contains(p.Message, "cadence 24h0m0s") {
+			t.Errorf("fault message must report the widened threshold and the cadence, got %q", p.Message)
+		}
+		if !alerter.has(producingAlertID("a1")) {
+			t.Fatal("a daily lane silent for 31h with queued work must alert")
+		}
+	})
+
+	t.Run("cadence shorter than the window leaves the window alone", func(t *testing.T) {
+		fleet := newFleet(7*time.Hour, time.Hour, true)
+		r := New(fastSettings(), fleet, newFakeAlerter(), testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionFalse || !strings.Contains(p.Message, "(threshold 6h0m0s)") || strings.Contains(p.Message, "cadence") {
+			t.Fatalf("Producing = %+v, want False with the plain 6h window", p)
+		}
+	})
+
+	t.Run("fresh production stays RecentProduction without a cadence note", func(t *testing.T) {
+		fleet := newFleet(time.Hour, 24*time.Hour, true)
+		r := New(fastSettings(), fleet, newFakeAlerter(), testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionTrue || p.Reason != "RecentProduction" || strings.Contains(p.Message, "cadence") {
+			t.Fatalf("Producing = %+v, want True/RecentProduction with no cadence note", p)
+		}
+	})
+
+	t.Run("unknown period applies the configured window", func(t *testing.T) {
+		fleet := newFleet(7*time.Hour, 0, false)
+		r := New(fastSettings(), fleet, newFakeAlerter(), testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionFalse || p.Reason != "NoRecentProduction" {
+			t.Fatalf("Producing = %+v, want False/NoRecentProduction", p)
+		}
+	})
+}

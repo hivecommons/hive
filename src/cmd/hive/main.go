@@ -3537,6 +3537,12 @@ func (b *boot) bootSupervision() {
 				}
 				return b.sched.ReviewerLaneIdleReason(name)
 			},
+			// The no-production window is never shorter than the agent's own
+			// cadence: a daily lane is on schedule for a day (#13817).
+			CadencePeriod: func(name string) (time.Duration, bool) {
+				mode := strings.ToLower(string(b.gov.GetState().Mode))
+				return b.cfg.CadenceValueForMode(name, mode).Period(time.Now())
+			},
 		}
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
 			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))

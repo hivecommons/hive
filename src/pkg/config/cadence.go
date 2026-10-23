@@ -236,6 +236,30 @@ func (c Cadence) NextAfter(after time.Time) (time.Time, bool) {
 	return best, !best.IsZero()
 }
 
+// Period returns how long the governor waits between timer kicks under this
+// cadence: the parsed duration for an interval cadence, or the gap between
+// the next two scheduled occurrences after `after` for a times/cron cadence.
+// ok=false for continuous, paused, invalid, or empty cadences — callers must
+// not treat those as "kicked constantly" or "never kicked"; they simply have
+// no period to reason about.
+func (c Cadence) Period(after time.Time) (time.Duration, bool) {
+	if c.IsPaused() || c.Mode() == CadenceModeContinuous {
+		return 0, false
+	}
+	first, ok := c.NextAfter(after)
+	if !ok {
+		return 0, false
+	}
+	if c.Mode() == CadenceModeInterval {
+		return first.Sub(after), true
+	}
+	second, ok := c.NextAfter(first)
+	if !ok || !second.After(first) {
+		return 0, false
+	}
+	return second.Sub(first), true
+}
+
 func (c Cadence) DueOccurrence(lastKick time.Time, now time.Time, catchUpWindow time.Duration) (time.Time, bool) {
 	if c.Mode() == CadenceModeContinuous {
 		return time.Time{}, false

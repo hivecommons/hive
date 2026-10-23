@@ -27,6 +27,10 @@ type WatchdogFleet struct {
 	// no suppression. Injected for the same reason as Queued: the governor and
 	// scheduler that know the answer are not imported by pkg/agent.
 	KickSuppressed func(name string) string
+	// CadencePeriod reports the agent's current-mode cadence period so the
+	// readiness gate never expects production more often than the governor
+	// kicks (#13817). Nil means no cadence is known.
+	CadencePeriod func(name string) (time.Duration, bool)
 }
 
 // AgentNames lists agents the watchdog should reconcile: agents the manager
@@ -177,6 +181,14 @@ func (f WatchdogFleet) KickSuppressedReason(name string) string {
 		return ""
 	}
 	return f.KickSuppressed(name)
+}
+
+// KickPeriod implements watchdog.KickPeriodReporter.
+func (f WatchdogFleet) KickPeriod(name string) (time.Duration, bool) {
+	if f.CadencePeriod == nil {
+		return 0, false
+	}
+	return f.CadencePeriod(name)
 }
 
 // agentIsAdvisoryOnly reports whether an agent is barred from opening issues

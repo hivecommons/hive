@@ -1,0 +1,1 @@
+- Watchdog no longer reports a lane "alive but not producing" during the idle part of its own cadence: the no-production window is widened to the agent's current-mode kick period plus a quarter (30h for a daily lane such as `dedupe`), and the condition names the cadence when it does (#13817).

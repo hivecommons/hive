@@ -60,6 +60,18 @@ type KickSuppressionReporter interface {
 	KickSuppressedReason(name string) string
 }
 
+// KickPeriodReporter is an optional Fleet extension. A fleet that implements
+// it tells the readiness gate how often the governor timer-kicks an agent, so
+// the no-production window is never shorter than the agent's own cadence: a
+// lane kicked once a day that produced during its last kick is on schedule,
+// not "alive but not producing" (#13817).
+type KickPeriodReporter interface {
+	// KickPeriod returns the current-mode cadence period for the agent.
+	// ok=false means the agent has no periodic cadence (continuous, paused,
+	// or unscheduled), in which case the configured window applies as is.
+	KickPeriod(name string) (period time.Duration, ok bool)
+}
+
 // AuthStatus is the tri-state outcome of one provider credential probe.
 type AuthStatus string
 
@@ -183,6 +195,10 @@ const (
 	// an empty queue is SUPPOSED to have idle agents, and one waiting item is
 	// enough to make "and nothing is happening" wrong.
 	minQueuedForNotProducing = 1
+	// cadenceSlackDivisor sets the slack added to a cadence period when it
+	// widens the no-production window: period/4, so a 24h lane is allowed
+	// 30h before silence counts — one late or long kick, not two missed ones.
+	cadenceSlackDivisor = 4
 )
 
 // agentRecord is the reconciler's per-agent memory. Guarded by Reconciler.mu.
@@ -800,6 +816,30 @@ func (r *Reconciler) reconcileAuth(ctx context.Context, name string, obs Observa
 	}
 }
 
+// productionThreshold is the no-production window for one agent: the
+// configured NoProductionFor, widened to the agent's cadence period plus
+// one kick's worth of slack when the governor kicks it less often than the
+// window (#13817). A 24h lane cannot be expected to show evidence every 6h;
+// it CAN be expected to show evidence within one cadence of its last kick,
+// and the slack covers a kick that lands late or runs long. The note names
+// the cadence so the condition explains why the threshold moved.
+func (r *Reconciler) productionThreshold(name string, settings Settings) (time.Duration, string) {
+	threshold := settings.NoProductionFor
+	kp, ok := r.fleet.(KickPeriodReporter)
+	if !ok {
+		return threshold, ""
+	}
+	period, ok := kp.KickPeriod(name)
+	if !ok || period <= 0 {
+		return threshold, ""
+	}
+	widened := period + period/cadenceSlackDivisor
+	if widened <= threshold {
+		return threshold, ""
+	}
+	return widened, fmt.Sprintf("cadence %v widens the %v window to %v", period, settings.NoProductionFor, widened)
+}
+
 // reconcileReadiness updates the Producing condition from production
 // evidence. A readiness failure alone NEVER pauses or restarts (design
 // decision on RFC open question 3): it publishes Producing=False and a
@@ -819,11 +859,16 @@ func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.T
 		}
 	} else if ok {
 		age := now.Sub(last)
+		threshold, thresholdNote := r.productionThreshold(name, settings)
 		switch {
-		case age < settings.NoProductionFor:
+		case age < threshold:
 			status = ConditionTrue
 			reason = "RecentProduction"
 			message = fmt.Sprintf("last production evidence %v ago", age.Round(time.Minute))
+			if thresholdNote != "" && age >= settings.NoProductionFor {
+				reason = "WithinCadence"
+				message += " — " + thresholdNote
+			}
 		default:
 			// Silence is only a fault when there is work to be silent about.
 			// An agent with an empty queue producing nothing is behaving
@@ -861,7 +906,10 @@ func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.T
 			default:
 				status = ConditionFalse
 				reason = "NoRecentProduction"
-				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), settings.NoProductionFor, queued)
+				message = fmt.Sprintf("no production evidence for %v (threshold %v) while %d item(s) are queued", age.Round(time.Minute), threshold, queued)
+				if thresholdNote != "" {
+					message += "; " + thresholdNote
+				}
 			}
 		}
 	}
