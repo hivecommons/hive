@@ -135,6 +135,8 @@ The `knowledge` group is also available under the alias `wiki`.
 
 ```bash
 hivectl knowledge search "user journey" --limit 20
+hivectl knowledge list --limit 200 --offset 0 -o json  # first page across all layers
+hivectl knowledge list --limit 200 --offset 200 -o json # next page
 hivectl knowledge list --layer project        # layer: personal|project|org|community
 hivectl knowledge get project create-project
 hivectl knowledge stats
@@ -147,6 +149,13 @@ hivectl knowledge update project create-project --file update.yaml
 hivectl knowledge import --file ux-wiki.md --format markdown --layer project
 hivectl knowledge delete project create-project --yes
 ```
+
+Without `--layer`, `knowledge list` returns one page: `--limit` defaults to 50
+(1–200), and `--offset` defaults to 0. The response includes `total`, `limit`,
+`offset`, and `has_more`; while `has_more` is true, request the next page by
+increasing `--offset` by `--limit`. `--type` applies before pagination.
+With `--layer`, the command still lists the entire layer; combining `--layer`
+with `--limit` or `--offset` is an error.
 
 `graph` reads the knowledge graph (`--root` optional; `--depth` defaults to 2
 and must be greater than zero). `import` posts Markdown or structured content
