@@ -144,6 +144,7 @@ auto_merge.contributor_tier.auto_promote_after_merged # contributor trust ratche
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
+auto_merge.require_current_base[] # TODO #11854
 auto_merge.required_checks[] # TODO #11854
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854
