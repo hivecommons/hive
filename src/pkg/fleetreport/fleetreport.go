@@ -180,6 +180,12 @@ type OpenIssue struct {
 	ClosedAt time.Time `json:"closed_at,omitempty"`
 	// Deferred is the last reason a filing was held back (rate limit etc).
 	Deferred string `json:"deferred,omitempty"`
+	// ClearedAttempts / ClearedNextAttemptAt pace retries of a runtime
+	// "cleared" comment after a transient failure; ClearedNotifyFailed is
+	// the error that made the publisher give up on it (#13827).
+	ClearedAttempts      int       `json:"cleared_attempts,omitempty"`
+	ClearedNextAttemptAt time.Time `json:"cleared_next_attempt_at,omitempty"`
+	ClearedNotifyFailed  string    `json:"cleared_notify_failed,omitempty"`
 }
 
 type Report struct {

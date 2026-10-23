@@ -42,7 +42,9 @@ import (
 //     the App identity.
 //
 // Cleared runtime conditions get a single "cleared on <hive>" comment; the
-// issue is never auto-closed.
+// issue is never auto-closed. A transient failure of that comment is retried
+// with backoff up to a cap; a permanent one (403/404/410/422) is recorded in
+// the state and never retried (#13827).
 
 // selfReportHubRelayPath is the hub ingest the spoke falls back to.
 const selfReportHubRelayPath = "/api/selfreport/ingest"
@@ -371,6 +373,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			o.PostedAt = now.UTC()
 			o.Class, o.Trigger, o.Deferred = report.Class, report.Trigger, ""
 			o.RollupOf = report.RollupOf
+			o.ClearedAttempts, o.ClearedNextAttemptAt, o.ClearedNotifyFailed = 0, time.Time{}, ""
 			if len(report.Evidence) > 0 {
 				o.Component = report.Evidence[0].Component
 			}
@@ -445,11 +448,22 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			if hive == "" {
 				hive = report.InstanceID
 			}
+			if open.Recovered || (!open.ClearedNextAttemptAt.IsZero() && now.Before(open.ClearedNextAttemptAt)) {
+				continue
+			}
 			if err := deps.gh.PostFleetReportCleared(ctx, deps.repo, open.Number, fleetreport.ClearedComment(report.Fingerprint, hive, deps.version, now)); err != nil {
-				logSelfReportFailure(logger, selfReportClearedFailedMsg, report.Fingerprint, err, "issue", open.Number)
+				recordSelfReportClearedFailure(logger, dashSrv, report.Fingerprint, open, err, now)
 				continue
 			}
 			clearSelfReportFailure(selfReportClearedFailedMsg, report.Fingerprint)
+			dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+				o, ok := st.Open[report.Fingerprint]
+				if !ok {
+					return
+				}
+				o.ClearedAttempts, o.ClearedNextAttemptAt, o.ClearedNotifyFailed = 0, time.Time{}, ""
+				st.Open[report.Fingerprint] = o
+			})
 			dashSrv.MarkFleetReportRecovered(report.Fingerprint)
 			logger.Info("fleet report: cleared comment recorded", "fingerprint", report.Fingerprint, "class", report.Class, "issue", open.Number)
 			continue
@@ -528,6 +542,77 @@ func relayObservationRecovery(ctx context.Context, deps selfReportPublishDeps, r
 		Body:        report.Body,
 		Repo:        config.DefaultFleetReportRepo,
 	})
+}
+
+// Retry pacing for the runtime "cleared" comment (#13827). A transient
+// failure backs off exponentially from selfReportClearedBaseBackoff up to
+// selfReportClearedMaxBackoff; after selfReportClearedMaxAttempts failures,
+// or on the first permanent error, the comment is given up.
+const (
+	selfReportClearedMaxAttempts = 6
+	selfReportClearedBaseBackoff = time.Minute
+	selfReportClearedMaxBackoff  = time.Hour
+)
+
+// recordSelfReportClearedFailure persists a failed cleared comment in the
+// fleet-report state. A permanent error (or the attempt cap) marks the
+// fingerprint recovered with ClearedNotifyFailed set, so neither the next
+// cycle nor a restart retries it, and warns once. A transient error schedules
+// the next attempt with backoff.
+func recordSelfReportClearedFailure(logger *slog.Logger, dashSrv *dashboard.Server, fingerprint string, open fleetreport.OpenIssue, err error, now time.Time) {
+	attempts := open.ClearedAttempts + 1
+	if selfReportClearedPermanent(err) || attempts >= selfReportClearedMaxAttempts {
+		clearSelfReportFailure(selfReportClearedFailedMsg, fingerprint)
+		dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+			o, ok := st.Open[fingerprint]
+			if !ok {
+				return
+			}
+			o.Recovered = true
+			o.ClearedAttempts, o.ClearedNextAttemptAt, o.ClearedNotifyFailed = attempts, time.Time{}, err.Error()
+			st.Open[fingerprint] = o
+		})
+		logger.Warn(selfReportClearedFailedMsg+"; giving up", "fingerprint", fingerprint, "issue", open.Number, "attempts", attempts, "error", err)
+		return
+	}
+	backoff := selfReportClearedBaseBackoff << (attempts - 1)
+	if backoff > selfReportClearedMaxBackoff || backoff <= 0 {
+		backoff = selfReportClearedMaxBackoff
+	}
+	next := now.Add(backoff).UTC()
+	dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+		o, ok := st.Open[fingerprint]
+		if !ok {
+			return
+		}
+		o.ClearedAttempts, o.ClearedNextAttemptAt = attempts, next
+		st.Open[fingerprint] = o
+	})
+	logSelfReportFailure(logger, selfReportClearedFailedMsg, fingerprint, err, "issue", open.Number, "attempt", attempts, "next_attempt", next)
+}
+
+// selfReportClearedPermanent reports whether a cleared-comment failure will
+// not go away on retry: GitHub answered 403/404/410/422 (no access, issue
+// gone, locked or invalid).
+func selfReportClearedPermanent(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		switch ghErr.Response.StatusCode {
+		case http.StatusForbidden, http.StatusNotFound, http.StatusGone, http.StatusUnprocessableEntity:
+			return true
+		}
+		return false
+	}
+	if errors.Is(err, github.ErrNoGitHubClient) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, s := range []string{": 403 ", ": 404 ", ": 410 ", ": 422 ", "resource not accessible"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // selfReportShouldRelay: a 403/404 from the report repo means this hive's

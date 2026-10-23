@@ -28,6 +28,10 @@ type fakeSelfReportWriter struct {
 	rollups   []int
 	rollupMsg []string
 	lookup    func(fp string) (github.FleetReportResult, bool, error)
+	// clearedErr, when set, fails PostFleetReportCleared; clearCalls counts
+	// every attempt, successful or not.
+	clearedErr func() error
+	clearCalls int
 }
 
 func (f *fakeSelfReportWriter) EnsureFleetReportWithOptions(_ context.Context, report fleetreport.Report, opts github.FleetReportOptions) (github.FleetReportResult, error) {
@@ -41,6 +45,12 @@ func (f *fakeSelfReportWriter) PostFleetReportRecovery(_ context.Context, n int,
 }
 
 func (f *fakeSelfReportWriter) PostFleetReportCleared(_ context.Context, _ string, n int, body string) error {
+	f.clearCalls++
+	if f.clearedErr != nil {
+		if err := f.clearedErr(); err != nil {
+			return err
+		}
+	}
 	if !strings.Contains(body, "Cleared on") {
 		return errors.New("not a cleared comment: " + body)
 	}
@@ -456,5 +466,129 @@ func TestLogSelfReportFailureWarnsOncePerError(t *testing.T) {
 	logSelfReportFailure(logger, msg, fp, errA)
 	if count("WARN") != 3 {
 		t.Fatalf("failure after success should warn again:\n%s", buf.String())
+	}
+}
+
+// #13827: a cleared comment GitHub refuses with a permanent 403 is tried
+// once, warned once and recorded as given up; later cycles never retry it.
+func TestPublishClearedCommentPermanentErrorIsTerminal(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{clearedErr: func() error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}, Message: "Resource not accessible by integration"}
+	}}
+	deps := selfReportDeps(w, &now)
+	fp := "fp-cleared-403"
+	t.Cleanup(func() { clearSelfReportFailure(selfReportClearedFailedMsg, fp) })
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open[fp] = fleetreport.OpenIssue{Number: 13666, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered, PostedAt: now}
+	})
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	rec := &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: fp, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered}}}
+	for i := 0; i < 5; i++ {
+		publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+		now = now.Add(time.Second)
+	}
+	if w.clearCalls != 1 {
+		t.Fatalf("cleared attempts = %d, want 1", w.clearCalls)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Fatalf("warns = %d, want 1:\n%s", n, buf.String())
+	}
+	o := srv.FleetReportState().Open[fp]
+	if !o.Recovered || !strings.Contains(o.ClearedNotifyFailed, "Resource not accessible") || !o.ClearedNextAttemptAt.IsZero() {
+		t.Fatalf("terminal failure not recorded: %#v", o)
+	}
+	// A day later (and across a restart: the state is persisted) still nothing.
+	now = now.Add(24 * time.Hour)
+	publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+	if w.clearCalls != 1 {
+		t.Fatalf("terminal cleared comment retried: calls = %d", w.clearCalls)
+	}
+}
+
+// A transient 5xx is retried, but only after an exponential backoff, and is
+// given up after selfReportClearedMaxAttempts.
+func TestPublishClearedCommentTransientErrorBacksOff(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	failing := true
+	w := &fakeSelfReportWriter{clearedErr: func() error {
+		if failing {
+			return &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusBadGateway}, Message: "bad gateway"}
+		}
+		return nil
+	}}
+	deps := selfReportDeps(w, &now)
+	fp := "fp-cleared-502"
+	t.Cleanup(func() { clearSelfReportFailure(selfReportClearedFailedMsg, fp) })
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open[fp] = fleetreport.OpenIssue{Number: 21, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered, PostedAt: now}
+	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: fp, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered}}}
+
+	publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+	o := srv.FleetReportState().Open[fp]
+	if w.clearCalls != 1 || o.Recovered || o.ClearedAttempts != 1 || !o.ClearedNextAttemptAt.Equal(now.Add(selfReportClearedBaseBackoff)) {
+		t.Fatalf("after first failure: calls=%d state=%#v", w.clearCalls, o)
+	}
+	// Inside the backoff window: no call.
+	now = now.Add(30 * time.Second)
+	publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+	if w.clearCalls != 1 {
+		t.Fatalf("retried inside backoff: calls=%d", w.clearCalls)
+	}
+	// Past it: retried, and the next window doubles.
+	now = now.Add(31 * time.Second)
+	publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+	o = srv.FleetReportState().Open[fp]
+	if w.clearCalls != 2 || o.ClearedAttempts != 2 || !o.ClearedNextAttemptAt.Equal(now.Add(2*selfReportClearedBaseBackoff)) {
+		t.Fatalf("after second failure: calls=%d state=%#v", w.clearCalls, o)
+	}
+	// Recovery of GitHub: the comment lands and the retry state is cleared.
+	failing = false
+	now = now.Add(2 * selfReportClearedBaseBackoff)
+	publishFleetReportsWith(context.Background(), logger, srv, rec, deps)
+	o = srv.FleetReportState().Open[fp]
+	if w.clearCalls != 3 || len(w.cleared) != 1 || !o.Recovered || o.ClearedAttempts != 0 || !o.ClearedNextAttemptAt.IsZero() || o.ClearedNotifyFailed != "" {
+		t.Fatalf("after success: calls=%d cleared=%v state=%#v", w.clearCalls, w.cleared, o)
+	}
+
+	// A comment that keeps failing transiently is given up at the cap.
+	fp2 := "fp-cleared-502-cap"
+	t.Cleanup(func() { clearSelfReportFailure(selfReportClearedFailedMsg, fp2) })
+	failing = true
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open[fp2] = fleetreport.OpenIssue{Number: 22, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered, PostedAt: now}
+	})
+	rec2 := &fleetreport.Result{Recoveries: []fleetreport.Report{{Fingerprint: fp2, Trigger: fleetreport.TriggerRuntimeError, Class: fleetreport.ClassPanicRecovered}}}
+	start := w.clearCalls
+	for i := 0; i < selfReportClearedMaxAttempts+3; i++ {
+		publishFleetReportsWith(context.Background(), logger, srv, rec2, deps)
+		now = now.Add(selfReportClearedMaxBackoff)
+	}
+	o = srv.FleetReportState().Open[fp2]
+	if w.clearCalls-start != selfReportClearedMaxAttempts || !o.Recovered || o.ClearedNotifyFailed == "" {
+		t.Fatalf("attempt cap: calls=%d state=%#v", w.clearCalls-start, o)
+	}
+}
+
+func TestSelfReportClearedPermanent(t *testing.T) {
+	cases := map[error]bool{
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 403}}:                                                                          true,
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 404}}:                                                                          true,
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 410}}:                                                                          true,
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 422}}:                                                                          true,
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 429}}:                                                                          false,
+		&gh.ErrorResponse{Response: &http.Response{StatusCode: 502}}:                                                                          false,
+		errors.New("POST https://api.github.com/repos/hivecommons/hive/issues/13666/comments: 403 Resource not accessible by integration []"): true,
+		errors.New("network down"): false,
+	}
+	for err, want := range cases {
+		if got := selfReportClearedPermanent(err); got != want {
+			t.Fatalf("selfReportClearedPermanent(%v) = %v want %v", err, got, want)
+		}
 	}
 }
