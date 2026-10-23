@@ -27,9 +27,10 @@ const priorArtKnowledgeLimit = 8
 const priorArtGateResumeSweepInterval = issueUnparkSweepInterval
 
 // newPriorArtSearcher builds the gate's Searcher: knowledge beads, the
-// dashboard Settings index (shared with the rfc_existing_check), and the
-// forge (merged PRs, closed issues, docs, code) through the client provider
-// so a swapped client is picked up (#9621).
+// dashboard Settings index (shared with the rfc_existing_check), the forge
+// (merged PRs, closed issues) through the client provider so a swapped
+// client is picked up (#9621), and docs/code from a local codeindex snapshot
+// over every registered repo's checkout (#13878).
 // knowledgeAPI is resolved per search: bootKnowledge runs after
 // bootDashboard, where the scheduler is wired, so the API is nil at wiring
 // time; without one the knowledge source answers nothing.
@@ -53,6 +54,7 @@ func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.Know
 	if current != nil {
 		sources = append(sources, liveForgePriorArtSources(current)...)
 	}
+	sources = append(sources, github.NewPriorArtCodeIndex(func() []github.PriorArtCheckout { return priorArtCheckouts(cfg) }, 0).Sources()...)
 	gate := cfg.Runs.Triage.PriorArt
 	return priorart.NewSearcher(priorart.Options{
 		Sources:     sources,
@@ -110,7 +112,7 @@ func settingsPriorArt(origin string, settings []rfccoverage.Setting) []priorart.
 
 // liveForgePriorArtSources resolves the GitHub client per search.
 func liveForgePriorArtSources(current func() *github.Client) []priorart.Source {
-	names := []string{"merged_prs", "closed_issues", "docs", "code"}
+	names := []string{"merged_prs", "closed_issues"}
 	out := make([]priorart.Source, 0, len(names))
 	for i, name := range names {
 		idx := i
@@ -125,6 +127,23 @@ func liveForgePriorArtSources(current func() *github.Client) []priorart.Source {
 			}
 			return srcs[idx].Search(ctx, q)
 		}})
+	}
+	return out
+}
+
+// priorArtCheckouts lists every registered repo with its checkouts_dir
+// checkout root ("" when unset, which the index reports as missing).
+func priorArtCheckouts(cfg *config.Config) []github.PriorArtCheckout {
+	if cfg == nil {
+		return nil
+	}
+	out := make([]github.PriorArtCheckout, 0, len(cfg.Project.Repos))
+	for _, repo := range cfg.Project.Repos {
+		slug := repo
+		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+			slug = cfg.Project.Org + "/" + repo
+		}
+		out = append(out, github.PriorArtCheckout{Repo: slug, Root: cfg.Project.CheckoutRootFor(repo)})
 	}
 	return out
 }

@@ -1,8 +1,8 @@
 # Local prior-art index
 
-`codeindex` supplies the offline search component of #13774. It is intentionally
-independent of the gate in PR #13773, which is not yet on `v5`. **This package is
-not yet wired into triage or issue filing.** It does not enforce a filing policy.
+`codeindex` supplies the offline search component of #13774. It backs the
+prior-art gate's `docs` and `code` sources (`pkg/github/prior_art_codeindex.go`,
+#13878) in place of GitHub code search. It does not enforce a filing policy.
 
 ## Integration contract
 
@@ -38,7 +38,10 @@ shared exact terms, then repository and path. Query cancellation is honored.
 
 ## Remaining #13774 work
 
-After #13773 lands, wire this snapshot into its code/docs sources, enforce
+The gate's code/docs sources use this snapshot (#13878): it is built over every
+`project.repos` entry at `checkouts_dir/<repo>`, rebuilt every 30 minutes, and
+missing, dirty or partly indexed checkouts are listed as coverage gaps on the
+gate report and its comment. Still remaining: enforce
 `FilingVerdictFor` in the authorized relay filing path (including knowledge-bead
 persistence and required "Gap vs existing" validation), and expose the remaining
 prior-art configuration in Settings. No prompt-only filing precondition has been

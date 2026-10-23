@@ -186,13 +186,15 @@ words 1) and asks, without a model call:
 | settings | the dashboard Settings search index, as the `rfc_existing_check` does | `setting` |
 | merged_prs | merged PRs in the repo from the last 12 months | `merged PR` |
 | closed_issues | closed issues in the repo (declined `not_planned` ones skipped unless `duplicate`) | `closed issue` |
-| docs | `README.md`, `CHANGELOG.md`, `docs/` by identifier or top terms (code search) | `doc` |
-| code | source files by identifier only (code search, two identifiers at most) | `code` / `setting` |
+| docs | `README*`, `CHANGELOG*`, `docs/` in every `project.repos` checkout under `checkouts_dir`, by identifier and top terms (local `pkg/codeindex` snapshot) | `doc` |
+| code | source files in every registered checkout, by identifier only (local `pkg/codeindex` snapshot) | `code` / `setting` |
 
 Each candidate's confidence is the share of the issue's weighted terms it
 contains; a candidate needs two shared terms including a title term or an
 identifier to count at all. Every source is optional and soft (a failed
-search drops its candidates only), the whole search is bounded (20s, one
+search drops its candidates only), a missing, dirty or partly indexed
+checkout is listed in the comment as "checkout missing/partial for <repo>"
+instead of being read as no prior art, the whole search is bounded (20s, one
 query per source) and the report is cached per issue content hash, so an
 unchanged issue costs nothing on later cycles.
 

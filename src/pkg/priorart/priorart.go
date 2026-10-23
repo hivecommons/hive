@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -106,7 +107,22 @@ type Report struct {
 	// failed (their candidates are simply absent).
 	Sources []string
 	Errors  int
-	Cached  bool
+	// Coverage lists the gaps sources reported (e.g. "checkout missing for
+	// org/repo"): the findings were searched without that evidence, so an
+	// empty or weak report is not proof that the feature is absent.
+	Coverage []string
+	Cached   bool
+}
+
+// CoverageError is returned by a Source that answered from incomplete
+// evidence. Unlike any other error, its candidates are still ranked and the
+// source counts as answered; Gaps are copied into Report.Coverage.
+type CoverageError struct {
+	Gaps []string
+}
+
+func (e *CoverageError) Error() string {
+	return "prior art: incomplete coverage: " + strings.Join(e.Gaps, "; ")
 }
 
 // Issue is the gate's view of an issue.
@@ -221,6 +237,16 @@ func (s *Searcher) Find(ctx context.Context, issue Issue) Report {
 			continue
 		}
 		cands, err := src.Search(ctx, q)
+		var gap *CoverageError
+		if errors.As(err, &gap) {
+			for _, g := range gap.Gaps {
+				if !containsString(report.Coverage, g) {
+					report.Coverage = append(report.Coverage, g)
+				}
+			}
+			s.opts.Logger.Info("prior art: source coverage incomplete", "source", src.Name(), "repo", issue.Repo, "issue", issue.Number, "gaps", gap.Gaps)
+			err = nil
+		}
 		if err != nil {
 			report.Errors++
 			s.opts.Logger.Debug("prior art: source failed", "source", src.Name(), "repo", issue.Repo, "issue", issue.Number, "error", err)
@@ -277,6 +303,15 @@ func (s *Searcher) remember(key string, now time.Time, r Report) {
 		}
 	}
 	s.cache[key] = cacheEntry{at: now, report: r}
+}
+
+func containsString(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
 
 // sameItem drops the issue itself when a forge source echoes it back.

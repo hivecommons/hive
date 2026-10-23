@@ -107,6 +107,9 @@ func renderFindingList(r Report) string {
 		}
 		b.WriteString("\n")
 	}
+	if len(r.Coverage) > 0 {
+		fmt.Fprintf(&b, "\n<sub>Search coverage incomplete — %s. More prior art may exist.</sub>\n", mdEscape(strings.Join(r.Coverage, "; ")))
+	}
 	return b.String()
 }
 
