@@ -20,7 +20,15 @@ func TestIsAgyCLILog(t *testing.T) {
 	}
 }
 
+// TestFixEntryLeavesAgyCLILogMode covers the isAgyCLILog exemption: a
+// tight-mode Antigravity CLI log owned by the watcher uid is left alone
+// instead of being widened on every tick. It must run as DevUID, otherwise
+// the owner guard in fixEntry returns before the chmod arm and the test
+// would pass vacuously.
 func TestFixEntryLeavesAgyCLILogMode(t *testing.T) {
+	if !runningAsDevUID() {
+		t.Skipf("chmod arm requires the process to run as DevUID (%d); running as %d", DevUID, os.Getuid())
+	}
 	dir := filepath.Join(t.TempDir(), ".gemini", "antigravity-cli", "log")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
