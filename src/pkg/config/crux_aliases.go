@@ -125,6 +125,7 @@ const (
 	KickLogSourceOriginConfig           = cruxconfig.KickLogSourceOriginConfig
 	KickLogSourceOriginDefault          = cruxconfig.KickLogSourceOriginDefault
 	LocalLiteLLMProxyPort               = cruxconfig.LocalLiteLLMProxyPort
+	MinKickListCap                      = cruxconfig.MinKickListCap
 	MaxKickListCap                      = cruxconfig.MaxKickListCap
 	ProxyInjectGHAuthEnv                = cruxconfig.ProxyInjectGHAuthEnv
 	ProxyInjectGHAuthOnValue            = cruxconfig.ProxyInjectGHAuthOnValue
