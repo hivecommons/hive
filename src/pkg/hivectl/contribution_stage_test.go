@@ -713,7 +713,7 @@ func TestStagedFollowAddsNothingWhenDiscoveryIsIncomplete(t *testing.T) {
 	stage := mustStage(t, set, hubs, repos)
 	mustStageOK(t, stage.SetFollow("alpha", true))
 	sel := stage.current.Profiles[0].Selection
-	if !sel.FollowNewRepositories || len(sel.Repositories) != 0 || sel.Auto != nil {
+	if !sel.FollowNewRepositories || len(sel.Repositories) != 0 || len(sel.Auto) != 0 {
 		t.Fatalf("an outage must not read as \"everything is new\": %+v", sel)
 	}
 }
@@ -756,7 +756,7 @@ func TestStagedTurningOffUnderFollowExcludes(t *testing.T) {
 	set.Profiles[0].Selection = &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA}, FollowNewRepositories: true}
 	stage := mustStage(t, set, hubs, repos)
 	mustStageOK(t, stage.SelectRepository("alpha", stageRepoB, false))
-	if got := stage.current.Profiles[0].Selection.Exclude; got != nil {
+	if got := stage.current.Profiles[0].Selection.Exclude; len(got) != 0 {
 		t.Fatalf("turning off a repository that was not on created an exclusion: %v", got)
 	}
 }
@@ -769,7 +769,7 @@ func TestStagedAcceptFollowedOnlyTouchesFollowedHives(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("staged %d, %v; want a and b on alpha", n, err)
 	}
-	if beta := stage.current.Profiles[1].Selection; len(beta.Repositories) != 0 || beta.Auto != nil {
+	if beta := stage.current.Profiles[1].Selection; len(beta.Repositories) != 0 || len(beta.Auto) != 0 {
 		t.Fatalf("a Hive that is not followed was changed: %+v", beta)
 	}
 	if n, err := stage.AcceptFollowed(); err != nil || n != 0 {
