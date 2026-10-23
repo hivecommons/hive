@@ -34,6 +34,7 @@ func (set *ProfileSet) SetSelectionMode(name, mode string, repositories []string
 	} else {
 		next.Mode, next.Repositories = mode, ids
 	}
+	next.Auto = nil // re-choosing the membership by hand makes every member a deliberate one
 	p.Selection = &next
 	return nil
 }
@@ -53,8 +54,113 @@ func (set *ProfileSet) DeselectCurrent(name string) error {
 	next := *p.Selection
 	next.Mode = SelectionSelected
 	next.Repositories, next.Include, next.MembershipSnapshot = nil, nil, nil
+	next.Auto = nil
 	p.Selection = &next
 	return nil
+}
+
+// AddAuto adds repositories that a followed Hive newly offers to the reviewed
+// membership and records them as automatic. Anything already a member or
+// excluded on this subscription is skipped, so a repository the user turned off
+// by hand is never re-added. It returns how many were added. A legacy
+// unrestricted profile has no reviewed membership to add to.
+func (set *ProfileSet) AddAuto(name string, ids []string) (int, error) {
+	p, _ := set.Find(name)
+	if p == nil {
+		return 0, fmt.Errorf("unknown hive %q", name)
+	}
+	if p.Selection == nil {
+		return 0, fmt.Errorf("hive %q is unrestricted; restrict it before following", name)
+	}
+	canonical, err := canonicalRepositorySet(ids)
+	if err != nil {
+		return 0, err
+	}
+	next := *p.Selection
+	known := map[string]bool{}
+	// Same definition of "already a member" as treeSavedMember: the snapshot only
+	// counts in all-current mode. A stale snapshot beside mode "selected" is not membership.
+	for _, list := range [][]string{next.reviewedBase(), next.Include, next.Exclude} {
+		for _, raw := range list {
+			id, _ := NormalizeRepositoryID(raw)
+			known[id] = true
+		}
+	}
+	var fresh []string
+	for _, id := range canonical {
+		if !known[id] {
+			fresh = append(fresh, id)
+		}
+	}
+	if len(fresh) == 0 {
+		return 0, nil
+	}
+	if next.Mode == SelectionAllCurrent {
+		next.MembershipSnapshot, err = canonicalRepositorySet(append(append([]string{}, next.MembershipSnapshot...), fresh...))
+	} else {
+		next.Repositories, err = canonicalRepositorySet(append(append([]string{}, next.Repositories...), fresh...))
+	}
+	if err != nil {
+		return 0, err
+	}
+	if next.Auto, err = canonicalRepositorySet(append(append([]string{}, next.Auto...), fresh...)); err != nil {
+		return 0, err
+	}
+	p.Selection = &next
+	return len(fresh), nil
+}
+
+// MarkAuto records that members already in the reviewed membership were added
+// by following the Hive (used by `preset refresh`, which adds them through
+// ApplyPreset). Personal inclusions are never marked: those were chosen by hand.
+func (set *ProfileSet) MarkAuto(name string, ids []string) error {
+	p, _ := set.Find(name)
+	if p == nil {
+		return fmt.Errorf("unknown hive %q", name)
+	}
+	if p.Selection == nil {
+		return nil
+	}
+	canonical, err := canonicalRepositorySet(ids)
+	if err != nil {
+		return err
+	}
+	inBase, inInclude := map[string]bool{}, map[string]bool{}
+	for _, raw := range p.Selection.reviewedBase() {
+		id, _ := NormalizeRepositoryID(raw)
+		inBase[id] = true
+	}
+	for _, raw := range p.Selection.Include {
+		id, _ := NormalizeRepositoryID(raw)
+		inInclude[id] = true
+	}
+	var mark []string
+	for _, id := range canonical {
+		if inBase[id] && !inInclude[id] {
+			mark = append(mark, id)
+		}
+	}
+	if len(mark) == 0 {
+		return nil
+	}
+	next := *p.Selection
+	if next.Auto, err = canonicalRepositorySet(append(append([]string{}, next.Auto...), mark...)); err != nil {
+		return err
+	}
+	p.Selection = &next
+	return nil
+}
+
+// dropAuto forgets that id was automatic, keeping a nil slice when none remain
+// so selections without automatic members stay byte-identical on disk.
+func dropAuto(selection *RepositorySelection, id string) {
+	if selection == nil || len(selection.Auto) == 0 {
+		return
+	}
+	selection.Auto = withoutRepository(selection.Auto, id)
+	if len(selection.Auto) == 0 {
+		selection.Auto = nil
+	}
 }
 
 func canonicalRepositorySet(repositories []string) ([]string, error) {
@@ -144,6 +250,9 @@ func (set *ProfileSet) repoOverride(name, id, operation string) error {
 	case "clear":
 		p.Selection.Include = withoutRepository(p.Selection.Include, canonical)
 		p.Selection.Exclude = withoutRepository(p.Selection.Exclude, canonical)
+	}
+	if err == nil && (operation == "include" || operation == "exclude") {
+		dropAuto(p.Selection, canonical) // touched by hand: no longer automatic
 	}
 	return err
 }

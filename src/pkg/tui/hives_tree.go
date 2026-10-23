@@ -518,6 +518,9 @@ func hivesTreeView(s *hivesTreeSession) panes.HiveTreeView {
 				if repo.Unreviewed {
 					node.Badges = append(node.Badges, "Unreviewed")
 				}
+				if repo.Auto {
+					node.Badges = append(node.Badges, "Auto")
+				}
 				if repo.Offered == "no" {
 					node.Badges = append(node.Badges, "Not offered now")
 				}
@@ -527,6 +530,8 @@ func hivesTreeView(s *hivesTreeSession) panes.HiveTreeView {
 					node.Explanation = "Unrestricted — legacy: receives every repository the Hive offers; R reviews and restricts"
 				case len(repo.ExcludedBy) > 0:
 					node.Explanation = "Not selected: an exclusion vetoes it on every subscription"
+				case repo.Selected && repo.Auto:
+					node.Explanation = "Selected automatically because the Hive is followed; turning it off excludes it so following will not add it back"
 				case repo.Selected:
 					node.Explanation = "Selected by saved membership"
 				case repo.Unreviewed:

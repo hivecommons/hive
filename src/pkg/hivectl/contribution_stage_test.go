@@ -675,3 +675,146 @@ func TestStagedSeparateIdentitiesAtOneOrigin(t *testing.T) {
 		t.Fatal("shared identity effects were not named separately")
 	}
 }
+
+// A stale snapshot beside mode "selected" must not hide repositories that are
+// new, and opening a session never stages anything by itself.
+func TestStagedFollowStagesWaitingRepositoriesAsAuto(t *testing.T) {
+	set, hubs, repos := stageFixture()
+	set.Profiles[0].Selection = &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA}, MembershipSnapshot: []string{stageRepoA, stageRepoB}}
+	stage := mustStage(t, set, hubs, repos)
+	if !stage.Diff().Empty() {
+		t.Fatal("opening staged edits changed consent")
+	}
+	mustStageOK(t, stage.SetFollow("alpha", true))
+	sub := stageSubscription(t, stage, "alpha")
+	if sub.Selection.Selected != 2 || sub.Selection.Auto != 1 {
+		t.Fatalf("selection = %+v", sub.Selection)
+	}
+	for _, repo := range sub.Repositories {
+		if want := repo.ID == stageRepoB; repo.Auto != want || repo.Selected != true {
+			t.Fatalf("repository %s: selected=%v auto=%v, want auto=%v", repo.ID, repo.Selected, repo.Auto, want)
+		}
+	}
+	d := stage.Diff()
+	if !reflect.DeepEqual(d.Auto, []StageTarget{{"alpha", stageRepoB}}) {
+		t.Fatalf("Auto = %+v", d.Auto)
+	}
+	if len(d.Membership) != 1 || !reflect.DeepEqual(d.Membership[0].After.Auto, []string{stageRepoB}) {
+		t.Fatalf("the saved selection must carry the marker: %+v", d.Membership)
+	}
+	if set.Profiles[0].Selection.Auto != nil || set.Profiles[0].Selection.FollowNewRepositories {
+		t.Fatal("staging modified the original consent")
+	}
+}
+
+func TestStagedFollowAddsNothingWhenDiscoveryIsIncomplete(t *testing.T) {
+	set, hubs, repos := stageFixture()
+	repos["alpha"] = TreeRepositorySnapshot{Discovery: TreeUnavailable}
+	stage := mustStage(t, set, hubs, repos)
+	mustStageOK(t, stage.SetFollow("alpha", true))
+	sel := stage.current.Profiles[0].Selection
+	if !sel.FollowNewRepositories || len(sel.Repositories) != 0 || sel.Auto != nil {
+		t.Fatalf("an outage must not read as \"everything is new\": %+v", sel)
+	}
+}
+
+// Exclusions are a union across subscriptions, so a repository vetoed anywhere
+// is not added automatically anywhere.
+func TestStagedFollowSkipsRepositoriesExcludedOnAnySubscription(t *testing.T) {
+	set, hubs, repos := stageFixture()
+	set.Profiles[1].Selection.Exclude = []string{stageRepoA}
+	stage := mustStage(t, set, hubs, repos)
+	mustStageOK(t, stage.SetFollow("alpha", true))
+	if got := stage.current.Profiles[0].Selection.Auto; !reflect.DeepEqual(got, []string{stageRepoB}) {
+		t.Fatalf("Auto = %v, want only b", got)
+	}
+}
+
+// Under a followed Hive, turning a repository off must also exclude it, or the
+// next check would see it as new and add it straight back. Without follow it is
+// just off.
+func TestStagedTurningOffUnderFollowExcludes(t *testing.T) {
+	for _, follow := range []bool{true, false} {
+		set, hubs, repos := stageFixture()
+		set.Profiles[0].Selection = &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA, stageRepoB}, Auto: []string{stageRepoB}, FollowNewRepositories: follow}
+		stage := mustStage(t, set, hubs, repos)
+		mustStageOK(t, stage.SelectRepository("alpha", stageRepoB, false))
+		sel := stage.current.Profiles[0].Selection
+		if excluded := reflect.DeepEqual(sel.Exclude, []string{stageRepoB}); excluded != follow {
+			t.Fatalf("follow=%v: Exclude = %v", follow, sel.Exclude)
+		}
+		if sel.Auto != nil || !reflect.DeepEqual(sel.Repositories, []string{stageRepoA}) {
+			t.Fatalf("follow=%v: selection = %+v", follow, sel)
+		}
+		if follow {
+			if d := stage.Diff(); d.ExcludedCount != 1 || len(d.Exclusions) != 1 || d.Exclusions[0].Repository != stageRepoB {
+				t.Fatalf("the exclusion must be named in the diff: %+v", d.Exclusions)
+			}
+		}
+	}
+	set, hubs, repos := stageFixture()
+	set.Profiles[0].Selection = &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA}, FollowNewRepositories: true}
+	stage := mustStage(t, set, hubs, repos)
+	mustStageOK(t, stage.SelectRepository("alpha", stageRepoB, false))
+	if got := stage.current.Profiles[0].Selection.Exclude; got != nil {
+		t.Fatalf("turning off a repository that was not on created an exclusion: %v", got)
+	}
+}
+
+func TestStagedAcceptFollowedOnlyTouchesFollowedHives(t *testing.T) {
+	set, hubs, repos := stageFixture()
+	set.Profiles[0].Selection.FollowNewRepositories = true
+	stage := mustStage(t, set, hubs, repos)
+	n, err := stage.AcceptFollowed()
+	if err != nil || n != 2 {
+		t.Fatalf("staged %d, %v; want a and b on alpha", n, err)
+	}
+	if beta := stage.current.Profiles[1].Selection; len(beta.Repositories) != 0 || beta.Auto != nil {
+		t.Fatalf("a Hive that is not followed was changed: %+v", beta)
+	}
+	if n, err := stage.AcceptFollowed(); err != nil || n != 0 {
+		t.Fatalf("second call staged %d, %v; want a no-op", n, err)
+	}
+}
+
+func TestAutoSurvivesYAMLRoundTripAndIsOmittedWhenEmpty(t *testing.T) {
+	selection := &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA}, Auto: []string{stageRepoA}}
+	data, err := yaml.Marshal(selection)
+	if err != nil || !strings.Contains(string(data), "auto:") {
+		t.Fatalf("marshal = %q, %v", data, err)
+	}
+	var back RepositorySelection
+	if err := yaml.Unmarshal(data, &back); err != nil || !reflect.DeepEqual(&back, selection) {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+	plain, err := yaml.Marshal(&RepositorySelection{Mode: SelectionSelected})
+	if err != nil || strings.Contains(string(plain), "auto") {
+		t.Fatalf("an empty Auto must not appear on disk: %q, %v", plain, err)
+	}
+}
+
+// Staged edits stay reversible: follow on then off undoes the automatic members
+// staged in this session, while automatic members that were already saved are
+// real membership and stay.
+func TestStagedFollowOnThenOffIsANetNoOpButKeepsSavedAuto(t *testing.T) {
+	set, hubs, repos := stageFixture()
+	set.Profiles[0].Selection = &RepositorySelection{Mode: SelectionSelected, Repositories: []string{stageRepoA}, Auto: []string{stageRepoA}, FollowNewRepositories: true}
+	stage := mustStage(t, set, hubs, repos)
+	mustStageOK(t, stage.SetFollow("alpha", false))
+	sel := stage.current.Profiles[0].Selection
+	if !reflect.DeepEqual(sel.Repositories, []string{stageRepoA}) || !reflect.DeepEqual(sel.Auto, []string{stageRepoA}) {
+		t.Fatalf("turning follow off dropped a saved automatic member: %+v", sel)
+	}
+	mustStageOK(t, stage.SetFollow("alpha", true))
+	if got := stage.current.Profiles[0].Selection.Auto; !reflect.DeepEqual(got, []string{stageRepoA, stageRepoB}) {
+		t.Fatalf("follow on did not stage the new repository: Auto = %v", got)
+	}
+	mustStageOK(t, stage.SetFollow("alpha", false))
+	sel = stage.current.Profiles[0].Selection
+	if !reflect.DeepEqual(sel.Repositories, []string{stageRepoA}) || !reflect.DeepEqual(sel.Auto, []string{stageRepoA}) {
+		t.Fatalf("on-then-off left staged members behind: %+v", sel)
+	}
+	if d := stage.Diff(); len(d.Auto) != 0 || len(d.Selected) != 0 {
+		t.Fatalf("diff should show no automatic additions: %+v", d)
+	}
+}

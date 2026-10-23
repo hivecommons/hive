@@ -105,6 +105,14 @@ func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot construct contribution review", http.StatusBadRequest)
 		return
 	}
+	// accept=1 is the explicit "check for new" button. Merely opening the page
+	// (discover=1 alone) stages nothing, so nothing unexpected is waiting to be applied.
+	if r.URL.Query().Get("discover") == "1" && r.URL.Query().Get("accept") == "1" {
+		if _, err := edits.AcceptFollowed(); err != nil {
+			http.Error(w, "cannot stage new repositories", http.StatusBadRequest)
+			return
+		}
+	}
 	id, err := randomCommonsWebToken()
 	if err != nil {
 		http.Error(w, "cannot create contribution review", http.StatusInternalServerError)

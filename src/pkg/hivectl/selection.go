@@ -26,6 +26,26 @@ type RepositorySelection struct {
 	FollowNewRepositories bool     `yaml:"follow_new_repositories,omitempty" json:"follow_new_repositories,omitempty"`
 	MembershipSnapshot    []string `yaml:"membership_snapshot,omitempty" json:"membership_snapshot,omitempty"`
 	Sources               []string `yaml:"sources,omitempty" json:"sources,omitempty"`
+	// Auto lists members that were added because the Hive is followed, not
+	// chosen by hand. It is provenance only: it never widens EffectiveRepositories
+	// and is dropped as soon as the member is touched by hand (included,
+	// excluded, deselected, or the whole selection is re-chosen). An older
+	// hivectl ignores the field and keeps the membership, so it degrades to
+	// "chosen by hand".
+	Auto []string `yaml:"auto,omitempty" json:"auto,omitempty"`
+}
+
+// IsAuto reports whether id was added automatically by following the Hive.
+func (selection *RepositorySelection) IsAuto(id string) bool {
+	if selection == nil {
+		return false
+	}
+	for _, raw := range selection.Auto {
+		if canonical, _ := NormalizeRepositoryID(raw); canonical == id {
+			return true
+		}
+	}
+	return false
 }
 
 // PresetProvenance is local review history. It contains no credentials and is
@@ -139,7 +159,7 @@ func (selection *RepositorySelection) Validate() error {
 	default:
 		return fmt.Errorf("selection mode %q must be selected or all-current", selection.Mode)
 	}
-	for _, list := range [][]string{selection.Repositories, selection.Include, selection.Exclude, selection.MembershipSnapshot} {
+	for _, list := range [][]string{selection.Repositories, selection.Include, selection.Exclude, selection.MembershipSnapshot, selection.Auto} {
 		for _, id := range list {
 			if _, err := NormalizeRepositoryID(id); err != nil {
 				return err

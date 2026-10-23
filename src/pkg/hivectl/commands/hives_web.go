@@ -688,6 +688,6 @@ document.getElementById('hives').addEventListener('click', async ev => {
   finally { if(!review) await loadTree().catch(e => say(e.message, 'error')); }
 });
 ` + commonsWebTreeJS + `
-Promise.all([load(), loadTree()]).then(() => document.getElementById('tree-refresh').click()).catch(e => say(e.message, 'error'));
+Promise.all([load(), loadTree()]).then(() => refreshTree(false)).catch(e => say(e.message, 'error'));
 </script>
 </html>`))

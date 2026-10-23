@@ -165,6 +165,7 @@ func (set *ProfileSet) ApplyPreset(name, presetID string, allCurrent bool, add, 
 	}
 	for _, id := range remove {
 		base = withoutRepository(base, id)
+		dropAuto(&next, id)
 	}
 	if len(base) == 0 {
 		base = nil

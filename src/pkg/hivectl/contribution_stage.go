@@ -77,6 +77,7 @@ func cloneStageSelection(selection *RepositorySelection) *RepositorySelection {
 	next.Include, _ = canonicalRepositorySet(selection.Include)
 	next.Exclude, _ = canonicalRepositorySet(selection.Exclude)
 	next.Sources = append([]string(nil), selection.Sources...)
+	next.Auto, _ = canonicalRepositorySet(selection.Auto)
 	return &next
 }
 
@@ -120,8 +121,13 @@ func (s *StagedEdits) profile(name string, scoped bool) (*Profile, error) {
 	return p, nil
 }
 
-// SelectRepository changes saved membership only, never an exclusion or follow
-// policy. Selecting an excluded target keeps the veto visible in the tree/diff.
+// SelectRepository changes saved membership only, never a follow policy.
+// Selecting an excluded target keeps the veto visible in the tree/diff.
+//
+// Turning a repository off under a followed Hive records an exclusion as well:
+// otherwise the next refresh would see it as new and add it straight back.
+// Exclusions apply on every scoped subscription (see RepositoryScopes), and the
+// diff names each one affected, so the effect is reviewed before Apply.
 func (s *StagedEdits) SelectRepository(name, repository string, selected bool) error {
 	p, err := s.profile(name, true)
 	if err != nil {
@@ -137,9 +143,18 @@ func (s *StagedEdits) SelectRepository(name, repository string, selected bool) e
 		}
 		return s.current.IncludeRepo(p.Name, id)
 	}
+	effective, _ := p.Selection.EffectiveRepositories()
+	wasOn := false
+	for _, member := range effective {
+		wasOn = wasOn || member == id
+	}
 	p.Selection.Repositories = withoutRepository(p.Selection.Repositories, id)
 	p.Selection.MembershipSnapshot = withoutRepository(p.Selection.MembershipSnapshot, id)
 	p.Selection.Include = withoutRepository(p.Selection.Include, id)
+	dropAuto(p.Selection, id)
+	if wasOn && p.Selection.FollowNewRepositories {
+		return s.current.ExcludeRepo(p.Name, id)
+	}
 	return nil
 }
 
@@ -161,13 +176,91 @@ func (s *StagedEdits) SetExcluded(name, repository string, excluded bool) error 
 	return nil
 }
 
+// SetFollow turns the Hive's follow flag on or off. Turning it on also stages
+// the repositories the Hive offers that are still new (when discovery is
+// complete), as automatic members; nothing is saved until Apply. Turning it
+// back off un-stages the automatic members added in this session, so an
+// on-then-off toggle is a net no-op. Automatic members that were already saved
+// are kept: they are real membership.
 func (s *StagedEdits) SetFollow(name string, follow bool) error {
 	p, err := s.profile(name, true)
 	if err != nil {
 		return err
 	}
 	p.Selection.FollowNewRepositories = follow
+	if follow {
+		_, err = s.acceptNew(name)
+		return err
+	}
+	s.unstageAuto(p)
 	return nil
+}
+
+// unstageAuto removes automatic members that are not in the saved selection.
+func (s *StagedEdits) unstageAuto(p *Profile) {
+	saved := map[string]bool{}
+	if old, _ := s.before.Find(p.Name); old != nil {
+		saved = stageAutoSet(old.Selection)
+	}
+	for _, raw := range p.Selection.Auto {
+		id, _ := NormalizeRepositoryID(raw)
+		if saved[id] {
+			continue
+		}
+		p.Selection.Repositories = withoutRepository(p.Selection.Repositories, id)
+		p.Selection.MembershipSnapshot = withoutRepository(p.Selection.MembershipSnapshot, id)
+		dropAuto(p.Selection, id)
+	}
+}
+
+// acceptNew stages, as automatic members, the repositories a followed Hive
+// offers that are neither members nor vetoed. Incomplete discovery adds
+// nothing (an outage must never read as "everything is new"), and a repository
+// excluded on any subscription is skipped because exclusions are a union.
+func (s *StagedEdits) acceptNew(name string) (int, error) {
+	p, err := s.profile(name, true)
+	if err != nil {
+		return 0, err
+	}
+	snapshot := s.repos[name]
+	if snapshot.Discovery != TreeComplete || !p.Selection.FollowNewRepositories {
+		return 0, nil
+	}
+	vetoed := map[string]bool{}
+	for _, other := range s.current.Profiles {
+		for id := range stageExclusions(other.Selection) {
+			vetoed[id] = true
+		}
+	}
+	var fresh []string
+	for _, raw := range snapshot.Repositories {
+		id, _ := NormalizeRepositoryID(raw)
+		if !vetoed[id] && !treeSavedMember(p.Selection, id) {
+			fresh = append(fresh, id)
+		}
+	}
+	return s.current.AddAuto(p.Name, fresh)
+}
+
+// AcceptFollowed is what an explicit "check for new" does: every followed Hive
+// with complete discovery has its new repositories staged as automatic members.
+// It returns how many were staged. Opening a session never calls it.
+func (s *StagedEdits) AcceptFollowed() (int, error) {
+	var names []string
+	for _, p := range s.current.Profiles {
+		if p.Selection != nil && p.Selection.FollowNewRepositories {
+			names = append(names, p.Name)
+		}
+	}
+	total := 0
+	for _, name := range names {
+		n, err := s.acceptNew(name)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
 }
 
 // SetHiveEnabled is deliberately allowed for legacy profiles without conversion.
@@ -359,6 +452,9 @@ type ContributionDiff struct {
 	DeselectedCount       int           `json:"deselected_count"`
 	ExcludedCount         int           `json:"excluded_count"`
 	ClearedExclusionCount int           `json:"cleared_exclusion_count"`
+	// Auto is the part of Selected that was added by following a Hive rather
+	// than chosen by hand.
+	Auto []StageTarget `json:"auto"`
 	// Membership changes remain visible even when an exclusion masks the effect.
 	Membership        []StageSelectionChange `json:"membership"`
 	Exclusions        []StageExclusionEffect `json:"exclusions"`
@@ -422,6 +518,13 @@ func (s *StagedEdits) Diff() ContributionDiff {
 			}
 			changed[p.Name] = true
 		}
+		oldAuto, newAuto := stageAutoSet(before), stageAutoSet(after)
+		for _, id := range stageChangedIDs(oldAuto, newAuto) {
+			if newAuto[id] {
+				d.Auto = append(d.Auto, StageTarget{p.Name, id})
+			}
+			changed[p.Name] = true
+		}
 		oldEx, newEx := stageExclusions(before), stageExclusions(after)
 		for _, id := range stageChangedIDs(oldEx, newEx) {
 			effect := StageExclusionEffect{StageTarget: StageTarget{p.Name, id}, Excluded: newEx[id]}
@@ -482,6 +585,17 @@ func stageExclusions(selection *RepositorySelection) map[string]bool {
 	ids := map[string]bool{}
 	if selection != nil {
 		for _, raw := range selection.Exclude {
+			id, _ := NormalizeRepositoryID(raw)
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+func stageAutoSet(selection *RepositorySelection) map[string]bool {
+	ids := map[string]bool{}
+	if selection != nil {
+		for _, raw := range selection.Auto {
 			id, _ := NormalizeRepositoryID(raw)
 			ids[id] = true
 		}

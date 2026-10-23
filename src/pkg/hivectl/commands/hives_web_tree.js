@@ -47,7 +47,8 @@ function describeReceipt(saved, reload, ack) {
 }
 function diffText(d) {
   const at = t => t.repository + ' on ' + t.subscription, lines = [];
-  (d.selected || []).forEach(t => lines.push('+ select ' + at(t)));
+  const auto = new Set((d.auto || []).map(t => t.subscription + '\u0000' + t.repository));
+  (d.selected || []).forEach(t => lines.push((auto.has(t.subscription + '\u0000' + t.repository) ? '+ add automatically (followed) ' : '+ select ') + at(t)));
   (d.deselected || []).forEach(t => lines.push('− deselect ' + at(t)));
   (d.exclusions || []).forEach(x => {
     lines.push((x.excluded ? '⊘ exclude ' : '○ clear exclusion of ') + x.repository + ' (source: ' + (x.sources || []).join(', ') + ')');
@@ -78,9 +79,10 @@ async function treeRequest(path, change={}) {
   if(!response.ok) throw new Error(data.error || 'Contribution request failed.');
   return data;
 }
-async function loadTree(discover=false) {
+async function loadTree(discover=false, accept=false) {
   // Refreshing an active review preserves its frozen membership and edits.
-  const query = review ? '?session=' + encodeURIComponent(review.session) : (discover ? '?discover=1' : '');
+  // accept=1 is the explicit "check for new": followed Hives stage their new repositories as automatic.
+  const query = review ? '?session=' + encodeURIComponent(review.session) : (discover ? '?discover=1' + (accept ? '&accept=1' : '') : '');
   const response = await fetch('/api/tree' + query, {headers});
   if(!response.ok) throw new Error(await response.text());
   review = await response.json(); renderTree();
@@ -265,7 +267,7 @@ function summaryText(d) {
   if(d.stale) return 'Out of date — discard and check again before Apply.';
   if(!hasTreeEdits()) return 'No changes yet.';
   const n = (list, word) => list && list.length ? list.length + ' ' + word : '';
-  const parts = [d.selected_count && d.selected_count + ' turned on', d.deselected_count && d.deselected_count + ' turned off', d.excluded_count && d.excluded_count + ' excluded', d.cleared_exclusion_count && d.cleared_exclusion_count + ' allowed again', n(d.follow, 'auto-accept change' + ((d.follow || []).length === 1 ? '' : 's')), n(d.enabled, 'paused or resumed'), n(d.legacy_conversions, 'restricted')].filter(Boolean);
+  const parts = [d.selected_count && d.selected_count + ' turned on' + ((d.auto || []).length ? ' (' + d.auto.length + ' automatically)' : ''), d.deselected_count && d.deselected_count + ' turned off', d.excluded_count && d.excluded_count + ' excluded', d.cleared_exclusion_count && d.cleared_exclusion_count + ' allowed again', n(d.follow, 'auto-accept change' + ((d.follow || []).length === 1 ? '' : 's')), n(d.enabled, 'paused or resumed'), n(d.legacy_conversions, 'restricted')].filter(Boolean);
   return parts.join(' · ') + ' — saved when you press Apply.';
 }
 function renderTree() {
@@ -329,12 +331,13 @@ function renderTree() {
         const sel = {state:repo.selected ? 'all-current':'off',selected:repo.selected ? 1:0,repositories:1,excluded:(repo.excluded_by || []).length ? 1:0,unreviewed:repo.unreviewed ? 1:0};
         const excl = repo.excluded_by || [];
         const r = treeItem(s.group, rkey, shortId(repo.id), sel, {operation:'repository',target:sub.id,repository:repo.id}, false, '', {kind: 'Repository', title: repo.id, lines: [
-          repo.selected ? 'On: this machine may work on it.' : repo.unreviewed ? 'New: not chosen yet, so it gets no work until you turn it on.' : 'Off.',
+          repo.selected ? (repo.auto ? 'Automatic: on because you follow this Hive. Turn it off and it stays off, so following will not add it back.' : 'On: this machine may work on it.') : repo.unreviewed ? 'New: not chosen yet, so it gets no work until you turn it on.' : 'Off.',
           excl.length ? 'Excluded: stays off even if you turn the group on.' : '',
           legacy ? 'This Hive is unrestricted, so it gets this repository anyway.' : '',
           'From ' + sub.id + '.'].filter(Boolean)});
         if(excl.length) r.row.append(node('span','Excluded','pill'));
         if(repo.unreviewed) r.row.append(node('span','New','pill'));
+        if(repo.auto) r.row.append(node('span','Auto','pill'));
         if(!legacy) {
           const excludedHere = excl.includes(sub.id);
           r.more.append(button(excludedHere ? 'Allow again' : 'Exclude', () => editTree({operation:'exclude',target:sub.id,repository:repo.id,value:!excludedHere}), rkey+':exclude', repo.id + ' in ' + sub.id));
@@ -436,17 +439,22 @@ async function leaveTreeEdits() {
   if(hasTreeEdits() && !await styledConfirm('Discard unapplied contribution edits?', 'Discard edits')) return false;
   await discardTree(); return true;
 }
-document.getElementById('tree-refresh').onclick = async () => {
+// accept=true is the "Check for new" button: followed Hives stage their new repositories as automatic.
+// The page-load call passes false, so opening the page never stages anything.
+async function refreshTree(accept) {
   if(treeBusy) return;
   // Ordinary refresh keeps pending edits and focus; renewed discovery requires
   // explicitly discarding the old reviewed snapshot, never replaying its edits.
   try {
     if(hasTreeEdits() && !review.diff.stale) { await loadTree(); say('Your changes are kept. Apply or Discard them before checking for new.'); return; }
     if(!await leaveTreeEdits()) return;
-    treeBusy = true; treeControls(); say('Checking for new repositories…'); await loadTree(true); say('Up to date. Nothing saved.');
+    treeBusy = true; treeControls(); say('Checking for new repositories…'); await loadTree(true, accept);
+    const n = (review.diff.auto || []).length;
+    say(n ? n + ' new ' + (n === 1 ? 'repository was' : 'repositories were') + ' turned on automatically because you follow their Hive. Apply to save, or Discard.' : 'Up to date. Nothing saved.');
   } catch(e) { say(e.message,'error'); }
   finally { treeBusy = false; treeControls(); }
-};
+}
+document.getElementById('tree-refresh').onclick = () => refreshTree(true);
 document.getElementById('tree-leave').onclick = async () => {
   try { if(await leaveTreeEdits()) location.assign('about:blank'); } catch(e) { say(e.message,'error'); }
 };

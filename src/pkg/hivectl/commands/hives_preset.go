@@ -31,6 +31,7 @@ type presetHiveReport struct {
 	PendingRemovals []string `json:"pending_removals,omitempty" yaml:"pending_removals,omitempty"`
 	Excluded        []string `json:"excluded,omitempty" yaml:"excluded,omitempty"`
 	allCurrent      bool
+	autoAdds        []string // additions applied because the Hive is followed (marked Auto)
 }
 
 func newHivesPresetCommand(env *commandEnv) *cobra.Command {
@@ -256,6 +257,9 @@ func newHivesPresetRefreshCommand(env *commandEnv) *cobra.Command {
 					p, _ := set.Find(r.Profile)
 					if !p.Selection.FollowNewRepositories {
 						r.PendingAdds, r.Additions = r.Additions, nil
+					} else {
+						// Applied because the Hive is followed, not confirmed by hand: remember that.
+						r.autoAdds = append([]string(nil), r.Additions...)
 					}
 					r.PendingRemovals = r.Removals
 					r.Removals = nil
@@ -299,6 +303,9 @@ func newHivesPresetRefreshCommand(env *commandEnv) *cobra.Command {
 					}
 					ok, err := set.ApplyPreset(r.Profile, recorded.ID, r.allCurrent, r.Additions, r.Removals)
 					if err != nil {
+						return err
+					}
+					if err := set.MarkAuto(r.Profile, r.autoAdds); err != nil {
 						return err
 					}
 					changed = changed || ok

@@ -189,3 +189,119 @@ func TestRepositoryInput(t *testing.T) {
 		}
 	}
 }
+
+const (
+	autoRepoA = "github/github.com/org/a"
+	autoRepoB = "github/github.com/org/b"
+	autoRepoC = "github/github.com/org/c"
+	autoRepoD = "github/github.com/org/d"
+)
+
+func autoSet(selection *RepositorySelection) *ProfileSet {
+	return &ProfileSet{Version: ProfilesVersion, Profiles: []Profile{{Name: "a", Hub: "https://a.example", RegistrationToken: "t", Selection: selection}}}
+}
+
+// A stale snapshot beside mode "selected" is not membership, and a repository
+// the user excluded or already chose is never re-added by following.
+func TestAddAutoRecordsOnlyGenuinelyNewMembers(t *testing.T) {
+	set := autoSet(&RepositorySelection{Mode: SelectionSelected, Repositories: []string{autoRepoA}, MembershipSnapshot: []string{autoRepoB}, Exclude: []string{autoRepoC}, FollowNewRepositories: true})
+	n, err := set.AddAuto("a", []string{autoRepoA, autoRepoB, autoRepoC, autoRepoD})
+	if err != nil || n != 2 {
+		t.Fatalf("added %d, %v; want b and d", n, err)
+	}
+	sel := set.Profiles[0].Selection
+	if want := []string{autoRepoA, autoRepoB, autoRepoD}; !reflect.DeepEqual(sel.Repositories, want) {
+		t.Fatalf("Repositories = %v, want %v", sel.Repositories, want)
+	}
+	if want := []string{autoRepoB, autoRepoD}; !reflect.DeepEqual(sel.Auto, want) {
+		t.Fatalf("Auto = %v, want %v", sel.Auto, want)
+	}
+	effective, err := sel.EffectiveRepositories()
+	if want := []string{autoRepoA, autoRepoB, autoRepoD}; err != nil || !reflect.DeepEqual(effective, want) {
+		t.Fatalf("effective = %v, %v; want %v (c stays excluded)", effective, err, want)
+	}
+	if !sel.IsAuto(autoRepoB) || sel.IsAuto(autoRepoA) {
+		t.Fatal("IsAuto must be true for b only: a was chosen by hand")
+	}
+	if n, err := set.AddAuto("a", []string{autoRepoB, autoRepoD}); err != nil || n != 0 {
+		t.Fatalf("second AddAuto added %d, %v; want a no-op", n, err)
+	}
+}
+
+func TestAddAutoUsesTheSnapshotInAllCurrentMode(t *testing.T) {
+	set := autoSet(&RepositorySelection{Mode: SelectionAllCurrent, MembershipSnapshot: []string{autoRepoA}})
+	if n, err := set.AddAuto("a", []string{autoRepoA, autoRepoB}); err != nil || n != 1 {
+		t.Fatalf("added %d, %v", n, err)
+	}
+	sel := set.Profiles[0].Selection
+	if want := []string{autoRepoA, autoRepoB}; !reflect.DeepEqual(sel.MembershipSnapshot, want) || sel.Repositories != nil {
+		t.Fatalf("snapshot = %v, repositories = %v", sel.MembershipSnapshot, sel.Repositories)
+	}
+	if _, err := autoSet(nil).AddAuto("a", []string{autoRepoA}); err == nil {
+		t.Fatal("following must not turn an unrestricted profile into a reviewed one")
+	}
+}
+
+// Auto is provenance for "added by following". Touching a member by hand ends it.
+func TestAutoIsDroppedWhenTouchedByHand(t *testing.T) {
+	mk := func() *ProfileSet {
+		return autoSet(&RepositorySelection{Mode: SelectionSelected, Repositories: []string{autoRepoA, autoRepoB}, Auto: []string{autoRepoB}, FollowNewRepositories: true})
+	}
+	for _, tc := range []struct {
+		name string
+		do   func(*ProfileSet) error
+	}{
+		{"exclude", func(s *ProfileSet) error { return s.ExcludeRepo("a", autoRepoB) }},
+		{"include", func(s *ProfileSet) error { return s.IncludeRepo("a", autoRepoB) }},
+		{"deselect current", func(s *ProfileSet) error { return s.DeselectCurrent("a") }},
+		{"select current", func(s *ProfileSet) error {
+			return s.SetSelectionMode("a", SelectionSelected, []string{autoRepoA, autoRepoB})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set := mk()
+			if err := tc.do(set); err != nil {
+				t.Fatal(err)
+			}
+			if got := set.Profiles[0].Selection.Auto; got != nil {
+				t.Fatalf("Auto = %v, want nil", got)
+			}
+		})
+	}
+	set := mk()
+	if err := set.ExcludeRepo("a", autoRepoA); err != nil {
+		t.Fatal(err)
+	}
+	if got := set.Profiles[0].Selection.Auto; !reflect.DeepEqual(got, []string{autoRepoB}) {
+		t.Fatalf("editing a different repository changed Auto: %v", got)
+	}
+}
+
+func TestPresetRemovalForgetsAuto(t *testing.T) {
+	set := autoSet(&RepositorySelection{Mode: SelectionSelected, Repositories: []string{autoRepoA, autoRepoB}, Auto: []string{autoRepoB}, FollowNewRepositories: true})
+	if _, err := set.ApplyPreset("a", "curated", false, nil, []string{autoRepoB}); err != nil {
+		t.Fatal(err)
+	}
+	sel := set.Profiles[0].Selection
+	if sel.Auto != nil || !reflect.DeepEqual(sel.Repositories, []string{autoRepoA}) {
+		t.Fatalf("selection = %+v", sel)
+	}
+}
+
+// A personal inclusion was chosen by hand, so `preset refresh` must not mark it.
+func TestMarkAutoSkipsPersonalInclusionsAndNonMembers(t *testing.T) {
+	set := autoSet(&RepositorySelection{Mode: SelectionSelected, Repositories: []string{autoRepoA, autoRepoB}, Include: []string{autoRepoB}})
+	if err := set.MarkAuto("a", []string{autoRepoA, autoRepoB, autoRepoC}); err != nil {
+		t.Fatal(err)
+	}
+	if got := set.Profiles[0].Selection.Auto; !reflect.DeepEqual(got, []string{autoRepoA}) {
+		t.Fatalf("Auto = %v, want only a", got)
+	}
+}
+
+func TestAutoRejectsMalformedIdentity(t *testing.T) {
+	selection := &RepositorySelection{Mode: SelectionSelected, Auto: []string{"not-a-repository"}}
+	if err := selection.Validate(); err == nil {
+		t.Fatal("Validate accepted a malformed Auto entry")
+	}
+}

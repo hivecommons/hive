@@ -158,3 +158,23 @@ func TestContributionTreeInvalidInputs(t *testing.T) {
 		t.Fatal("accepted nil profiles")
 	}
 }
+
+// Auto is provenance of a selected member: a repository listed in Auto that is
+// not actually selected is never reported as automatic.
+func TestContributionTreeMarksAutoOnlyWhenSelected(t *testing.T) {
+	set := &ProfileSet{Version: ProfilesVersion, Profiles: []Profile{{Name: "a", Hub: "https://a.example", Selection: &RepositorySelection{
+		Mode: SelectionSelected, Repositories: []string{treeRepo}, Auto: []string{treeRepo, treeNewRepo}}}}}
+	tree, err := BuildContributionTree(set, nil, map[string]TreeRepositorySnapshot{"a": {Discovery: TreeComplete, Repositories: []string{treeRepo, treeNewRepo}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub := tree.Subscriptions[0]
+	for _, repo := range sub.Repositories {
+		if want := repo.ID == treeRepo; repo.Auto != want {
+			t.Fatalf("repository %s: Auto = %v, want %v", repo.ID, repo.Auto, want)
+		}
+	}
+	if sub.Selection.Auto != 1 || tree.Selection.Auto != 1 {
+		t.Fatalf("Auto counts = %d (Hive), %d (tree), want 1", sub.Selection.Auto, tree.Selection.Auto)
+	}
+}

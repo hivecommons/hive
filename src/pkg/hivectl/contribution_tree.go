@@ -37,6 +37,8 @@ type TreeCounts struct {
 	Selected     int `json:"selected" yaml:"selected"`
 	Excluded     int `json:"excluded" yaml:"excluded"`
 	Unreviewed   int `json:"unreviewed" yaml:"unreviewed"`
+	// Auto counts selected repositories that were added by following the Hive.
+	Auto int `json:"auto" yaml:"auto"`
 }
 
 type TreeSelection struct {
@@ -81,7 +83,10 @@ type TreeRepository struct {
 	ID         string   `json:"id" yaml:"id"`
 	Selected   bool     `json:"selected" yaml:"selected"`
 	ExcludedBy []string `json:"excluded_by,omitempty" yaml:"excluded_by,omitempty"`
-	Unreviewed bool     `json:"unreviewed" yaml:"unreviewed"`
+	// Auto is true for a selected repository that was added by following the
+	// Hive rather than chosen by hand.
+	Auto       bool `json:"auto" yaml:"auto"`
+	Unreviewed bool `json:"unreviewed" yaml:"unreviewed"`
 	// Offered is unknown unless discovery is complete. Saved consent survives
 	// an outage or removal; it is not evidence of runtime eligibility.
 	Offered string `json:"offered" yaml:"offered"`
@@ -101,6 +106,7 @@ func addTreeSelection(dst *TreeSelection, src TreeSelection) {
 	dst.Selected += src.Selected
 	dst.Excluded += src.Excluded
 	dst.Unreviewed += src.Unreviewed
+	dst.Auto += src.Auto
 	dst.MembershipIncomplete = dst.MembershipIncomplete || src.MembershipIncomplete
 	dst.Legacy = dst.Legacy || src.Legacy
 }
@@ -186,6 +192,7 @@ func BuildContributionTree(set *ProfileSet, hubs []TreeHubSnapshot, repos map[st
 			if p.Selection != nil {
 				r.ExcludedBy = append([]string(nil), excluded[id]...)
 				r.Unreviewed = offered[id] && !selected[id] && len(r.ExcludedBy) == 0 && !treeSavedMember(p.Selection, id)
+				r.Auto = r.Selected && p.Selection.IsAuto(id)
 			}
 			s.Repositories = append(s.Repositories, r)
 			s.Selection.Repositories++
@@ -197,6 +204,9 @@ func BuildContributionTree(set *ProfileSet, hubs []TreeHubSnapshot, repos map[st
 			}
 			if r.Unreviewed {
 				s.Selection.Unreviewed++
+			}
+			if r.Auto {
+				s.Selection.Auto++
 			}
 		}
 		sort.Slice(s.Repositories, func(i, j int) bool { return s.Repositories[i].ID < s.Repositories[j].ID })
