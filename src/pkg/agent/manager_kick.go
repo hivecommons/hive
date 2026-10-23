@@ -1316,6 +1316,12 @@ const (
 	// pool. Once the kick has run this long AND at least one CI-poll command
 	// has been seen, treat it the same as crossing the count threshold.
 	ciPollNudgeWallClock = 10 * time.Minute
+	// ciPollReportMinPolls is how many CI-poll commands a nudged kick must
+	// have run before the nudge is also self-reported to the fleet (#13863).
+	// A lone poll past the wall clock is a normal post-push check: the agent
+	// is still nudged in-session, but the fleet only hears about repeated
+	// polling.
+	ciPollReportMinPolls = 2
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
@@ -1443,8 +1449,8 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	if ciPollReportWorthy(newPolls) {
 		fleetreport.Observe(fleetreport.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
-			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s\n--- pane tail (%d lines) ---\n%s",
-				agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
+				agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
 	}
 
 	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
@@ -1454,7 +1460,8 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 }
 
 // ciPollReportWorthy reports whether a CI-poll nudge is repeated polling
-// (more than one poll command since the kick) rather than a single check.
+// (at least ciPollReportMinPolls commands since the kick) rather than a
+// single check.
 func ciPollReportWorthy(newPolls int) bool {
-	return newPolls > 1
+	return newPolls >= ciPollReportMinPolls
 }

@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 // ci_poll_wall_clock_test.go covers the second half of #9673's harness-guard
@@ -159,10 +162,58 @@ func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
 	}
 }
 
-func TestCIPollReportWorthy(t *testing.T) {
-	for polls, want := range map[int]bool{0: false, 1: false, 2: true, 7: true} {
-		if got := ciPollReportWorthy(polls); got != want {
-			t.Errorf("ciPollReportWorthy(%d) = %v, want %v", polls, got, want)
+// TestNudgeIfPollingCISelfReportGate pins #13863: a single poll past the
+// wall clock still gets the in-session nudge but produces no ci_poll_nudge
+// fleet evidence; repeated polling produces exactly one.
+func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		kickAge      time.Duration
+		polls        int
+		wantEvidence int
+	}{
+		{name: "one poll past wall clock: nudged, not reported", kickAge: 11 * time.Minute, polls: 1, wantEvidence: 0},
+		{name: "repeated polls past wall clock: nudged and reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, wantEvidence: 1},
+		{name: "count threshold crossed: nudged and reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := fleetreport.NewRuntimeTracker(nil)
+			fleetreport.SetDefaultTrackerForTest(t, tr)
+			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
+			sent := 0
+			termSeams(m).sendLiteral = func(*AgentProcess, string) { sent++ }
+
+			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
+			scrollback := ""
+			for i := 0; i < tt.polls; i++ {
+				scrollback += "gh pr checks 123\n"
+			}
+			m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+
+			if !a.ciPollNudgeSent || sent != 1 {
+				t.Fatalf("ciPollNudgeSent = %v, literals sent = %d, want nudge sent once", a.ciPollNudgeSent, sent)
+			}
+			ev := ciPollEvidence(tr)
+			if len(ev) != tt.wantEvidence {
+				t.Fatalf("ci_poll_nudge evidence = %d, want %d: %#v", len(ev), tt.wantEvidence, ev)
+			}
+			if tt.wantEvidence == 1 {
+				for _, want := range []string{"agent=scanner", fmt.Sprintf("polls_since_kick=%d", tt.polls), fmt.Sprintf("report_min_polls=%d", ciPollReportMinPolls)} {
+					if !strings.Contains(ev[0].Diagnostics, want) {
+						t.Errorf("diagnostics missing %q:\n%s", want, ev[0].Diagnostics)
+					}
+				}
+			}
+		})
+	}
+}
+
+func ciPollEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
+	var out []fleetreport.Evidence
+	for _, e := range tr.Evidence() {
+		if e.Class == fleetreport.ClassCIPollNudge {
+			out = append(out, e)
 		}
 	}
+	return out
 }
