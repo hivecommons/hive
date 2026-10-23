@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,5 +207,25 @@ func TestStatusWebhooksModeAndSince(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339Nano, got["since"].(string)); err != nil {
 		t.Fatalf("since = %v, want RFC3339: %v", got["since"], err)
+	}
+}
+
+func TestGitHubWebhookMissingSecretWarnsOnce(t *testing.T) {
+	s := newGitHubWebhookTestServer(t)
+	var buf bytes.Buffer
+	s.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Setenv(githubWebhookSecretEnvVar, "")
+	body := []byte(`{}`)
+
+	for i := 0; i < 3; i++ {
+		if rec := postGitHubWebhook(s, "pull_request", "", body); rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("attempt %d: status = %d, want 503", i, rec.Code)
+		}
+	}
+	if got := strings.Count(buf.String(), "level=WARN"); got != 1 {
+		t.Fatalf("WARN lines = %d, want 1; log:\n%s", got, buf.String())
+	}
+	if got := strings.Count(buf.String(), "level=DEBUG"); got != 2 {
+		t.Fatalf("DEBUG lines = %d, want 2; log:\n%s", got, buf.String())
 	}
 }

@@ -73,7 +73,15 @@ func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) 
 	// /data/saas/webhook-secret.key) with the same secret set on the GitHub App.
 	secret := loadWebhookSecret()
 	if secret == "" {
-		s.logger.Warn("webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)")
+		const msg = "webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)"
+		warned := false
+		s.webhookNoSecretOnce.Do(func() {
+			warned = true
+			s.logger.Warn(msg)
+		})
+		if !warned {
+			s.logger.Debug(msg)
+		}
 		http.Error(w, `{"error":"webhooks disabled: no secret configured"}`, http.StatusServiceUnavailable)
 		return
 	}

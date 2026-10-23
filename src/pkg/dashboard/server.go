@@ -93,6 +93,8 @@ func isOwnerRole(role string) bool {
 var proxyProofRequired = true
 
 type Server struct {
+	webhookNoSecretOnce sync.Once // warn once per process about a missing webhook secret (#13666)
+
 	port       int
 	authToken  string
 	statusMu   sync.RWMutex

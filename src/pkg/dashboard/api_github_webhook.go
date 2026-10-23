@@ -58,7 +58,15 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	secret := strings.TrimSpace(os.Getenv(githubWebhookSecretEnvVar))
 	if secret == "" {
-		s.webhookLogger().Warn("github webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)")
+		const msg = "github webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)"
+		warned := false
+		s.webhookNoSecretOnce.Do(func() {
+			warned = true
+			s.webhookLogger().Warn(msg)
+		})
+		if !warned {
+			s.webhookLogger().Debug(msg)
+		}
 		jsonError(w, "webhooks disabled: no secret configured", http.StatusServiceUnavailable)
 		return
 	}

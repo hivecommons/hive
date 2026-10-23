@@ -978,6 +978,8 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
+	// webhookNoSecretOnce limits the missing-webhook-secret warning to once per process (#13666).
+	webhookNoSecretOnce  sync.Once
 	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
 	registry             Registry
