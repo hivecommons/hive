@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -46,6 +47,42 @@ import (
 // selfReportHubRelayPath is the hub ingest the spoke falls back to.
 const selfReportHubRelayPath = "/api/selfreport/ingest"
 const selfReportObservationClass = "observation"
+
+// selfReportFailures remembers the last write failure per (kind, fingerprint)
+// so a persistent outage warns once, then logs at Debug until a write
+// succeeds or the error changes.
+var selfReportFailures = struct {
+	sync.Mutex
+	last map[string]string
+}{last: map[string]string{}}
+
+// logSelfReportFailure warns the first time a (kind, fingerprint) fails with
+// a given error and logs at Debug on repeats.
+func logSelfReportFailure(logger *slog.Logger, msg, fingerprint string, err error, attrs ...any) {
+	key := msg + "|" + fingerprint
+	selfReportFailures.Lock()
+	repeat := selfReportFailures.last[key] == err.Error()
+	selfReportFailures.last[key] = err.Error()
+	selfReportFailures.Unlock()
+	attrs = append([]any{"fingerprint", fingerprint}, append(attrs, "error", err)...)
+	if repeat {
+		logger.Debug(msg+" (repeat)", attrs...)
+		return
+	}
+	logger.Warn(msg, attrs...)
+}
+
+// clearSelfReportFailure re-arms the warning after a successful write.
+func clearSelfReportFailure(msg, fingerprint string) {
+	selfReportFailures.Lock()
+	delete(selfReportFailures.last, msg+"|"+fingerprint)
+	selfReportFailures.Unlock()
+}
+
+const (
+	selfReportWriteFailedMsg   = "fleet report: upstream write failed"
+	selfReportClearedFailedMsg = "fleet report: cleared comment failed"
+)
 
 // selfReportRelayTimeout bounds one relay POST.
 const selfReportRelayTimeout = 20 * time.Second
@@ -308,9 +345,10 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			}
 		}
 		if err != nil {
-			logger.Warn("fleet report: upstream write failed", "fingerprint", report.Fingerprint, "class", report.Class, "error", err)
+			logSelfReportFailure(logger, selfReportWriteFailedMsg, report.Fingerprint, err, "class", report.Class)
 			continue
 		}
+		clearSelfReportFailure(selfReportWriteFailedMsg, report.Fingerprint)
 		if !write.ClosedAt.IsZero() {
 			logger.Info("fleet report: fingerprint closed upstream recently; not re-filing", "fingerprint", report.Fingerprint, "issue", write.Number, "closed_at", write.ClosedAt)
 			dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
@@ -408,9 +446,10 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 				hive = report.InstanceID
 			}
 			if err := deps.gh.PostFleetReportCleared(ctx, deps.repo, open.Number, fleetreport.ClearedComment(report.Fingerprint, hive, deps.version, now)); err != nil {
-				logger.Warn("fleet report: cleared comment failed", "fingerprint", report.Fingerprint, "issue", open.Number, "error", err)
+				logSelfReportFailure(logger, selfReportClearedFailedMsg, report.Fingerprint, err, "issue", open.Number)
 				continue
 			}
+			clearSelfReportFailure(selfReportClearedFailedMsg, report.Fingerprint)
 			dashSrv.MarkFleetReportRecovered(report.Fingerprint)
 			logger.Info("fleet report: cleared comment recorded", "fingerprint", report.Fingerprint, "class", report.Class, "issue", open.Number)
 			continue

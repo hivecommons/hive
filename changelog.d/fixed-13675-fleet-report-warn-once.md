@@ -1,0 +1,1 @@
+- Fleet self-report upstream-write and cleared-comment failures now warn once per fingerprint and error (Debug on repeats, re-armed after a successful write) instead of on every retry, so an unreachable report repo no longer files repeated-error self-reports ([#13675](https://github.com/hivecommons/hive/issues/13675), [#13676](https://github.com/hivecommons/hive/issues/13676)).

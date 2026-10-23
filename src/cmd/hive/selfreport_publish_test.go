@@ -433,3 +433,28 @@ func TestPublishObservationReportsRelayThroughHubOnly(t *testing.T) {
 		t.Fatalf("observation ledger = %#v", records[fp])
 	}
 }
+
+func TestLogSelfReportFailureWarnsOncePerError(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	msg, fp := selfReportWriteFailedMsg, "fp-warn-once"
+	t.Cleanup(func() { clearSelfReportFailure(msg, fp) })
+	count := func(level string) int { return strings.Count(buf.String(), "level="+level) }
+
+	errA := errors.New("boom")
+	logSelfReportFailure(logger, msg, fp, errA)
+	logSelfReportFailure(logger, msg, fp, errA)
+	logSelfReportFailure(logger, msg, fp, errA)
+	if count("WARN") != 1 || count("DEBUG") != 2 {
+		t.Fatalf("want 1 warn + 2 debug, got:\n%s", buf.String())
+	}
+	logSelfReportFailure(logger, msg, fp, errors.New("different"))
+	if count("WARN") != 2 {
+		t.Fatalf("changed error should warn again:\n%s", buf.String())
+	}
+	clearSelfReportFailure(msg, fp)
+	logSelfReportFailure(logger, msg, fp, errA)
+	if count("WARN") != 3 {
+		t.Fatalf("failure after success should warn again:\n%s", buf.String())
+	}
+}
