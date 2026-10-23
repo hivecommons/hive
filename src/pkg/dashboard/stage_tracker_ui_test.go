@@ -24,7 +24,12 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`'activity-monitor-section': { heading: 'Hive activity monitor'`,
 		`'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'`,
 		`fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined)`,
-		`if (r.status === 304) { stageTrackerTickClock(); return; }`,
+		// A 304 carries no body: generated_at/source come from the headers so the
+		// "updated" chip stays truthful on a quiet hive.
+		`if (r.status === 304) {`,
+		`const at = r.headers.get('X-Hive-Stage-Tracker-Generated-At');`,
+		`if (at) _stageTracker.generated_at = at;`,
+		`stageTrackerTickClock();`,
 		`dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS)`,
 		`dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS)`,
 		`id="activity-monitor-q" class="ham-input" type="search"`,
