@@ -75,16 +75,16 @@ func (c *Client) countOpenHeldHivePRs(items []HoldItem) map[string]int {
 // warnCapWithoutBotLogin warns once when repos carry a max_open_held_prs cap
 // but the client has no App bot login (PAT auth): no PR can be attributed to
 // the hive, every count stays 0 and the cap never fires
-// (hivecommons/hive#13739).
+// (hivecommons/hive#13739). openHeldMu is held throughout: getRepos locks
+// reposMu and limit is a pure resolver, so there is no lock ordering issue.
 func (c *Client) warnCapWithoutBotLogin() {
 	if c.appBotLogin != "" {
 		return
 	}
 	c.openHeldMu.Lock()
+	defer c.openHeldMu.Unlock()
 	limit := c.openHeld.limit
-	warned := c.openHeld.warnedNoBot
-	c.openHeldMu.Unlock()
-	if limit == nil || warned {
+	if limit == nil || c.openHeld.warnedNoBot {
 		return
 	}
 	var capped []string
@@ -96,13 +96,7 @@ func (c *Client) warnCapWithoutBotLogin() {
 	if len(capped) == 0 {
 		return
 	}
-	c.openHeldMu.Lock()
-	if c.openHeld.warnedNoBot {
-		c.openHeldMu.Unlock()
-		return
-	}
 	c.openHeld.warnedNoBot = true
-	c.openHeldMu.Unlock()
 	if c.logger != nil {
 		c.logger.Warn("max_open_held_prs is set but cannot be enforced: the GitHub client has no App bot login (PAT auth), so open held hive PRs are never counted",
 			"repos", capped)
