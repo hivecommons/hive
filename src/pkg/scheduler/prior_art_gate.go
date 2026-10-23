@@ -188,7 +188,17 @@ func (s *Scheduler) judgePriorArt(searcher PriorArtSearcher, commenter TriageCom
 	}
 
 	report := searcher.Find(ctx, priorart.Issue{Repo: issue.Repo, Number: issue.Number, Title: issue.Title, Body: issue.Body, Labels: issue.Labels})
-	if report.Confidence < threshold || len(report.Findings) == 0 {
+	if len(report.Findings) == 0 {
+		if len(report.Coverage) > 0 {
+			// Not proof of no prior art: leave a trace, nothing is posted.
+			s.priorArtInfo("prior-art gate found nothing but coverage was incomplete", issue, "coverage", strings.Join(report.Coverage, "; "))
+			if audit := s.auditLogger(); audit != nil {
+				audit("prior-art-gate-coverage-gap", "repo="+issue.Repo+", issue="+strconv.Itoa(issue.Number)+", gaps="+strings.Join(report.Coverage, "; "), priorArtDiscoverabilityAgent)
+			}
+		}
+		return false, false
+	}
+	if report.Confidence < threshold {
 		return false, false
 	}
 	kind := s.priorArtAuthorKind(issue)

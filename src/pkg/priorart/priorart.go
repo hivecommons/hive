@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,9 @@ type Candidate struct {
 	URL  string
 	// Ref is a short human handle: "#123", "docs/triage.md", "bead slug".
 	Ref string
+	// Terms are extra matched terms the source knows the file contains but
+	// Text does not show; the ranker counts them, the quote never does.
+	Terms []string
 }
 
 // Source is one place prior art may live.
@@ -119,6 +123,9 @@ type Report struct {
 // source counts as answered; Gaps are copied into Report.Coverage.
 type CoverageError struct {
 	Gaps []string
+	// Transient marks gaps that clear on their own (an index still
+	// building); a report carrying one is not cached.
+	Transient bool
 }
 
 func (e *CoverageError) Error() string {
@@ -230,6 +237,7 @@ func (s *Searcher) Find(ctx context.Context, issue Issue) Report {
 	defer cancel()
 
 	var findings []Finding
+	transient := false
 	seen := map[string]bool{}
 	for _, src := range s.opts.Sources {
 		if ctx.Err() != nil {
@@ -240,10 +248,11 @@ func (s *Searcher) Find(ctx context.Context, issue Issue) Report {
 		var gap *CoverageError
 		if errors.As(err, &gap) {
 			for _, g := range gap.Gaps {
-				if !containsString(report.Coverage, g) {
+				if !slices.Contains(report.Coverage, g) {
 					report.Coverage = append(report.Coverage, g)
 				}
 			}
+			transient = transient || gap.Transient
 			s.opts.Logger.Info("prior art: source coverage incomplete", "source", src.Name(), "repo", issue.Repo, "issue", issue.Number, "gaps", gap.Gaps)
 			err = nil
 		}
@@ -285,7 +294,11 @@ func (s *Searcher) Find(ctx context.Context, issue Issue) Report {
 	if len(findings) > 0 {
 		report.Confidence = findings[0].Confidence
 	}
-	s.remember(key, now, report)
+	// A report built while a source was still warming up, or cut short by
+	// the budget, would otherwise stand in for a clean answer for the TTL.
+	if !transient && ctx.Err() == nil {
+		s.remember(key, now, report)
+	}
 	return report
 }
 
@@ -303,15 +316,6 @@ func (s *Searcher) remember(key string, now time.Time, r Report) {
 		}
 	}
 	s.cache[key] = cacheEntry{at: now, report: r}
-}
-
-func containsString(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
 }
 
 // sameItem drops the issue itself when a forge source echoes it back.

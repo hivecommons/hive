@@ -102,7 +102,7 @@ func (p *PriorArtCodeIndex) search(ctx context.Context, terms []string, kind pri
 	if len(terms) == 0 {
 		return nil, nil
 	}
-	idx, gaps := p.snapshot(ctx)
+	idx, gaps, transient := p.snapshot(ctx)
 	var out []priorart.Candidate
 	if idx != nil {
 		matches, err := idx.Search(ctx, terms, priorArtCodeIndexSearchLimit)
@@ -120,11 +120,10 @@ func (p *PriorArtCodeIndex) search(ctx context.Context, terms []string, kind pri
 			out = append(out, priorart.Candidate{
 				Kind:  k,
 				Title: m.Repo + ": " + m.Path,
-				// The ranker needs the file's matched terms, not only its
-				// best line; an HTML-comment line is never quoted.
-				Text: m.Text + "\n<!-- terms: " + strings.Join(m.Terms, " ") + " -->",
-				URL:  m.URL(),
-				Ref:  m.Repo + "/" + m.Path,
+				Text:  m.Text,
+				Terms: m.Terms,
+				URL:   m.URL(),
+				Ref:   m.Repo + "/" + m.Path,
 			})
 			if len(out) == priorArtCodeIndexPerSource {
 				break
@@ -132,7 +131,7 @@ func (p *PriorArtCodeIndex) search(ctx context.Context, terms []string, kind pri
 		}
 	}
 	if len(gaps) > 0 {
-		return out, &priorart.CoverageError{Gaps: gaps}
+		return out, &priorart.CoverageError{Gaps: gaps, Transient: transient}
 	}
 	return out, nil
 }
@@ -140,12 +139,9 @@ func (p *PriorArtCodeIndex) search(ctx context.Context, terms []string, kind pri
 // snapshot returns the current index and its coverage gaps, starting a
 // rebuild when the snapshot is stale. Only when no snapshot exists yet does
 // it wait for the build, and then only until ctx ends.
-func (p *PriorArtCodeIndex) snapshot(ctx context.Context) (*codeindex.Index, []string) {
+func (p *PriorArtCodeIndex) snapshot(ctx context.Context) (*codeindex.Index, []string, bool) {
 	p.mu.Lock()
-	if p.building == nil && (p.builtAt.IsZero() || p.now().Sub(p.builtAt) >= p.ttl) {
-		p.building = make(chan struct{})
-		go p.rebuild(p.building)
-	}
+	p.startRebuildLocked()
 	done, built := p.building, !p.builtAt.IsZero()
 	p.mu.Unlock()
 	if done != nil && !built {
@@ -157,10 +153,29 @@ func (p *PriorArtCodeIndex) snapshot(ctx context.Context) (*codeindex.Index, []s
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	gaps := append([]string(nil), p.gaps...)
-	if p.builtAt.IsZero() {
+	building := p.builtAt.IsZero()
+	if building {
 		gaps = append(gaps, "code index still building: no registered checkout searched yet")
 	}
-	return p.idx, gaps
+	return p.idx, gaps, building
+}
+
+// Warm starts the initial build without waiting for it, so the first gated
+// issue does not spend its search budget on it.
+func (p *PriorArtCodeIndex) Warm() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.startRebuildLocked()
+}
+
+func (p *PriorArtCodeIndex) startRebuildLocked() {
+	if p.building == nil && (p.builtAt.IsZero() || p.now().Sub(p.builtAt) >= p.ttl) {
+		p.building = make(chan struct{})
+		go p.rebuild(p.building)
+	}
 }
 
 func (p *PriorArtCodeIndex) rebuild(done chan struct{}) {

@@ -292,7 +292,7 @@ func Rank(terms []Term, c Candidate) (Finding, bool) {
 	if len(terms) == 0 {
 		return Finding{}, false
 	}
-	hay := strings.ToLower(c.Title + "\n" + c.Text)
+	hay := strings.ToLower(c.Title + "\n" + c.Text + "\n" + strings.Join(c.Terms, " "))
 	hayTokens := map[string]bool{}
 	for _, w := range tokenSplitRE.Split(hay, -1) {
 		if w != "" {

@@ -54,7 +54,9 @@ func newPriorArtSearcher(cfg *config.Config, knowledgeAPI func() *knowledge.Know
 	if current != nil {
 		sources = append(sources, liveForgePriorArtSources(current)...)
 	}
-	sources = append(sources, github.NewPriorArtCodeIndex(func() []github.PriorArtCheckout { return priorArtCheckouts(cfg) }, 0).Sources()...)
+	codeIdx := github.NewPriorArtCodeIndex(func() []github.PriorArtCheckout { return priorArtCheckouts(cfg) }, 0)
+	codeIdx.Warm()
+	sources = append(sources, codeIdx.Sources()...)
 	gate := cfg.Runs.Triage.PriorArt
 	return priorart.NewSearcher(priorart.Options{
 		Sources:     sources,

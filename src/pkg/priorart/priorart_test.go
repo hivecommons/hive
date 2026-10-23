@@ -451,3 +451,22 @@ func TestSearcherCacheEviction(t *testing.T) {
 		t.Fatalf("cache size = %d, want eviction to keep it within %d", n, maxCacheEntries)
 	}
 }
+
+func TestSearcherSkipsCachingTransientCoverage(t *testing.T) {
+	calls := 0
+	src := SourceFunc{SourceName: "code", Fn: func(context.Context, Query) ([]Candidate, error) {
+		calls++
+		return nil, &CoverageError{Gaps: []string{"code index still building"}, Transient: calls == 1}
+	}}
+	s := NewSearcher(Options{Sources: []Source{src}})
+	issue := Issue{Repo: "o/r", Title: "Add widget_cap limit", Body: "widget_cap bounds the widget"}
+	if r := s.Find(context.Background(), issue); r.Cached || len(r.Coverage) == 0 {
+		t.Fatalf("first report = %+v", r)
+	}
+	if r := s.Find(context.Background(), issue); r.Cached {
+		t.Fatal("transient-gap report was cached")
+	}
+	if r := s.Find(context.Background(), issue); !r.Cached {
+		t.Fatal("settled report should be cached")
+	}
+}
