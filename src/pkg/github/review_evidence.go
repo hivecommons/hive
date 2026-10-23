@@ -107,9 +107,11 @@ func evidencePathSegment(s string) string {
 	return out
 }
 
-// LoadReviewEvidence reads one bundle. A missing file reports an error
-// wrapping os.ErrNotExist.
+// LoadReviewEvidence reads one bundle. For a bundle in a PR directory the
+// newest copy across that directory and its <pr>.uid<N> fallback siblings is
+// read. A missing file reports an error wrapping os.ErrNotExist.
 func LoadReviewEvidence(path string) (*evidence.Bundle, error) {
+	path = resolveReviewEvidencePath(path)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -261,7 +263,7 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 	// fetches here, before reviewEvidenceMu is taken: the merge-eligibility
 	// poll loop (recordReviewEvidenceCI) takes the same lock and must not wait
 	// on the network. A bundle that appears meanwhile only costs a spare fetch.
-	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+	if _, statErr := os.Stat(resolveReviewEvidencePath(path)); errors.Is(statErr, os.ErrNotExist) {
 		fetchPR()
 	}
 
@@ -396,7 +398,7 @@ func (c *Client) StartReviewEvidence(repo string, number int, head string, pr *g
 	if !ok {
 		return
 	}
-	if _, err := os.Stat(ReviewEvidencePath("", repo, number, head)); err == nil || !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(resolveReviewEvidencePath(ReviewEvidencePath("", repo, number, head))); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return
 	}
 	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
@@ -510,16 +512,37 @@ var evidenceWriteDenied sync.Map
 // different uids that share a group can all add bundles to one directory.
 const evidenceDirMode = os.FileMode(0o775) | os.ModeSetgid
 
+// evidenceFallbackDirMarker separates a PR directory's name from the uid of
+// the writer that owns its fallback sibling: <pr>.uid<N>.
+const evidenceFallbackDirMarker = ".uid"
+
 // writeReviewEvidence commits b with write-then-rename so a reader never
-// observes a half-written bundle.
+// observes a half-written bundle. When the PR directory exists but this uid
+// may not write into it (created by another writer, #13836), the bundle goes
+// to the writer-owned sibling <pr>.uid<N>/ instead; the readers
+// (ListReviewEvidence, LoadReviewEvidence) consult those siblings too.
 func writeReviewEvidence(path string, b *evidence.Bundle) error {
-	if err := mkdirEvidenceDirs(filepath.Dir(path)); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(b, "", "  ")
 	if err != nil {
 		return err
 	}
+	err = writeEvidenceFile(path, data)
+	if !errors.Is(err, fs.ErrPermission) {
+		return err
+	}
+	fallback := reviewEvidenceFallbackPath(path)
+	if ferr := writeEvidenceFile(fallback, data); ferr != nil {
+		return fmt.Errorf("%w (fallback %s: %v)", err, fallback, ferr)
+	}
+	return nil
+}
+
+func writeEvidenceFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := mkdirEvidenceDirs(dir); err != nil {
+		return err
+	}
+	widenOwnedEvidenceDir(dir)
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
@@ -531,9 +554,73 @@ func writeReviewEvidence(path string, b *evidence.Bundle) error {
 	return nil
 }
 
+// reviewEvidenceFallbackPath is where this process writes the bundle at path
+// when the PR directory is not writable: <pr>.uid<N>/<head>.json.
+func reviewEvidenceFallbackPath(path string) string {
+	return filepath.Join(filepath.Dir(path)+evidenceFallbackDirMarker+strconv.Itoa(os.Getuid()), filepath.Base(path))
+}
+
+// reviewEvidenceDirs is dir followed by its <dir>.uid<N> fallback siblings.
+func reviewEvidenceDirs(dir string) []string {
+	dirs := []string{dir}
+	matches, _ := filepath.Glob(dir + evidenceFallbackDirMarker + "*")
+	sort.Strings(matches)
+	for _, m := range matches {
+		if _, err := strconv.Atoi(strings.TrimPrefix(m, dir+evidenceFallbackDirMarker)); err != nil {
+			continue
+		}
+		if info, err := os.Stat(m); err == nil && info.IsDir() {
+			dirs = append(dirs, m)
+		}
+	}
+	return dirs
+}
+
+// resolveReviewEvidencePath is the most recently written copy of the bundle
+// at path across the PR directory and its fallback siblings, or path itself
+// when no copy exists (so callers still see os.ErrNotExist).
+func resolveReviewEvidencePath(path string) string {
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	if _, err := strconv.Atoi(filepath.Base(dir)); err != nil {
+		return path
+	}
+	best := path
+	var bestMod time.Time
+	found := false
+	for _, d := range reviewEvidenceDirs(dir) {
+		p := filepath.Join(d, name)
+		info, err := os.Stat(p)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if !found || info.ModTime().After(bestMod) {
+			best, bestMod, found = p, info.ModTime(), true
+		}
+	}
+	return best
+}
+
+// widenOwnedEvidenceDir makes an existing evidence directory this uid owns
+// and can write (e.g. 0o755, created before #13836) group-writable
+// (evidenceDirMode), so it stops locking out other writers sharing its group.
+// A directory deliberately made read-only for its owner is left alone.
+func widenOwnedEvidenceDir(dir string) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	uid := os.Getuid()
+	perm := info.Mode().Perm()
+	if uid < 0 || fileOwnerUID(info) != uid || perm&0o200 == 0 || perm&0o020 != 0 {
+		return
+	}
+	_ = os.Chmod(dir, evidenceDirMode)
+}
+
 // mkdirEvidenceDirs creates dir and any missing parents, applying
 // evidenceDirMode to each component it created (MkdirAll is subject to umask
-// and ignores setgid). Pre-existing directories are left untouched.
+// and ignores setgid). Pre-existing directories are handled by
+// widenOwnedEvidenceDir.
 func mkdirEvidenceDirs(dir string) error {
 	var missing []string
 	for d := dir; ; d = filepath.Dir(d) {
@@ -678,16 +765,13 @@ func containsPostedReview(have []evidence.PostedReview, url string) bool {
 // bundles) for a head other than head, or "" when there is none. A new push
 // starts a new bundle; this is what keeps the chain of heads traceable.
 func previousReviewEvidenceID(dir, head string) string {
-	entries, err := os.ReadDir(dir)
+	names, err := reviewEvidenceFileNames(dir)
 	if err != nil {
 		return ""
 	}
 	var best *evidence.Bundle
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		b, err := LoadReviewEvidence(filepath.Join(dir, e.Name()))
+	for _, name := range names {
+		b, err := LoadReviewEvidence(filepath.Join(dir, name))
 		if err != nil || b.HeadSHA == head || b.ID == "" {
 			continue
 		}
