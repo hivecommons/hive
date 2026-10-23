@@ -437,7 +437,6 @@ type Client struct {
 	stageEngineMu sync.Mutex
 	stageWriter   *stageWriter
 	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
-	stageLegacy   stageengine.LegacyTable
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {

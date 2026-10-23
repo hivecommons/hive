@@ -7,12 +7,12 @@ import (
 )
 
 // Stage engine (ADR-0025) — composition root. The engine's DeriveIssue /
-// DerivePR delegate to the kind-specific derivers registered here: the
-// enumeration-backed issue deriver in pkg/github and the lane-backed PR
-// deriver in pkg/github/automerge. Neither package can import the other
-// (automerge imports github), so the hub is where both meet. The
-// github.Client's default FactSink reads the PR side through this
-// registration; without it a PR fact would abstain.
+// DerivePR delegate to the kind-specific derivers: the enumeration-backed
+// issue deriver in pkg/github and the lane-backed PR deriver in
+// pkg/github/automerge. Each package registers its own at init; this
+// re-registration pins the pairing at the hub where both are linked, so
+// the github.Client's default FactSink can never see a PR fact abstain for
+// want of a deriver.
 func init() {
 	stageengine.SetDerivers(github.IssueDeriver(), automerge.PRDeriver())
 }

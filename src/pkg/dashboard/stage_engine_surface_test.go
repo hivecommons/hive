@@ -13,13 +13,7 @@ import (
 )
 
 func fakeStageEngineStatus() stageengine.Status {
-	return stageengine.Status{
-		Mode: "shadow", Derivations: 12, Mismatches: 2, Anomalies: 1, Healed: 3,
-		LastMismatchExamples: []stageengine.StatusExample{{
-			Ref: "acme/widgets#7", Kind: "stage", Legacy: "stage/050", Engine: "stage/060",
-			At: time.Date(2026, 10, 17, 11, 0, 0, 0, time.UTC),
-		}},
-	}
+	return stageengine.Status{Mode: "shadow", Derivations: 12, Anomalies: 1, Healed: 3}
 }
 
 // governor.labels.stage.engine.mode round-trips through the Labels tab's
@@ -27,7 +21,7 @@ func fakeStageEngineStatus() stageengine.Status {
 // renders a control with the YAML hint and help mark (ADR-0025, PR-E).
 func TestGovernorLabelsStageEngineModeRoundTrip(t *testing.T) {
 	s := covApiServer(t)
-	for _, bad := range []any{"audit", "ON", 7} {
+	for _, bad := range []any{"audit", "ON", "off", 7} {
 		if rec := doPut(s, "/api/config/governor/labels", map[string]any{"stage_engine_mode": bad}); rec.Code != http.StatusBadRequest {
 			t.Fatalf("%v: expected 400, got %d — %s", bad, rec.Code, rec.Body.String())
 		}
@@ -64,21 +58,22 @@ func TestGovernorLabelsStageEngineModeRoundTrip(t *testing.T) {
 		`id="cfg-stage-engine-mode" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_engine_mode" data-arg-types="s,s,v"`,
 		"settingHelpMark('settings', 'labels', 'Central stage engine',",
 		"_configState.data.stageEngineMode || 'enforce'",
-		"['off',", "['shadow',", "['enforce',",
-		"48h",
+		"['shadow',", "['enforce',",
 	} {
 		if !strings.Contains(labels, want) {
 			t.Errorf("renderGovLabels lacks %q", want)
 		}
+	}
+	if strings.Contains(labels, "['off',") {
+		t.Error("renderGovLabels still offers the retired off mode")
 	}
 	if !strings.Contains(html, "key: 'governor.labels.stage.engine.mode'") {
 		t.Error("settings search index has no entry for governor.labels.stage.engine.mode")
 	}
 }
 
-// /api/status carries stageEngine{mode,derivations,mismatches,anomalies,
-// healed,lastMismatchExamples} when the hive wires a status source, and
-// omits it otherwise.
+// /api/status carries stageEngine{mode,derivations,anomalies,healed} when
+// the hive wires a status source, and omits it otherwise.
 func TestStatusStageEngineBlock(t *testing.T) {
 	s := covApiServer(t)
 	s.statusMu.Lock()
@@ -105,24 +100,21 @@ func TestStatusStageEngineBlock(t *testing.T) {
 	if !ok {
 		t.Fatalf("stageEngine missing: %s", rec.Body.String())
 	}
-	for k, want := range map[string]any{"mode": "shadow", "derivations": 12.0, "mismatches": 2.0, "anomalies": 1.0, "healed": 3.0} {
+	for k, want := range map[string]any{"mode": "shadow", "derivations": 12.0, "anomalies": 1.0, "healed": 3.0} {
 		if eng[k] != want {
 			t.Errorf("stageEngine.%s = %v, want %v", k, eng[k], want)
 		}
 	}
-	ex, _ := eng["lastMismatchExamples"].([]any)
-	if len(ex) != 1 {
-		t.Fatalf("lastMismatchExamples = %v", eng["lastMismatchExamples"])
-	}
-	first, _ := ex[0].(map[string]any)
-	if first["ref"] != "acme/widgets#7" || first["legacy"] != "stage/050" || first["engine"] != "stage/060" || first["kind"] != "stage" {
-		t.Fatalf("example = %v", first)
+	for _, gone := range []string{"mismatches", "lastMismatchExamples"} {
+		if _, ok := eng[gone]; ok {
+			t.Errorf("stageEngine.%s still present; the shadow comparator left with PR-F", gone)
+		}
 	}
 }
 
 // The activity tracker payload carries the engine block and the page renders
-// it as a .ham-engine strip (mode / mismatches / anomalies) with hover text on
-// the items only — no inline style, no raw hex.
+// it as a .ham-engine strip (mode / anomalies) with hover text on the
+// items only — no inline style, no raw hex.
 func TestStageTrackerEngineStrip(t *testing.T) {
 	now := time.Date(2026, 10, 17, 11, 0, 0, 0, time.UTC)
 	s, store := stageTrackerFixture(t, now)
@@ -138,7 +130,7 @@ func TestStageTrackerEngineStrip(t *testing.T) {
 	status := s.status
 	s.statusMu.RUnlock()
 	resp = s.buildStageTracker(status, store, now)
-	if resp.Engine == nil || resp.Engine.Mode != "shadow" || resp.Engine.Mismatches != 2 {
+	if resp.Engine == nil || resp.Engine.Mode != "shadow" || resp.Engine.Anomalies != 1 {
 		t.Fatalf("engine = %+v", resp.Engine)
 	}
 	raw, err := json.Marshal(resp)
@@ -154,13 +146,14 @@ func TestStageTrackerEngineStrip(t *testing.T) {
 	for _, want := range []string{
 		`<span class="ham-engine" data-mode="${esc(e.mode)}">`,
 		`class="ham-engine-mode" title=`,
-		`class="ham-engine-mismatch${mismatches ? ' ham-engine-warn' : ''}" title=`,
 		`class="ham-engine-anomaly${anomalies ? ' ham-engine-warn' : ''}" title=`,
-		`e.lastMismatchExamples`,
 	} {
 		if !strings.Contains(fn, want) {
 			t.Errorf("stageTrackerEngineHtml lacks %q", want)
 		}
+	}
+	if strings.Contains(fn, "mismatch") {
+		t.Error("the engine strip must not render the retired shadow-mismatch item")
 	}
 	if strings.Contains(fn, "style=") || strings.Contains(fn, "#") {
 		t.Error("the engine strip must not carry inline style or raw colours")
@@ -191,12 +184,11 @@ func TestWriteStageEngineMetrics(t *testing.T) {
 	}
 	writeStageEngineMetrics(&b, "h1", writeHeader, c)
 	out := b.String()
-	if headers != 5 {
-		t.Fatalf("headers = %d, want 5", headers)
+	if headers != 4 {
+		t.Fatalf("headers = %d, want 4", headers)
 	}
 	for _, want := range []string{
 		`hive_stage_derivations_total{hive_id="h1"} 0`,
-		`hive_stage_shadow_mismatch_total{hive_id="h1"} 0`,
 		`hive_stage_transition_anomaly_total{hive_id="h1"} 0`,
 		`hive_stage_writer_writes_total{hive_id="h1"} 0`,
 		`hive_stage_duplicate_pills_healed_total{hive_id="h1"} 0`,
@@ -207,14 +199,12 @@ func TestWriteStageEngineMetrics(t *testing.T) {
 	}
 
 	c.Derivation(stagelabels.PRItem, stagelabels.ReviewPending)
-	c.ShadowMismatch(stagelabels.PRItem, stagelabels.ReviewPending, stagelabels.Reviewed)
 	c.TransitionAnomaly(stagelabels.IssueItem, stagelabels.Claimed, stagelabels.Actionable)
 	b.Reset()
 	writeStageEngineMetrics(&b, "h1", func(string, string, string) {}, c)
 	out = b.String()
 	for _, want := range []string{
 		`hive_stage_derivations_total{hive_id="h1",kind="pr",stage=`,
-		`hive_stage_shadow_mismatch_total{hive_id="h1",engine=`,
 		`hive_stage_transition_anomaly_total{hive_id="h1",from=`,
 	} {
 		if !strings.Contains(out, want) {

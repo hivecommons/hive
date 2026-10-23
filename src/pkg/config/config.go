@@ -3735,21 +3735,19 @@ type StageLabelsConfig struct {
 
 // StageEngineConfig is governor.labels.stage.engine (ADR-0025).
 type StageEngineConfig struct {
-	// Mode is off, shadow or enforce (default enforce). shadow: the engine
-	// derives every item alongside the sweep's own derivation, writes the
-	// sweep's result and records where the two disagree
-	// (stage_shadow_mismatch_total). enforce: the engine's result is
-	// written. off: the sweep's result is written with no derivation or
-	// comparison (rollback). Read on every sweep, so a change applies on
-	// the next pass without a restart. The rollout gate is 48 h in shadow
-	// with zero mismatches and zero healed duplicate pills before enforce.
+	// Mode is shadow or enforce (default enforce). enforce: the engine's
+	// derivation is written. shadow: the engine derives and counts but
+	// writes nothing, so every stage label stays as found (a pause). Read
+	// on every sweep, so a change applies on the next pass without a
+	// restart. The pre-PR-F value off (legacy pass-through) is rejected at
+	// load: the legacy derivation path it selected no longer exists.
 	Mode string `yaml:"mode,omitempty"`
 }
 
 // DefaultStageEngineMode is what an unset governor.labels.stage.engine.mode
 // yields: enforce, since the ADR-0025 rollout gates held on hive's own spoke
 // (48 h shadow with zero mismatches, then 48 h clean enforce). Set the key to
-// shadow or off to opt out.
+// shadow to pause stage writes.
 const DefaultStageEngineMode = stageengine.ModeEnforce
 
 // EffectiveMode parses Mode. Unset yields DefaultStageEngineMode; an
@@ -3765,7 +3763,7 @@ func (c StageEngineConfig) EffectiveMode() stageengine.Mode {
 	return m
 }
 
-// Validate rejects a mode outside off|shadow|enforce.
+// Validate rejects a mode outside shadow|enforce.
 func (c StageEngineConfig) Validate() error {
 	if _, err := stageengine.ParseMode(c.Mode); err != nil {
 		return fmt.Errorf("governor.labels.stage.engine.mode: %w", err)

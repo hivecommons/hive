@@ -135,9 +135,9 @@ type Options struct {
 	StageStore *stagelabels.Store
 	// StageEngine configures the ADR-0025 reconciler ApplyStageLabels
 	// routes every stage write through (hivecommons/hive#13008). Nil is the
-	// default: stageengine.DefaultMode (shadow) with this sweep's own
-	// derivation as the legacy comparator, so the labels written are
-	// exactly what the sweep derived. The mode flag arrives with plan PR-E.
+	// default: stageengine.DefaultMode (enforce) over the transport's one
+	// StageWriter; cmd/hive passes the process's shared Options so the mode
+	// follows governor.labels.stage.engine.mode.
 	StageEngine *stageengine.Options
 	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
 	// nil posts the GitHub comment only.

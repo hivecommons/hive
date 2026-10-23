@@ -115,7 +115,7 @@ func TestStageWriterNilClient(t *testing.T) {
 	if c.StageWriter() != nil {
 		t.Fatal("nil client has no writer")
 	}
-	if r, l := c.StageReconciler(nil, nil, nil); r != nil || l != nil {
+	if r := c.StageReconciler(nil, nil, nil); r != nil {
 		t.Fatal("nil client has no reconciler")
 	}
 	if _, err := (&stageWriter{}).Apply(context.Background(), issueRef7(), nil, stagelabels.Desired{}); err != ErrNoGitHubClient {
@@ -123,33 +123,26 @@ func TestStageWriterNilClient(t *testing.T) {
 	}
 }
 
-// The default reconciler is shadow mode with the LegacyTable as
-// comparator: what the sweep set is what gets written, byte for byte, and
-// a Ref the sweep did not set is skipped. The same Store returns the same
-// reconciler; a caller's options are honoured.
-func TestStageReconcilerDefaultIsShadowWithLegacy(t *testing.T) {
+// The default reconciler is enforce mode: the engine's derivation is what
+// lands on the item. The same Store returns the same reconciler; a
+// caller's options are honoured.
+func TestStageReconcilerDefaultIsEnforce(t *testing.T) {
 	f, c := newIssueLabelFixture(t, "bug", "stage/010-actionable")
 	ctx := context.Background()
 	store := stagelabels.NewStore("", nil)
-	r, legacy := c.StageReconciler(store, nil, testLogger())
-	if r2, _ := c.StageReconciler(store, nil, nil); r2 != r {
+	r := c.StageReconciler(store, nil, testLogger())
+	if r2 := c.StageReconciler(store, nil, nil); r2 != r {
 		t.Fatal("one reconciler per store")
 	}
+	if sw, ok := r.(stageengine.ModeSwitch); !ok || sw.Mode() != stageengine.ModeEnforce {
+		t.Fatalf("default mode = %v, want enforce", r)
+	}
 	ref := issueRef7()
-	facts := stageengine.Facts{Ref: ref, Open: true, Labels: []string{"bug", "stage/010-actionable"}, Issue: &stageengine.IssueFacts{Bucket: stageengine.BucketActionable}}
-
-	// Not set by the sweep: abstain, nothing written.
+	facts := stageengine.Facts{Ref: ref, Open: true, Labels: []string{"bug", "stage/010-actionable"}, Issue: &stageengine.IssueFacts{Bucket: stageengine.BucketClaimed}}
 	trs, err := r.ReconcileBatch(ctx, []stageengine.Facts{facts})
-	if err != nil || len(trs) != 1 || trs[0].Outcome.Changed() {
-		t.Fatalf("unset legacy: trs=%+v err=%v", trs, err)
+	if err != nil || len(trs) != 1 || trs[0].To != stagelabels.Claimed {
+		t.Fatalf("default write: trs=%+v err=%v", trs, err)
 	}
-	// The sweep says 020 (whatever the engine thinks of an actionable bucket).
-	legacy.Set(ref, stageengine.Decision{Stage: stagelabels.Claimed, Reason: "sweep: claimed"})
-	trs, err = r.ReconcileBatch(ctx, []stageengine.Facts{facts})
-	if err != nil || len(trs) != 1 || trs[0].To != stagelabels.Claimed || trs[0].Reason != "sweep: claimed" {
-		t.Fatalf("legacy write: trs=%+v err=%v", trs, err)
-	}
-	legacy.Delete(ref)
 	f.mu.Lock()
 	labels := strings.Join(f.labels, ",")
 	f.mu.Unlock()
@@ -165,7 +158,7 @@ func TestStageReconcilerDefaultIsShadowWithLegacy(t *testing.T) {
 	engine := stageengine.DeriverFunc(stagelabels.IssueItem, func(stageengine.Facts) stageengine.Decision {
 		return stageengine.Decision{Stage: stagelabels.PRInProgress, Reason: "engine"}
 	})
-	r3, _ := c.StageReconciler(store2, &stageengine.Options{Mode: stageengine.ModeEnforce, Issue: engine}, nil)
+	r3 := c.StageReconciler(store2, &stageengine.Options{Mode: stageengine.ModeEnforce, Issue: engine}, nil)
 	tr, err := r3.Reconcile(ctx, stageengine.Facts{Ref: ref, Open: true, Labels: []string{"bug", "stage/020-claimed"}, Issue: &stageengine.IssueFacts{Bucket: stageengine.BucketClaimed}})
 	if err != nil || tr.To != stagelabels.PRInProgress {
 		t.Fatalf("enforce: tr=%+v err=%v", tr, err)

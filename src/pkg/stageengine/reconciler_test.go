@@ -143,7 +143,7 @@ func randomFacts(rng *rand.Rand, n int) Facts {
 	return f
 }
 
-func newTestReconciler(t *testing.T, mode Mode, w StageWriter, legacy func(Facts) Decision) (Reconciler, *Counters, *stagelabels.Store) {
+func newTestReconciler(t *testing.T, mode Mode, w StageWriter) (Reconciler, *Counters, *stagelabels.Store) {
 	t.Helper()
 	store := stagelabels.NewStore("", nil)
 	m := NewCounters()
@@ -153,7 +153,6 @@ func newTestReconciler(t *testing.T, mode Mode, w StageWriter, legacy func(Facts
 		Writer:  w,
 		Issue:   tableDeriver(stagelabels.IssueItem),
 		PR:      tableDeriver(stagelabels.PRItem),
-		Legacy:  legacy,
 		Now:     func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) },
 		Logger:  slog.New(slog.NewTextHandler(&strings.Builder{}, nil)),
 		Metrics: m,
@@ -169,7 +168,7 @@ func TestReconcileIdempotent(t *testing.T) {
 	ctx := context.Background()
 	for i := 1; i <= 300; i++ {
 		w := newFakeWriter()
-		r, _, _ := newTestReconciler(t, ModeEnforce, w, nil)
+		r, _, _ := newTestReconciler(t, ModeEnforce, w)
 		f := randomFacts(rng, i)
 		w.labels[f.Ref.Key()] = append([]string(nil), f.Labels...)
 
@@ -217,83 +216,11 @@ func prFacts(n int, reason string) Facts {
 	}
 }
 
-// TestShadowNeverWritesEngineResult: shadow mode writes the legacy stage
-// (when a comparator is configured), records the mismatch and never puts
-// the engine's stage on the item.
-func TestShadowNeverWritesEngineResult(t *testing.T) {
+// Shadow: pure compute, nothing observed or written.
+func TestShadowWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	legacy := func(Facts) Decision { return Decision{Stage: stagelabels.Reviewed, Reason: "legacy says reviewed"} }
-	r, m, store := newTestReconciler(t, ModeShadow, w, legacy)
-	f := prFacts(7, "pending") // engine: 050 review-pending
-
-	tr, err := r.Reconcile(ctx, f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := w.stageLabels(f.Ref); len(got) != 1 || got[0] != stagelabels.Reviewed.Label() {
-		t.Fatalf("shadow wrote %v, want only the legacy %s", got, stagelabels.Reviewed.Label())
-	}
-	if tr.To != stagelabels.Reviewed || tr.Reason != "legacy says reviewed" {
-		t.Fatalf("transition %+v should carry the legacy result", tr)
-	}
-	if rec, ok := store.Get(f.Ref.Key()); !ok || rec.Stage != stagelabels.Reviewed {
-		t.Fatalf("store = %+v, want legacy stage", rec)
-	}
-	if m.Total(MetricShadowMismatch) != 1 || m.Total(MetricDerivations) != 1 {
-		t.Fatalf("metrics %+v", m.Snapshot())
-	}
-	// Same mismatch again: counted, logged once (no panic, no second write).
-	if _, err := r.Reconcile(ctx, f); err != nil {
-		t.Fatal(err)
-	}
-	if m.Total(MetricShadowMismatch) != 2 || w.Writes != 1 {
-		t.Fatalf("second pass: mismatches=%d writes=%d", m.Total(MetricShadowMismatch), w.Writes)
-	}
-
-	// Agreement records no mismatch.
-	agree := func(Facts) Decision { return Decision{Stage: stagelabels.ReviewPending, Reason: "pending"} }
-	r2, m2, _ := newTestReconciler(t, ModeShadow, newFakeWriter(), agree)
-	if _, err := r2.Reconcile(ctx, f); err != nil {
-		t.Fatal(err)
-	}
-	if m2.Total(MetricShadowMismatch) != 0 {
-		t.Fatal("agreeing legacy/engine must not count a mismatch")
-	}
-
-	// A legacy Abstain skips the item: nothing observed, nothing written.
-	skip := func(Facts) Decision { return Decision{Abstain: true, Reason: "sweep had no opinion"} }
-	w3 := newFakeWriter()
-	r3, m3, store3 := newTestReconciler(t, ModeShadow, w3, skip)
-	if tr, err := r3.Reconcile(ctx, f); err != nil || tr.Reason != "sweep had no opinion" {
-		t.Fatalf("tr=%+v err=%v", tr, err)
-	}
-	if _, ok := store3.Get(f.Ref.Key()); ok || w3.Writes != 0 || m3.Total(MetricShadowMismatch) != 0 {
-		t.Fatalf("legacy abstain must skip: writes=%d store=%v", w3.Writes, ok)
-	}
-
-	// The engine abstaining never blocks the legacy write; it is the mismatch.
-	w4 := newFakeWriter()
-	r4, m4, _ := newTestReconciler(t, ModeShadow, w4, legacy)
-	other := f
-	other.Ref.Kind = stagelabels.IssueItem // the PR table deriver abstains on an issue
-	other.Ref.Number = 8
-	if _, err := r4.Reconcile(ctx, other); err != nil {
-		t.Fatal(err)
-	}
-	if got := w4.stageLabels(other.Ref); len(got) != 1 || w4.Writes != 1 {
-		t.Fatalf("engine abstain blocked the legacy write: %v", got)
-	}
-	if m4.Total(MetricShadowMismatch) != 1 || m4.Total(MetricDerivations) != 0 {
-		t.Fatalf("metrics %+v", m4.Snapshot())
-	}
-}
-
-// Shadow without a comparator: pure compute, nothing observed or written.
-func TestShadowWithoutLegacyWritesNothing(t *testing.T) {
-	ctx := context.Background()
-	w := newFakeWriter()
-	r, m, store := newTestReconciler(t, ModeShadow, w, nil)
+	r, m, store := newTestReconciler(t, ModeShadow, w)
 	f := prFacts(8, "soaking")
 	tr, err := r.Reconcile(ctx, f)
 	if err != nil {
@@ -303,27 +230,15 @@ func TestShadowWithoutLegacyWritesNothing(t *testing.T) {
 		t.Fatalf("shadow wrote %v", w.labels)
 	}
 	if _, ok := store.Get(f.Ref.Key()); ok {
-		t.Fatal("shadow without legacy must not observe the store")
+		t.Fatal("shadow must not observe the store")
 	}
 	if tr.To != stagelabels.MergeQueue || m.Total(MetricDerivations) != 1 {
 		t.Fatalf("transition %+v metrics %+v", tr, m.Snapshot())
 	}
 }
 
-func TestModeOffDoesNothing(t *testing.T) {
-	w := newFakeWriter()
-	r, m, store := newTestReconciler(t, ModeOff, w, nil)
-	tr, err := r.Reconcile(context.Background(), prFacts(9, "soaking"))
-	if err != nil || tr.To != stagelabels.None || w.Writes != 0 || m.Total(MetricDerivations) != 0 {
-		t.Fatalf("off mode: tr=%+v err=%v writes=%d", tr, err, w.Writes)
-	}
-	if len(store.Keys()) != 0 {
-		t.Fatal("off mode must not touch the store")
-	}
-}
-
 func TestEnforceNeedsWriter(t *testing.T) {
-	r, _, _ := newTestReconciler(t, ModeEnforce, nil, nil)
+	r, _, _ := newTestReconciler(t, ModeEnforce, nil)
 	if _, err := r.Reconcile(context.Background(), prFacts(1, "soaking")); !errors.Is(err, ErrNoWriter) {
 		t.Fatalf("err = %v, want ErrNoWriter", err)
 	}
@@ -332,7 +247,7 @@ func TestEnforceNeedsWriter(t *testing.T) {
 func TestEnforceAnomalyIsCountedNotRejected(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, m, store := newTestReconciler(t, ModeEnforce, w, nil)
+	r, m, store := newTestReconciler(t, ModeEnforce, w)
 	f := prFacts(3, "soaking") // 100
 	if _, err := r.Reconcile(ctx, f); err != nil {
 		t.Fatal(err)
@@ -385,7 +300,7 @@ func TestEnforceAnomalyIsCountedNotRejected(t *testing.T) {
 func TestEnforceWritesMetricsAndHealsDuplicates(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, m, _ := newTestReconciler(t, ModeEnforce, w, nil)
+	r, m, _ := newTestReconciler(t, ModeEnforce, w)
 	f := prFacts(4, "pending")
 	f.Labels = []string{stagelabels.MergeQueue.Label(), stagelabels.Reviewed.Label()}
 	w.labels[f.Ref.Key()] = append([]string(nil), f.Labels...)
@@ -411,7 +326,7 @@ func TestEnforceWritesMetricsAndHealsDuplicates(t *testing.T) {
 func TestWriterErrorIsReported(t *testing.T) {
 	w := newFakeWriter()
 	w.Err = errors.New("boom")
-	r, _, _ := newTestReconciler(t, ModeEnforce, w, nil)
+	r, _, _ := newTestReconciler(t, ModeEnforce, w)
 	_, err := r.Reconcile(context.Background(), prFacts(5, "pending"))
 	if err == nil || !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "acme/widgets#5") {
 		t.Fatalf("err = %v", err)
@@ -420,7 +335,7 @@ func TestWriterErrorIsReported(t *testing.T) {
 
 func TestAbstainTouchesNothing(t *testing.T) {
 	w := newFakeWriter()
-	r, m, store := newTestReconciler(t, ModeEnforce, w, nil)
+	r, m, store := newTestReconciler(t, ModeEnforce, w)
 	f := prFacts(6, "pending")
 	f.PR.Lanes = nil
 	tr, err := r.Reconcile(context.Background(), f)
@@ -435,7 +350,7 @@ func TestAbstainTouchesNothing(t *testing.T) {
 func TestReconcileBatchDedupesAndKeepsOrder(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, _, _ := newTestReconciler(t, ModeEnforce, w, nil)
+	r, _, _ := newTestReconciler(t, ModeEnforce, w)
 	a := prFacts(1, "pending")
 	b := prFacts(2, "soaking")
 	a2 := prFacts(1, "soaking") // later facts for #1 win, position stays first
@@ -467,7 +382,7 @@ func TestReconcileBatchDedupesAndKeepsOrder(t *testing.T) {
 func TestConcurrentReconcileOneStage(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, _, _ := newTestReconciler(t, ModeEnforce, w, nil)
+	r, _, _ := newTestReconciler(t, ModeEnforce, w)
 	sink := NewFactSink(r, FactSinkOptions{})
 	ref := Ref{Owner: "acme", Repo: "widgets", Number: 42, Kind: stagelabels.IssueItem}
 	var wg sync.WaitGroup

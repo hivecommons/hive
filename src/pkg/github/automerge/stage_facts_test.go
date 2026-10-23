@@ -216,3 +216,39 @@ func TestPRDeriverRequiresHumanBeatsAdmissionReason(t *testing.T) {
 		t.Fatalf("pending verdict derived %+v, want not 085", got)
 	}
 }
+
+// TestPRDeriverPassCarriesStalledAndKindLabels pins the two Desired fields
+// the pass computes after resolution: the dwell verdict and the configured
+// author/<kind> names. Before PRPassFacts carried them an enforce-mode
+// sweep (the default since hivecommons/hive#13598) never wrote
+// stage/stalled on a PR and ignored custom kind names; the legacy
+// comparator had masked that in shadow. A terminal verdict still zeroes
+// every pipeline label and leaves the author label alone.
+func TestPRDeriverPassCarriesStalledAndKindLabels(t *testing.T) {
+	names := authorkind.Names{Human: "author/person"}
+	list := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}}}
+	f := factsFrom(list)
+	f.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
+	got := PRDeriver().Derive(f)
+	if got.Abstain || got.Stage != stagelabels.ReviewPending {
+		t.Fatalf("derived %+v, want 050", got)
+	}
+	if !got.Stalled || got.KindLabels != names || got.Kind != authorkind.Human {
+		t.Fatalf("decision dropped the pass's Desired fields: %+v", got)
+	}
+	want := got.Desired()
+	if !want.Stalled || want.KindLabels.Label(authorkind.Human) != "author/person" {
+		t.Fatalf("desired %+v", want)
+	}
+
+	closed := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: "closed", Detail: stageDetail{Role: stagelabels.RoleContributor}}}
+	tf := factsFrom(closed)
+	tf.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
+	term := PRDeriver().Derive(tf)
+	if term.Abstain || !term.Terminal || term.Stage != stagelabels.None {
+		t.Fatalf("closed derived %+v, want terminal", term)
+	}
+	if term.Stalled || term.Role != stagelabels.RoleNone || term.Kind != authorkind.Unknown {
+		t.Fatalf("terminal decision must be a zero Desired: %+v", term)
+	}
+}

@@ -23,7 +23,7 @@ func TestStageEngineOneReconcilerSharedBySweeps(t *testing.T) {
 	if optsA != optsB {
 		t.Fatal("stageEngineOptions built two Options; the engine must be constructed once")
 	}
-	if optsA.Shadow == nil || optsA.Metrics == nil || optsA.Issue == nil || optsA.PR == nil || optsA.Store != stagelabels.Shared() {
+	if optsA.Metrics == nil || optsA.Issue == nil || optsA.PR == nil || optsA.Store != stagelabels.Shared() {
 		t.Fatalf("options missing a required collaborator: %+v", optsA)
 	}
 
@@ -31,8 +31,8 @@ func TestStageEngineOneReconcilerSharedBySweeps(t *testing.T) {
 	// The PR sweep path (automerge.Options.StageEngine) and the issue sweep
 	// path (SyncIssueStageLabelsWith) both resolve through StageReconciler
 	// with the shared Options.
-	fromPRSweep, _ := client.StageReconciler(stagelabels.Shared(), optsA, logger)
-	fromIssueSweep, _ := client.StageReconciler(stagelabels.Shared(), optsB, logger)
+	fromPRSweep := client.StageReconciler(stagelabels.Shared(), optsA, logger)
+	fromIssueSweep := client.StageReconciler(stagelabels.Shared(), optsB, logger)
 	if boot == nil || fromPRSweep != boot || fromIssueSweep != boot {
 		t.Fatalf("sweeps got different reconcilers: boot=%p pr=%p issue=%p", boot, fromPRSweep, fromIssueSweep)
 	}
@@ -59,8 +59,8 @@ func TestStageEngineModeFollowsConfig(t *testing.T) {
 	if got := sw.Mode(); got != stageengine.ModeShadow {
 		t.Fatalf("mode after reload = %v, want shadow", got)
 	}
-	if st := stageEngineStatus(cfg, client, logger); st.Mode != "shadow" || st.LastMismatchExamples == nil {
-		t.Fatalf("status = %+v, want mode shadow with non-nil examples", st)
+	if st := stageEngineStatus(cfg, client, logger); st.Mode != "shadow" {
+		t.Fatalf("status = %+v, want mode shadow", st)
 	}
 
 	cfg.Governor.Labels.Stage.Engine.Mode = "enforce"

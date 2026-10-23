@@ -18,7 +18,7 @@ import (
 func TestRelayVsSweepOneStage(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, m, _ := newTestReconciler(t, ModeEnforce, w, nil)
+	r, m, _ := newTestReconciler(t, ModeEnforce, w)
 	sink := NewFactSink(r, FactSinkOptions{})
 	ref := Ref{Owner: "acme", Repo: "widgets", Number: 77, Kind: stagelabels.IssueItem}
 	w.labels[ref.Key()] = []string{"bug", stagelabels.Actionable.Label()}

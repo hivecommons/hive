@@ -11,7 +11,6 @@ import (
 // renders Counters.Snapshot under these names.
 const (
 	MetricDerivations     = "stage_derivations_total"            // {kind,stage}
-	MetricShadowMismatch  = "stage_shadow_mismatch_total"        // {kind,legacy,engine}
 	MetricAnomaly         = "stage_transition_anomaly_total"     // {kind,from,to}
 	MetricWriterWrites    = "stage_writer_writes_total"          // {kind,op}
 	MetricDuplicateHealed = "stage_duplicate_pills_healed_total" // {kind}
@@ -27,7 +26,6 @@ const (
 // for concurrent use.
 type Metrics interface {
 	Derivation(kind stagelabels.Item, stage stagelabels.Stage)
-	ShadowMismatch(kind stagelabels.Item, legacy, engine stagelabels.Stage)
 	TransitionAnomaly(kind stagelabels.Item, from, to stagelabels.Stage)
 	WriterWrite(kind stagelabels.Item, op string, n int)
 	DuplicateHealed(kind stagelabels.Item)
@@ -87,11 +85,6 @@ func stageLabel(s stagelabels.Stage) string {
 // Derivation implements Metrics.
 func (c *Counters) Derivation(kind stagelabels.Item, stage stagelabels.Stage) {
 	c.add(MetricDerivations, 1, "kind", kind.String(), "stage", stageLabel(stage))
-}
-
-// ShadowMismatch implements Metrics.
-func (c *Counters) ShadowMismatch(kind stagelabels.Item, legacy, engine stagelabels.Stage) {
-	c.add(MetricShadowMismatch, 1, "kind", kind.String(), "legacy", stageLabel(legacy), "engine", stageLabel(engine))
 }
 
 // TransitionAnomaly implements Metrics.

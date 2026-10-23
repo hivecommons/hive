@@ -68,7 +68,6 @@ func metricsToken() string {
 //	hive_trajectory_ran_total{hive_id,reason}              — trajectory reviews that ran, by reason
 //	hive_pr_followup_pointers_pruned_total{hive_id,reason} — pointers deleted by the sweep
 //	hive_stage_derivations_total{hive_id,kind,stage}       — central stage engine derivations (ADR-0025)
-//	hive_stage_shadow_mismatch_total{hive_id,kind,legacy,engine} — shadow-mode legacy/engine disagreements
 //	hive_stage_transition_anomaly_total{hive_id,kind,from,to}    — transitions the admission table rejected
 //	hive_stage_writer_writes_total{hive_id,kind,op}        — label writes by the single StageWriter
 //	hive_stage_duplicate_pills_healed_total{hive_id,kind}  — duplicate stage pills the writer removed

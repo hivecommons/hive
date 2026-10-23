@@ -117,8 +117,9 @@ Package: `src/pkg/stageengine` (imports `stagelabels`, `authorkind`,
 their side). Config: `governor.labels.stage.engine.mode: shadow | enforce`
 (short name `stage_engine.mode` in dashboards/logs; default `enforce` since
 the plan's acceptance metrics held on hive's own spoke — it was `shadow`
-during the rollout; `off` keeps the legacy paths and exists only for
-rollback).
+during the rollout. `shadow` is now a pause: derive and count, write
+nothing. The rollback value `off` kept the legacy paths and was retired
+with them in plan PR-F).
 
 ### Facts
 
@@ -295,9 +296,8 @@ type Reconciler interface {
 type Mode string
 
 const (
-	ModeOff     Mode = "off"
-	ModeShadow  Mode = "shadow"
-	ModeEnforce Mode = "enforce"
+	ModeShadow  Mode = "shadow"  // derive and count, write nothing
+	ModeEnforce Mode = "enforce" // default
 )
 
 type Options struct {
@@ -306,7 +306,7 @@ type Options struct {
 	Writer  StageWriter
 	Issue   Deriver // defaults to DeriveIssue
 	PR      Deriver // defaults to DerivePR
-	Legacy  func(f Facts) (stagelabels.Stage, string) // shadow-mode comparator; nil in enforce
+	// (Legacy, the shadow-mode comparator, existed for the rollout and left with plan PR-F.)
 	Now     func() time.Time
 	Logger  *slog.Logger
 	Metrics Metrics
@@ -366,9 +366,10 @@ writer did not derive.
 
 ### Metrics
 
-`stage_derivations_total{kind,stage}`, `stage_shadow_mismatch_total{kind,legacy,engine}`,
-`stage_transition_anomaly_total{kind,from,to}`, `stage_writer_writes_total{kind,op}`,
-`stage_duplicate_pills_healed_total{kind}`. Exposed on the existing
+`stage_derivations_total{kind,stage}`, `stage_transition_anomaly_total{kind,from,to}`,
+`stage_writer_writes_total{kind,op}`, `stage_duplicate_pills_healed_total{kind}`
+(`stage_shadow_mismatch_total{kind,legacy,engine}` existed for the rollout and
+was retired with the legacy comparator in plan PR-F). Exposed on the existing
 `/metrics` path and summarised on the activity tracker's status strip.
 
 ## Scope and extension points

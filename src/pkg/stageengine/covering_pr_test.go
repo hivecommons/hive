@@ -13,7 +13,7 @@ import (
 func TestReconcileNotesCoveringPR(t *testing.T) {
 	ctx := context.Background()
 	w := newFakeWriter()
-	r, _, store := newTestReconciler(t, ModeEnforce, w, nil)
+	r, _, store := newTestReconciler(t, ModeEnforce, w)
 	issue := Ref{Owner: "o", Repo: "r", Number: 7, Kind: stagelabels.IssueItem}
 	pr := Ref{Owner: "o", Repo: "r", Number: 8, Kind: stagelabels.PRItem}
 
@@ -43,7 +43,7 @@ func TestReconcileNotesCoveringPR(t *testing.T) {
 // cover is gone" from "a claim lapsed under a cover that still stands".
 func TestFactSinkUncoveredNamesClosedPR(t *testing.T) {
 	var got Facts
-	r, _, _ := newTestReconciler(t, ModeEnforce, newFakeWriter(), nil)
+	r, _, _ := newTestReconciler(t, ModeEnforce, newFakeWriter())
 	sink := NewFactSink(r, FactSinkOptions{Enrich: func(_ context.Context, f Facts) (Facts, error) { got = f; return f, nil }})
 	issue := Ref{Owner: "o", Repo: "r", Number: 7, Kind: stagelabels.IssueItem}
 	pr := Ref{Owner: "o", Repo: "r", Number: 8}

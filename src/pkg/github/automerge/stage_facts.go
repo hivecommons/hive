@@ -193,8 +193,12 @@ func observationsFrom(f stageengine.Facts) []stageObservation {
 type prDeriverAdapter struct{}
 
 // PRDeriver returns the automerge-backed stageengine.Deriver for pull
-// requests; cmd/hive registers it with stageengine.SetDerivers.
+// requests. The package registers it with stageengine.SetDerivers at
+// init, so any process that links automerge derives PR stages the same
+// way (see github.IssueDeriver for the issue side).
 func PRDeriver() stageengine.Deriver { return prDeriverAdapter{} }
+
+func init() { stageengine.SetDerivers(nil, PRDeriver()) }
 
 // Kind implements stageengine.Deriver.
 func (prDeriverAdapter) Kind() stagelabels.Item { return stagelabels.PRItem }
@@ -281,17 +285,22 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		}
 	}
 	d := stageengine.Decision{
-		Stage:    verdict.Stage,
-		Role:     role,
-		Kind:     pass.AuthorKind,
-		Terminal: verdict.Terminal,
-		Reason:   obs.Reason,
-		DCO:      dco,
+		Stage:      verdict.Stage,
+		Role:       role,
+		Kind:       pass.AuthorKind,
+		KindLabels: pass.KindLabels,
+		Terminal:   verdict.Terminal,
+		Reason:     obs.Reason,
+		DCO:        dco,
 	}
 	if verdict.Terminal {
-		d.Stage = stagelabels.None
+		// The pass writes a zero Desired on a terminal PR: every pipeline
+		// label (stage, role, stalled) comes off; the author/<kind> label
+		// stays (Kind unknown leaves it alone) as a fact about the PR.
+		d.Stage, d.Role, d.Kind, d.KindLabels = stagelabels.None, stagelabels.RoleNone, authorkind.Unknown, authorkind.Names{}
 	} else {
 		d.Human = human
+		d.Stalled = pass.Stalled
 	}
 	return d
 }

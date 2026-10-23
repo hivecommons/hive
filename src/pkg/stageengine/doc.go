@@ -13,8 +13,10 @@
 // pkg/github/automerge import it and register their derivers through
 // SetDerivers; nothing here knows about lanes, buckets or the forge.
 //
-// Until the derivation bodies move in (plan PR-F), DeriveIssue and DerivePR
-// delegate to the adapters registered by those packages, which wrap today's
-// IssueStageFor and resolveStage unchanged. Golden parity is proven under
-// ModeShadow before ModeEnforce writes anything.
+// Until the derivation bodies move in (plan PR-F part 2), DeriveIssue and
+// DerivePR delegate to the adapters registered by those packages, which
+// wrap today's IssueStageFor and resolveStage unchanged. The engine is the
+// only writer: ModeEnforce writes its Decision, ModeShadow derives and
+// counts without writing (a pause); the legacy comparator that let shadow
+// write the sweep's own derivation during the rollout is gone.
 package stageengine

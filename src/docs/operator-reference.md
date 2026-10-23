@@ -646,27 +646,18 @@ logs one `WARN stage engine: mode changed` per transition.
 
 | mode | behaviour |
 |---|---|
-| `shadow` | engine derives alongside the sweep; the sweep's derivation is written; every disagreement is counted and logged once per `(kind, legacy, engine)` |
-| `enforce` (default) | engine's derivation is written; out-of-order transitions are rejected and counted as anomalies |
-| `off` | rollback — the sweep's derivation is written verbatim, the engine is inert |
+| `enforce` (default) | engine's derivation is written; out-of-order transitions are counted as anomalies |
+| `shadow` | pause — the engine derives and counts but writes nothing; every `stage/*` label stays exactly as found |
 
-An unset mode is `enforce`. The runbook below is for a hive that opts back
-into `shadow` (for example to validate a deriver change) before returning to
-`enforce`:
-
-1. Run `shadow` for 48h. Watch `/api/status.stageEngine`
-   (`mode`, `derivations`, `mismatches`, `anomalies`,
-   `lastMismatchExamples[≤5]`), the strip at the top of the activity
-   tracker (`engine shadow · N mismatches · N anomalies`) and
-   `hive_stage_shadow_mismatch_total{kind,legacy,engine}` on `/metrics`.
-2. Investigate every distinct mismatch pair; an item where the engine is
-   right is a legacy fix, an item where legacy is right is a deriver fix.
-   The gate is 48h with zero unexplained mismatches.
-3. Set `enforce`. Watch `hive_stage_transition_anomaly_total{kind,from,to}`
-   and `hive_stage_duplicate_pills_healed_total{kind}`; anomalies should
-   stay at the baseline shadow showed.
-4. Rollback at any step: set `off` — the sweeps write exactly what they
-   derived before the engine existed. `shadow` is a safe intermediate.
+An unset mode is `enforce`. The pre-rollout value `off` (legacy
+pass-through) is rejected at config load since the sweeps' own derivation
+path was retired (plan PR-F); set `shadow` to pause stage writes instead.
+Watch `/api/status.stageEngine` (`mode`, `derivations`, `anomalies`,
+`healed`), the strip at the top of the activity tracker (`engine enforce ·
+N anomalies`), `hive_stage_transition_anomaly_total{kind,from,to}` and
+`hive_stage_duplicate_pills_healed_total{kind}` on `/metrics`; an anomaly
+pair not explained by a documented event (merge, close, human label edit)
+is a deriver or transition-table fix, never a reason to leave `enforce`.
 
 The remaining series are `hive_stage_derivations_total{kind,stage}` and
 `hive_stage_writer_writes_total{kind,op}`.

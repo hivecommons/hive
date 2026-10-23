@@ -35,7 +35,8 @@ Scope: freeze today's behaviour. No production code changes.
   diff.
 - `src/pkg/stagelabels/shadowdiff/` (tiny): `Diff(legacy, engine Decision) []Mismatch`
   and a `Recorder` that counts `stage_shadow_mismatch_total{kind,legacy,engine}`
-  and logs one line per distinct mismatch. Pure; no engine import.
+  and logs one line per distinct mismatch. Pure; no engine import. (Served
+  the rollout; deleted with the legacy comparator in PR-F.)
 
 Tests: the golden tests themselves; `shadowdiff` unit test.
 Files touched: ~6 new, 0 modified. Depends on: nothing.
@@ -160,8 +161,8 @@ so the import would cycle; `TestClaimLabelConstantsMatchStages` in
 Landed (hivecommons/hive#13010): `cmd/hive/stage_engine.go` builds the one
 `stageengine.Options`, `Client.StageReconciler` the one reconciler; the mode
 is a runtime switch (`stageengine.ModeSwitch`) re-read before each sweep,
-`off` is legacy pass-through; `/api/status.stageEngine` and the tracker strip
-report mode / mismatches / anomalies. The original scope follows.
+`off` was legacy pass-through (retired by PR-F); `/api/status.stageEngine` and the tracker strip
+report mode / anomalies. The original scope follows.
 
 - `src/pkg/config`: `governor.labels.stage.engine.mode` (`off|shadow|enforce`,
   default `shadow` during the rollout, `enforce` since the default flip); Settings → Labels tab exposes it; `hivectl config`
@@ -188,26 +189,37 @@ Default flip landed (hivecommons/hive#12999): an unset
 `governor.labels.stage.engine.mode` now yields `enforce`
 (`config.DefaultStageEngineMode`) after 48 h clean `enforce` on hive's spoke;
 an unparsable value still falls back to `shadow`, never `enforce`. A hive
-that wants the old behaviour sets `mode: shadow` (or `off` to roll back).
-`stageengine.DefaultMode` stays `shadow`: it is the library default for a
-caller that passes zero `Options` (tests, `Client.StageReconciler(store,
-nil, …)`), not the configured hive's default. ADR-0025 is Accepted.
+that wants to pause stage writes sets `mode: shadow`. ADR-0025 is Accepted.
+(`stageengine.DefaultMode` was `shadow` as the library default until PR-F
+retired the legacy comparator; with nothing else able to write it is
+`enforce` too.)
 
 ## PR-F — move derivation in, delete legacy (follow-up, ≥48 h after enforce default)
 
-- Move `classifyStage`/`resolveStage` bodies into `stageengine.DerivePR`
-  and `IssueStageFor` into `DeriveIssue`; delete the adapters, the legacy
-  `Options.Legacy` comparator and `ModeOff`.
-- Goldens from PR-A move to `src/pkg/stageengine/testdata` and must pass
-  unchanged.
-- Land the review-pending-stuck finding as the `ReviewFacts.State` fold (its
-  own golden update) — the first semantic change, after parity is proven.
+Shipped as three PRs (hivecommons/hive#13011):
+
+- **F1 — retire the legacy comparator** (landed): `Options.Legacy`,
+  `LegacyTable`, `ModeOff`, the shadow-diff recorder
+  (`pkg/stagelabels/shadowdiff`), `stage_shadow_mismatch_total` and the
+  status/strip mismatch fields are gone. `shadow` is now a pure pause
+  (derive, count, write nothing). The sweeps no longer feed their own
+  derivation to the reconciler; each package registers its deriver at
+  init. Retiring the comparator exposed that the PR adapter's enforce-mode
+  Decision dropped the pass's `Stalled` and configured `KindLabels`
+  (`PRPassFacts` now carries both) and kept the role on a terminal PR.
+- **F2 — move derivation in**: `classifyStage`/`resolveStage` bodies into
+  `stageengine.DerivePR` and `IssueStageFor` into `DeriveIssue`; delete
+  the adapters and `SetDerivers`; goldens from PR-A move to
+  `src/pkg/stageengine/testdata` and must pass unchanged.
+- **F3 — `ReviewFacts.State` fold**: land the review-pending-stuck finding
+  (its own golden update) — the first semantic change, after parity is
+  proven — and close the ADR's open question.
 
 ## Acceptance metrics
 
 | Gate | Metric | Target |
 |---|---|---|
-| shadow → enforce (spoke) | `stage_shadow_mismatch_total` | 0 over 48 h |
+| shadow → enforce (spoke) | `stage_shadow_mismatch_total` (series retired by PR-F; held at 0) | 0 over 48 h |
 | shadow → enforce (spoke) | duplicate-stage pills (`Outcome.Healed`) | 0 over 48 h |
 | enforce → default | `stage_transition_anomaly_total` | only pairs explained by a documented event (merge, close, human label edit) |
 | any | GitHub REST calls per cycle (`hive:issue_stage_labels`, `stageRESTCaller`) | not above the pre-engine baseline |

@@ -425,7 +425,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	if store == nil {
 		store = stagelabels.Shared()
 	}
-	reconciler, legacy := client.StageReconciler(store, engine, logger)
+	reconciler := client.StageReconciler(store, engine, logger)
 	ctx = WithRESTCaller(ctx, issueStageRESTCaller)
 	// The closes this pass may perform (decomposed parent, merged full-fix
 	// PR) are irreversible; bound them to a fresh, non-stale view of the
@@ -489,6 +489,8 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		}
 		stage, covered, reason := IssueStageFor(in, prStage)
 		if awaitingChildren && stage != stagelabels.None {
+			// Mirrors the engine's deriver (IssueFacts.OpenChildren) so the
+			// pre-write Observe and the reconciler's agree on the reason.
 			reason += "; waiting on " + strconv.Itoa(in.Children.Open()) + " open child issue(s)"
 		}
 		var want stagelabels.Desired
@@ -534,7 +536,6 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		facts.Ref.Owner, facts.Ref.Repo = owner, name
 		facts.ObservedAt = now
 		facts.Issue.Stalled = want.Stalled
-		legacy.Set(facts.Ref, stageengine.Decision{Stage: want.Stage, Stalled: want.Stalled, Terminal: stage == stagelabels.None, Reason: reason})
 		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
@@ -551,7 +552,6 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
-		legacy.Delete(p.facts.Ref)
 		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
 		var out stagelabels.Outcome
 		err := ctx.Err()

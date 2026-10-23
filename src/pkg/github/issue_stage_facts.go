@@ -8,6 +8,7 @@ package github
 // moves in this file; PR-F moves IssueStageFor into pkg/stageengine.
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/claims"
@@ -35,6 +36,9 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 			FilteredReason: in.Reason,
 			LikelyDone:     issueHasLabel(in.Labels, LikelyDoneLabel),
 		},
+	}
+	if in.Children != nil && in.Children.Total > 0 {
+		f.Issue.OpenChildren = in.Children.Open()
 	}
 	if in.Claim != nil || in.ClaimKind != "" || in.ClaimedBy != "" {
 		c := &stageengine.ClaimFact{Holder: in.ClaimedBy, Kind: claims.Kind(in.ClaimKind), PRStarted: in.PRStarted}
@@ -91,8 +95,13 @@ func issueInputFrom(f stageengine.Facts) IssueStageInput {
 type issueDeriverAdapter struct{}
 
 // IssueDeriver returns the enumeration-backed stageengine.Deriver for
-// issues; cmd/hive registers it with stageengine.SetDerivers.
+// issues. The package registers it with stageengine.SetDerivers at init
+// so every process that links pkg/github (the hive, hivectl, tests)
+// derives issues the same way; since plan PR-F retired the sweep's legacy
+// comparator the engine's deriver is the only source of an issue's stage.
 func IssueDeriver() stageengine.Deriver { return issueDeriverAdapter{} }
+
+func init() { stageengine.SetDerivers(IssueDeriver(), nil) }
 
 // Kind implements stageengine.Deriver.
 func (issueDeriverAdapter) Kind() stagelabels.Item { return stagelabels.IssueItem }
@@ -125,6 +134,9 @@ func (issueDeriverAdapter) Derive(f stageengine.Facts) stageengine.Decision {
 		}
 	}
 	stage, _, reason := IssueStageFor(issueInputFrom(f), prStage)
+	if f.Issue.OpenChildren > 0 && stage != stagelabels.None {
+		reason += "; waiting on " + strconv.Itoa(f.Issue.OpenChildren) + " open child issue(s)"
+	}
 	return stageengine.Decision{
 		Stage:    stage,
 		Reason:   reason,

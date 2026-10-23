@@ -415,7 +415,7 @@ func (c *Engine) stageStoreOrShared() *stagelabels.Store {
 // stageengine.StageWriter (hgithub.Client). The reconciler is built over
 // it so every stage write the engine makes goes through that one writer.
 type stageReconcilerTransport interface {
-	StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) (stageengine.Reconciler, *stageengine.LegacyTable)
+	StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) stageengine.Reconciler
 }
 
 // ErrNoStageWriter is returned when the transport cannot supply the stage
@@ -423,18 +423,18 @@ type stageReconcilerTransport interface {
 // guess.
 var ErrNoStageWriter = errors.New("automerge: transport provides no stage writer")
 
-// stageReconciler returns the reconciler for this pass and the table the
-// pass fills with its derivation (see Options.StageEngine).
-func (c *Engine) stageReconciler(store *stagelabels.Store) (stageengine.Reconciler, *stageengine.LegacyTable, error) {
+// stageReconciler returns the reconciler for this pass (see
+// Options.StageEngine).
+func (c *Engine) stageReconciler(store *stagelabels.Store) (stageengine.Reconciler, error) {
 	t, ok := c.transport.(stageReconcilerTransport)
 	if !ok {
-		return nil, nil, ErrNoStageWriter
+		return nil, ErrNoStageWriter
 	}
-	r, legacy := t.StageReconciler(store, c.stageEngine, c.logger)
-	if r == nil || legacy == nil {
-		return nil, nil, ErrNoStageWriter
+	r := t.StageReconciler(store, c.stageEngine, c.logger)
+	if r == nil {
+		return nil, ErrNoStageWriter
 	}
-	return r, legacy, nil
+	return r, nil
 }
 
 // prStagePending is one PR the pass derived a stage for, waiting on the
@@ -1217,7 +1217,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		return result, hgithub.ErrNoGitHubClient
 	}
 	store := c.stageStoreOrShared()
-	reconciler, legacy, err := c.stageReconciler(store)
+	reconciler, err := c.stageReconciler(store)
 	if err != nil {
 		tracker.drain()
 		return result, err
@@ -1428,11 +1428,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		facts := factsFrom(list)
 		facts.ObservedAt = now
 		pass.AuthorKind = obs.AuthorKind
+		pass.Stalled, pass.KindLabels = want.Stalled, want.KindLabels
 		facts.PR.Pass = pass
-		legacy.Set(facts.Ref, stageengine.Decision{
-			Stage: want.Stage, Role: want.Role, Kind: want.Kind, KindLabels: want.KindLabels,
-			Stalled: want.Stalled, DCO: want.DCO, Terminal: verdict.Terminal, Reason: obs.Reason,
-		})
 		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
@@ -1447,7 +1444,6 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
-		legacy.Delete(p.facts.Ref)
 		obs, key, role, want, tr := p.obs, p.key, p.role, p.want, p.tr
 		commentsBefore := result.Comments
 		var out stagelabels.Outcome

@@ -7,7 +7,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine"
 )
 
-// governor.labels.stage.engine.mode (ADR-0025): off|shadow|enforce,
+// governor.labels.stage.engine.mode (ADR-0025): shadow|enforce,
 // default enforce, validated at load so hivectl config catches a typo
 // before the hive boots with it.
 func TestStageEngineModeConfig(t *testing.T) {
@@ -18,7 +18,7 @@ func TestStageEngineModeConfig(t *testing.T) {
 	if blank := (StageEngineConfig{Mode: "  "}); blank.EffectiveMode() != stageengine.ModeEnforce {
 		t.Fatalf("blank mode = %s, want the enforce default", blank.EffectiveMode())
 	}
-	for in, want := range map[string]stageengine.Mode{"off": stageengine.ModeOff, " Shadow ": stageengine.ModeShadow, "ENFORCE": stageengine.ModeEnforce} {
+	for in, want := range map[string]stageengine.Mode{"enforce": stageengine.ModeEnforce, " Shadow ": stageengine.ModeShadow, "ENFORCE": stageengine.ModeEnforce} {
 		c := StageEngineConfig{Mode: in}
 		if err := c.Validate(); err != nil || c.EffectiveMode() != want {
 			t.Fatalf("%q: mode %s err %v, want %s", in, c.EffectiveMode(), err, want)
@@ -31,6 +31,14 @@ func TestStageEngineModeConfig(t *testing.T) {
 	}
 	if bad.EffectiveMode() != stageengine.ModeShadow {
 		t.Fatalf("an invalid mode must fall back to shadow, not enforce: %s", bad.EffectiveMode())
+	}
+	// The retired rollback value is an error, not a silent enforce.
+	off := StageEngineConfig{Mode: "off"}
+	if err := off.Validate(); err == nil || !strings.Contains(err.Error(), "want shadow or enforce") {
+		t.Fatalf("off: err = %v, want rejection", err)
+	}
+	if off.EffectiveMode() != stageengine.ModeShadow {
+		t.Fatalf("off must fall back to shadow (no writes), got %s", off.EffectiveMode())
 	}
 }
 

@@ -13,7 +13,6 @@ import (
 // hive_ prefix like every other series on /metrics.
 var stageEngineMetricHelp = map[string]string{
 	stageengine.MetricDerivations:     "Stage derivations the central stage engine ran, by item kind and derived stage.",
-	stageengine.MetricShadowMismatch:  "Shadow-mode disagreements between the sweep's legacy derivation and the engine, by kind and both stages.",
 	stageengine.MetricAnomaly:         "Stage transitions the engine's admission table rejected, by kind and from/to stage.",
 	stageengine.MetricWriterWrites:    "Label writes the single StageWriter performed, by kind and operation.",
 	stageengine.MetricDuplicateHealed: "Items on which the writer removed duplicate stage pills, by kind.",

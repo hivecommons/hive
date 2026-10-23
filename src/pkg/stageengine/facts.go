@@ -128,6 +128,10 @@ type IssueFacts struct {
 	// reports. The sink's enrichment never re-reads it as a still-open
 	// cover (stagelabels.Record.CoveringPR) for the issue.
 	ClosedPR *Ref
+	// OpenChildren is the number of still-open sub-issues of a decomposed
+	// parent (hivecommons/hive#12857). A parent waiting on children keeps
+	// its stage with the wait named in the reason and is never stalled.
+	OpenChildren int
 }
 
 // ClaimFact is the live claim on an issue.
@@ -200,6 +204,14 @@ type PRPassFacts struct {
 	// the stalled-adoption escape moved it to 085 instead.
 	AdoptionLive     bool
 	EscalationReason string
+	// Stalled is the pass's dwell verdict (stagelabels.StalledWith over the
+	// store record after this pass's Observe); KindLabels are the
+	// configured author/<kind> names. Both are outputs of the pass the
+	// writer needs on the Desired, so the Decision carries them through;
+	// before they were recorded here an enforce-mode pass never wrote
+	// stage/stalled on a PR and ignored custom author-kind names.
+	Stalled    bool
+	KindLabels authorkind.Names
 }
 
 // PriorStage is the store record a pass started from.

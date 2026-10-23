@@ -380,21 +380,19 @@ not read as the issue regressing.
 > write — the claim relay, in-progress sweep, PR-claim sync and dashboard
 > submit *facts* instead of labels
 > ([#13009](https://github.com/hivecommons/hive/issues/13009)); the
-> per-kind rules above are the engine's derivers, and the sweeps' own
-> derivation is kept as the comparator. The reconciler is built once per process
+> per-kind rules above are the engine's derivers. The reconciler is built once per process
 > (`cmd/hive/stage_engine.go`) and shared by both sweeps. Rollout is gated
 > by `governor.labels.stage.engine.mode` (Settings → Labels → *Central
 > stage engine mode*; takes effect on the next sweep, no restart):
 >
 > | mode | who derives | who writes | counted |
 > |---|---|---|---|
-> | `off` | sweep (legacy) | sweep's derivation verbatim; engine inert | — |
-> | `shadow` | both | sweep's derivation | `stage_shadow_mismatch_total{kind,legacy,engine}`, one log per distinct pair |
 > | `enforce` (default) | engine | engine's derivation | `stage_transition_anomaly_total{kind,from,to}` for out-of-order moves |
+> | `shadow` | engine | nobody (pause; labels stay as found) | `stage_derivations_total{kind,stage}` only |
 >
-> Mode, derivation / mismatch / anomaly counts and the last five mismatch
-> examples are on `/api/status.stageEngine` and in the activity tracker's
-> status strip; the rollout runbook is in
+> Mode and the derivation / anomaly / healed counts are on
+> `/api/status.stageEngine` and in the activity tracker's status strip;
+> the operator notes are in
 > [operator-reference.md](operator-reference.md#central-stage-engine-rollout)
 > and the plan in [stage-engine-plan.md](stage-engine-plan.md).
 

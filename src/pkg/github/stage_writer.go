@@ -49,18 +49,16 @@ func (c *Client) StageWriter() stageengine.StageWriter {
 }
 
 // StageReconciler returns the reconciler the sweeps route their stage
-// writes through, built once per Store over this client's StageWriter,
-// and the LegacyTable the sweep fills with its own derivation before each
-// ReconcileBatch. opts may be nil: the default is stageengine.DefaultMode
-// (shadow) with the table as comparator, which writes exactly what the
-// sweep derived — byte-identical to the pre-engine sweep. A caller's opts
-// are honoured field by field; nil fields take the same defaults. The
-// first call for a Store fixes its reconciler; later calls return it
-// whatever opts they pass, so cmd/hive's boot-time call is the one
-// construction and the sweeps share it.
-func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) (stageengine.Reconciler, *stageengine.LegacyTable) {
+// writes through, built once per Store over this client's StageWriter.
+// opts may be nil: the default is stageengine.DefaultMode (enforce), so
+// the engine's derivation is what lands on the item. A caller's opts are
+// honoured field by field; nil fields take the same defaults. The first
+// call for a Store fixes its reconciler; later calls return it whatever
+// opts they pass, so cmd/hive's boot-time call is the one construction
+// and the sweeps share it.
+func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Options, logger *slog.Logger) stageengine.Reconciler {
 	if c == nil {
-		return nil, nil
+		return nil
 	}
 	if store == nil {
 		store = stagelabels.Shared()
@@ -68,7 +66,7 @@ func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Opt
 	c.stageEngineMu.Lock()
 	defer c.stageEngineMu.Unlock()
 	if r, ok := c.stageEngines[store]; ok {
-		return r, &c.stageLegacy
+		return r
 	}
 	var o stageengine.Options
 	if opts != nil {
@@ -84,12 +82,6 @@ func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Opt
 	if o.Mode == "" {
 		o.Mode = stageengine.DefaultMode
 	}
-	// The comparator is installed whatever the starting mode: the mode is
-	// a runtime switch (stageengine.ModeSwitch), and shadow and off both
-	// need the sweep's own derivation to write.
-	if o.Legacy == nil {
-		o.Legacy = c.stageLegacy.Lookup
-	}
 	if o.Logger == nil && logger != nil {
 		o.Logger = logger
 	}
@@ -98,5 +90,5 @@ func (c *Client) StageReconciler(store *stagelabels.Store, opts *stageengine.Opt
 		c.stageEngines = map[*stagelabels.Store]stageengine.Reconciler{}
 	}
 	c.stageEngines[store] = r
-	return r, &c.stageLegacy
+	return r
 }
