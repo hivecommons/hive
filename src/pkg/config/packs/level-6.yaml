@@ -4,6 +4,11 @@ description: 'Fully autonomous operation. Fifteen agents run the complete roster
 
   '
 governor:
+  # The semantic injection classifier is on by default from L4 up: agents at
+  # this level open PRs, so paraphrased injections the rules miss are worth a
+  # small model call per untrusted text. Override per hive with
+  # ioscan.classifier.enabled: false.
+  ioscan_classifier: "on"
   modes: SURGE, BUSY, QUIET, IDLE
   # High-trust level: decomposed epic plans are approved automatically, so their
   # child sub-tasks become claimable without a human plan-review step.

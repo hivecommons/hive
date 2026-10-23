@@ -39,9 +39,11 @@ by default.
   `ioscan_canary_leak` audit entry and, in `closed` mode, blocks the request.
   Encodings outside that list are not caught. Git push bodies are not
   inspected; in `closed` mode they are refused.
-* **Optional classifier.** A language model can score already-cleaned text
-  for injections written in plain English. It is off by default. When it
-  errors or times out, the deterministic rules still apply.
+* **Semantic classifier.** A language model scores the already-cleaned text
+  for injections written in plain English that no rule matched. It is on by
+  default at autonomy levels L4–L6 and off below. When it cannot answer,
+  the rules have already run; what happens next depends on its fail mode.
+  See [Classifier](#classifier).
 
 ## What it does not do
 
@@ -66,7 +68,8 @@ ioscan:
     pr_body: medium
     review: medium
   classifier:
-    enabled: false       # default false
+    enabled: true        # default: on at ACMM L4–L6, off at L1–L3
+    fail_mode: closed    # default: follows ioscan.fail_mode (closed at L5–L6)
     model: ""            # empty uses the governor's default model
     warn_threshold: 0.55
     block_threshold: 0.85
@@ -110,6 +113,41 @@ matched a rule that was recorded and then handed to the agent anyway. The
 medium line withholds those. The cost is more withheld text from strangers
 when a rule misfires; raise one surface at a time with `block_at` if that
 happens on your hive.
+
+## Classifier
+
+The rules catch phrasings; the classifier reads intent. After the rules have
+cleaned a piece of untrusted text, the classifier asks a small model for a
+score from 0 to 1. Above `warn_threshold` it files an advisory. Above
+`block_threshold` it withholds the text, or in `closed` mode blocks the
+task.
+
+**Defaults by level.** From L4 up agents open pull requests, so a paraphrase
+that slips past the rules has somewhere to go. The classifier is therefore
+on by default at L4–L6 and off at L1–L3. Set `classifier.enabled` to
+override either way.
+
+**Fail mode.** When the classifier cannot answer (endpoint down, timeout,
+unreadable reply), `open` passes the rule-cleaned text on and records a skip.
+`closed` withholds the text with an `injection.semantic_classifier_unavailable`
+marker and records a fail-closed entry. `classifier.fail_mode` left unset
+follows `ioscan.fail_mode`, so it is `closed` at L5–L6 and `open` below. At
+L5–L6 a hive with no model endpoint configured therefore withholds all
+untrusted text until one is set, or until the owner sets
+`classifier.enabled: false` or `classifier.fail_mode: open`. The boot log
+says so in one line.
+
+**What still passes.** The classifier has a budget of 64 calls per scheduler
+pass. Text beyond that budget is passed on with a `budget_exhausted` skip in
+the audit log, in either fail mode. Review-bot threads are not sent to the
+classifier; the rules alone cover them.
+
+**Cost.** One call per untrusted text per pass, cached by content, with an
+8,000-character cap per call. At the default model that is on the order of
+a few thousand input tokens per call; a hive that sees 200 new or edited
+untrusted texts a day spends well under a dollar a day. Pick a cheaper model
+with `classifier.model` or turn it off with `classifier.enabled: false` if
+that is too much.
 
 ## Related checks that do not depend on ioscan
 

@@ -95,6 +95,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if _, err := c.Ioscan.Policy(); err != nil {
 		return err
 	}
+	if m := strings.ToLower(strings.TrimSpace(c.Ioscan.Classifier.FailMode)); m != "" && m != ioscanFailModeOpen && m != ioscanFailModeClosed {
+		return fmt.Errorf("ioscan.classifier.fail_mode: %q is not \"open\" or \"closed\"", c.Ioscan.Classifier.FailMode)
+	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().

@@ -4,6 +4,11 @@ description: 'Semi-autonomous feedback. Fourteen agents can propose issues and p
 
   '
 governor:
+  # The semantic injection classifier is on by default from L4 up: agents at
+  # this level open PRs, so paraphrased injections the rules miss are worth a
+  # small model call per untrusted text. Override per hive with
+  # ioscan.classifier.enabled: false.
+  ioscan_classifier: "on"
   modes: SURGE, BUSY, QUIET, IDLE
   # Gate 2 stays on at L5: a human approves the task list before it enters
   # the pool. L6 ("runs itself") keeps auto-approve (RFC hivecommons/hive#7993 §4).

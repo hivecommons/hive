@@ -207,7 +207,7 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on := true
 		cfg.Ioscan.Enabled = &on
-		cfg.Ioscan.Classifier.Enabled = true
+		cfg.Ioscan.Classifier.Enabled = &on
 		b := newBootDashboardBoot(t, cfg)
 		// bootDashboardWith starts backfillRecentMergedPRs in a goroutine that
 		// logs through b.logger, so the sink must be goroutine-safe (#13168).
@@ -224,11 +224,49 @@ func TestBootDashboardWithClassifier(t *testing.T) {
 			t.Fatalf("log:\n%s", log.String())
 		}
 	})
+	t.Run("L5 default on, no endpoint installs fail-closed classifier", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on := true
+		cfg.Ioscan.Enabled = &on
+		level := 5
+		cfg.ACMMLevel = &level
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); !installed {
+			t.Fatal("L5 requires the classifier; an unavailable classifier must be installed so scans fail closed")
+		}
+		if !strings.Contains(log.String(), "required at this ACMM level but not running") {
+			t.Fatalf("log:\n%s", log.String())
+		}
+	})
+	t.Run("L5 with classifier disabled explicitly skips", func(t *testing.T) {
+		cfg := bootDashboardConfig()
+		on, off := true, false
+		cfg.Ioscan.Enabled = &on
+		cfg.Ioscan.Classifier.Enabled = &off
+		level := 5
+		cfg.ACMMLevel = &level
+		b := newBootDashboardBoot(t, cfg)
+		var log syncLogBuffer
+		b.logger = slog.New(slog.NewTextHandler(&log, nil))
+		b.sched = scheduler.New(cfg, b.logger)
+
+		b.bootDashboardWith(newBootDashboardFake().deps)
+
+		if _, _, installed := b.sched.IoscanHooksForTest(); installed {
+			t.Fatal("explicit classifier.enabled: false must win at L5")
+		}
+	})
 	t.Run("endpoint installs cached classifier", func(t *testing.T) {
 		cfg := bootDashboardConfig()
 		on := true
 		cfg.Ioscan.Enabled = &on
-		cfg.Ioscan.Classifier.Enabled = true
+		cfg.Ioscan.Classifier.Enabled = &on
 		cfg.Ioscan.Classifier.Model = "judge-small"
 		cfg.Governor.Trajectory.Endpoint = "http://127.0.0.1:1/v1"
 		b := newBootDashboardBoot(t, cfg)

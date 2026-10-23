@@ -53,9 +53,10 @@ of "ioscan findings" is not a count of attacks stopped.
 
 ### Not covered
 
-* **The optional classifier.** It is off by default and needs a live
-  language-model endpoint; its contribution is unmeasured. It fails open, so
-  the numbers here are the worst case whether or not it is enabled.
+* **The semantic classifier.** It needs a live language-model endpoint, so
+  this corpus does not exercise it and its contribution is unmeasured. The
+  numbers here are what the rules alone do: the floor at L1–L3, where the
+  classifier is off by default, and the worst case at L4–L6, where it is on.
 * **The output path and canaries.** The canary egress check has its own
   unit tests for known encodings
   ([#6686](https://github.com/hivecommons/hive/issues/6686)) but no measured

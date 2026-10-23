@@ -112,9 +112,51 @@ func TestIoscanConfig_FailClosedAtLevel(t *testing.T) {
 	}
 }
 
-func TestIoscanClassifierConfig_DefaultOff(t *testing.T) {
+func TestIoscanClassifierConfig_DefaultFollowsLevel(t *testing.T) {
 	var c IoscanConfig
-	if c.Classifier.Enabled {
-		t.Fatal("ioscan classifier must default off")
+	for level, want := range map[int]bool{0: false, 1: false, 3: false, 4: true, 5: true, 6: true, 7: false} {
+		if got := c.ClassifierEnabledAtLevel(level); got != want {
+			t.Errorf("ClassifierEnabledAtLevel(%d) = %v, want %v", level, got, want)
+		}
+	}
+	off := false
+	c.Classifier.Enabled = &off
+	if c.ClassifierEnabledAtLevel(5) {
+		t.Fatal("explicit enabled: false must win at L5")
+	}
+	on := true
+	c.Classifier.Enabled = &on
+	if !c.ClassifierEnabledAtLevel(1) {
+		t.Fatal("explicit enabled: true must win at L1")
+	}
+	disabled := false
+	c.Enabled = &disabled
+	if c.ClassifierEnabledAtLevel(5) {
+		t.Fatal("ioscan.enabled: false must switch the classifier off too")
+	}
+}
+
+func TestIoscanClassifierConfig_FailClosedAtLevel(t *testing.T) {
+	cases := []struct {
+		name, ioscanMode, classifierMode string
+		level                            int
+		want                             bool
+	}{
+		{"pack default L4 open", "", "", 4, false},
+		{"pack default L5 closed", "", "", 5, true},
+		{"pack default L6 closed", "", "", 6, true},
+		{"ioscan open inherited", "open", "", 5, false},
+		{"ioscan closed inherited", "closed", "", 1, true},
+		{"classifier open wins", "closed", "open", 6, false},
+		{"classifier closed wins", "open", "closed", 1, true},
+		{"case-insensitive", "", "CLOSED", 2, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := IoscanConfig{FailMode: tc.ioscanMode, Classifier: IoscanClassifierConfig{FailMode: tc.classifierMode}}
+			if got := c.ClassifierFailClosedAtLevel(tc.level); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

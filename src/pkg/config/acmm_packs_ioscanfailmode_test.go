@@ -48,3 +48,13 @@ func TestPackGovernorIoscanFailModeField(t *testing.T) {
 		}
 	}
 }
+
+// TestIoscanClassifierForLevel checks the ioscan_classifier default resolves
+// from the packs: on at L4-L6, off below and for unknown levels.
+func TestIoscanClassifierForLevel(t *testing.T) {
+	for level, want := range map[int]bool{0: false, 1: false, 2: false, 3: false, 4: true, 5: true, 6: true, 9: false} {
+		if got := IoscanClassifierForLevel(level); got != want {
+			t.Errorf("IoscanClassifierForLevel(%d) = %v, want %v", level, got, want)
+		}
+	}
+}

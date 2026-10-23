@@ -113,6 +113,13 @@ func (s *Scheduler) ioscanFailClosed() bool {
 	return s.cfg != nil && s.cfg.Ioscan.FailClosedAtLevel(s.cfg.ACMMLevelOrZero())
 }
 
+// classifierFailClosed reports whether a classifier that cannot answer
+// withholds the text (ioscan.classifier.fail_mode, defaulting to the ioscan
+// fail mode and so to closed at ACMM L5-L6).
+func (s *Scheduler) classifierFailClosed() bool {
+	return s.cfg != nil && s.cfg.Ioscan.ClassifierFailClosedAtLevel(s.cfg.ACMMLevelOrZero())
+}
+
 // ioscanPolicy returns the configured severity matrix (ioscan.block_at), or
 // the shipped default when the config is absent or did not validate; config
 // load already rejects a bad map, so the fallback is for tests and nil cfg.
@@ -191,13 +198,22 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 	}
 	score, err := classifier.Score(context.Background(), sanitized)
 	if err != nil {
+		if s.classifierFailClosed() {
+			s.recordClassifierSkip("error_fail_closed")
+			if s.logger != nil {
+				s.logger.Warn("ioscan classifier failed closed; text withheld", "error", err)
+			}
+			cv := ioscan.UnavailableVerdict(err.Error())
+			s.recordIoscanFailClosed(cv)
+			return ioscan.UnavailableRedactionMarker("error"), cv
+		}
 		s.recordClassifierSkip("error")
 		if s.logger != nil {
 			s.logger.Warn("ioscan classifier failed open", "error", err)
 		}
 		return sanitized, v
 	}
-	action := ioscan.ActionForScore(score, thresholds, s.ioscanFailClosed())
+	action := ioscan.ActionForScore(score, thresholds, s.classifierFailClosed())
 	s.recordClassifierResult(score, action)
 	switch action {
 	case ioscan.ClassifierActionBlock:
