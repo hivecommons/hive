@@ -91,7 +91,7 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    are aliases of the `pkg/agent` definitions for now: Stage 1 renames the
    seam, Stage 2 moves the definitions behind it. `pkg/dashboard` holds a
    `crux.Runtime` in `Dependencies.AgentMgr` and went from 68 to 51 distinct
-   `agent.<Symbol>` references; what remains is audit, commit-trailer,
+   `agent.<Symbol>` references; what remained was audit, commit-trailer,
    provider-status, Copilot-token and agent-mode helpers plus the test-only
    manager constructors, none of which a lifecycle interface covers.
    `pkg/hub` holds no manager at all: its 18 references were the provider
@@ -106,8 +106,14 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    imports `pkg/agent`, which cannot import it back; it folds into
    `pkg/crux` once `Process` is its own type. That move took `pkg/hub` to 1
    (`AgentAvailableAtACMMLevel`), `pkg/hub/spoke` 15 → 5, `pkg/dashboard`
-   51 → 39 and `cmd/hive` 37 → 33. `pkg/crux` and everything under it is
-   inside the boundary for the ratchet's purposes.
+   51 → 39 and `cmd/hive` 37 → 33. The dashboard's audit, lease-stage,
+   commit-trailer and artifact-link references were aliases of
+   `pkg/agentaudit`, the stdlib-only governor-side leaf; `pkg/agent` now
+   keeps only the lifecycle actions it emits itself and the dashboard
+   references `agentaudit` directly, taking it 39 → 19 (manager
+   constructors, `ProjectContext`, `NewRingBuffer`, Copilot-token and
+   agent-mode helpers). `pkg/crux` and everything under it is inside the
+   boundary for the ratchet's purposes.
 4. Agent configuration as its own struct and file (shipped):
    `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
    `src/pkg/config/agent_config.go`, embedded inline in `Config` and

@@ -7,8 +7,10 @@ import (
 // The audit vocabulary — action names, the AuditSink interface, and the
 // detail-string formatting — lives in the stdlib-only leaf pkg/agentaudit so
 // policy-layer packages can emit audit events without importing this runtime
-// package. The aliases below keep every existing consumer of agent.Audit* /
-// agent.AuditSink / agent.FormatAuditDetail working unchanged.
+// package. The aliases below are the lifecycle actions this runtime itself
+// emits; the governor-side vocabulary (lease stages, commit trailers,
+// artifact links, FormatAuditDetail, Fields) is agentaudit's alone and is
+// referenced there directly (hivecommons/hive#13536).
 const (
 	AuditAgentStarted     = agentaudit.AuditAgentStarted
 	AuditAgentStartFailed = agentaudit.AuditAgentStartFailed
@@ -24,18 +26,6 @@ const (
 
 	AuditCopilotTokenMissing = agentaudit.AuditCopilotTokenMissing
 	AuditClaudeTokenMissing  = agentaudit.AuditClaudeTokenMissing
-
-	AuditLeaseStageAdvanced  = agentaudit.AuditLeaseStageAdvanced
-	AuditLeaseStageRetried   = agentaudit.AuditLeaseStageRetried
-	AuditLeaseStageReset     = agentaudit.AuditLeaseStageReset
-	AuditLeaseStageRefused   = agentaudit.AuditLeaseStageRefused
-	AuditLeaseStageEscalated = agentaudit.AuditLeaseStageEscalated
-
-	TrailerRun  = agentaudit.TrailerRun
-	TrailerPlan = agentaudit.TrailerPlan
-	TrailerSpec = agentaudit.TrailerSpec
-
-	AuditArtifactLinkMissing = agentaudit.AuditArtifactLinkMissing
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
@@ -47,20 +37,9 @@ const (
 const auditActorSystem = "system"
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.
-// See agentaudit.AuditSink for the contract; the alias exists so the many
-// existing consumers keep compiling unchanged.
+// See agentaudit.AuditSink for the contract; the alias exists because it is
+// the parameter type of SetAuditSink.
 type AuditSink = agentaudit.AuditSink
-
-type AuditRecord = agentaudit.AuditRecord
-type AuditReader = agentaudit.AuditReader
-type CommitMessageReader = agentaudit.CommitMessageReader
-type ArtifactLinks = agentaudit.Links
-type ArtifactResolver = agentaudit.Resolver
-type LocalGit = agentaudit.LocalGit
-
-var ResolveCommit = agentaudit.ResolveCommit
-var ParseTrailers = agentaudit.ParseTrailers
-var MissingTrailers = agentaudit.MissingTrailers
 
 // SetAuditSink installs the durable audit sink. Safe to leave unset: a nil
 // sink makes every audit call a no-op, which is what unit tests and any
@@ -96,16 +75,4 @@ func (m *Manager) auditWithActor(actor, action, agentName string, fields map[str
 // agentaudit.Fields.
 func auditFields(kv ...any) map[string]any {
 	return agentaudit.Fields(kv...)
-}
-
-// Fields builds a structured audit field map for external emitters that use the
-// agent audit vocabulary without importing pkg/agentaudit directly.
-func Fields(kv ...any) map[string]any {
-	return agentaudit.Fields(kv...)
-}
-
-// FormatAuditDetail renders a fields map as the stable "k=v, k=v" detail
-// string; see agentaudit.FormatAuditDetail.
-func FormatAuditDetail(fields map[string]any) string {
-	return agentaudit.FormatAuditDetail(fields)
 }

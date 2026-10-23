@@ -7,15 +7,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // TestAgentAuditSinkSatisfiesInterface pins the dependency-inversion contract:
-// the dashboard adapter must remain assignable to agent.AuditSink, which is
+// the dashboard adapter must remain assignable to agentaudit.AuditSink, which is
 // what lets cmd/hive inject it without pkg/agent importing pkg/dashboard.
 func TestAgentAuditSinkSatisfiesInterface(t *testing.T) {
-	var _ agent.AuditSink = &agentAuditSink{}
+	var _ agentaudit.AuditSink = &agentAuditSink{}
 
 	s := &Server{audit: &AuditLog{}}
 	if s.AgentAuditSink() == nil {
@@ -38,7 +38,7 @@ func TestAgentAuditSinkRendersLifecycleEntry(t *testing.T) {
 	log := &AuditLog{}
 	sink := &agentAuditSink{log: log}
 
-	sink.Record("system", agent.AuditAgentStartFailed, "ci-maintainer", map[string]any{
+	sink.Record("system", agentaudit.AuditAgentStartFailed, "ci-maintainer", map[string]any{
 		"outcome": "failure",
 		"backend": "watsonx",
 		"model":   "granite-3",
@@ -50,8 +50,8 @@ func TestAgentAuditSinkRendersLifecycleEntry(t *testing.T) {
 		t.Fatalf("got %d entries, want 1", len(entries))
 	}
 	e := entries[0]
-	if e.Action != agent.AuditAgentStartFailed {
-		t.Errorf("Action = %q, want %q", e.Action, agent.AuditAgentStartFailed)
+	if e.Action != agentaudit.AuditAgentStartFailed {
+		t.Errorf("Action = %q, want %q", e.Action, agentaudit.AuditAgentStartFailed)
 	}
 	if e.Agent != "ci-maintainer" {
 		t.Errorf("Agent = %q, want ci-maintainer", e.Agent)
@@ -75,7 +75,7 @@ func TestAgentAuditSinkSurvivesPersistReload(t *testing.T) {
 
 	log := &AuditLog{writer: &lumberjack.Logger{Filename: path}}
 	sink := &agentAuditSink{log: log}
-	sink.Record("system", agent.AuditAgentStartFailed, "ci-maintainer", map[string]any{
+	sink.Record("system", agentaudit.AuditAgentStartFailed, "ci-maintainer", map[string]any{
 		"outcome": "failure",
 		"backend": "watsonx",
 		"model":   "granite-3",
@@ -100,8 +100,8 @@ func TestAgentAuditSinkSurvivesPersistReload(t *testing.T) {
 	if err := json.Unmarshal([]byte(line), &reloaded); err != nil {
 		t.Fatalf("unmarshal persisted entry: %v", err)
 	}
-	if reloaded.Action != agent.AuditAgentStartFailed {
-		t.Errorf("Action = %q, want %q", reloaded.Action, agent.AuditAgentStartFailed)
+	if reloaded.Action != agentaudit.AuditAgentStartFailed {
+		t.Errorf("Action = %q, want %q", reloaded.Action, agentaudit.AuditAgentStartFailed)
 	}
 	if reloaded.Agent != "ci-maintainer" {
 		t.Errorf("Agent = %q, want ci-maintainer", reloaded.Agent)

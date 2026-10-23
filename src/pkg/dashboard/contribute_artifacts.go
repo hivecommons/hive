@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/agentaudit"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -28,16 +28,16 @@ func (h *ContributeWSHub) validatePRArtifactTrailers(task *WSTaskAssign, prURL s
 	}
 	run := task.identityKey()
 	for _, commit := range commits {
-		missing := agent.MissingTrailers(commit.Message)
+		missing := agentaudit.MissingTrailers(commit.Message)
 		if len(missing) == 0 {
 			continue
 		}
-		trailers := agent.ParseTrailers(commit.Message)
-		h.server.AgentAuditSink().Record("system", agent.AuditArtifactLinkMissing, task.TaskID,
-			agent.Fields(
-				"run", firstRunNonEmpty(trailers[agent.TrailerRun], run),
-				"plan", trailers[agent.TrailerPlan],
-				"clause", trailers[agent.TrailerSpec],
+		trailers := agentaudit.ParseTrailers(commit.Message)
+		h.server.AgentAuditSink().Record("system", agentaudit.AuditArtifactLinkMissing, task.TaskID,
+			agentaudit.Fields(
+				"run", firstRunNonEmpty(trailers[agentaudit.TrailerRun], run),
+				"plan", trailers[agentaudit.TrailerPlan],
+				"clause", trailers[agentaudit.TrailerSpec],
 				"sha", commit.SHA,
 				"missing", strings.Join(missing, ","),
 				"pr", strconv.Itoa(ref.Number),

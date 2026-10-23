@@ -48,10 +48,12 @@ import (
 // token and agent-mode helpers plus the test-only manager constructors.
 // Provider-status and backend-auth types then moved to pkg/crux/types
 // (re-exported by pkg/crux, aliased by pkg/agent): hub 18 → 1, spoke 15 → 5,
-// dashboard 51 → 39, cmd/hive 37 → 33.
+// dashboard 51 → 39, cmd/hive 37 → 33. The dashboard's audit, lease-stage,
+// commit-trailer and artifact-link references then moved to pkg/agentaudit,
+// the governor-side leaf they were always aliases of: dashboard 39 → 19.
 var cruxSymbolBaseline = map[string]int{
 	"cmd/hive":      33,
-	"pkg/dashboard": 39,
+	"pkg/dashboard": 19,
 	"pkg/discord":   1,
 	"pkg/hub":       1,
 	"pkg/hub/spoke": 5,

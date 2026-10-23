@@ -1,10 +1,8 @@
 package dashboard
 
-import (
-	"github.com/hivecommons/hive/pkg/agent"
-)
+import "github.com/hivecommons/hive/pkg/agentaudit"
 
-// agentAuditSink adapts the dashboard's AuditLog to agent.AuditSink so the
+// agentAuditSink adapts the dashboard's AuditLog to agentaudit.AuditSink so the
 // agent manager can record lifecycle events (start, stop, launch failure,
 // backend/model change) into the durable, queryable audit store.
 //
@@ -15,18 +13,18 @@ type agentAuditSink struct {
 	log *AuditLog
 }
 
-// Record implements agent.AuditSink. Fields are rendered with the shared
+// Record implements agentaudit.AuditSink. Fields are rendered with the shared
 // formatter in pkg/agent so the detail column has one canonical shape
 // regardless of which side produced the entry.
 func (s *agentAuditSink) Record(actor, action, agentName string, fields map[string]any) {
 	if s == nil || s.log == nil {
 		return
 	}
-	s.log.Log(actor, action, agent.FormatAuditDetail(fields), agentName)
+	s.log.Log(actor, action, agentaudit.FormatAuditDetail(fields), agentName)
 }
 
-// AgentAuditSink returns an agent.AuditSink backed by this server's audit log,
+// AgentAuditSink returns an agentaudit.AuditSink backed by this server's audit log,
 // for injection into the agent manager at wiring time (see cmd/hive/main.go).
-func (s *Server) AgentAuditSink() agent.AuditSink {
+func (s *Server) AgentAuditSink() agentaudit.AuditSink {
 	return &agentAuditSink{log: s.audit}
 }
