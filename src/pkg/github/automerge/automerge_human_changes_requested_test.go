@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func humanReview(id int64, login, state, commit, body string) map[string]any {
@@ -22,8 +23,8 @@ func humanReview(id int64, login, state, commit, body string) map[string]any {
 
 // TestTrySweepSelfAuthoredPRHonoursHumanChangesRequested pins
 // hivecommons/hive#13041: a trusted human's changes_requested on the App's
-// own PR head sends it to fixing (reason human-changes-requested, a
-// stageFixingReasons member) and records one request for the planner.
+// own PR head sends it to fixing (reason human-changes-requested) and
+// records one request for the planner.
 func TestTrySweepSelfAuthoredPRHonoursHumanChangesRequested(t *testing.T) {
 	const body = "Please (1) gate it behind the flag and (2) drop the retry loop."
 	tests := []struct {
@@ -98,8 +99,8 @@ func TestTrySweepSelfAuthoredPRHonoursHumanChangesRequested(t *testing.T) {
 			if req.Actor != "bob" || req.Body != body || req.Source != review.HumanChangeRequestSourceReview || req.SourceID != 1 {
 				t.Fatalf("recorded request = %+v", req)
 			}
-			if !stageFixingReasons[reason] {
-				t.Fatalf("%q is not a fixing reason; the PR would not reach 070", reason)
+			if got := classifyStage(stageObservation{SelfAuthored: true, Reason: reason}); got.Stage != stagelabels.Fixing {
+				t.Fatalf("%q routes to %v, want fixing (070)", reason, got.Stage)
 			}
 			if _, asks, _ := nudgeDiagnosis(reason, stageDetail{}); len(asks) != 1 || !strings.Contains(asks[0], "maintainer requested changes") {
 				t.Fatalf("nudge prose for %q = %q", reason, asks)
