@@ -119,20 +119,25 @@ func TestNudgeIfPollingCIWallClockSecondNudgeSuppressed(t *testing.T) {
 	}
 }
 
-// TestNudgeIfPollingCISkipsReviewer pins #13860: a reviewer reading check
-// status on the PRs it reviews must not be nudged or reported.
-func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
+// TestNudgeIfPollingCISkipsMonitoringLanes pins #13860 and #13898: reviewers
+// and CI maintainers read check status as evidence for the PRs and repositories
+// they monitor, so that work must not be mistaken for polling their own PR.
+func TestNudgeIfPollingCISkipsMonitoringLanes(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
 		agentName  string
 		role       string
 		wantNudged bool
 	}{
-		{name: "role", agentName: "scanner", role: ReviewerRole, wantNudged: false},
-		{name: "name only", agentName: "code-reviewer-sonnet-1", role: "", wantNudged: false},
+		{name: "reviewer role", agentName: "scanner", role: ReviewerRole, wantNudged: false},
+		{name: "reviewer name only", agentName: "code-reviewer-sonnet-1", role: "", wantNudged: false},
+		{name: "CI maintainer role", agentName: "worker", role: "ci-maintainer", wantNudged: false},
+		{name: "CI maintainer name only", agentName: "ci-maintainer", role: "", wantNudged: false},
 		{name: "developer", agentName: "scanner", role: "developer", wantNudged: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			tr := fleetreport.NewRuntimeTracker(nil)
+			fleetreport.SetDefaultTrackerForTest(t, tr)
 			m, a := ciPollManager(t, ciPollIdlePane, 2*time.Minute)
 			a.Name = tt.agentName
 			a.Config.Role = tt.role
@@ -141,8 +146,8 @@ func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
 
 			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
 			scrollback := ""
-			for i := 0; i < ciPollNudgeThreshold+2; i++ {
-				scrollback += "gh pr checks 123\n"
+			for range ciPollNudgeThreshold + 2 {
+				scrollback += "gh run list --repo acme/widgets\n"
 			}
 			m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
 
@@ -155,8 +160,13 @@ func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
 			if (a.CIPollNudges > 0) != tt.wantNudged {
 				t.Errorf("CIPollNudges = %d, wantNudged %v", a.CIPollNudges, tt.wantNudged)
 			}
-			if !tt.wantNudged && sent != 0 {
-				t.Errorf("sent %d literals to reviewer, want 0", sent)
+			if !tt.wantNudged {
+				if sent != 0 {
+					t.Errorf("sent %d literals to monitoring lane, want 0", sent)
+				}
+				if ev := ciPollEvidence(tr); len(ev) != 0 {
+					t.Errorf("ci_poll_nudge evidence = %d for monitoring lane, want 0: %#v", len(ev), ev)
+				}
 			}
 		})
 	}

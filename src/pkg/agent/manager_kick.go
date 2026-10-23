@@ -1382,6 +1382,22 @@ func reviewLaneAgent(agent *AgentProcess) bool {
 	return false
 }
 
+// ciPollNudgeExemptAgent identifies lanes whose work inherently reads CI
+// status across repositories. The guard cannot distinguish those operational
+// reads from an agent polling its own PR, so nudging these lanes interrupts the
+// work they were kicked to do.
+func ciPollNudgeExemptAgent(agent *AgentProcess) bool {
+	if reviewLaneAgent(agent) {
+		return true
+	}
+	for _, f := range []string{agent.Name, agent.Config.Role} {
+		if strings.EqualFold(strings.TrimSpace(f), "ci-maintainer") {
+			return true
+		}
+	}
+	return false
+}
+
 // nudgeIfPollingCI tells an agent that keeps polling CI within one kick to
 // move on. Policy templates already forbid it; this is the harness backstop.
 // Sends at most one nudge per kick, and only at an idle prompt so it never
@@ -1397,9 +1413,10 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
 		return
 	}
-	// Reviewers read CI on the PRs under review as evidence and own no PR to
-	// wait on, so polling checks is not the loop this guard targets (#13860).
-	if reviewLaneAgent(agent) {
+	// Reviewers and CI maintainers read check status as evidence for the PRs
+	// and repositories they inspect. Those reads are not an own-PR wait loop,
+	// which this guard cannot identify from pane text alone (#13860, #13898).
+	if ciPollNudgeExemptAgent(agent) {
 		return
 	}
 	count := countCIPollCommands(scrollback)
