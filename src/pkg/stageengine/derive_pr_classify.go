@@ -503,7 +503,7 @@ func BaseBranchRedStage(o stageObservation) (stageVerdict, bool) {
 	if len(o.BaseRedChecks) == 0 {
 		return stageVerdict{}, false
 	}
-	if ClassifyCIReason(o.Reason) != CIReasonRed && o.Detail.redCheck(o.HeadSHA) == "" {
+	if ClassifyCIReason(o.Reason) != CIReasonRed && o.Detail.RedCheck(o.HeadSHA) == "" {
 		return stageVerdict{}, false
 	}
 	stage := stagelabels.ReviewPending
@@ -522,7 +522,7 @@ func SharedCIDeferredStage(o stageObservation) (stageVerdict, bool) {
 	if o.SharedCIIncident <= 0 {
 		return stageVerdict{}, false
 	}
-	if ClassifyCIReason(o.Reason) != CIReasonRed && o.Detail.redCheck(o.HeadSHA) == "" {
+	if ClassifyCIReason(o.Reason) != CIReasonRed && o.Detail.RedCheck(o.HeadSHA) == "" {
 		return stageVerdict{}, false
 	}
 	stage := stagelabels.ReviewPending
