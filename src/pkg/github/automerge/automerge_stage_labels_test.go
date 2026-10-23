@@ -451,8 +451,11 @@ func TestResolveStageKeepsExistingRoleWhenNoLaneReportsOne(t *testing.T) {
 			author: stagelabels.RoleUntrusted,
 		},
 		{
-			name:   "lane tier overrides the existing label",
-			list:   []stageObservation{{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Labels: []string{"role/trusted"}, Detail: stageDetail{Role: stagelabels.RoleContributor}}},
+			// Owned stage: the label is only a fallback, so a lane-reported
+			// tier wins. (On weak stages the label is merged first and a
+			// trusted label is sticky by Role.Merge — pre-existing.)
+			name:   "lane tier overrides the existing label on an owned stage",
+			list:   []stageObservation{{Lane: stageLaneContributor, Reason: "required-check-pending:build", Labels: []string{"role/trusted"}, Detail: stageDetail{Role: stagelabels.RoleContributor}}},
 			author: stagelabels.RoleContributor,
 		},
 	}
