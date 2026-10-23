@@ -7323,7 +7323,7 @@ type ReviewConfig struct {
 	// off still shows the outcome on the PR. Like HumanDecisionLabel the
 	// labels are never created; a repo without them is skipped. Labels are
 	// informational and never block.
-	VerdictLabels ReviewVerdictLabelsConfig `yaml:"verdict_labels,omitempty" json:"verdict_labels,omitempty"`
+	VerdictLabels ReviewVerdictLabelsConfig `yaml:"verdict_labels,omitempty" json:"verdict_labels,omitzero"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.

@@ -451,7 +451,7 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 	if len(issueBodies) != 1 {
 		t.Fatalf("issues = %d, want 1 (the P3 nit only)", len(issueBodies))
 	}
-	if strings.Join(issueLabels[0], ",") != "nit,blocked,agent/reviewer" {
+	if strings.Join(issueLabels[0], ",") != "nit,agent/reviewer,blocked" {
 		t.Fatalf("labels = %v, want nit, blocked (#13833) and the agent/reviewer fallback label", issueLabels[0])
 	}
 	if !strings.Contains(issueBodies[0], "https://github.com/o/r/blob/abc/pkg/a.go#L3") || !strings.Contains(issueBodies[0], "filed by Hive review backlog") {

@@ -203,7 +203,7 @@ func ReconcileReviewBacklogBlocks(ctx context.Context, c *Client, logger *slog.L
 			if outcome == reviewBacklogPROpen {
 				continue
 			}
-			if sink == nil || sink.Destination() != rec.Destination {
+			if sink.Destination() != rec.Destination {
 				res.Errors++
 				logger.Warn("review backlog block sweep: item's destination is not the configured one; left blocked", "item", rec.ItemKey, "destination", rec.Destination)
 				continue
