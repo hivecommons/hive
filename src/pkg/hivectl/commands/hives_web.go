@@ -545,54 +545,58 @@ kbd{font-family:var(--font-mono);font-size:.78em;border:1px solid var(--line-str
 .skip{position:absolute;left:-9999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:10;background:var(--surface-2);color:var(--text);padding:.5rem;border:2px solid var(--ring)}
 dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}summary{cursor:pointer}
 @media (max-width:480px),(max-height:600px){.staging{position:static}}@media (max-width:480px){#contribution-tree,[role=group]{padding-left:.25rem}[role=group]{padding-left:.5rem}.identity{min-width:0}}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.more{display:none;order:9;flex-basis:100%;gap:.5rem;flex-wrap:wrap;align-items:center;padding:.15rem 0 .1rem 1.9rem}.tree-row.active>.more{display:flex}.more form{margin:0;display:flex;gap:.4rem}
+.toggle{padding:.05rem .45rem;min-width:1.9rem}details.help{margin:.5rem 0}details.help dl{margin:.4rem 0}.brandbar button{margin-left:.5rem}
+#manage{margin-top:1.2rem}#manage>summary{font-size:1.05rem;font-weight:700;padding:.6rem 0}
+.brandbar{flex-wrap:wrap}
 </style>
 <button type="button" class="skip" id="skip-apply">Skip to staged changes and Apply</button>
 <button type="button" class="skip" id="skip-profiles">Skip to profile management</button>
 <main>
-<header class="brandbar"><span class="bee" aria-hidden="true">🐝</span><div><div class="eyebrow">Hive · local console</div><h1>The Commons</h1></div><span class="pill">loopback only</span></header>
-<p class="muted">This loopback-only page edits the same local profile store as <code>hivectl hives</code> and the TUI. Registration tokens are never displayed.</p>
+<header class="brandbar"><span class="bee" aria-hidden="true">🐝</span><div><div class="eyebrow">Hive · local console</div><h1>The Commons</h1></div><span class="pill">loopback only</span><button id="tree-leave" type="button">Close</button></header>
 <section aria-labelledby="tree-title">
-<h2 id="tree-title">Contribution tree</h2>
-<p>Review current membership, then Apply. Following is separate from selection; deselecting current membership retains follow rules, which can repopulate it. Readiness and activity are unavailable until relay evidence is connected.</p>
-<details><summary>What do these words mean?</summary><dl>
-<dt>Hive</dt><dd>A project's contribution endpoint that you are subscribed to. Each Hive keeps its own saved choices.</dd>
-<dt>Hub</dt><dd>A directory that lists several Hives. “Direct Hives” are Hives you added without a hub.</dd>
-<dt>Selected / Partial / Off</dt><dd>Whether the repositories a Hive offers are chosen for your machine to work on.</dd>
-<dt>Unrestricted — legacy</dt><dd>An older subscription with no repository choices saved. It can receive work from every repository the Hive offers. “Review and restrict” lets you choose.</dd>
-<dt>Unreviewed</dt><dd>A repository the Hive offers that you have not chosen or excluded yet. It receives no work until you select it.</dd>
-<dt>Excluded</dt><dd>A repository you have vetoed. Selecting a whole Hive or hub never brings it back.</dd>
-<dt>Accept all new repositories</dt><dd>Also choose repositories the Hive adds later (picked up whenever membership is refreshed). Off by default. “Accept N new” chooses the ones already waiting.</dd>
-<dt>Tick-down</dt><dd>Like folders in a file manager: ticking a hub ticks every Hive under it, ticking a Hive ticks all its repositories, and a partly ticked parent shows a dash. Anything you excluded stays excluded.</dd>
-<dt>Apply / Discard</dt><dd>Nothing is saved until you press Apply. Discard throws the staged changes away.</dd>
-</dl></details>
-<p class="muted keys" id="tree-keys">Keyboard: <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>←</kbd> collapse or go to parent · <kbd>→</kbd> expand or go to first child · <kbd>Space</kbd> select · <kbd>Enter</kbd> expand/collapse · <kbd>*</kbd> expand everything below · type a name to jump · <kbd>Tab</kbd> for the row's other controls.</p>
-<div class="tree-tools"><label>Search (press /) <input id="tree-search" type="search"></label><button id="tree-select-matching" hidden>Select matching</button><button id="tree-collapse-all">Collapse all</button><button id="tree-expand-all">Expand all</button><button id="tree-refresh">Refresh membership</button><button id="tree-leave">Leave page</button></div>
-<ul id="contribution-tree" role="tree" aria-label="Hub, Hive and repository contributions"></ul>
-<div class="staging"><div id="tree-info" role="region" aria-label="Details of the focused or hovered row"></div><div class="staging-main" aria-labelledby="diff-title"><h3 id="diff-title">Staged changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No staged changes.</p><details><summary>Named targets and shared effects</summary><pre id="tree-diff"></pre><details><summary>Raw diff (JSON)</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div></div>
+<h2 id="tree-title">What you contribute to</h2>
+<p>Turn on what this machine may work on. Nothing is saved until you press <strong>Apply</strong>.</p>
+<details class="help"><summary>Help &amp; keyboard</summary><dl>
+<dt>Hive</dt><dd>A project you can contribute to. A hub is a group of Hives.</dd>
+<dt>New</dt><dd>Offered to you but not chosen yet. It gets no work until you turn it on.</dd>
+<dt>Excluded</dt><dd>Never, even if you turn on the whole group.</dd>
+<dt>Unrestricted</dt><dd>An older setup that gets work from everything the Hive offers. “Choose what to allow” limits it.</dd>
+<dt>Accept all new</dt><dd>Also turn on repositories added later. “Accept N new” turns on the ones already waiting.</dd>
+<dt>Turning on a group</dt><dd>Turns on everything inside it; a dash means only some are on.</dd>
+</dl>
+<p class="keys">Keys: <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>←</kbd> <kbd>→</kbd> collapse or expand · <kbd>Space</kbd> turn on or off · <kbd>/</kbd> search · type a name to jump · <kbd>Tab</kbd> for the row’s buttons.</p>
+<p class="muted">This page edits the same local profiles as <code>hivectl hives</code> and the TUI. Registration tokens are never shown.</p>
+</details>
+<div class="tree-tools"><label>Search <input id="tree-search" type="search" placeholder="Press /"></label><button id="tree-select-matching" hidden>Turn on matching</button><button id="tree-collapse-all">Collapse all</button><button id="tree-expand-all">Expand all</button><button id="tree-refresh">Check for new</button></div>
+<ul id="contribution-tree" role="tree" aria-label="Things you contribute to or could"></ul>
+<div class="staging"><div id="tree-info" role="region" aria-label="Details of the focused or hovered row"></div><div class="staging-main" aria-labelledby="diff-title"><h3 id="diff-title">Your changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No changes yet.</p><details><summary>Exact changes</summary><pre id="tree-diff"></pre><details><summary>Technical detail</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div></div>
 </section>
-<h2 id="profiles-title" tabindex="-1">Profile management</h2>
-<p>These existing controls save separately. Apply or discard tree edits first.</p>
+<div id="message" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+<details id="manage"><summary id="profiles-title" tabindex="-1">Manage Hives</summary>
+<p class="muted">Add a Hive, change the order work is taken in, or remove one. These save straight away, separately from the list above.</p>
 <section>
-  <label>Routing strategy
+  <label>How to pick the next Hive
     <select id="strategy">
-      <option value="ranked">ranked — strict priority/fall-through</option>
-      <option value="spread">spread — weighted rotation</option>
-      <option value="neediest">neediest — queued work + idle capacity</option>
+      <option value="ranked">ranked — in the order below</option>
+      <option value="spread">spread — take turns</option>
+      <option value="neediest">neediest — most waiting work first</option>
     </select>
   </label>
-  <button id="save-strategy">Apply strategy</button>
+  <button id="save-strategy">Save</button>
 </section>
 <form id="subscribe">
-  <input id="name" aria-label="Profile name" type="text" required placeholder="profile name, e.g. acme">
-  <input id="hub" aria-label="Hive URL" type="text" required placeholder="wss://hive.example/contribute">
-  <button>Apply subscription</button>
+  <input id="name" aria-label="Name" type="text" required placeholder="name, e.g. acme">
+  <input id="hub" aria-label="Hive address" type="text" required placeholder="wss://hive.example/contribute">
+  <button>Add Hive</button>
 </form>
-<div id="message" class="muted" role="status" aria-live="polite" aria-atomic="true"></div>
 <table>
-  <thead><tr><th>Rank</th><th>Hive</th><th>Hub</th><th>Contributor</th><th>Session</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Order</th><th>Hive</th><th>Address</th><th>Contributor</th><th>Session</th><th></th></tr></thead>
   <tbody id="hives"></tbody>
 </table>
-<p class="muted">Profile store: <span id="path"></span>; projection: <span id="envpath"></span></p>
+<p class="muted">Profiles: <span id="path"></span>; projection: <span id="envpath"></span></p>
+</details>
 </main>
 <script>
 const token = {{.Token}};
