@@ -1,0 +1,1 @@
+- The selfreport slog feed no longer files `unclassified_error_repeated` issues for the permissions watcher's "fixed file permissions" line; it records a repair that already succeeded and is treated as benign self-healing housekeeping ([#13735](https://github.com/hivecommons/hive/issues/13735)).
