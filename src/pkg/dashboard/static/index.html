@@ -24879,16 +24879,15 @@ function burnAreaChart() {
         : '';
 
       const costBody = `
-          <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
-          <div class="cost-disclaimer" style="margin:4px 0 10px">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+          <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate — but this is not a bill: subscription plans (Claude, Copilot), self-hosted inference (vLLM) and negotiated rates differ from list price.</div>
           ${recordingNotice}
           <div class="cost-grid sec-headline" data-collapsed-keep>
             <div class="cost-stat"><div class="cval" title="${esc(headlineTooltip)}">${fmtUSD(allTimeCost.usd)}<span class="cost-badge est" title="${esc(headlineTooltip)}">est.</span><span class="cost-help" role="img" aria-label="What this estimate means" title="${esc(headlineTooltip)}">?</span></div><div class="clabel" title="${esc(headlineTooltip)}">${esc(costTotalLabel(allTimeCost))}</div>${currentLine}${costSparkSvg()}</div>
             ${coinStat}
-            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title + countAuthorNote)}">${prUnit.value}</div><div class="clabel">cost / merged PR — ${esc(prCountLabel)}</div></div>
             <div class="cost-stat"><div class="cval" title="${esc(issueUnit.title + countAuthorNote)}">${issueUnit.value}</div><div class="clabel">cost / closed issue — ${esc(issueCountLabel)}</div></div>
+            <div class="cost-stat"><div class="cval" title="${esc(prUnit.title + countAuthorNote)}">${prUnit.value}</div><div class="clabel">cost / merged PR — ${esc(prCountLabel)}</div></div>
           </div>
-          <div class="cost-disclaimer cost-sub-disclaimer">cost / merged PR and cost / closed issue each divide the same headline total — two views of one figure, not two costs to add.</div>
+          <div class="cost-disclaimer cost-sub-disclaimer">cost / closed issue and cost / merged PR each divide the same headline total — two views of one figure, not two costs to add.</div>
           ${costTrendHtml()}
           ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
           <div class="cost-subtable-title" title="Live token summary only — the sessions currently on disk, priced at list price. Spend recorded before a reset of that summary is in the headline but not in these rows.">usage by model <span class="cost-window-tag">(live token summary · ${esc(usageWindow)})</span></div>

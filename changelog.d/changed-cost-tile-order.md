@@ -1,0 +1,1 @@
+Dashboard Cost section: the per-unit tiles now read total spend, cost / closed issue, cost / merged PR (issue before PR), the footer sentence follows the same order, and the two stacked "estimated from token counts" sentences in the header are merged into one. Presentation only — the `/api/cost` payload is unchanged.
