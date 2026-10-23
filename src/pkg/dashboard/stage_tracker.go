@@ -3,6 +3,7 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"slices"
@@ -272,10 +273,22 @@ type StageTrackerItem struct {
 	// soak window was left as of the last sweep (the lane's
 	// `soaking(remaining=…)` reason aged by the time since it was recorded);
 	// 0 when unknown or not soaking.
-	SoakRemainingSeconds int64      `json:"soak_remaining_seconds,omitempty"`
-	NudgeCount           int        `json:"nudge_count,omitempty"`
-	LastNudgeAt          *time.Time `json:"last_nudge_at,omitempty"`
-	AdoptedBy            int        `json:"adopted_by,omitempty"`
+	SoakRemainingSeconds int64 `json:"soak_remaining_seconds,omitempty"`
+	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
+	// it wears the configured alert label (sentinel.label, default
+	// sentinel-alert) or the review evidence bundle for its current head
+	// records sentinel findings. A webhook label patch flips it without
+	// waiting for the next governor cycle. SentinelFindings counts the
+	// findings in that bundle (0 when only the label says so) and
+	// SentinelReason is the first finding's summary, so the lane text can
+	// name why a person must look (hivecommons/hive: "Sentinel alert ·
+	// needs human").
+	SentinelAlert    bool       `json:"sentinel_alert,omitempty"`
+	SentinelFindings int        `json:"sentinel_findings,omitempty"`
+	SentinelReason   string     `json:"sentinel_reason,omitempty"`
+	NudgeCount       int        `json:"nudge_count,omitempty"`
+	LastNudgeAt      *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy        int        `json:"adopted_by,omitempty"`
 	// ClaimantKind is the author kind of whoever holds the live claim on a
 	// claimed issue (human / clanker / hive), from the worker-claim ledger.
 	ClaimantKind string `json:"claimant_kind,omitempty"`
@@ -329,6 +342,11 @@ type StageTrackerLinkedPR struct {
 	StageSince *time.Time `json:"stage_since,omitempty"`
 	Caption    string     `json:"caption,omitempty"`
 	Modifiers  []string   `json:"modifiers,omitempty"`
+	// SentinelAlert / SentinelReason mirror the nested PR's own row fields
+	// so a sub-row under an issue names the alert too.
+	SentinelAlert  bool   `json:"sentinel_alert,omitempty"`
+	SentinelReason string `json:"sentinel_reason,omitempty"`
+	Head           string `json:"head,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -537,7 +555,45 @@ func stageTrackerTier(labels []string) string {
 	return ""
 }
 
-// stageTrackerModifiers lists the control/health markers on the item.
+// stageTrackerSentinelMoreFormat renders how many findings follow the one
+// named in SentinelReason.
+const stageTrackerSentinelMoreFormat = " (+%d more)"
+
+// stageTrackerSentinel reports whether the sentinel flagged repo#number at
+// head: the PR wears the configured alert label (the sweep's blocking
+// signal, read from the live labels so a webhook label patch flips it at
+// once) or the review evidence bundle for head records sentinel findings
+// (how a trusted author's notice-only finding is seen, since those carry a
+// comment rather than the label). The findings count and the first
+// finding's summary come from the bundle; both are empty when only the
+// label says so. One file read per PR with a known head, ENOENT when the
+// sentinel never wrote one; the tracker payload is memoised so this runs
+// once per snapshot, not per request.
+func (s *Server) stageTrackerSentinel(repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
+	label := s.sentinelLabel()
+	for _, l := range labels {
+		if strings.EqualFold(strings.TrimSpace(l), label) {
+			alert = true
+			break
+		}
+	}
+	if head == "" {
+		return alert, 0, ""
+	}
+	b, err := github.LoadReviewEvidence(github.ReviewEvidencePath("", repo, number, head))
+	if err != nil || b == nil || len(b.Sentinel) == 0 {
+		return alert, 0, ""
+	}
+	findings = len(b.Sentinel)
+	reason = strings.TrimSpace(b.Sentinel[0].Summary)
+	if reason == "" {
+		reason = strings.TrimSpace(b.Sentinel[0].Rule)
+	}
+	if findings > 1 {
+		reason += fmt.Sprintf(stageTrackerSentinelMoreFormat, findings-1)
+	}
+	return true, findings, reason
+}
 func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Record, hasRec bool, overrides map[string]time.Duration, now time.Time, draft bool) []string {
 	set := map[string]bool{}
 	for _, l := range labels {
@@ -1063,6 +1119,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Lane = laneHive
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
+		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, status.GitHubBaseURL)
 		add(it)
 	}
@@ -1415,6 +1472,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
+				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

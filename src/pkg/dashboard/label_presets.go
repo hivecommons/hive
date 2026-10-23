@@ -43,6 +43,9 @@ const (
 //   - github.HoldLabels plus this hive's canonical hold label;
 //   - stage/071-needs-author, the PR stage where a human author must push
 //     or answer the hive's diagnosis;
+//   - the sentinel alert label (sentinel.label, default sentinel-alert): the
+//     sweep refuses to merge a flagged PR until a maintainer reviews it and
+//     removes the label (hivecommons/hive#13780);
 //   - the reporter-trust awaiting label (default needs-triage): the issue
 //     waits for a maintainer to triage it before the hive may pick it up.
 //
@@ -80,8 +83,10 @@ func needsHumanPresetLabels(cfg *config.Config, hiveID string) []string {
 	add(github.CanonicalHiveHoldLabel(hiveID))
 	add(stagelabels.NeedsAuthor.Label())
 	if cfg != nil {
+		add(cfg.Sentinel.LabelOrDefault())
 		add(cfg.Project.IssueFilter.ReporterTrustAwaitingLabel())
 	} else {
+		add(config.DefaultSentinelLabel)
 		add(config.DefaultReporterTrustAwaitingLabel)
 	}
 	return out

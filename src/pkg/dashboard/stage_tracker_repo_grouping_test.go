@@ -93,6 +93,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
+		stageTrackerSentinelJS(t, html),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIL_HOPS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
