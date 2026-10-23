@@ -1098,7 +1098,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Children = github.TrackerTaskProgress(issue.Body)
 		}
 		it.IsTracker = github.RendersAsTracker(issue.IsTracker, issue.Labels, it.Children)
-		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference
+		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference && issue.ClaimContext.Decision != github.ClaimDecisionReleasedRedStalePR
 		if issue.AuthorIsHuman {
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {

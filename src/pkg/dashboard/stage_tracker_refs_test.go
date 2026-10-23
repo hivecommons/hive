@@ -17,9 +17,17 @@ func TestStageTrackerRefsAndTrackerMetadata(t *testing.T) {
 		ClaimContext: &github.IssueClaimContext{PRNumber: 203, Reference: true},
 		LinkedPRs:    []github.IssueLinkedPR{{Number: 203, State: "open", Reference: true}},
 	}}
-	s.status.Repos[0].ActionableIssues = append(s.status.Repos[0].ActionableIssues, github.Issue{
-		Repo: "acme/console", Number: 10, Title: "Partial work", Labels: []string{" Hive/Partially-Addressed "},
-	})
+	s.status.Repos[0].ActionableIssues = append(s.status.Repos[0].ActionableIssues,
+		github.Issue{
+			Repo: "acme/console", Number: 10, Title: "Partial work", Labels: []string{" Hive/Partially-Addressed "},
+		},
+		github.Issue{
+			Repo: "acme/console", Number: 11, Title: "Released reference",
+			ClaimContext: &github.IssueClaimContext{
+				PRNumber: 204, Reference: true, Decision: github.ClaimDecisionReleasedRedStalePR,
+			},
+		},
+	)
 	s.status.Repos[0].NonActionablePrs = []any{github.RepoWorkPR{
 		Repo: "acme/console", Number: 203, Title: "Draft coverage", Draft: true,
 		Bucket: "draft", BaseRef: "v6",
@@ -33,6 +41,10 @@ func TestStageTrackerRefsAndTrackerMetadata(t *testing.T) {
 	partial := trackerItem(t, resp, "issue", 10)
 	if !partial.IsTracker || partial.Children != nil {
 		t.Fatalf("partial label classification differs from work details: %+v", partial)
+	}
+	released := trackerItem(t, resp, "issue", 11)
+	if released.ClaimReference {
+		t.Fatalf("red+stale released issue retained refs chip: %+v", released)
 	}
 	pr := trackerItem(t, resp, "pr", 203)
 	if pr.BaseRef != "v6" {
