@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -15,11 +15,11 @@ import (
 // pane showed quota exhaustion — a paused or stopped agent out of quota is not
 // an actionable heartbeat signal.
 func TestQuotaExhaustedProcessCount(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
-		"counted":    {State: agent.StateRunning, QuotaExhausted: true},
-		"paused":     {State: agent.StateRunning, QuotaExhausted: true, Paused: true},
-		"stopped":    {State: agent.StateStopped, QuotaExhausted: true},
-		"has-quota":  {State: agent.StateRunning, QuotaExhausted: false},
+	statuses := map[string]*crux.Process{
+		"counted":    {State: crux.StateRunning, QuotaExhausted: true},
+		"paused":     {State: crux.StateRunning, QuotaExhausted: true, Paused: true},
+		"stopped":    {State: crux.StateStopped, QuotaExhausted: true},
+		"has-quota":  {State: crux.StateRunning, QuotaExhausted: false},
 		"nil-status": nil,
 	}
 	if got := spoke.QuotaExhaustedProcessCount(statuses); got != 1 {

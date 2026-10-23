@@ -3,12 +3,12 @@ package agent
 import (
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-type RestartEvent struct {
-	At     time.Time `json:"at"`
-	Reason string    `json:"reason"`
-}
+// RestartEvent is one restart and its reason; see types.RestartEvent.
+type RestartEvent = types.RestartEvent
 
 func cloneRestartEvents(in []RestartEvent) []RestartEvent {
 	if len(in) == 0 {

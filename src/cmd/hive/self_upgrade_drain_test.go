@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 func TestUpgradeDrain_ProceedsImmediatelyWithNoKicksInFlight(t *testing.T) {
@@ -119,16 +119,16 @@ func TestAgentKicksInFlight(t *testing.T) {
 	kick := processStart.Add(10 * time.Minute)
 	seeded := processStart.Add(-time.Hour)
 
-	statuses := map[string]*agent.AgentProcess{
-		"architect": {State: agent.StateRunning, LastKick: &kick},
-		"reviewer": {State: agent.StateRunning, LastKick: &kick,
-			KickOutcome: agent.KickOutcome{Kind: agent.KickOutcomeEnded, KickAt: kick}},
-		"quality": {State: agent.StateRunning, LastKick: &kick,
-			KickOutcome: agent.KickOutcome{Kind: agent.KickOutcomeEnded, KickAt: processStart.Add(time.Minute)}},
-		"scanner":    {State: agent.StateRunning, LastKick: &seeded},
-		"operations": {State: agent.StateRunning, Paused: true, LastKick: &kick},
-		"telemetry":  {State: agent.StateIdle, LastKick: &kick},
-		"sec-check":  {State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"architect": {State: crux.StateRunning, LastKick: &kick},
+		"reviewer": {State: crux.StateRunning, LastKick: &kick,
+			KickOutcome: crux.KickOutcome{Kind: crux.KickOutcomeEnded, KickAt: kick}},
+		"quality": {State: crux.StateRunning, LastKick: &kick,
+			KickOutcome: crux.KickOutcome{Kind: crux.KickOutcomeEnded, KickAt: processStart.Add(time.Minute)}},
+		"scanner":    {State: crux.StateRunning, LastKick: &seeded},
+		"operations": {State: crux.StateRunning, Paused: true, LastKick: &kick},
+		"telemetry":  {State: crux.StateIdle, LastKick: &kick},
+		"sec-check":  {State: crux.StateRunning},
 		"nil-proc":   nil,
 	}
 

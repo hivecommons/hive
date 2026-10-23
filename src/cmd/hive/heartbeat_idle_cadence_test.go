@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -14,7 +14,7 @@ func TestHeartbeatKickIntervalOnlyForGovernorKickedAgents(t *testing.T) {
 	govState := governor.State{Cadences: map[string]governor.AgentCadence{
 		"quality": {Agent: "quality", Interval: 2 * time.Hour},
 	}}
-	proc := &agent.AgentProcess{Name: "quality", Config: config.AgentConfig{}}
+	proc := &crux.Process{Name: "quality", Config: config.AgentConfig{}}
 	if got := spoke.HeartbeatKickInterval(govState, "quality", proc, nil); got != 2*time.Hour {
 		t.Fatalf("implicit kick channel interval = %v, want 2h", got)
 	}

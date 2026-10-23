@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
@@ -64,8 +65,8 @@ func TestRestoreAgentRuntimeState_ReplaysPausedBy(t *testing.T) {
 	}
 }
 
-func pausedProc(trigger string) *agent.AgentProcess {
-	return &agent.AgentProcess{Paused: true, PausedTrigger: trigger}
+func pausedProc(trigger string) *crux.Process {
+	return &crux.Process{Paused: true, PausedTrigger: trigger}
 }
 
 // The frostyard shape: 8 owner-paused staff agents plus the always-startup-
@@ -74,7 +75,7 @@ func pausedProc(trigger string) *agent.AgentProcess {
 // one separately.
 func TestPausedRestoreDetail_ExcludesByDesignOnDemand(t *testing.T) {
 	enabled := map[string]config.AgentConfig{}
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	staff := []string{"scanner", "quality", "ci-maintainer", "architect", "guide", "sec-check", "strategist", "supervisor"}
 	for _, name := range staff {
 		enabled[name] = config.AgentConfig{Enabled: true, Paused: true}
@@ -101,7 +102,7 @@ func TestPausedRestoreDetail_ExcludesPackOnDemand(t *testing.T) {
 		"brainstorm": {Enabled: true, Paused: true},
 		"scanner":    {Enabled: true, Paused: true},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"brainstorm": pausedProc("startup"),
 		"scanner":    pausedProc("dashboard-api"),
 	}
@@ -121,7 +122,7 @@ func TestPausedRestoreDetail_BreaksDownByTrigger(t *testing.T) {
 		"c": {Enabled: true, Paused: true},
 		"d": {Enabled: true, Paused: true},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"a": pausedProc("dashboard-api"),
 		"b": pausedProc("dashboard-api"),
 		"c": pausedProc("login-detector"),
@@ -138,7 +139,7 @@ func TestPausedRestoreDetail_NothingPaused(t *testing.T) {
 	enabled := map[string]config.AgentConfig{
 		"scanner": {Enabled: true},
 	}
-	got := pausedRestoreDetail(enabled, nil, map[string]*agent.AgentProcess{})
+	got := pausedRestoreDetail(enabled, nil, map[string]*crux.Process{})
 	want := "restoring 0 paused agent(s)"
 	if got != want {
 		t.Errorf("detail = %q, want %q", got, want)

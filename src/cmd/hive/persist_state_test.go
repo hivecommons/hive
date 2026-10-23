@@ -14,6 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -118,15 +119,15 @@ func TestPersistStateRoundTripUsesInjectedPaths(t *testing.T) {
 		t.Fatalf("SetBackendOverride: %v", err)
 	}
 	mgr.SeedLastKick("scanner", lastKick)
-	mgr.SeedKickHistory("scanner", []agent.KickRecord{{Timestamp: lastKick, Agent: "scanner", Snippet: "please scan"}})
-	mgr.SeedRestartTelemetry("scanner", 3, []agent.RestartEvent{{At: restartAt, Reason: "watchdog"}}, "watchdog")
+	mgr.SeedKickHistory("scanner", []crux.KickRecord{{Timestamp: lastKick, Agent: "scanner", Snippet: "please scan"}})
+	mgr.SeedRestartTelemetry("scanner", 3, []crux.RestartEvent{{At: restartAt, Reason: "watchdog"}}, "watchdog")
 	sinceOutput := 2 * time.Minute
-	mgr.SeedTurnLoss("scanner", agent.TurnLoss{
+	mgr.SeedTurnLoss("scanner", crux.TurnLoss{
 		Interruptions: 2,
 		Producing:     1,
 		UpperBound:    7 * time.Minute,
 		Bytes:         2048,
-		Recent: []agent.TurnInterruption{{
+		Recent: []crux.TurnInterruption{{
 			At:          restartAt,
 			Reason:      "restart",
 			SinceKick:   5 * time.Minute,

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/snapshot"
@@ -205,7 +205,7 @@ func TestOutputFreshnessNoKicksYieldsEmptyTimestamp(t *testing.T) {
 
 func TestRestartEventsToSnapshotFiltersStaleAndZero(t *testing.T) {
 	now := time.Now()
-	events := []agent.RestartEvent{
+	events := []crux.RestartEvent{
 		{At: now.Add(-25 * time.Hour), Reason: "too old"},
 		{}, // zero timestamp
 		{At: now.Add(-time.Hour), Reason: "recent"},

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // TestScanPrunesVanishedAgentsFromTheSightingMap pins the Retain sweep at the
@@ -21,8 +21,8 @@ func TestScanPrunesVanishedAgentsFromTheSightingMap(t *testing.T) {
 	sightings.Observe("departed", true)
 
 	mgr := &fakeLoginScanManager{
-		statuses: map[string]*agent.AgentProcess{
-			"present": {State: agent.StateRunning},
+		statuses: map[string]*crux.Process{
+			"present": {State: crux.StateRunning},
 		},
 		outputs: map[string][]string{
 			"present": {"build passed"},
@@ -52,8 +52,8 @@ func TestScanSkipsInvalidPatternsButKeepsScanning(t *testing.T) {
 	t.Parallel()
 
 	mgr := &fakeLoginScanManager{
-		statuses: map[string]*agent.AgentProcess{
-			"stuck": {State: agent.StateRunning},
+		statuses: map[string]*crux.Process{
+			"stuck": {State: crux.StateRunning},
 		},
 		outputs: map[string][]string{
 			"stuck": {"Please log in to continue"},
@@ -84,8 +84,8 @@ func TestScanWithOnlyInvalidPatternsDoesNothing(t *testing.T) {
 	t.Parallel()
 
 	mgr := &fakeLoginScanManager{
-		statuses: map[string]*agent.AgentProcess{
-			"stuck": {State: agent.StateRunning},
+		statuses: map[string]*crux.Process{
+			"stuck": {State: crux.StateRunning},
 		},
 		outputs: map[string][]string{
 			"stuck": {"Please log in to continue"},

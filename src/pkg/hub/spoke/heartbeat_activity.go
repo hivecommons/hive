@@ -144,7 +144,7 @@ func QuotaExhaustedAgentCount(agents []AgentSummary) int {
 func QuotaExhaustedProcessCount(statuses map[string]*crux.Process) int {
 	count := 0
 	for _, proc := range statuses {
-		if proc != nil && proc.QuotaExhausted && !proc.Paused && proc.State == agent.StateRunning {
+		if proc != nil && proc.QuotaExhausted && !proc.Paused && proc.State == crux.StateRunning {
 			count++
 		}
 	}

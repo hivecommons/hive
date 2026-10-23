@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/notify"
 )
 
 type fakeLoginScanManager struct {
-	statuses       map[string]*agent.AgentProcess
+	statuses       map[string]*crux.Process
 	outputs        map[string][]string
 	validCreds     map[string]bool
 	outputErrs     map[string]error
@@ -25,7 +25,7 @@ type fakeLoginScanManager struct {
 	callOrder      []string
 }
 
-func (m *fakeLoginScanManager) AllStatuses() map[string]*agent.AgentProcess {
+func (m *fakeLoginScanManager) AllStatuses() map[string]*crux.Process {
 	return m.statuses
 }
 
@@ -79,12 +79,12 @@ func TestScanForLoginRequiredLoopBodyHandlesVerdicts(t *testing.T) {
 	t.Parallel()
 
 	mgr := &fakeLoginScanManager{
-		statuses: map[string]*agent.AgentProcess{
-			"clean":   {State: agent.StateRunning},
-			"valid":   {State: agent.StateRunning},
-			"defer":   {State: agent.StateRunning},
-			"pause":   {State: agent.StateRunning},
-			"stopped": {State: agent.StateStopped},
+		statuses: map[string]*crux.Process{
+			"clean":   {State: crux.StateRunning},
+			"valid":   {State: crux.StateRunning},
+			"defer":   {State: crux.StateRunning},
+			"pause":   {State: crux.StateRunning},
+			"stopped": {State: crux.StateStopped},
 		},
 		outputs: map[string][]string{
 			"clean":   {"build passed", "no auth prompt here"},
@@ -136,10 +136,10 @@ func TestScanForLoginRequiredLoopBodyContinuesAfterPaneReadError(t *testing.T) {
 	t.Parallel()
 
 	mgr := &fakeLoginScanManager{
-		statuses: map[string]*agent.AgentProcess{
-			"one":   {State: agent.StateRunning},
-			"two":   {State: agent.StateRunning},
-			"three": {State: agent.StateRunning},
+		statuses: map[string]*crux.Process{
+			"one":   {State: crux.StateRunning},
+			"two":   {State: crux.StateRunning},
+			"three": {State: crux.StateRunning},
 		},
 		outputs: map[string][]string{
 			"one":   {"Please log in to continue"},
@@ -177,7 +177,7 @@ func TestScanForLoginRequiredLoopBodyContinuesAfterPaneReadError(t *testing.T) {
 func TestScanForLoginRequiredLoopBodyAcceptsEmptyAgentList(t *testing.T) {
 	t.Parallel()
 
-	mgr := &fakeLoginScanManager{statuses: map[string]*agent.AgentProcess{}}
+	mgr := &fakeLoginScanManager{statuses: map[string]*crux.Process{}}
 	cfg := loginScanLoopConfig([]string{"please log in"}, nil)
 
 	Scan(context.Background(), cfg, mgr, &fakeLoginScanNotifier{}, &fakeLoginScanAuditor{}, testLogger(), NewSightingTracker())

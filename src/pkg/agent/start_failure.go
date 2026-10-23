@@ -7,38 +7,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/crux/types"
+
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// StartFailureClass is the stable, machine-comparable kind of a start failure.
-// The class — not the human sentence — is what consecutive-failure counting
-// compares, so re-phrasing a message can never reset the ladder, and two
-// genuinely different faults can never be counted as one recurrence.
-type StartFailureClass string
+// StartFailureClass and its values are defined in pkg/crux/types as part of
+// the Crux runtime surface (hivecommons/hive#13536); aliased here.
+type StartFailureClass = types.StartFailureClass
 
 const (
-	// StartFailureLoginRequired: the CLI came up but has no usable interactive
-	// session — Copilot's "/login to sign in", a device-code prompt. A human
-	// must authenticate; no number of relaunches will do it.
-	StartFailureLoginRequired StartFailureClass = "login-required"
-	// StartFailureCredentialRejected: a credential was presented and the server
-	// refused it — bob's "Invalid or expired API Key", a 401. Also terminal
-	// until a human replaces the credential.
-	StartFailureCredentialRejected StartFailureClass = "credential-rejected"
-	// StartFailureCredentialMissing: no credential is configured at all.
-	StartFailureCredentialMissing StartFailureClass = "credential-missing"
-	// StartFailureBackendMismatch: the agent is launched as one CLI and
-	// health-checked as another, because backend and launch_cmd disagree
-	// (#5921's root cause 1). Relaunching cannot converge — the readiness probe
-	// is watching for a prompt the launched binary never prints.
-	StartFailureBackendMismatch StartFailureClass = "backend-mismatch"
-	// StartFailureBinaryMissing: the backend's CLI is not on PATH.
-	StartFailureBinaryMissing StartFailureClass = "binary-missing"
-	// StartFailureNoOutput: the CLI produced no readiness marker and the
-	// diagnostic could not say why. The honest residual class — it means "we
-	// know it did not start and we do not know why", which is different from
-	// every named class above and must not borrow their wording.
-	StartFailureNoOutput StartFailureClass = "no-output"
+	StartFailureLoginRequired      = types.StartFailureLoginRequired
+	StartFailureCredentialRejected = types.StartFailureCredentialRejected
+	StartFailureCredentialMissing  = types.StartFailureCredentialMissing
+	StartFailureBackendMismatch    = types.StartFailureBackendMismatch
+	StartFailureBinaryMissing      = types.StartFailureBinaryMissing
+	StartFailureNoOutput           = types.StartFailureNoOutput
 )
 
 // startFailureBlockThresholdDefault is how many CONSECUTIVE failures of the

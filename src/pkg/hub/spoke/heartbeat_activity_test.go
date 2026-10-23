@@ -104,10 +104,10 @@ func TestHeartbeatKickInterval(t *testing.T) {
 
 func TestQuotaExhaustedCountsAndReasons(t *testing.T) {
 	statuses := map[string]*crux.Process{
-		"counted":   {State: agent.StateRunning, QuotaExhausted: true},
-		"paused":    {State: agent.StateRunning, QuotaExhausted: true, Paused: true},
-		"stopped":   {State: agent.StateStopped, QuotaExhausted: true},
-		"has-quota": {State: agent.StateRunning},
+		"counted":   {State: crux.StateRunning, QuotaExhausted: true},
+		"paused":    {State: crux.StateRunning, QuotaExhausted: true, Paused: true},
+		"stopped":   {State: crux.StateStopped, QuotaExhausted: true},
+		"has-quota": {State: crux.StateRunning},
 	}
 	if got := QuotaExhaustedProcessCount(statuses); got != 1 {
 		t.Errorf("QuotaExhaustedProcessCount = %d, want 1", got)

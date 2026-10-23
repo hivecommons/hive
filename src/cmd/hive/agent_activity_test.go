@@ -6,6 +6,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -35,7 +36,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	pausedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	lastPane := time.Date(2026, 8, 20, 8, 55, 0, 0, time.UTC)
-	proc := &agent.AgentProcess{
+	proc := &crux.Process{
 		Paused:         true,
 		PausedTrigger:  "dashboard-api",
 		PausedReason:   "manual pause",
@@ -76,7 +77,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 	cfg := activityTestConfig()
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
-	proc := &agent.AgentProcess{}
+	proc := &crux.Process{}
 
 	scheduled := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !scheduled.ExpectedActive {
@@ -103,7 +104,7 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 // divergence verdict.
 func TestAgentActivityForNilConfig(t *testing.T) {
 	mgr := agent.NewManager(map[string]config.AgentConfig{}, restoreTestLogger(), agent.ProjectContext{})
-	act := spoke.AgentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
+	act := spoke.AgentActivityFor(mgr, nil, governor.State{}, "busy", "scanner", &crux.Process{}, nil)
 	if act.ExpectedActive || act.Enabled {
 		t.Errorf("nil config: ExpectedActive=%v Enabled=%v, want both false", act.ExpectedActive, act.Enabled)
 	}
@@ -115,7 +116,7 @@ func TestAgentActivityForNilConfig(t *testing.T) {
 func TestAgentActivityForUnknownAgentCapabilitiesStayFalse(t *testing.T) {
 	cfg := activityTestConfig()
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
-	act := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &agent.AgentProcess{}, nil)
+	act := spoke.AgentActivityFor(mgr, cfg, governor.State{}, "busy", "ghost", &crux.Process{}, nil)
 	if act.CanOpenIssue || act.CanOpenPR || act.CanMerge {
 		t.Errorf("unknown agent capabilities = (%v, %v, %v), want all false (UNKNOWN)",
 			act.CanOpenIssue, act.CanOpenPR, act.CanMerge)

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -144,8 +144,8 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) (b
 // resumeKickStatusSource is the subset of *agent.Manager the resume-kick-held
 // reconcile reads.
 type resumeKickStatusSource interface {
-	GetStatusFast(name string) (*agent.AgentProcess, error)
-	AllStatuses() map[string]*agent.AgentProcess
+	GetStatusFast(name string) (*crux.Process, error)
+	AllStatuses() map[string]*crux.Process
 }
 
 // resumeKickHeldFacts wires the resume-kick-held reconcile (#9612) to the
@@ -154,15 +154,15 @@ type resumeKickStatusSource interface {
 // lazily at most once per call, settles whether the agent is still in the
 // roster, so a busy manager never reads as a roster removal.
 func resumeKickHeldFacts(status resumeKickStatusSource, gate func(string) (governor.ResumeRefusal, time.Duration)) spokealerts.ResumeKickHeldFacts {
-	var roster map[string]*agent.AgentProcess
-	lookup := func(name string) (*agent.AgentProcess, bool) {
+	var roster map[string]*crux.Process
+	lookup := func(name string) (*crux.Process, bool) {
 		if st, err := status.GetStatusFast(name); err == nil && st != nil {
 			return st, true
 		}
 		if roster == nil {
 			roster = status.AllStatuses()
 			if roster == nil {
-				roster = map[string]*agent.AgentProcess{}
+				roster = map[string]*crux.Process{}
 			}
 		}
 		st, ok := roster[name]
@@ -181,7 +181,7 @@ func resumeKickHeldFacts(status resumeKickStatusSource, gate func(string) (gover
 			if !ok {
 				return true // no longer in the roster
 			}
-			return st.Paused || st.State == agent.StatePaused || !st.Config.Enabled
+			return st.Paused || st.State == crux.StatePaused || !st.Config.Enabled
 		},
 		WorkedSince: func(name string, since time.Time) bool {
 			st, ok := lookup(name)
