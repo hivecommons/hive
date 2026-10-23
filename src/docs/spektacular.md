@@ -193,8 +193,10 @@ Each candidate's confidence is the share of the issue's weighted terms it
 contains; a candidate needs two shared terms including a title term or an
 identifier to count at all. Every source is optional and soft (a failed
 search drops its candidates only), a missing, dirty or partly indexed
-checkout is listed in the comment as "checkout missing/partial for <repo>"
-instead of being read as no prior art, the whole search is bounded (20s, one
+checkout is called out as "checkout missing/partial for <repo>" instead of
+being read as no prior art — in the gate comment when one is posted, and as a
+`prior-art-gate-coverage-gap` audit entry otherwise; reports with a
+still-building index are not cached, the whole search is bounded (20s, one
 query per source) and the report is cached per issue content hash, so an
 unchanged issue costs nothing on later cycles.
 

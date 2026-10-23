@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sort"
@@ -198,7 +199,8 @@ func (p *PriorArtCodeIndex) rebuild(done chan struct{}) {
 			continue
 		}
 		if info, err := os.Stat(c.Root); err != nil || !info.IsDir() {
-			gaps = append(gaps, fmt.Sprintf("checkout missing for %s: %s", c.Repo, c.Root))
+			// Gap text reaches GitHub comments: name the repo, never the host path.
+			gaps = append(gaps, fmt.Sprintf("checkout missing for %s", c.Repo))
 			continue
 		}
 		if out, err := exec.CommandContext(ctx, "git", "-C", c.Root, "status", "--porcelain", "--untracked-files=no").Output(); err == nil && len(strings.TrimSpace(string(out))) > 0 {
@@ -209,19 +211,24 @@ func (p *PriorArtCodeIndex) rebuild(done chan struct{}) {
 	idx, errs := codeindex.Build(ctx, repos)
 	for _, r := range repos {
 		if err := errs[r.Name]; err != nil {
-			gaps = append(gaps, fmt.Sprintf("checkout partial for %s: %v", r.Name, err))
+			slog.Warn("prior art: code index build failed", "repo", r.Name, "error", err)
+			gaps = append(gaps, fmt.Sprintf("checkout partial for %s: index build failed", r.Name))
 		}
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if idx != nil {
+	switch {
+	case idx != nil:
 		p.idx = idx
-	} else {
-		gaps = append(gaps, "code index build interrupted; answering from the previous snapshot")
+		p.builtAt = p.now()
+	case p.idx != nil:
+		// builtAt stays stale so the next search retries the build.
+		gaps = append(gaps, "code index rebuild interrupted; answering from the previous snapshot")
 	}
+	// With no snapshot at all builtAt stays zero, so the transient
+	// "still building" gap persists until a real build lands.
 	p.gaps = gaps
-	p.builtAt = p.now()
 	p.building = nil
 	close(done)
 }
