@@ -1366,3 +1366,70 @@ func TestTriageNeededStage(t *testing.T) {
 		t.Fatal("un-parking 045 → 015 is not a step back")
 	}
 }
+
+// TestLabelNormalisationConsistency verifies that Current and IssueCoveredByPR
+// agree on label case handling: both normalise (lowercase, trim) before matching.
+func TestLabelNormalisationConsistency(t *testing.T) {
+	tests := []struct {
+		desc        string
+		labels      []string
+		wantStage   Stage
+		wantCovered bool
+	}{
+		{
+			desc:        "exact match lowercase",
+			labels:      []string{"stage/040-covered-by-pr"},
+			wantStage:   CoveredByPR,
+			wantCovered: true,
+		},
+		{
+			desc:        "uppercase normalised to lowercase",
+			labels:      []string{"STAGE/040-COVERED-BY-PR"},
+			wantStage:   CoveredByPR,
+			wantCovered: true,
+		},
+		{
+			desc:        "mixed case normalised",
+			labels:      []string{"Stage/040-Covered-By-PR"},
+			wantStage:   CoveredByPR,
+			wantCovered: true,
+		},
+		{
+			desc:        "padded with spaces",
+			labels:      []string{"  stage/040-covered-by-pr  "},
+			wantStage:   CoveredByPR,
+			wantCovered: true,
+		},
+		{
+			desc:        "mixed case and padded",
+			labels:      []string{"  STAGE/040-COVERED-BY-PR  "},
+			wantStage:   CoveredByPR,
+			wantCovered: true,
+		},
+		{
+			desc:        "non-covered stage in various cases",
+			labels:      []string{"STAGE/020-CLAIMED", "  Stage/030-Pr-In-Progress  "},
+			wantStage:   PRInProgress,
+			wantCovered: false,
+		},
+		{
+			desc:        "covered stage alongside non-covered",
+			labels:      []string{"stage/045-needs-decision", "  STAGE/040-COVERED-BY-PR  "},
+			wantStage:   IssueNeedsDecision, // Latest wins
+			wantCovered: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			got := Current(tt.labels)
+			if got != tt.wantStage {
+				t.Errorf("Current(%v) = %v, want %v", tt.labels, got, tt.wantStage)
+			}
+			gotCovered := IssueCoveredByPR(tt.labels)
+			if gotCovered != tt.wantCovered {
+				t.Errorf("IssueCoveredByPR(%v) = %v, want %v", tt.labels, gotCovered, tt.wantCovered)
+			}
+		})
+	}
+}

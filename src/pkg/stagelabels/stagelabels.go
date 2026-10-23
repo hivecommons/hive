@@ -798,10 +798,11 @@ func (s Stage) CoversIssue() bool {
 // IssueCoveredByPR reports whether any label in labels is a stage (current
 // spelling or a Renames entry) that CoversIssue. Each label is read on its
 // own, so an issue carrying 040 next to a stale park label mid-migration
-// still reads as covered.
+// still reads as covered. Labels are normalized (lowercased and trimmed)
+// before matching, consistent with Current.
 func IssueCoveredByPR(labels []string) bool {
 	for _, l := range labels {
-		if Current([]string{strings.ToLower(strings.TrimSpace(l))}).CoversIssue() {
+		if Current([]string{l}).CoversIssue() {
 			return true
 		}
 	}
@@ -828,10 +829,13 @@ var Renames = map[string]Stage{
 // Current returns the stage a label set carries, or None. An unknown
 // `stage/*` label (stale table entry, health marker) yields None. Should an
 // item transiently carry two stage labels (mid-migration, before the
-// reconciler's next pass), the furthest along wins.
+// reconciler's next pass), the furthest along wins. Labels are normalized
+// (lowercased and trimmed) before matching, so Current and IssueCoveredByPR
+// agree on case handling.
 func Current(labels []string) Stage {
 	cur := None
 	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
 		if s, ok := Renames[l]; ok && cur.Before(s) {
 			cur = s
 		}
