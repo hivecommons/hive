@@ -156,8 +156,9 @@ own tags (`crux/vX.Y.Z`), own coverage floor and CI lane; same repo, same PRs,
 same v5/v6 branches. The `crux` binary that this stage was going to ship
 already exists (item 6), so the stage is the module cut alone.
 
-Not started, and blocked until the outbound ratchet's `pkg/config` rows are
-gone. A nested module whose packages import `pkg/config` needs the root
+Not started. It was blocked until the outbound ratchet's `pkg/config` rows
+were gone, which prerequisite 1 delivered; the remaining prerequisites are
+the other outbound rows. A nested module whose packages import `pkg/config` needs the root
 module to `replace` the nested one *and* the nested one to `replace` the
 root: a module cycle. It builds, but nothing can consume
 `github.com/hivecommons/hive/crux` without also pulling in all of Hive, so
@@ -166,24 +167,34 @@ move for the ring's consumers and for the test shards, coverage floors and
 `crux-scope.sh` that key on `./pkg/agent`. Doing the move before the config
 cut buys the churn without the benefit. Prerequisites, in order:
 
-1. An agent-runtime configuration leaf. `config.AgentConfig` (35 methods,
-   embedding review-model, rotation and provider-budget types) and the
-   `AgentRuntimeConfig` / `AgentRuntimeGovernorConfig` structs from item 4
-   move into the ring as stdlib-only types; `pkg/config` keeps them as
-   aliases so `hive.yaml` loading and every key position are unchanged.
-   This alone removes the `config` row from `pkg/agent`, `pkg/crux`,
-   `pkg/crux/cli`, `pkg/inference`, `pkg/proxy`, `pkg/toolapprove` and
-   `pkg/watchdog`. The leaf is `pkg/crux/config` (package name `config`,
-   so a consumer's migration is an import-path swap); what it holds and
-   what stays host-side is in
+1. **Done** (#13834, #13868, #13883). An agent-runtime configuration
+   leaf: `config.AgentConfig` (35 methods, embedding review-model,
+   rotation and provider-budget types) and the `AgentRuntimeConfig` /
+   `AgentRuntimeGovernorConfig` structs from item 4 moved into the ring
+   as the stdlib-only `pkg/crux/config` (package name `config`, so a
+   consumer's migration was an import-path swap); `pkg/config` keeps them
+   as aliases so `hive.yaml` loading and every key position are
+   unchanged. No ring package imports `pkg/config` any more; the one
+   `config` row left in the outbound baseline is `cmd/crux`, the process
+   boundary that loads `hive.yaml` for the CLI's `DefinitionLoader`. What
+   moved, what was aliased and what was inverted is in
    [Configuration leaf](#configuration-leaf).
-2. The remaining `pkg/agent` edges, each small once config is done:
-   `fleetreport` behind a reporter interface the host injects;
-   `outputschema` (the agent-report schema) moves into the ring; `jev`
-   becomes a host-provided skill installer and environment; `effects` and
-   `gitidentity` are stdlib leaves and move in; `pushbroker` moves in once
-   its own `pkg/github` dependency is inverted the way `AgentTokenCachePath`
-   was.
+2. The remaining `pkg/agent` edges, measured on v5 after prerequisite 1
+   (distinct `<pkg>.<Symbol>` selectors; *test* counts only `_test.go`):
+
+   | Edge | Non-test | Test-only | Files | Shape of the cut |
+   |---|---|---|---|---|
+   | `effects` | 1 (`Boundary`) | 0 | 3 | stdlib-only already; moves into the ring (`pkg/crux/effects` or `pkg/crux/types`), `pkg/effects` aliases |
+   | `gitidentity` | 2 (`AgentIdentity`, `AppLinkedAgentIdentity`) | 0 | 1 | stdlib-only already; moves in, `pkg/gitidentity` aliases |
+   | `outputschema` | 4 (`AgentReport`, `AgentReportFilePrefix`, `AgentReportFileSuffix`, `Validate`) | 0 | 1 | the report schema moves in; it imports `effects` (moves with it) and `convergence/proof`, which has to be inverted or left behind with the host-side validator |
+   | `jev` | 6 (`DefaultEndpoint`, `EndpointEnvVar`, `ModeEnvVar`, `SkillFile`, `SkillMarkdown`, `SkillRelDir`) | 5 | 2 + 1 test | constants and the skill text: a host-provided skill installer / environment seam, or the six symbols move to a stdlib leaf (`jev` itself imports `agentaudit` and `config`, so it does not move whole) |
+   | `fleetreport` | 8 (`Observe`, `Clear`, six `Class*` constants) | 7 | 5 + 3 test | a reporter interface on `Manager` the host injects, the same shape as `SpanStarter`; the classes become `pkg/crux/types` constants. `pkg/watchdog` has the same edge (7 symbols, incl. `RuntimeTracker`) and takes the same seam |
+   | `pushbroker` | 6 (`Broker`, `DefaultRemote`, `GitHubAppMinter`, `PushEnv`, `Result`, `TokenMinter`) | 2 | 3 + 3 test | moves in once its own `pkg/github` (`GitHubAppMinter`) and `logscrub` edges are inverted the way `AgentTokenCachePath` was; `effects` and `gitidentity` move first |
+
+   27 non-test symbols across six edges; `effects`, `gitidentity` and
+   `outputschema` are 7 of them and are pure moves. Order: effects +
+   gitidentity (one PR, aliases), outputschema, fleetreport seam (agent and
+   watchdog together), jev, pushbroker.
 3. `pkg/proxy`'s edges to `github`, `ioscan`, `issueshape`, `tokens` and
    `inferencehealth`, and `pkg/watchdog`'s to `rotation`. The proxy is both a
    ring member and an inbound consumer (14 `agent.<Symbol>` references);
