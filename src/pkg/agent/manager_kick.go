@@ -1370,16 +1370,6 @@ func countCIPollCommands(pane string) int {
 	return n
 }
 
-// nudgeIfPollingCI tells an agent that keeps polling CI within one kick to
-// move on. Policy templates already forbid it; this is the harness backstop.
-// Sends at most one nudge per kick, and only at an idle prompt so it never
-// splices into a running response.
-//
-// Two independent triggers count as "polling CI" (#9673's ask, item 2): more
-// than ciPollNudgeThreshold poll commands this kick, OR at least one poll
-// command with the kick already running longer than ciPollNudgeWallClock — a
-// single `gh run watch` blocks for the whole wait and would otherwise never
-// cross the count threshold.
 // reviewLaneAgent mirrors the review swarm's own admission rule
 // (review.hasReviewCapability): a name or role carrying "review" is a
 // reviewer. pkg/review is not imported here (cycle risk); the token is tiny.
@@ -1391,6 +1381,17 @@ func reviewLaneAgent(agent *AgentProcess) bool {
 	}
 	return false
 }
+
+// nudgeIfPollingCI tells an agent that keeps polling CI within one kick to
+// move on. Policy templates already forbid it; this is the harness backstop.
+// Sends at most one nudge per kick, and only at an idle prompt so it never
+// splices into a running response.
+//
+// Two independent triggers count as "polling CI" (#9673's ask, item 2): more
+// than ciPollNudgeThreshold poll commands this kick, OR at least one poll
+// command with the kick already running longer than ciPollNudgeWallClock — a
+// single `gh run watch` blocks for the whole wait and would otherwise never
+// cross the count threshold.
 
 func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible string) {
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
