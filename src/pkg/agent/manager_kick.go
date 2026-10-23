@@ -1374,8 +1374,25 @@ func countCIPollCommands(pane string) int {
 // command with the kick already running longer than ciPollNudgeWallClock — a
 // single `gh run watch` blocks for the whole wait and would otherwise never
 // cross the count threshold.
+// reviewLaneAgent mirrors the review swarm's own admission rule
+// (review.hasReviewCapability): a name or role carrying "review" is a
+// reviewer. pkg/review is not imported here (cycle risk); the token is tiny.
+func reviewLaneAgent(agent *AgentProcess) bool {
+	for _, f := range []string{agent.Name, agent.Config.Role} {
+		if strings.Contains(strings.ToLower(f), "review") {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible string) {
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
+		return
+	}
+	// Reviewers read CI on the PRs under review as evidence and own no PR to
+	// wait on, so polling checks is not the loop this guard targets (#13860).
+	if reviewLaneAgent(agent) {
 		return
 	}
 	count := countCIPollCommands(scrollback)

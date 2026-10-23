@@ -115,3 +115,46 @@ func TestNudgeIfPollingCIWallClockSecondNudgeSuppressed(t *testing.T) {
 		t.Errorf("CIPollNudges = %d, want unchanged at %d (already nudged this kick)", a.CIPollNudges, nudgesAfterFirst)
 	}
 }
+
+// TestNudgeIfPollingCISkipsReviewer pins #13860: a reviewer reading check
+// status on the PRs it reviews must not be nudged or reported.
+func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		agentName  string
+		role       string
+		wantNudged bool
+	}{
+		{name: "role", agentName: "scanner", role: ReviewerRole, wantNudged: false},
+		{name: "name only", agentName: "code-reviewer-sonnet-1", role: "", wantNudged: false},
+		{name: "developer", agentName: "scanner", role: "developer", wantNudged: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, 2*time.Minute)
+			a.Name = tt.agentName
+			a.Config.Role = tt.role
+			sent := 0
+			termSeams(m).sendLiteral = func(*AgentProcess, string) { sent++ }
+
+			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
+			scrollback := ""
+			for i := 0; i < ciPollNudgeThreshold+2; i++ {
+				scrollback += "gh pr checks 123\n"
+			}
+			m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+
+			if a.ciPollNudgeSent != tt.wantNudged {
+				t.Errorf("ciPollNudgeSent = %v, want %v", a.ciPollNudgeSent, tt.wantNudged)
+			}
+			if a.AwaitingCI != tt.wantNudged {
+				t.Errorf("AwaitingCI = %v, want %v", a.AwaitingCI, tt.wantNudged)
+			}
+			if (a.CIPollNudges > 0) != tt.wantNudged {
+				t.Errorf("CIPollNudges = %d, wantNudged %v", a.CIPollNudges, tt.wantNudged)
+			}
+			if !tt.wantNudged && sent != 0 {
+				t.Errorf("sent %d literals to reviewer, want 0", sent)
+			}
+		})
+	}
+}
