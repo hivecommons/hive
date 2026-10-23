@@ -218,6 +218,15 @@ type Engine struct {
 	// actual comment across restarts; this clock drives the missing-caller grace.
 	workflowApprovalCommandsMu sync.Mutex
 	workflowApprovalCommands   map[string]time.Time
+	// workflowApprovalScans is the last time this process read a PR's
+	// comments for the hive's own /ok-to-test posts and the merge bot's
+	// rejection reply; workflowApprovalUntrusted remembers PRs whose merge
+	// bot refused the App so no later head posts again (per PR, not head).
+	// workflowApprovalWorkflowChecks caches whether a repository carries
+	// the hive-ok-to-test workflow (automerge_held_runs.go).
+	workflowApprovalScans          map[string]time.Time
+	workflowApprovalUntrusted      map[string]bool
+	workflowApprovalWorkflowChecks map[string]okToTestWorkflowCheck
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool

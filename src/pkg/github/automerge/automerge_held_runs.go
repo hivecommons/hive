@@ -32,6 +32,7 @@ package automerge
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/oktotest"
 )
 
 const (
@@ -68,8 +70,34 @@ const (
 	// waiting on a person's approval.
 	workflowRunConclusionActionRequired   = "action_required"
 	workflowApprovalWorkflowMissingPrefix = "workflow-approval-required:missing-workflow:"
-	workflowApprovalCommand               = "/ok-to-test"
-	workflowApprovalGrace                 = 10 * time.Minute
+	// workflowApprovalUntrustedPrefix: the repository's merge bot (Prow) owns
+	// `/ok-to-test` and only honours it from its trusted users, which a
+	// GitHub App login never is. Posting again cannot succeed; a person must
+	// issue the command (hivecommons/hive homebrew-hive#110).
+	workflowApprovalUntrustedPrefix = "workflow-approval-required:untrusted-commenter:"
+	workflowApprovalCommand         = "/ok-to-test"
+	workflowApprovalGrace           = 10 * time.Minute
+	// workflowApprovalCommandMarkerPrefix tags the hive's own command comment
+	// with the head it was posted for, so a restarted hive (or another
+	// replica) finds it instead of posting a second time for the same head.
+	// It sits on its own line: Prow's trigger plugin and approve.sh both
+	// match the command per line, so the marker does not hide it.
+	workflowApprovalCommandMarkerPrefix = "<!-- hive-ok-to-test:"
+	// workflowApprovalRejectedMarker stamps the one needs-human note posted
+	// after the merge bot rejected the App's command.
+	workflowApprovalRejectedMarker = "<!-- hive-ok-to-test-rejected -->"
+	// prowOkToTestRejection is the reply Prow's trigger plugin posts when the
+	// commenter is not one of its trusted users.
+	prowOkToTestRejection = "Cannot trigger testing until a trusted user"
+	// prowApprovalNotifier appears in every comment Prow's approve plugin
+	// posts; its presence means `/ok-to-test` on this PR is Prow's command.
+	prowApprovalNotifier = "[APPROVALNOTIFIER]"
+	// workflowApprovalRecheck bounds how often one process re-reads a held
+	// PR's comments for the merge bot's reply.
+	workflowApprovalRecheck = 5 * time.Minute
+	// okToTestWorkflowCheckTTL bounds how long a repository's hive-ok-to-test
+	// workflow presence is remembered before being read again.
+	okToTestWorkflowCheckTTL = time.Hour
 	// heldRunNeverStartedGrace bounds how long a head with zero workflow runs
 	// is still treated as "GitHub has not scheduled them yet".
 	heldRunNeverStartedGrace = 30 * time.Minute
@@ -166,8 +194,24 @@ func (c *Engine) workflowApprovalRequiredReason(ctx context.Context, displayRepo
 }
 
 func (c *Engine) workflowApprovalAttention(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, contextName string, held int) string {
+	if c.workflowApprovalUntrustedKnown(owner, repo, number) {
+		return workflowApprovalUntrustedPrefix + contextName
+	}
 	firstSeen, first := c.markWorkflowApprovalCommandSeen(owner, repo, number, headSHA)
-	if first {
+	state, scanned := c.workflowApprovalCommentState(ctx, displayRepo, owner, repo, number, headSHA, first)
+	if scanned && (state.rejected || state.prowManaged) && !c.okToTestWorkflowInstalled(ctx, displayRepo, owner, repo) {
+		// Prow owns /ok-to-test here and the App is not one of its trusted
+		// users: every further post gets the same rejection, so stop and
+		// hand the command to a person once.
+		c.markWorkflowApprovalUntrusted(owner, repo, number)
+		if !state.rejectionNoted {
+			c.postWorkflowApprovalUntrustedNote(ctx, displayRepo, owner, repo, number, headSHA, state.rejected)
+		}
+		c.warn("automerge workflow approval cannot be requested by the App; merge bot trusts only its own users",
+			"repo", displayRepo, "pr", number, "sha", headSHA, "held", held, "context", contextName, "rejected", state.rejected, "prow", state.prowManaged)
+		return workflowApprovalUntrustedPrefix + contextName
+	}
+	if first && !state.postedForHead {
 		c.postWorkflowApprovalCommand(ctx, displayRepo, owner, repo, number, headSHA)
 	}
 	if !firstSeen.IsZero() && headOlderThan(c.now, firstSeen, workflowApprovalGrace) {
@@ -185,10 +229,7 @@ func (c *Engine) workflowApprovalCommandKey(owner, repo string, number int, head
 
 func (c *Engine) markWorkflowApprovalCommandSeen(owner, repo string, number int, headSHA string) (time.Time, bool) {
 	key := c.workflowApprovalCommandKey(owner, repo, number, headSHA)
-	now := time.Now()
-	if c != nil && c.now != nil {
-		now = c.now()
-	}
+	now := c.clock()
 	c.workflowApprovalCommandsMu.Lock()
 	defer c.workflowApprovalCommandsMu.Unlock()
 	if c.workflowApprovalCommands == nil {
@@ -201,7 +242,157 @@ func (c *Engine) markWorkflowApprovalCommandSeen(owner, repo string, number int,
 	return now, true
 }
 
+func (c *Engine) clock() time.Time {
+	if c != nil && c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// workflowApprovalUntrustedKnown reports whether this process already
+// learned that the merge bot refuses the App's command on this PR.
+func (c *Engine) workflowApprovalUntrustedKnown(owner, repo string, number int) bool {
+	c.workflowApprovalCommandsMu.Lock()
+	defer c.workflowApprovalCommandsMu.Unlock()
+	return c.workflowApprovalUntrusted[c.evaluatedHeadKey(owner, repo, number)]
+}
+
+func (c *Engine) markWorkflowApprovalUntrusted(owner, repo string, number int) {
+	c.workflowApprovalCommandsMu.Lock()
+	defer c.workflowApprovalCommandsMu.Unlock()
+	if c.workflowApprovalUntrusted == nil {
+		c.workflowApprovalUntrusted = make(map[string]bool)
+	}
+	c.workflowApprovalUntrusted[c.evaluatedHeadKey(owner, repo, number)] = true
+}
+
+// workflowApprovalScanDue reports whether the PR's comments should be read
+// this tick: always for a head this process has not seen, otherwise at most
+// once per workflowApprovalRecheck so the merge bot's reply (posted seconds
+// after the command) is noticed on the next sweep, not the next head.
+func (c *Engine) workflowApprovalScanDue(owner, repo string, number int, first bool) bool {
+	key := c.evaluatedHeadKey(owner, repo, number)
+	now := c.clock()
+	c.workflowApprovalCommandsMu.Lock()
+	defer c.workflowApprovalCommandsMu.Unlock()
+	if c.workflowApprovalScans == nil {
+		c.workflowApprovalScans = make(map[string]time.Time)
+	}
+	if last, ok := c.workflowApprovalScans[key]; ok && !first && now.Sub(last) < workflowApprovalRecheck {
+		return false
+	}
+	c.workflowApprovalScans[key] = now
+	return true
+}
+
+// workflowApprovalComments is what a PR's comment thread says about the
+// hive's /ok-to-test command.
+type workflowApprovalComments struct {
+	// postedForHead: the App already posted the command for this head.
+	postedForHead bool
+	// rejected: the merge bot replied that the commenter is not trusted.
+	rejected bool
+	// rejectionNoted: the App already posted its needs-human note.
+	rejectionNoted bool
+	// prowManaged: Prow's approve plugin comments on this PR.
+	prowManaged bool
+}
+
+// workflowApprovalCommentState reads the PR's comments when a scan is due.
+// The second result is false when nothing was read (not due, or the API
+// failed), in which case the caller keeps its in-process knowledge.
+func (c *Engine) workflowApprovalCommentState(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string, first bool) (workflowApprovalComments, bool) {
+	var state workflowApprovalComments
+	if !c.workflowApprovalScanDue(owner, repo, number, first) {
+		return state, false
+	}
+	appLogin := ""
+	if c.transport != nil {
+		appLogin = strings.TrimSpace(c.transport.AppBotLogin())
+	}
+	marker := workflowApprovalCommandMarkerPrefix + strings.ToLower(headSHA) + " -->"
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for {
+		comments, resp, err := c.gh.Issues.ListComments(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, opts)
+		if err != nil {
+			c.warn("automerge could not list PR comments for ok-to-test state", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
+			return workflowApprovalComments{}, false
+		}
+		for _, comment := range comments {
+			if comment == nil {
+				continue
+			}
+			body := comment.GetBody()
+			login := hgithub.SafeGetLogin(comment.GetUser())
+			if appLogin != "" && strings.EqualFold(login, appLogin) {
+				if strings.Contains(body, marker) {
+					state.postedForHead = true
+				}
+				if strings.Contains(body, workflowApprovalRejectedMarker) {
+					state.rejectionNoted = true
+				}
+				continue
+			}
+			if strings.Contains(body, prowApprovalNotifier) {
+				state.prowManaged = true
+			}
+			if strings.Contains(body, prowOkToTestRejection) && (appLogin == "" || strings.Contains(strings.ToLower(body), "@"+strings.ToLower(appLogin))) {
+				state.rejected = true
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return state, true
+}
+
+// okToTestWorkflowCheck remembers one repository's hive-ok-to-test lookup.
+type okToTestWorkflowCheck struct {
+	at        time.Time
+	installed bool
+}
+
+// okToTestWorkflowInstalled reports whether the repository carries the
+// self-contained hive-ok-to-test workflow, which approves held runs on the
+// App's command whatever Prow thinks of the commenter. A lookup failure
+// other than 404 reports true so the existing post-once behaviour is kept.
+func (c *Engine) okToTestWorkflowInstalled(ctx context.Context, displayRepo, owner, repo string) bool {
+	key := strings.ToLower(owner + "/" + repo)
+	now := c.clock()
+	c.workflowApprovalCommandsMu.Lock()
+	cached, ok := c.workflowApprovalWorkflowChecks[key]
+	c.workflowApprovalCommandsMu.Unlock()
+	if ok && now.Sub(cached.at) < okToTestWorkflowCheckTTL {
+		return cached.installed
+	}
+	installed := true
+	_, _, resp, err := c.gh.Repositories.GetContents(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, oktotest.WorkflowPath, nil)
+	switch {
+	case err == nil:
+		installed = true
+	case resp != nil && resp.StatusCode == http.StatusNotFound:
+		installed = false
+	default:
+		c.warn("automerge could not check for the hive ok-to-test workflow", "repo", displayRepo, "path", oktotest.WorkflowPath, "error", err)
+	}
+	c.workflowApprovalCommandsMu.Lock()
+	if c.workflowApprovalWorkflowChecks == nil {
+		c.workflowApprovalWorkflowChecks = make(map[string]okToTestWorkflowCheck)
+	}
+	c.workflowApprovalWorkflowChecks[key] = okToTestWorkflowCheck{at: now, installed: installed}
+	c.workflowApprovalCommandsMu.Unlock()
+	return installed
+}
+
+// workflowApprovalCommandBody is the command plus the per-head marker line.
+func workflowApprovalCommandBody(headSHA string) string {
+	return workflowApprovalCommand + "\n" + workflowApprovalCommandMarkerPrefix + strings.ToLower(headSHA) + " -->"
+}
+
 func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string) {
+	body := workflowApprovalCommandBody(headSHA)
 	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,
@@ -209,7 +400,7 @@ func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, o
 		Actor:  "automerge",
 		Inputs: map[string]string{"head_sha": headSHA, "body": effects.StableDigest(workflowApprovalCommand)},
 	}, func(ctx context.Context) (effects.Result, error) {
-		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(workflowApprovalCommand)})
+		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 		if apiErr != nil {
 			return effects.Result{}, effects.NotApplied(apiErr)
 		}
@@ -221,6 +412,63 @@ func (c *Engine) postWorkflowApprovalCommand(ctx context.Context, displayRepo, o
 		return
 	}
 	c.info("automerge posted ok-to-test workflow approval command", "repo", displayRepo, "pr", number, "sha", headSHA, "command", workflowApprovalCommand)
+}
+
+// workflowApprovalUntrustedNote is the one needs-human comment posted when
+// the merge bot refuses the App's command.
+func workflowApprovalUntrustedNote(appLogin string, rejected bool) string {
+	if appLogin == "" {
+		appLogin = "the Hive App"
+	}
+	var b strings.Builder
+	b.WriteString(workflowApprovalRejectedMarker)
+	b.WriteString("\nneeds-human: GitHub Actions is holding this PR's workflow runs for approval, and Hive cannot start them. `")
+	b.WriteString(workflowApprovalCommand)
+	b.WriteString("` on this repository belongs to Prow, which only accepts it from its trusted users")
+	if rejected {
+		b.WriteString("; it rejected `")
+		b.WriteString(appLogin)
+		b.WriteString("` (\"")
+		b.WriteString(prowOkToTestRejection)
+		b.WriteString("\")")
+	} else {
+		b.WriteString(", and `")
+		b.WriteString(appLogin)
+		b.WriteString("` is not one")
+	}
+	b.WriteString(". Hive will not post the command again on this PR.\n\nA maintainer can comment `")
+	b.WriteString(workflowApprovalCommand)
+	b.WriteString("` (plus `/lgtm` and `/approve` for tide), or install `")
+	b.WriteString(oktotest.WorkflowPath)
+	b.WriteString("` (`hivectl ok-to-test-template`) so the repository's own GITHUB_TOKEN approves trusted same-repo bot runs on Hive's command.")
+	return b.String()
+}
+
+func (c *Engine) postWorkflowApprovalUntrustedNote(ctx context.Context, displayRepo, owner, repo string, number int, headSHA string, rejected bool) {
+	appLogin := ""
+	if c.transport != nil {
+		appLogin = strings.TrimSpace(c.transport.AppBotLogin())
+	}
+	body := workflowApprovalUntrustedNote(appLogin, rejected)
+	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+		Repo:   owner + "/" + repo,
+		Kind:   effects.KindIssueComment,
+		Target: strconv.Itoa(number),
+		Actor:  "automerge",
+		Inputs: map[string]string{"body": effects.StableDigest(workflowApprovalRejectedMarker)},
+	}, func(ctx context.Context) (effects.Result, error) {
+		comment, _, apiErr := c.gh.Issues.CreateComment(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
+		if apiErr != nil {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		c.noteOwnStageComment(owner, repo, number)
+		return effects.Result{Provenance: comment.GetHTMLURL()}, nil
+	})
+	if err != nil {
+		c.warn("automerge failed to post ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "error", err)
+		return
+	}
+	c.info("automerge posted ok-to-test needs-human note", "repo", displayRepo, "pr", number, "sha", headSHA, "rejected", rejected)
 }
 
 // detectTrustedRegistryClankerWorkflowApprovalRequired surfaces held runs for

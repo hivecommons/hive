@@ -15,6 +15,8 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func heldRun(id int, headRepo string) map[string]any {
@@ -58,8 +60,8 @@ func TestTrySweepSelfAuthoredPRSurfacesHeldWorkflowRunsWithoutApproving(t *testi
 			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
 		}
 	}
-	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
-		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("comments = %q, want one %q command with the head marker", comments, workflowApprovalCommand)
 	}
 	if len(merged) != 0 {
 		t.Fatalf("merged = %v, want no merge while workflow approval is required", merged)
@@ -366,8 +368,8 @@ func TestTrySweepTrustedBotSurfacesActionRequiredPendingRuns(t *testing.T) {
 	if reason != workflowApprovalRequiredPrefix+"ci/build" {
 		t.Fatalf("reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
 	}
-	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
-		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("comments = %q, want one %q command with the head marker", comments, workflowApprovalCommand)
 	}
 	if len(merged) != 0 {
 		t.Fatalf("merged = %v, want no merge while workflow approval is required", merged)
@@ -409,8 +411,8 @@ func TestTrySweepTrustedBotWorkflowApprovalMissingWorkflowAfterGrace(t *testing.
 	if reason != workflowApprovalWorkflowMissingPrefix+"ci/build" {
 		t.Fatalf("second reason = %q, want %q", reason, workflowApprovalWorkflowMissingPrefix+"ci/build")
 	}
-	if len(comments) != 1 || comments[0] != workflowApprovalCommand {
-		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("comments = %q, want one %q command with the head marker", comments, workflowApprovalCommand)
 	}
 }
 
@@ -458,5 +460,245 @@ func TestSweepSurfacesTrustedRegistryClankerWorkflowApprovalWithoutMerging(t *te
 	}
 	if len(merged) != 0 || len(res.Merged) != 0 {
 		t.Fatalf("merged server=%v result=%v, want no merge", merged, res.Merged)
+	}
+}
+
+// prowComment is a comment Prow's approve or trigger plugin would post.
+func prowComment(id int, body string) map[string]any {
+	return map[string]any{"id": id, "body": body, "user": map[string]string{"login": "kubestellar-prow[bot]"}}
+}
+
+// appComment is a comment the hive's own App login posted.
+func appComment(id int, body string) map[string]any {
+	return map[string]any{"id": id, "body": body, "user": map[string]string{"login": testHiveAppBotLogin}}
+}
+
+// The hosted hive posted /ok-to-test fifteen times on homebrew-hive#110:
+// Prow owns that command there and only honours it from its trusted users,
+// so every post got "Cannot trigger testing until a trusted user reviews the
+// PR". Once that reply is on the thread the sweep must stop posting, say so
+// once, and park the PR for a person.
+func TestTrySweepSelfAuthoredPRStopsOkToTestAfterProwRejection(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = &[]map[string]any{
+			prowComment(1, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**"),
+			appComment(2, workflowApprovalCommandBody("oldhead")),
+			prowComment(3, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
+		}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	want := workflowApprovalUntrustedPrefix + "ci/build"
+	for tick := 1; tick <= 3; tick++ {
+		_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+		if err != nil {
+			t.Fatalf("tick %d returned error: %v", tick, err)
+		}
+		if reason != want {
+			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
+		}
+	}
+	if len(comments) != 1 {
+		t.Fatalf("comments = %q, want exactly one needs-human note and no further %q", comments, workflowApprovalCommand)
+	}
+	if !strings.HasPrefix(comments[0], workflowApprovalRejectedMarker) || !strings.Contains(comments[0], "needs-human") || !strings.Contains(comments[0], prowOkToTestRejection) {
+		t.Fatalf("note = %q, want the rejected marker, a needs-human note and Prow's reply quoted", comments[0])
+	}
+	if strings.Contains(comments[0], "\n"+workflowApprovalCommand+"\n") {
+		t.Fatalf("note = %q, must not itself carry the command on its own line", comments[0])
+	}
+	if !isTerminalRequiredCheckHold(want) {
+		t.Fatalf("isTerminalRequiredCheckHold(%q) = false, want true", want)
+	}
+	if len(merged) != 0 {
+		t.Fatalf("merged = %v, want no merge", merged)
+	}
+}
+
+// The needs-human note is posted once per PR, even across a restart: a
+// thread that already carries it gets nothing new.
+func TestTrySweepSelfAuthoredPRProwRejectionNoteIsOncePerPR(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = &[]map[string]any{
+			appComment(1, workflowApprovalCommandBody("oldhead")),
+			prowComment(2, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
+			appComment(3, workflowApprovalUntrustedNote(testHiveAppBotLogin, true)),
+		}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != workflowApprovalUntrustedPrefix+"ci/build" {
+		t.Fatalf("reason = %q, want %q", reason, workflowApprovalUntrustedPrefix+"ci/build")
+	}
+	if len(comments) != 0 {
+		t.Fatalf("comments = %q, want none", comments)
+	}
+}
+
+// On a Prow-managed repository without the hive-ok-to-test workflow the App
+// is never a trusted commenter: do not post at all, park for a person.
+func TestTrySweepSelfAuthoredPRNeverPostsOkToTestOnProwRepoWithoutWorkflow(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = &[]map[string]any{prowComment(1, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**")}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != workflowApprovalUntrustedPrefix+"ci/build" {
+		t.Fatalf("reason = %q, want %q", reason, workflowApprovalUntrustedPrefix+"ci/build")
+	}
+	if len(comments) != 1 || strings.Contains(comments[0], "\n"+workflowApprovalCommand+"\n") || !strings.HasPrefix(comments[0], workflowApprovalRejectedMarker) {
+		t.Fatalf("comments = %q, want only the needs-human note and no %q", comments, workflowApprovalCommand)
+	}
+	if !strings.Contains(comments[0], "is not one") {
+		t.Fatalf("note = %q, want the untrusted-commenter wording when Prow has not replied yet", comments[0])
+	}
+}
+
+// A Prow-managed repository that carries the hive-ok-to-test workflow still
+// gets the command: the repository's own GITHUB_TOKEN approves the runs on
+// it whatever Prow replies.
+func TestTrySweepSelfAuthoredPRPostsOkToTestOnProwRepoWithWorkflow(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.okToTestWorkflowStatus = http.StatusOK
+		p.existingComments = &[]map[string]any{
+			prowComment(1, "[APPROVALNOTIFIER] This PR is **NOT APPROVED**"),
+			prowComment(2, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
+		}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != workflowApprovalRequiredPrefix+"ci/build" {
+		t.Fatalf("reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
+	}
+	if len(comments) != 1 || comments[0] != workflowApprovalCommandBody("sha23") {
+		t.Fatalf("comments = %q, want one %q command", comments, workflowApprovalCommand)
+	}
+}
+
+// The once-per-head marker survives a restart: a thread that already carries
+// the App's command for this head gets no second post from a fresh process.
+func TestTrySweepSelfAuthoredPRDoesNotRepostOkToTestForSameHeadAfterRestart(t *testing.T) {
+	var comments []string
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = &[]map[string]any{appComment(1, workflowApprovalCommandBody("SHA23"))}
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+	}
+	if reason != workflowApprovalRequiredPrefix+"ci/build" {
+		t.Fatalf("reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
+	}
+	if len(comments) != 0 {
+		t.Fatalf("comments = %q, want no second %q for the same head", comments, workflowApprovalCommand)
+	}
+}
+
+// Prow replies seconds after the command, so the rejection must be noticed
+// on a later sweep of the SAME head, not only when a new head arrives. The
+// re-read is rate-limited to workflowApprovalRecheck.
+func TestTrySweepSelfAuthoredPRNoticesProwRejectionOnLaterTick(t *testing.T) {
+	now := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	var comments []string
+	thread := &[]map[string]any{}
+	pr := missingRequiredPR(func(p *selfAuthoredPR) {
+		p.workflowRuns = []map[string]any{heldRun(1, "acme/widget")}
+		p.commentBodies = &comments
+		p.existingComments = thread
+	})
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	c.now = func() time.Time { return now }
+
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("first tick returned error: %v", err)
+	}
+	if reason != workflowApprovalRequiredPrefix+"ci/build" {
+		t.Fatalf("first reason = %q, want %q", reason, workflowApprovalRequiredPrefix+"ci/build")
+	}
+	if len(comments) != 1 {
+		t.Fatalf("comments after first tick = %q, want the command", comments)
+	}
+	// Prow replies; a tick inside the recheck window does not re-read.
+	*thread = []map[string]any{
+		appComment(1, comments[0]),
+		prowComment(2, "@"+testHiveAppBotLogin+": Cannot trigger testing until a trusted user reviews the PR and leaves an `/ok-to-test` message."),
+	}
+	now = now.Add(time.Minute)
+	_, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("second tick returned error: %v", err)
+	}
+	if reason != workflowApprovalRequiredPrefix+"ci/build" {
+		t.Fatalf("second reason = %q, want %q (inside recheck window)", reason, workflowApprovalRequiredPrefix+"ci/build")
+	}
+	now = now.Add(workflowApprovalRecheck)
+	_, reason, err = c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+	if err != nil {
+		t.Fatalf("third tick returned error: %v", err)
+	}
+	if reason != workflowApprovalUntrustedPrefix+"ci/build" {
+		t.Fatalf("third reason = %q, want %q", reason, workflowApprovalUntrustedPrefix+"ci/build")
+	}
+	if len(comments) != 2 || !strings.HasPrefix(comments[1], workflowApprovalRejectedMarker) {
+		t.Fatalf("comments = %q, want the command then one needs-human note", comments)
+	}
+}
+
+func TestWorkflowApprovalUntrustedReasonParksAtNeedsDecision(t *testing.T) {
+	reason := workflowApprovalUntrustedPrefix + "Tap CI"
+	v := classifyStage(stageObservation{Reason: reason, Lane: stageLaneSelf})
+	if v.Stage != stagelabels.NeedsDecision || !v.Human {
+		t.Fatalf("classifyStage(%q) = %+v, want 085 needs-decision for a person", reason, v)
+	}
+	cause := decisionCause(reason)
+	if !strings.Contains(cause, "Prow") || !strings.Contains(cause, workflowApprovalCommand) || !strings.Contains(cause, oktotest.WorkflowPath) {
+		t.Fatalf("decisionCause(%q) = %q, want Prow, the command and the workflow path named", reason, cause)
 	}
 }

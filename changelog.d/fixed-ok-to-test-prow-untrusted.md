@@ -1,0 +1,1 @@
+- automerge: `/ok-to-test` is now posted at most once per head SHA (durable comment marker, survives restarts), is skipped entirely when Prow replies that the App is not a trusted commenter and the repo has no `hive-ok-to-test.yml` workflow, and such PRs park at `stage/085-needs-decision` with a single `needs-human` note instead of looping.

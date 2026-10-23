@@ -1752,6 +1752,12 @@ type selfAuthoredPR struct {
 	// commentBodies collects POST /issues/{n}/comments bodies.
 	headCommitAuthor string
 	commentBodies    *[]string
+	// existingComments, when set, are returned by GET /issues/{n}/comments
+	// (a pointer so a test can grow the thread between ticks).
+	existingComments *[]map[string]any
+	// okToTestWorkflowStatus is the status GET /contents/.github/workflows/hive-ok-to-test.yml
+	// answers with (0 = 404).
+	okToTestWorkflowStatus int
 }
 
 func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
@@ -1822,7 +1828,25 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				"contexts": []string{"ci/build"},
 			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
-			json.NewEncoder(w).Encode([]map[string]any{})
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+			out := []map[string]any{}
+			if pr := byNumber[number]; pr != nil && pr.existingComments != nil {
+				out = *pr.existingComments
+			}
+			json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/contents/.github/workflows/hive-ok-to-test.yml":
+			status := http.StatusNotFound
+			for _, pr := range prs {
+				if pr.okToTestWorkflowStatus != 0 {
+					status = pr.okToTestWorkflowStatus
+				}
+			}
+			w.WriteHeader(status)
+			if status == http.StatusOK {
+				json.NewEncoder(w).Encode(map[string]any{"type": "file", "path": ".github/workflows/hive-ok-to-test.yml", "content": "", "encoding": "base64"})
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/basesha/status":
 			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []map[string]string{}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/status"):
