@@ -90,6 +90,26 @@ func TestHivesTreeExplainScopeAndExclusions(t *testing.T) {
 	}
 }
 
+// One unrestricted Hive must not describe its restricted siblings, and an
+// unrestricted Hive must never read as "0 of N selected" (it receives all N).
+func TestHivesTreeGroupExplainKeepsRestrictedSiblingsVisible(t *testing.T) {
+	restricted := hivectl.TreeSubscription{Selection: treeSel("partial", 2, 12, nil)}
+	legacy := hivectl.TreeSubscription{Selection: treeSel("off", 0, 12, func(s *hivectl.TreeSelection) { s.Legacy = true })}
+	hub := treeSel("partial", 4, 36, func(s *hivectl.TreeSelection) { s.Legacy = true })
+	got := hivesTreeGroupExplain(hub, []hivectl.TreeSubscription{restricted, restricted, legacy})
+	for _, want := range []string{"4 of 24 selected in 2 restricted Hive(s)", "1 unrestricted — legacy"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("group %q missing %q", got, want)
+		}
+	}
+	if got := hivesTreeExplain(legacy.Selection, 1); !strings.HasPrefix(got, "Unrestricted — legacy:") || strings.Contains(got, "0 of") {
+		t.Errorf("single unrestricted explain = %q", got)
+	}
+	if got := hivesTreeGroupExplain(treeSel("off", 0, 4, nil), []hivectl.TreeSubscription{restricted, restricted}); !strings.Contains(got, "across 2 subscriptions") {
+		t.Errorf("all-restricted group must keep the plain scope wording, got %q", got)
+	}
+}
+
 func TestHivesTreeProvenance(t *testing.T) {
 	set := &hivectl.ProfileSet{Presets: []hivectl.PresetProvenance{{ID: "core", ReviewedRevision: "r7"}}}
 	tests := []struct {

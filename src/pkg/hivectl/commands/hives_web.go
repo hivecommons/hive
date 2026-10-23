@@ -518,20 +518,34 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>The Commons — Hive</title>
 <style>
-:root{--card:Canvas;--border:GrayText;color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#777}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:16rem;flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}
+:root{--card:Canvas;--border:GrayText;color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#595959}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:min(16rem,100%);flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}
 
-:focus-visible{outline:3px solid #327bd6;outline-offset:3px}button{cursor:pointer}button:disabled,button[aria-disabled=true]{cursor:default;opacity:.65}#contribution-tree,[role=group]{list-style:none;padding-left:1rem}.tree-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.4rem;border-bottom:1px solid #8884}.identity{overflow-wrap:anywhere;flex:1;min-width:10rem}.tree-meta{font-size:.85em;overflow-wrap:anywhere}.staging{position:sticky;bottom:0;background:Canvas;border:1px solid GrayText;padding:.7rem;z-index:2}.staging pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:15rem;overflow:auto}.tree-tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}table{display:block;overflow:auto}#tree-receipt{white-space:pre-wrap}dialog{background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:12px;max-width:28rem}dialog::backdrop{background:#0008}
+:focus-visible{outline:3px solid #327bd6;outline-offset:3px}button{cursor:pointer}button:disabled,button[aria-disabled=true]{cursor:default;opacity:.65}#contribution-tree,[role=group]{list-style:none;padding-left:1rem}.tree-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.4rem;border-bottom:1px solid #8884}.identity{overflow-wrap:anywhere;flex:1;min-width:10rem}.tree-meta{font-size:.85em;overflow-wrap:anywhere}.staging{position:sticky;bottom:0;background:Canvas;border:1px solid GrayText;padding:.7rem;z-index:2}.staging h3{margin:.2rem 0}.staging p{margin:.3rem 0}.staging pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:15rem;overflow:auto}.tree-tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}table{display:block;overflow:auto}#tree-receipt{white-space:pre-wrap}dialog{background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:12px;max-width:28rem}dialog::backdrop{background:#0008}.skip{position:absolute;left:-9999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:10;background:Canvas;color:CanvasText;padding:.5rem;border:2px solid #327bd6}dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}@media (prefers-color-scheme:dark){.muted{color:#a8a8a8}.error{color:#ff8a9b}.ok{color:#6fdc8c}}@media (max-width:480px){body{margin:1rem auto}#contribution-tree,[role=group]{padding-left:.25rem}.identity{min-width:0}}
+select{max-width:100%}#path,#envpath{overflow-wrap:anywhere}@media (max-width:480px),(max-height:600px){.staging{position:static}}
 </style>
+<button type="button" class="skip" id="skip-apply">Skip to staged changes and Apply</button>
+<button type="button" class="skip" id="skip-profiles">Skip to profile management</button>
+<main>
 <h1>The Commons</h1>
 <p class="muted">This loopback-only page edits the same local profile store as <code>hivectl hives</code> and the TUI. Registration tokens are never displayed.</p>
 <section aria-labelledby="tree-title">
 <h2 id="tree-title">Contribution tree</h2>
 <p>Review current membership, then Apply. Following is separate from selection; deselecting current membership retains follow rules, which can repopulate it. Readiness and activity are unavailable until relay evidence is connected.</p>
-<div class="tree-tools"><label>Search <input id="tree-search" type="search"></label><button id="tree-refresh">Refresh membership</button><button id="tree-leave">Leave page</button></div>
+<details><summary>What do these words mean?</summary><dl>
+<dt>Hive</dt><dd>A project's contribution endpoint that you are subscribed to. Each Hive keeps its own saved choices.</dd>
+<dt>Hub</dt><dd>A directory that lists several Hives. “Direct Hives” are Hives you added without a hub.</dd>
+<dt>Selected / Partial / Off</dt><dd>Whether the repositories a Hive offers are chosen for your machine to work on.</dd>
+<dt>Unrestricted — legacy</dt><dd>An older subscription with no repository choices saved. It can receive work from every repository the Hive offers. “Review and restrict” lets you choose.</dd>
+<dt>Unreviewed</dt><dd>A repository the Hive offers that you have not chosen or excluded yet. It receives no work until you select it.</dd>
+<dt>Excluded</dt><dd>A repository you have vetoed. Selecting a whole Hive or hub never brings it back.</dd>
+<dt>Follow future repositories</dt><dd>Also choose repositories the Hive adds later. Off by default.</dd>
+<dt>Apply / Discard</dt><dd>Nothing is saved until you press Apply. Discard throws the staged changes away.</dd>
+</dl></details>
+<div class="tree-tools"><label>Search (press /) <input id="tree-search" type="search"></label><button id="tree-select-matching" hidden>Select matching</button><button id="tree-collapse-all">Collapse all</button><button id="tree-expand-all">Expand all</button><button id="tree-refresh">Refresh membership</button><button id="tree-leave">Leave page</button></div>
 <ul id="contribution-tree" role="tree" aria-label="Hub, Hive and repository contributions"></ul>
-<div class="staging" aria-labelledby="diff-title"><h3 id="diff-title">Staged changes</h3><p id="diff-summary">No staged changes.</p><details><summary>Named targets and shared effects</summary><pre id="tree-diff"></pre></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div>
+<div class="staging" aria-labelledby="diff-title"><h3 id="diff-title">Staged changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No staged changes.</p><details><summary>Named targets and shared effects</summary><pre id="tree-diff"></pre><details><summary>Raw diff (JSON)</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div>
 </section>
-<h2>Profile management</h2>
+<h2 id="profiles-title" tabindex="-1">Profile management</h2>
 <p>These existing controls save separately. Apply or discard tree edits first.</p>
 <section>
   <label>Routing strategy
@@ -554,6 +568,7 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
   <tbody id="hives"></tbody>
 </table>
 <p class="muted">Profile store: <span id="path"></span>; projection: <span id="envpath"></span></p>
+</main>
 <script>
 const token = {{.Token}};
 history.replaceState(null, '', location.pathname);
@@ -563,7 +578,7 @@ const nameInput = document.getElementById('name');
 const hubInput = document.getElementById('hub');
 const strategySelect = document.getElementById('strategy');
 let revision = '';
-function say(text, cls='muted'){ message.textContent = text; message.className = cls; }
+function say(text, cls='muted'){ message.textContent = text; message.className = cls; const t = document.getElementById('tree-status'); if(t){ t.textContent = text; t.className = cls; } }
 async function api(path, opts={}){
   const extra = (opts.method && opts.method !== 'GET' && revision) ? {'If-Match': revision} : {};
   const res = await fetch(path, {...opts, headers: {...headers, ...extra, ...(opts.headers||{})}});
@@ -643,6 +658,6 @@ document.getElementById('hives').addEventListener('click', async ev => {
   finally { if(!review) await loadTree().catch(e => say(e.message, 'error')); }
 });
 ` + commonsWebTreeJS + `
-Promise.all([load(), loadTree()]).catch(e => say(e.message, 'error'));
+Promise.all([load(), loadTree()]).then(() => document.getElementById('tree-refresh').click()).catch(e => say(e.message, 'error'));
 </script>
 </html>`))

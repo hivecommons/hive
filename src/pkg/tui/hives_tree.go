@@ -436,7 +436,7 @@ func hivesTreeView(s *hivesTreeSession) panes.HiveTreeView {
 	view.Stale = diff.Stale
 	view.Staged = len(diff.Membership) + len(diff.Enabled) + len(diff.HubFollow)
 	view.Diff = hivesTreeDiffLines(diff)
-	view.Scope = hivesTreeScope(tree.Selection, len(tree.Subscriptions))
+	view.Scope = hivesTreeGroupExplain(tree.Selection, tree.Subscriptions)
 
 	subs := make(map[string]hivectl.TreeSubscription, len(tree.Subscriptions))
 	for _, sub := range tree.Subscriptions {
@@ -448,13 +448,17 @@ func hivesTreeView(s *hivesTreeSession) panes.HiveTreeView {
 		for _, name := range h.Subscriptions {
 			enabled = enabled || !subs[name].Disabled
 		}
+		members := make([]hivectl.TreeSubscription, 0, len(h.Subscriptions))
+		for _, name := range h.Subscriptions {
+			members = append(members, subs[name])
+		}
 		hub := panes.HiveTreeNode{
 			Key: hubKey, Kind: panes.HiveTreeHub,
 			Short: hivesTreeHubName(h), Identity: h.ID, Hub: h.ID,
 			Selection: hivesTreeMark(h.Selection), Badges: hivesTreeBadges(h.Selection, 0, false),
 			Follow: h.Follow, Readiness: "unavailable", Activity: "unavailable",
 			Provenance:      "tracked hub " + hivesTreeHubName(h),
-			Explanation:     hivesTreeExplain(h.Selection, len(h.Subscriptions)),
+			Explanation:     hivesTreeGroupExplain(h.Selection, members),
 			ExclusionSource: hivesTreeExclusions(h.Selection),
 			Enabled:         enabled, Legacy: h.Selection.Legacy, Direct: h.Direct,
 			Subscriptions: len(h.Subscriptions), Repositories: h.Selection.Repositories,
@@ -586,6 +590,14 @@ func hivesTreeBadges(sel hivectl.TreeSelection, sharedHubs int, disabled bool) [
 }
 
 func hivesTreeExplain(sel hivectl.TreeSelection, subscriptions int) string {
+	if sel.Legacy && subscriptions == 1 {
+		// An unrestricted subscription has no saved selection, so "0 of N selected" would read as "not contributing".
+		text := "Unrestricted — legacy: receives every repository the Hive offers until restricted"
+		if sel.MembershipIncomplete {
+			text += "; Membership incomplete"
+		}
+		return text
+	}
 	text := fmt.Sprintf("%s: %d of %d repositories selected", hivesTreeStateLabel(sel), sel.Selected, sel.Repositories)
 	if subscriptions != 1 {
 		text += fmt.Sprintf(" across %d subscriptions", subscriptions)
@@ -605,6 +617,34 @@ func hivesTreeExclusions(sel hivectl.TreeSelection) string {
 
 func hivesTreeScope(sel hivectl.TreeSelection, subscriptions int) string {
 	return hivesTreeExplain(sel, subscriptions)
+}
+
+// hivesTreeGroupExplain describes a hub or the whole tree. One unrestricted
+// subscription must not stand in for its restricted siblings, so restricted
+// and unrestricted Hives are reported separately.
+func hivesTreeGroupExplain(sel hivectl.TreeSelection, members []hivectl.TreeSubscription) string {
+	legacy, restricted, selected, total := 0, 0, 0, 0
+	for _, m := range members {
+		if m.Selection.Legacy {
+			legacy++
+			continue
+		}
+		restricted++
+		selected += m.Selection.Selected
+		total += m.Selection.Repositories
+	}
+	if legacy == 0 {
+		return hivesTreeScope(sel, len(members))
+	}
+	var parts []string
+	if restricted > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d selected in %d restricted Hive(s)", selected, total, restricted))
+	}
+	parts = append(parts, fmt.Sprintf("%d unrestricted — legacy (receives all)", legacy))
+	if sel.MembershipIncomplete {
+		parts = append(parts, "Membership incomplete")
+	}
+	return strings.Join(parts, "; ")
 }
 
 // hivesTreeProvenance names reviewed presets by ID and revision. A source with
