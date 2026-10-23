@@ -555,7 +555,7 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 </table>
 <p class="muted">Profile store: <span id="path"></span>; projection: <span id="envpath"></span></p>
 <script>
-const token = {{printf "%q" .Token}};
+const token = {{.Token}};
 history.replaceState(null, '', location.pathname);
 const headers = {'Content-Type':'application/json', 'X-Hive-Commons-Token': token};
 const message = document.getElementById('message');

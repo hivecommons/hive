@@ -420,6 +420,33 @@ func TestCommonsTreePageAccessibilityAndLocalAssets(t *testing.T) {
 	}
 }
 
+// The page script sends this literal as the X-Hive-Commons-Token header. The
+// template is html/template, whose JS context already quotes a string; piping
+// the token through printf "%q" first double-quotes it, the header then
+// carries literal quote characters, and every API call is rejected with 401.
+func TestCommonsPageEmbedsTokenAsSingleJSStringLiteral(t *testing.T) {
+	for _, token := range []string{"local-token", `a"b</script>`} {
+		var page bytes.Buffer
+		if err := commonsWebTemplate.Execute(&page, map[string]string{"Token": token}); err != nil {
+			t.Fatal(err)
+		}
+		line := ""
+		for _, l := range strings.Split(page.String(), "\n") {
+			if strings.HasPrefix(l, "const token = ") {
+				line = l
+			}
+		}
+		if line == "" {
+			t.Fatal("page has no `const token = ` line")
+		}
+		literal := strings.TrimSuffix(strings.TrimPrefix(line, "const token = "), ";")
+		var got string
+		if err := json.Unmarshal([]byte(literal), &got); err != nil || got != token {
+			t.Errorf("token literal %s decodes to %q (err %v), want exactly %q", literal, got, err, token)
+		}
+	}
+}
+
 func TestCommonsTreePublicDiscoveryAndOutage(t *testing.T) {
 	for _, unavailable := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete", true: "outage"}[unavailable], func(t *testing.T) {
