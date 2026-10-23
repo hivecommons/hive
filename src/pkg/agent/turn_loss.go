@@ -2,6 +2,8 @@ package agent
 
 import (
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // turnLossNow is the clock this file reads, seamed for tests in the same
@@ -15,56 +17,16 @@ var turnLossNow = time.Now
 // loss (a few long turns vs. many short ones), which a handful conveys.
 const turnLossRecentCapacity = 20
 
-// TurnInterruption is one teardown that killed a turn in flight.
-//
-// Durations are seconds rather than time.Duration because this crosses into
-// the persisted state file, where a float is legible to `jq` and stable across
-// Go's duration-marshalling.
-type TurnInterruption struct {
-	// At is when the teardown happened.
-	At time.Time
-	// Reason is the teardown reason, matching the kick-log archive reason
-	// ("restart", "shutdown").
-	Reason string
-	// SinceKick is teardown minus kick delivery — the upper bound on cost.
-	// Zero when the agent had no recorded kick.
-	SinceKick time.Duration
-	// SinceOutput is teardown minus the last observed pane change. Nil when
-	// the pane poller never saw two differing captures, which reads as
-	// "unknown" and must never be read as "idle".
-	SinceOutput *time.Duration
-	// Producing reports whether the pane changed after the kick landed — that
-	// the agent did something this turn. Unknown counts as false: an
-	// instrument that guesses "yes" would inflate exactly the number the RFC
-	// is trying to size.
-	Producing bool
-	// Bytes is the scrollback archived at teardown, a proxy for the volume of
-	// turn output discarded. Zero when kick-log archiving is disabled or the
-	// capture failed — the interruption is still recorded, because undercounting
-	// interruptions wherever archiving is off would bias the measurement toward
-	// the fleet's best-instrumented spokes.
-	Bytes int
-}
+// TurnInterruption and TurnLoss are defined in pkg/crux/types as part of the
+// Crux runtime surface (hivecommons/hive#13536); aliased here. TurnLoss is
+// persisted through snapshot.AgentState into /data/hive-state.json — the
+// store that already carries RestartCount — rather than a new sidecar file,
+// per the RFC's explicit caution against adding durable store number five.
+type TurnInterruption = types.TurnInterruption
 
-// TurnLoss is the per-agent accumulation that survives the restart it measures.
-// Persisted through snapshot.AgentState into /data/hive-state.json — the store
-// that already carries RestartCount — rather than a new sidecar file, per the
-// RFC's explicit caution against adding durable store number five.
-type TurnLoss struct {
-	// Interruptions is every teardown that hit a turn with pending output.
-	Interruptions int
-	// Producing is the subset where the agent was observably working. This is
-	// the honest headline number: interruptions that certainly discarded work.
-	Producing int
-	// UpperBound is the summed SinceKick across all interruptions. Named for
-	// what it is: the most this agent's restarts could have cost, not what
-	// they did cost.
-	UpperBound time.Duration
-	// Bytes is the summed archived scrollback across all interruptions.
-	Bytes int64
-	// Recent is the newest turnLossRecentCapacity records, oldest first.
-	Recent []TurnInterruption
-}
+// TurnLoss is the per-agent accumulation that survives the restart it
+// measures; see types.TurnLoss.
+type TurnLoss = types.TurnLoss
 
 // noteTurnInterruptedLocked records one interrupted turn against the agent.
 // Callers must hold m.mu; it reads pane observations under paneMu, which is

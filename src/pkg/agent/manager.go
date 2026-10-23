@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/crux/types"
+
 	"github.com/hivecommons/hive/pkg/claude"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -19,21 +21,20 @@ import (
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
-type ProcessState string
+// ProcessState and the State* values are defined in pkg/crux/types as part
+// of the Crux runtime surface (hivecommons/hive#13536); aliased here.
+type ProcessState = types.ProcessState
 
 const (
-	StateIdle    ProcessState = "idle"
-	StateRunning ProcessState = "running"
-	StateStopped ProcessState = "stopped"
-	StateFailed  ProcessState = "failed"
-	StatePaused  ProcessState = "paused"
+	StateIdle    = types.StateIdle
+	StateRunning = types.StateRunning
+	StateStopped = types.StateStopped
+	StateFailed  = types.StateFailed
+	StatePaused  = types.StatePaused
 )
 
-type KickRecord struct {
-	Timestamp time.Time `json:"timestamp"`
-	Agent     string    `json:"agent"`
-	Snippet   string    `json:"snippet"`
-}
+// KickRecord is one entry of KickHistory; see types.KickRecord.
+type KickRecord = types.KickRecord
 
 const (
 	outputBufferCapacity = 500

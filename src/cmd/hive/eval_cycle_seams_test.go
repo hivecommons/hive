@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -246,19 +246,19 @@ func TestMergeResumeKicks_HeldCarriesReason(t *testing.T) {
 }
 
 type fakeResumeKickStatus struct {
-	fast        map[string]*agent.AgentProcess
-	all         map[string]*agent.AgentProcess
+	fast        map[string]*crux.Process
+	all         map[string]*crux.Process
 	allStatuses int
 }
 
-func (f *fakeResumeKickStatus) GetStatusFast(name string) (*agent.AgentProcess, error) {
+func (f *fakeResumeKickStatus) GetStatusFast(name string) (*crux.Process, error) {
 	if st, ok := f.fast[name]; ok {
 		return st, nil
 	}
 	return nil, errors.New("status unavailable")
 }
 
-func (f *fakeResumeKickStatus) AllStatuses() map[string]*agent.AgentProcess {
+func (f *fakeResumeKickStatus) AllStatuses() map[string]*crux.Process {
 	f.allStatuses++
 	return f.all
 }
@@ -271,16 +271,16 @@ func TestResumeKickHeldFacts(t *testing.T) {
 	since := time.Date(2026, 9, 29, 8, 0, 0, 0, time.UTC)
 	kick := since.Add(time.Minute)
 	status := &fakeResumeKickStatus{
-		fast: map[string]*agent.AgentProcess{
+		fast: map[string]*crux.Process{
 			"scanner":  {Name: "scanner", Config: config.AgentConfig{Enabled: true}, LastKick: &kick},
 			"paused":   {Name: "paused", Config: config.AgentConfig{Enabled: true}, Paused: true},
-			"stateP":   {Name: "stateP", Config: config.AgentConfig{Enabled: true}, State: agent.StatePaused},
+			"stateP":   {Name: "stateP", Config: config.AgentConfig{Enabled: true}, State: crux.StatePaused},
 			"disabled": {Name: "disabled"},
 			"busy":     {Name: "busy", Config: config.AgentConfig{Enabled: true}, KicksUndeliverable: 1},
 			"worked":   {Name: "worked", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(time.Second)},
 			"stale":    {Name: "stale", Config: config.AgentConfig{Enabled: true}, LastTranscriptActivity: since.Add(-time.Second)},
 		},
-		all: map[string]*agent.AgentProcess{
+		all: map[string]*crux.Process{
 			"slow": {Name: "slow", Config: config.AgentConfig{Enabled: true}},
 		},
 	}

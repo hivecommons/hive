@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/rotation"
 )
@@ -71,7 +72,7 @@ func (h *rotationHarness) run(t *testing.T) {
 	runRotationCheck(context.Background(), h.cfg, h.rotMgr, h.gov, h.agentMgr, rotationTestLogger())
 }
 
-func (h *rotationHarness) status(t *testing.T, name string) *agent.AgentProcess {
+func (h *rotationHarness) status(t *testing.T, name string) *crux.Process {
 	t.Helper()
 	proc, ok := h.agentMgr.AllStatuses()[name]
 	if !ok {

@@ -2,9 +2,9 @@
 
 Status: **partly shipped (v5).** Stage 1 is in progress in this repo: the
 boundary is named, the architecture ratchet and the tmux funnel are live,
-`crux.Runtime` exists, the dashboard is on it, the hub and spoke are on the
-crux value types, and the remaining Stage 1 item (CI path filters) is
-tracked on the RFC. Stages 2 and 3 are design only.
+`crux.Runtime` exists, the dashboard is on it, Crux owns its value types
+and the hub, spoke, dashboard and `cmd/hive` reference them as `crux.<Name>`,
+and the remaining Stage 1 item (CI path filters) is tracked on the RFC. Stages 2 and 3 are design only.
 
 ## What Crux is
 
@@ -81,39 +81,41 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    `HasSession`); `pkg/tui` attaches through it and the ratchet's tmux
    baseline is zero everywhere else. Operations are added as call sites
    move behind the funnel, not ahead of them.
-3. `crux.Runtime` (dashboard shipped, hub on the crux value types): `src/pkg/crux/runtime.go`
-   is the exported runtime surface, grouped as `Lifecycle`, `Observer`,
-   `Kicker`, `Definitions`, `Fleet` and `Credentials`; every method is
-   annotated with the consumer that needs it and `*agent.Manager` satisfies
-   it directly, so the adapter is zero-cost. The observation value types
-   (`Process`, `ProcessState`, `KickDispatch`, `KickOutcome`, `KickLogInfo`,
-   `RestartEvent`, `SubAgentModel`, `StartFailureClass` and their constants)
-   are aliases of the `pkg/agent` definitions for now: Stage 1 renames the
-   seam, Stage 2 moves the definitions behind it. `pkg/dashboard` holds a
-   `crux.Runtime` in `Dependencies.AgentMgr` and went from 68 to 51 distinct
-   `agent.<Symbol>` references; what remained was audit, commit-trailer,
-   provider-status, Copilot-token and agent-mode helpers plus the test-only
-   manager constructors, none of which a lifecycle interface covers.
-   `pkg/hub` holds no manager at all: its 18 references were the provider
-   status value types (`ProviderStatus`, `ProviderAgentEvidence`,
-   `RollUpProviderStatus`, `BackendAuthState`, the `BackendAuth*`,
-   `ProviderAuth*` and `Provider*` availability constants). Those now live in
-   `pkg/crux/types`, a leaf package that `pkg/agent` imports and aliases
-   (the alias direction is reversed for them: Crux defines, the runtime
-   implementation re-exports) and that `pkg/crux` re-exports as
-   `crux.<Name>`, so consumers never see the leaf. It is a separate package
-   only because `pkg/crux` still aliases `agent.AgentProcess` and therefore
+3. `crux.Runtime` (shipped): `src/pkg/crux/runtime.go` is the exported
+   runtime surface, grouped as `Lifecycle`, `Observer`, `Kicker`,
+   `Definitions`, `Fleet` and `Credentials`; every method is annotated with
+   the consumer that needs it and `*agent.Manager` satisfies it directly, so
+   the adapter is zero-cost. `pkg/dashboard` holds a `crux.Runtime` in
+   `Dependencies.AgentMgr`; `pkg/hub` holds no manager at all.
+
+   The value types are Crux's own. Everything on the surface except
+   `Process` — `ProcessState` and the `State*` values, `KickDispatch` and
+   the `KickPhase*` values, `KickOutcome` and the `KickOutcome*` values,
+   `KickLogInfo`, `KickRecord`, `RestartEvent`, `SubAgentModel`,
+   `StartFailureClass` and its values, `TurnLoss`, `TurnInterruption`, and
+   the provider-status vocabulary (`ProviderStatus`,
+   `ProviderAgentEvidence`, `RollUpProviderStatus`, `BackendAuthState`, the
+   `BackendAuth*`, `ProviderAuth*` and `Provider*` constants) — is DEFINED
+   in `pkg/crux/types`, a stdlib-only leaf that `pkg/agent` imports and
+   re-exports as aliases and that `pkg/crux` re-exports as `crux.<Name>`.
+   Consumers never see the leaf. It is a separate package only because
+   `pkg/crux` still aliases `agent.AgentProcess` as `crux.Process` and so
    imports `pkg/agent`, which cannot import it back; it folds into
-   `pkg/crux` once `Process` is its own type. That move took `pkg/hub` to 1
-   (`AgentAvailableAtACMMLevel`), `pkg/hub/spoke` 15 → 5, `pkg/dashboard`
-   51 → 39 and `cmd/hive` 37 → 33. The dashboard's audit, lease-stage,
-   commit-trailer and artifact-link references were aliases of
-   `pkg/agentaudit`, the stdlib-only governor-side leaf; `pkg/agent` now
-   keeps only the lifecycle actions it emits itself and the dashboard
-   references `agentaudit` directly, taking it 39 → 19 (manager
-   constructors, `ProjectContext`, `NewRingBuffer`, Copilot-token and
-   agent-mode helpers). `pkg/crux` and everything under it is inside the
-   boundary for the ratchet's purposes.
+   `pkg/crux` once `Process` is its own type (Stage 2). The governor-side
+   audit vocabulary (lease stages, commit trailers, artifact links) that
+   `pkg/agent` used to re-export from `pkg/agentaudit` is no longer
+   re-exported; consumers reference `agentaudit` directly.
+
+   Ratchet counts over that sequence: `pkg/dashboard` 68 → 51 (onto
+   `crux.Runtime`) → 39 (provider status) → 19 (audit eviction);
+   `pkg/hub` 18 → 1 (`AgentAvailableAtACMMLevel`); `pkg/hub/spoke` 15 → 5
+   → 3; `cmd/hive` 37 → 33 → 22; `pkg/loginscan` 7 → 4. What remains in
+   every consumer is the manager and its constructors (`Manager`,
+   `NewManager`, `ProjectContext`, `NewRingBuffer`), agent-mode and
+   capability parsing, UID maps, Copilot-token helpers and pane
+   classification: implementation the test-only constructors and
+   `cmd/hive`'s wiring need, not observation. `pkg/crux` and everything
+   under it is inside the boundary for the ratchet's purposes.
 4. Agent configuration as its own struct and file (shipped):
    `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
    `src/pkg/config/agent_config.go`, embedded inline in `Config` and

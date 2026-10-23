@@ -4,44 +4,23 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-// Kick outcome kinds. pkg/governor mirrors these strings (governor.KickOutcome*)
-// so the two packages need no import edge between them.
+// Kick outcome kinds and KickOutcome are defined in pkg/crux/types as part of
+// the Crux runtime surface (hivecommons/hive#13536); aliased here. pkg/governor
+// mirrors the strings (governor.KickOutcome*) so it needs no import edge.
 const (
-	// KickOutcomeQuestion: the agent ended its turn asking the operator what to
-	// do. A kick already told it; ending on a question is a defect.
-	KickOutcomeQuestion = "question"
-	// KickOutcomeStandDown: the agent ended its turn with an explicit policy
-	// stand-down. A legitimate refusal — blocked, not idle.
-	KickOutcomeStandDown = "stand-down"
-	// KickOutcomeNoOp: the agent explicitly reported producing nothing (the
-	// "no issue opened, no PR opened, no bead created" triple) without a
-	// stand-down.
-	KickOutcomeNoOp = "no-op"
-	// KickOutcomeEnded: the turn ended with no recognised no-op signature. Not
-	// a productivity claim.
-	KickOutcomeEnded = "ended"
+	KickOutcomeQuestion  = types.KickOutcomeQuestion
+	KickOutcomeStandDown = types.KickOutcomeStandDown
+	KickOutcomeNoOp      = types.KickOutcomeNoOp
+	KickOutcomeEnded     = types.KickOutcomeEnded
 )
 
-// KickOutcome is how an agent's most recent kicked turn ended.
-type KickOutcome struct {
-	Kind string `json:"kind"`
-	// Reason is the pane line that decided a no-op verdict; empty for "ended".
-	Reason string `json:"reason,omitempty"`
-	// At is when the turn was observed to have ended.
-	At time.Time `json:"at"`
-	// KickAt is the delivery time of the kick this outcome belongs to. An
-	// outcome whose KickAt differs from the agent's LastKick describes an
-	// earlier turn; the current one has not ended yet.
-	KickAt time.Time `json:"kickAt"`
-}
-
-// Settled reports whether this outcome belongs to the kick delivered at
-// kickAt — i.e. that turn has ended and been classified.
-func (o KickOutcome) Settled(kickAt *time.Time) bool {
-	return kickAt != nil && o.Kind != "" && o.KickAt.Equal(*kickAt)
-}
+// KickOutcome is how an agent's most recent kicked turn ended; see
+// types.KickOutcome.
+type KickOutcome = types.KickOutcome
 
 // kickOutcomeGrace is how long after delivery a pane at the input prompt is
 // still assumed to be the CLI accepting the kick rather than a finished turn.

@@ -204,7 +204,7 @@ func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []crux.
 	return spoke.ProviderStatusForHeartbeat(agents)
 }
 
-func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
+func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused:         proc.Paused,
 		PausedTrigger:  proc.PausedTrigger,
@@ -270,7 +270,7 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	return act
 }
 
-func heartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {
+func heartbeatKickInterval(govState governor.State, name string, proc *crux.Process, onDemandFromPack map[string]bool) time.Duration {
 	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
 		return 0
 	}
@@ -2173,7 +2173,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
 	// produced work (and a question earns an early re-kick).
-	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome agent.KickOutcome) {
+	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome crux.KickOutcome) {
 		b.gov.RecordKickOutcome(agentName, outcome.Kind, outcome.Reason, outcome.KickAt, outcome.At)
 	})
 
@@ -8082,7 +8082,7 @@ func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
 // The overwhelming majority of agents are in that state, and a measurement that
 // bloated every hive's state file with empty records would be its own argument
 // for removing it.
-func turnLossToSnapshot(loss agent.TurnLoss) *snapshot.AgentTurnLoss {
+func turnLossToSnapshot(loss crux.TurnLoss) *snapshot.AgentTurnLoss {
 	if loss.Interruptions == 0 && len(loss.Recent) == 0 {
 		return nil
 	}
@@ -8109,7 +8109,7 @@ func turnLossToSnapshot(loss agent.TurnLoss) *snapshot.AgentTurnLoss {
 	return out
 }
 
-func restartEventsToSnapshot(events []agent.RestartEvent) []snapshot.AgentRestartEvent {
+func restartEventsToSnapshot(events []crux.RestartEvent) []snapshot.AgentRestartEvent {
 	if len(events) == 0 {
 		return nil
 	}
@@ -8124,17 +8124,17 @@ func restartEventsToSnapshot(events []agent.RestartEvent) []snapshot.AgentRestar
 	return out
 }
 
-func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []agent.RestartEvent {
+func restartEventsFromSnapshot(events []snapshot.AgentRestartEvent) []crux.RestartEvent {
 	if len(events) == 0 {
 		return nil
 	}
-	out := make([]agent.RestartEvent, 0, len(events))
+	out := make([]crux.RestartEvent, 0, len(events))
 	cutoff := time.Now().Add(-24 * time.Hour)
 	for _, ev := range events {
 		if ev.At.IsZero() || ev.At.Before(cutoff) {
 			continue
 		}
-		out = append(out, agent.RestartEvent{At: ev.At, Reason: ev.Reason})
+		out = append(out, crux.RestartEvent{At: ev.At, Reason: ev.Reason})
 	}
 	return out
 }
@@ -9074,7 +9074,7 @@ func runRotationCheck(ctx context.Context, cfg *config.Config, rotMgr *rotation.
 			continue // never touch an operator pause
 		}
 		// Never rotate mid-task: only idle agents are candidates.
-		if proc.State == agent.StateRunning {
+		if proc.State == crux.StateRunning {
 			continue
 		}
 

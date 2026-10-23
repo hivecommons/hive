@@ -51,14 +51,20 @@ import (
 // dashboard 51 → 39, cmd/hive 37 → 33. The dashboard's audit, lease-stage,
 // commit-trailer and artifact-link references then moved to pkg/agentaudit,
 // the governor-side leaf they were always aliases of: dashboard 39 → 19.
+// The remaining runtime value types (ProcessState, Kick*, RestartEvent,
+// SubAgentModel, StartFailureClass, TurnLoss, KickRecord) then moved to
+// pkg/crux/types too: cmd/hive 33 → 22, loginscan 7 → 4, spoke 5 → 3. What
+// is left everywhere is the manager and its constructors (Manager,
+// NewManager, ProjectContext), agent-mode and capability parsing, UID maps,
+// and pane classification — implementation, not observation.
 var cruxSymbolBaseline = map[string]int{
-	"cmd/hive":      33,
+	"cmd/hive":      22,
 	"pkg/dashboard": 19,
 	"pkg/discord":   1,
 	"pkg/hub":       1,
-	"pkg/hub/spoke": 5,
+	"pkg/hub/spoke": 3,
 	"pkg/ioscan":    5,
-	"pkg/loginscan": 7,
+	"pkg/loginscan": 4,
 	"pkg/proxy":     14,
 }
 

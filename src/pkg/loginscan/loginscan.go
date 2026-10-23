@@ -15,6 +15,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/notify"
 )
 
@@ -200,7 +201,7 @@ func Verdict(matched, credentialValid bool, sightings int) Action {
 }
 
 type AgentManager interface {
-	AllStatuses() map[string]*agent.AgentProcess
+	AllStatuses() map[string]*crux.Process
 	GetOutput(name string, lines int) ([]string, error)
 	AgentHasValidCredential(agentName string) bool
 	RefreshAgentTokenFor(ctx context.Context, name string) error

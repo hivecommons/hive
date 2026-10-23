@@ -5,41 +5,21 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-// Kick dispatch phases. A dispatch is INDETERMINATE while it is pending: the
-// prompt may still be delivered. Only KickPhaseFailed is a definitive failure.
+// Kick dispatch phases and KickDispatch are defined in pkg/crux/types as part
+// of the Crux runtime surface (hivecommons/hive#13536); aliased here.
 const (
-	// KickPhasePending means the kick passed its preconditions and a delivery
-	// goroutine is waiting for the CLI's input prompt.
-	KickPhasePending = "pending"
-	// KickPhaseDelivered means the message was typed into the agent's pane.
-	KickPhaseDelivered = "delivered"
-	// KickPhaseFailed means delivery will not happen: the CLI never reached
-	// its input prompt within inputPromptTimeout, a restart failed, or the
-	// agent disappeared mid-flight.
-	KickPhaseFailed = "failed"
+	KickPhasePending   = types.KickPhasePending
+	KickPhaseDelivered = types.KickPhaseDelivered
+	KickPhaseFailed    = types.KickPhaseFailed
 )
 
-// KickDispatch is the observable outcome of one asynchronous kick.
-type KickDispatch struct {
-	// Agent is the resolved agent name.
-	Agent string `json:"agent"`
-	// Phase is one of KickPhasePending / KickPhaseDelivered / KickPhaseFailed.
-	Phase string `json:"phase"`
-	// Error carries the failure reason when Phase is KickPhaseFailed. It is
-	// empty in every other phase.
-	Error string `json:"error,omitempty"`
-	// QueuedAt is when the dispatch passed its preconditions.
-	QueuedAt time.Time `json:"queuedAt"`
-	// SettledAt is when the dispatch reached a terminal phase. Zero while
-	// pending.
-	SettledAt time.Time `json:"settledAt,omitempty"`
-}
-
-// Pending reports whether this dispatch is still in flight — the state in
-// which the outcome is INDETERMINATE and must never be rendered as a failure.
-func (d KickDispatch) Pending() bool { return d.Phase == KickPhasePending }
+// KickDispatch is the observable outcome of one asynchronous kick; see
+// types.KickDispatch.
+type KickDispatch = types.KickDispatch
 
 // kickDispatchRegistry holds the latest dispatch per agent plus the in-flight
 // guard. It is deliberately independent of m.mu: the background delivery

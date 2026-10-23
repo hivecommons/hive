@@ -3,6 +3,7 @@ package crux
 import (
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
@@ -29,9 +30,9 @@ func TestFromManager_WrapsManagerUnchanged(t *testing.T) {
 	}
 }
 
-// TestValueAliasesTrackAgent pins that the façade's constants are the
-// manager's own, so a consumer comparing crux.StateRunning against a
-// Process.State written by pkg/agent can never drift.
+// TestValueAliasesTrackAgent pins that the façade's constants are the ones
+// the manager writes (both sides alias pkg/crux/types), so a consumer
+// comparing crux.StateRunning against a Process.State can never drift.
 func TestValueAliasesTrackAgent(t *testing.T) {
 	if StateRunning != agent.StateRunning || StatePaused != agent.StatePaused || StateStopped != agent.StateStopped {
 		t.Fatal("process state constants diverged from pkg/agent")
@@ -46,6 +47,19 @@ func TestValueAliasesTrackAgent(t *testing.T) {
 	p.State = StateRunning
 	if p.State != agent.StateRunning {
 		t.Fatal("Process alias does not share agent.AgentProcess's State type")
+	}
+	p.KickOutcome = KickOutcome{Kind: KickOutcomeEnded, KickAt: time.Unix(1, 0)}
+	kickAt := time.Unix(1, 0)
+	if !p.KickOutcome.Settled(&kickAt) || p.KickOutcome.Kind != agent.KickOutcomeEnded {
+		t.Fatal("KickOutcome alias does not share agent.AgentProcess's KickOutcome type")
+	}
+	p.RestartEvents = []RestartEvent{{Reason: "x"}}
+	p.TurnLoss = TurnLoss{Recent: []TurnInterruption{{Reason: "restart"}}}
+	p.KickHistory = []KickRecord{{Agent: "a"}}
+	p.SubAgentModels = []SubAgentModel{{Model: "m"}}
+	p.StartFailureClass = string(StartFailureNoOutput)
+	if p.StartFailureClass != string(agent.StartFailureNoOutput) || !(KickDispatch{Phase: KickPhasePending}).Pending() {
+		t.Fatal("start-failure or kick-dispatch aliases diverged from pkg/agent")
 	}
 }
 

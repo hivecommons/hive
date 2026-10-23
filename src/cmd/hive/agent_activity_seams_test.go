@@ -77,7 +77,7 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	since := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
-	failing := &agent.AgentProcess{BackendAuth: crux.BackendAuthState{
+	failing := &crux.Process{BackendAuth: crux.BackendAuthState{
 		Status:    crux.BackendAuthTokenExpired,
 		Since:     since,
 		LastError: "401 token expired",
@@ -90,7 +90,7 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 			act.BackendAuthStatus, act.BackendAuthSince, act.BackendAuthLastError)
 	}
 
-	for name, proc := range map[string]*agent.AgentProcess{
+	for name, proc := range map[string]*crux.Process{
 		"explicit ok":      {BackendAuth: crux.BackendAuthState{Status: crux.BackendAuthOK, Since: since, LastError: "stale"}},
 		"never classified": {},
 	} {
@@ -108,7 +108,7 @@ func TestAgentActivityForCarriesStartedAt(t *testing.T) {
 	cfg := activityTestConfig()
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	started := time.Date(2026, 9, 10, 6, 30, 0, 0, time.UTC)
-	proc := &agent.AgentProcess{StartedAt: &started}
+	proc := &crux.Process{StartedAt: &started}
 	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !act.StartedAt.Equal(started) {
 		t.Errorf("StartedAt = %v, want %v", act.StartedAt, started)
@@ -123,9 +123,9 @@ func TestAgentActivityForCarriesRestartTelemetry(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	lastAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	mgr.SeedRestartTelemetry("scanner", 5,
-		[]agent.RestartEvent{{At: lastAt, Reason: "pane stall"}}, "seed fallback")
+		[]crux.RestartEvent{{At: lastAt, Reason: "pane stall"}}, "seed fallback")
 
-	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", &agent.AgentProcess{}, nil)
+	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", &crux.Process{}, nil)
 	if act.Restarts.Total != 5 {
 		t.Errorf("Restarts.Total = %d, want 5", act.Restarts.Total)
 	}

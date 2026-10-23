@@ -11,11 +11,13 @@
 // references each consumer still makes; this package is how that number goes
 // down.
 //
-// Stage 1 keeps this a façade: the observation value types below are aliases
-// of their pkg/agent definitions, so the adapter is zero-cost and nothing
-// about the runtime's behaviour changes. Value types this package owns (the
-// provider-status vocabulary in provider_status.go) are defined in the leaf
-// package pkg/crux/types and aliased both here and in pkg/agent, because this
+// Stage 1 keeps this a façade: Process is an alias of agent.AgentProcess, so
+// the adapter is zero-cost and nothing about the runtime's behaviour changes.
+// Every other value type on this surface (process states, kick dispatch and
+// outcome, kick logs, restart events, sub-agent models, start-failure classes,
+// turn loss, the provider-status vocabulary) is DEFINED in the leaf package
+// pkg/crux/types and aliased both here and in pkg/agent: Crux owns them and
+// the runtime implementation re-exports them. The leaf exists because this
 // package imports pkg/agent for Process and so cannot be imported by it. Each
 // interface method is annotated with the consumer that needs it today; a
 // method with no consumer does not belong here.
@@ -26,6 +28,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // Process is the observable snapshot of one agent: state, pins, overrides,
@@ -33,65 +36,76 @@ import (
 // Observer.AllStatuses return.
 type Process = agent.AgentProcess
 
-// ProcessState is the manager's intent for an agent (running, stopped,
+// ProcessState is the runtime's intent for an agent (running, stopped,
 // paused, …), as distinct from what its pane is observed to be doing.
-type ProcessState = agent.ProcessState
+type ProcessState = types.ProcessState
 
 // Process states.
 const (
-	StateIdle    = agent.StateIdle
-	StateRunning = agent.StateRunning
-	StateStopped = agent.StateStopped
-	StateFailed  = agent.StateFailed
-	StatePaused  = agent.StatePaused
+	StateIdle    = types.StateIdle
+	StateRunning = types.StateRunning
+	StateStopped = types.StateStopped
+	StateFailed  = types.StateFailed
+	StatePaused  = types.StatePaused
 )
+
+// KickRecord is one entry of Process.KickHistory.
+type KickRecord = types.KickRecord
 
 // KickDispatch is the observable outcome of one asynchronous kick; see
 // Kicker.SendKickAsync and Kicker.KickDispatchState.
-type KickDispatch = agent.KickDispatch
+type KickDispatch = types.KickDispatch
 
 // Kick dispatch phases. A dispatch is indeterminate while pending; only
 // KickPhaseFailed is a definitive failure.
 const (
-	KickPhasePending   = agent.KickPhasePending
-	KickPhaseDelivered = agent.KickPhaseDelivered
-	KickPhaseFailed    = agent.KickPhaseFailed
+	KickPhasePending   = types.KickPhasePending
+	KickPhaseDelivered = types.KickPhaseDelivered
+	KickPhaseFailed    = types.KickPhaseFailed
 )
 
 // KickOutcome is how an agent's most recent kicked turn ended.
-type KickOutcome = agent.KickOutcome
+type KickOutcome = types.KickOutcome
 
 // Kick outcome kinds.
 const (
-	KickOutcomeQuestion  = agent.KickOutcomeQuestion
-	KickOutcomeStandDown = agent.KickOutcomeStandDown
-	KickOutcomeNoOp      = agent.KickOutcomeNoOp
-	KickOutcomeEnded     = agent.KickOutcomeEnded
+	KickOutcomeQuestion  = types.KickOutcomeQuestion
+	KickOutcomeStandDown = types.KickOutcomeStandDown
+	KickOutcomeNoOp      = types.KickOutcomeNoOp
+	KickOutcomeEnded     = types.KickOutcomeEnded
 )
 
 // KickLogInfo describes one archived kick log; see Kicker.ListKickLogs.
-type KickLogInfo = agent.KickLogInfo
+type KickLogInfo = types.KickLogInfo
 
 // RestartEvent is one entry of Process.RestartEvents.
-type RestartEvent = agent.RestartEvent
+type RestartEvent = types.RestartEvent
 
 // SubAgentModel is one observed Copilot sub-agent row; see
 // Process.SubAgentModels.
-type SubAgentModel = agent.SubAgentModel
+type SubAgentModel = types.SubAgentModel
 
 // StartFailureClass classifies why an agent failed to start; see
 // Process.StartFailureClass.
-type StartFailureClass = agent.StartFailureClass
+type StartFailureClass = types.StartFailureClass
 
 // Start failure classes.
 const (
-	StartFailureLoginRequired      = agent.StartFailureLoginRequired
-	StartFailureCredentialRejected = agent.StartFailureCredentialRejected
-	StartFailureCredentialMissing  = agent.StartFailureCredentialMissing
-	StartFailureBackendMismatch    = agent.StartFailureBackendMismatch
-	StartFailureBinaryMissing      = agent.StartFailureBinaryMissing
-	StartFailureNoOutput           = agent.StartFailureNoOutput
+	StartFailureLoginRequired      = types.StartFailureLoginRequired
+	StartFailureCredentialRejected = types.StartFailureCredentialRejected
+	StartFailureCredentialMissing  = types.StartFailureCredentialMissing
+	StartFailureBackendMismatch    = types.StartFailureBackendMismatch
+	StartFailureBinaryMissing      = types.StartFailureBinaryMissing
+	StartFailureNoOutput           = types.StartFailureNoOutput
 )
+
+// TurnInterruption is one teardown that killed a turn in flight; see
+// Process.TurnLoss.Recent.
+type TurnInterruption = types.TurnInterruption
+
+// TurnLoss is what teardowns have discarded from an agent's in-flight turns;
+// see Process.TurnLoss. cmd/hive: state persistence.
+type TurnLoss = types.TurnLoss
 
 // Lifecycle starts, stops, pauses and restarts agents.
 type Lifecycle interface {

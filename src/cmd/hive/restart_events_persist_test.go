@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
@@ -16,7 +16,7 @@ import (
 // contract turn_loss_persist_test.go pins for the turn-loss record.
 
 func TestRestartEventsRoundTripThroughPersistedState(t *testing.T) {
-	in := []agent.RestartEvent{
+	in := []crux.RestartEvent{
 		{At: time.Now().Add(-2 * time.Hour), Reason: "output stalled"},
 		{At: time.Now().Add(-30 * time.Minute), Reason: "config reload"},
 	}
@@ -38,7 +38,7 @@ func TestRestartEventsRoundTripThroughPersistedState(t *testing.T) {
 
 func TestRestartEventsToSnapshotDropsStaleAndZeroTimeEvents(t *testing.T) {
 	fresh := time.Now().Add(-time.Hour)
-	in := []agent.RestartEvent{
+	in := []crux.RestartEvent{
 		{At: time.Time{}, Reason: "zero time must not persist"},
 		{At: time.Now().Add(-25 * time.Hour), Reason: "older than the 24h window"},
 		{At: fresh, Reason: "still inside the window"},
@@ -78,7 +78,7 @@ func TestRestartEventsConversionMapsEmptyToNil(t *testing.T) {
 	if got := restartEventsToSnapshot(nil); got != nil {
 		t.Errorf("restartEventsToSnapshot(nil) = %+v, want nil", got)
 	}
-	if got := restartEventsToSnapshot([]agent.RestartEvent{}); got != nil {
+	if got := restartEventsToSnapshot([]crux.RestartEvent{}); got != nil {
 		t.Errorf("restartEventsToSnapshot(empty) = %+v, want nil so the JSON field is omitted", got)
 	}
 	if got := restartEventsFromSnapshot(nil); got != nil {
@@ -90,7 +90,7 @@ func TestRestartEventsConversionMapsEmptyToNil(t *testing.T) {
 }
 
 func TestRestartEventsToSnapshotAllStaleYieldsEmptyNotNilPanic(t *testing.T) {
-	in := []agent.RestartEvent{
+	in := []crux.RestartEvent{
 		{At: time.Now().Add(-30 * time.Hour), Reason: "stale"},
 	}
 	out := restartEventsToSnapshot(in)

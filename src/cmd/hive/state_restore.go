@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
@@ -44,7 +45,7 @@ import (
 // statuses carries the manager's post-restore pause provenance; agents
 // missing from it (not yet registered) count under the "unknown" trigger
 // rather than being dropped — the total must always add up.
-func pausedRestoreDetail(enabled map[string]config.AgentConfig, onDemandFromPack map[string]bool, statuses map[string]*agent.AgentProcess) string {
+func pausedRestoreDetail(enabled map[string]config.AgentConfig, onDemandFromPack map[string]bool, statuses map[string]*crux.Process) string {
 	restored := 0
 	byDesign := 0
 	byTrigger := map[string]int{}
@@ -144,9 +145,9 @@ func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config
 			agentMgr.SeedLastKick(name, *as.LastKick)
 		}
 		if len(as.KickHistory) > 0 {
-			records := make([]agent.KickRecord, len(as.KickHistory))
+			records := make([]crux.KickRecord, len(as.KickHistory))
 			for i, ke := range as.KickHistory {
-				records[i] = agent.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Snippet: ke.Snippet}
+				records[i] = crux.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Snippet: ke.Snippet}
 			}
 			agentMgr.SeedKickHistory(name, records)
 		}
@@ -177,18 +178,18 @@ func restoreAgentRuntimeState(saved *snapshot.PersistedState, cfg *config.Config
 
 // turnLossFromSnapshot converts the persisted turn-loss record back into the
 // manager's in-memory form. The inverse of turnLossToSnapshot in main.go.
-func turnLossFromSnapshot(in *snapshot.AgentTurnLoss) agent.TurnLoss {
+func turnLossFromSnapshot(in *snapshot.AgentTurnLoss) crux.TurnLoss {
 	if in == nil {
-		return agent.TurnLoss{}
+		return crux.TurnLoss{}
 	}
-	out := agent.TurnLoss{
+	out := crux.TurnLoss{
 		Interruptions: in.Interruptions,
 		Producing:     in.Producing,
 		UpperBound:    time.Duration(in.UpperBoundS * float64(time.Second)),
 		Bytes:         in.Bytes,
 	}
 	for _, r := range in.Recent {
-		rec := agent.TurnInterruption{
+		rec := crux.TurnInterruption{
 			At:        r.At,
 			Reason:    r.Reason,
 			SinceKick: time.Duration(r.SinceKickS * float64(time.Second)),

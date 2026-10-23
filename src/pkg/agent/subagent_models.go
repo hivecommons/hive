@@ -4,17 +4,12 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-// SubAgentModel is an explicit model observation, not the model requested by
-// task(). Copilot 1.0.88 (Dockerfile pin) prints these in its terminal task rows.
-// The session-state layout is not a stable effective-model contract, so use
-// those rows as a read-only fallback. Missing/changed layouts yield no rows.
-type SubAgentModel struct {
-	AgentType       string `json:"agentType"`
-	Model           string `json:"model"`
-	OlderGeneration bool   `json:"olderGeneration,omitempty"`
-}
+// SubAgentModel is an observed Copilot sub-agent row; see types.SubAgentModel.
+type SubAgentModel = types.SubAgentModel
 
 // Anchor the whole row: policy prose mentioning a model must not become a
 // model observation. Accept the TUI's status/tree decoration, not arbitrary text.

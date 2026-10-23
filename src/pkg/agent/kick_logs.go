@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 const (
@@ -69,27 +71,8 @@ const (
 	kickLogFileMode = os.FileMode(0o600)
 )
 
-// KickLogInfo describes one archived kick log, as listed by ListKickLogs and
-// the dashboard's kick-history endpoint.
-type KickLogInfo struct {
-	// ID is the archive's filename — the handle ReadKickLog accepts.
-	ID string `json:"id"`
-	// Timestamp is when the archived kick STARTED (agent.LastKick at archive
-	// time), parsed from the filename, falling back to the file mtime. #9580:
-	// this used to be when the archive was WRITTEN — which for the "kick"
-	// reason is the NEXT kick's delivery time, often hours after this kick
-	// ran, and useless for lining a kick up against e.g. a budget reset.
-	Timestamp time.Time `json:"timestamp"`
-	// SizeBytes is the archive size on disk.
-	SizeBytes int64 `json:"size_bytes"`
-	// Reason says what triggered the snapshot: "kick" (a newer kick rotated
-	// this one out), "restart", or "shutdown" (pod roll / hive upgrade).
-	Reason string `json:"reason"`
-	// Source is the header's source: line — "scrollback" or "transcript"
-	// (#11762) — so a listing can say which without opening the file. Empty
-	// for archives written before the header carried one.
-	Source string `json:"source,omitempty"`
-}
+// KickLogInfo describes one archived kick log; see types.KickLogInfo.
+type KickLogInfo = types.KickLogInfo
 
 // kickLogSettingsFromEnv resolves the archive root, per-agent retention
 // count, and per-agent byte cap, applying env overrides over the defaults.

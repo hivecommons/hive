@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // The turn-loss measurement (#4002 open question 3) is worthless unless it
@@ -15,12 +15,12 @@ import (
 
 func TestTurnLossRoundTripsThroughPersistedState(t *testing.T) {
 	since := 90 * time.Second
-	in := agent.TurnLoss{
+	in := crux.TurnLoss{
 		Interruptions: 3,
 		Producing:     2,
 		UpperBound:    7*time.Minute + 30*time.Second,
 		Bytes:         4096,
-		Recent: []agent.TurnInterruption{
+		Recent: []crux.TurnInterruption{
 			{
 				At:          time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC),
 				Reason:      "restart",
@@ -72,7 +72,7 @@ func TestTurnLossRoundTripsThroughPersistedState(t *testing.T) {
 // empty record for each would bloat every hive's state file and become its own
 // argument for deleting the measurement.
 func TestUninterruptedAgentPersistsNothing(t *testing.T) {
-	if got := turnLossToSnapshot(agent.TurnLoss{}); got != nil {
+	if got := turnLossToSnapshot(crux.TurnLoss{}); got != nil {
 		t.Errorf("turnLossToSnapshot(zero) = %+v, want nil", got)
 	}
 }
@@ -91,10 +91,10 @@ func TestNilPersistedTurnLossRestoresEmpty(t *testing.T) {
 // nanosecond integer that nobody can read at a glance, and the whole point of
 // the record is that a human can size the problem from it.
 func TestPersistedTurnLossIsJSONLegible(t *testing.T) {
-	out := turnLossToSnapshot(agent.TurnLoss{
+	out := turnLossToSnapshot(crux.TurnLoss{
 		Interruptions: 1,
 		UpperBound:    90 * time.Second,
-		Recent:        []agent.TurnInterruption{{SinceKick: 90 * time.Second}},
+		Recent:        []crux.TurnInterruption{{SinceKick: 90 * time.Second}},
 	})
 	if out.UpperBoundS != 90 {
 		t.Errorf("UpperBoundS = %v, want 90", out.UpperBoundS)

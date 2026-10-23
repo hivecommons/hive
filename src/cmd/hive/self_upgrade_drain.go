@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // selfUpgradeDrainStaleAfter bounds how long a drain stays latched without a
@@ -115,13 +115,13 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 
 // agentKicksInFlight names the running, unpaused agents whose most recent kick was
 // delivered by THIS process and whose turn has not been classified as ended
-// (agent.KickOutcome is settled by the pane poller / stall watchdog when the
+// (crux.KickOutcome is settled by the pane poller / stall watchdog when the
 // CLI returns to its prompt). Kicks seeded from persisted state predate
 // processStart and cannot still be running here, so they are ignored.
-func agentKicksInFlight(statuses map[string]*agent.AgentProcess, processStart time.Time) []string {
+func agentKicksInFlight(statuses map[string]*crux.Process, processStart time.Time) []string {
 	var names []string
 	for name, proc := range statuses {
-		if proc == nil || proc.State != agent.StateRunning || proc.Paused || proc.LastKick == nil {
+		if proc == nil || proc.State != crux.StateRunning || proc.Paused || proc.LastKick == nil {
 			continue
 		}
 		if !proc.LastKick.After(processStart) {
