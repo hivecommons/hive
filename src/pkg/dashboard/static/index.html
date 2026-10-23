@@ -4541,7 +4541,7 @@
     }
     .section-chevron.collapsed { transform: rotate(-90deg); }
     .section-body {
-      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease, content-visibility 200ms;
       max-height: none; opacity: 1;
     }
     .section-body.collapsed {
@@ -4737,7 +4737,12 @@
     .gh-api-budget-table .gh-api-budget-empty { white-space: normal; }
     .gh-api-budget-empty { color: var(--muted); }
     @media (max-width: 640px) { .debug-headline-tokens { display: none; } }
-    .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
+    .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease, content-visibility 200ms; max-height: none; opacity: 1; }
+    /* Keep content rendered until collapse finishes, but reveal it at the start
+       of expansion so scrollHeight and sparkline geometry can be measured. */
+    .dash-card-body, .section-body { transition-behavior: allow-discrete; }
+    .dash-card-body.collapsed:not(.collapsed-with-headline),
+    .section-body.collapsed:not(.collapsed-with-headline) { content-visibility: hidden; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
     /* Wrap controls separately from the dense, locally scrolling audit table. */
@@ -9531,6 +9536,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body.style.maxHeight = hasHeadline ? SECTION_EXPANDED_MAX_HEIGHT : body.style.maxHeight;
       } else {
         clearCollapsedHeadlineVisibility(body);
+        // Restore content visibility before reading layout or replaying sparklines.
         body.classList.remove('collapsed');
         if (animate) {
           body.style.maxHeight = body.scrollHeight + 'px';
