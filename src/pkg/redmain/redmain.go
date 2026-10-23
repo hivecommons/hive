@@ -18,7 +18,10 @@
 //     on <who>".
 //
 // The fact clears on the first observation in which the check is green
-// again, which lifts the pause and the ordering with nothing to undo. Trust
+// again (a completed run that is not red), which lifts the pause and the
+// ordering with nothing to undo. A check whose run on the tip has not
+// completed yet is neither red nor green: it keeps its previous state, so a
+// push to a red branch does not restart the clock. Trust
 // levels, the trusted-merger definition and the self-merge floor are not
 // read or changed here.
 package redmain
@@ -315,6 +318,15 @@ func repoKey(repo string) string { return strings.ToLower(strings.TrimSpace(repo
 // check first seen red is dated from its run's completion when that is
 // known and not in the future, else from now.
 func (t *Tracker) Observe(repo, branch string, red map[string]RedRun, now time.Time) {
+	t.ObservePending(repo, branch, red, nil, now)
+}
+
+// ObservePending is Observe with the required checks whose run on the tip
+// has not completed yet (queued, in progress, or not created). Only a
+// completed green run clears a check: a pending check that was red keeps
+// its entry unchanged — same since, same run — and one that was not red
+// stays untracked.
+func (t *Tracker) ObservePending(repo, branch string, red map[string]RedRun, pending map[string]bool, now time.Time) {
 	if t == nil {
 		return
 	}
@@ -338,6 +350,17 @@ func (t *Tracker) Observe(repo, branch string, red map[string]RedRun, now time.T
 		}
 		next[check] = redEntry{since: since, run: run}
 	}
+	for check, isPending := range pending {
+		if !isPending {
+			continue
+		}
+		if _, seen := next[check]; seen {
+			continue
+		}
+		if e, ok := prev[check]; ok {
+			next[check] = e
+		}
+	}
 	if len(next) == 0 {
 		delete(t.repos, key)
 	} else {
@@ -346,6 +369,34 @@ func (t *Tracker) Observe(repo, branch string, red map[string]RedRun, now time.T
 	if branch != "" {
 		t.branches[key] = branch
 	}
+}
+
+// TrackingIssue returns the tracking issue recorded for repo's red check,
+// 0 when none is or the check is not red.
+func (t *Tracker) TrackingIssue(repo, check string) int {
+	if t == nil {
+		return 0
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.repos[repoKey(repo)][check].run.TrackingIssue
+}
+
+// SetTrackingIssue records issue as the tracking issue of repo's red check.
+// It does nothing when the check is not tracked as red.
+func (t *Tracker) SetTrackingIssue(repo, check string, issue int) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	checks := t.repos[repoKey(repo)]
+	e, ok := checks[check]
+	if !ok {
+		return
+	}
+	e.run.TrackingIssue = issue
+	checks[check] = e
 }
 
 // Forget drops everything known about repo.

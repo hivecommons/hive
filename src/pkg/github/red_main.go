@@ -20,13 +20,15 @@ import (
 //     concluded red, the run URL, the files the failing run's annotations
 //     name, and the open `[shared-ci] <check> failing across <owner/repo>`
 //     tracking issue. The tracker dates each check's red from its first
-//     sighting since it was last green.
+//     sighting since it was last green; a check whose tip run has not
+//     completed keeps its previous state, so a push does not reset the clock.
 //   - StampRedMain turns the tracker into per-repo facts on the actionable
 //     snapshot, with the open PRs that fix main (the fixes-main label, a
 //     closing reference to the tracking issue, or changed files overlapping
 //     the failing check; passing PR checks only confirm).
 //   - The review queue ranks those PRs first, the PR-request relay refuses
-//     NEW PRs in the repo unless they fix main (redMainPRRequestRefusal), and
+//     NEW PRs in the repo unless they fix main (redMainPRRequestRefusal,
+//     which reads a named issue live when the sweep has not seen it), and
 //     kicks and the repo card name the check and the fix PR.
 //
 // Every lookup failure leaves the repo's previous observation in place:
@@ -35,6 +37,10 @@ import (
 // redMainMaxIssuePages bounds the open-issue listing used to find the
 // `[shared-ci]` tracking issue (newest first, 100 per page).
 const redMainMaxIssuePages = 3
+
+// redMainMaxLiveIssueLookups bounds the issues a refused PR request names
+// that the refusal path reads live to find a just-filed tracking issue.
+const redMainMaxLiveIssueLookups = 3
 
 // redMainMaxAnnotatedPaths bounds the failing-file list kept per check.
 const redMainMaxAnnotatedPaths = 50
@@ -153,12 +159,22 @@ func (c *Client) SweepRedMain(ctx context.Context, now time.Time) (RedMainSweepR
 			res.Skipped++
 			continue
 		}
-		runs, err := c.redCheckRunsForRef(ctx, owner, name, branch)
+		runs, settled, err := c.redCheckRunsForRef(ctx, owner, name, branch)
 		if err != nil {
 			c.logger.Debug("red-main: default branch check runs unavailable; keeping previous observation", "repo", key, "error", err)
 			res.Skipped++
 			continue
 		}
+		// A required check with no completed run on the tip yet (a push
+		// whose CI is still running) is pending: it neither clears nor
+		// re-dates a red entry.
+		pending := map[string]bool{}
+		for check, required := range rules.Required {
+			if required && !settled[check] {
+				pending[check] = true
+			}
+		}
+		tracker := c.redMainTracker()
 		red := map[string]redmain.RedRun{}
 		for check, cr := range runs {
 			if !rules.Required[check] {
@@ -178,23 +194,29 @@ func (c *Client) SweepRedMain(ctx context.Context, now time.Time) (RedMainSweepR
 					red[check] = run
 				}
 			} else {
-				c.logger.Debug("red-main: tracking issue lookup failed", "repo", key, "error", err)
+				c.logger.Debug("red-main: tracking issue lookup failed; keeping previous tracking issues", "repo", key, "error", err)
+				for check, run := range red {
+					run.TrackingIssue = tracker.TrackingIssue(key, check)
+					red[check] = run
+				}
 			}
 		}
-		c.ObserveRedMain(key, branch, red, now)
+		tracker.ObservePending(key, branch, red, pending, now)
 	}
 	return res, nil
 }
 
 // redCheckRunsForRef returns the latest red check run per name on ref
-// (meta checks excluded) — redCheckNamesForRef with the runs kept.
-func (c *Client) redCheckRunsForRef(ctx context.Context, owner, repo, ref string) (map[string]*gh.CheckRun, error) {
+// (meta checks excluded) — redCheckNamesForRef with the runs kept — and the
+// names whose latest runs have all completed (red or not). A name missing
+// from settled has a run still queued or in progress.
+func (c *Client) redCheckRunsForRef(ctx context.Context, owner, repo, ref string) (map[string]*gh.CheckRun, map[string]bool, error) {
 	var all []*gh.CheckRun
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		runs, resp, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		all = append(all, runs.CheckRuns...)
 		if resp == nil || resp.NextPage == 0 {
@@ -203,16 +225,26 @@ func (c *Client) redCheckRunsForRef(ctx context.Context, owner, repo, ref string
 		opts.Page = resp.NextPage
 	}
 	red := map[string]*gh.CheckRun{}
+	settled := map[string]bool{}
+	running := map[string]bool{}
 	for _, cr := range latestCheckRunsByNameAndApp(all) {
 		name := cr.GetName()
-		if name == "" || isMetaCheck(name) || cr.GetStatus() != "completed" {
+		if name == "" || isMetaCheck(name) {
 			continue
 		}
+		if cr.GetStatus() != "completed" {
+			running[name] = true
+			continue
+		}
+		settled[name] = true
 		if checkConclusionIsRed(cr.GetConclusion()) {
 			red[name] = cr
 		}
 	}
-	return red, nil
+	for name := range running {
+		delete(settled, name)
+	}
+	return red, settled, nil
 }
 
 // redMainAnnotatedPaths returns the files a failing run's annotations name,
@@ -452,24 +484,83 @@ func (c *Client) StampRedMain(actionable *ActionableResult, changedPaths func(fu
 // redMainPRRequestRefusal returns the reason a PR-open request is refused
 // while repo's main is red, or "" when the breaker is not tripped or the
 // request itself fixes main: it names the red-main tracking issue in
-// --issues or closes it in its title/body. Existing PRs never pass through
-// here, and issue filing is a different relay, so neither is affected.
-func (c *Client) redMainPRRequestRefusal(req PRRequest, now time.Time) string {
+// --issues or closes it in its title/body. When the request names an issue
+// the last sweep did not know as the tracking issue — the agent just filed
+// it, as PauseReason tells it to — the issue is read live
+// (redMainLiveTrackingIssue) before refusing. Existing PRs never pass
+// through here, and issue filing is a different relay, so neither is
+// affected.
+func (c *Client) redMainPRRequestRefusal(ctx context.Context, req PRRequest, now time.Time) string {
 	fact := c.RedMainFact(req.Repo, now)
 	if fact == nil {
 		return ""
 	}
-	if fact.TrackingIssue > 0 {
-		for _, n := range req.IssueN {
-			if n == fact.TrackingIssue {
-				return ""
-			}
-		}
-		for _, ref := range ParseClaimedIssues(req.Title+"\n"+req.Body, fact.Repo) {
-			if ref.Issue == fact.TrackingIssue && (ref.Repo == "" || strings.EqualFold(ref.Repo, fact.Repo)) {
-				return ""
-			}
+	named := redMainRequestIssues(req, fact.Repo)
+	for _, n := range named {
+		if fact.TrackingIssue > 0 && n == fact.TrackingIssue {
+			return ""
 		}
 	}
+	if c.redMainLiveTrackingIssue(ctx, fact, named) > 0 {
+		return ""
+	}
 	return fact.PauseReason()
+}
+
+// redMainRequestIssues returns the same-repo issues a PR request names in
+// --issues or closes in its title/body, in order, without duplicates.
+func redMainRequestIssues(req PRRequest, repo string) []int {
+	var out []int
+	seen := map[int]bool{}
+	add := func(n int) {
+		if n > 0 && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	for _, n := range req.IssueN {
+		add(n)
+	}
+	for _, ref := range ParseClaimedIssues(req.Title+"\n"+req.Body, repo) {
+		if ref.Repo == "" || strings.EqualFold(ref.Repo, repo) {
+			add(ref.Issue)
+		}
+	}
+	return out
+}
+
+// redMainLiveTrackingIssue reads up to redMainMaxLiveIssueLookups of the
+// issues a refused request names and returns the first that is an open
+// `[shared-ci] <fact.Check> failing across <repo>` issue, 0 when none is.
+// A match is recorded in the tracker (when no tracking issue is known) so
+// later requests and fix-PR detection see it before the next sweep. Only
+// the refusal path calls it, and only for named issues.
+func (c *Client) redMainLiveTrackingIssue(ctx context.Context, fact *redmain.Fact, issues []int) int {
+	if c.client == nil || fact == nil || len(issues) == 0 {
+		return 0
+	}
+	ctx = WithRESTCaller(ctx, "hive:red_main")
+	owner, name := c.splitRepo(fact.Repo)
+	fullRepo := owner + "/" + name
+	want := strings.ToLower(strings.TrimSpace(fact.Check))
+	for i, n := range issues {
+		if i >= redMainMaxLiveIssueLookups {
+			break
+		}
+		issue, _, err := c.client.Issues.Get(ctx, owner, name, n)
+		if err != nil {
+			c.logger.Debug("red-main: named issue unavailable", "repo", fullRepo, "issue", n, "error", err)
+			continue
+		}
+		if issue == nil || issue.IsPullRequest() || issue.GetState() != "open" {
+			continue
+		}
+		if check, ok := SharedCITrackingCheck(issue.GetTitle(), fullRepo); ok && check == want {
+			if fact.TrackingIssue == 0 {
+				c.redMainTracker().SetTrackingIssue(fact.Repo, fact.Check, n)
+			}
+			return n
+		}
+	}
+	return 0
 }

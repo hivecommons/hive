@@ -168,3 +168,54 @@ func TestSortFixPRs(t *testing.T) {
 		t.Fatalf("order = %+v", prs)
 	}
 }
+
+// A check whose tip run has not completed (a push to the red branch) is
+// neither red nor green: it keeps its entry, since and run unchanged, and
+// only a completed green observation clears it.
+func TestTrackerPendingCarriesOver(t *testing.T) {
+	tr := NewTracker()
+	tr.Observe("acme/widget", "main", map[string]RedRun{"unit": {URL: "run-1", TrackingIssue: 7}}, t0)
+	for _, at := range []time.Duration{3 * time.Hour, 5 * time.Hour} {
+		tr.ObservePending("acme/widget", "main", nil, map[string]bool{"unit": true, "lint": true}, t0.Add(at))
+	}
+	f := tr.Active("acme/widget", 0, t0.Add(7*time.Hour))
+	if f == nil || !f.Since.Equal(t0) || f.RunURL != "run-1" || f.TrackingIssue != 7 || f.Check != "unit" {
+		t.Fatalf("fact = %+v, want the pre-push entry unchanged", f)
+	}
+	// A pending check that was never red is not invented.
+	tr.ObservePending("acme/other", "main", nil, map[string]bool{"unit": true}, t0)
+	if f := tr.Active("acme/other", time.Minute, t0.Add(time.Hour)); f != nil {
+		t.Fatalf("pending without a prior red tripped: %+v", f)
+	}
+	// Still red once the new run completes: dated from the first sighting.
+	tr.ObservePending("acme/widget", "main", map[string]RedRun{"unit": {URL: "run-2", CompletedAt: t0.Add(6 * time.Hour)}}, map[string]bool{"lint": true}, t0.Add(6*time.Hour))
+	if f := tr.Active("acme/widget", 0, t0.Add(7*time.Hour)); f == nil || !f.Since.Equal(t0) || f.RunURL != "run-2" {
+		t.Fatalf("fact = %+v, want since the first red with the new run", f)
+	}
+	// Completed green: cleared.
+	tr.ObservePending("acme/widget", "main", nil, nil, t0.Add(7*time.Hour))
+	if f := tr.Active("acme/widget", 0, t0.Add(8*time.Hour)); f != nil {
+		t.Fatalf("green main still reports %+v", f)
+	}
+}
+
+func TestTrackerTrackingIssue(t *testing.T) {
+	tr := NewTracker()
+	tr.SetTrackingIssue("acme/widget", "unit", 9)
+	if n := tr.TrackingIssue("acme/widget", "unit"); n != 0 {
+		t.Fatalf("untracked check got tracking issue %d", n)
+	}
+	tr.Observe("acme/widget", "main", map[string]RedRun{"unit": {}}, t0)
+	tr.SetTrackingIssue("ACME/Widget", "unit", 9)
+	if n := tr.TrackingIssue("acme/widget", "unit"); n != 9 {
+		t.Fatalf("TrackingIssue = %d, want 9", n)
+	}
+	if f := tr.Active("acme/widget", 0, t0.Add(7*time.Hour)); f == nil || f.TrackingIssue != 9 {
+		t.Fatalf("fact = %+v, want tracking issue 9", f)
+	}
+	var nilTracker *Tracker
+	nilTracker.SetTrackingIssue("acme/widget", "unit", 1)
+	if nilTracker.TrackingIssue("acme/widget", "unit") != 0 {
+		t.Fatal("nil tracker must report 0")
+	}
+}

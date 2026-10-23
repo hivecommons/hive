@@ -942,7 +942,9 @@ active repo's default branch tip (`src/pkg/github/red_main.go`): the required
 checks (config, classic branch protection and rulesets) that concluded red,
 the failing run, the files its annotations name, and an open
 `[shared-ci] <check> failing across <owner/repo>` tracking issue. A check is
-dated from the first time it was seen red since it was last green. Once it has
+dated from the first time it was seen red since it was last green; while the
+tip's run for it is still queued or in progress (a push to the red branch) it
+keeps its previous state, so pushes do not restart the clock. Once it has
 been red for **more than** the threshold:
 
 - **Fix-main PRs rank first** in the review queue. A PR fixes main when it has
@@ -954,12 +956,16 @@ been red for **more than** the threshold:
 - **New PR opening pauses in that repo.** `hive-open-pr` refuses the request
   with gate `red-main` and a message naming the check, the run and the fix PR,
   unless the request itself fixes main (it names the tracking issue in
-  `--issues` or closes it in its title/body). Existing PRs keep going and
+  `--issues` or closes it in its title/body). If the sweep has not seen the
+  tracking issue yet, the issues the request names are read on the spot, so
+  a PR naming a just-filed `[shared-ci]` issue for the check opens at once.
+  Existing PRs keep going and
   issue filing is unaffected; agents are told the same in their kick.
 - **The repo card** shows `main red since <time> on <check>; fix: #N waiting
   on <who>`.
 
-Everything lifts automatically on the first sweep that sees the check green.
+Everything lifts automatically on the first sweep that sees a completed green
+run of the check.
 A repo whose required-check set or check runs cannot be read keeps its last
 observation (a read error neither trips nor clears the breaker). Trust levels,
 the trusted-merger definition and the self-merge floor are unchanged.

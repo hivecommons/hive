@@ -12,7 +12,10 @@ import (
 	"github.com/hivecommons/hive/pkg/redmain"
 )
 
-func redMainTestServer(t *testing.T, red *bool) *httptest.Server {
+// redMainTestServer serves acme/widget with "unit" required. state is the
+// tip's latest "unit" run: "red", "green", "pending" (in progress) or
+// "queued".
+func redMainTestServer(t *testing.T, state *string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widget", func(w http.ResponseWriter, r *http.Request) {
@@ -25,12 +28,20 @@ func redMainTestServer(t *testing.T, red *bool) *httptest.Server {
 		_, _ = w.Write([]byte("[]"))
 	})
 	mux.HandleFunc("/repos/acme/widget/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
-		unit := "success"
-		if *red {
-			unit = "failure"
+		unitRun := map[string]any{"id": 11, "name": "unit", "status": "completed", "conclusion": "success", "html_url": "https://github.test/acme/widget/runs/11", "started_at": "2026-10-22T07:50:00Z", "completed_at": "2026-10-22T08:00:00Z"}
+		switch *state {
+		case "red":
+			unitRun["conclusion"] = "failure"
+		case "pending", "queued":
+			// A push to the red branch: the new tip's run has not concluded.
+			status := "in_progress"
+			if *state == "queued" {
+				status = "queued"
+			}
+			unitRun = map[string]any{"id": 13, "name": "unit", "status": status, "html_url": "https://github.test/acme/widget/runs/13", "started_at": "2026-10-22T10:55:00Z"}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 2, "check_runs": []map[string]any{
-			{"id": 11, "name": "unit", "status": "completed", "conclusion": unit, "html_url": "https://github.test/acme/widget/runs/11", "started_at": "2026-10-22T07:50:00Z", "completed_at": "2026-10-22T08:00:00Z"},
+			unitRun,
 			// Red but not required: never trips the breaker.
 			{"id": 12, "name": "flaky-optional", "status": "completed", "conclusion": "failure", "started_at": "2026-10-22T07:50:00Z", "completed_at": "2026-10-22T08:00:00Z"},
 		}})
@@ -51,6 +62,12 @@ func redMainTestServer(t *testing.T, red *bool) *httptest.Server {
 			{"number": 503, "title": "[shared-ci] unit failing across acme/other"},
 		})
 	})
+	mux.HandleFunc("/repos/acme/widget/issues/601", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 601, "state": "open", "title": "[shared-ci] unit failing across acme/widget"})
+	})
+	mux.HandleFunc("/repos/acme/widget/issues/602", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 602, "state": "open", "title": "[shared-ci] lint failing across acme/widget"})
+	})
 	return httptest.NewServer(mux)
 }
 
@@ -58,8 +75,8 @@ func redMainTestServer(t *testing.T, red *bool) *httptest.Server {
 // counts, it trips only past the threshold, it carries the run URL, the
 // failing files and the tracking issue, and it clears when main is green.
 func TestSweepRedMainDetectsAndClears(t *testing.T) {
-	red := true
-	srv := redMainTestServer(t, &red)
+	state := "red"
+	srv := redMainTestServer(t, &state)
 	defer srv.Close()
 	c := newTestClient(t, srv, "acme", []string{"widget"})
 	completed := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
@@ -89,12 +106,78 @@ func TestSweepRedMainDetectsAndClears(t *testing.T) {
 	}
 	c.SetRedMainThresholdFunc(nil)
 
-	red = false
+	state = "green"
 	if _, err := c.SweepRedMain(context.Background(), completed.Add(7*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if f := c.RedMainFact("widget", completed.Add(8*time.Hour)); f != nil {
 		t.Fatalf("green main still tripped: %+v", f)
+	}
+}
+
+// A push to a red default branch must not restart the clock: while the new
+// tip's run is queued or in progress the check is neither red nor green, so
+// the entry keeps its original since and run, and only a completed green run
+// clears it.
+func TestSweepRedMainPendingTipKeepsClock(t *testing.T) {
+	for _, pending := range []string{"pending", "queued"} {
+		t.Run(pending, func(t *testing.T) {
+			state := "red"
+			srv := redMainTestServer(t, &state)
+			defer srv.Close()
+			c := newTestClient(t, srv, "acme", []string{"widget"})
+			completed := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
+
+			if _, err := c.SweepRedMain(context.Background(), completed.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			state = pending
+			for _, at := range []time.Duration{3 * time.Hour, 3*time.Hour + 10*time.Minute} {
+				if _, err := c.SweepRedMain(context.Background(), completed.Add(at)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f := c.RedMainFact("widget", completed.Add(6*time.Hour+time.Second))
+			if f == nil {
+				t.Fatal("a pending tip dropped the red entry")
+			}
+			if !f.Since.Equal(completed) || f.RunURL != "https://github.test/acme/widget/runs/11" || f.TrackingIssue != 502 {
+				t.Fatalf("pending tip changed the entry: %+v", f)
+			}
+
+			state = "green"
+			if _, err := c.SweepRedMain(context.Background(), completed.Add(7*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+			if f := c.RedMainFact("widget", completed.Add(8*time.Hour)); f != nil {
+				t.Fatalf("completed green run did not clear: %+v", f)
+			}
+		})
+	}
+}
+
+// The refusal tells the agent to file the `[shared-ci]` issue and open the
+// PR with `Fixes #<it>`; that PR must open before the next sweep sees the
+// issue. A named issue that tracks another check does not count.
+func TestRedMainPRRequestAcceptsFreshTrackingIssue(t *testing.T) {
+	state := "red"
+	srv := redMainTestServer(t, &state)
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"widget"})
+	now := time.Date(2026, 10, 22, 15, 0, 0, 0, time.UTC)
+	c.ObserveRedMain("widget", "main", map[string]redmain.RedRun{"unit": {URL: "run-url"}}, now.Add(-7*time.Hour))
+	if f := c.RedMainFact("widget", now); f == nil || f.TrackingIssue != 0 {
+		t.Fatalf("fact = %+v, want tripped with no tracking issue", f)
+	}
+
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget", Title: "fix: lint", Body: "Fixes #602"}, now); r == "" {
+		t.Error("an issue tracking another check must not let the PR open")
+	}
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget", Title: "fix: unit", IssueN: []int{601}}, now); r != "" {
+		t.Fatalf("a PR naming the freshly filed tracking issue must open: %s", r)
+	}
+	if f := c.RedMainFact("widget", now); f == nil || f.TrackingIssue != 601 {
+		t.Fatalf("live-resolved tracking issue not recorded: %+v", f)
 	}
 }
 
@@ -181,29 +264,29 @@ func TestRedMainPRRequestPauseAndResume(t *testing.T) {
 		t.Fatalf("stamped red-main = %+v", actionable.RedMain)
 	}
 
-	reason := c.redMainPRRequestRefusal(PRRequest{Repo: "widget", Title: "feat: new thing", Body: "Fixes #9"}, now)
+	reason := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget", Title: "feat: new thing", Body: "Fixes #9"}, now)
 	for _, want := range []string{`"unit"`, "#77", "Fixes #42"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("refusal missing %q: %s", want, reason)
 		}
 	}
-	if r := c.redMainPRRequestRefusal(PRRequest{Repo: "widget", IssueN: []int{42}}, now); r != "" {
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget", IssueN: []int{42}}, now); r != "" {
 		t.Errorf("a PR declaring the tracking issue must open: %s", r)
 	}
-	if r := c.redMainPRRequestRefusal(PRRequest{Repo: "acme/widget", Body: "Fixes #42"}, now); r != "" {
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "acme/widget", Body: "Fixes #42"}, now); r != "" {
 		t.Errorf("a PR closing the tracking issue must open: %s", r)
 	}
-	if r := c.redMainPRRequestRefusal(PRRequest{Repo: "other", Body: "x"}, now); r != "" {
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "other", Body: "x"}, now); r != "" {
 		t.Errorf("another repo is not paused: %s", r)
 	}
 	// Below the threshold nothing is paused.
-	if r := c.redMainPRRequestRefusal(PRRequest{Repo: "widget"}, now.Add(-2*time.Hour)); r != "" {
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget"}, now.Add(-2*time.Hour)); r != "" {
 		t.Errorf("paused before the threshold: %s", r)
 	}
 
 	// Main goes green: pause and stamp lift with nothing to undo.
 	c.ObserveRedMain("widget", "main", nil, now)
-	if r := c.redMainPRRequestRefusal(PRRequest{Repo: "widget"}, now); r != "" {
+	if r := c.redMainPRRequestRefusal(context.Background(), PRRequest{Repo: "widget"}, now); r != "" {
 		t.Errorf("pause did not lift on green: %s", r)
 	}
 	c.StampRedMain(actionable, nil, now)

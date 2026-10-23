@@ -419,7 +419,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// on the repo's default branch past its threshold, a new PR would be red
 	// too, so only a PR that fixes main opens. Existing PRs never come
 	// through here and issue filing is a separate relay; both keep going.
-	if reason := c.redMainPRRequestRefusal(req, nowFn()); reason != "" {
+	if reason := c.redMainPRRequestRefusal(ctx, req, nowFn()); reason != "" {
 		c.rejectPRRequest(path, req, "red-main", reason, nowFn)
 		return
 	}
