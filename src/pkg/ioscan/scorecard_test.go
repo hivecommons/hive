@@ -86,7 +86,7 @@ func runScorecard(cases []redTeamCase) scorecard {
 	byCat := map[string]*scorecardRow{}
 	var sc scorecard
 	for _, c := range cases {
-		got, _ := observe(c.payload)
+		got, _ := observe(c)
 		row := byCat[c.category]
 		if row == nil {
 			row = &scorecardRow{category: c.category}

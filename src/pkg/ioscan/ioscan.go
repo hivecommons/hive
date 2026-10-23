@@ -186,6 +186,15 @@ var injectionRules = []rule{
 		re:       regexp.MustCompile(`(?i)(reveal|print|repeat|show|output|leak)\s+(your\s+|the\s+)?(system\s+prompt|initial\s+instructions?|hidden\s+(prompt|instructions?)|your\s+instructions?)`),
 	},
 	{
+		// A directive to skip the review/approval step, addressed to the agent
+		// (clause-initial imperative, "you to", "please"). "We should merge
+		// without CI on docs changes" is discussion and does not match.
+		name:     "injection.bypass_review",
+		kind:     KindInjection,
+		severity: SeverityHigh,
+		re:       regexp.MustCompile(`(?i)(^|[.:;!\n]\s*|\byou\s+(to|should|must|may|can)\s+|\bplease\s+)(proceed|continue|go\s+ahead|merge|ship|land|push)\s+(it\s+|this\s+|the\s+pr\s+)?without\s+(the\s+)?(usual\s+|normal\s+|standard\s+|any\s+|a\s+)?(code\s+)?(review|approval|sign-?off|checks?|tests?|ci)\b`),
+	},
+	{
 		name:     "injection.tool_abuse",
 		kind:     KindInjection,
 		severity: SeverityHigh,

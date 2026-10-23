@@ -157,6 +157,43 @@ func (s *Scheduler) enforceIssueTextVerdict(text string) (string, ioscan.Verdict
 	return sanitized, v
 }
 
+// threadEnforcer scans one issue/PR conversation (title first, then each
+// comment or review body in order) as a unit and returns the segments with
+// withheld ones redacted, plus whether the fail-closed policy tripped. A nil
+// enforcer is a passthrough, used by formatting tests.
+type threadEnforcer func(segments []string) ([]string, bool)
+
+// enforceThread is the kick-path counterpart of enforceIssueTextVerdict for
+// text that arrives as an ordered conversation (hivecommons/hive#6685,
+// split-payload family). Each segment still gets its own scan, and the
+// conversation is scanned once more as a whole so a payload split across two
+// comments is withheld from both halves rather than reaching the agent in
+// pieces. Disabled → strict passthrough.
+func (s *Scheduler) enforceThread(segments []string) ([]string, bool) {
+	if !s.ioscanEnabled() || len(segments) == 0 {
+		return segments, false
+	}
+	out, tv := ioscan.EnforceThread(segments)
+	failClosed := false
+	for _, v := range tv.Segments {
+		if v.Blocked {
+			s.recordIoscanBlock(v)
+		}
+		if s.ioscanFailClosed() && v.HasCriticalInjection() {
+			s.recordIoscanFailClosed(v)
+			failClosed = true
+		}
+	}
+	if tv.Thread.Blocked {
+		s.recordIoscanBlock(tv.Thread)
+	}
+	if s.ioscanFailClosed() && tv.Thread.HasCriticalInjection() {
+		s.recordIoscanFailClosed(tv.Thread)
+		failClosed = true
+	}
+	return out, failClosed
+}
+
 func (s *Scheduler) enforceLabelsWithPolicy(labels []string) ([]string, bool) {
 	if !s.ioscanEnabled() || len(labels) == 0 {
 		return labels, false

@@ -13,6 +13,11 @@ by default.
   secret-shaped strings. These rules always run when `ioscan` is enabled.
 * **Withholds matched text.** Text that trips a rule is replaced with
   `[ioscan: content withheld — ...]`. The original never reaches the agent.
+* **Reads a thread as one unit.** Where Hive hands an agent several
+  comments from the same issue or PR, it scans them one at a time and then
+  once more joined in order. A payload split across two comments matches on
+  the joined text, and both halves are withheld. The joined scan covers the
+  most recent 64 comments or 128 KB, whichever is smaller.
 * **Plants canaries.** Each task gets its own marker string. Hive scans
   everything the agent sends out for that marker, including copies that are
   base64-, hex- or percent-encoded, reversed, re-cased, split across
@@ -27,8 +32,8 @@ by default.
 ## What it does not do
 
 Rules match specific phrasings. A measured test against 43 attack payloads
-withheld 42% and let 58% reach the agent; paraphrased instructions, split
-payloads and most encodings got through. Details and numbers:
+withheld 51% and let 49% reach the agent; paraphrased instructions and most
+encodings got through. Details and numbers:
 [ioscan-red-team.md](ioscan-red-team.md). The control that stops a persuaded
 agent from merging code is the network proxy, which denies pull-request
 creation and merge calls for every agent, not `ioscan`.
