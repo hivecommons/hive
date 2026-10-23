@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -346,7 +347,14 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 		return
 	}
 	if err := writeReviewEvidence(path, b); err != nil {
-		c.logger.Warn("review evidence: could not write bundle",
+		level := slog.LevelWarn
+		// Permission failures are an ownership problem that repeats every poll; warn once per path.
+		if errors.Is(err, fs.ErrPermission) {
+			if _, seen := evidenceWriteDenied.LoadOrStore(path, struct{}{}); seen {
+				level = slog.LevelDebug
+			}
+		}
+		c.logger.Log(context.Background(), level, "review evidence: could not write bundle",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
 	}
@@ -494,6 +502,9 @@ func containsSentinelFinding(have []evidence.SentinelFinding, f evidence.Sentine
 	}
 	return false
 }
+
+// evidenceWriteDenied remembers paths whose write already failed with a permission error.
+var evidenceWriteDenied sync.Map
 
 // writeReviewEvidence commits b with write-then-rename so a reader never
 // observes a half-written bundle.
