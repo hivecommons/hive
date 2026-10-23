@@ -555,9 +555,31 @@ func writeEvidenceBundleFile(path string, data []byte) error {
 }
 
 // reviewEvidenceFallbackPath is where this process writes the bundle at path
-// when the PR directory is not writable: <pr>.uid<N>/<head>.json.
+// when its directory is not writable: <pr>.uid<N>/<head>.json. path may
+// itself already be inside another writer's <pr>.uid<M>/ sibling (an
+// Entry.Path handed back by ListReviewEvidence); the sibling is always
+// derived from the canonical PR directory so the readers, which only glob
+// <pr>.uid<N> next to <pr>/, still find the bundle.
 func reviewEvidenceFallbackPath(path string) string {
-	return filepath.Join(filepath.Dir(path)+evidenceFallbackDirMarker+strconv.Itoa(os.Getuid()), filepath.Base(path))
+	dir := reviewEvidenceCanonicalDir(filepath.Dir(path))
+	return filepath.Join(dir+evidenceFallbackDirMarker+strconv.Itoa(os.Getuid()), filepath.Base(path))
+}
+
+// reviewEvidenceCanonicalDir is the PR directory for dir, which is either the
+// PR directory itself or one of its <pr>.uid<N> fallback siblings.
+func reviewEvidenceCanonicalDir(dir string) string {
+	base := filepath.Base(dir)
+	i := strings.LastIndex(base, evidenceFallbackDirMarker)
+	if i <= 0 {
+		return dir
+	}
+	if _, err := strconv.Atoi(base[i+len(evidenceFallbackDirMarker):]); err != nil {
+		return dir
+	}
+	if _, err := strconv.Atoi(base[:i]); err != nil {
+		return dir
+	}
+	return filepath.Join(filepath.Dir(dir), base[:i])
 }
 
 // reviewEvidenceDirs is dir followed by its <dir>.uid<N> fallback siblings.

@@ -127,3 +127,85 @@ func TestWriteReviewEvidenceUnwritableDirFallsBackToUIDSibling(t *testing.T) {
 		t.Fatalf("rewrite not visible to reader: %+v, %v", got, err)
 	}
 }
+
+func TestReviewEvidenceCanonicalDir(t *testing.T) {
+	root := filepath.Join("ev", "o", "r")
+	for in, want := range map[string]string{
+		filepath.Join(root, "7"):              filepath.Join(root, "7"),
+		filepath.Join(root, "7.uid1001"):      filepath.Join(root, "7"),
+		filepath.Join(root, "7.uid1001.uid2"): filepath.Join(root, "7.uid1001.uid2"),
+		filepath.Join(root, "7.uidx"):         filepath.Join(root, "7.uidx"),
+		filepath.Join(root, ".uid7"):          filepath.Join(root, ".uid7"),
+	} {
+		if got := reviewEvidenceCanonicalDir(in); got != want {
+			t.Errorf("reviewEvidenceCanonicalDir(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A later writer (merge, outcome, change-failure) rewrites the bundle at the
+// Entry.Path ListReviewEvidence handed it, which may be another writer's
+// <pr>.uid<M>/ sibling. When that dir is unwritable too the bundle must land
+// in this writer's <pr>.uid<N>/, not in <pr>.uid<M>.uid<N>/ where no reader
+// looks.
+func TestWriteReviewEvidenceFallbackFromForeignSiblingUsesOwnSibling(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply to root")
+	}
+	root := t.TempDir()
+	dir := ReviewEvidenceDir(root, "o/r", 7)
+	foreign := dir + ".uid" + strconv.Itoa(os.Getuid()+1)
+	for _, d := range []string{dir, foreign} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(d, 0o755) })
+	}
+	probe := filepath.Join(foreign, "probe")
+	if err := os.WriteFile(probe, nil, 0o644); err == nil {
+		_ = os.Remove(probe)
+		t.Skip("chmod 0o555 does not block writes here")
+	}
+
+	created := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
+	b := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("o/r", 7, "abc1234"),
+		Repo:          "o/r",
+		Number:        7,
+		HeadSHA:       "abc1234",
+		CreatedAt:     created,
+		UpdatedAt:     created,
+	}
+	entryPath := filepath.Join(foreign, "abc1234.json")
+	if err := writeReviewEvidence(entryPath, b); err != nil {
+		t.Fatalf("write with unwritable foreign sibling: %v", err)
+	}
+
+	want := filepath.Join(dir+".uid"+strconv.Itoa(os.Getuid()), "abc1234.json")
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("bundle not in own fallback sibling %s: %v", want, err)
+	}
+	if _, err := os.Stat(foreign + ".uid" + strconv.Itoa(os.Getuid())); !os.IsNotExist(err) {
+		t.Fatalf("fallback-of-fallback dir was created: %v", err)
+	}
+
+	canonical := ReviewEvidencePath(root, "o/r", 7, "abc1234")
+	if got, err := LoadReviewEvidence(canonical); err != nil || got.ID != b.ID {
+		t.Fatalf("LoadReviewEvidence(%s) = %+v, %v; want the fallback bundle", canonical, got, err)
+	}
+	entries, err := ListReviewEvidence(root, "o/r", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Path != want || entries[0].Bundle.ID != b.ID {
+		t.Fatalf("ListReviewEvidence = %+v; want the one fallback bundle at %s", entries, want)
+	}
+	lookup, err := FindReviewEvidence(root, "o/r", 7, "abc1234")
+	if err != nil || lookup.Entry == nil || lookup.Entry.Bundle.ID != b.ID {
+		t.Fatalf("FindReviewEvidence = %+v, %v; want the fallback bundle", lookup, err)
+	}
+}
