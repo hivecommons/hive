@@ -455,6 +455,86 @@ else
   printf '%s\n' "$output" | sed 's/^/      | /'
 fi
 
+# --- merge-method/merge: the hive's merge-commit election -------------------
+#
+# A role/trusted PR the hive adopted in place: the contributor's commit signed
+# off as the contributor, plus the hive's fix commit authored AND signed off as
+# the App. The hive labels it merge-method/merge and merges with a merge
+# commit, so the App's self-signed commit lands as it is. The workflow passes
+# PR_MERGE_METHOD=merge for that label.
+git checkout -q -b mixedauthorship "$base_sha"
+echo m1 > m1.txt
+git add m1.txt
+GIT_AUTHOR_NAME='Real Human' GIT_AUTHOR_EMAIL='human@example.com' \
+  git commit -q -m "contributor change" -m "Signed-off-by: Real Human <human@example.com>"
+mixed_human_sha=$(git rev-parse HEAD)
+echo m2 > m2.txt
+git add m2.txt
+GIT_AUTHOR_NAME='hivecommons-hive[bot]' GIT_AUTHOR_EMAIL='123+hivecommons-hive[bot]@users.noreply.github.com' \
+  git commit -q -m "test: cover the fix" \
+  -m "Signed-off-by: hivecommons-hive[bot] <123+hivecommons-hive[bot]@users.noreply.github.com>"
+mixed_bot_sha=$(git rev-parse HEAD)
+mixed_map="${mixed_human_sha}=alice,${mixed_bot_sha}=hivecommons-hive[bot]"
+
+set +e
+output=$(DCO_AUTHOR_LOGIN_MAP="$mixed_map" bash "$CHECKER" "$base_sha" mixedauthorship alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ] && printf '%s\n' "$output" | grep -q "^FAIL ${mixed_bot_sha} bot-signoff"; then
+  pass "without the label a self-signed App commit on a human PR is rejected"
+else
+  bad "the unlabelled mixed-authorship head was not caught (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+set +e
+output=$(DCO_AUTHOR_LOGIN_MAP="$mixed_map" PR_MERGE_METHOD=merge bash "$CHECKER" "$base_sha" mixedauthorship alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -q "^Skipping ${mixed_bot_sha}: bot-authored and self-signed"; then
+  pass "with merge-method/merge a self-signed App commit beside the contributor's passes"
+else
+  bad "the labelled mixed-authorship head was rejected (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# The label never excuses the #6798 shape itself: a HUMAN-authored commit
+# signed off by a bot is a mismatch however the PR merges.
+set +e
+output=$(PR_MERGE_METHOD=merge bash "$CHECKER" "$base_sha" botsignoff alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ]; then
+  pass "merge-method/merge does not excuse a human commit signed off by a bot"
+else
+  bad "the label excused a bot sign-off on a human commit (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# Nor a different person's sign-off on the contributor's commit.
+set +e
+output=$(PR_MERGE_METHOD=merge DCO_AUTHOR_LOGIN_MAP="${foreignnoreply_sha}=clubanderson" bash "$CHECKER" "$base_sha" foreignnoreply clubanderson 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ]; then
+  pass "merge-method/merge does not excuse a different person's sign-off"
+else
+  bad "the label excused a foreign human sign-off (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
+# Any other method value keeps the squash rule.
+set +e
+output=$(DCO_AUTHOR_LOGIN_MAP="$mixed_map" PR_MERGE_METHOD=squash bash "$CHECKER" "$base_sha" mixedauthorship alice 2>&1)
+rc=$?
+set -e
+if [ "$rc" -eq 1 ]; then
+  pass "PR_MERGE_METHOD=squash keeps the squash rule"
+else
+  bad "a non-merge method value relaxed the gate (rc=${rc})"
+  printf '%s\n' "$output" | sed 's/^/      | /'
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "test-check-squash-signoff-attribution FAILED"
   exit 1

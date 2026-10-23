@@ -161,6 +161,9 @@ type Record struct {
 	// for; it survives ClearAdoptionEscalation so a blocker that flaps on
 	// one head is noted once.
 	AdoptEscalationNotedHead string `json:"adopt_escalation_noted_head,omitempty"`
+	// MergeCommitNotedHead is the head the `merge-method/merge` note was
+	// posted for, so the lane explains the merge method once per head.
+	MergeCommitNotedHead string `json:"merge_commit_noted_head,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -855,6 +858,11 @@ func (r Record) AdoptionEscalationNoted(head string) bool {
 	return head != "" && r.AdoptEscalationNotedHead == head
 }
 
+// MergeCommitNoted reports whether the merge-method note was posted for head.
+func (r Record) MergeCommitNoted(head string) bool {
+	return head != "" && r.MergeCommitNotedHead == head
+}
+
 // AdoptedHeadClockUnset reports a live in-place adoption whose head clock
 // was never stamped: a record written before AdoptedHeadAt existed.
 func (r Record) AdoptedHeadClockUnset() bool {
@@ -1011,6 +1019,19 @@ func (s *Store) MarkAdoptionEscalated(key, head, reason string) {
 		return
 	}
 	r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = head, reason, head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkMergeCommitNoted records that the merge-method note was posted for head.
+func (s *Store) MarkMergeCommitNoted(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.MergeCommitNotedHead == head {
+		return
+	}
+	r.MergeCommitNotedHead = head
 	s.items[key] = r
 	s.dirty = true
 }

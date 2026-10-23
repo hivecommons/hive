@@ -221,6 +221,13 @@ type PRPassFacts struct {
 	DCORequired      bool
 	SquashUnsafeHive int
 	AuthorIsApp      bool
+	// MergeCommit is the pass's merge-method verdict for the head:
+	// MergeCommitWanted when it elected a merge commit (mixed authorship,
+	// each commit self-signed, role/trusted, repo not squash-only), in
+	// which case the attribution override does not apply and the writer
+	// puts `merge-method/merge` on; NotWanted takes it off; Unknown (commit
+	// check not read) leaves it as found.
+	MergeCommit stagelabels.MergeCommitState
 	// AdoptionLive is prev.AdoptionLive(head): the hive owns the PR, so a
 	// stage that yields to adoption reads 074. EscalationReason is set when
 	// the stalled-adoption escape moved it to 085 instead.

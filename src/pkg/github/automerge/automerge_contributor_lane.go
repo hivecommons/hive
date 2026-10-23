@@ -975,13 +975,14 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
 		return eval, "conflicting", nil
 	}
-	eval.method = c.mergeMethodFor(ctx, owner, repo, pr)
+	var methodReason string
+	eval.method, methodReason = c.mergeMethodWithReason(ctx, owner, repo, pr)
 	eval.mergeClaim = effects.Claim{
 		Repo:   fullRepo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: strconv.Itoa(number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": eval.method, "expect_sha": headSHA, "lane": contributorLaneTier},
+		Inputs: mergeClaimInputs(eval.method, methodReason, headSHA, contributorLaneTier),
 	}
 	if !relay {
 		c.reconcileOpenPRMergeEffect(ctx, eval.mergeClaim, owner, repo, number)

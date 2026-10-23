@@ -8871,6 +8871,14 @@ type AutoMergeConfig struct {
 	// sides changed. Fork heads are never written. Empty (the default) keeps
 	// the PR parked for its author.
 	MergeForwardTrustedHuman []string `yaml:"merge_forward_trusted_human,omitempty" json:"merge_forward_trusted_human,omitempty"`
+	// SquashOnly lists owner/repo names whose policy forbids merge commits.
+	// Elsewhere a role/trusted PR whose head mixes the contributor's commits
+	// with hive commits, each signed off by its own author, is merged with a
+	// merge commit (`merge-method/merge`) instead of being parked for a
+	// person, because a squash would misattribute the hive's sign-off. In a
+	// squash-only repo the lane keeps the squash convention and the PR goes
+	// back to its author (or, adopted, to stage/085 naming this policy).
+	SquashOnly []string `yaml:"squash_only,omitempty" json:"squash_only,omitempty"`
 }
 
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.
@@ -9196,6 +9204,12 @@ func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
 // case-insensitively) is listed in auto_merge.merge_forward_trusted_human.
 func (a AutoMergeConfig) MergeForwardTrustedHumanFor(repo string) bool {
 	return repoListSet(a.MergeForwardTrustedHuman)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// SquashOnlyFor reports whether repo (owner/repo, matched case-insensitively)
+// is listed in auto_merge.squash_only.
+func (a AutoMergeConfig) SquashOnlyFor(repo string) bool {
+	return repoListSet(a.SquashOnly)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
 // RequiredCheckSet returns the global config-declared required-status-check set

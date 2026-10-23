@@ -574,8 +574,48 @@ func LabelDefsFor(kinds authorkind.Names) []LabelDef {
 		out = append(out, roleDefs[r])
 	}
 	out = append(out, authorKindDefs(kinds)...)
-	out = append(out, dcoDefs[DCOYes], dcoDefs[DCONo])
+	out = append(out, dcoDefs[DCOYes], dcoDefs[DCONo], mergeCommitDef)
 	return out
+}
+
+// Merge-method label (hivecommons/hive#13623 follow-up). A role/trusted PR
+// whose head mixes the contributor's commits with hive commits, every one
+// signed off by its own author, cannot be squashed without the landing
+// commit misattributing the hive's sign-off to the contributor — the
+// `Sign-off survives the squash` gate exists for exactly that. A merge
+// commit lands every commit as it is, so the lane selects one instead of
+// parking the PR for a person. The label is the lane's commitment: the
+// attribution check reads it and accepts a bot's self-signed commit under
+// it, and the merge sweeps honour it with `merge_method=merge`. Written by
+// the stage pass whenever the commit check has spoken; never squash a PR
+// wearing it.
+const MergeCommitLabel = "merge-method/merge"
+
+// MergeCommitColor is the stage orange: the label is lane state, not a verdict.
+const MergeCommitColor = StageColor
+
+var mergeCommitDef = LabelDef{Name: MergeCommitLabel, Color: MergeCommitColor, Description: "Hive merges this PR with a merge commit (mixed authorship, each commit self-signed); never squash"}
+
+// MergeCommitState is the stage pass's merge-method verdict for a head.
+type MergeCommitState int
+
+const (
+	// MergeCommitUnknown leaves the label as found (commit check not read).
+	MergeCommitUnknown MergeCommitState = iota
+	// MergeCommitWanted puts `merge-method/merge` on the PR.
+	MergeCommitWanted
+	// MergeCommitNotWanted takes it off.
+	MergeCommitNotWanted
+)
+
+// HasMergeCommitLabel reports whether labels carry `merge-method/merge`.
+func HasMergeCommitLabel(labels []string) bool {
+	for _, l := range labels {
+		if strings.TrimSpace(l) == MergeCommitLabel {
+			return true
+		}
+	}
+	return false
 }
 
 // DCO labels (hivecommons/hive#12542). The operator wanted "the label and
@@ -683,6 +723,9 @@ type Desired struct {
 	// DCO is the commit check's verdict for the head; DCOUnknown leaves the
 	// item's existing DCO labels (own or legacy) untouched.
 	DCO DCOState
+	// MergeCommit is the merge-method verdict for the head;
+	// MergeCommitUnknown leaves `merge-method/merge` as found.
+	MergeCommit MergeCommitState
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -692,8 +735,8 @@ type Desired struct {
 // label from a previous table and the retired `author/<tier>` role
 // spellings — is removed. With Kind unset, `author/<kind>` labels are kept
 // as found. The `dco` / `no-dco` pair is reconciled only when want.DCO is
-// known. Non-hive labels — including Prow's `dco-signoff: *` — are never
-// touched.
+// known, and `merge-method/merge` only when want.MergeCommit is. Non-hive
+// labels — including Prow's `dco-signoff: *` — are never touched.
 func Plan(current []string, want Desired) (add, remove []string) {
 	wanted := map[string]bool{}
 	if l := want.Stage.Label(); l != "" {
@@ -711,6 +754,9 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if l := want.DCO.Label(); l != "" {
 		wanted[l] = true
 	}
+	if want.MergeCommit == MergeCommitWanted {
+		wanted[MergeCommitLabel] = true
+	}
 	have := map[string]bool{}
 	for _, l := range current {
 		l = strings.TrimSpace(l)
@@ -725,6 +771,12 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		// has spoken; an unread head keeps its pill.
 		if dcoOwned(l) {
 			if want.DCO != DCOUnknown {
+				remove = append(remove, l)
+			}
+			continue
+		}
+		if l == MergeCommitLabel {
+			if want.MergeCommit == MergeCommitNotWanted {
 				remove = append(remove, l)
 			}
 			continue

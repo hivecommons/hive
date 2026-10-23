@@ -270,7 +270,7 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			verdict.Stage = fixingStage(obs)
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonDCOMissing
-		} else if pass.SquashUnsafeHive > 0 && !pass.AuthorIsApp {
+		} else if pass.SquashUnsafeHive > 0 && !pass.AuthorIsApp && pass.MergeCommit != stagelabels.MergeCommitWanted {
 			verdict.Stage = fixingStage(obs)
 			verdict.Rank = stageRankOwned
 			obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
@@ -292,6 +292,9 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 		Terminal:   verdict.Terminal,
 		Reason:     obs.Reason,
 		DCO:        dco,
+	}
+	if !verdict.Terminal && pass.DCOKnown {
+		d.MergeCommit = pass.MergeCommit
 	}
 	if verdict.Terminal {
 		// The pass writes a zero Desired on a terminal PR: every pipeline

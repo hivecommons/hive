@@ -521,13 +521,11 @@ var requiredChecksExpectedRE = regexp.MustCompile(`(?i)(required status check ["
 // keeps the repository's squash convention. The classification (branch, title,
 // and head history) is shared with the hive-merge relay via
 // hgithub.ResolveForwardMergeMethod.
+// A PR wearing `merge-method/merge` (mixed authorship, each commit
+// self-signed; automerge_merge_commit.go) is merged with a merge commit too.
 func (c *Engine) mergeMethodFor(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
-	var client *gh.Client
-	var logger *slog.Logger
-	if c != nil {
-		client, logger = c.gh, c.logger
-	}
-	return hgithub.ResolveForwardMergeMethod(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), client, logger, owner, repo, pr, "squash")
+	method, _ := c.mergeMethodWithReason(ctx, owner, repo, pr)
+	return method
 }
 
 type AutoMergeSweepOptions struct {
@@ -1589,13 +1587,13 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if c.humanChangesRequestedForHead(ctx, owner, repo, number, evaluatedHeadSHA) {
 		return AutoMergeSweepEvent{}, autoMergeReasonHumanChangesRequested, nil
 	}
-	method := c.mergeMethodFor(ctx, owner, repo, pr)
+	method, methodReason := c.mergeMethodWithReason(ctx, owner, repo, pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": method, "expect_sha": evaluatedHeadSHA, "lane": lane},
+		Inputs: mergeClaimInputs(method, methodReason, evaluatedHeadSHA, lane),
 	}
 	c.reconcileOpenPRMergeEffect(ctx, mergeClaim, owner, repo, number)
 
@@ -2051,13 +2049,13 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if headSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
-	method := c.mergeMethodFor(ctx, owner, repo, pr)
+	method, methodReason := c.mergeMethodWithReason(ctx, owner, repo, pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": method, "expect_sha": headSHA, "lane": "trusted-author"},
+		Inputs: mergeClaimInputs(method, methodReason, headSHA, "trusted-author"),
 	}
 	c.reconcileOpenPRMergeEffect(ctx, mergeClaim, owner, repo, number)
 	baseBranch := ""
@@ -2344,13 +2342,13 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	if headSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
-	method := c.mergeMethodFor(ctx, owner, repo, pr)
+	method, methodReason := c.mergeMethodWithReason(ctx, owner, repo, pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindPullRequestMerge,
 		Target: fmt.Sprintf("%d", number),
 		Actor:  "automerge",
-		Inputs: map[string]string{"method": method, "expect_sha": headSHA, "lane": "queued"},
+		Inputs: mergeClaimInputs(method, methodReason, headSHA, "queued"),
 	}
 	c.reconcileOpenPRMergeEffect(ctx, mergeClaim, owner, repo, number)
 	if strings.TrimSpace(c.transport.AppBotLogin()) == "" {

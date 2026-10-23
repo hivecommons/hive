@@ -114,6 +114,11 @@ func TestAllLabelDefsColours(t *testing.T) {
 			if d.Color != StalledColor {
 				t.Errorf("no-dco colour %s want the engine's red %s", d.Color, StalledColor)
 			}
+		case d.Name == MergeCommitLabel:
+			// Lane state, not a verdict: the stage orange.
+			if d.Color != StageColor {
+				t.Errorf("merge-method/merge colour %s want the stage colour %s", d.Color, StageColor)
+			}
 		default:
 			t.Errorf("unexpected def %s", d.Name)
 		}

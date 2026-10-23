@@ -387,15 +387,36 @@ func AdoptionStalledComment(obs stageObservation, rec stagelabels.Record, reason
 	return b.String()
 }
 
+// mergeCommitRefusalText is the ask in the hive-signoff-attribution stall
+// note: why the hive did not select a merge commit itself
+// (stageDetail.MergeCommitRefused) and what a person can do.
+func mergeCommitRefusalText(obs stageObservation, author string) string {
+	var b strings.Builder
+	switch obs.Detail.MergeCommitRefused {
+	case mergeCommitRefusedSquashOnly:
+		fmt.Fprintf(&b, "Every commit already carries a sign-off matching its own author, so a merge commit would land them without rewriting history, but `%s` is squash-only (`auto_merge.squash_only`), so the hive did not select one. ", obs.Display)
+		fmt.Fprintf(&b, "**Ask:** either lift the squash-only policy for this repo (the hive then merges with a merge commit on its next sweep) or @%s re-authors the hive's commits under their own sign-off and pushes a new head.", author)
+	case mergeCommitRefusedRole:
+		fmt.Fprintf(&b, "The hive selects a merge commit for this shape only on a `%s` PR; this one is not, so it will not merge it unattended. ", stagelabels.RoleTrusted.Label())
+		fmt.Fprintf(&b, "**Ask:** every commit already carries a sign-off matching its own author, so a maintainer can merge this PR with a merge commit (`gh pr merge %d --merge`, not squash) and DCO holds without rewriting history; otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.", obs.Number, author)
+	case mergeCommitRefusedHiveOnly:
+		fmt.Fprintf(&b, "Every non-merge commit on the head is the hive's, so there is no contributor authorship for a merge commit to preserve. **Ask:** a maintainer merges with a merge commit (`gh pr merge %d --merge`, not squash), or @%s pushes a head of their own.", obs.Number, author)
+	default:
+		fmt.Fprintf(&b, "**Ask:** every commit already carries a sign-off matching its own author, so a maintainer can merge this PR with a merge commit (`gh pr merge %d --merge`, not squash) and DCO holds without rewriting history; otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.", obs.Number, author)
+	}
+	return b.String()
+}
+
 // adoptionBlockerText spells out what the lane reason stands for.
 func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	switch {
 	case adoptedHeadSignoffUnfixable(obs, rec):
-		return fmt.Sprintf("%d commit(s) on `%s` carry the App's `Signed-off-by` while a squash merge would land them as @%s, so the `Sign-off survives the squash` gate stays red. "+
-			"The hive cannot rewrite that authorship without the contributor, and a superseding PR would carry the same head, so it opened none. "+
-			"**Ask:** every commit already carries a sign-off matching its own author, so a maintainer can merge this PR with a merge commit (`gh pr merge %d --merge`, not squash) and DCO holds without rewriting history; "+
-			"otherwise @%s re-authors the hive's commits under their own sign-off and pushes a new head.",
-			obs.Detail.DCOSquashUnsafeHive, shortSHA(obs.HeadSHA), nonEmpty(obs.Author, "the contributor"), obs.Number, nonEmpty(obs.Author, "the contributor"))
+		author := nonEmpty(obs.Author, "the contributor")
+		msg := fmt.Sprintf("%d commit(s) on `%s` carry the App's `Signed-off-by` while a squash merge would land them as @%s, so the `Sign-off survives the squash` gate stays red. "+
+			"The hive cannot rewrite that authorship without the contributor, and a superseding PR would carry the same head, so it opened none. ",
+			obs.Detail.DCOSquashUnsafeHive, shortSHA(obs.HeadSHA), author)
+		msg += mergeCommitRefusalText(obs, author)
+		return msg
 	case verdictBlocks(obs.Detail):
 		msg := fmt.Sprintf("the review swarm's latest verdict on `%s` is `%s` and no fix landed", shortSHA(obs.HeadSHA), strings.ToLower(strings.TrimSpace(obs.Detail.Verdict.Verdict)))
 		if n := len(obs.Detail.Verdict.HumanSummaries); n > 0 {
@@ -894,6 +915,12 @@ func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLab
 	if adoptionCIPending(obs) {
 		return false
 	}
+	if obs.Detail.MergeCommit && !stagelabels.HasMergeCommitLabel(obs.Labels) {
+		// The lane just elected a merge commit for this head; the label
+		// it is about to write re-runs the attribution check. Nothing has
+		// sat yet under that plan.
+		return false
+	}
 	return now.Sub(since) >= stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell)
 }
 
@@ -904,8 +931,14 @@ func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLab
 // hive may not rewrite the contributor's history, so nothing the hive can
 // push fixes it: the PR is a person's (hivecommons/hive#13623). A DCO-red
 // head is left to settleAdoption's DCO re-home.
+//
+// Not unfixable when the stage pass elected a merge commit for the head
+// (obs.Detail.MergeCommit, automerge_merge_commit.go): the hive merges it
+// itself with `merge-method/merge`, so the adoption carries on — including
+// one escalated before the election existed, which the sweep re-evaluates
+// and releases to 074.
 func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) bool {
-	return rec.AdoptedInPlace() && obs.HeadSHA != "" && !adoptedHeadDCORed(obs, rec) && obs.Detail.DCOSquashUnsafeHive > 0
+	return rec.AdoptedInPlace() && obs.HeadSHA != "" && !adoptedHeadDCORed(obs, rec) && obs.Detail.DCOSquashUnsafeHive > 0 && !obs.Detail.MergeCommit
 }
 
 // inPlaceRehomeReason is the reason an in-place adoption converts to a
@@ -966,7 +999,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		store.ClearAdoptionEscalation(key)
-		c.info("stage labels: adoption escalation reason cleared; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason))
+		c.info("stage labels: adoption escalation reason cleared; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason), "merge_commit", obs.Detail.MergeCommit)
 		rec, _ = store.Get(key)
 	}
 	comments := 0

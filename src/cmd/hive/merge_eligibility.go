@@ -120,6 +120,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			SharedCIIncident:          stageSharedCIIncident,
 			BaseBranchRed:             stageBaseBranchRed,
 			DCORequired:               stage.DCO.RequiredFor,
+			SquashOnly:                cfg.AutoMerge.SquashOnlyFor,
 		}
 	}
 }

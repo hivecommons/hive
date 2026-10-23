@@ -147,6 +147,7 @@ auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
 auto_merge.require_current_base[] # TODO #11854
 auto_merge.required_checks[] # TODO #11854
+auto_merge.squash_only[] # merge-method policy; yaml-only
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854
 auto_merge.trusted_bot_authors[] # TODO #11854

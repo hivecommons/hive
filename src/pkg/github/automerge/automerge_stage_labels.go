@@ -83,6 +83,12 @@ type StageLabelPolicy struct {
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
 	DCORequired func(display string) (required, ok bool)
+	// SquashOnly reports whether "owner/repo" forbids merge commits
+	// (auto_merge.squash_only). Where it does not, a role/trusted head
+	// mixing contributor and self-signed hive commits is merged with a
+	// merge commit (`merge-method/merge`) rather than parked on
+	// hive-signoff-attribution. nil = merge commits allowed everywhere.
+	SquashOnly func(display string) bool
 	// HiveID is this hive's id; hive/<HiveID> on a PR the App did not author
 	// is a stray the reconciler removes (hivecommons/hive#12545), and the
 	// `<!-- hive:origin hive=<id> -->` marker naming it marks a PR as
@@ -214,6 +220,12 @@ type stageDetail struct {
 	DCOUnsignedHive     int
 	DCOUnsignedOther    int
 	DCOSquashUnsafeHive int
+	// MergeCommit says the pass elected a merge commit for the head
+	// (mergeCommitElection); MergeCommitRefused names why it could not
+	// when squash-unsafe hive commits are present ("" when it did or the
+	// question never arose).
+	MergeCommit        bool
+	MergeCommitRefused string
 	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
 	// on the head (required-check set or reported status/check run): the
 	// detected "this repo enforces DCO" signal the 072 override needs when
@@ -1312,7 +1324,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Detail.DCOUnsignedOther = stats.unsignedOther
 			obs.Detail.DCOSquashUnsafeHive = stats.squashUnsafeHive
 			want.DCO = obs.Detail.DCO
+			if dcoRead && stats.squashUnsafeHive == 0 {
+				// Nothing a squash would misattribute: a head that no
+				// longer needs the merge commit drops the label.
+				want.MergeCommit = stagelabels.MergeCommitNotWanted
+			}
 			pass.DCO, pass.DCOKnown = want.DCO, true
+			pass.MergeCommit = want.MergeCommit
 			pass.DCORequired = dcoRequired(policy, obs)
 			pass.SquashUnsafeHive = stats.squashUnsafeHive
 			// The label is written everywhere; the 072 override only where
@@ -1321,16 +1339,33 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Stage = fixingStage(obs)
 				verdict.Rank = stageRankOwned
 				obs.Reason = stagelabels.LaneReasonDCOMissing
-			} else if stats.squashUnsafeHive > 0 && normalizeBotLogin(obs.Author) != normalizeBotLogin(c.transport.AppBotLogin()) {
+			} else if stats.squashUnsafeHive > 0 && !pass.AuthorIsApp {
 				// A sign-off naming the App on a commit the squash would
-				// land as the contributor: only the branch owner can rewrite
-				// it (no hive push lands on a non-App branch), so the PR
-				// goes back to its author by kind (071/072), not to 070
-				// where nothing can act (hivecommons/hive OWNERS PRs of
-				// 2026-10-20).
-				verdict.Stage = fixingStage(obs)
-				verdict.Rank = stageRankOwned
-				obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
+				// land as the contributor. For a role/trusted PR whose
+				// every commit is self-signed the lane selects a merge
+				// commit instead (mergeCommitElection): nothing is
+				// squashed, so nothing is misattributed, and the PR
+				// stays in its lane. Otherwise only the branch owner can
+				// rewrite it (no hive push lands on a non-App branch), so
+				// the PR goes back to its author by kind (071/072), not
+				// to 070 where nothing can act (hivecommons/hive OWNERS
+				// PRs of 2026-10-20).
+				election := mergeCommitElection(stats, role, policy, obs.Display)
+				obs.Detail.MergeCommit, obs.Detail.MergeCommitRefused = election.Elected, election.Refused
+				if election.Elected {
+					want.MergeCommit = stagelabels.MergeCommitWanted
+					pass.MergeCommit = want.MergeCommit
+					n, err := c.noteMergeCommit(ctx, store, key, obs, stats)
+					result.Comments += n
+					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+				} else {
+					want.MergeCommit, pass.MergeCommit = stagelabels.MergeCommitNotWanted, stagelabels.MergeCommitNotWanted
+					verdict.Stage = fixingStage(obs)
+					verdict.Rank = stageRankOwned
+					obs.Reason = stagelabels.LaneReasonHiveSignoffAttribution
+				}
 			} else if want.DCO == stagelabels.DCONo {
 				// Not enforced here: keep the lane's stage and do not ask
 				// the author to rebase in the nudge.
@@ -1388,12 +1423,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
-				Stage:      verdict.Stage,
-				Role:       role,
-				Kind:       obs.AuthorKind,
-				KindLabels: policy.AuthorKindLabels,
-				Stalled:    stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
-				DCO:        want.DCO,
+				Stage:       verdict.Stage,
+				Role:        role,
+				Kind:        obs.AuthorKind,
+				KindLabels:  policy.AuthorKindLabels,
+				Stalled:     stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
+				DCO:         want.DCO,
+				MergeCommit: want.MergeCommit,
 			}
 			if stagelabels.HiveHeld(rec, policy.Dwell, now) {
 				result.HiveHeld++
