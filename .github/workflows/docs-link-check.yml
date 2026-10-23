@@ -48,6 +48,7 @@ on:
       - 'src/scripts/test-check-docs-links.sh'
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
+      - 'src/scripts/check-security-docs-readability.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -69,6 +70,7 @@ on:
       - 'src/scripts/test-check-docs-links.sh'
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
+      - 'src/scripts/check-security-docs-readability.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -114,6 +116,11 @@ jobs:
 
       - name: Check src/docs file:line citations
         run: python3 src/scripts/check-docs-citations.py src/docs
+
+      # Security docs must stay readable by a non-expert: Flesch-Kincaid grade
+      # 11 or lower for SECURITY.md and the src/docs/security*/ioscan* set.
+      - name: Check security docs readability
+        run: bash src/scripts/check-security-docs-readability.sh --verbose
 
       # Repo-root docs/ was covered by nothing until #5491: it was absent from
       # both paths: filters and had no step, so a PR breaking a relative link
