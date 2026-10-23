@@ -38,7 +38,7 @@ project:
 		}
 	}
 	cfg.Project.RedMainThreshold = ""
-	if got := cfg.RepoRedMainThreshold("c"); got != redmain.DefaultThreshold || got != 6*time.Hour {
+	if got := cfg.RepoRedMainThreshold("c"); got != redmain.DefaultThreshold || redmain.DefaultThreshold != 6*time.Hour {
 		t.Errorf("RepoRedMainThreshold without config = %s, want the 6h default", got)
 	}
 	var nilCfg *Config

@@ -307,6 +307,11 @@ func SharedCITrackingCheck(title, fullRepo string) (string, bool) {
 	return check, check != ""
 }
 
+// RedMainFact is the red-main fact as surfaced to callers that read it
+// through this package (the dashboard repo card) without importing
+// pkg/redmain themselves.
+type RedMainFact = redmain.Fact
+
 // RedMainFactFor finds repo's fact in a snapshot's RedMain map, matching a
 // bare repo name against an "owner/repo" key.
 func RedMainFactFor(facts map[string]*redmain.Fact, repo string) *redmain.Fact {
