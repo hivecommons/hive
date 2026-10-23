@@ -333,15 +333,11 @@ func TestContributorFlap_ResumeReassertsIssueClaim(t *testing.T) {
 		Status: "working",
 	})
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if got, ok := l.Lookup("myorg/repo1", 13768); ok {
-			if got.HolderID != identity {
-				t.Fatalf("re-asserted claim held by %q, want %q", got.HolderID, identity)
-			}
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	waitFor(t, func() bool {
+		_, ok := l.Lookup("myorg/repo1", 13768)
+		return ok
+	}, "resume to re-assert the issue claim released on disconnect")
+	if got, _ := l.Lookup("myorg/repo1", 13768); got.HolderID != identity {
+		t.Fatalf("re-asserted claim held by %q, want %q", got.HolderID, identity)
 	}
-	t.Fatal("resume did not re-assert the issue claim released on disconnect")
 }
