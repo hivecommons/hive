@@ -139,6 +139,22 @@ func isSharedGroupReadableFile(path string) bool {
 		filepath.Base(geminiDir) == ".gemini"
 }
 
+// isAgyCLILog reports whether path is an Antigravity CLI session log
+// (.gemini/antigravity-cli/log/cli-*.log). agy recreates/rewrites these with
+// its own 0640 mode on every run, so widening them to group-write just made
+// the watcher chmod the same file on every tick (#13653, #13692). Only agy's
+// own process writes its log, so no group access is needed.
+func isAgyCLILog(path string) bool {
+	if ok, _ := filepath.Match("cli-*.log", filepath.Base(path)); !ok {
+		return false
+	}
+	logDir := filepath.Dir(path)
+	agyDir := filepath.Dir(logDir)
+	return filepath.Base(logDir) == "log" &&
+		filepath.Base(agyDir) == "antigravity-cli" &&
+		filepath.Base(filepath.Dir(agyDir)) == ".gemini"
+}
+
 // WatchedHomeDirs are the subdirectories under the shared home and data
 // volume that tools (Copilot, Claude, etc.) or init containers frequently
 // create with root ownership, locking out agent UIDs.
@@ -636,6 +652,10 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// so an already-correct file is left byte-identical.
 	if !fi.IsDir() && isSharedGroupReadableFile(path) {
 		fixSharedCredentialGroupRead(path, fi.Mode(), stat.Uid, logger)
+		return
+	}
+
+	if !fi.IsDir() && isAgyCLILog(path) {
 		return
 	}
 
