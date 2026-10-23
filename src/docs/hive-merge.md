@@ -176,6 +176,46 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
+### One human step at L5: approve and unhold
+
+At ACMM L5 an agent PR carries the level `hold`, and Hive cannot merge its own
+PRs below L6, so a person normally removes `hold` and then separately merges or
+queues the PR. `auto_merge.queue_on_approve_and_unhold` is a per-repo opt-in
+(empty by default, so nothing changes until a repo is listed) that turns those
+two steps into one (RFC #13617 Proposal 2, #13629).
+
+For a listed repo, on a hive running at exactly L5, the queued sweep queues an
+open agent PR when **one trusted merger** (a `merger` or `owner` in
+`dashboard.authorized_users`) has both:
+
+- submitted a GitHub **Approve** review whose commit is the PR's **current
+  head**, and that is still their latest decisive review; and
+- removed the level `hold` the App applied (the newest `hold` label event is
+  that person's removal, and the App's level-hold notice is on the PR).
+
+The order does not matter. Hive then calls the same path as the dashboard's
+queue-auto-merge button, recording that merger as the queuer, and the queued
+lane merges it on green CI with every existing gate.
+
+Nothing else counts as consent: a comment or `/lgtm`, an approval of an older
+head, removing the hold without approving, approving without removing the hold,
+approval and removal by two different people, a bot, or anyone who is not a
+trusted merger. A draft, a PR that is already queued, a PR with
+`sentinel-alert`, or one that is held again does not queue. If a person removes
+the queue label after Hive queued a head, Hive does not re-queue that head.
+
+Unchanged: self-merge stays off below L6 (`SelfMergeMinACMMLevel`), the queued
+lane still re-checks the head SHA before merging, the hold guard's "push after
+review means re-review" rule still re-applies `hold` (and a new head needs a
+new approval), Sentinel still blocks, and trust levels and the trusted-merger
+definition are as before.
+
+```yaml
+auto_merge:
+  queue_on_approve_and_unhold:
+    - your-org/your-repo
+```
+
 ### Self-merge review gate
 
 Immediately before an automerge lane merges a PR — the self-authored sweep for

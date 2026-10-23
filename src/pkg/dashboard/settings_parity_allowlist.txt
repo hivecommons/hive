@@ -143,6 +143,7 @@ auto_merge.allow_unprotected_base[] # TODO #11854
 auto_merge.contributor_tier.auto_promote_after_merged # contributor trust ratchet; yaml-only (#12839)
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.no_ci_ok[] # TODO #11854
+auto_merge.queue_on_approve_and_unhold[] # per-repo L5 opt-in; yaml-only (#13629)
 auto_merge.repos.<key>.required_checks[] # TODO #11854
 auto_merge.required_checks[] # TODO #11854
 auto_merge.trusted_authors.exclude_labels[] # TODO #11854

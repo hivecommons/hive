@@ -234,3 +234,14 @@ func TestEnsureLevelHoldNoticePostsAgentAndDoesNotDuplicate(t *testing.T) {
 		}
 	}
 }
+
+func TestIsLevelHoldNotice(t *testing.T) {
+	if !IsLevelHoldNotice(levelHoldNotice("scanner")) {
+		t.Fatal("the level-gate notice must be recognised")
+	}
+	for _, body := range []string{"", "hold please", "<!-- hive:level-hold {} -->", "<!-- hive:level-hold not-json -->"} {
+		if IsLevelHoldNotice(body) {
+			t.Fatalf("IsLevelHoldNotice(%q) = true, want false", body)
+		}
+	}
+}

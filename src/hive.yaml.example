@@ -51,6 +51,11 @@ project:
 #     - legacy-entry-no-longer-needed
 #   no_ci_ok:
 #     - your-org/docs-only-repo
+#   # One human step per agent PR at ACMM L5 (src/docs/hive-merge.md): a trusted
+#   # merger's Approve review on the current head plus removing the level hold
+#   # queues the PR for auto-merge. Per repo, off by default.
+#   queue_on_approve_and_unhold:
+#     - your-org/your-repo
 #   # Contributor-lane tier (src/docs/hive-merge.md#contributor-lane-auto-merge):
 #   # merges a green, soaked, reviewer-approved PR from a contributor the
 #   # operator trusts. The author is admitted either by holding a require_tiers

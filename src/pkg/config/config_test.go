@@ -1271,6 +1271,41 @@ func TestSelfAuthoredAutoMergeAllowed(t *testing.T) {
 	}
 }
 
+// TestQueueOnApproveAndUnholdAllowed pins hivecommons/hive#13629: the opt-in
+// is per repo, default off, and applies at ACMM L5 only. It never touches the
+// self-merge floor.
+func TestQueueOnApproveAndUnholdAllowed(t *testing.T) {
+	l4, l5, l6 := 4, 5, 6
+	optedIn := AutoMergeConfig{QueueOnApproveAndUnhold: []string{" Acme/Widget ", "gadget"}}
+	cases := []struct {
+		name  string
+		cfg   AutoMergeConfig
+		repo  string
+		level *int
+		want  bool
+	}{
+		{"default off at L5", AutoMergeConfig{}, "acme/widget", &l5, false},
+		{"opted-in repo at L5", optedIn, "acme/widget", &l5, true},
+		{"opted-in repo matched case-insensitively", optedIn, "ACME/widget", &l5, true},
+		{"bare-name entry matches owner/repo", optedIn, "acme/gadget", &l5, true},
+		{"other repo stays off", optedIn, "acme/other", &l5, false},
+		{"blank repo stays off", optedIn, " ", &l5, false},
+		{"nil level fails closed", optedIn, "acme/widget", nil, false},
+		{"L4 stays off", optedIn, "acme/widget", &l4, false},
+		{"L6 stays off: self-merge already applies there", optedIn, "acme/widget", &l6, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.QueueOnApproveAndUnholdAllowed(tc.repo, tc.level); got != tc.want {
+				t.Errorf("QueueOnApproveAndUnholdAllowed(%q, %v) = %v, want %v", tc.repo, tc.level, got, tc.want)
+			}
+		})
+	}
+	if SelfMergeMinACMMLevel != 6 {
+		t.Fatalf("SelfMergeMinACMMLevel = %d, want 6: #13629 must not move the self-merge floor", SelfMergeMinACMMLevel)
+	}
+}
+
 func TestAutoMergeConfigRequiredCheckSet(t *testing.T) {
 	cases := []struct {
 		name     string

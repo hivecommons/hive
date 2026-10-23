@@ -41,6 +41,13 @@ func levelHoldAgentFromNotice(body string) (string, bool) {
 	return meta.Agent, ok
 }
 
+// IsLevelHoldNotice reports whether body carries the ACMM level-gate hold
+// marker. Callers must still check the comment was authored by the App.
+func IsLevelHoldNotice(body string) bool {
+	_, ok := levelHoldMetadataFromNotice(body)
+	return ok
+}
+
 func levelHoldMetadataFromNotice(body string) (levelHoldNoticeMetadata, bool) {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)

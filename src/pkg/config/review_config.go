@@ -488,6 +488,13 @@ type AutoMergeConfig struct {
 	// "zero statuses + zero check runs + zero workflow runs" verdict from
 	// unverified to green. Red or pending evidence still refuses/waits.
 	NoCIOK []string `yaml:"no_ci_ok,omitempty" json:"no_ci_ok,omitempty"`
+	// QueueOnApproveAndUnhold is the per-repo opt-in for RFC #13617 Proposal 2
+	// (hivecommons/hive#13629): at ACMM L5, when one trusted merger both
+	// submits an APPROVED review on an agent PR's current head and removes its
+	// level `hold`, the queued sweep queues the PR through the same path as the
+	// dashboard's queue-auto-merge button. Nothing else counts as consent.
+	// Empty (the default) changes nothing. Entries are owner/repo or bare names.
+	QueueOnApproveAndUnhold []string `yaml:"queue_on_approve_and_unhold,omitempty" json:"queue_on_approve_and_unhold,omitempty"`
 	// TrustedBotAuthors lists bot logins whose open PRs the self-authored
 	// automerge sweep treats like the App's own: merged once mergeable and
 	// CI-green through the identical gates (required checks, hold/exempt
@@ -861,6 +868,35 @@ func (a AutoMergeConfig) AllowUnprotectedBaseSet() map[string]bool {
 
 func (a AutoMergeConfig) NoCIOKSet() map[string]bool {
 	return repoListSet(a.NoCIOK)
+}
+
+// QueueOnApproveAndUnholdACMMLevel is the only ACMM level at which
+// auto_merge.queue_on_approve_and_unhold applies (hivecommons/hive#13629).
+const QueueOnApproveAndUnholdACMMLevel = 5
+
+// QueueOnApproveAndUnholdAllowed reports whether repo (owner/repo or bare
+// name, matched case-insensitively) opted into queueing on a trusted merger's
+// approval plus level-hold removal, and the hive runs at
+// QueueOnApproveAndUnholdACMMLevel. An unset level fails closed.
+func (a AutoMergeConfig) QueueOnApproveAndUnholdAllowed(repo string, acmmLevel *int) bool {
+	if acmmLevel == nil || *acmmLevel != QueueOnApproveAndUnholdACMMLevel {
+		return false
+	}
+	set := repoListSet(a.QueueOnApproveAndUnhold)
+	if len(set) == 0 {
+		return false
+	}
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if repo == "" {
+		return false
+	}
+	if set[repo] {
+		return true
+	}
+	if i := strings.LastIndex(repo, "/"); i >= 0 {
+		return set[repo[i+1:]]
+	}
+	return false
 }
 
 // HumanMergePathsFor returns the human-merge path patterns configured for repo

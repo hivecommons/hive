@@ -84,6 +84,8 @@ Delivery agents open GitHub issues — bugs, docs gaps, CI problems, security vu
 
 Agents open issues AND pull requests. Agent PRs get literal `hold` from the level gate — humans batch-review and approve. The dashboard `hive-pause/<hive-id>` label is a separate manual hold, and `hive/<hive-id>` is provenance only. Architect produces RFCs, strategist coordinates across agents, and reviewer works the hold-gated PR queue every 30 minutes, and adjudicator works escalated (`needs-human`) hive PRs through the reviewer lane every 30 minutes (recommend-close only; closing is operator-only below L6). Dedupe runs once a day, reads every open issue and PR, and posts one consolidation checklist issue per repository (near-duplicates, same-root-cause clusters, unlinked PR/issue pairs, already-resolved items), parked with `--needs-decision`; it never closes or edits anyone else's items. The system proposes; it does not merge autonomously.
 
+Per-repo opt-in `auto_merge.queue_on_approve_and_unhold` (off by default) lets a person finish an agent PR in one step: when one trusted merger both submits an APPROVED review on an agent PR's current head and removes its level `hold`, Hive queues the PR for auto-merge on green CI exactly as the dashboard's queue button does. Nothing else counts as consent, and the self-merge floor stays at L6. See [hive-merge.md](hive-merge.md#one-human-step-at-l5-approve-and-unhold).
+
 | Agent | Mode | Template |
 |-------|------|----------|
 | supervisor | advisory | `supervisor-nogithub.md` |

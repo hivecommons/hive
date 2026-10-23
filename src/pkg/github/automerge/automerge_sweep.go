@@ -86,6 +86,10 @@ type Options struct {
 	// RepoAutoMergeEnabled returns the live per-repo auto-merge switch. nil
 	// preserves default-on behavior.
 	RepoAutoMergeEnabled func(repo string) bool
+	// QueueOnApproveAndUnhold returns the live per-repo
+	// auto_merge.queue_on_approve_and_unhold opt-in at the hive's ACMM level
+	// (hivecommons/hive#13629). repo is owner/repo. nil means off.
+	QueueOnApproveAndUnhold func(repo string) bool
 	// TrustedBotAuthors returns the live lower-cased set of bot logins whose
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
@@ -199,6 +203,7 @@ type Engine struct {
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
+	queueOnApproveAndUnhold           func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
@@ -267,6 +272,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
+		queueOnApproveAndUnhold:           opts.QueueOnApproveAndUnhold,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
@@ -833,6 +839,9 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 			continue
 		}
 		owner, repoName := c.transport.SplitRepo(repo)
+		if c.queueOnApproveAndUnholdActive(owner + "/" + repoName) {
+			c.queueApprovedUnheldLevelHolds(ctx, repo, owner, repoName, label)
+		}
 		issues, err := c.listQueuedPullRequestIssues(ctx, owner, repoName, label)
 		if err != nil {
 			return result, err
