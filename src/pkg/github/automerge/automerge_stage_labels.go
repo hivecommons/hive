@@ -865,7 +865,7 @@ var stageMergeQueueReasons = map[string]bool{
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
 var stageFixingReasons = map[string]bool{
 	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
-	"label:needs-rebase": true,
+	"label:needs-rebase": true, autoMergeReasonForkNotEditable: true,
 }
 
 // fixingStage is the rework stage for the lane: a hive agent reworks its

@@ -109,6 +109,8 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, "the review swarm requested changes")
 	case r == "conflicting" || r == "not-mergeable" || r == "label:needs-rebase":
 		asks = append(asks, "the branch conflicts with the base and needs a rebase")
+	case r == autoMergeReasonForkNotEditable:
+		asks = append(asks, "the branch is behind the base and Hive cannot update it; enable \"allow edits by maintainers\" or rebase")
 	case r == stagelabels.LaneReasonDCOMissing:
 		asks = append(asks, dcoAsk(d))
 	case r == stagelabels.LaneReasonHiveSignoffAttribution:

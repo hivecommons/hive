@@ -1,0 +1,1 @@
+- Automerge no longer reports fork PRs that disallow maintainer edits as conflicting when update-branch is refused; they now skip as fork-not-editable, and an already-current branch is a no-op (#13650)

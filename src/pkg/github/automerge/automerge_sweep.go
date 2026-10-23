@@ -1079,7 +1079,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", "not-mergeable"}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable"}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -2170,13 +2170,57 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string) (AutoMergeSweepEvent, string, error) {
 	if err := c.executeUpdateBranchEffect(ctx, owner, repo, number, headSHA, reason); err != nil {
-		if isGitHubStatus(err, http.StatusUnprocessableEntity) {
+		switch classifyUpdateBranchError(err) {
+		case updateBranchUpToDate:
+			return AutoMergeSweepEvent{}, "check-pending", nil
+		case updateBranchForkNotEditable:
+			c.info("automerge update-branch skipped: fork head not editable by the app", "repo", displayRepo, "pr", number, "reason", reason)
+			return AutoMergeSweepEvent{}, autoMergeReasonForkNotEditable, nil
+		case updateBranchConflict:
 			return AutoMergeSweepEvent{}, "conflicting", nil
 		}
 		return AutoMergeSweepEvent{}, "update-branch", err
 	}
 	c.info("automerge update-branch", "repo", displayRepo, "pr", number, "reason", reason)
 	return AutoMergeSweepEvent{Repo: displayRepo, Number: number, HeadSHA: headSHA, BranchUpdated: true}, "check-pending", nil
+}
+
+const autoMergeReasonForkNotEditable = "fork-not-editable"
+
+type updateBranchFailure int
+
+const (
+	updateBranchOther updateBranchFailure = iota
+	updateBranchConflict
+	updateBranchUpToDate
+	updateBranchForkNotEditable
+)
+
+// classifyUpdateBranchError separates the update-branch failures GitHub
+// reports with overlapping statuses: 422 covers conflicts and an already
+// current branch, while 403 (or a 422 naming maintainer edits) means the app
+// cannot write to the fork head. An unrecognised 422 stays a conflict.
+func classifyUpdateBranchError(err error) updateBranchFailure {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return updateBranchOther
+	}
+	msg := strings.ToLower(ghErr.Message)
+	switch ghErr.Response.StatusCode {
+	case http.StatusForbidden:
+		return updateBranchForkNotEditable
+	case http.StatusUnprocessableEntity:
+		switch {
+		case strings.Contains(msg, "maintainer") || strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+			return updateBranchForkNotEditable
+		case strings.Contains(msg, "merge conflict"):
+			return updateBranchConflict
+		case strings.Contains(msg, "up to date") || strings.Contains(msg, "up-to-date"):
+			return updateBranchUpToDate
+		}
+		return updateBranchConflict
+	}
+	return updateBranchOther
 }
 
 func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo string, number int, headSHA, reason string) error {
