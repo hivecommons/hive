@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,11 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 		{"runsTriageMinBodyChars": -1},
 		{"runsTriageClarityGateThreshold": -1},
 		{"runsTriageClarityGateThreshold": 101},
+		{"runsTriagePriorArtKinds": "feature, bug"},
+		{"runsTriagePriorArtMaxFindings": -1},
+		{"runsTriagePriorArtMaxParksPerCycle": -1},
+		{"runsTriagePriorArtBotCloseTtl": "-1h"},
+		{"runsTriagePriorArtBotCloseTtl": "soon"},
 		{"spektacularRecheckDefaultInterval": "weekly"},
 		{"spektacularRecheckMaxDeltaTasks": -1},
 		{"spektacularRecheckDiscoveryProxy": "http://user:pw@relay:18443"},
@@ -60,6 +66,11 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 		"runsTriageClarityGateEnabled":   true,
 		"runsTriageClarityGateThreshold": 70,
 
+		"runsTriagePriorArtKinds":            " RFC, epic,rfc",
+		"runsTriagePriorArtMaxFindings":      3,
+		"runsTriagePriorArtMaxParksPerCycle": 2,
+		"runsTriagePriorArtBotCloseTtl":      "48h",
+
 		"spektacularRecheckEnabled":         true,
 		"spektacularRecheckDefaultInterval": "72h",
 		"spektacularRecheckMaxDeltaTasks":   25,
@@ -93,6 +104,9 @@ func TestGovernorFeaturesRunsSettingsRoundTrip(t *testing.T) {
 	}
 	if !r.Triage.ClarityGate.Enabled || r.Triage.ClarityGate.Threshold != 70 {
 		t.Fatalf("clarity gate not applied: %+v", r.Triage.ClarityGate)
+	}
+	if pa := r.Triage.PriorArt; !slices.Equal(pa.Kinds, []string{"rfc", "epic"}) || pa.MaxFindings != 3 || pa.MaxParksPerCycle != 2 || pa.BotCloseTTL != 48*time.Hour {
+		t.Fatalf("prior-art gate not applied: %+v", pa)
 	}
 	rc := r.Spektacular.Recheck
 	if !rc.Enabled || rc.DefaultInterval != 72*time.Hour || rc.MaxDeltaTasks != 25 || rc.DiscoveryProxy != "http://relay:18443" ||
@@ -204,6 +218,10 @@ func TestRunsSettingsRenderEveryKey(t *testing.T) {
 		{"runs.triage.min_body_chars", `data-arg0="features" data-arg1="runsTriageMinBodyChars" data-arg-types="s,s,N"`},
 		{"runs.triage.clarity_gate.enabled", `data-section="features" data-key="runsTriageClarityGateEnabled"`},
 		{"runs.triage.clarity_gate.threshold", `data-arg0="features" data-arg1="runsTriageClarityGateThreshold" data-arg-types="s,s,N"`},
+		{"runs.triage.prior_art.kinds[]", `data-arg0="features" data-arg1="runsTriagePriorArtKinds" data-arg-types="s,s,w"`},
+		{"runs.triage.prior_art.max_findings", `data-arg0="features" data-arg1="runsTriagePriorArtMaxFindings" data-arg-types="s,s,N"`},
+		{"runs.triage.prior_art.max_parks_per_cycle", `data-arg0="features" data-arg1="runsTriagePriorArtMaxParksPerCycle" data-arg-types="s,s,N"`},
+		{"runs.triage.prior_art.bot_close_ttl", `data-arg0="features" data-arg1="runsTriagePriorArtBotCloseTtl" data-arg-types="s,s,w"`},
 		{"runs.spektacular.binary", `data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w"`},
 		{"runs.spektacular.recheck.enabled", `data-section="features" data-key="spektacularRecheckEnabled"`},
 		{"runs.spektacular.recheck.default_interval", `data-arg0="features" data-arg1="spektacularRecheckDefaultInterval" data-arg-types="s,s,w"`},
