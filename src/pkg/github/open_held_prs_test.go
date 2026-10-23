@@ -1,8 +1,8 @@
 package github
 
 import (
-	"context"
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
