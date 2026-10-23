@@ -2389,6 +2389,14 @@
     .yt-inbox-title { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .yt-inbox-title:hover { text-decoration: underline; }
     .yt-verdict { color: var(--muted); font-size: var(--fs-xs); }
+    /* Critical path (#13646): hard edges are solid chips, the file/issue
+       overlap hint is dashed and muted, the named action is a plain tag. */
+    .cp-chip { display: inline-block; margin-left: var(--sp-1); padding: 0 var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--fg); font-size: var(--fs-2xs); font-weight: 600; white-space: nowrap; }
+    .cp-chip.cp-unblocks { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
+    .cp-chip.soft { border-style: dashed; color: var(--muted); font-weight: 400; }
+    .cp-action { display: inline-block; padding: 0 var(--sp-2); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-size: var(--fs-2xs); font-weight: 700; white-space: nowrap; }
+    .cp-dependents { margin: var(--sp-0) var(--sp-0) var(--sp-1) var(--sp-4); }
+    .cp-dependents > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-xs); }
     .yt-inbox-btn { flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--r-pill); background: var(--bg); color: var(--muted); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
     .yt-inbox-btn:hover, .yt-inbox-btn[aria-expanded="true"] { color: var(--fg); border-color: var(--accent); }
     .yt-collapse { margin: var(--sp-0) var(--sp-0) var(--sp-2); }
@@ -22212,6 +22220,92 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     installYourTurnListeners(document);
 
+    // ── The critical path (#13646) ──────────────────────────────────────
+
+    // your-turn critical path helpers begin
+    // The server stamps every your-turn row with what it waits on, how many
+    // your-turn items it unblocks, the PRs it may conflict with (a soft hint,
+    // never an edge), the one action that moves it and, unless it is a root
+    // cause itself, the root cause (blocker) it collapses under.
+
+    // A row reference ("#N" relative to repo, or "owner/repo#N") as a key.
+    function cpRowKey(repo, ref) {
+      const text = String(ref || '');
+      const at = text.lastIndexOf('#');
+      if (at < 0) return '';
+      return String(at === 0 ? repo : text.slice(0, at)).toLowerCase() + '#' + text.slice(at + 1);
+    }
+
+    function cpUnblocks(row) { return Number(row && row.unblocks) || 0; }
+
+    // Most unblocked first; ties keep the order they came in (age, rank).
+    function cpByUnblocks(a, b) { return cpUnblocks(b) - cpUnblocks(a); }
+
+    function cpWaitsText(row) {
+      const label = w => w.kind === 'base-check' ? w.ref + ' (red on base)' : w.kind === 'approval' ? 'approval' : w.kind === 'merge' ? '' : (w.ref || w.kind);
+      const parts = ((row && row.waits_on) || []).map(label).filter(Boolean);
+      return parts.length ? 'waits on ' + parts.join(', ') : '';
+    }
+
+    function cpActionText(row) {
+      const labels = { merge: 'merge', 'release-hold': 'release hold', rebase: 'rebase', rerun: 'rerun', approve: 'approve' };
+      if (!row || !labels[row.action]) return '';
+      if (!row.action_ref) return labels[row.action];
+      return labels[row.action] + (row.action === 'rebase' || row.action === 'rerun' ? ' after ' : ' ') + row.action_ref;
+    }
+
+    // The "unblocks N" / "waits on …" chips and the soft "may conflict with".
+    function cpChipsHTML(row) {
+      if (!row || !Array.isArray(row.waits_on)) return '';
+      const out = [];
+      const n = cpUnblocks(row);
+      if (n) out.push(`<span class="cp-chip cp-unblocks" title="${esc(n + ' your-turn item' + (n === 1 ? ' waits' : 's wait') + ' on this, directly or through another')}">unblocks ${n}</span>`);
+      const waits = cpWaitsText(row);
+      if (waits) out.push(`<span class="cp-chip cp-waits" title="${esc(waits + (row.blocker ? ' — root cause ' + row.blocker : ''))}">${esc(waits)}</span>`);
+      const soft = (row.may_conflict_with || []).map(Number).filter(Boolean);
+      if (soft.length) out.push(`<span class="cp-chip soft" title="Touches the same files or closes the same issue. Not a dependency: either can land first.">may conflict with ${esc(soft.map(x => '#' + x).join(', '))}</span>`);
+      return out.join('');
+    }
+
+    function cpActionHTML(row) {
+      const text = cpActionText(row);
+      return text ? `<span class="cp-action" title="${esc('Next action: ' + text)}">${esc(text)}</span>` : '';
+    }
+
+    // Folds every item whose blocker is also among items under that blocker.
+    // items are { repo, kind, row }; the result keeps the order of the items
+    // not folded, each with the dependents folded under it.
+    function cpCollapse(items) {
+      const byKey = new Map();
+      (items || []).forEach(item => byKey.set(cpRowKey(item.repo, '#' + item.row.number), item));
+      const dependents = new Map();
+      const folded = new Set();
+      (items || []).forEach(item => {
+        const blocker = item.row && item.row.blocker ? byKey.get(cpRowKey(item.repo, item.row.blocker)) : null;
+        if (!blocker || blocker === item || (blocker.row && blocker.row.blocker)) return;
+        if (!dependents.has(blocker)) dependents.set(blocker, []);
+        dependents.get(blocker).push(item);
+        folded.add(item);
+      });
+      return (items || []).filter(item => !folded.has(item)).map(item => ({ item, dependents: dependents.get(item) || [] }));
+    }
+
+    // "8 PRs waiting on #255 (dakota-iso)"
+    function cpCollapsedSummary(blocker, dependents) {
+      const n = dependents.length;
+      const kinds = new Set(dependents.map(d => d.kind));
+      const noun = kinds.size !== 1 ? 'item' : (kinds.has('pr') ? 'PR' : 'issue');
+      const repo = String(blocker.repo || '').split('/').pop();
+      return n + ' ' + noun + (n === 1 ? '' : 's') + ' waiting on #' + blocker.row.number + (repo ? ' (' + repo + ')' : '');
+    }
+
+    // One expandable row under the blocker holding its dependents.
+    function cpDependentsHTML(entry, renderRow) {
+      if (!entry || !entry.dependents.length) return '';
+      return `<details class="cp-dependents"><summary>${esc(cpCollapsedSummary(entry.item, entry.dependents))}</summary>${entry.dependents.map(renderRow).join('')}</details>`;
+    }
+    // your-turn critical path helpers end
+
     // ── The inbox ────────────────────────────────────────────────────────
 
     // Every your-turn item on the repositories shown, in the server's order.
@@ -22241,7 +22335,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         });
       });
       const rank = item => Number(item.row.ownership.inbox_rank) || Number.MAX_SAFE_INTEGER;
-      return items.sort((a, b) => rank(a) - rank(b));
+      return items.sort((a, b) => cpByUnblocks(a.row, b.row) || rank(a) - rank(b));
     }
 
     // N excludes CLOSE; M is the CLOSE count.
@@ -22286,16 +22380,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const base = (window._githubBaseUrl || 'https://github.com').replace(/\/$/, '');
       const url = item.row.url || (base + '/' + item.repo + '/' + (item.kind === 'pr' ? 'pull' : 'issues') + '/' + item.row.number);
       const verdict = yourTurnReviewerVerdict(item);
-      return `<div class="yt-inbox-row"><span class="yt-inbox-repo">${esc(item.repo)}</span><a class="yt-inbox-title" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(item.row.title || '')}"><span class="pill-num">#${Number(item.row.number)}</span> <span class="pill-title">${esc(item.row.title || '')}</span></a><span class="yt-verb">${esc(own.verb)}</span><span class="yt-reason yt-inbox-reason-cell">${esc(own.reason)}</span><span class="yt-inbox-end">${verdict}${yourTurnButtonHTML(item.repo, item.kind, item.row, 'inbox')}</span></div>`;
+      return `<div class="yt-inbox-row"><span class="yt-inbox-repo">${esc(item.repo)}</span><a class="yt-inbox-title" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(item.row.title || '')}"><span class="pill-num">#${Number(item.row.number)}</span> <span class="pill-title">${esc(item.row.title || '')}</span></a><span class="yt-verb">${esc(own.verb)}</span><span class="yt-inbox-reason-cell"><span class="yt-reason">${esc(own.reason)}</span>${cpChipsHTML(item.row)}</span><span class="yt-inbox-end">${verdict}${cpActionHTML(item.row)}${yourTurnButtonHTML(item.repo, item.kind, item.row, 'inbox')}</span></div>`;
     }
 
     function yourTurnInboxHTML(items, levels) {
       const counts = yourTurnCounts(items);
       const head = `<div class="yt-inbox-head" id="yt-inbox-head">${esc(yourTurnInboxHeaderText(counts))}</div>`;
       if (!items.length) return `${head}<div class="yt-inbox-empty">${esc(yourTurnEmptyText(levels))}</div>`;
+      // Items waiting on another item of the inbox fold under it (#13646).
+      const entries = cpCollapse(items);
       const groups = YOUR_TURN_VERB_ORDER.map(verb => {
         const rows = items.filter(item => item.row.ownership.verb === verb);
-        return rows.length ? `<div class="yt-inbox-group" data-yt-verb="${esc(verb)}"><div class="yt-inbox-group-title">${esc(verb)} · ${rows.length}</div>${rows.map(yourTurnInboxRowHTML).join('')}</div>` : '';
+        const shown = entries.filter(entry => entry.item.row.ownership.verb === verb);
+        return rows.length ? `<div class="yt-inbox-group" data-yt-verb="${esc(verb)}"><div class="yt-inbox-group-title">${esc(verb)} · ${rows.length}</div>${shown.map(entry => yourTurnInboxRowHTML(entry.item) + cpDependentsHTML(entry, yourTurnInboxRowHTML)).join('')}</div>` : '';
       }).join('');
       return `${head}<div class="yt-inbox-body">${groups}</div>`;
     }
@@ -23200,10 +23297,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
           const statusKind = isHeldIssue ? 'issue:held' : (info.chip ? repoIssueChipKind(info.chip) : ('issue:' + info.band));
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge + cpActionHTML(i), planBtn, designBtn, holdBtn])}</span>`;
         };
+        // Critical path (#13646): within a band the rows that unblock the
+        // most come first, and a row waiting on another row of the same
+        // column folds under it as one expandable row.
+        const cpCardFold = (entries, rowOf, kind) => {
+          const fold = new Map();
+          const folded = new Set();
+          cpCollapse(entries.map(entry => ({ repo: cardRepo, kind, row: rowOf(entry), entry }))).forEach(c => {
+            if (!c.dependents.length) return;
+            fold.set(c.item.entry, c);
+            c.dependents.forEach(d => folded.add(d.entry));
+          });
+          return { fold, folded };
+        };
+        const cpIssueFold = cpCardFold([].concat(...collapseView.issueGroups.map(g => g.issues)), entry => entry.issue, 'issue');
         const issuePills = collapseView.issueGroups.map(g => {
-          const items = g.issues.map(entry => renderIssuePill(entry.issue, entry.info)).join('');
+          const shown = g.issues.filter(entry => !cpIssueFold.folded.has(entry)).sort((a, b) => cpByUnblocks(a.issue, b.issue));
+          const items = shown.map(entry => renderIssuePill(entry.issue, entry.info) + cpDependentsHTML(cpIssueFold.fold.get(entry), d => renderIssuePill(d.entry.issue, d.entry.info))).join('');
           return `<div class="repo-issue-band repo-issue-band-${esc(g.band)}"><div class="repo-issue-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.issues.length}</div><div class="repo-issue-band-items">${items}</div></div>`;
         }).join('');
         const renderNonActionableIssuePill = (i) => {
@@ -23311,12 +23423,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const prStatusTip = sentinelTip + (reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request'));
           const rowKinds = repoPRFilterKinds(p, held, bandInfo);
           const statusKind = sentinelFlagged ? 'pr:sentinel' : held ? 'pr:held' : (needsHuman ? 'needs-human' : (mergeState === 'eligible' ? 'pr:eligible' : (mergeState === 'outstanding' ? 'pr:outstanding' : ((reviewClass === 'fix') ? 'pr:fix' : 'pr:open'))));
-          return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(cardRepo, 'pr', p), `<button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button>`)}<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
+          return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(cardRepo, 'pr', p), `<button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button>`)}<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}${cpChipsHTML(p)}</a>${repoPillActionCluster([reviewPill, cpActionHTML(p) + queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
+        const cpPRFold = cpCardFold([].concat(...collapseView.prGroups.map(g => g.prs)), entry => entry.pr, 'pr');
         const prPills = collapseView.prGroups.map(g => {
-          const shown = g.prs;
-          const items = shown.map(entry => renderPrPill(entry.pr, entry.held, entry.info)).join('');
-          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${shown.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
+          const shown = g.prs.filter(entry => !cpPRFold.folded.has(entry)).sort((a, b) => cpByUnblocks(a.pr, b.pr));
+          const items = shown.map(entry => renderPrPill(entry.pr, entry.held, entry.info) + cpDependentsHTML(cpPRFold.fold.get(entry), d => renderPrPill(d.entry.pr, d.entry.held, d.entry.info))).join('');
+          return `<div class="repo-pr-band repo-pr-band-${esc(g.band)}"><div class="repo-pr-band-title" title="${esc(g.tip)}">${esc(g.label)} · ${g.prs.length}</div><div class="repo-pr-band-items">${items}</div></div>`;
         }).join('');
         // Two columns under the two numbers: issue pills (actionable and held
         // grouped into the same display bands) under "issues", PR pills grouped
@@ -23349,7 +23462,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const tip = 'New PRs are paused on this repo until main is green; PRs that fix main rank first in the review queue. Existing PRs keep going.';
           const run = rm.run_url ? ` <a href="${esc(rm.run_url)}" target="_blank" rel="noopener">run</a>` : '';
           const fixLink = fix && fix.url ? ` <a href="${esc(fix.url)}" target="_blank" rel="noopener">#${esc(String(fix.number))}</a>` : '';
-          return `<div class="repo-red-main" title="${esc(tip)}">🚨 ${esc(r.redMainLine)}${run}${fixLink}</div>`;
+          // The your-turn summary says when the fix PR waits on you (#13646).
+          const mr = (r.yourTurn || {}).main_red;
+          const line = mr && mr.fix && mr.fix_your_turn
+            ? 'main red since ' + formatDashboardDateTime(mr.since) + ' on ' + mr.check + '; fix #' + mr.fix + ' is waiting on you'
+            : r.redMainLine;
+          return `<div class="repo-red-main" title="${esc(tip)}">🚨 ${esc(line)}${run}${fixLink}</div>`;
         })() : '';
         // Fork badge (#11433): which upstream the fork follows, whether the
         // upstream watch is on for it, and when it was last checked.

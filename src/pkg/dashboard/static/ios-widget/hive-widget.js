@@ -4,9 +4,9 @@
 //
 // Hive iPhone widget (Scriptable) — see src/docs/ios-widget.md
 //
-// Shows, for one hive: total open issues, total open PRs, actionable issues
-// and actionable PRs, each with a sparkline. Tapping the widget opens the
-// hive dashboard (the same mobile page you get from "Add to Home Screen").
+// Shows, for one hive: total open issues, total open PRs, and the your-turn
+// issues and PRs counted as root causes, each with a sparkline. Tapping the
+// widget opens the hive dashboard (the same mobile page you get from "Add to Home Screen").
 //
 // Setup: scan the QR code from the dashboard's "iPhone widget" dialog (the
 // owner mints a read-only widget token there), or run the script once inside
@@ -160,6 +160,30 @@ function pointToSample(p) {
   };
 }
 
+// The YOUR TURN cells count root causes: your-turn items that wait on no
+// other your-turn item, so eight PRs stuck behind one fix count once
+// (hivecommons/hive#13646). A sample whose 15-minute bucket has a recorded
+// root-cause count uses it, and the newest sample takes the live count;
+// history from before the hive recorded root causes keeps the governor's
+// actionable figure.
+function withRootCauses(samples, rootHist, live) {
+  const bucketMs = HISTORY_BUCKET_MIN * 60 * 1000;
+  const roots = new Map();
+  for (const p of Array.isArray(rootHist) ? rootHist : []) {
+    if (!p || p.yourTurnRootIssues == null || p.yourTurnRootPrs == null) continue;
+    roots.set(Math.floor(Number(p.t) / bucketMs), p);
+  }
+  const out = samples.map((s) => {
+    const r = roots.get(Math.floor(s.t / bucketMs));
+    return r ? Object.assign({}, s, { actIssues: Number(r.yourTurnRootIssues), actPrs: Number(r.yourTurnRootPrs) }) : s;
+  });
+  if (live && out.length) {
+    const last = out[out.length - 1];
+    out.push(Object.assign({}, last, { t: Date.now(), actIssues: Number(live.root_issues || 0), actPrs: Number(live.root_prs || 0) }));
+  }
+  return out;
+}
+
 function historyFile(base) {
   const fm = FileManager.local();
   const dir = fm.joinPath(fm.documentsDirectory(), "hive-widget");
@@ -194,17 +218,19 @@ async function loadData(base) {
   const state = loadLocal(base);
   let live = null, err = null;
   try {
-    let hist, summary;
+    let hist, summary, rootHist;
     if (widgetToken(base)) {
       summary = await getJSON(base, "/api/widget/summary");
       hist = summary.history;
+      rootHist = summary.yourTurnHistory;
     } else {
-      [hist, summary] = await Promise.all([
+      [hist, summary, rootHist] = await Promise.all([
         getJSON(base, "/api/history?hours=168"),
         getJSON(base, "/api/status/summary"),
+        getJSON(base, "/api/trend/history").catch(() => []),
       ]);
     }
-    const incoming = (Array.isArray(hist) ? hist : []).map(pointToSample).filter((s) => s.t > 0);
+    const incoming = withRootCauses((Array.isArray(hist) ? hist : []).map(pointToSample).filter((s) => s.t > 0), rootHist, summary.yourTurn);
     state.samples = mergeSamples(state.samples || [], incoming);
     const agents = Array.isArray(summary.agents) ? summary.agents : [];
     state.meta = {
