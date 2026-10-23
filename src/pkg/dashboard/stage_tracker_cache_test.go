@@ -129,6 +129,10 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 		t.Fatalf("fresh payload: source=%q ttl=%d at=%v items=%d", fresh.Source, fresh.CacheTTLSeconds, fresh.GeneratedAt, len(fresh.Items))
 	}
 	etag := first.Header().Get("ETag")
+	if first.Header().Get("X-Hive-Stage-Tracker-Generated-At") == "" || first.Header().Get("Last-Modified") == "" {
+		t.Fatalf("200 lacks generated-at headers: %v", first.Header())
+	}
+	wantAt := first.Header().Get("X-Hive-Stage-Tracker-Generated-At")
 
 	second := get("")
 	if second.Code != http.StatusOK || second.Header().Get("ETag") != etag || second.Header().Get("X-Hive-Stage-Tracker-Source") != "cache" {
@@ -146,6 +150,17 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 	}
 	if third := get(etag); third.Code != http.StatusNotModified || third.Body.Len() != 0 {
 		t.Fatalf("If-None-Match: %d body=%d", third.Code, third.Body.Len())
+	} else {
+		at, err := time.Parse(time.RFC3339Nano, third.Header().Get("X-Hive-Stage-Tracker-Generated-At"))
+		if err != nil || !at.Equal(fresh.GeneratedAt) || third.Header().Get("X-Hive-Stage-Tracker-Generated-At") != wantAt {
+			t.Fatalf("304 generated-at header %q (err %v), want %q", third.Header().Get("X-Hive-Stage-Tracker-Generated-At"), err, wantAt)
+		}
+		if _, err := http.ParseTime(third.Header().Get("Last-Modified")); err != nil {
+			t.Fatalf("304 Last-Modified %q: %v", third.Header().Get("Last-Modified"), err)
+		}
+		if third.Header().Get("X-Hive-Stage-Tracker-Source") == "" {
+			t.Fatal("304 lacks the Source header")
+		}
 	}
 	if miss := get(`"nope"`); miss.Code != http.StatusOK {
 		t.Fatalf("stale validator: %d", miss.Code)

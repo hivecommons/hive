@@ -1342,6 +1342,8 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age="+strconv.FormatInt(int64(remaining/time.Second), 10))
 	w.Header().Set("X-Hive-Stage-Tracker-Source", map[bool]string{true: "fresh", false: "cache"}[fresh])
+	w.Header().Set("X-Hive-Stage-Tracker-Generated-At", generatedAt.UTC().Format(time.RFC3339Nano))
+	w.Header().Set("Last-Modified", generatedAt.UTC().Format(http.TimeFormat))
 	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
 		github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusNotModified)
 		w.WriteHeader(http.StatusNotModified)

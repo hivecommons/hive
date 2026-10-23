@@ -15265,7 +15265,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
         if (!_stageTrackerSig && !_stageTrackerEtag) { stageTrackerLoadFilter(); stageTrackerSoundInit(); }
         const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
-        if (r.status === 304) { stageTrackerTickClock(); return; }
+        if (r.status === 304) {
+          // A 304 carries no body, so take generated_at/source from the headers or the "updated" chip goes amber on a quiet hive.
+          const at = r.headers.get('X-Hive-Stage-Tracker-Generated-At');
+          const src = r.headers.get('X-Hive-Stage-Tracker-Source');
+          if (_stageTracker) {
+            if (at) _stageTracker.generated_at = at;
+            if (src) _stageTracker.source = src;
+          }
+          stageTrackerTickClock();
+          return;
+        }
         if (!r.ok) return;
         _stageTrackerEtag = r.headers.get('ETag') || '';
         const text = await r.text();
