@@ -1,0 +1,1 @@
+- `max_open_held_prs` now logs a warning naming the affected repos when the GitHub client has no App bot login (PAT auth), where the cap cannot be enforced because open held hive PRs are never counted.

@@ -28,6 +28,8 @@ func (o OpenHeldPRs) AtCapacity() bool {
 // Client.openHeldMu.
 type openHeldPRState struct {
 	limit func(repo string) int
+	// warnedNoBot is set once the "cap cannot be enforced" warning fired.
+	warnedNoBot bool
 	// counts are the open held hive PRs per lower-cased owner/repo.
 	counts map[string]int
 }
@@ -70,6 +72,43 @@ func (c *Client) countOpenHeldHivePRs(items []HoldItem) map[string]int {
 	return counts
 }
 
+// warnCapWithoutBotLogin warns once when repos carry a max_open_held_prs cap
+// but the client has no App bot login (PAT auth): no PR can be attributed to
+// the hive, every count stays 0 and the cap never fires
+// (hivecommons/hive#13739).
+func (c *Client) warnCapWithoutBotLogin() {
+	if c.appBotLogin != "" {
+		return
+	}
+	c.openHeldMu.Lock()
+	limit := c.openHeld.limit
+	warned := c.openHeld.warnedNoBot
+	c.openHeldMu.Unlock()
+	if limit == nil || warned {
+		return
+	}
+	var capped []string
+	for _, repo := range c.getRepos() {
+		if limit(c.openHeldKey(repo)) > 0 {
+			capped = append(capped, repo)
+		}
+	}
+	if len(capped) == 0 {
+		return
+	}
+	c.openHeldMu.Lock()
+	if c.openHeld.warnedNoBot {
+		c.openHeldMu.Unlock()
+		return
+	}
+	c.openHeld.warnedNoBot = true
+	c.openHeldMu.Unlock()
+	if c.logger != nil {
+		c.logger.Warn("max_open_held_prs is set but cannot be enforced: the GitHub client has no App bot login (PAT auth), so open held hive PRs are never counted",
+			"repos", capped)
+	}
+}
+
 // StampOpenHeldPRs recounts the open held hive PRs per repo from
 // actionable's hold list, keeps the counts for the hive-open-pr refusal, and
 // records each capped repo's count on actionable.OpenHeldPRs for the kick.
@@ -78,6 +117,7 @@ func (c *Client) StampOpenHeldPRs(actionable *ActionableResult) {
 	if c == nil || actionable == nil {
 		return
 	}
+	c.warnCapWithoutBotLogin()
 	counts := c.countOpenHeldHivePRs(actionable.Hold.Items)
 	c.openHeldMu.Lock()
 	c.openHeld.counts = counts

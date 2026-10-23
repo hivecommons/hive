@@ -2,7 +2,9 @@ package github
 
 import (
 	"context"
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -165,5 +167,27 @@ func TestPRRequestWatcher_RefusesRepoAtCapacity(t *testing.T) {
 	c.ProcessPRRequestsOnce(context.Background())
 	if created != 1 {
 		t.Errorf("below the cap: %d PRs created, want 1", created)
+	}
+}
+
+func TestWarnCapWithoutBotLogin(t *testing.T) {
+	run := func(login string, caps map[string]int) (int, string) {
+		var buf bytes.Buffer
+		c := &Client{org: "o", repos: []string{"r", "s"}, appBotLogin: login,
+			logger: slog.New(slog.NewTextHandler(&buf, nil))}
+		c.SetMaxOpenHeldPRsFunc(capRepos(caps))
+		for i := 0; i < 3; i++ {
+			c.StampOpenHeldPRs(&ActionableResult{})
+		}
+		return strings.Count(buf.String(), "max_open_held_prs is set but cannot be enforced"), buf.String()
+	}
+	if n, out := run("", map[string]int{"r": 2}); n != 1 || !strings.Contains(out, "r") {
+		t.Errorf("want exactly one warning naming the capped repo, got %d: %s", n, out)
+	}
+	if n, _ := run(openHeldTestBot, map[string]int{"r": 2}); n != 0 {
+		t.Errorf("warned despite a known App login")
+	}
+	if n, _ := run("", nil); n != 0 {
+		t.Errorf("warned with no cap configured")
 	}
 }
