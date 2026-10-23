@@ -50,8 +50,12 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// issuing /search/issues on every cycle (hivecommons/hive#13376), plus
 	// pkg/agentaudit so the contribute hub writes the relay_* lifecycle rows
 	// into the one /data/audit.jsonl stream instead of a second audit store
-	// (hivecommons/hive#13453).
-	const maxDashboardInternalImports = 55
+	// (hivecommons/hive#13453), plus pkg/crux, the exported agent-runtime
+	// surface the dashboard holds instead of *agent.Manager; pkg/agent stays
+	// for the audit, trailer, provider-status and agent-mode helpers the
+	// Runtime does not cover, and leaves when those move behind the boundary
+	// (hivecommons/hive#13536).
+	const maxDashboardInternalImports = 56
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
