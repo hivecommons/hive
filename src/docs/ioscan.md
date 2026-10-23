@@ -10,9 +10,19 @@ by default.
 ## What it does
 
 * **Cleans and matches.** Removes invisible Unicode characters and
-  look-alike letters, decodes base64 blocks, then matches the text against
-  rules for known prompt-injection phrasing, dangerous instructions and
-  secret-shaped strings. These rules always run when `ioscan` is enabled.
+  look-alike letters, then matches the text against rules for known
+  prompt-injection phrasing, dangerous instructions and secret-shaped
+  strings. These rules always run when `ioscan` is enabled.
+* **Peels encodings.** Base64 is decoded up to three layers deep. Hex
+  escapes, HTML entities, percent encoding, rot13 and hyphen or underscore
+  slugs (`ignore-all-previous-instructions`) are each turned back into
+  plain text and rescanned. A hit in a decoded layer is reported as
+  `injection.obfuscated` at high.
+* **Tells use from mention.** A short quoted phrase on one line that the
+  text frames as something being talked about ("issues containing '...'",
+  "the string '...'") is recorded at low and not withheld. A critical rule
+  such as `rm -rf` is never softened this way. A quoted phrase with no such
+  framing, or a fenced block, is still a payload.
 * **Withholds matched text.** Text that trips a rule is replaced with
   `[ioscan: content withheld — ...]`. The original never reaches the agent.
   How strong a match has to be depends on who wrote the text and where.
@@ -35,9 +45,10 @@ by default.
 
 ## What it does not do
 
-Rules match specific phrasings. A measured test against 43 attack payloads
-withheld 67% and let 33% reach the agent; paraphrased instructions and most
-encodings got through. Details and numbers:
+Rules match specific phrasings. A measured test against 63 attack payloads
+withheld 97% and let 3% reach the agent, with one wrongly withheld benign
+case in twelve. A paraphrase that avoids every rule still passes; the
+classifier is the control for that. Details and numbers:
 [ioscan-red-team.md](ioscan-red-team.md). The control that stops a persuaded
 agent from merging code is the network proxy, which denies pull-request
 creation and merge calls for every agent, not `ioscan`.

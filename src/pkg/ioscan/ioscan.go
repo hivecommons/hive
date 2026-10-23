@@ -195,6 +195,36 @@ var injectionRules = []rule{
 		re:       regexp.MustCompile(`(?i)(^|[.:;!\n]\s*|\byou\s+(to|should|must|may|can)\s+|\bplease\s+)(proceed|continue|go\s+ahead|merge|ship|land|push)\s+(it\s+|this\s+|the\s+pr\s+)?without\s+(the\s+)?(usual\s+|normal\s+|standard\s+|any\s+|a\s+)?(code\s+)?(review|approval|sign-?off|checks?|tests?|ci)\b`),
 	},
 	{
+		// Paraphrased override with no "ignore/disregard" trigger word: set
+		// aside / forget what you were told, or "my instructions supersede".
+		name:     "injection.supersede_prior",
+		kind:     KindInjection,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)((set|put)\s+aside|forget|discard|throw\s+away)\s+(what\s+(the\s+)?\w+\s+told\s+you|(the\s+|any\s+|all\s+)?(guidance|instructions?|rules?|directions?|guidelines?)\s+(you\s+were\s+given|you\s+(got|received)|from\s+(the\s+)?\w+|above|earlier)|what\s+you\s+were\s+told)|\b(my|these|the\s+following|this\s+comment'?s?)\s+(instructions?|directions?|rules?)\s+(supersede|override|overrule|replace|take\s+precedence\s+over)\b`),
+	},
+	{
+		// A forged conversation turn: a chat-template marker, or a claim that
+		// the previous message/turn was only a test.
+		name:     "injection.fake_system_turn",
+		kind:     KindInjection,
+		severity: SeverityHigh,
+		re:       regexp.MustCompile(`(?i)(<\|im_start\|>|<\|system\|>|<<\s*SYS\s*>>|\[INST\]|\bsystem\s*:\s*(the\s+)?(previous|prior|above|earlier)\s+(message|turn|instructions?|prompt)|\b(previous|prior|earlier|above|last)\s+(message|turn|prompt|instructions?)\s+(was|were)\s+(just\s+|only\s+)?(a\s+)?(test|mistake|joke|placeholder|drill))`),
+	},
+	{
+		// Text addressed to the AI reader rather than to humans.
+		name:     "injection.address_agent",
+		kind:     KindInjection,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)\b(note|notes?|message|instructions?|attention|hey|hi|hello|dear|psa|reminder)\s+(for|to)\s+(the\s+|any\s+|all\s+)?(ai|llm|bot|assistant|agent|copilot|claude|gpt|model|automation)s?\b`),
+	},
+	{
+		// A claimed, unverifiable approval to skip a control.
+		name:     "injection.claimed_approval",
+		kind:     KindInjection,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)\b(maintainers?|owners?|admins?|leads?|team|security\s+team)\s+(has|have|had|already)\s+(already\s+)?(approved|authori[sz]ed|ok'?d|okayed|agreed\s+to|signed\s+off\s+on|cleared)\s+(skipping|bypassing|disabling|turning\s+off|merging\s+without|removing)\b|\b(already|has|have)\s+(agreed|approved|authori[sz]ed)\b[^.\n]{0,40}\b(skip|bypass|disable)\s+(the\s+)?(review|tests?|ci|checks?|sandbox|guardrails?)\b`),
+	},
+	{
 		name:     "injection.tool_abuse",
 		kind:     KindInjection,
 		severity: SeverityHigh,
@@ -220,7 +250,7 @@ var dangerousRules = []rule{
 		name:     "dangerous.disable_guardrails",
 		kind:     KindDangerous,
 		severity: SeverityHigh,
-		re:       regexp.MustCompile(`(?i)(disable|turn\s+off|bypass|ignore|remove)\s+(the\s+|all\s+|your\s+)?(guardrails?|safety\s+(checks?|filters?)|content\s+filters?|restrictions?|protections?)`),
+		re:       regexp.MustCompile(`(?i)(disable|turn\s+off|bypass|ignore|remove)\s+(the\s+|all\s+|your\s+)?(guardrails?|safety\s+(checks?|filters?)|content\s+filters?|restrictions?|protections?|sandbox(ing)?)\b|\b(skip|escape|leave|break\s+out\s+of)\s+(the\s+)?sandbox\b`),
 	},
 	{
 		name:     "dangerous.exfiltrate",
@@ -233,6 +263,41 @@ var dangerousRules = []rule{
 		kind:     KindDangerous,
 		severity: SeverityCritical,
 		re:       regexp.MustCompile(`:\(\)\s*\{\s*:\|:&\s*\}\s*;`),
+	},
+	{
+		// Fetch a script to disk and run it: the two-step form of curl|sh.
+		name:     "dangerous.curl_then_sh",
+		kind:     KindDangerous,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)\b(curl|wget)\s+[^\n]*(&&|;)\s*(sudo\s+)?(sh|bash|zsh|source|\.)\s+\S`),
+	},
+	{
+		// Mass deletion through the API, phrased as a directive to the reader.
+		name:     "dangerous.mass_delete",
+		kind:     KindDangerous,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)(^|[.:;!\n]\s*|\bplease\s+|\byou\s+(should|must|need\s+to|can)\s+|\bfirst\s+|\bthen\s+)(delete|remove|drop|purge|wipe|destroy)\s+(every|all|each|the\s+remaining)\s+(the\s+|other\s+|existing\s+)?(branch(es)?|tags?|releases?|repos?|repositor(y|ies)|issues?|workflow\s+runs?|secrets?|deployments?|environments?|webhooks?|labels?|milestones?)\b`),
+	},
+	{
+		// Echoing a workflow secret into a log or request.
+		name:     "dangerous.workflow_secret_echo",
+		kind:     KindDangerous,
+		severity: SeverityHigh,
+		re:       regexp.MustCompile(`(?i)\b(echo(es)?|print(s|f)?|cat|dump|log|logs|curl|wget|post)\b[^\n]{0,80}\$\{\{\s*secrets\.`),
+	},
+	{
+		// Adding a key to authorized_keys: a persistent backdoor on the runner.
+		name:     "dangerous.ssh_backdoor",
+		kind:     KindDangerous,
+		severity: SeverityHigh,
+		re:       regexp.MustCompile(`(?i)\b(append|add|insert|write|put|echo)\s+(my|this|the\s+following|our|a\s+new|his|her|their)\s+(public\s+|ssh\s+)*key\s+(to|into)\b[^\n]{0,40}authorized_keys|>>\s*\S*authorized_keys\b`),
+	},
+	{
+		// Force-pushing over a protected branch.
+		name:     "dangerous.force_push_main",
+		kind:     KindDangerous,
+		severity: SeverityMedium,
+		re:       regexp.MustCompile(`(?i)\bgit\s+push\s+(-f|--force(-with-lease)?)\b[^\n]{0,40}\b(main|master|release)\b|\bgit\s+push\b[^\n]{0,40}\b(main|master)\s+(-f|--force)\b`),
 	},
 	{
 		name:     "dangerous.chmod_777_root",
@@ -344,6 +409,7 @@ func (s *Scanner) collect(text string) []Finding {
 	findings = append(findings, scanSecrets(scanText)...)
 	findings = append(findings, normalized.findings...)
 	findings = append(findings, scanBase64Instructions(scanText)...)
+	findings = append(findings, scanObfuscated(scanText)...)
 	findings = append(findings, scanGenericSecrets(scanText)...)
 	return findings
 }
@@ -353,14 +419,28 @@ func (s *Scanner) collect(text string) []Finding {
 func matchRules(text string, rules []rule) []Finding {
 	var out []Finding
 	for _, r := range rules {
-		if loc := r.re.FindString(text); loc != "" {
-			out = append(out, Finding{
-				Kind:     r.kind,
-				Severity: r.severity,
-				Snippet:  snippet(loc),
-				Rule:     r.name,
-			})
+		locs := r.re.FindAllStringIndex(text, -1)
+		if len(locs) == 0 {
+			continue
 		}
+		f := Finding{Kind: r.kind, Severity: r.severity, Rule: r.name}
+		// A match that only ever appears inside a quoted mention ("issues
+		// containing '...' break the kick") is reported, not blocked. A
+		// Critical rule is never downgraded: quoting rm -rf / is still rm -rf /.
+		quoted := r.severity < SeverityCritical
+		for _, loc := range locs {
+			if f.Snippet == "" {
+				f.Snippet = snippet(text[loc[0]:loc[1]])
+			}
+			if quoted && !quotedMention(text, loc[0], loc[1]) {
+				quoted = false
+			}
+		}
+		if quoted {
+			f.Severity = SeverityLow
+			f.Rule += QuotedRuleSuffix
+		}
+		out = append(out, f)
 	}
 	return out
 }
@@ -567,8 +647,8 @@ func fullwidthASCII(r rune) (rune, bool) {
 func scanBase64Instructions(text string) []Finding {
 	var out []Finding
 	for _, blob := range base64BlobRe.FindAllString(text, -1) {
-		decoded, ok := tryDecodeBase64(blob)
-		if !ok || len(decoded) < base64MinDecodedLen {
+		decoded, depth := decodeBase64Nested(blob)
+		if depth == 0 || len(decoded) < base64MinDecodedLen {
 			continue
 		}
 		nested := append(matchRules(decoded, injectionRules), matchRules(decoded, dangerousRules)...)

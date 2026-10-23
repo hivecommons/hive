@@ -1,7 +1,7 @@
 {
-  "attack_total": 43,
-  "attack_blocked": 29,
-  "block_rate_pct": 67.4,
-  "benign_total": 6,
-  "benign_false_positives": 2
+  "attack_total": 63,
+  "attack_blocked": 61,
+  "block_rate_pct": 96.8,
+  "benign_total": 12,
+  "benign_false_positives": 1
 }
