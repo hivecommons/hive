@@ -4,14 +4,12 @@ import "testing"
 
 func TestResolveLiteLLMRemoteRoute_ExplicitGatewayBeatsStaleLegacy(t *testing.T) {
 	t.Setenv(LiteLLMEndpointEnv, "https://env-old.example")
-	g := GovernorConfig{
-		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
-			LiteLLM: LiteLLMConfig{Endpoint: "https://yaml-old.example", DefaultModel: "old-model"},
-			Gateways: []GatewayConfig{{
-				Name: "litellm", Kind: GatewayKindLiteLLM,
-				Endpoint: " https://litellm.cb.ete.res.ibm.com ", DefaultModel: "rits/zai-org/glm-5-3",
-			}},
-		},
+	g := AgentRuntimeGovernorConfig{
+		LiteLLM: LiteLLMConfig{Endpoint: "https://yaml-old.example", DefaultModel: "old-model"},
+		Gateways: []GatewayConfig{{
+			Name: "litellm", Kind: GatewayKindLiteLLM,
+			Endpoint: " https://litellm.cb.ete.res.ibm.com ", DefaultModel: "rits/zai-org/glm-5-3",
+		}},
 	}
 	ep, model, src := g.ResolveLiteLLMRemoteRoute("litellm", "")
 	if ep != "https://litellm.cb.ete.res.ibm.com" || model != "rits/zai-org/glm-5-3" || src != LiteLLMRouteGateway {
@@ -26,12 +24,9 @@ func TestResolveLiteLLMRemoteRoute_ExplicitGatewayBeatsStaleLegacy(t *testing.T)
 }
 
 func TestResolveLiteLLMRemoteRoute_LegacySources(t *testing.T) {
-	g := GovernorConfig{
-		AgentRuntimeGovernorConfig: AgentRuntimeGovernorConfig{
-			LiteLLM:  LiteLLMConfig{Endpoint: "https://yaml.example", DefaultModel: "yaml-model"},
-			Gateways: []GatewayConfig{{Name: "litellm", Kind: GatewayKindLiteLLM}},
-		},
-		// no endpoint → falls back
+	g := AgentRuntimeGovernorConfig{
+		LiteLLM:  LiteLLMConfig{Endpoint: "https://yaml.example", DefaultModel: "yaml-model"},
+		Gateways: []GatewayConfig{{Name: "litellm", Kind: GatewayKindLiteLLM}}, // no endpoint → falls back
 	}
 	t.Setenv(LiteLLMEndpointEnv, "")
 	if ep, model, src := g.ResolveLiteLLMRemoteRoute("litellm", ""); ep != "https://yaml.example" || model != "yaml-model" || src != LiteLLMRouteLegacyYAML {
@@ -44,7 +39,7 @@ func TestResolveLiteLLMRemoteRoute_LegacySources(t *testing.T) {
 	if ep, _, src := g.ResolveLiteLLMRemoteRoute("litellm", ""); ep != "https://env.example" || src != LiteLLMRouteLegacyEnv {
 		t.Fatalf("env: got (%q, %v)", ep, src)
 	}
-	none := GovernorConfig{}
+	none := AgentRuntimeGovernorConfig{}
 	t.Setenv(LiteLLMEndpointEnv, "")
 	if ep, model, src := none.ResolveLiteLLMRemoteRoute("litellm", "m"); ep != "" || model != "m" || src != LiteLLMRouteNone {
 		t.Fatalf("none: got (%q, %q, %v)", ep, model, src)

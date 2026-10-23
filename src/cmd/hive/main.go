@@ -4024,7 +4024,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			// durable operator inbox the desk uses. nil when the desk is off,
 			// which keeps the dispatcher's "no approval queue wired" error
 			// honest rather than failing on every firing.
-			Approvals: newHookApprovalAdapter(b.approvalInbox, toolapprove.ACMMLevelOf(b.cfg)),
+			Approvals: newHookApprovalAdapter(b.approvalInbox, b.cfg.ACMMLevelOrZero()),
 		}, b.logger)
 
 		// Re-apply live agent definitions (definition_source) on reload so an
@@ -4150,7 +4150,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		Timeline: b.dashSrv.LifecycleTimeline(),
 		Audit:    b.dashSrv.AgentAuditSink(),
 		// #4000 ↔ #4001 seam: see the reload site above.
-		Approvals: newHookApprovalAdapter(b.approvalInbox, toolapprove.ACMMLevelOf(b.cfg)),
+		Approvals: newHookApprovalAdapter(b.approvalInbox, b.cfg.ACMMLevelOrZero()),
 	}, b.logger)
 
 	// Emit the governor_mode_change transition post-commit. Installed once:
@@ -11107,11 +11107,11 @@ func runHub(logger *slog.Logger, configPath string) {
 }
 
 func resolveLiteLLMInferenceRoute(cfg *config.Config, backend, requestedModel string) (endpoint, model string, ok bool) {
-	return inference.ResolveLiteLLMRoute(cfg, backend, requestedModel)
+	return inference.ResolveLiteLLMRoute(&cfg.Governor.AgentRuntimeGovernorConfig, backend, requestedModel)
 }
 
 func resolveWatsonxGateway(cfg *config.Config) *config.GatewayConfig {
-	return inference.ResolveWatsonxGateway(cfg)
+	return inference.ResolveWatsonxGateway(&cfg.Governor.AgentRuntimeGovernorConfig)
 }
 
 func resolveGatewayAuth(gw *config.GatewayConfig, agentName, backend string, logger *slog.Logger) (string, map[string]string) {

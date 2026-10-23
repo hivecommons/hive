@@ -163,6 +163,44 @@ func applyCeiling(d Decision, acmmLevel int) (Decision, bool) {
 type Desk struct {
 	rules   *RuleEngine
 	scanner SecurityScanner
+	plans   PlanPolicy
+}
+
+// PlanPolicy answers the two level questions the desk cannot answer from the
+// configuration leaf: whether a decomposition plan auto-approves at an ACMM
+// level (the ACMM pack's plan_auto_approve, config.PlanAutoApproveForLevel)
+// and whether the label planning trigger may fire there
+// (config.PlanningConfig.PlanFromLabelEnabled). Both live behind Hive's
+// embedded packs and loader, outside the Crux boundary, so the host wires
+// the real predicates with SetPlanPolicy (cmd/hive does, in buildApprovalDesk)
+// and the parity tests that pin the desk against them live on the host side.
+// A desk with no policy fails closed: those kinds go to the operator lane.
+type PlanPolicy interface {
+	PlanAutoApprove(acmmLevel int) bool
+	PlanFromLabel(acmmLevel int) bool
+}
+
+// PlanPolicyFuncs adapts two predicates to PlanPolicy. A nil func answers
+// false.
+type PlanPolicyFuncs struct {
+	AutoApprove func(acmmLevel int) bool
+	FromLabel   func(acmmLevel int) bool
+}
+
+func (p PlanPolicyFuncs) PlanAutoApprove(acmmLevel int) bool {
+	return p.AutoApprove != nil && p.AutoApprove(acmmLevel)
+}
+
+func (p PlanPolicyFuncs) PlanFromLabel(acmmLevel int) bool {
+	return p.FromLabel != nil && p.FromLabel(acmmLevel)
+}
+
+// SetPlanPolicy installs the host's plan-approval predicates. Nil-safe on the
+// receiver so a disabled (nil) desk can be wired unconditionally.
+func (d *Desk) SetPlanPolicy(p PlanPolicy) {
+	if d != nil {
+		d.plans = p
+	}
 }
 
 // NewDesk builds a desk over a compiled rule engine and a scanner. Both may be
@@ -325,7 +363,7 @@ func (d *Desk) baseVerdict(ctx context.Context, req Request, acmmLevel int) Verd
 	// The migrated gate kinds carry no tool-policy surface; their base verdict
 	// is the level mapping the legacy gate encoded, which LegacyBaseDecision
 	// derives from the same constants the legacy gate reads.
-	return LegacyBaseDecision(req, acmmLevel)
+	return LegacyBaseDecision(req, acmmLevel, d.plans)
 }
 
 // runScan resolves a scan-lane verdict through the scanner and re-applies the

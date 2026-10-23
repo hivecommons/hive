@@ -8,25 +8,32 @@ package toolapprove
 // changes — never as conservative shipped defaults that silently downgrade
 // every high-autonomy hive on upgrade day."
 //
-// The tests compare the desk against the LEGACY predicates themselves (the same
-// config functions the production gates call), not against a hardcoded table.
-// A future change to a threshold therefore moves both sides together and these
-// keep passing — they pin EQUIVALENCE, which is what must not break.
+// The tests compare the desk against the LEGACY predicates themselves, not
+// against a hardcoded table, so a future change to a threshold moves both
+// sides together and these keep passing — they pin EQUIVALENCE, which is what
+// must not break. The self-merge gate's threshold (SelfMergeMinACMMLevel)
+// lives in the configuration leaf and is pinned here; the plan gates live
+// behind Hive's ACMM packs and PlanningConfig, outside the Crux boundary, so
+// the desk reaches them through PlanPolicy and cmd/hive/approvalparity_test.go
+// pins the desk against the real predicates at every level. Here the plan
+// kinds are pinned to follow whatever PlanPolicy answers, and to fail closed
+// without one.
 
 import (
 	"context"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
-// TestSelfMergeParityAcrossLevels pins the desk against
-// AutoMergeConfig.SelfAuthoredAutoMergeAllowed at every level.
+// TestSelfMergeParityAcrossLevels pins the desk against the legacy
+// self-merge threshold (SelfMergeMinACMMLevel, the constant
+// AutoMergeConfig.SelfAuthoredAutoMergeAllowed compares against) at every
+// level.
 func TestSelfMergeParityAcrossLevels(t *testing.T) {
 	// A desk with NO operator rules is the day-one configuration: a hive that
 	// enables the feature and writes no rules must behave exactly as before.
 	desk := NewDesk(nil, passingScanner{})
-	amc := config.AutoMergeConfig{SelfAuthored: boolPtr(true)}
 
 	req := Request{
 		Kind:        KindSelfMerge,
@@ -38,7 +45,7 @@ func TestSelfMergeParityAcrossLevels(t *testing.T) {
 	}
 
 	for level := 0; level <= 7; level++ {
-		legacyAllows := LegacyGateSelfMerge(amc, level)
+		legacyAllows := level >= config.SelfMergeMinACMMLevel
 		v := desk.Resolve(context.Background(), req, level)
 		deskAllows := v.Decision == DecisionAutoApprove
 
@@ -50,38 +57,49 @@ func TestSelfMergeParityAcrossLevels(t *testing.T) {
 	}
 }
 
-// TestPlanApprovalParityAcrossLevels pins the desk against
-// config.PlanAutoApproveForLevel.
+// stepPolicy is a stand-in for the host's PlanPolicy: plans auto-approve
+// from the given level up, label planning from one level higher.
+type stepPolicy struct{ from int }
+
+func (p stepPolicy) PlanAutoApprove(l int) bool { return l >= p.from }
+func (p stepPolicy) PlanFromLabel(l int) bool   { return l >= p.from+1 }
+
+// TestPlanApprovalParityAcrossLevels pins that the desk's plan-approval
+// verdict is exactly the PlanPolicy's answer at every level.
 func TestPlanApprovalParityAcrossLevels(t *testing.T) {
 	desk := NewDesk(nil, passingScanner{})
+	policy := stepPolicy{from: 4}
+	desk.SetPlanPolicy(policy)
 	req := Request{Kind: KindPlanApproval, Tool: ToolRequest{Tool: "plan"}, Agent: AgentIdentity{Name: "architect"}}
 
 	for level := 0; level <= 7; level++ {
-		legacyAllows := LegacyGatePlanAutoApprove(level)
+		legacyAllows := policy.PlanAutoApprove(level)
 		v := desk.Resolve(context.Background(), req, level)
 		deskAllows := v.Decision == DecisionAutoApprove
 
 		if deskAllows != legacyAllows {
-			t.Errorf("L%d plan approval: legacy PlanAutoApproveForLevel=%v, desk allows=%v (decision %s) — "+
+			t.Errorf("L%d plan approval: PlanPolicy=%v, desk allows=%v (decision %s) — "+
 				"the decomposition path must see identical behavior",
 				level, legacyAllows, deskAllows, v.Decision)
 		}
 	}
 }
 
-// TestPlanFromLabelParityAcrossLevels pins the desk against
-// PlanningConfig.PlanFromLabelEnabled with the default (absent-block) config.
+// TestPlanFromLabelParityAcrossLevels pins that the desk's plan-from-label
+// verdict is exactly the PlanPolicy's answer at every level.
 func TestPlanFromLabelParityAcrossLevels(t *testing.T) {
 	desk := NewDesk(nil, passingScanner{})
+	policy := stepPolicy{from: 4}
+	desk.SetPlanPolicy(policy)
 	req := Request{Kind: KindPlanFromLabel, Tool: ToolRequest{Tool: "plan"}, Agent: AgentIdentity{Name: "architect"}}
 
 	for level := 0; level <= 7; level++ {
-		legacyAllows := LegacyGatePlanFromLabel(config.PlanningConfig{}, level)
+		legacyAllows := policy.PlanFromLabel(level)
 		v := desk.Resolve(context.Background(), req, level)
 		deskAllows := v.Decision == DecisionAutoApprove
 
 		if deskAllows != legacyAllows {
-			t.Errorf("L%d plan-from-label: legacy PlanFromLabelEnabled=%v, desk allows=%v (decision %s)",
+			t.Errorf("L%d plan-from-label: PlanPolicy=%v, desk allows=%v (decision %s)",
 				level, legacyAllows, deskAllows, v.Decision)
 		}
 	}
@@ -93,8 +111,13 @@ func TestPlanFromLabelParityAcrossLevels(t *testing.T) {
 //
 // This is the test that would fail if someone shipped a "safe" default that
 // routed high-autonomy traffic through the operator lane.
+//
+// The plan kinds depend on the host's PlanPolicy; the leaf half of this test
+// wires a policy that mirrors today's L6 pack, and cmd/hive's
+// approvalparity_test.go runs the same assertion against the real packs.
 func TestNoConservativeDowngradeAtHighAutonomy(t *testing.T) {
 	desk := NewDesk(nil, passingScanner{})
+	desk.SetPlanPolicy(stepPolicy{from: 6})
 
 	// Every request an L6 hive resolves today without a human.
 	for _, req := range []Request{
@@ -109,6 +132,21 @@ func TestNoConservativeDowngradeAtHighAutonomy(t *testing.T) {
 			t.Errorf("L6 %s/%s resolved to %s, want auto-approve — enabling the desk with no rules "+
 				"must not downgrade a high-autonomy hive (rationale: %s)",
 				req.Kind, req.Tool.Tool, v.Decision, v.Rationale)
+		}
+	}
+}
+
+// TestPlanKindsFailClosedWithoutPolicy pins that a desk the host never gave a
+// PlanPolicy sends the plan kinds to the operator lane at every level rather
+// than guessing the pack's answer.
+func TestPlanKindsFailClosedWithoutPolicy(t *testing.T) {
+	desk := NewDesk(nil, passingScanner{})
+	for _, kind := range []string{KindPlanApproval, KindPlanFromLabel} {
+		for level := 0; level <= 7; level++ {
+			v := desk.Resolve(context.Background(), Request{Kind: kind, Tool: ToolRequest{Tool: "plan"}, Agent: AgentIdentity{Name: "architect"}}, level)
+			if v.Decision != DecisionOperatorApprove {
+				t.Errorf("L%d %s without a PlanPolicy resolved to %s, want operator-approve (fail-closed)", level, kind, v.Decision)
+			}
 		}
 	}
 }
@@ -132,5 +170,3 @@ func TestLegacyQueuedMergeGate(t *testing.T) {
 		t.Error("an untrusted queuer must not permit a queued merge")
 	}
 }
-
-func boolPtr(b bool) *bool { return &b }

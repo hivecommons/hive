@@ -10,48 +10,24 @@ package toolapprove
 //
 // This file is how that constraint is kept honest. Each legacy gate gets:
 //
-//   - a LegacyGate* function that computes the gate's answer by calling the
-//     SAME config constants and predicates the production gate calls, and
-//   - a case in LegacyBaseDecision that maps that answer onto a desk verdict.
+//   - a case in LegacyBaseDecision that maps the gate's answer onto a desk
+//     verdict, computed from the SAME constant (SelfMergeMinACMMLevel) or the
+//     SAME predicate (PlanPolicy, which the host wires to the config
+//     functions the production gate calls) rather than a re-encoded threshold.
 //
-// parity_test.go then asserts, for EVERY ACMM level 0..7, that the desk's
-// verdict for a request permits exactly what the legacy gate permits. Because
-// the parity functions delegate to the real config predicates rather than
-// re-encoding thresholds, a future change to (say) SelfMergeMinACMMLevel moves
-// both sides together and the test keeps passing — which is the point: the test
-// pins EQUIVALENCE, not a hardcoded table that would rot.
+// parity_test.go (here, for the leaf-resident gates) and cmd/hive's
+// approvalparity_test.go (for the plan gates behind PlanPolicy) then assert,
+// for EVERY ACMM level 0..7, that the desk's verdict for a request permits
+// exactly what the legacy gate permits. Because both sides read the same
+// source, a future change to (say) SelfMergeMinACMMLevel moves both together
+// and the tests keep passing — which is the point: they pin EQUIVALENCE, not
+// a hardcoded table that would rot.
 
 import (
 	"fmt"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
-
-// LegacyGateSelfMerge reports whether the App-self-merge sweep may merge a PR
-// the App itself authored, at the given ACMM level.
-//
-// Delegates to config.AutoMergeConfig.SelfAuthoredAutoMergeAllowed — the same
-// predicate SweepSelfAuthoredAutoMerges consults — so the desk cannot drift
-// from the gate it is replacing. The gate history is recorded on
-// SelfMergeMinACMMLevel: the sweep originally had NO ACMM check, which is how
-// an L4 hive wrongly self-merged its own PR.
-func LegacyGateSelfMerge(cfg config.AutoMergeConfig, acmmLevel int) bool {
-	lvl := acmmLevel
-	return cfg.SelfAuthoredAutoMergeAllowed(&lvl)
-}
-
-// LegacyGatePlanAutoApprove reports whether a decomposition plan auto-approves
-// at the given level, delegating to config.PlanAutoApproveForLevel (the pack
-// lookup the decomposition path uses).
-func LegacyGatePlanAutoApprove(acmmLevel int) bool {
-	return config.PlanAutoApproveForLevel(acmmLevel)
-}
-
-// LegacyGatePlanFromLabel reports whether the label planning trigger may fire
-// at the given level, delegating to config.PlanningConfig.PlanFromLabelEnabled.
-func LegacyGatePlanFromLabel(p config.PlanningConfig, acmmLevel int) bool {
-	return p.PlanFromLabelEnabled(acmmLevel)
-}
 
 // LegacyGateQueuedMerge reports whether a queued merge may proceed. Unlike the
 // other three this gate is identity-based rather than level-based: the sweep
@@ -71,7 +47,13 @@ func LegacyGateQueuedMerge(trustedApproval bool) bool {
 // kinds the base verdict is ALREADY derived from the level, so the ceiling is
 // a no-op in the common case — it exists to bound operator rules, not to
 // second-guess the legacy mapping.
-func LegacyBaseDecision(req Request, acmmLevel int) Verdict {
+//
+// plans answers the plan-approval kinds; nil fails closed to the operator lane
+// (see PlanPolicy).
+func LegacyBaseDecision(req Request, acmmLevel int, plans PlanPolicy) Verdict {
+	if plans == nil {
+		plans = PlanPolicyFuncs{}
+	}
 	v := Verdict{
 		Kind:      req.Kind,
 		Tool:      req.Tool.Tool,
@@ -110,7 +92,7 @@ func LegacyBaseDecision(req Request, acmmLevel int) Verdict {
 		}
 
 	case KindPlanApproval:
-		if LegacyGatePlanAutoApprove(acmmLevel) {
+		if plans.PlanAutoApprove(acmmLevel) {
 			v.Decision = DecisionAutoApprove
 			v.Rationale = fmt.Sprintf("ACMM L%d pack sets plan_auto_approve: plan approved without operator", acmmLevel)
 		} else {
@@ -119,10 +101,7 @@ func LegacyBaseDecision(req Request, acmmLevel int) Verdict {
 		}
 
 	case KindPlanFromLabel:
-		// PlanFromLabelEnabled takes a PlanningConfig; the zero value carries
-		// the same defaults the config loader applies when the block is absent,
-		// which is the behavior an unconfigured hive has today.
-		if LegacyGatePlanFromLabel(config.PlanningConfig{}, acmmLevel) {
+		if plans.PlanFromLabel(acmmLevel) {
 			v.Decision = DecisionAutoApprove
 			v.Rationale = fmt.Sprintf("ACMM L%d permits the plan-from-label trigger", acmmLevel)
 		} else {

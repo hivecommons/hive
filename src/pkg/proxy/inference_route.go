@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // InferenceRoute defines where to send an agent's API traffic when using

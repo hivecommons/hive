@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // This file is the hermetic canary for #6515: the OpenAI-compatible gateway

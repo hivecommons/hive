@@ -326,7 +326,7 @@ func approvalOperator(r *http.Request) string {
 
 // currentACMMLevel reads the hive's configured level for display, defaulting to
 // the most restrictive reading when unset — the same fail-closed default
-// toolapprove.ACMMLevelOf applies.
+// Config.ACMMLevelOrZero applies.
 func (s *Server) currentACMMLevel() int {
 	if s.deps == nil || s.deps.Config == nil || s.deps.Config.ACMMLevel == nil {
 		return 0

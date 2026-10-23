@@ -176,3 +176,39 @@ var (
 	ValidateReasoningEffort   = cruxconfig.ValidateReasoningEffort
 	WildcardMatch             = cruxconfig.WildcardMatch
 )
+
+// origin_labels.go (moved to the leaf with pkg/proxy's migration).
+const (
+	DefaultReviewBacklogLabel = cruxconfig.DefaultReviewBacklogLabel
+	OriginLabelPrefix         = cruxconfig.OriginLabelPrefix
+	OriginReviewerLabel       = cruxconfig.OriginReviewerLabel
+	LegacyOriginReviewLabel   = cruxconfig.LegacyOriginReviewLabel
+	LegacyReviewBacklogLabel  = cruxconfig.LegacyReviewBacklogLabel
+	OriginSourceReviewer      = cruxconfig.OriginSourceReviewer
+	OriginSourceSelfReport    = cruxconfig.OriginSourceSelfReport
+	OriginSourceGovernor      = cruxconfig.OriginSourceGovernor
+	OriginSourceDashboard     = cruxconfig.OriginSourceDashboard
+	OriginSourceForge         = cruxconfig.OriginSourceForge
+	OriginSourceConvergence   = cruxconfig.OriginSourceConvergence
+)
+
+var (
+	KnownOriginLanes        = cruxconfig.KnownOriginLanes
+	OriginLabelRenames      = cruxconfig.OriginLabelRenames
+	CanonicalOriginLabel    = cruxconfig.CanonicalOriginLabel
+	OriginLabel             = cruxconfig.OriginLabel
+	IsOriginLabel           = cruxconfig.IsOriginLabel
+	OriginSourceOf          = cruxconfig.OriginSourceOf
+	OriginLaneFromAgent     = cruxconfig.OriginLaneFromAgent
+	AgentLaneLabel          = cruxconfig.AgentLaneLabel
+	CanonicalAgentLaneLabel = cruxconfig.CanonicalAgentLaneLabel
+	OriginLabelForAgent     = cruxconfig.OriginLabelForAgent
+	IsKnownOriginLane       = cruxconfig.IsKnownOriginLane
+	IsAgentLaneLabel        = cruxconfig.IsAgentLaneLabel
+	FirstOriginLabel        = cruxconfig.FirstOriginLabel
+	WithOriginLabel         = cruxconfig.WithOriginLabel
+	WithIssueOriginLabel    = cruxconfig.WithIssueOriginLabel
+	WithAgentLaneLabel      = cruxconfig.WithAgentLaneLabel
+	OriginLabelDescription  = cruxconfig.OriginLabelDescription
+	KnownOriginSources      = cruxconfig.KnownOriginSources
+)

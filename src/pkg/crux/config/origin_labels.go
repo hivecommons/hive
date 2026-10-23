@@ -6,6 +6,54 @@ import (
 	"strings"
 )
 
+// DefaultReviewBacklogLabel is the label applied when review.backlog.labels
+// is unset; reviewer is an agent lane, so agent/reviewer carries routing,
+// ownership and provenance.
+const DefaultReviewBacklogLabel = "agent/reviewer"
+
+// Origin provenance labels. Non-lane hive issue filers use origin/<source>.
+// Agent lanes use agent/<lane> instead.
+const (
+	OriginLabelPrefix = "origin/"
+	// OriginReviewerLabel is retired; reviewer is an agent lane and now maps
+	// to agent/reviewer.
+	OriginReviewerLabel = OriginLabelPrefix + "reviewer"
+	// LegacyOriginReviewLabel is the first origin/* spelling of the reviewer
+	// lane provenance label. Config still accepts it; the hive maps it to
+	// agent/reviewer when filing and migrates open items once at startup.
+	LegacyOriginReviewLabel = OriginLabelPrefix + "review"
+	// LegacyReviewBacklogLabel is the pre-origin/* name of the reviewer lane
+	// provenance label. Config still accepts it; the hive maps it to
+	// agent/reviewer when filing and migrates open items once at startup.
+	LegacyReviewBacklogLabel = "from-review"
+)
+
+// OriginLabelRenames maps retired reviewer provenance label names to the
+// canonical reviewer lane label. Readers use CanonicalOriginLabel; the startup
+// reconciler swaps the old name for the new one on open items.
+var OriginLabelRenames = map[string]string{
+	LegacyReviewBacklogLabel: DefaultReviewBacklogLabel,
+	LegacyOriginReviewLabel:  DefaultReviewBacklogLabel,
+	OriginReviewerLabel:      DefaultReviewBacklogLabel,
+}
+
+// CanonicalOriginLabel returns the canonical replacement for a retired
+// provenance label, maps legacy origin/<lane> labels to agent/<lane>, or
+// returns the trimmed input unchanged when it is not renamed. renamed reports
+// whether a mapping applied.
+func CanonicalOriginLabel(name string) (canonical string, renamed bool) {
+	name = strings.TrimSpace(name)
+	if to, ok := OriginLabelRenames[strings.ToLower(name)]; ok {
+		return to, true
+	}
+	if IsOriginLabel(name) {
+		if to, ok := CanonicalAgentLaneLabel(name); ok {
+			return to, true
+		}
+	}
+	return name, false
+}
+
 // origin/<source> is the provenance family for hive issue filers that do not
 // have an agent lane label. Agent-filed issues use agent/<lane> as their
 // single lane label: that label carries routing, ownership and provenance.

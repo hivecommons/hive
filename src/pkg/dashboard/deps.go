@@ -185,7 +185,7 @@ type Dependencies struct {
 	// signal that the feature is off.
 	ApprovalDesk *toolapprove.Desk
 	// ApprovalInbox is the durable operator-lane queue backing the desk. Nil
-	// exactly when ApprovalDesk is nil (both come from DeskFromConfig).
+	// exactly when ApprovalDesk is nil (both come from toolapprove.DeskFromConfig).
 	ApprovalInbox *toolapprove.Inbox
 	// RecordIssueClaim writes one claim into the same ledger IssueClaimed
 	// reads (hivecommons/hive#7871). The contribute hub calls it after

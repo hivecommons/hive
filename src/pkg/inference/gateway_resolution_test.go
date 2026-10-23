@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // ResolveWatsonxGateway must prefer the gateway BOTH named and kinded
@@ -33,7 +33,7 @@ func TestResolveWatsonxGateway(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{Governor: config.GovernorConfig{AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{Gateways: tc.gateways}}}
+			cfg := &config.AgentRuntimeGovernorConfig{Gateways: tc.gateways}
 			got := ResolveWatsonxGateway(cfg)
 			if tc.want == "" {
 				if got != nil {

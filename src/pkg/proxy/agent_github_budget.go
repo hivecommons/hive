@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 const (

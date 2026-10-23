@@ -3,7 +3,7 @@ package inference
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // ResolveLiteLLMRoute is the route-install decision tree for the
@@ -167,12 +167,10 @@ func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 			// leak a real environment into these cases.
 			t.Setenv(config.LiteLLMEndpointEnv, "")
 
-			cfg := &config.Config{Governor: config.GovernorConfig{
-				AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
-					LiteLLM:  tc.litellm,
-					Gateways: tc.gateways,
-				},
-			}}
+			cfg := &config.AgentRuntimeGovernorConfig{
+				LiteLLM:  tc.litellm,
+				Gateways: tc.gateways,
+			}
 
 			endpoint, model, ok := ResolveLiteLLMRoute(cfg, tc.backend, tc.requestedModel)
 
@@ -199,11 +197,9 @@ func TestResolveLiteLLMInferenceRoute(t *testing.T) {
 // here keeps the route-level tree honest about which source it consulted.
 func TestResolveLiteLLMInferenceRouteEnvEndpoint(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "https://from-env.example")
-	cfg := &config.Config{Governor: config.GovernorConfig{
-		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
-			LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example", DefaultModel: "legacy-model"},
-		},
-	}}
+	cfg := &config.AgentRuntimeGovernorConfig{
+		LiteLLM: config.LiteLLMConfig{Endpoint: "https://from-yaml.example", DefaultModel: "legacy-model"},
+	}
 
 	endpoint, model, ok := ResolveLiteLLMRoute(cfg, "litellm", "")
 	if !ok || endpoint != "https://from-env.example" || model != "legacy-model" {
@@ -235,15 +231,13 @@ func TestResolveLiteLLMInferenceRouteExplicitGatewayBeatsStaleLegacyEndpoint(t *
 			} else {
 				t.Setenv(config.LiteLLMEndpointEnv, "")
 			}
-			cfg := &config.Config{Governor: config.GovernorConfig{
-				AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
-					LiteLLM: lc,
-					Gateways: []config.GatewayConfig{{
-						Name: "litellm", Kind: config.GatewayKindLiteLLM,
-						Endpoint: " https://litellm.cb.example ", DefaultModel: "rits/zai-org/glm-5-3",
-					}},
-				},
-			}}
+			cfg := &config.AgentRuntimeGovernorConfig{
+				LiteLLM: lc,
+				Gateways: []config.GatewayConfig{{
+					Name: "litellm", Kind: config.GatewayKindLiteLLM,
+					Endpoint: " https://litellm.cb.example ", DefaultModel: "rits/zai-org/glm-5-3",
+				}},
+			}
 
 			endpoint, model, ok := ResolveLiteLLMRoute(cfg, "litellm", "")
 			if !ok {
@@ -267,12 +261,10 @@ func TestResolveLiteLLMInferenceRouteExplicitGatewayBeatsStaleLegacyEndpoint(t *
 // tab entry cannot black-hole a hive that was working off governor.litellm.
 func TestResolveLiteLLMInferenceRouteExplicitGatewayWithoutEndpointFallsBackToLegacy(t *testing.T) {
 	t.Setenv(config.LiteLLMEndpointEnv, "")
-	cfg := &config.Config{Governor: config.GovernorConfig{
-		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
-			LiteLLM:  config.LiteLLMConfig{Endpoint: "https://legacy.example", DefaultModel: "legacy-model"},
-			Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "  "}},
-		},
-	}}
+	cfg := &config.AgentRuntimeGovernorConfig{
+		LiteLLM:  config.LiteLLMConfig{Endpoint: "https://legacy.example", DefaultModel: "legacy-model"},
+		Gateways: []config.GatewayConfig{{Name: "litellm", Endpoint: "  "}},
+	}
 	if gw := ExplicitLiteLLMGateway(cfg, "litellm"); gw != nil {
 		t.Fatalf("ExplicitLiteLLMGateway = %+v, want nil for an endpoint-less gateway", gw)
 	}

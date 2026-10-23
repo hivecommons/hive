@@ -4,7 +4,9 @@
 // the optional bundled local LiteLLM proxy.
 //
 // Extracted from cmd/hive's package main (#7238 stage 3). These are pure
-// resolvers over *config.Config plus one supervisor loop; none of them needs
+// resolvers over the governor's AgentRuntimeGovernorConfig (the leaf type the
+// host passes as &cfg.Governor.AgentRuntimeGovernorConfig) plus one supervisor
+// loop; none of them needs
 // anything from package main, and keeping them there meant the route
 // resolution that decides whether every agent call 502s could only be tested
 // from inside the binary.
@@ -18,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
@@ -34,7 +36,7 @@ import (
 //
 // local_proxy wins outright: the Go translator forwards to the bundled litellm
 // proxy on loopback, overriding any configured remote endpoint. Otherwise the
-// decision is config.GovernorConfig.ResolveLiteLLMRemoteRoute — explicit
+// decision is AgentRuntimeGovernorConfig.ResolveLiteLLMRemoteRoute — explicit
 // gateway named by the backend first, legacy governor.litellm block second —
 // which lives in pkg/config so the dashboard's Test Connection can print the
 // very same route without importing this package (hivecommons/hive#9945).
@@ -43,8 +45,8 @@ import (
 // install NO route. It never invents an endpoint, and never returns a route
 // with an empty endpoint — a silently empty endpoint is the 502 this whole
 // path exists to prevent.
-func ResolveLiteLLMRoute(cfg *config.Config, backend, requestedModel string) (endpoint, model string, ok bool) {
-	lc := cfg.Governor.LiteLLM
+func ResolveLiteLLMRoute(gov *config.AgentRuntimeGovernorConfig, backend, requestedModel string) (endpoint, model string, ok bool) {
+	lc := gov.LiteLLM
 	if lc.LocalProxy {
 		model = requestedModel
 		if model == "" {
@@ -52,20 +54,20 @@ func ResolveLiteLLMRoute(cfg *config.Config, backend, requestedModel string) (en
 		}
 		return LocalLiteLLMProxyURL(), model, true
 	}
-	endpoint, model, source := cfg.Governor.ResolveLiteLLMRemoteRoute(backend, requestedModel)
+	endpoint, model, source := gov.ResolveLiteLLMRemoteRoute(backend, requestedModel)
 	if source == config.LiteLLMRouteNone || endpoint == "" {
 		return "", requestedModel, false
 	}
 	return endpoint, model, true
 }
 
-// ExplicitLiteLLMGateway is config.GovernorConfig.ExplicitLiteLLMGateway for
-// a whole Config (nil-safe).
-func ExplicitLiteLLMGateway(cfg *config.Config, backend string) *config.GatewayConfig {
-	if cfg == nil {
+// ExplicitLiteLLMGateway is AgentRuntimeGovernorConfig.ExplicitLiteLLMGateway
+// behind a nil-safe pointer.
+func ExplicitLiteLLMGateway(gov *config.AgentRuntimeGovernorConfig, backend string) *config.GatewayConfig {
+	if gov == nil {
 		return nil
 	}
-	return cfg.Governor.ExplicitLiteLLMGateway(backend)
+	return gov.ExplicitLiteLLMGateway(backend)
 }
 
 // ChatCompletionsURL is config.LiteLLMChatCompletionsURL: the exact URL the
@@ -79,8 +81,8 @@ func ChatCompletionsURL(endpoint string) string {
 // the first gateway of KIND watsonx — so `backend: watsonx` works whether the
 // operator named their gateway "watsonx" or something descriptive like
 // "ibm-granite-prod". Returns nil when no watsonx gateway is configured.
-func ResolveWatsonxGateway(cfg *config.Config) *config.GatewayConfig {
-	gws := cfg.Governor.ResolvedGateways()
+func ResolveWatsonxGateway(gov *config.AgentRuntimeGovernorConfig) *config.GatewayConfig {
+	gws := gov.ResolvedGateways()
 	for i := range gws {
 		if strings.EqualFold(gws[i].Name, config.GatewayKindWatsonx) &&
 			strings.EqualFold(gws[i].Kind, config.GatewayKindWatsonx) {

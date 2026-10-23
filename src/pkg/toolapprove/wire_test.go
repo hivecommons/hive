@@ -9,17 +9,16 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestDeskFromConfigDisabledByDefault is the additive guarantee: an absent or
 // disabled tool_approval block yields no desk, which is every producer's signal
 // to keep using its legacy gate.
 func TestDeskFromConfigDisabledByDefault(t *testing.T) {
-	for name, cfg := range map[string]*config.Config{
-		"nil config":   nil,
+	for name, cfg := range map[string]config.ToolApprovalConfig{
 		"absent block": {},
-		"explicit off": {AgentRuntimeConfig: config.AgentRuntimeConfig{ToolApproval: config.ToolApprovalConfig{Enabled: false}}},
+		"explicit off": {Enabled: false},
 	} {
 		desk, inbox, err := DeskFromConfig(cfg, nil, nil)
 		if err != nil {
@@ -34,16 +33,12 @@ func TestDeskFromConfigDisabledByDefault(t *testing.T) {
 // TestDeskFromConfigEnabledBuildsBoth is the positive control.
 func TestDeskFromConfigEnabledBuildsBoth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "inbox.json")
-	cfg := &config.Config{
-		AgentRuntimeConfig: config.AgentRuntimeConfig{
-			ToolApproval: config.ToolApprovalConfig{
-				Enabled:   true,
-				InboxPath: path,
-				Rules: []config.ToolApprovalRule{
-					{Name: "hold-workflows", Expr: `request.file_path.startsWith(".github/workflows/")`, Action: "operator-approve", Priority: 10},
-					{Name: "green-deps", Expr: `request.checks_green && request.author == "dependabot[bot]"`, Action: "auto-approve"},
-				},
-			},
+	cfg := config.ToolApprovalConfig{
+		Enabled:   true,
+		InboxPath: path,
+		Rules: []config.ToolApprovalRule{
+			{Name: "hold-workflows", Expr: `request.file_path.startsWith(".github/workflows/")`, Action: "operator-approve", Priority: 10},
+			{Name: "green-deps", Expr: `request.checks_green && request.author == "dependabot[bot]"`, Action: "auto-approve"},
 		},
 	}
 
@@ -73,13 +68,9 @@ func TestDeskFromConfigEnabledBuildsBoth(t *testing.T) {
 // a bad rule is an error and NO desk, so the operator fixes config rather than
 // running a fleet with a half-applied rule set.
 func TestDeskFromConfigRejectsMalformedRules(t *testing.T) {
-	cfg := &config.Config{
-		AgentRuntimeConfig: config.AgentRuntimeConfig{
-			ToolApproval: config.ToolApprovalConfig{
-				Enabled: true,
-				Rules:   []config.ToolApprovalRule{{Name: "bad", Expr: "request.nope == 1", Action: "auto-approve"}},
-			},
-		},
+	cfg := config.ToolApprovalConfig{
+		Enabled: true,
+		Rules:   []config.ToolApprovalRule{{Name: "bad", Expr: "request.nope == 1", Action: "auto-approve"}},
 	}
 	desk, inbox, err := DeskFromConfig(cfg, nil, nil)
 	if err == nil {
@@ -90,18 +81,13 @@ func TestDeskFromConfigRejectsMalformedRules(t *testing.T) {
 	}
 }
 
-// TestACMMLevelOfFailsClosed pins that an unset level reads as the most
-// restrictive value rather than defaulting to something permissive.
-func TestACMMLevelOfFailsClosed(t *testing.T) {
-	if got := ACMMLevelOf(nil); got != 0 {
-		t.Errorf("ACMMLevelOf(nil) = %d, want 0", got)
-	}
-	if got := ACMMLevelOf(&config.Config{}); got != 0 {
-		t.Errorf("ACMMLevelOf(unset level) = %d, want 0 (fail-closed)", got)
-	}
-	six := 6
-	if got := ACMMLevelOf(&config.Config{ACMMLevel: &six}); got != 6 {
-		t.Errorf("ACMMLevelOf(6) = %d, want 6", got)
+// TestSetPlanPolicyNilDesk pins that wiring a policy into a disabled (nil)
+// desk is a no-op rather than a panic, so the host can wire unconditionally.
+func TestSetPlanPolicyNilDesk(t *testing.T) {
+	var nilDesk *Desk
+	nilDesk.SetPlanPolicy(PlanPolicyFuncs{})
+	if p := (PlanPolicyFuncs{}); p.PlanAutoApprove(6) || p.PlanFromLabel(6) {
+		t.Error("a PlanPolicyFuncs with nil predicates must answer false")
 	}
 }
 
@@ -274,7 +260,7 @@ func TestVerdictWordBothBranches(t *testing.T) {
 
 // TestLegacyBaseDecisionQueuedMerge pins the queued-merge lane mapping.
 func TestLegacyBaseDecisionQueuedMerge(t *testing.T) {
-	v := LegacyBaseDecision(Request{Kind: KindQueuedMerge}, 6)
+	v := LegacyBaseDecision(Request{Kind: KindQueuedMerge}, 6, nil)
 	if v.Decision != DecisionOperatorApprove {
 		t.Errorf("queued merge base decision = %s, want operator-approve", v.Decision)
 	}

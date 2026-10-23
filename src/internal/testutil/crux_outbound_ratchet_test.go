@@ -58,9 +58,17 @@ import (
 // AgentDefinition reading moved behind cli.DefinitionLoader; the Hive-backed
 // implementation lives in cmd/crux (the process boundary, where cmd/hive's
 // equivalent wiring also lives), which is why cmd/crux now carries those two
-// edges — they moved, they were not added. What remains is the
-// inference/proxy/toolapprove/watchdog pkg/config edges and the
-// fleetreport/pushbroker/watchdog cluster that pkg/config drags in.
+// edges — they moved, they were not added. inference, proxy, toolapprove
+// and watchdog followed: the LiteLLM route and gateway resolvers take the
+// leaf's AgentRuntimeGovernorConfig, the origin-label vocabulary moved into
+// the leaf, toolapprove.DeskFromConfig takes the ToolApprovalConfig block
+// and reaches the ACMM-pack plan gates through Desk.SetPlanPolicy (cmd/hive
+// wires config.PlanAutoApproveForLevel and PlanningConfig.PlanFromLabelEnabled
+// and carries the parity tests), and the two tests that loaded a full
+// hive.yaml moved to cmd/hive. No ring package imports pkg/config any more;
+// what remains is the effects/fleetreport/gitidentity/jev/outputschema/
+// pushbroker cluster, the proxy's GitHub-side helpers and watchdog's
+// fleetreport/rotation edges.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -77,11 +85,9 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/inference": {
 		"internal/testutil (test)",
-		"pkg/config",
 		"pkg/watsonx",
 	},
 	"pkg/proxy": {
-		"pkg/config",
 		"pkg/github",
 		"pkg/inferencehealth",
 		"pkg/ioscan",
@@ -89,14 +95,12 @@ var cruxOutboundBaseline = map[string][]string{
 		"pkg/tokens",
 	},
 	"pkg/toolapprove": {
-		"pkg/config",
 		"pkg/ioscan",
 	},
 	"pkg/trajectory": {
 		"pkg/jsonextract",
 	},
 	"pkg/watchdog": {
-		"pkg/config",
 		"pkg/fleetreport",
 		"pkg/rotation",
 	},

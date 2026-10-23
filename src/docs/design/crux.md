@@ -283,23 +283,28 @@ the same change that swaps its imports):
 |---|---|---|
 | `pkg/agent` | import-path swap in 13 + 112 test files; `GovernorConfig.ResolvedGateways` / `ResolveGateway` / `ValidateBackend` and `LegacyLiteLLMGatewayName` moved onto `AgentRuntimeGovernorConfig` (they read only `Gateways` and `LiteLLM`; `GovernorConfig` embeds it, so `cfg.Governor.ResolveGateway` still promotes); the kick-transcript test drives `NormalizeKickLogSource` instead of `LoggingConfig` | — |
 | `pkg/crux` | import-path swap; `crux.ProjectContext` re-exports `agent.ProjectContext` so a host can build one without naming `pkg/agent` | — |
+| `pkg/inference` | import-path swap; `GovernorConfig.ExplicitLiteLLMGateway` / `ResolveLiteLLMRemoteRoute` moved onto `AgentRuntimeGovernorConfig` (they read `Gateways` and `LiteLLM`) | `ResolveLiteLLMRoute`, `ExplicitLiteLLMGateway` and `ResolveWatsonxGateway` take `*config.AgentRuntimeGovernorConfig` instead of `*config.Config`; cmd/hive passes `&cfg.Governor.AgentRuntimeGovernorConfig` |
+| `pkg/proxy` | import-path swap; the origin-label vocabulary (`origin_labels.go`: `OriginLaneFromAgent`, `WithIssueOriginLabel`, `CanonicalOriginLabel`, `OriginLabelRenames` and the `*OriginLabel*` constants) moved into the leaf | the one test that loaded a full `hive.yaml` (`LoadWithOverrides`) moved to `cmd/hive/agent_repo_scope_test.go` |
+| `pkg/toolapprove` | import-path swap (`ToolApprovalConfig`, `SelfMergeMinACMMLevel`, `WildcardMatch` were already in the leaf) | `DeskFromConfig` takes the `ToolApprovalConfig` block, not `*Config`; `ACMMLevelOf` is `Config.ACMMLevelOrZero` on the host. The ACMM-pack plan gates (`PlanAutoApproveForLevel`, `PlanningConfig.PlanFromLabelEnabled`) are behind `toolapprove.PlanPolicy`, installed by `Desk.SetPlanPolicy`; cmd/hive's `planPolicyFromConfig` wires the real predicates and `cmd/hive/approvalparity_test.go` carries the per-level parity tests against them (the leaf-side tests pin that the desk follows its policy and fails closed without one). A desk with no policy sends plan kinds to the operator lane, which is why the host wires it unconditionally in `buildApprovalDesk`. |
+| `pkg/watchdog` | import-path swap (`WatchdogConfig` was already in the leaf) | — |
 | `pkg/crux/cli` | import-path swap | `cli.DefinitionLoader` (`LoadConfig`, `LoadDefinitionFile`) on `cli.Env`, passed to `cli.Main`. The Hive-backed implementation — `config.Load`, `config.LoadAgentOverrides`, `Config.ApplyAgentDefaults`, `defsrc.ParseDefinition` / `MergeAllowedFields`, cmd/hive's `ProjectContext` derivation — is `cmd/crux/definitions.go`. `pkg/defsrc` stays outside: beyond the portable-YAML parser it holds `ApplyToConfig(*config.Config)` and the governor `Cadence`, so moving it in would drag `Config`. |
 
 ## Outbound edges
 
 Imports from ring packages to Hive packages outside the ring, as the
-outbound ratchet records them after the agent / crux / crux-cli config
-migration. Entries marked *(test)* appear only in `_test.go` files.
+outbound ratchet records them after the configuration-leaf migration: no
+ring package imports `pkg/config`. Entries marked *(test)* appear only in
+`_test.go` files.
 
 | Ring package | Outside Hive imports |
 |---|---|
 | `cmd/crux` | `config`, `defsrc` (the `DefinitionLoader` implementation; moved here from `pkg/crux/cli`, see [Configuration leaf](#configuration-leaf)) |
 | `pkg/agent` | `effects`, `fleetreport`, `gitidentity`, `jev`, `outputschema`, `pushbroker`, `internal/testutil` *(test)* |
-| `pkg/inference` | `config`, `watsonx`, `internal/testutil` *(test)* |
-| `pkg/proxy` | `config`, `github`, `inferencehealth`, `ioscan`, `issueshape`, `tokens` |
-| `pkg/toolapprove` | `config`, `ioscan` |
+| `pkg/inference` | `watsonx`, `internal/testutil` *(test)* |
+| `pkg/proxy` | `github`, `inferencehealth`, `ioscan`, `issueshape`, `tokens` |
+| `pkg/toolapprove` | `ioscan` |
 | `pkg/trajectory` | `jsonextract` |
-| `pkg/watchdog` | `config`, `fleetreport`, `rotation` |
+| `pkg/watchdog` | `fleetreport`, `rotation` |
 
 Edges removed in #13785, and the shape each cut took, because the same
 shapes apply to the rows above:

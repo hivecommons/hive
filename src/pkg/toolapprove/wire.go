@@ -7,10 +7,11 @@ package toolapprove
 import (
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
-// DeskFromConfig builds a Desk and its operator Inbox from loaded config.
+// DeskFromConfig builds a Desk and its operator Inbox from the loaded
+// tool_approval block (the host passes cfg.ToolApproval).
 //
 // Fail-closed: a malformed rule returns an error and NO desk, so the operator
 // rejects the config at load rather than discovering at decision time that half
@@ -20,13 +21,17 @@ import (
 // Returns (nil, nil, nil) when the feature is disabled — the default. A nil
 // desk is the signal to every producer to keep using its legacy gate, so an
 // upgrade with no config change is byte-identical in behavior.
-func DeskFromConfig(cfg *config.Config, scanner SecurityScanner, logger *slog.Logger) (*Desk, *Inbox, error) {
-	if cfg == nil || !cfg.ToolApproval.Enabled {
+//
+// The desk the host gets back answers plan-approval kinds through its
+// PlanPolicy, which the host sets (SetPlanPolicy) from the ACMM pack and
+// planning config it alone can read; see PlanPolicy.
+func DeskFromConfig(tc config.ToolApprovalConfig, scanner SecurityScanner, logger *slog.Logger) (*Desk, *Inbox, error) {
+	if !tc.Enabled {
 		return nil, nil, nil
 	}
 
-	rules := make([]Rule, 0, len(cfg.ToolApproval.Rules))
-	for _, r := range cfg.ToolApproval.Rules {
+	rules := make([]Rule, 0, len(tc.Rules))
+	for _, r := range tc.Rules {
 		rules = append(rules, Rule{
 			Name:         r.Name,
 			Expr:         r.Expr,
@@ -41,16 +46,5 @@ func DeskFromConfig(cfg *config.Config, scanner SecurityScanner, logger *slog.Lo
 		return nil, nil, err
 	}
 
-	return NewDesk(engine, scanner), NewInbox(cfg.ToolApproval.InboxPath), nil
-}
-
-// ACMMLevelOf reads the hive's configured ACMM level, defaulting to the most
-// restrictive lane when unset. An absent level must never widen authority —
-// the same fail-closed reading SelfAuthoredAutoMergeAllowed applies to its nil
-// level pointer.
-func ACMMLevelOf(cfg *config.Config) int {
-	if cfg == nil || cfg.ACMMLevel == nil {
-		return 0
-	}
-	return *cfg.ACMMLevel
+	return NewDesk(engine, scanner), NewInbox(tc.InboxPath), nil
 }

@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/agentmode"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // Decision represents the tool approval outcome.
