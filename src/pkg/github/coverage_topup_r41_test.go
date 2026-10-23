@@ -59,6 +59,9 @@ func TestRemoveLabelTolerates404AndSkipsEmpty(t *testing.T) {
 }
 
 func TestGetPRStateReadsMergedAndClosed(t *testing.T) {
+	// GetPRState reads the process-wide PR detail cache; o/r#9 and #10 may be
+	// cached by other tests, which would skip the HTTP calls asserted below.
+	t.Cleanup(resetPRDetailCacheForTest(nil, 0))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/o/r/pulls/9", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
