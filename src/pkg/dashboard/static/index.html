@@ -1271,11 +1271,14 @@
     .status-badge.disabled { --component-status: var(--status-neutral); }
     .agent-card.status-blocked { border-left-color: var(--red) !important; }
     .agent-card.status-needs-context { border-left-color: var(--yellow) !important; }
+    /* Stale pulse: an opacity-only overlay on the left edge (compositor
+       thread) rather than animating border-left-color on the main thread. */
     @keyframes pulse-amber {
-      0%,100% { border-left-color: color-mix(in srgb, var(--yellow) 30%, transparent); }
-      50% { border-left-color: color-mix(in srgb, var(--yellow) 80%, transparent); }
+      0%,100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
     }
-    .agent-card.status-stale { animation: pulse-amber 2s ease-in-out infinite; }
+    .agent-card.status-stale { border-left-color: transparent !important; }
+    .agent-card.status-stale::before { content: ''; position: absolute; top: calc(-1 * var(--line-width)); bottom: calc(-1 * var(--line-width)); left: calc(-1 * var(--focus-ring-width)); width: var(--focus-ring-width); border-radius: var(--r-lg) 0 0 var(--r-lg); background: var(--yellow); pointer-events: none; animation: pulse-amber 2s ease-in-out infinite; }
     /* Last upstream/launch error — stacked below .agent-state, never under the
        working-indicator dot, so a retry in progress cannot hide it (#3604). */
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
@@ -2733,9 +2736,12 @@
       100% { box-shadow: inset 0 0 0 2px transparent; }
     }
     .anchor-highlight { animation: anchor-flash 1.2s ease-out; }
+    /* Infinite pulses animate opacity only (compositor thread). Animating
+       box-shadow forced a main-thread paint of the page every frame. The glow
+       is a static shadow on the dot and fades with the dot's opacity. */
     @keyframes breathe-green {
-      0%,100% { opacity: 1; box-shadow: 0 0 6px 2px rgba(63,185,80,0.5); }
-      50% { opacity: 0.25; box-shadow: 0 0 2px 0px rgba(63,185,80,0.1); }
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.25; }
     }
     .working-indicator {
       position: absolute; top: 12px; right: 12px;
@@ -2744,14 +2750,16 @@
     }
     .agent-card.working .working-indicator {
       display: block;
+      box-shadow: 0 0 6px 2px color-mix(in srgb, var(--green) 50%, transparent);
       animation: breathe-green 4s ease-in-out infinite;
     }
 
     /* Green pulsing dot for active agents in cadence matrix */
-    @keyframes green-pulse { 0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); } 50% { opacity: 0.3; box-shadow: none; } }
+    @keyframes green-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
     .active-dot {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: var(--green); margin-right: var(--sp-3); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
       animation: green-pulse 6s ease-in-out infinite;
     }
 
@@ -2870,6 +2878,7 @@
     .gov-matrix .agent-dot {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: var(--green); margin-right: var(--sp-2); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
       animation: green-pulse 6s ease-in-out infinite;
     }
 
@@ -4406,6 +4415,10 @@
     .kb-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: 14px; }
     .kb-fact-list { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 500px; overflow-y: auto; }
     .kb-fact-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; transition: all 0.15s; }
+    /* The list can hold thousands of facts inside a 500px scroller; let the
+       browser skip layout and paint for the cards that are scrolled out of
+       view instead of re-rendering all of them on every frame. */
+    .kb-fact-item { content-visibility: auto; contain-intrinsic-size: auto 80px; }
     .kb-fact-item:hover { border-color: var(--accent); background: rgba(88,166,255,0.04); }
     .kb-fact-item.selected { border-color: var(--accent); background: rgba(88,166,255,0.08); }
     .kb-fact-meta { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); width: 50px; }
