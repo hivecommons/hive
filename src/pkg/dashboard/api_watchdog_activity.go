@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
 
@@ -151,7 +151,7 @@ func (s *Server) handleWatchdogActivity(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var cfg *config.Config
-	var statuses map[string]*agent.AgentProcess
+	var statuses map[string]*crux.Process
 	if s.deps != nil {
 		cfg = s.deps.Config
 		if s.deps.AgentMgr != nil {
@@ -177,7 +177,7 @@ func watchdogActivitySince(now time.Time, days int) time.Time {
 // buildWatchdogActivity aggregates the pre-filtered watchdog audit entries
 // and the agents' published conditions into the response. Pure: every input
 // is a value, so the handler test and the unit tests share it.
-func buildWatchdogActivity(entries []AuditEntry, statuses map[string]*agent.AgentProcess, cfg *config.Config, settings watchdog.Settings, now time.Time, days int) WatchdogActivity {
+func buildWatchdogActivity(entries []AuditEntry, statuses map[string]*crux.Process, cfg *config.Config, settings watchdog.Settings, now time.Time, days int) WatchdogActivity {
 	since := watchdogActivitySince(now, days)
 	out := WatchdogActivity{
 		Days:     days,
@@ -278,7 +278,7 @@ func watchdogPromotionHint(a WatchdogActivity, severe, days int) *WatchdogPromot
 // conditions are omitted rather than listed as healthy: the watchdog has not
 // looked at them, and a row would claim an observation it never made. Agents
 // disabled in config are omitted too — they are not supposed to be alive.
-func watchdogAgentLiveness(statuses map[string]*agent.AgentProcess, cfg *config.Config) []WatchdogAgentLiveness {
+func watchdogAgentLiveness(statuses map[string]*crux.Process, cfg *config.Config) []WatchdogAgentLiveness {
 	out := make([]WatchdogAgentLiveness, 0, len(statuses))
 	for name, proc := range statuses {
 		if proc == nil || len(proc.WatchdogConditions) == 0 || agentDisabledInConfig(cfg, name, proc) {

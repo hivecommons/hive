@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
@@ -25,15 +25,15 @@ func TestAgentPayloadCarriesWatchdogConditions(t *testing.T) {
 		Governor: config.GovernorConfig{Modes: map[string]config.ModeConfig{}},
 	}
 	transition := time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
-			State: agent.StateRunning,
+			State: crux.StateRunning,
 			WatchdogConditions: []watchdog.Condition{
 				{Type: watchdog.ConditionReady, Status: watchdog.ConditionFalse, Reason: "shell-prompt", LastTransitionTime: transition},
 				{Type: watchdog.ConditionAuthenticated, Status: watchdog.ConditionTrue, Reason: "ProbeOK", LastTransitionTime: transition},
 			},
 		},
-		"quality": {State: agent.StateRunning},
+		"quality": {State: crux.StateRunning},
 	}
 
 	payload := BuildAgentOnlyStatus(governor.State{Mode: "IDLE"}, statuses, cfg)
@@ -52,7 +52,7 @@ func TestAgentPayloadCarriesWatchdogConditions(t *testing.T) {
 	}
 	// The observed truth (Ready=False) rides BESIDE the state echo, exactly
 	// the RFC's point: state says running, conditions say dead.
-	if scanner.State != string(agent.StateRunning) {
+	if scanner.State != string(crux.StateRunning) {
 		t.Fatalf("state echo = %q", scanner.State)
 	}
 
@@ -74,8 +74,8 @@ func TestAgentPayloadCarriesWatchdogConditions(t *testing.T) {
 // whether a False condition was acted on, and "crash-looping" would read as
 // "paused" even when nothing was paused.
 func TestAgentPayloadCarriesWatchdogMode(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning},
 	}
 	newCfg := func(mode string) *config.Config {
 		return &config.Config{

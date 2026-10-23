@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
@@ -19,25 +20,25 @@ import (
 // surface as StructuredStatus=BLOCKED with the count and last crash reason,
 // while normal restart churn below the threshold must not.
 
-func crashLoopProc(name string, events []agent.RestartEvent) *agent.AgentProcess {
-	return &agent.AgentProcess{
+func crashLoopProc(name string, events []crux.RestartEvent) *crux.Process {
+	return &crux.Process{
 		Name:          name,
 		Config:        config.AgentConfig{Backend: "claude", Enabled: true},
-		State:         agent.StateRunning,
+		State:         crux.StateRunning,
 		OutputBuffer:  agent.NewRingBuffer(10),
 		RestartCount:  len(events),
 		RestartEvents: events,
 	}
 }
 
-func buildOneAgent(t *testing.T, proc *agent.AgentProcess) FrontendAgent {
+func buildOneAgent(t *testing.T, proc *crux.Process) FrontendAgent {
 	t.Helper()
 	cfg := &config.Config{
 		AgentRuntimeConfig: config.AgentRuntimeConfig{
 			Agents: map[string]config.AgentConfig{proc.Name: proc.Config},
 		},
 	}
-	agents := buildAgents(map[string]*agent.AgentProcess{proc.Name: proc}, cfg, governor.State{Mode: governor.ModeIdle})
+	agents := buildAgents(map[string]*crux.Process{proc.Name: proc}, cfg, governor.State{Mode: governor.ModeIdle})
 	if len(agents) != 1 {
 		t.Fatalf("buildAgents returned %d agents, want 1", len(agents))
 	}
@@ -46,9 +47,9 @@ func buildOneAgent(t *testing.T, proc *agent.AgentProcess) FrontendAgent {
 
 func TestBuildAgents_CrashLoopEscalatesToBlocked(t *testing.T) {
 	now := time.Now()
-	var events []agent.RestartEvent
+	var events []crux.RestartEvent
 	for i := 0; i < spoke.AgentRestartProblemThreshold(); i++ {
-		events = append(events, agent.RestartEvent{
+		events = append(events, crux.RestartEvent{
 			At:     now.Add(-time.Duration(i+1) * time.Minute),
 			Reason: "crash",
 		})
@@ -57,7 +58,7 @@ func TestBuildAgents_CrashLoopEscalatesToBlocked(t *testing.T) {
 
 	// The raw launch-intent fields keep their historical values — the fix is
 	// the escalation channel, not a busy-state rework.
-	if a.State != string(agent.StateRunning) || a.Busy != "working" {
+	if a.State != string(crux.StateRunning) || a.Busy != "working" {
 		t.Fatalf("state/busy = %q/%q, want running/working", a.State, a.Busy)
 	}
 	if a.StructuredStatus != "BLOCKED" {
@@ -79,9 +80,9 @@ func TestBuildAgents_CrashLoopEscalatesToBlocked(t *testing.T) {
 
 func TestBuildAgents_RestartsBelowThresholdStayHealthy(t *testing.T) {
 	now := time.Now()
-	var events []agent.RestartEvent
+	var events []crux.RestartEvent
 	for i := 0; i < spoke.AgentRestartProblemThreshold()-1; i++ {
-		events = append(events, agent.RestartEvent{At: now.Add(-time.Duration(i+1) * time.Minute), Reason: "crash"})
+		events = append(events, crux.RestartEvent{At: now.Add(-time.Duration(i+1) * time.Minute), Reason: "crash"})
 	}
 	a := buildOneAgent(t, crashLoopProc("scanner", events))
 	if a.StructuredStatus != "" {
@@ -93,9 +94,9 @@ func TestBuildAgents_StaleRestartsOutsideWindowIgnored(t *testing.T) {
 	// A long-lived agent accumulates lifetime restarts; only the rolling 24h
 	// window may trip the escalation, exactly like the hub's Restarts.Last24h.
 	now := time.Now()
-	var events []agent.RestartEvent
+	var events []crux.RestartEvent
 	for i := 0; i < spoke.AgentRestartProblemThreshold()+3; i++ {
-		events = append(events, agent.RestartEvent{At: now.Add(-25 * time.Hour), Reason: "crash"})
+		events = append(events, crux.RestartEvent{At: now.Add(-25 * time.Hour), Reason: "crash"})
 	}
 	proc := crashLoopProc("scanner", events)
 	proc.RestartCount = 918
@@ -112,9 +113,9 @@ func TestBuildAgents_StartBlockedOutranksCrashLoop(t *testing.T) {
 	// A spoke that has STOPPED relaunching carries the more specific reason;
 	// it must win over the generic crash-loop evidence.
 	now := time.Now()
-	var events []agent.RestartEvent
+	var events []crux.RestartEvent
 	for i := 0; i < spoke.AgentRestartProblemThreshold(); i++ {
-		events = append(events, agent.RestartEvent{At: now.Add(-time.Duration(i+1) * time.Minute), Reason: "crash"})
+		events = append(events, crux.RestartEvent{At: now.Add(-time.Duration(i+1) * time.Minute), Reason: "crash"})
 	}
 	proc := crashLoopProc("scanner", events)
 	proc.StartBlocked = true
@@ -130,7 +131,7 @@ func TestBuildAgents_StartBlockedOutranksCrashLoop(t *testing.T) {
 }
 
 func TestRestartsLast24h_ReasonFallsBackToLastRestartReason(t *testing.T) {
-	proc := crashLoopProc("scanner", []agent.RestartEvent{
+	proc := crashLoopProc("scanner", []crux.RestartEvent{
 		{At: time.Now().Add(-time.Minute)},
 	})
 	proc.LastRestartReason = "session lock EACCES"

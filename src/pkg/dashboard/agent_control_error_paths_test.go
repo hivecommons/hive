@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -215,9 +216,9 @@ func TestKickRunningAgentResponses(t *testing.T) {
 		{
 			name: "in flight",
 			seed: func(deps *Dependencies) {
-				deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+				agentManager(deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 					Agent:    "scanner",
-					Phase:    agent.KickPhasePending,
+					Phase:    crux.KickPhasePending,
 					QueuedAt: time.Now(),
 				})
 			},

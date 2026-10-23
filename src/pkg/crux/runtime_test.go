@@ -1,0 +1,50 @@
+package crux
+
+import (
+	"log/slog"
+	"testing"
+
+	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/config"
+)
+
+func TestFromManager_NilManagerIsNilRuntime(t *testing.T) {
+	var m *agent.Manager
+	if rt := FromManager(m); rt != nil {
+		t.Fatalf("FromManager(nil) = %#v, want a nil interface so `rt != nil` guards keep working", rt)
+	}
+}
+
+func TestFromManager_WrapsManagerUnchanged(t *testing.T) {
+	m := agent.NewManager(map[string]config.AgentConfig{}, slog.Default(), agent.ProjectContext{})
+	rt := FromManager(m)
+	if rt == nil {
+		t.Fatal("FromManager(non-nil) returned nil")
+	}
+	if got, ok := rt.(*agent.Manager); !ok || got != m {
+		t.Fatalf("FromManager returned %T, want the same *agent.Manager", rt)
+	}
+	if _, err := rt.GetStatus("no-such-agent"); err == nil {
+		t.Fatal("GetStatus on an unknown agent should fail through the Runtime surface as it does on the manager")
+	}
+}
+
+// TestValueAliasesTrackAgent pins that the façade's constants are the
+// manager's own, so a consumer comparing crux.StateRunning against a
+// Process.State written by pkg/agent can never drift.
+func TestValueAliasesTrackAgent(t *testing.T) {
+	if StateRunning != agent.StateRunning || StatePaused != agent.StatePaused || StateStopped != agent.StateStopped {
+		t.Fatal("process state constants diverged from pkg/agent")
+	}
+	if KickPhasePending != agent.KickPhasePending || KickPhaseFailed != agent.KickPhaseFailed {
+		t.Fatal("kick phase constants diverged from pkg/agent")
+	}
+	if StartFailureCredentialRejected != agent.StartFailureCredentialRejected {
+		t.Fatal("start failure constants diverged from pkg/agent")
+	}
+	var p Process
+	p.State = StateRunning
+	if p.State != agent.StateRunning {
+		t.Fatal("Process alias does not share agent.AgentProcess's State type")
+	}
+}

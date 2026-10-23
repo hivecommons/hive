@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -21,8 +21,8 @@ func TestAgentStatusCarriesContinuousBudgetAndCounters(t *testing.T) {
 		"busy":  {Threshold: 10, Cadences: map[string]config.Cadence{"scanner": "15m"}},
 		"surge": {Threshold: 20, Cadences: map[string]config.Cadence{"scanner": "15m"}},
 	}}}
-	statuses := map[string]*agent.AgentProcess{
-		"scanner": {Name: "scanner", Config: cfg.Agents["scanner"], State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner": {Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning},
 	}
 	govState := governor.State{
 		Mode: governor.ModeIdle,
@@ -56,8 +56,8 @@ func TestAgentStatusContinuousNotInMode(t *testing.T) {
 			"surge": {Cadences: map[string]config.Cadence{"scanner": "continuous"}},
 		}},
 	}
-	statuses := map[string]*agent.AgentProcess{
-		"scanner": {Name: "scanner", Config: cfg.Agents["scanner"], State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner": {Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning},
 	}
 	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeBusy})
 	if len(agents) != 1 {

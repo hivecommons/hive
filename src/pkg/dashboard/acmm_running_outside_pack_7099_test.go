@@ -5,6 +5,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -40,17 +41,17 @@ func TestBuildAgentsWithHidden_RunningCustomAgentOutsideAnyPackVisible7099(t *te
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"review": {
 			Name:         "review",
 			Config:       reviewCfg,
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}

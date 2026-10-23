@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // installRestartFakeTmux puts a fake tmux first on PATH that exits 0 for every
@@ -76,9 +77,9 @@ func TestHandleRestartSuccessTailReportsKickCancelled(t *testing.T) {
 	// A pending dispatch, exactly what SendKickAsync leaves while its
 	// delivery goroutine waits for the CLI prompt. The restart teardown
 	// (invalidateKicksOnRestartLocked) must fail it with a "cancelled:" error.
-	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+	agentManager(deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 		Agent:    "scanner",
-		Phase:    agent.KickPhasePending,
+		Phase:    crux.KickPhasePending,
 		QueuedAt: time.Now(),
 	})
 
@@ -104,8 +105,8 @@ func TestHandleRestartSuccessTailReportsKickCancelled(t *testing.T) {
 	if !ok {
 		t.Fatal("kick dispatch vanished from the registry")
 	}
-	if d.Phase != agent.KickPhaseFailed {
-		t.Errorf("dispatch phase = %q, want %q", d.Phase, agent.KickPhaseFailed)
+	if d.Phase != crux.KickPhaseFailed {
+		t.Errorf("dispatch phase = %q, want %q", d.Phase, crux.KickPhaseFailed)
 	}
 }
 
@@ -153,7 +154,7 @@ func TestHandleRestartSuccessTailPreservesPausedState(t *testing.T) {
 	if !proc.Paused {
 		t.Error("restart of a paused agent must preserve the pause")
 	}
-	if proc.State != agent.StatePaused {
-		t.Errorf("state = %q, want %q", proc.State, agent.StatePaused)
+	if proc.State != crux.StatePaused {
+		t.Errorf("state = %q, want %q", proc.State, crux.StatePaused)
 	}
 }

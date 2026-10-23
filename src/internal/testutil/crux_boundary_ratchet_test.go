@@ -23,9 +23,9 @@ import (
 //     `agent.<Symbol>` selectors referenced from Go files (tests included:
 //     a test that builds an agent.Manager to drive a dashboard handler is
 //     coupling the runtime surface has to serve too) outside pkg/agent/...
-//     A new symbol is new coupling; the way to add behaviour is to widen
-//     agent.Runtime (or an equivalent exported seam), not to reach for
-//     another internal.
+//     and pkg/crux. A new symbol is new coupling; the way to add behaviour
+//     is to widen crux.Runtime (or an equivalent exported seam in pkg/crux),
+//     not to reach for another internal.
 //  2. cruxTmuxBaseline — per package, the number of NON-TEST Go files outside
 //     pkg/agent/... that invoke tmux: a string literal exactly "tmux"
 //     (exec.Command("tmux", ...), exec.LookPath("tmux"), or a constant that
@@ -42,10 +42,13 @@ import (
 //
 // Re-measured on v5 when the baselines were made exact, with exactly the
 // AST walk below (so a re-measure is `go test ./internal/testutil -run
-// TestCruxBoundaryRatchet -v`, not a grep).
+// TestCruxBoundaryRatchet -v`, not a grep). pkg/dashboard went 68 → 51 when
+// it moved onto crux.Runtime and the crux value aliases (#13536 Stage 1,
+// item 3); what remains there is audit, trailer, provider-status, Copilot
+// token and agent-mode helpers plus the test-only manager constructors.
 var cruxSymbolBaseline = map[string]int{
 	"cmd/hive":      37,
-	"pkg/dashboard": 68,
+	"pkg/dashboard": 51,
 	"pkg/discord":   1,
 	"pkg/hub":       18,
 	"pkg/hub/spoke": 15,
@@ -81,10 +84,22 @@ var cruxBoundaryRoots = []string{
 	filepath.Join("..", "..", "internal"),
 }
 
-// cruxInsidePrefix is the Crux tree itself, relative to src/. Files under it
-// (including future pkg/agent/<sub> packages such as the tmux funnel) are the
-// thing being protected, not consumers, and are skipped.
-const cruxInsidePrefix = "pkg/agent"
+// cruxInsidePrefixes are the Crux tree itself, relative to src/. Files under
+// them (including pkg/agent/<sub> packages such as the tmux funnel, and
+// pkg/crux, the exported runtime surface that aliases the manager's types)
+// are the thing being protected, not consumers, and are skipped.
+var cruxInsidePrefixes = []string{"pkg/agent", "pkg/crux"}
+
+// cruxInside reports whether rel (a src/-relative directory) is one of
+// cruxInsidePrefixes or nested under one.
+func cruxInside(rel string) bool {
+	for _, p := range cruxInsidePrefixes {
+		if rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
+}
 
 type cruxMeasurement struct {
 	// symbols maps package → distinct agent.<Symbol> names referenced.
@@ -144,7 +159,7 @@ func TestCruxBoundaryRatchet(t *testing.T) {
 
 	if len(failures) > 0 {
 		t.Fatalf("Crux boundary ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
-			"New agent.<Symbol> references belong on the exported runtime surface; new tmux calls belong "+
+			"New agent.<Symbol> references belong on the exported runtime surface (pkg/crux); new tmux calls belong "+
 			"inside pkg/agent/... Remove the coupling, or move an existing reference out so the count does not grow. "+
 			"A baseline above the measured count must be lowered to it in the same change.",
 			strings.Join(failures, "\n\n"))
@@ -177,7 +192,7 @@ func measureCruxBoundary(t *testing.T) cruxMeasurement {
 			}
 			rel := cruxRelPath(root, path)
 			if d.IsDir() {
-				if d.Name() == "testdata" || rel == cruxInsidePrefix || strings.HasPrefix(rel, cruxInsidePrefix+"/") {
+				if d.Name() == "testdata" || cruxInside(rel) {
 					return filepath.SkipDir
 				}
 				return nil

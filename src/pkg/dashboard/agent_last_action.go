@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -84,7 +84,7 @@ func lookupAgentLastAction(agentName string) (agentLastAction, bool) {
 // this round and summaryUpdated is the time of that action, or the round's
 // start when it has not acted yet, so the card's stale warning and age badge
 // measure time without progress through the hive.
-func applyAgentLastAction(a *FrontendAgent, proc *agent.AgentProcess, busy string) {
+func applyAgentLastAction(a *FrontendAgent, proc *crux.Process, busy string) {
 	la, ok := lookupAgentLastAction(a.Name)
 	current := ok && (proc.LastKick == nil || !la.at.Before(*proc.LastKick))
 	if ok {

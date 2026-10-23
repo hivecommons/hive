@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // #7421: an agent sitting at its idle prompt after a fruitless kick reported
@@ -16,12 +17,12 @@ import (
 // is idle whatever the process state says, a stand-down surfaces as BLOCKED
 // with its reason, and a clarifying question is named on the card.
 
-func outcomeProc(kickAt time.Time, outcome agent.KickOutcome) *agent.AgentProcess {
+func outcomeProc(kickAt time.Time, outcome crux.KickOutcome) *crux.Process {
 	k := kickAt
-	return &agent.AgentProcess{
+	return &crux.Process{
 		Name:         "quality",
 		Config:       config.AgentConfig{Backend: "claude", Enabled: true},
-		State:        agent.StateRunning,
+		State:        crux.StateRunning,
 		OutputBuffer: agent.NewRingBuffer(10),
 		LastKick:     &k,
 		KickOutcome:  outcome,
@@ -32,18 +33,18 @@ func TestBuildAgents_FinishedTurnIsNotWorking(t *testing.T) {
 	kickAt := time.Now().Add(-10 * time.Minute)
 
 	// Turn still running (no verdict yet): the historical reading stands.
-	a := buildOneAgent(t, outcomeProc(kickAt, agent.KickOutcome{}))
+	a := buildOneAgent(t, outcomeProc(kickAt, crux.KickOutcome{}))
 	if a.Busy != "working" || a.KickOutcome != "" {
 		t.Fatalf("running turn: busy=%q outcome=%q, want working and no outcome", a.Busy, a.KickOutcome)
 	}
 
 	// Turn ended on a clarifying question: idle, and the card says why.
-	q := agent.KickOutcome{Kind: agent.KickOutcomeQuestion, Reason: "What should I focus on?", At: kickAt.Add(time.Minute), KickAt: kickAt}
+	q := crux.KickOutcome{Kind: crux.KickOutcomeQuestion, Reason: "What should I focus on?", At: kickAt.Add(time.Minute), KickAt: kickAt}
 	a = buildOneAgent(t, outcomeProc(kickAt, q))
 	if a.Busy != "idle" {
 		t.Errorf("question-ended turn: busy=%q, want idle — a pane at its prompt is not evidence of work (#7421)", a.Busy)
 	}
-	if a.KickOutcome != agent.KickOutcomeQuestion || a.KickOutcomeReason != "What should I focus on?" {
+	if a.KickOutcome != crux.KickOutcomeQuestion || a.KickOutcomeReason != "What should I focus on?" {
 		t.Errorf("kickOutcome = %q/%q, want question with its reason", a.KickOutcome, a.KickOutcomeReason)
 	}
 	if a.StructuredStatus == "BLOCKED" {
@@ -51,7 +52,7 @@ func TestBuildAgents_FinishedTurnIsNotWorking(t *testing.T) {
 	}
 
 	// A verdict for an OLDER kick does not describe the current turn.
-	stale := agent.KickOutcome{Kind: agent.KickOutcomeEnded, At: kickAt.Add(-time.Hour), KickAt: kickAt.Add(-2 * time.Hour)}
+	stale := crux.KickOutcome{Kind: crux.KickOutcomeEnded, At: kickAt.Add(-time.Hour), KickAt: kickAt.Add(-2 * time.Hour)}
 	a = buildOneAgent(t, outcomeProc(kickAt, stale))
 	if a.Busy != "working" || a.KickOutcome != "" {
 		t.Errorf("older verdict leaked onto the current turn: busy=%q outcome=%q", a.Busy, a.KickOutcome)
@@ -60,7 +61,7 @@ func TestBuildAgents_FinishedTurnIsNotWorking(t *testing.T) {
 
 func TestBuildAgents_StandDownIsBlockedWithReason(t *testing.T) {
 	kickAt := time.Now().Add(-10 * time.Minute)
-	sd := agent.KickOutcome{Kind: agent.KickOutcomeStandDown, Reason: "● STAND DOWN.", At: kickAt.Add(time.Minute), KickAt: kickAt}
+	sd := crux.KickOutcome{Kind: crux.KickOutcomeStandDown, Reason: "● STAND DOWN.", At: kickAt.Add(time.Minute), KickAt: kickAt}
 	a := buildOneAgent(t, outcomeProc(kickAt, sd))
 	if a.StructuredStatus != "BLOCKED" {
 		t.Fatalf("StructuredStatus = %q, want BLOCKED for a policy stand-down", a.StructuredStatus)

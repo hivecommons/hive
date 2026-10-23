@@ -5,6 +5,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -47,17 +48,17 @@ func TestBuildAgentsIncludesActiveAgentOutsideCurrentPack(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
 			OutputBuffer:  agent.NewRingBuffer(10),
@@ -114,11 +115,11 @@ func TestBuildAgentsWithHidden_RuntimePausedGhostNotResurrectedByConfigPass(t *t
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
 			OutputBuffer:  agent.NewRingBuffer(10),
@@ -173,17 +174,17 @@ func TestBuildAgentsWithHidden_ReportsPackInactiveGhost(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       supervisorCfg,
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"scanner": {
 			Name:          "scanner",
 			Config:        ghostCfg,
-			State:         agent.StatePaused,
+			State:         crux.StatePaused,
 			Paused:        true,
 			PausedTrigger: "acmm-pack",
 			OutputBuffer:  agent.NewRingBuffer(10),

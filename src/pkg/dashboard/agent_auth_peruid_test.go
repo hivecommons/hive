@@ -15,8 +15,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // TestAgentCLIUnauthenticated_InferenceBackendNeverNeedsLogin: the spoke's
@@ -29,8 +29,8 @@ func TestAgentCLIUnauthenticated_InferenceBackendNeverNeedsLogin(t *testing.T) {
 	probe := func(string) (bool, bool) { return false, true }
 
 	for _, backend := range config.InferenceBackends {
-		for _, state := range []agent.ProcessState{agent.StateRunning, agent.StateStopped} {
-			p := &agent.AgentProcess{
+		for _, state := range []crux.ProcessState{crux.StateRunning, crux.StateStopped} {
+			p := &crux.Process{
 				State:  state,
 				Config: config.AgentConfig{Backend: backend},
 			}
@@ -48,8 +48,8 @@ func TestAgentCLIUnauthenticated_InferenceBackendNeverNeedsLogin(t *testing.T) {
 func TestAgentCLIUnauthenticated_RunningAgentBeatsMissingCredentials(t *testing.T) {
 	probe := func(string) (bool, bool) { return false, true } // empty shared path
 
-	running := &agent.AgentProcess{
-		State:  agent.StateRunning,
+	running := &crux.Process{
+		State:  crux.StateRunning,
 		Config: config.AgentConfig{Backend: "claude"},
 	}
 	if agentCLIUnauthenticated(running, probe) {
@@ -58,8 +58,8 @@ func TestAgentCLIUnauthenticated_RunningAgentBeatsMissingCredentials(t *testing.
 
 	// True positive preserved: the same probe verdict on a NON-running agent
 	// still reports needs-login.
-	stopped := &agent.AgentProcess{
-		State:  agent.StateStopped,
+	stopped := &crux.Process{
+		State:  crux.StateStopped,
 		Config: config.AgentConfig{Backend: "claude"},
 	}
 	if !agentCLIUnauthenticated(stopped, probe) {
@@ -73,8 +73,8 @@ func TestAgentCLIUnauthenticated_RunningAgentBeatsMissingCredentials(t *testing.
 func TestAgentCLIUnauthenticated_PaneLoginPromptStillWins(t *testing.T) {
 	probe := func(string) (bool, bool) { return true, true } // credentials look fine
 
-	wedged := &agent.AgentProcess{
-		State:      agent.StateRunning,
+	wedged := &crux.Process{
+		State:      crux.StateRunning,
 		NeedsLogin: true,
 		Config:     config.AgentConfig{Backend: "claude"},
 	}

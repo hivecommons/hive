@@ -3,8 +3,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -19,7 +19,7 @@ func buildReleaseLineStatus(t *testing.T) *StatusPayload {
 		GitHub:  config.GitHubConfig{Token: "tok"},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	return BuildFrontendStatus(gov.GetState(), nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
 }
 

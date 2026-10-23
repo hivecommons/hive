@@ -1,0 +1,1 @@
+- The dashboard now programs against `crux.Runtime`, the exported agent-runtime surface in `pkg/crux`, instead of `*agent.Manager`; no behaviour changes, and the Crux boundary ratchet for `pkg/dashboard` drops from 68 to 51 distinct `agent.*` references.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -24,12 +25,12 @@ func withInferenceLastErrorProvider(t *testing.T, fn func(string) (string, int, 
 	t.Cleanup(func() { SetInferenceLastErrorProvider(nil) })
 }
 
-func backendAuthErrorStatuses(cfg *config.Config, lastKick *time.Time) map[string]*agent.AgentProcess {
-	return map[string]*agent.AgentProcess{
+func backendAuthErrorStatuses(cfg *config.Config, lastKick *time.Time) map[string]*crux.Process {
+	return map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
+			State:                     crux.StateRunning,
 			OutputBuffer:              agent.NewRingBuffer(10),
 			LastKick:                  lastKick,
 			ProviderErrorClass:        "backend_auth_error",
@@ -89,9 +90,9 @@ func TestBuildFrontendStatus_InferenceLastErrorDuringCurrentTurn(t *testing.T) {
 	})
 	cfg := inferenceLastErrorCfg()
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
-			Name: "scanner", Config: cfg.Agents["scanner"], State: agent.StateRunning,
+			Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10), LastKick: &kick,
 		},
 	}
@@ -114,9 +115,9 @@ func TestBuildFrontendStatus_InferenceLastErrorStaleIsHidden(t *testing.T) {
 	withInferenceLastErrorProvider(t, func(string) (string, int, time.Time, bool) {
 		return fullProxyError, 401, time.Now().Add(-5 * time.Minute), true
 	})
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
-			Name: "scanner", Config: cfg.Agents["scanner"], State: agent.StateRunning,
+			Name: "scanner", Config: cfg.Agents["scanner"], State: crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10), LastKick: &kick,
 		},
 	}

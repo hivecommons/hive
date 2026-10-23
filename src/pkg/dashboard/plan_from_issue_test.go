@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -551,7 +552,7 @@ func TestArchitectPausedFromStatuses(t *testing.T) {
 	if architectPausedFromStatuses(nil) {
 		t.Error("nil statuses → false")
 	}
-	statuses := map[string]*agent.AgentProcess{"architect": {Paused: true}}
+	statuses := map[string]*crux.Process{"architect": {Paused: true}}
 	if !architectPausedFromStatuses(statuses) {
 		t.Error("paused architect status → true")
 	}

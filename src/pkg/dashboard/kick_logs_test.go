@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // kickHistoryServer wires apiServer's manager at a temp archive dir and
@@ -22,7 +22,7 @@ func kickHistoryServer(t *testing.T, content string) (*Server, string) {
 	t.Helper()
 	s, deps := apiServer(t)
 	dir := t.TempDir()
-	deps.AgentMgr.SetKickLogDir(dir)
+	agentManager(deps.AgentMgr).SetKickLogDir(dir)
 	id := "20260820-070000.000-kick.log"
 	agentDir := filepath.Join(dir, "scanner")
 	if err := os.MkdirAll(agentDir, 0o700); err != nil {
@@ -46,12 +46,12 @@ func TestHandleAgentKickLogList_UnknownAgent(t *testing.T) {
 // an error — the "less history than normal" requirement from #4296.
 func TestHandleAgentKickLogList_NoHistoryYet(t *testing.T) {
 	s, deps := apiServer(t)
-	deps.AgentMgr.SetKickLogDir(t.TempDir())
+	agentManager(deps.AgentMgr).SetKickLogDir(t.TempDir())
 	rec := doGet(s, "/api/agents/scanner/kicks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var infos []agent.KickLogInfo
+	var infos []crux.KickLogInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
 		t.Fatalf("bad JSON: %v\n%s", err, rec.Body.String())
 	}
@@ -66,7 +66,7 @@ func TestHandleAgentKickLogList_ReturnsArchives(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	var infos []agent.KickLogInfo
+	var infos []crux.KickLogInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestHandleAgentKickHistoryPage(t *testing.T) {
 
 func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 	s, deps := apiServer(t)
-	deps.AgentMgr.SetKickLogDir(t.TempDir())
+	agentManager(deps.AgentMgr).SetKickLogDir(t.TempDir())
 	rec := doGet(s, "/agents/scanner/kicks")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -186,7 +186,7 @@ func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 func TestHandleAgentKickHistoryPage_ShowsSource(t *testing.T) {
 	s, id := kickHistoryServer(t, "==== hive kick log ====\nagent: scanner\nsource: transcript\n=======================\nbody\n")
 	rec := doGet(s, "/api/agents/scanner/kicks")
-	var infos []agent.KickLogInfo
+	var infos []crux.KickLogInfo
 	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
 		t.Fatal(err)
 	}

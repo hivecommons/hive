@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -242,7 +243,7 @@ const inferenceLastErrorMaxAge = 15 * time.Minute
 // than the last kick), which is exactly the mid-retry window #11761 is about.
 // A successful inference call clears the proxy entry, so a recovered agent
 // never shows it.
-func agentInferenceLastError(proc *agent.AgentProcess, now time.Time) (msg string, at time.Time, ok bool) {
+func agentInferenceLastError(proc *crux.Process, now time.Time) (msg string, at time.Time, ok bool) {
 	fn := getInferenceLastErrorFn()
 	if fn == nil || proc == nil {
 		return "", time.Time{}, false
@@ -341,7 +342,7 @@ type AgentStatusPayload struct {
 // data. No GitHub API calls, no metrics collection — just agent state.
 func BuildAgentOnlyStatus(
 	govState governor.State,
-	agentStatuses map[string]*agent.AgentProcess,
+	agentStatuses map[string]*crux.Process,
 	cfg *config.Config,
 ) *AgentStatusPayload {
 	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
@@ -357,7 +358,7 @@ func BuildAgentOnlyStatus(
 func BuildFrontendStatus(
 	govState governor.State,
 	actionable *github.ActionableResult,
-	agentStatuses map[string]*agent.AgentProcess,
+	agentStatuses map[string]*crux.Process,
 	cfg *config.Config,
 	tokenCollector *tokens.Collector,
 	gov *governor.Governor,
@@ -602,7 +603,7 @@ func mergeAgentAuthHealth(health map[string]any, agents []FrontendAgent) {
 // on UpdateConfig/reconcile. Callers must check "running" FIRST: an agent
 // disabled while it is still up keeps running until the next reconcile, and it
 // genuinely does have a session until then.
-func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+func agentDisabledInConfig(cfg *config.Config, name string, proc *crux.Process) bool {
 	if cfg != nil {
 		if liveCfg, ok := cfg.Agents[name]; ok {
 			return !liveCfg.Enabled
@@ -621,15 +622,15 @@ func agentDisabledInConfig(cfg *config.Config, name string, proc *agent.AgentPro
 // wins during config/reconcile races; otherwise enabled and unpaused is the
 // active configuration. Pack-paused or disabled entries remain suppressible as
 // the inactive higher-level "ghost" agents the dashboard filter targets.
-func activeOutsidePack(cfg *config.Config, name string, proc *agent.AgentProcess) bool {
+func activeOutsidePack(cfg *config.Config, name string, proc *crux.Process) bool {
 	if proc == nil {
 		return false
 	}
-	if proc.State == agent.StateRunning {
+	if proc.State == crux.StateRunning {
 		return true
 	}
 	return !agentDisabledInConfig(cfg, name, proc) &&
-		!proc.Paused && proc.State != agent.StatePaused
+		!proc.Paused && proc.State != crux.StatePaused
 }
 
 func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
@@ -793,7 +794,7 @@ func buildSkills() FrontendSkills {
 // to LastRestartReason). Same window the manager's RestartTelemetry reports to
 // the hub heartbeat — buildAgents works from process snapshots, so it counts
 // the cloned RestartEvents directly (#6237).
-func restartsLast24h(proc *agent.AgentProcess, now time.Time) (int, string) {
+func restartsLast24h(proc *crux.Process, now time.Time) (int, string) {
 	cutoff := now.Add(-24 * time.Hour)
 	count := 0
 	reason := ""
@@ -833,7 +834,7 @@ const (
 	hiddenReasonDisabled      = "disabled-in-config"
 )
 
-func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
+func buildAgents(statuses map[string]*crux.Process, cfg *config.Config, govState governor.State) []FrontendAgent {
 	agents, _ := buildAgentsWithHidden(statuses, cfg, govState)
 	return agents
 }
@@ -843,7 +844,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 // existing caller (and every existing test) keeps its original single-value
 // signature; only BuildFrontendStatus/BuildAgentOnlyStatus need the second
 // value to publish it on the status payload.
-func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
+func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config, govState governor.State) ([]FrontendAgent, []HiddenAgentInfo) {
 	currentMode := strings.ToLower(string(govState.Mode))
 
 	// The watchdog's authority is hive-wide, but it rides each agent's payload
@@ -974,7 +975,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// seen END is idle, whatever the process state says; liveness is not
 		// evidence of work.
 		busy := "idle"
-		if proc.State == agent.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
+		if proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
 			busy = "working"
 		}
 		// awaitingCI (#9673 item 3): the manager's CI-poll guard already
@@ -1107,7 +1108,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 			Session:         name,
 			State:           string(proc.State),
-			Starting:        proc.Starting && proc.State != agent.StateRunning,
+			Starting:        proc.Starting && proc.State != crux.StateRunning,
 			Busy:            busy,
 			AwaitingCI:      awaitingCI,
 			Paused:          proc.Paused,
@@ -1178,7 +1179,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		if proc.KickOutcome.Settled(proc.LastKick) {
 			a.KickOutcome = proc.KickOutcome.Kind
 			a.KickOutcomeReason = proc.KickOutcome.Reason
-			if proc.KickOutcome.Kind == agent.KickOutcomeStandDown {
+			if proc.KickOutcome.Kind == crux.KickOutcomeStandDown {
 				a.StructuredStatus = "BLOCKED"
 				a.StatusEvidence = "blocked: policy stand-down"
 				if r := strings.TrimSpace(proc.KickOutcome.Reason); r != "" {
@@ -1383,7 +1384,7 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 		OnDemand:        onDemand,
 		Sandboxed:       agentCfg.SandboxEnabled(cfg.AgentSandbox),
 		Session:         name,
-		State:           string(agent.StateStopped),
+		State:           string(crux.StateStopped),
 		Busy:            "idle",
 		Paused:          agentCfg.Paused,
 		OffByCadence:    false,
@@ -2556,7 +2557,7 @@ const planningReplanWindow = 24 * time.Hour
 // architectPausedFromStatuses reads the architect's paused state from the
 // already-collected agent statuses, so the PLANNING tile can flag a queue
 // blocked on a paused architect WITHOUT taking the agent-manager lock.
-func architectPausedFromStatuses(statuses map[string]*agent.AgentProcess) bool {
+func architectPausedFromStatuses(statuses map[string]*crux.Process) bool {
 	if ap, ok := statuses[planning.ArchitectAgentName]; ok && ap != nil {
 		return ap.Paused
 	}
@@ -2746,7 +2747,7 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	return fb
 }
 
-func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*agent.AgentProcess, currentMode string) []FrontendCadence {
+func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*crux.Process, currentMode string) []FrontendCadence {
 	if cfg == nil {
 		return nil
 	}

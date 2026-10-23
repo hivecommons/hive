@@ -18,6 +18,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
@@ -79,12 +80,12 @@ func TestHealthSummary_QuietByDesignAgentsAreIdleNotDown(t *testing.T) {
 	}}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
 	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
-	healthAgentStatuses = func() map[string]*agent.AgentProcess {
-		return map[string]*agent.AgentProcess{
-			"reviewer": {State: agent.StateStopped, Config: deps.Config.Agents["reviewer"]},
-			"nightly":  {State: agent.StateStopped, Config: deps.Config.Agents["nightly"]},
-			"paused":   {State: agent.StatePaused, Paused: true, Config: deps.Config.Agents["paused"]},
-			"crashed":  {State: agent.StateStopped, Config: deps.Config.Agents["crashed"]},
+	healthAgentStatuses = func() map[string]*crux.Process {
+		return map[string]*crux.Process{
+			"reviewer": {State: crux.StateStopped, Config: deps.Config.Agents["reviewer"]},
+			"nightly":  {State: crux.StateStopped, Config: deps.Config.Agents["nightly"]},
+			"paused":   {State: crux.StatePaused, Paused: true, Config: deps.Config.Agents["paused"]},
+			"crashed":  {State: crux.StateStopped, Config: deps.Config.Agents["crashed"]},
 		}
 	}
 	t.Cleanup(func() { healthAgentStatuses = nil })
@@ -117,16 +118,16 @@ func TestHealthSummary_AgentAuthCheckAggregatesProviderAuthBlocks(t *testing.T) 
 	}}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
 	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
-	healthAgentStatuses = func() map[string]*agent.AgentProcess {
-		return map[string]*agent.AgentProcess{
+	healthAgentStatuses = func() map[string]*crux.Process {
+		return map[string]*crux.Process{
 			"scanner": {
-				State:                     agent.StateRunning,
+				State:                     crux.StateRunning,
 				Config:                    deps.Config.Agents["scanner"],
 				ProviderErrorClass:        "auth",
 				ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
 				ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
 			},
-			"quality": {State: agent.StateRunning, Config: deps.Config.Agents["quality"]},
+			"quality": {State: crux.StateRunning, Config: deps.Config.Agents["quality"]},
 		}
 	}
 	t.Cleanup(func() { healthAgentStatuses = nil })
@@ -151,10 +152,10 @@ func TestHealthSummary_AgentAuthCheckIgnoresExpiredProviderBlocks(t *testing.T) 
 	deps.Config.Agents = map[string]config.AgentConfig{"scanner": cfg}
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
 	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
-	healthAgentStatuses = func() map[string]*agent.AgentProcess {
-		return map[string]*agent.AgentProcess{
+	healthAgentStatuses = func() map[string]*crux.Process {
+		return map[string]*crux.Process{
 			"scanner": {
-				State:                     agent.StateRunning,
+				State:                     crux.StateRunning,
 				Config:                    cfg,
 				ProviderErrorClass:        "auth",
 				ProviderErrorLine:         "expired auth block",
@@ -189,7 +190,7 @@ func scannedTokenCollector(t *testing.T, dir string, live bool) *tokens.Collecto
 	return c
 }
 
-func tokenHealthServer(t *testing.T, agentCfgs map[string]config.AgentConfig, statuses map[string]*agent.AgentProcess, collector *tokens.Collector) *Server {
+func tokenHealthServer(t *testing.T, agentCfgs map[string]config.AgentConfig, statuses map[string]*crux.Process, collector *tokens.Collector) *Server {
 	t.Helper()
 	deps := testDeps(t)
 	deps.Config.Agents = agentCfgs
@@ -203,7 +204,7 @@ func tokenHealthServer(t *testing.T, agentCfgs map[string]config.AgentConfig, st
 	deps.Governor = governor.New(deps.Config.Governor, deps.Config.Agents, deps.Logger)
 	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{})
 	deps.Tokens = collector
-	healthAgentStatuses = func() map[string]*agent.AgentProcess { return statuses }
+	healthAgentStatuses = func() map[string]*crux.Process { return statuses }
 	t.Cleanup(func() { healthAgentStatuses = nil })
 	s := NewServer(0, deps.Logger)
 	s.RegisterAPI(deps)
@@ -216,7 +217,7 @@ func TestHealthSummary_ZeroTokensQuietCasesAreSkipped(t *testing.T) {
 	pausedCfg := config.AgentConfig{Backend: "copilot", Enabled: true, Paused: true}
 	pausedSrv := tokenHealthServer(t,
 		map[string]config.AgentConfig{"scanner": pausedCfg},
-		map[string]*agent.AgentProcess{"scanner": {State: agent.StatePaused, Paused: true, Config: pausedCfg}},
+		map[string]*crux.Process{"scanner": {State: crux.StatePaused, Paused: true, Config: pausedCfg}},
 		collector)
 	if st, detail := healthCheckOf(t, pausedSrv, "tokens"); st != "skip" || detail != "zero consumed — all agents paused" {
 		t.Fatalf("paused tokens check = %q/%q, want skip/all paused", st, detail)
@@ -226,7 +227,7 @@ func TestHealthSummary_ZeroTokensQuietCasesAreSkipped(t *testing.T) {
 	idleCfg := config.AgentConfig{Backend: "copilot", Enabled: true, OnDemand: true}
 	idleSrv := tokenHealthServer(t,
 		map[string]config.AgentConfig{"reviewer": idleCfg},
-		map[string]*agent.AgentProcess{"reviewer": {State: agent.StateStopped, Config: idleCfg}},
+		map[string]*crux.Process{"reviewer": {State: crux.StateStopped, Config: idleCfg}},
 		idleCollector)
 	if st, detail := healthCheckOf(t, idleSrv, "tokens"); st != "skip" || !strings.Contains(detail, "no agents due") {
 		t.Fatalf("no-due tokens check = %q/%q, want skip/no agents due", st, detail)
@@ -236,7 +237,7 @@ func TestHealthSummary_ZeroTokensQuietCasesAreSkipped(t *testing.T) {
 	runningCfg := config.AgentConfig{Backend: "copilot", Enabled: true, OnDemand: true}
 	runningSrv := tokenHealthServer(t,
 		map[string]config.AgentConfig{"reviewer": runningCfg},
-		map[string]*agent.AgentProcess{"reviewer": {State: agent.StateRunning, Config: runningCfg}},
+		map[string]*crux.Process{"reviewer": {State: crux.StateRunning, Config: runningCfg}},
 		runningCollector)
 	if st, detail := healthCheckOf(t, runningSrv, "tokens"); st != "warn" || !strings.Contains(detail, "metering disabled") {
 		t.Fatalf("running on-demand tokens check = %q/%q, want warn/metering cause", st, detail)
@@ -252,7 +253,7 @@ func TestHealthSummary_ZeroTokensReportsCause(t *testing.T) {
 	scannerCfg := config.AgentConfig{Backend: "copilot", Enabled: true}
 	s := tokenHealthServer(t,
 		map[string]config.AgentConfig{"scanner": scannerCfg},
-		map[string]*agent.AgentProcess{"scanner": {State: agent.StateRunning, Config: scannerCfg}},
+		map[string]*crux.Process{"scanner": {State: crux.StateRunning, Config: scannerCfg}},
 		collector)
 	if st, detail := healthCheckOf(t, s, "tokens"); st != "warn" || !strings.Contains(detail, "no model calls recorded") {
 		t.Fatalf("tokens check = %q/%q, want warn with zero-token cause", st, detail)
@@ -341,11 +342,11 @@ func TestAgentCLIUnauthenticated(t *testing.T) {
 	}
 
 	// Pane poller saw a login prompt → unauthenticated even with no probe.
-	if !agentCLIUnauthenticated(&agent.AgentProcess{NeedsLogin: true}, nil) {
+	if !agentCLIUnauthenticated(&crux.Process{NeedsLogin: true}, nil) {
 		t.Fatal("NeedsLogin=true must classify as unauthenticated")
 	}
 	// Unknown auth state must NOT reclassify a crashed agent out of "down".
-	p := &agent.AgentProcess{Config: config.AgentConfig{Backend: "mystery"}}
+	p := &crux.Process{Config: config.AgentConfig{Backend: "mystery"}}
 	if agentCLIUnauthenticated(p, authFor(map[string][2]bool{"mystery": {false, false}})) {
 		t.Fatal("unknown auth state must not count as need-login")
 	}
@@ -354,13 +355,13 @@ func TestAgentCLIUnauthenticated(t *testing.T) {
 		t.Fatal("nil auth probe must not count as need-login")
 	}
 	// Bob API-key rejection is a credential/login problem even while the key file exists.
-	p = &agent.AgentProcess{Config: config.AgentConfig{Backend: "bob"}, StartFailureClass: string(agent.StartFailureCredentialRejected)}
+	p = &crux.Process{Config: config.AgentConfig{Backend: "bob"}, StartFailureClass: string(crux.StartFailureCredentialRejected)}
 	if !agentCLIUnauthenticated(p, authFor(map[string][2]bool{"bob": {true, true}})) {
 		t.Fatal("Bob rejected API key must count as need-login instead of down")
 	}
 
 	// BackendOverride wins over the configured backend, mirroring buildAgents.
-	p = &agent.AgentProcess{
+	p = &crux.Process{
 		Config:          config.AgentConfig{Backend: "claude"},
 		BackendOverride: "bob",
 	}
@@ -388,10 +389,10 @@ func TestHealthSummary_RunningAtLoginPromptNeedsLogin(t *testing.T) {
 	SetBackendAuthProvider(func(backend string) (available, known bool) { return true, true })
 	t.Cleanup(func() { SetBackendAuthProvider(nil) })
 
-	healthAgentStatuses = func() map[string]*agent.AgentProcess {
-		return map[string]*agent.AgentProcess{
-			"wedged": {State: agent.StateRunning, NeedsLogin: true, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
-			"worker": {State: agent.StateRunning, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
+	healthAgentStatuses = func() map[string]*crux.Process {
+		return map[string]*crux.Process{
+			"wedged": {State: crux.StateRunning, NeedsLogin: true, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
+			"worker": {State: crux.StateRunning, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
 		}
 	}
 	t.Cleanup(func() { healthAgentStatuses = nil })

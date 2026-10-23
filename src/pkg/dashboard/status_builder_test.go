@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/tokens"
@@ -67,7 +68,7 @@ func TestOperabilityAgentsHiddenFromDashboardBelowL5(t *testing.T) {
 			},
 		}},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner":    {Name: "scanner", Config: cfg.Agents["scanner"]},
 		"telemetry":  {Name: "telemetry", Config: cfg.Agents["telemetry"]},
 		"operations": {Name: "operations", Config: cfg.Agents["operations"]},
@@ -342,7 +343,7 @@ func TestBuildCadenceMatrix(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner":    {Paused: false},
 		"supervisor": {Paused: true},
 	}
@@ -416,18 +417,18 @@ func TestBuildAgents(t *testing.T) {
 	buf := agent.NewRingBuffer(10)
 	buf.Write("test output line")
 
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			LastKick:     &now,
 			OutputBuffer: buf,
 		},
 		"supervisor": {
 			Name:         "supervisor",
 			Config:       config.AgentConfig{Backend: "claude", Model: "opus"},
-			State:        agent.StatePaused,
+			State:        crux.StatePaused,
 			Paused:       true,
 			PinnedCLI:    "claude",
 			PinnedModel:  "opus",
@@ -493,7 +494,7 @@ func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *tes
 		},
 	}
 
-	agents := buildAgents(map[string]*agent.AgentProcess{}, cfg, governor.State{Mode: governor.ModeIdle})
+	agents := buildAgents(map[string]*crux.Process{}, cfg, governor.State{Mode: governor.ModeIdle})
 	if len(agents) != 1 {
 		t.Fatalf("agents len = %d, want 1 for enabled agent using configured gateway backend", len(agents))
 	}
@@ -514,23 +515,23 @@ func TestBuildAgents_ShowsGatewayNamedConfiguredAgentWithoutRuntimeStatus(t *tes
 // dashboard uses to paint a hollow-green (alive-but-governor-off) dot for hives
 // stuck in a mode where every cadence is paused (e.g. SURGE).
 func TestBuildAgents_OffByCadence(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"quality": {
 			Name:         "quality",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"brainstorm": {
 			Name:         "brainstorm",
 			Config:       config.AgentConfig{Backend: "claude", OnDemand: true},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -591,11 +592,11 @@ func TestBuildFrontendStatus(t *testing.T) {
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
 	govState := gov.GetState()
 
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -645,11 +646,11 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
+			State:                     crux.StateRunning,
 			OutputBuffer:              agent.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "✗ You are not licensed to use Copilot.",
@@ -658,7 +659,7 @@ func TestBuildFrontendStatus_AgentAuthHealthFailsOnProviderAuthBlock(t *testing.
 		"quality": {
 			Name:         "quality",
 			Config:       cfg.Agents["quality"],
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -678,11 +679,11 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 		},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
+			State:                     crux.StateRunning,
 			OutputBuffer:              agent.NewRingBuffer(10),
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         "Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute",
@@ -721,11 +722,11 @@ func TestBuildFrontendStatus_AgentAuthHealthRecoversWhenProviderBackoffExpires(t
 		GitHub: config.GitHubConfig{Token: "tok"},
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:                      "scanner",
 			Config:                    cfg.Agents["scanner"],
-			State:                     agent.StateRunning,
+			State:                     crux.StateRunning,
 			OutputBuffer:              agent.NewRingBuffer(10),
 			ProviderErrorClass:        "auth",
 			ProviderErrorLine:         "old auth error",
@@ -822,11 +823,11 @@ func TestBuildHealth_IgnoresCachedWorkflowHealth(t *testing.T) {
 }
 
 func TestBuildAgents_WithOverrides(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:            "scanner",
 			Config:          config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:           agent.StateRunning,
+			State:           crux.StateRunning,
 			BackendOverride: "aider",
 			ModelOverride:   "opus",
 			OutputBuffer:    agent.NewRingBuffer(10),
@@ -870,7 +871,7 @@ func TestBuildCadenceMatrix_PausedWithCadence(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Paused: true},
 	}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
@@ -954,11 +955,11 @@ func TestBuildFrontendStatus_WithMetrics(t *testing.T) {
 	}
 	gov := governor.New(cfg.Governor, cfg.Agents, nil)
 	govState := gov.GetState()
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -1076,7 +1077,7 @@ func TestBuildCadenceMatrix_PauseCadence(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
 	if len(matrix) != 1 {
 		t.Fatalf("len = %d", len(matrix))
@@ -1210,7 +1211,7 @@ func TestBuildCadenceMatrix_PausedAgent(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {Paused: true},
 	}
 	matrix := buildCadenceMatrix(cfg, statuses, "surge")
@@ -1532,11 +1533,11 @@ func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
 			"scanner": {ID: "scanner", Backend: "claude", Enabled: true},
 		},
 	}}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude"},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 			LastError:    "copilot hung: your one-time code: ABCD-1234 | key sk-ant-abcdef123456",
 			PausedReason: "restart storm: ghp_abcdefghijklmnop1234 sk-ant-abcdef123456",

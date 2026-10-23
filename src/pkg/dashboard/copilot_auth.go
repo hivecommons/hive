@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 const (
@@ -60,7 +61,7 @@ var (
 
 	// activateCopilotToken is a test seam around the manager operation that
 	// updates both its injected token and the shared Copilot CLI identity.
-	activateCopilotToken = func(m *agent.Manager, token string) error {
+	activateCopilotToken = func(m crux.Runtime, token string) error {
 		return m.ActivateCopilotToken(token)
 	}
 )

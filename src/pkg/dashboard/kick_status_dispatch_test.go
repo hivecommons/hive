@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // TestKickStatusDeliveredResponseShape asserts the observable HTTP response shape
@@ -16,9 +16,9 @@ func TestKickStatusDeliveredResponseShape(t *testing.T) {
 	queuedAt := time.Date(2026, 9, 9, 14, 30, 0, 0, time.UTC)
 	settledAt := time.Date(2026, 9, 9, 14, 30, 4, 500000000, time.UTC)
 
-	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+	agentManager(deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 		Agent:     "scanner",
-		Phase:     agent.KickPhaseDelivered,
+		Phase:     crux.KickPhaseDelivered,
 		QueuedAt:  queuedAt,
 		SettledAt: settledAt,
 	})
@@ -61,9 +61,9 @@ func TestKickStatusFailedResponseShape(t *testing.T) {
 	settledAt := time.Date(2026, 9, 9, 15, 2, 0, 0, time.UTC)
 	failMsg := "cli never reached prompt within 120s"
 
-	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+	agentManager(deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 		Agent:     "scanner",
-		Phase:     agent.KickPhaseFailed,
+		Phase:     crux.KickPhaseFailed,
 		Error:     failMsg,
 		QueuedAt:  queuedAt,
 		SettledAt: settledAt,
@@ -105,9 +105,9 @@ func TestKickStatusInFlightResponseShape(t *testing.T) {
 
 	queuedAt := time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC)
 
-	deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+	agentManager(deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 		Agent:    "scanner",
-		Phase:    agent.KickPhasePending,
+		Phase:    crux.KickPhasePending,
 		QueuedAt: queuedAt,
 	})
 
@@ -145,9 +145,9 @@ func TestKickStatusInFlightResponseShape(t *testing.T) {
 func TestKickStatusResolvesAgentAlias(t *testing.T) {
 	srv := newFullServer(t)
 
-	srv.deps.AgentMgr.RecordKickDispatchForTest(agent.KickDispatch{
+	agentManager(srv.deps.AgentMgr).RecordKickDispatchForTest(crux.KickDispatch{
 		Agent:    "scanner",
-		Phase:    agent.KickPhaseDelivered,
+		Phase:    crux.KickPhaseDelivered,
 		QueuedAt: time.Now().UTC(),
 	})
 

@@ -14,7 +14,7 @@ import (
 func kickLogSourceServer(t *testing.T) (*Server, *Dependencies) {
 	t.Helper()
 	s, deps := apiServer(t)
-	deps.AgentMgr.SetKickLogSourceResolver(func() string {
+	agentManager(deps.AgentMgr).SetKickLogSourceResolver(func() string {
 		return deps.Config.Governor.Logging.ResolveKickLogSource()
 	})
 	return s, deps
@@ -59,7 +59,7 @@ func TestHandleGovernorLogging_KickLogSourceRoundTrip(t *testing.T) {
 		if got := deps.Config.Governor.Logging.KickLogSource; got != want {
 			t.Errorf("saved kick_log_source = %q, want %q", got, want)
 		}
-		if got := deps.AgentMgr.KickLogSource(); got != want {
+		if got := agentManager(deps.AgentMgr).KickLogSource(); got != want {
 			t.Errorf("agent manager source after save = %q, want %q (live apply)", got, want)
 		}
 		l = governorLoggingSection(t, s)
@@ -119,7 +119,7 @@ func TestHandleGovernorLogging_KickLogSourceEnvLocked(t *testing.T) {
 	if l["kickLogSource"] != config.KickLogSourceScrollback || l["kickLogSourceEffective"] != config.KickLogSourceTranscript || l["kickLogSourceEnvLocked"] != true {
 		t.Errorf("env-locked logging section = %+v", l)
 	}
-	if got := deps.AgentMgr.KickLogSource(); got != config.KickLogSourceTranscript {
+	if got := agentManager(deps.AgentMgr).KickLogSource(); got != config.KickLogSourceTranscript {
 		t.Errorf("agent manager source under env override = %q, want transcript", got)
 	}
 }

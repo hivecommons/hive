@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -56,11 +56,11 @@ func TestCadenceTooltipAndCardAgreeOnNextKick(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:     "scanner",
 			Config:   config.AgentConfig{Backend: "claude"},
-			State:    agent.StateRunning,
+			State:    crux.StateRunning,
 			LastKick: &lastKick,
 		},
 	}
@@ -149,11 +149,11 @@ func TestCadenceTooltipNonActiveModesOmitNext(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:     "scanner",
 			Config:   config.AgentConfig{Backend: "claude"},
-			State:    agent.StateRunning,
+			State:    crux.StateRunning,
 			LastKick: &lastKick,
 		},
 	}

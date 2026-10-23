@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
@@ -109,7 +110,7 @@ func TestKickBeforeFirstScanReturnsDeferred(t *testing.T) {
 		Sandbox: &config.AgentSandboxOverride{Enabled: &sandboxOn},
 	}
 	deps.AgentMgr = agent.NewManager(deps.Config.Agents, deps.Logger, agent.ProjectContext{Org: "myorg", Repos: []string{"repo1"}})
-	deps.AgentMgr.SetSandboxConfig(deps.Config.AgentSandbox)
+	agentManager(deps.AgentMgr).SetSandboxConfig(deps.Config.AgentSandbox)
 	if err := deps.AgentMgr.Start(context.Background(), "scanner"); err != nil {
 		t.Fatalf("start sandbox scanner: %v", err)
 	}
@@ -138,11 +139,11 @@ func TestKickBeforeFirstScanReturnsDeferred(t *testing.T) {
 // mistake this guards against.
 func TestKickPhaseStatusMapsPendingToInFlight(t *testing.T) {
 	cases := map[string]string{
-		agent.KickPhaseDelivered: kickStatusDelivered,
-		agent.KickPhaseFailed:    kickStatusFailed,
-		agent.KickPhasePending:   kickStatusInFlight,
-		"":                       kickStatusInFlight,
-		"something-new":          kickStatusInFlight,
+		crux.KickPhaseDelivered: kickStatusDelivered,
+		crux.KickPhaseFailed:    kickStatusFailed,
+		crux.KickPhasePending:   kickStatusInFlight,
+		"":                      kickStatusInFlight,
+		"something-new":         kickStatusInFlight,
 	}
 	for phase, want := range cases {
 		if got := kickPhaseStatus(phase); got != want {

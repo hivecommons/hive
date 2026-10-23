@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // copilotDeviceMock serves fake /login/device/code and /login/oauth/access_token
@@ -139,7 +139,7 @@ func withCopilotTokenPath(t *testing.T) string {
 	// Manager activation normally writes /data/home/.copilot/config.json.
 	// Agent-package tests cover that write; dashboard tests isolate their
 	// package-global paths and verify the handoff through this seam.
-	activateCopilotToken = func(m *agent.Manager, token string) error {
+	activateCopilotToken = func(m crux.Runtime, token string) error {
 		m.SetCopilotToken(token)
 		return nil
 	}
@@ -460,7 +460,7 @@ func TestPollCopilotToken_AccessDeniedStopsImmediately(t *testing.T) {
 func TestSaveCopilotToken_WritesAtomicallyWithPermissions(t *testing.T) {
 	tokenPath := withCopilotTokenPath(t)
 	var activated string
-	activateCopilotToken = func(m *agent.Manager, token string) error {
+	activateCopilotToken = func(m crux.Runtime, token string) error {
 		activated = token
 		m.SetCopilotToken(token)
 		return nil

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -198,8 +198,8 @@ func TestBuildAgentOnlyStatus(t *testing.T) {
 	}
 
 	state := governor.State{Mode: "IDLE"}
-	statuses := map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning},
+	statuses := map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning},
 	}
 
 	payload := BuildAgentOnlyStatus(state, statuses, cfg)

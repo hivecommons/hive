@@ -3,11 +3,12 @@ package dashboard
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/hivecommons/hive/pkg/config"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Tests for the three top-level config sections whose handlers had zero

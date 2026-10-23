@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -22,17 +23,17 @@ import (
 // "capturing pane for guide: exit status 1" while the card still linked to both.
 
 func TestBuildAgentsCarriesEnabledFlag(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       config.AgentConfig{Backend: "claude", Enabled: true},
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"guide": {
 			Name:         "guide",
 			Config:       config.AgentConfig{Backend: "copilot", Enabled: false},
-			State:        agent.StateStopped,
+			State:        crux.StateStopped,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -57,7 +58,7 @@ func TestBuildAgentsCarriesEnabledFlag(t *testing.T) {
 	// State alone cannot carry this: a stopped-because-disabled agent and a
 	// stopped-because-it-died agent are the same string here, which is why the
 	// flag has to travel separately.
-	if byName["guide"].State != string(agent.StateStopped) {
+	if byName["guide"].State != string(crux.StateStopped) {
 		t.Fatalf("guide.State = %q, want stopped (precondition)", byName["guide"].State)
 	}
 }
@@ -66,11 +67,11 @@ func TestBuildAgentsPrefersLiveConfigForEnabled(t *testing.T) {
 	// proc.Config is the manager's COPY, refreshed only on UpdateConfig or a
 	// reconcile. An operator who just disabled the agent from the config dialog
 	// has written cfg.Agents and nothing else, so the live config must win.
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"guide": {
 			Name:         "guide",
 			Config:       config.AgentConfig{Backend: "copilot", Enabled: true},
-			State:        agent.StateStopped,
+			State:        crux.StateStopped,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -90,7 +91,7 @@ func TestBuildAgentsPrefersLiveConfigForEnabled(t *testing.T) {
 }
 
 func TestAgentDisabledInConfigFallsBackToProcessCopy(t *testing.T) {
-	proc := &agent.AgentProcess{Name: "guide", Config: config.AgentConfig{Enabled: false}}
+	proc := &crux.Process{Name: "guide", Config: config.AgentConfig{Enabled: false}}
 
 	// Absent from the live config (an agent that exists only in the roster):
 	// the process copy is all there is.

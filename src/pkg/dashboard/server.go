@@ -25,6 +25,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -755,7 +756,7 @@ type FrontendAgent struct {
 	Continuous        bool   `json:"continuous,omitempty"`
 	ContinuousBackoff string `json:"continuousBackoff,omitempty"`
 	FrontendAgentContinuous
-	SubAgentModels []agent.SubAgentModel `json:"subAgentModels,omitempty"`
+	SubAgentModels []crux.SubAgentModel `json:"subAgentModels,omitempty"`
 
 	KicksUndeliverable     int    `json:"kicksUndeliverable,omitempty"`
 	BusySince              string `json:"busySince,omitempty"`
@@ -3170,7 +3171,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			if proc.Paused {
 				ac["paused"] = true
 				ac["status"] = "skip"
-			} else if proc.State == agent.StateRunning {
+			} else if proc.State == crux.StateRunning {
 				ac["status"] = "pass"
 				if proc.LastKick != nil {
 					ac["last_kick"] = proc.LastKick.Format(time.RFC3339)
@@ -3288,7 +3289,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		const staleOutputThreshold = 30 * time.Minute
 		stalled := []string{}
 		for name, proc := range s.deps.AgentMgr.AllStatuses() {
-			if proc.State != agent.StateRunning || proc.Paused {
+			if proc.State != crux.StateRunning || proc.Paused {
 				continue
 			}
 			if proc.OutputBuffer != nil && proc.OutputBuffer.Count() == 0 && proc.LastKick != nil {
@@ -4210,9 +4211,9 @@ func (s *Server) InferenceAuthState() (errMsg string, since time.Time) {
 // A test seam mirroring SetBackendAuthProvider: AllStatuses returns value
 // snapshots, so tests cannot stage states (running-at-login-prompt) by
 // mutating manager internals — they override this instead. nil ⇒ live manager.
-var healthAgentStatuses func() map[string]*agent.AgentProcess
+var healthAgentStatuses func() map[string]*crux.Process
 
-func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend string) (available, known bool)) bool {
+func agentCLIUnauthenticated(proc *crux.Process, authFn func(backend string) (available, known bool)) bool {
 	if proc.NeedsLogin {
 		return true
 	}
@@ -4220,7 +4221,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	if proc.BackendOverride != "" {
 		backend = proc.BackendOverride
 	}
-	if backend == "bob" && proc.StartFailureClass == string(agent.StartFailureCredentialRejected) {
+	if backend == "bob" && proc.StartFailureClass == string(crux.StartFailureCredentialRejected) {
 		return true
 	}
 	// METHOD GATE. An inference backend (litellm/vllm/llm-d) authenticates with
@@ -4238,7 +4239,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	// reclassify it. Only a non-running agent falls through to the probe. This
 	// is what stopped the empty shared credential path (per-agent-UID layout)
 	// from reporting healthy agents as needing login.
-	if proc.State == agent.StateRunning {
+	if proc.State == crux.StateRunning {
 		return false
 	}
 	if authFn == nil {
@@ -4248,7 +4249,7 @@ func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend strin
 	return known && !available
 }
 
-func agentProviderAuthBlocked(proc *agent.AgentProcess, now time.Time) bool {
+func agentProviderAuthBlocked(proc *crux.Process, now time.Time) bool {
 	return proc != nil &&
 		strings.EqualFold(strings.TrimSpace(proc.ProviderErrorClass), "auth") &&
 		!proc.ProviderErrorBackoffUntil.IsZero() &&
@@ -4270,7 +4271,7 @@ func (s *Server) healthGovernorMode() string {
 	return string(s.deps.Governor.GetState().Mode)
 }
 
-func (s *Server) agentIdleByDesign(name string, proc *agent.AgentProcess, currentMode string, onDemandFromPack map[string]bool) string {
+func (s *Server) agentIdleByDesign(name string, proc *crux.Process, currentMode string, onDemandFromPack map[string]bool) string {
 	if s == nil || s.deps == nil || s.deps.Config == nil || proc == nil {
 		return ""
 	}
@@ -4340,7 +4341,7 @@ func (s *Server) allAgentsPaused() bool {
 			continue
 		}
 		seen = true
-		if !proc.Paused && proc.State != agent.StatePaused {
+		if !proc.Paused && proc.State != crux.StatePaused {
 			return false
 		}
 	}
@@ -4359,10 +4360,10 @@ func (s *Server) noAgentsDue() bool {
 	onDemandFromPack := config.OnDemandAgentsFromPacks()
 	seen := false
 	for name, proc := range statuses {
-		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) || proc.Paused || proc.State == agent.StatePaused {
+		if proc == nil || agentDisabledInConfig(s.deps.Config, name, proc) || proc.Paused || proc.State == crux.StatePaused {
 			continue
 		}
-		if proc.State == agent.StateRunning {
+		if proc.State == crux.StateRunning {
 			return false
 		}
 		seen = true
@@ -4389,7 +4390,7 @@ func (s *Server) hasRunningMeteredAgentWithoutLiveCapture() bool {
 		statuses = healthAgentStatuses()
 	}
 	for _, proc := range statuses {
-		if proc == nil || proc.State != agent.StateRunning {
+		if proc == nil || proc.State != crux.StateRunning {
 			continue
 		}
 		backend := strings.ToLower(strings.TrimSpace(proc.BackendOverride))
@@ -4500,7 +4501,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 				providerAuth++
 				providerAuthNames = append(providerAuthNames, name)
 			}
-			if proc.State == agent.StateRunning {
+			if proc.State == crux.StateRunning {
 				// A RUNNING agent sitting at a login prompt is alive but cannot
 				// work — the pane poller has literally seen "/login" on its
 				// terminal (proc.NeedsLogin). Counting it as running rendered a

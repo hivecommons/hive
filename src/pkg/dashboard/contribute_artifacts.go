@@ -2,10 +2,11 @@ package dashboard
 
 import (
 	"context"
-	"github.com/hivecommons/hive/pkg/agent"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/agent"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func (h *ContributeWSHub) validatePRArtifactTrailers(task *WSTaskAssign, prURL string) {

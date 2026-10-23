@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 )
@@ -24,7 +24,7 @@ func resetAgentLastActions(t *testing.T) {
 	})
 }
 
-func lastActionAgentByName(t *testing.T, statuses map[string]*agent.AgentProcess, name string) FrontendAgent {
+func lastActionAgentByName(t *testing.T, statuses map[string]*crux.Process, name string) FrontendAgent {
 	t.Helper()
 	cfg := &config.Config{
 		AgentRuntimeConfig: config.AgentRuntimeConfig{
@@ -57,8 +57,8 @@ func TestStaleWorkingAgentGetsDoingAndSummaryUpdated(t *testing.T) {
 		Action: github.AuditActionAgentCommentCreated, Agent: "scanner", Repo: "console", Target: 123,
 	}, acted)
 
-	a := lastActionAgentByName(t, map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning, LastKick: &kick},
+	a := lastActionAgentByName(t, map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning, LastKick: &kick},
 	}, "scanner")
 
 	if a.Busy != "working" {
@@ -88,8 +88,8 @@ func TestWorkingAgentWithoutActionUsesRoundStart(t *testing.T) {
 		Action: github.AuditActionAgentCommentCreated, Agent: "scanner", Repo: "console", Target: 7,
 	}, kick.Add(-time.Hour))
 
-	a := lastActionAgentByName(t, map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning, LastKick: &kick},
+	a := lastActionAgentByName(t, map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning, LastKick: &kick},
 	}, "scanner")
 
 	if a.Doing != "" {
@@ -111,8 +111,8 @@ func TestIdleAgentHasNoDoing(t *testing.T) {
 		Action: github.AuditActionAgentPRCreated, Agent: "scanner", Repo: "console", Target: 9,
 	}, time.Now().Add(-5*time.Minute))
 
-	a := lastActionAgentByName(t, map[string]*agent.AgentProcess{
-		"scanner": {State: agent.StateRunning, LastKick: &kick, Paused: true},
+	a := lastActionAgentByName(t, map[string]*crux.Process{
+		"scanner": {State: crux.StateRunning, LastKick: &kick, Paused: true},
 	}, "scanner")
 	if a.Doing != "" || a.SummaryUpdated != "" {
 		t.Errorf("paused agent doing=%q summaryUpdated=%q, want both empty", a.Doing, a.SummaryUpdated)

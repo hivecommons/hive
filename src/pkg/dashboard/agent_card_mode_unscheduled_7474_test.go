@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -49,7 +49,7 @@ func modeUnscheduledCfg() *config.Config {
 // surge-only cadence agent of #7474 is named `auditor` here.
 func TestBuildAgents_UnscheduledInMode(t *testing.T) {
 	cfg := modeUnscheduledCfg()
-	statuses := map[string]*agent.AgentProcess{}
+	statuses := map[string]*crux.Process{}
 	for name, ac := range cfg.Agents {
 		statuses[name] = newBlockerProc(name, ac, nil)
 	}

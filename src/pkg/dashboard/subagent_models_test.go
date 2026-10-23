@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -16,9 +16,9 @@ func TestSubAgentModelsStatus(t *testing.T) {
 			"scanner": {Backend: "copilot", Enabled: true},
 		},
 	}}
-	statuses := map[string]*agent.AgentProcess{"scanner": {
+	statuses := map[string]*crux.Process{"scanner": {
 		Name: "scanner", Config: cfg.Agents["scanner"],
-		SubAgentModels: []agent.SubAgentModel{{AgentType: "General-purpose", Model: "claude-opus-5", OlderGeneration: true}},
+		SubAgentModels: []crux.SubAgentModel{{AgentType: "General-purpose", Model: "claude-opus-5", OlderGeneration: true}},
 	}}
 	got := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})
 	if len(got) != 1 || len(got[0].SubAgentModels) != 1 || !got[0].SubAgentModels[0].OlderGeneration {

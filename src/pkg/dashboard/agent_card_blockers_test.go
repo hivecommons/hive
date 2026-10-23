@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -18,7 +19,7 @@ import (
 
 func TestBuildAgents_NoCadence(t *testing.T) {
 	kicked := time.Now().Add(-time.Hour)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scheduled":   newBlockerProc("scheduled", config.AgentConfig{Backend: "claude", Enabled: true}, nil),
 		"unscheduled": newBlockerProc("unscheduled", config.AgentConfig{Backend: "claude", Enabled: true}, nil),
 		"kickedonce":  newBlockerProc("kickedonce", config.AgentConfig{Backend: "claude", Enabled: true}, &kicked),
@@ -63,11 +64,11 @@ func TestBuildAgents_NoCadence(t *testing.T) {
 	}
 }
 
-func newBlockerProc(name string, cfg config.AgentConfig, lastKick *time.Time) *agent.AgentProcess {
-	return &agent.AgentProcess{
+func newBlockerProc(name string, cfg config.AgentConfig, lastKick *time.Time) *crux.Process {
+	return &crux.Process{
 		Name:         name,
 		Config:       cfg,
-		State:        agent.StateRunning,
+		State:        crux.StateRunning,
 		LastKick:     lastKick,
 		OutputBuffer: agent.NewRingBuffer(10),
 	}
@@ -75,7 +76,7 @@ func newBlockerProc(name string, cfg config.AgentConfig, lastKick *time.Time) *a
 
 func TestBuildAgents_NextKickIn(t *testing.T) {
 	last := time.Now().Add(-20 * time.Minute)
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scheduled": newBlockerProc("scheduled", config.AgentConfig{Backend: "claude", Enabled: true}, &last),
 		"stopped":   newBlockerProc("stopped", config.AgentConfig{Backend: "claude", Enabled: true}, &last),
 	}

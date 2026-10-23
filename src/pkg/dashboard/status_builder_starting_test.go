@@ -5,6 +5,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -22,18 +23,18 @@ func TestBuildAgents_StartingFlagOnlyWhileNotRunning(t *testing.T) {
 			},
 		},
 	}
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"scanner": {
 			Name:         "scanner",
 			Config:       cfg.Agents["scanner"],
-			State:        agent.StateStopped,
+			State:        crux.StateStopped,
 			Starting:     true,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 		"quality": {
 			Name:         "quality",
 			Config:       cfg.Agents["quality"],
-			State:        agent.StateRunning,
+			State:        crux.StateRunning,
 			Starting:     true,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},

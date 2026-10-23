@@ -27,7 +27,7 @@ func TestGatewayUpsertRefreshesLiveInferenceRoutes(t *testing.T) {
 	}
 
 	refreshed := false
-	deps.AgentMgr.SetInferenceCallbacks(func(name, backend, model string) {
+	agentManager(deps.AgentMgr).SetInferenceCallbacks(func(name, backend, model string) {
 		if name != "scanner" || backend != "litellm" || model != "m" {
 			t.Fatalf("refresh callback = (%q,%q,%q), want scanner/litellm/m", name, backend, model)
 		}

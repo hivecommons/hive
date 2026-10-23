@@ -1,8 +1,10 @@
 # Crux: the agent runtime boundary (#13536)
 
 Status: **partly shipped (v5).** Stage 1 is in progress in this repo: the
-boundary is named, the architecture ratchet and the tmux funnel are live, and
-the remaining Stage 1 items are tracked on the RFC. Stages 2 and 3 are design only.
+boundary is named, the architecture ratchet and the tmux funnel are live,
+`crux.Runtime` exists and the dashboard is on it, and the remaining Stage 1
+items (hub onto the crux value types, CI path filters) are tracked on the
+RFC. Stages 2 and 3 are design only.
 
 ## What Crux is
 
@@ -79,9 +81,23 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    `HasSession`); `pkg/tui` attaches through it and the ratchet's tmux
    baseline is zero everywhere else. Operations are added as call sites
    move behind the funnel, not ahead of them.
-3. `agent.Runtime`: the surface dashboard and hub actually need (sessions,
-   panes, kicks, engines, limits, event stream). Migrate both to it and
-   ratchet the symbol counts down.
+3. `crux.Runtime` (dashboard shipped, hub pending): `src/pkg/crux/runtime.go`
+   is the exported runtime surface, grouped as `Lifecycle`, `Observer`,
+   `Kicker`, `Definitions`, `Fleet` and `Credentials`; every method is
+   annotated with the consumer that needs it and `*agent.Manager` satisfies
+   it directly, so the adapter is zero-cost. The observation value types
+   (`Process`, `ProcessState`, `KickDispatch`, `KickOutcome`, `KickLogInfo`,
+   `RestartEvent`, `SubAgentModel`, `StartFailureClass` and their constants)
+   are aliases of the `pkg/agent` definitions for now: Stage 1 renames the
+   seam, Stage 2 moves the definitions behind it. `pkg/dashboard` holds a
+   `crux.Runtime` in `Dependencies.AgentMgr` and went from 68 to 51 distinct
+   `agent.<Symbol>` references; what remains is audit, commit-trailer,
+   provider-status, Copilot-token and agent-mode helpers plus the test-only
+   manager constructors, none of which a lifecycle interface covers.
+   `pkg/hub` holds no manager at all: its 18 references are the provider
+   status value types (`ProviderStatus`, `BackendAuth*`, `ProviderAuth*`),
+   which move to `pkg/crux` as the next step. `pkg/crux` is inside the
+   boundary for the ratchet's purposes.
 4. Agent configuration as its own struct and file (shipped):
    `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
    `src/pkg/config/agent_config.go`, embedded inline in `Config` and
