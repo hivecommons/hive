@@ -40,6 +40,16 @@
 #                     is itself a bot, the check is skipped: a bot-authored PR
 #                     squashes to a bot-authored commit, which the monitor
 #                     skips, so no mismatch is created.
+#   PR_MERGE_METHOD   "merge" when the PR wears the hive's `merge-method/merge`
+#                     label (dco-squash-attribution.yml sets it). The hive puts
+#                     it on a role/trusted PR whose head mixes the contributor's
+#                     commits with its own, each signed off by its own author,
+#                     and merges it with a merge commit; a bot-authored commit
+#                     that signs off as itself lands unchanged there, so it is
+#                     accepted. Only that shape: a contributor's commit still
+#                     needs the contributor's sign-off, and a sign-off naming
+#                     a different person still fails. Any other value (or
+#                     unset) keeps the squash rule.
 
 set -u -o pipefail
 
@@ -54,6 +64,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 base_ref="${1:-}"
 head_ref="${2:-HEAD}"
 pr_author="${3:-${PR_AUTHOR_LOGIN:-}}"
+merge_method="$(printf '%s' "${PR_MERGE_METHOD:-}" | tr '[:upper:]' '[:lower:]')"
 
 if [ -z "$base_ref" ]; then
   echo "usage: check-squash-signoff-attribution.sh <base-ref> <head-ref> [pr-author-login]" >&2
@@ -189,6 +200,18 @@ while IFS= read -r sha; do
   # cannot carry code, so forging this shape onto a real PR buys nothing.
   if is_release_commit "$sha" "$author_name" "$author_lc" "$signoff_emails"; then
     echo "Skipping ${sha}: release commit authored and signed by hive-release-bot; its PR merges with a merge commit, not a squash."
+    continue
+  fi
+
+  # The hive's merge-commit election (`merge-method/merge`): a bot-authored
+  # commit whose sign-off is its own address is internally consistent and a
+  # merge commit lands it exactly as it is, so the squash mismatch this gate
+  # exists for cannot arise. Deliberately narrow — bot author, self-sign-off —
+  # so a human commit signed off by a bot (or by another person) is still
+  # rejected whatever the label says.
+  if [ "$merge_method" = "merge" ] && is_bot_identity "$author_name $author_lc" &&
+     printf '%s\n' "$signoff_emails" | grep -qxF "$author_lc"; then
+    echo "Skipping ${sha}: bot-authored and self-signed; the PR carries merge-method/merge and lands this commit unchanged."
     continue
   fi
 

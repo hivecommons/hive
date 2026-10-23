@@ -3498,23 +3498,26 @@ func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func statusJSONResponse(w http.ResponseWriter, r *http.Request, data any) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Add("Vary", "Accept-Encoding")
+	body, ok := conditionalJSONBytes(w, r, data)
+	if !ok {
+		return
+	}
 	if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		if err := json.NewEncoder(w).Encode(data); err != nil {
-			slog.Warn("status json encode failed", "error", err)
+		if _, err := w.Write(body); err != nil {
+			slog.Warn("status json write failed", "error", err)
 		}
 		return
 	}
 	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Add("Vary", "Accept-Encoding")
 	gz := gzip.NewWriter(w)
 	defer func() {
 		if err := gz.Close(); err != nil {
 			slog.Warn("status gzip close failed", "error", err)
 		}
 	}()
-	if err := json.NewEncoder(gz).Encode(data); err != nil {
-		slog.Warn("status json gzip encode failed", "error", err)
+	if _, err := gz.Write(body); err != nil {
+		slog.Warn("status json gzip write failed", "error", err)
 	}
 }
 

@@ -49,8 +49,8 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 11 || detours != 6 {
-		t.Fatalf("mains=%d detours=%d, want 11 main segments (015 shares the Actionable column; 045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
+	if mains != 12 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 12 main segments (015 and 017 share the Actionable column; 045 is the issue parking bay; 095 shares the merge gate column) and 6 detours", mains, detours)
 	}
 }
 

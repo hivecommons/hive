@@ -1,209 +1,228 @@
 # Hive landscape and positioning
 
-> **Conducted: 2026-08-07. This document will rot.** Agentic software-delivery
-> tools are moving quickly; treat product details as time-sensitive and update
-> this page by PR when public docs change.
+> **Conducted: 2026-10-23. This document will rot.** Tools for AI coding
+> agents change fast. Treat every product detail here as time-sensitive and
+> update it by pull request when public docs change.
 
-Hive is an operations plane for AI-agent fleets: one operator-controlled system
-runs multiple coding/review agents, applies deterministic policy before and
-after model judgment, and exposes live dashboard, cost, hub/spoke, and
-contributor-compute surfaces. This page positions that design against nearby
-agentic orchestration tools.
+Hive is an operations plane for fleets of AI agents. One operator-controlled
+system runs many coding and review agents, applies fixed rules before and
+after the model's judgment, and shows status, cost and hub/spoke health on
+one dashboard. Each claim below names the public page checked on the date
+above.
 
 ## Agentic AI Foundation (AAIF) and Goose
 
 The Linux Foundation's [Agentic AI Foundation](https://aaif.io/) hosts
-[Goose](https://github.com/aaif-goose/goose), originally developed at Block.
-Goose is an execution backend; Hive is a downstream orchestration layer that
-dispatches to Goose at fleet scale, with operator-controlled policy and
-contributor-compute relays. Hive integrates Goose as an independent CNCF
-project; Hive does not join AAIF, seek AAIF membership, rely on AAIF to host or
-govern Hive, or claim AAIF endorsement or compliance.
-
-This page tracks Goose's upstream move so Hive's backend documentation,
-Dockerfiles, and pin-bump tooling follow the correct release source. It does not
-request an AAIF landscape listing or describe Hive as part of the foundation's
-membership, governance, or project set.
+[Goose](https://github.com/aaif-goose/goose), first built at Block. Goose's
+README now describes it as a general-purpose agent (desktop app, CLI and API)
+that works with 15 or more model providers. Goose runs tasks; Hive sits above
+it and dispatches work to Goose at fleet scale. Hive is an independent CNCF project. It is not an AAIF
+member, is not governed by AAIF, and claims no AAIF endorsement.
 
 Review material: [OpenSSF Best Practices badge](https://www.bestpractices.dev/projects/14261),
-[Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md),
+[Apache-2.0 license](../../LICENSE), [security self-assessment](security-self-assessment.md)
 and [CNCF reference architecture](cncf-reference-architecture.md).
 
-The [unattended Goose integration guide](../../docs/goose-at-scale.md) is
-maintained here for now. Goose's [contribution workflow](https://github.com/aaif-goose/goose/blob/main/CONTRIBUTING.md#from-issue-to-pull-request)
-requires a **Ready** issue on its board before any external docs PR, and asks
-humans to write new issues themselves. No open Hive issue was found there
-when checked for #10627, so no upstream PR has been opened. A human sponsor
-must file the documentation proposal and obtain Ready status before the
-page can be proposed upstream; the local guide is not upstream approval.
+The [unattended Goose guide](../../docs/goose-at-scale.md) lives here for now.
+Goose's [contribution workflow](https://github.com/aaif-goose/goose/blob/main/CONTRIBUTING.md#from-issue-to-pull-request)
+still requires a human-written **Ready** issue before any outside docs PR.
+None is open, so the guide is not upstream.
 
 ## Fullsend
 
-Public references: [fullsend.sh](https://fullsend.sh),
-[fullsend-ai/fullsend](https://github.com/fullsend-ai/fullsend),
-[Fullsend architecture](https://github.com/fullsend-ai/fullsend/blob/main/docs/architecture.md),
-[Fullsend roadmap](https://github.com/fullsend-ai/fullsend/blob/main/docs/roadmap.md),
-[Fullsend runtimes](https://github.com/fullsend-ai/fullsend/blob/main/docs/runtimes.md),
-[Fullsend intent representation](https://github.com/fullsend-ai/fullsend/blob/main/docs/problems/intent-representation.md).
+Checked: [fullsend.sh](https://fullsend.sh),
+[README](https://github.com/fullsend-ai/fullsend),
+[architecture](https://github.com/fullsend-ai/fullsend/blob/main/docs/architecture.md),
+[roadmap](https://github.com/fullsend-ai/fullsend/blob/main/docs/roadmap.md),
+[runtimes](https://github.com/fullsend-ai/fullsend/blob/main/docs/runtimes.md),
+[intent representation](https://github.com/fullsend-ai/fullsend/blob/main/docs/problems/intent-representation.md).
 
-Fullsend is a closely comparable open-source project. Its public README
-positions it as autonomous agentic software development for Git-hosted
-organizations, including GitHub, GitLab, and Forgejo. Its docs emphasize a
-repo-visible coordination model: target repositories carry `.fullsend/`
-configuration, GitHub installations use shim/reusable workflows and OIDC-minted
-GitHub App tokens, and GitLab support is being built through native CI triggers
-and polling. Its architecture names a vertical execution stack of dispatch,
-infrastructure, sandbox, harness, and runtime; production runtime docs currently
-list Claude Code as the production runtime and `dummy` for behavior tests, while
-future runtimes are tracked separately.
+Fullsend is the closest open-source comparison. Its README describes
+autonomous software development for GitHub, GitLab and Forgejo, "secure by
+design". Each target repo carries a `.fullsend/` folder. On GitHub a thin
+shim workflow calls one upstream reusable workflow, which mints short-lived
+GitHub App tokens through OIDC (identity proof without stored secrets). Its
+stack is dispatch, infrastructure, sandbox, harness and runtime, with one
+sandbox per agent role.
 
-Fullsend is also notably strong in public design discipline: many ADRs, a public
-roadmap, security and governance problem documents, and a thoughtful intent
-model. Its intent docs discuss git as an intent ledger and tiered authorization,
-which directly influenced Hive's catch-up work in [#2812](https://github.com/hivecommons/hive/issues/2812).
+Changed since August: per-org install was removed; GitLab uses a webhook fast
+path plus a cron poller; the runtime table lists `claude` (default) with `pi`
+and `codex` opt-in; Jira intake is a "Now" roadmap theme. Fullsend still
+publishes many ADRs (short design decision records). Its tiered-intent idea
+shaped [#2812](https://github.com/hivecommons/hive/issues/2812).
 
 ### Where Hive differs
 
-| Dimension | Fullsend, fairly summarized | Hive, today or in-flight |
+| Dimension | Fullsend | Hive |
 | --- | --- | --- |
-| Control plane | Repo-centered install and workflow dispatch, especially strong for GitHub Actions-native adoption. | A live fleet operations plane with governor modes, dashboard/SSE, terminal access, budget tracking, hub/spoke heartbeats, and contributor compute. |
-| Execution model | Short-lived, workflow/sandbox-oriented agent runs; production docs currently center Claude Code. | Long-lived tmux-managed agents today, with multiple backends documented in config: Claude, Copilot, Codex, Antigravity, Goose, and OpenAI-compatible gateways. |
-| Autonomy model | Public docs discuss shadow/autonomous and intent-tier concepts. | ACMM L1-L6 maps operator-selected maturity to deterministic per-agent modes and merge authority. |
-| Security enforcement | Sandbox, harness, scanner, and OIDC-mint controls are first-class in the docs. | Defense-in-depth combines CLI tool denial, scoped tokens, per-UID attribution, and a runtime-agnostic MITM proxy that enforces GitHub writes at the network boundary. |
-| Fleet topology | Per-repo install is the public deployment model. | Hub/spoke registry, callbacks, leaderboard, SaaS/manual provisioning paths, and ClankeR contributor-compute relay are built into the product shape. |
+| Control plane | Repo-centered install; GitHub Actions or GitLab CI runs each stage. | A live fleet plane: governor modes, dashboard, terminal access, budgets, hub/spoke heartbeats, contributor compute. |
+| Execution model | Short runs, one sandbox per agent role; Claude Code by default, `pi` and `codex` opt-in. | Long-lived agents in tmux; backends include Claude, Copilot, Codex, Antigravity, Goose and OpenAI-compatible gateways. |
+| Autonomy model | Tiered intent and shadow/autonomous concepts in its problem docs. | ACMM (AI Codebase Maturity Model) L1–L6 maps repo maturity to per-agent modes and merge rights. |
+| Security | Sandbox, harness, scanner and OIDC token minting are first-class. | Layered controls: tool denial, scoped tokens, per-user attribution, and a proxy that checks every GitHub write on the network. See [security model](security-model.md) and [self-assessment](security-self-assessment.md). |
+| Fleet topology | Per-repo install. | Hub/spoke registry, callbacks, leaderboard, provisioning paths, contributor relay. |
 
-Neither approach is inherently better for every team. Fullsend-style tooling is
-lighter when the target is one repo or one GitHub organization, GitHub Actions is
-already the trusted execution substrate, and the team wants minimal standing
-infrastructure. Hive is a better fit when operators need live fleet visibility,
-multiple runtimes, graduated autonomy, hub-managed spokes, contributor compute,
-or network-level enforcement independent of agent runtime hooks.
+Fullsend is lighter for one repo or org where Actions is already trusted.
+Hive fits when operators need live fleet visibility, many runtimes, graduated
+autonomy, hub-managed spokes, contributor compute, or network-level checks.
 
 ## OpenAI Symphony
 
-Reviewed against [OpenAI Symphony](https://github.com/openai/symphony) at
-[`be10a1b`](https://github.com/openai/symphony/tree/be10a1b79df723d6d7612b5651c8522704dafb2e).
-Public references: [README](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/README.md),
-[Draft v1 SPEC.md](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/SPEC.md).
-Symphony is Apache-2.0 licensed and describes its Elixir reference implementation
-as an engineering preview for trusted environments. Its demo monitors Linear,
-runs isolated coding agents, and presents proof of work (CI status, review
-feedback, complexity analysis, and walkthrough videos) before accepted PRs land.
-Those demo artifacts and auto-landing are **not** mandatory spec requirements:
-a successful spec run can stop at a human-review handoff.
-
-Hive applies the Symphony operating model—manage work rather than supervise
-every coding turn—to GitHub/GitLab-native projects, with deterministic policy
-gating in front of the agent. This is a positioning analogy, **not** a claim
-that Hive implements Symphony's `WORKFLOW.md` or Codex app-server contracts.
+Checked: [openai/symphony](https://github.com/openai/symphony) at
+[`be10a1b`](https://github.com/openai/symphony/tree/be10a1b79df723d6d7612b5651c8522704dafb2e)
+([README](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/README.md),
+[SPEC.md](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/SPEC.md)).
+`main` has not moved since 2026-09-15. Symphony is Apache-2.0; its Elixir
+build is an "engineering preview for trusted environments". The demo watches
+Linear, runs isolated agents and shows proof of work before a PR lands. Those
+extras are **not** required by the spec. Hive borrows the idea of managing
+work rather than watching every coding turn. Hive does not implement
+Symphony's `WORKFLOW.md` or Codex app-server contracts.
 
 | Dimension | Symphony | Hive |
 | --- | --- | --- |
-| Work source | Linear in the demo; the current spec defines a provider-neutral tracker adapter. | GitHub/GitLab forge workflows; primary planning adapters include GitHub Issues/Projects, Linear, and Jira. |
-| Pre-agent gating | Config preflight, active/terminal states, required labels, adapter dispatchability, claims, and concurrency checks (spec §§6–8). | Deterministic shell enumeration/classification/merge eligibility before a kick, plus ACMM and network-level write enforcement. |
-| Agents | Codex app-server is the specified runner protocol. | Multiple CLI backends, including Claude, Copilot, Codex, Antigravity, and Goose; confinement depends on backend and deployment. |
-| Scale model | Per-issue persistent workspace, bounded concurrent runs, reconciliation, continuation, and retry. | Queue-depth-driven cadence, long-lived agents, isolated execution paths, hub/spoke, and convergence audits. |
-| Packaging | Language-neutral draft specification and experimental Elixir reference implementation. | Go runtime and supporting scripts, Compose/Quadlet deployment, dashboard, and contributor relay. |
+| Work source | Linear in the demo; the spec defines a tracker-neutral adapter. | GitHub Issues, GitHub Projects, Linear and Jira (see Work sources below). |
+| Pre-agent gating | Config preflight, state checks, labels, claims and concurrency limits. | Shell-level listing, classification and merge checks before any kick, plus ACMM and proxy write checks. |
+| Agents | Codex app-server is the runner protocol. | Many CLI backends; isolation depends on backend and deployment. |
+| Scale model | One workspace per issue, bounded runs, retry. | Queue-depth cadence, long-lived agents, hub/spoke, convergence audits. |
+| Packaging | Draft spec plus Elixir preview. | Go runtime, Compose/Quadlet deploy, dashboard, contributor relay. |
 
-Choose Symphony when a repo-owned `WORKFLOW.md`, the Codex app-server contract,
-and per-ticket workspace lifecycle are the desired integration surface. Choose
-Hive when fleet operations, multiple runtimes, forge-native review/merge policy,
-and graduated autonomy are central. Neither tool's workspace isolation alone
-constitutes a sandbox.
-
-See the [section-by-section alignment review](../../docs/design/symphony-spec-alignment.md)
-for gaps and intentional divergences, the existing
-[Linear work source](work-sources.md), and
-[work-source provider contract](integrations/work-source-providers.md).
+See the [alignment review](../../docs/design/symphony-spec-alignment.md),
+[work sources](work-sources.md) and the
+[provider contract](integrations/work-source-providers.md).
 
 ## GitHub Agentic Workflows (gh-aw)
 
-Public references: [github/gh-aw](https://github.com/github/gh-aw),
-[gh-aw documentation](https://github.github.com/gh-aw/), and the
-[githubnext/agentics sample gallery](https://github.com/githubnext/agentics).
+Checked: [github/gh-aw](https://github.com/github/gh-aw),
+[docs](https://github.github.com/gh-aw/),
+[githubnext/agentics](https://github.com/githubnext/agentics).
 
-GitHub Agentic Workflows compiles Markdown-authored agent instructions and
-frontmatter into GitHub Actions workflows. It is an Actions-native on-ramp,
-not a replacement for Hive's fleet scheduler. Its engines include Copilot,
-Claude, Codex, and Gemini; shared engine names do not imply shared credentials,
-confinement, or Hive backend-tier acceptance.
+gh-aw compiles Markdown plus YAML frontmatter into a normal GitHub Actions
+workflow: an Actions-native on-ramp, not a fleet scheduler. Since August its
+engine list added **Pi** alongside Copilot, Claude Code, Codex and Gemini.
+Agent jobs are read-only and sandboxed by default; writes go through
+`safe-outputs` jobs with scoped permissions.
 
 | Dimension | gh-aw | Hive |
 | --- | --- | --- |
-| Execution substrate | Event, dispatch, and scheduled GitHub Actions runs | Long-running fleet with queue-depth cadence and convergence audits |
-| Authoring | Markdown prompt plus workflow frontmatter compiled to Actions | Project config, deterministic pipeline, and agent policies |
-| Judgment and policy | Engine judgment with declared tools, permissions, and safe outputs | Deterministic filtering/classification before judgment and gated merge authority afterward |
-| Operations | Per-workflow Actions logs and artifacts | Live dashboard, budgets, hub/spoke, and contributor compute |
-| Best starting point | A repo already using Actions that wants bounded agentic jobs | Operators coordinating continuous work across agents and repositories |
+| Execution | Event, dispatch and scheduled Actions runs | Long-running fleet with queue-depth cadence |
+| Authoring | Markdown prompt plus frontmatter | Project config, fixed pipeline, agent policies |
+| Policy | Engine judgment with declared tools and safe outputs | Fixed filtering before judgment, gated merge rights after |
+| Operations | Per-workflow logs and artifacts | Live dashboard, budgets, hub/spoke, contributor compute |
+| Best start | A repo on Actions that wants bounded agent jobs | Operators running continuous work across repos |
 
-Our [Hive workflow sample and installation guide](../deploy/gh-aw/README.md)
-provides manually dispatched **report-only issue triage**. A deterministic
-pre-agent admission step filters held/blocked issues, then runs Hive's existing
-classifier before the configured engine produces an advisory report. It does
-not give the engine merge authority or reproduce the whole production pipeline.
-Keep existing gh-aw workflows when adopting Hive: add the relay/fleet for the
-queues and stages requiring continuous operation, rather than rewriting those
-workflows or letting both systems claim the same tasks.
-
-The inverse path (Hive dispatching gh-aw as an external host through
-`pkg/extwork`) is **not implemented**. A future adapter is bounded to report-only
-and shadow modes, with the same credential, capability, and verified-receipt
-admission bar as external OMP; see
+Hive's [gh-aw sample](../deploy/gh-aw/README.md) is a manually run,
+report-only issue triage with no merge rights. Keep existing gh-aw workflows
+when adopting Hive. Hive dispatching gh-aw as an external host is **not
+implemented**; see
 [backend support tiers](backend-support-tiers.md#github-agentic-workflows-on-ramp-not-a-cli-backend).
 
-## Single-agent and service-oriented tools
+## New since August 2026
 
-### GitHub Copilot coding agent
+Verified 2026-10-23; all were missing from this page. "Backend" means Hive
+could drive it; "orchestrator" means it competes with Hive's control plane.
 
-GitHub Copilot's coding agent is a hosted, GitHub-native way to assign issues or
-PR follow-ups to an agent. It is the lowest-friction option for teams already in
-GitHub that want a single background agent without operating their own control
-plane. Hive differs by coordinating a fleet of specialized agents, enforcing
-ACMM-derived permissions, aggregating fleet cost/status, and supporting
-non-Copilot runtimes.
+**[GitHub Agent HQ](https://github.blog/news-insights/company-news/welcome-home-agents/)**
+(announced 2025-10-28, rolling out since) adds a "mission control" to assign
+and track agents from Anthropic, OpenAI, Google, Cognition and xAI inside a
+paid Copilot plan. Orchestrator, GitHub-only, hosted. Copilot stays a Hive
+backend.
 
-### Devin-class hosted services
+**[Claude Managed Agents](https://claude.com/resources/articles/claude-managed-agents)**
+(2026-04-08, public beta) is Anthropic's hosted harness: state, permissions,
+scheduled runs, and self-hosted sandboxes, billed per session-hour. Backend
+or hosting layer, not a work-source orchestrator.
 
-Hosted software-engineering agents such as Devin-class services optimize for
-outsourcing a task to a capable autonomous worker with a managed environment and
-product UX. They can be a better fit when a team wants a vendor-operated agent
-and does not want to run orchestration infrastructure. Hive is more appropriate
-when the organization needs open-source control, explicit policy, self-hosted
-operation, or integration with Kubernetes/hub/spoke workflows.
+**[OpenAI Agents API](https://platform.openai.com/docs/guides/agents)** runs
+persistent agents on OpenAI infrastructure with the Codex harness. Backend
+or hosting layer; Codex CLI remains a Hive backend.
 
-### SWE-agent and research harnesses
+**[Jules Action](https://github.com/google-labs-code/jules-action)** triggers
+Google's Jules cloud agent from GitHub events. Per-repo orchestrator on
+Actions, like gh-aw; Jules itself is a possible backend.
 
-SWE-agent-style projects are excellent for benchmarking, experiments, and
-single-task repair loops where the research question is the agent's ability to
-solve an issue. Hive is not primarily a benchmark harness; it is an operating
-system for repeated project maintenance, policy-bound merge decisions, and
-multi-agent fleet operation.
+**[Omnigent](https://github.com/omnigent-ai/omnigent)** (Apache-2.0) is an
+open-source "meta-harness" over Claude Code, Codex, Cursor, Pi and others
+with policy and sandboxing. Both: a competitor at single-team scale and a
+backend candidate.
+
+**[Zeron](https://github.com/zeronsh/zeron)** (MIT) is a local-first control
+plane for coding agents. Orchestrator for one developer or VPS; no
+work-source adapters.
+
+| Dimension | Agent HQ | Managed Agents / Agents API | Omnigent, Zeron |
+| --- | --- | --- | --- |
+| Control plane | Hosted mission control in GitHub | Hosted agent runtime, no tracker | Local or VPS app |
+| Work source | GitHub issues and PRs | None built in | Chat and terminal sessions |
+| Policy | Enterprise controls, agentic review | Scoped permissions, vaults | Omnigent policies; Zeron local |
+| Isolation | Vendor-run | Managed or self-hosted sandbox | Omnigent sandboxing; Zeron none stated |
+| Role for Hive | Competitor; Copilot backend | Backend / hosting | Both / competitor |
+
+## Agent isolation
+
+By default Hive agents share one container, separated by Unix user. An
+opt-in sandbox mode runs each task in its own rootless Podman container or
+Kubernetes Job with no credentials at all; pushes go through a broker. See
+[sandbox isolation](sandbox-isolation.md) and the
+[security model](security-model.md#3-agent-runtime-isolation).
+
+The project is evaluating stronger isolation runtimes. One candidate is
+[NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) (Apache-2.0), a
+"safe, private runtime for fleets of autonomous AI agents" with kernel-level
+file, syscall and network policy per sandbox. AAIF's
+[OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) is another.
+Nothing is decided and no integration exists today.
+
+| Project | Isolation unit | Checked |
+| --- | --- | --- |
+| Hive (default) | Shared container, per-user separation | this repo |
+| Hive (opt-in) | Rootless container or K8s Job per task, no credentials | [sandbox-isolation.md](sandbox-isolation.md) |
+| Fullsend | One sandbox per agent role, policy in `.fullsend/` | [architecture](https://github.com/fullsend-ai/fullsend/blob/main/docs/architecture.md) |
+| gh-aw | Actions runner, read-only by default | [README](https://github.com/github/gh-aw) |
+| Symphony | Workspace per issue; not a sandbox by itself | [SPEC.md](https://github.com/openai/symphony/blob/be10a1b79df723d6d7612b5651c8522704dafb2e/SPEC.md) |
+| OpenShell | Kernel-enforced sandbox with policy gateway | [README](https://github.com/NVIDIA/OpenShell) |
+| OpenSandbox (AAIF) | Sandbox API over Docker or Kubernetes; Firecracker micro-VMs | [README](https://github.com/opensandbox-group/OpenSandbox) |
+
+## Work sources
+
+Hive is work-source agnostic. The governor reads GitHub Issues, GitHub
+Projects, Linear or Jira through one
+[provider contract](integrations/work-source-providers.md); Hive Commons
+itself runs on it. Symphony is Linear-first; Fullsend, gh-aw and Agent HQ
+are forge-first. Hive states this as a differentiator: the same fleet,
+policy and dashboard apply whichever tracker holds the work.
+
+## Related projects and vendors
+
+**GitHub Copilot coding agent** hands one issue to one hosted agent inside
+GitHub; it is now one of the agents under Agent HQ (below). **Devin-class
+hosted services** sell a managed worker with a vendor UX for teams that do
+not want to run orchestration. **SWE-agent and research harnesses** are
+built for benchmarks and single-task repair loops. Hive differs from all
+three: open-source, self-hosted, fleet-scale, with explicit policy.
 
 ## When to choose what
 
-- Choose **gh-aw** when you want Markdown-authored, bounded agentic Actions
-  jobs in an existing repository without running a standing fleet.
-- Choose **GitHub Copilot coding agent** when you need the quickest hosted path
-  for GitHub issues and do not need a separate fleet governor or custom policy
-  plane.
-- Choose **Symphony** when you want a spec-first, repo-owned `WORKFLOW.md`
-  and Codex app-server orchestration with per-ticket persistent workspaces.
-- Choose **Fullsend-style tooling** when you have a small number of repos, want
-  GitHub Actions or native CI to be the execution substrate, prefer repo-visible
-  `.fullsend/` configuration, and want little or no always-on infrastructure.
-- Choose **Devin-class services** when managed autonomy and vendor UX matter more
-  than self-hosted controls or open implementation details.
-- Choose **SWE-agent/research harnesses** when the goal is evaluation,
-  reproducible experiments, or one-off issue repair rather than operations.
-- Choose **Hive** when the problem is operating a live AI-agent fleet: multiple
-  runtimes, ACMM maturity gates, deterministic merge policy, hub/spoke
-  provisioning, contributor compute, cost visibility, and network-level MITM
-  enforcement.
+- **gh-aw or Jules Action**: bounded agent jobs in a repo already on
+  Actions, no standing fleet.
+- **Agent HQ / Copilot coding agent**: the quickest hosted path for GitHub
+  issues with no separate policy plane.
+- **Symphony**: spec-first `WORKFLOW.md`, Codex app-server, one workspace
+  per ticket.
+- **Fullsend**: a few repos, CI as the substrate, repo-visible `.fullsend/`
+  config.
+- **Hosted services (Devin-class, Managed Agents)**: vendor-run autonomy
+  over self-hosted control.
+- **Research harnesses**: evaluation and one-off repair, not operations.
+- **Hive**: operating a live agent fleet across any work source, with many
+  runtimes, ACMM gates, fixed merge policy, hub/spoke provisioning,
+  contributor compute, cost visibility and proxy-level write checks.
 
 ## Hive claims checked against this repo
 
-- Live fleet operations plane: [architecture](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick), [dashboard and observability](architecture.md#10-dashboard--observability).
-- Multi-runtime model: [architecture](architecture.md#9-model-backends--cost), [agent configuration](agent-configuration.md).
-- ACMM autonomy: [architecture](architecture.md#6-acmm--controlling-agent-autonomy), [ACMM matrix](acmm-policy-matrix.md).
+- Fleet operations plane: [architecture](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick), [dashboard](architecture.md#10-dashboard--observability).
+- Multi-runtime: [architecture](architecture.md#9-model-backends--cost), [agent configuration](agent-configuration.md).
+- ACMM: [architecture](architecture.md#6-acmm--controlling-agent-autonomy), [ACMM matrix](acmm-policy-matrix.md).
 - Hub/spoke and contributor compute: [architecture](architecture.md#8-hub--spoke), [manual provisioning](manual-provisioning.md).
-- MITM enforcement: [architecture](architecture.md#5-layered-guardrails-defense-in-depth), [ADR-0002](adr/0002-mitm-proxy-network-enforcement.md).
+- Proxy write checks: [architecture](architecture.md#5-layered-guardrails-defense-in-depth), [ADR-0002](adr/0002-mitm-proxy-network-enforcement.md).
+- Work sources: [work-sources.md](work-sources.md).
+- Isolation: [sandbox-isolation.md](sandbox-isolation.md), [security model](security-model.md#3-agent-runtime-isolation).

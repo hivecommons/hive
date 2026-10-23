@@ -43,12 +43,17 @@ const (
 //   - github.HoldLabels plus this hive's canonical hold label;
 //   - stage/071-needs-author, the PR stage where a human author must push
 //     or answer the hive's diagnosis;
+//   - the sentinel alert label (sentinel.label, default sentinel-alert): the
+//     sweep refuses to merge a flagged PR until a maintainer reviews it and
+//     removes the label (hivecommons/hive#13780);
 //   - the reporter-trust awaiting label (default needs-triage): the issue
 //     waits for a maintainer to triage it before the hive may pick it up.
 //
 // The Hive activity monitor's synthetic "Needs human" facet reads the same
 // list (StageTrackerResponse.NeedsHumanLabels); a label matches when it
-// equals an entry or sits under it as `entry/...` (needs-human/agent-ready).
+// equals an entry or sits under it as `entry/...` (needs-human/agent-ready),
+// or matches the needs-human*, *needs-decision or *needs-author patterns
+// (stageTrackerLabelNeedsHuman).
 //
 // "blocked" is deliberately absent: the codebase treats it as a contributor
 // skip marker and a PR mergeability state, not as a parked-on-a-person label.
@@ -80,8 +85,10 @@ func needsHumanPresetLabels(cfg *config.Config, hiveID string) []string {
 	add(github.CanonicalHiveHoldLabel(hiveID))
 	add(stagelabels.NeedsAuthor.Label())
 	if cfg != nil {
+		add(cfg.Sentinel.LabelOrDefault())
 		add(cfg.Project.IssueFilter.ReporterTrustAwaitingLabel())
 	} else {
+		add(config.DefaultSentinelLabel)
 		add(config.DefaultReporterTrustAwaitingLabel)
 	}
 	return out

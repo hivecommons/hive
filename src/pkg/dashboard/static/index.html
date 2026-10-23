@@ -1271,11 +1271,14 @@
     .status-badge.disabled { --component-status: var(--status-neutral); }
     .agent-card.status-blocked { border-left-color: var(--red) !important; }
     .agent-card.status-needs-context { border-left-color: var(--yellow) !important; }
+    /* Stale pulse: an opacity-only overlay on the left edge (compositor
+       thread) rather than animating border-left-color on the main thread. */
     @keyframes pulse-amber {
-      0%,100% { border-left-color: color-mix(in srgb, var(--yellow) 30%, transparent); }
-      50% { border-left-color: color-mix(in srgb, var(--yellow) 80%, transparent); }
+      0%,100% { opacity: 0.3; }
+      50% { opacity: 0.8; }
     }
-    .agent-card.status-stale { animation: pulse-amber 2s ease-in-out infinite; }
+    .agent-card.status-stale { border-left-color: transparent !important; }
+    .agent-card.status-stale::before { content: ''; position: absolute; top: calc(-1 * var(--line-width)); bottom: calc(-1 * var(--line-width)); left: calc(-1 * var(--focus-ring-width)); width: var(--focus-ring-width); border-radius: var(--r-lg) 0 0 var(--r-lg); background: var(--yellow); pointer-events: none; animation: pulse-amber 2s ease-in-out infinite; }
     /* Last upstream/launch error — stacked below .agent-state, never under the
        working-indicator dot, so a retry in progress cannot hide it (#3604). */
     .agent-error { font-size: 0.72rem; color: var(--red); margin-top: var(--sp-2); text-align: right; word-break: break-word; }
@@ -1445,6 +1448,13 @@
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
     .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+    .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
+    /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
+       regressed, and the human-decision chevron itself when its word
+       reads "Sentinel alert · needs human". Danger-tinted from the
+       status token the sentinel pill on the repo card already uses. */
+    .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
+    .ham-seg.active.ham-sentinel { background: var(--status-error); color: var(--surface-0); }
     .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); min-height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
     .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
     .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
@@ -2733,9 +2743,12 @@
       100% { box-shadow: inset 0 0 0 2px transparent; }
     }
     .anchor-highlight { animation: anchor-flash 1.2s ease-out; }
+    /* Infinite pulses animate opacity only (compositor thread). Animating
+       box-shadow forced a main-thread paint of the page every frame. The glow
+       is a static shadow on the dot and fades with the dot's opacity. */
     @keyframes breathe-green {
-      0%,100% { opacity: 1; box-shadow: 0 0 6px 2px rgba(63,185,80,0.5); }
-      50% { opacity: 0.25; box-shadow: 0 0 2px 0px rgba(63,185,80,0.1); }
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.25; }
     }
     .working-indicator {
       position: absolute; top: 12px; right: 12px;
@@ -2744,14 +2757,16 @@
     }
     .agent-card.working .working-indicator {
       display: block;
+      box-shadow: 0 0 6px 2px color-mix(in srgb, var(--green) 50%, transparent);
       animation: breathe-green 4s ease-in-out infinite;
     }
 
     /* Green pulsing dot for active agents in cadence matrix */
-    @keyframes green-pulse { 0%,100% { opacity: 1; box-shadow: 0 0 4px var(--green); } 50% { opacity: 0.3; box-shadow: none; } }
+    @keyframes green-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
     .active-dot {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: var(--green); margin-right: var(--sp-3); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
       animation: green-pulse 6s ease-in-out infinite;
     }
 
@@ -2870,6 +2885,7 @@
     .gov-matrix .agent-dot {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: var(--green); margin-right: var(--sp-2); vertical-align: middle;
+      box-shadow: 0 0 4px var(--green);
       animation: green-pulse 6s ease-in-out infinite;
     }
 
@@ -4406,6 +4422,10 @@
     .kb-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: 14px; }
     .kb-fact-list { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 500px; overflow-y: auto; }
     .kb-fact-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; transition: all 0.15s; }
+    /* The list can hold thousands of facts inside a 500px scroller; let the
+       browser skip layout and paint for the cards that are scrolled out of
+       view instead of re-rendering all of them on every frame. */
+    .kb-fact-item { content-visibility: auto; contain-intrinsic-size: auto 80px; }
     .kb-fact-item:hover { border-color: var(--accent); background: rgba(88,166,255,0.04); }
     .kb-fact-item.selected { border-color: var(--accent); background: rgba(88,166,255,0.08); }
     .kb-fact-meta { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); width: 50px; }
@@ -4521,7 +4541,7 @@
     }
     .section-chevron.collapsed { transform: rotate(-90deg); }
     .section-body {
-      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease;
+      overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease, content-visibility 200ms;
       max-height: none; opacity: 1;
     }
     .section-body.collapsed {
@@ -4717,7 +4737,12 @@
     .gh-api-budget-table .gh-api-budget-empty { white-space: normal; }
     .gh-api-budget-empty { color: var(--muted); }
     @media (max-width: 640px) { .debug-headline-tokens { display: none; } }
-    .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
+    .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease, content-visibility 200ms; max-height: none; opacity: 1; }
+    /* Keep content rendered until collapse finishes, but reveal it at the start
+       of expansion so scrollHeight and sparkline geometry can be measured. */
+    .dash-card-body, .section-body { transition-behavior: allow-discrete; }
+    .dash-card-body.collapsed:not(.collapsed-with-headline),
+    .section-body.collapsed:not(.collapsed-with-headline) { content-visibility: hidden; }
     .dash-card-body.collapsed { max-height: 0 !important; opacity: 0; pointer-events: none; }
     .dash-card-body.collapsed.collapsed-with-headline { max-height: none !important; opacity: 1; pointer-events: auto; }
     /* Wrap controls separately from the dense, locally scrolling audit table. */
@@ -9511,6 +9536,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         body.style.maxHeight = hasHeadline ? SECTION_EXPANDED_MAX_HEIGHT : body.style.maxHeight;
       } else {
         clearCollapsedHeadlineVisibility(body);
+        // Restore content visibility before reading layout or replaying sparklines.
         body.classList.remove('collapsed');
         if (animate) {
           body.style.maxHeight = body.scrollHeight + 'px';
@@ -10220,7 +10246,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
       });
       if (!experimentOn) {
-        if (_nousPollTimer) { clearInterval(_nousPollTimer); _nousPollTimer = null; }
+        if (_nousPollTimer) { dashboardClearInterval('nous-status'); _nousPollTimer = null; }
         _nousPollStarted = false;
         const panel = document.getElementById('nous-panel');
         if (panel) panel.innerHTML = '';
@@ -11506,15 +11532,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return capDashboardArray(arr, max || CLIENT_HISTORY_MAX_SAMPLES);
     }
     function dashboardSetInterval(key, fn, ms) {
-      if (DASHBOARD_INTERVALS[key]) clearInterval(DASHBOARD_INTERVALS[key]);
-      DASHBOARD_INTERVALS[key] = setInterval(fn, ms);
-      return DASHBOARD_INTERVALS[key];
+      dashboardClearInterval(key);
+      const entry = { fn, ms, timer: null };
+      DASHBOARD_INTERVALS[key] = entry;
+      if (!document.hidden) dashboardStartInterval(entry);
+      return entry;
+    }
+    function dashboardStartInterval(entry) {
+      entry.timer = setInterval(entry.fn, entry.ms);
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
-      clearInterval(DASHBOARD_INTERVALS[key]);
+      clearInterval(DASHBOARD_INTERVALS[key].timer);
       delete DASHBOARD_INTERVALS[key];
     }
+    document.addEventListener('visibilitychange', () => {
+      for (const [key, entry] of Object.entries(DASHBOARD_INTERVALS)) {
+        if (DASHBOARD_INTERVALS[key] !== entry) continue;
+        clearInterval(entry.timer);
+        entry.timer = null;
+        if (document.hidden) continue;
+        dashboardStartInterval(entry);
+        // A refresh failure must not prevent the other panels from resuming.
+        // Snapshot iteration also permits a callback to clear/replace itself.
+        if (DASHBOARD_INTERVALS[key] === entry) {
+          try { Promise.resolve(entry.fn()).catch(console.error); } catch (err) { console.error(err); }
+        }
+      }
+    });
     let historyData = (() => {
       try {
         const stored = localStorage.getItem(SPARKLINE_STORAGE_KEY);
@@ -11670,6 +11715,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (svg.getClientRects && svg.getClientRects().length === 0) return false;
       return true;
     }
+    function animateSparklinePart(element, frames, options) {
+      const animation = element.animate(frames, options);
+      animation.onfinish = () => {
+        // Persist the final appearance before releasing the forwards-fill effect.
+        const last = frames[frames.length - 1];
+        for (const [property, value] of Object.entries(last)) element.style[property] = String(value);
+        animation.cancel();
+      };
+      return animation;
+    }
     function animateSparklineSvg(svg, length) {
       if (!svg || !svg.isConnected) return;
       cancelSparklineWork(svg, false);
@@ -11684,9 +11739,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.classList.add('is-redrawing', 'is-glowing');
       line.style.strokeDasharray = String(len);
       line.style.strokeDashoffset = String(len);
-      line.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
-      if (area) area.animate([{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
-      if (dot) dot.animate([{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
+      animateSparklinePart(line, [{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
+      if (area) animateSparklinePart(area, [{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
+      if (dot) animateSparklinePart(dot, [{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
       const cleanupTimer = setTimeout(() => {
         _sparklineCleanupTimers.delete(wrap);
         if (!line.isConnected) return;
@@ -11784,12 +11839,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return sparkSvg(series, 'var(--red)', entries.map(e => e.t), `agent:${agentName}:restarts`);
     }
 
+    // Conditional reads avoid reparsing unchanged histories. Keep one validator
+    // per endpoint (not per since cursor), so this cache stays bounded.
+    const _historyValidators = new Map();
+    async function fetchDashboardHistory(url) {
+      const key = url.split('?')[0];
+      const previous = _historyValidators.get(key);
+      const headers = previous && previous.url === url ? { 'If-None-Match': previous.etag } : {};
+      const r = await fetch(url, { headers, cache: 'no-store' });
+      if (r.status === 304) return null;
+      if (!r.ok) throw new Error(`History request failed: ${r.status}`);
+      const data = await r.json();
+      const etag = r.headers.get('ETag');
+      if (etag) _historyValidators.set(key, { url, etag });
+      else _historyValidators.delete(key);
+      return data;
+    }
+
     // ── Fact count sparkline (30-day server-side history) ──
     let _factHistory = [];
     async function fetchFactHistory() {
       try {
-        const r = await fetch('/api/knowledge/fact-history');
-        _factHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP);
+        const data = await fetchDashboardHistory('/api/knowledge/fact-history');
+        if (data !== null) _factHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP);
       } catch { /* non-critical */ }
     }
     // axisSparkSvg renders a time series WITH axes (#4298: the dashboard's
@@ -11838,11 +11910,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Mirrors the fact sparkline: same axis treatment,
     // reads /api/cost/history which parallels /api/knowledge/fact-history.
     let _costHistory = [];
+    let _costHistoryLoading = false;
+    let _costHistoryInstance = null;
+    // Spend calculations require every counter step, including resets. Bootstrap
+    // the full retained ring once, then transfer only new full-resolution rows.
+    const COST_HISTORY_POINTS = 8640;
     async function fetchCostHistory() {
+      if (_costHistoryLoading) return;
+      _costHistoryLoading = true;
       try {
-        const r = await fetch('/api/cost/history');
-        _costHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP);
+        const instance = _statusInstance;
+        const history = _costHistoryInstance === instance ? _costHistory : [];
+        const since = history.length ? history[history.length - 1].t : 0;
+        if (_costHistoryInstance !== instance) _historyValidators.delete('/api/cost/history');
+        const data = await fetchDashboardHistory(`/api/cost/history?max_points=${COST_HISTORY_POINTS}${since ? '&since=' + since : ''}`);
+        if (instance !== _statusInstance) return; // a restart raced this request
+        if (data !== null) {
+          _costHistory = capDashboardArray(history.concat(data), COST_HISTORY_POINTS);
+          _costHistoryInstance = instance;
+        }
       } catch { /* non-critical */ }
+      finally { _costHistoryLoading = false; }
     }
     function costSparkSvg() {
       const total = costAllTimeEstimate(_lastCost && _lastCost.estimated);
@@ -13009,8 +13097,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     async function fetchHistory() {
       try {
-        const r = await fetch('/api/history');
-        const evalEntries = await r.json();
+        const evalEntries = await fetchDashboardHistory('/api/history');
+        if (evalEntries === null) return;
         // Ensure token history is loaded before merging (fixes race on initial page load)
         if (!window._serverTokenHistory) {
           try {
@@ -13544,12 +13632,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // It lights the Actionable column too, with its own word; a maintainer's
     // move. The Open column is untouched by it.
     const STAGE_TRACKER_TRIAGE_NEEDED = 15;
+    // 017 possible-existing: the prior-art gate parked the issue on its
+    // author (hivecommons/hive#13575). Lights Actionable with its own word.
+    const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 15: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     // Motion bucket of the lit chevron: only a step the hive is acting on
     // ('active', gentle pulse) or one waiting on a person ('needs-human',
@@ -13595,6 +13686,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_MOTION_BY_STAGE[n] || STAGE_TRACKER_MOTION_STATIC;
     }
     const STAGE_TRACKER_TRAIL_HOPS = 4;
+    // Sentinel alert on a PR (payload sentinel_alert, from the sentinel-alert
+    // label or the head's evidence bundle): the human-decision lane names
+    // it in the chevron word itself; every other lane adds a chip. The
+    // words come from the hive's sentinel (possible security override,
+    // privilege escalation or codebase damage), so a maintainer reads the
+    // security reason before the row's "needs human".
+    const STAGE_TRACKER_SENTINEL_WORD = 'Sentinel alert · needs human';
+    const STAGE_TRACKER_SENTINEL_CHIP = 'sentinel';
+    const STAGE_TRACKER_SENTINEL_TIP = 'Sentinel flagged security-relevant changes';
+    const STAGE_TRACKER_SENTINEL_TIP_FALLBACK = 'possible security override, privilege escalation or codebase damage — a maintainer must review before merge';
+    const STAGE_TRACKER_SHORT_SHA = 7;
     var _stageTracker = null;
     var _stageTrackerSig = '';
     var _stageTrackerEtag = '';
@@ -13655,6 +13757,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
         case 15: return 'Triage needed';
+        case 17: return 'Possibly exists · needs author';
         case 20: return 'Claimed';
         case 30: return 'PR in progress';
         case 40: return 'Covered by a PR, not yet in review';
@@ -13692,6 +13795,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
     }
 
+    // "Sentinel flagged security-relevant changes at <head short sha>:
+    // <reason>" — the sentinel wording for an item's tooltips and aria
+    // labels; '' when the item carries no alert. Without a reason or a
+    // head the generic sentinel description stands in.
+    function stageTrackerSentinelTip(item) {
+      if (!item || !item.sentinel_alert) return '';
+      const head = String(item.head || '').slice(0, STAGE_TRACKER_SHORT_SHA);
+      const reason = String(item.sentinel_reason || '').trim();
+      return STAGE_TRACKER_SENTINEL_TIP + (head ? ' at ' + head : '') + ': ' + (reason || STAGE_TRACKER_SENTINEL_TIP_FALLBACK);
+    }
+    // Whether the item's lit chevron word carries the alert itself (a PR
+    // parked at 085, or an issue riding one): the chip then adds nothing.
+    function stageTrackerSentinelInLane(item) {
+      return !!(item && item.sentinel_alert) && (Number(item.stage) || 0) === STAGE_TRACKER_NEEDS_DECISION && (item.kind === 'pr' || !!item.via_pr);
+    }
+
     // Which strip segment a stage lights: main stages light themselves,
     // 040 shares the PR in progress column with 030, 060, 095 and 100 share
     // the Merge gate column with 080, detours light the segment they branch from.
@@ -13701,7 +13820,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerAnchor(stage, stages, kind) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
+      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
@@ -13721,8 +13840,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const curStage = byNum[cur] || {};
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
-        ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur) } : null;
+      const sentinelLane = stageTrackerSentinelInLane(item);
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+        ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur)), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';
@@ -13739,8 +13859,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed' };
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -13824,7 +13944,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const motionAttr = motion === STAGE_TRACKER_MOTION_STATIC ? '' : ` data-motion="${motion}"`;
       return segs.map(sg => {
         if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : ''].filter(Boolean).join(' ');
+        const sentinel = !!(sg.detour && sg.detour.sentinel);
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sentinel ? 'ham-sentinel' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         if (active) {
@@ -13834,12 +13955,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           else if (curStage === STAGE_TRACKER_PRE_MERGE_SOAK) tip = sg.label + ' — admitted, soaking' + stageTrackerSoakLeft(item);
           else if (curStage === 100) tip = sg.label + ' — admitted, merging';
           if (actorKind && !sg.cap) tip += ' · Next move: ' + actorKind;
+          // The sentinel's reason leads the lane tooltip so the security
+          // implication is read before the stage mechanics.
+          if (sentinel) tip = stageTrackerSentinelTip(item) + ' — ' + tip;
         }
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
         else if (active) inner = stageTrackerIcon(sg.number, 'ham-ico ham-active-ico') + (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
-        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr} title="${esc(tip)}" aria-current="step"` : ''}>${inner}</li>`;
+        return `<li class="${cls}"${active ? `${sg.cap ? '' : motionAttr} title="${esc(tip)}" aria-current="step"` : ''}${sentinel ? ` aria-label="${esc(STAGE_TRACKER_SENTINEL_WORD + ' — ' + stageTrackerSentinelTip(item))}"` : ''}>${inner}</li>`;
       }).join('');
     }
 
@@ -13900,6 +14024,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actorKind = stageTrackerActorKind(item);
       if (actorKind) lines.push('Next move: ' + actorKind);
       if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      if (item.sentinel_alert) lines.push(stageTrackerSentinelTip(item));
       const regressed = stageTrackerRegressionText(item, nowMs);
       if (regressed) lines.push(regressed.charAt(0).toUpperCase() + regressed.slice(1));
       if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
@@ -13907,10 +14032,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return lines.filter(Boolean).join('\n');
     }
 
+    // The sentinel chip: drawn in the chip area (beside needs rebase /
+    // regressed) on every lane but the one whose word already says it.
+    function stageTrackerSentinelChipHtml(item) {
+      if (!item || !item.sentinel_alert || stageTrackerSentinelInLane(item)) return '';
+      return `<span class="ham-badge ham-badge-sentinel" title="${esc(stageTrackerSentinelTip(item))}" aria-label="${esc('Sentinel alert — ' + stageTrackerSentinelTip(item))}">${esc(STAGE_TRACKER_SENTINEL_CHIP)}</span>`;
+    }
+
     function stageTrackerChipsHtml(item) {
+      const sentinel = stageTrackerSentinelChipHtml(item);
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
-      if (!mods.length) return '';
+      if (!mods.length) return sentinel;
       let text = STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' ');
       // A blocked row with a hive:recheck-after deadline ("blocked until <RFC3339>") names when the sweep re-checks it.
       const recheck = mods[0] === 'blocked' ? /^blocked until (\S+)/i.exec(String(item.bucket_reason || '')) : null;
@@ -13918,7 +14051,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!isNaN(recheckMs)) text += ' · re-check at ' + agentNowClockTime(recheckMs, Date.now());
       // The regressed pill (lead or folded into "+1") explains itself on hover.
       const regressed = stageTrackerRegressionText(item, Date.now());
-      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+      return sentinel + `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}"${regressed ? ` title="${esc(regressed)}"` : ''}>${esc(text)}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
     // Ghost strip for a title line: the lead cell (Open..Claimed) carries
@@ -13941,7 +14074,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // PR's full tooltip rides its link; the sub-row container has none.
     function stageTrackerSubRowHtml(lp, issue, stages, nowMs, ctx) {
       const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
-        stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
+        stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
+        sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
@@ -14116,7 +14250,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title)];
-          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason });
+          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
+            sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -14612,8 +14747,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNeedsHumanLabels(d) {
       return (d && Array.isArray(d.needs_human_labels) ? d.needs_human_labels : []).map(l => String(l || '').trim().toLowerCase()).filter(Boolean);
     }
+    // Patterns catch new stages/labels the explicit set does not list yet:
+    // needs-human*, *needs-decision, *needs-author.
     function stageTrackerLabelNeedsHuman(label, set) {
       const l = String(label || '').toLowerCase();
+      if (l.startsWith('needs-human') || l.endsWith('needs-decision') || l.endsWith('needs-author')) return true;
       return (set || []).some(s => l === s || l.startsWith(s + '/'));
     }
     function stageTrackerItemNeedsHuman(item, set) {
@@ -14754,7 +14892,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       shown.sort(stageTrackerLabelCompare);
       const chip = l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 });
       const set = Array.isArray(opts.needsHumanLabels) ? opts.needsHumanLabels : [];
-      const needsHuman = set.length ? { count: (items || []).filter(it => stageTrackerItemNeedsHuman(it, set)).length, on: f.needsHuman, labels: set.slice() } : null;
+      const needsHuman = set.length ? { count: (items || []).filter(it => stageTrackerItemNeedsHuman(it, set)).length, on: f.needsHuman, labels: set.slice(), covered: all.filter(l => stageTrackerLabelNeedsHuman(l, set)).map(chip) } : null;
       return { chips: shown.map(chip), all: all.map(chip), hidden: Math.max(0, all.length - shown.length), needsHuman };
     }
 
@@ -14944,8 +15082,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // In-app modal (config-overlay recipe), never a native prompt.
     function stageTrackerLabelDialogHtml(data) {
       return `<div class="ham-label-dialog-tools"><input type="search" class="ham-input" id="activity-monitor-labels-q" placeholder="Type to filter labels…" autocomplete="off" spellcheck="false" aria-label="Filter the label list" value="${esc(data.query)}" data-input-action="stageTrackerLabelDialogQuery" data-arg-types="w"><span class="ham-count">${esc(stageTrackerLabelDialogCountText(data))}</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="hamFilter" data-arg0="labelsClear"${data.selected ? '' : ' disabled'} title="Clear every label filter">Clear</button></div>`
-        + (data.needsHuman ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}</div>` : '')
+        + (data.needsHuman ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}</div>` + stageTrackerNeedsHumanGroupHtml(data.needsHuman) : '')
         + `<div class="ham-labels ham-label-dialog-list" role="group" aria-label="All labels">${stageTrackerLabelDialogListHtml(data)}</div>`;
+    }
+    // Group header listing the labels the Needs human facet covers.
+    function stageTrackerNeedsHumanGroupHtml(nh) {
+      const covered = nh && Array.isArray(nh.covered) ? nh.covered : [];
+      if (!covered.length) return '';
+      return `<div class="ham-label-group" role="group" aria-label="Needs human labels"><div class="ham-label-group-title">Needs human covers ${covered.length} ${covered.length === 1 ? 'label' : 'labels'}</div><div class="ham-labels">${covered.map(stageTrackerLabelChipHtml).join('')}</div></div>`;
     }
     function stageTrackerLabelDialogListHtml(data) {
       return data.rows.length ? data.rows.map(stageTrackerLabelChipHtml).join('') : `<div class="ham-empty">No label matches “${esc(data.query)}”</div>`;
@@ -15203,9 +15347,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
-      hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'needs-human': 'Mark needs-human',
+      hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
+    // Accept triage shows on an issue the chevron calls "Triage needed":
+    // stage 015, or the needs-triage pill on another stage (a claimed or
+    // covered issue the reporter-trust gate still holds). Never on a PR.
+    const STAGE_TRACKER_TRIAGE_STAGE = 15;
+    const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
     var _stageTrackerSel = new Set();
@@ -15309,7 +15458,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const parked = it => (Array.isArray(it.modifiers) ? it.modifiers : []).indexOf('needs-decision') >= 0 || STAGE_TRACKER_DECISION_STAGES.indexOf(Number(it.stage) || 0) >= 0;
       if (item.kind === 'pr') return parked(item) ? item : null;
       for (const lp of (Array.isArray(item.linked_prs) ? item.linked_prs : [])) {
-        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], author: lp.author || '' };
+        const pr = { repo: item.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', stage: lp.stage || 0, modifiers: lp.modifiers || [], author: lp.author || '',
+          sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
         if (parked(pr)) return pr;
       }
       if (item.mirrored) return null;
@@ -15338,6 +15488,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
     }
+    // Pure: whether a row is an issue waiting on a maintainer's triage.
+    function stageTrackerTriageNeeded(item) {
+      if (!item || item.kind === 'pr') return false;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      return (Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE || mods.indexOf('needs-triage') >= 0;
+    }
+    // Pure: the item as it reads once triage is accepted — 010 Actionable,
+    // the needs-triage pill and the 👤 next-move gone — for the optimistic
+    // re-render before the tracker's next payload confirms it.
+    function stageTrackerTriageAccepted(item) {
+      const next = Object.assign({}, item);
+      next.modifiers = (Array.isArray(item.modifiers) ? item.modifiers : []).filter(m => m !== 'needs-triage');
+      if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE) {
+        next.stage = STAGE_TRACKER_ACTIONABLE_STAGE;
+        next.stage_slug = 'actionable';
+        next.stage_label = 'stage/010-actionable';
+        next.caption = ''; next.actor = ''; next.reason = '';
+      }
+      return next;
+    }
     // Pure: the actions that apply to one row in its current state.
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
@@ -15354,6 +15524,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
+      if (stageTrackerTriageNeeded(item)) out.push({ id: 'accept-triage', label: 'Accept triage', hint: 'triage/accepted', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
@@ -15614,6 +15785,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
+        case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -15645,6 +15817,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         done(msg, type) { if (el) dismissToast(el, msg, type); else showToast(msg, type); },
       };
     }
+    // Replace one item in the current tracker payload with fn(item) and
+    // re-render, so the row reads its new state before the next fetch.
+    function stageTrackerPatchItem(item, fn) {
+      const d = _stageTracker;
+      if (!d || !Array.isArray(d.items)) return;
+      const key = stageTrackerItemKey(item);
+      const i = d.items.findIndex(x => stageTrackerItemKey(x) === key);
+      if (i < 0) return;
+      d.items[i] = fn(d.items[i]);
+      if (typeof renderStageTracker === 'function') renderStageTracker(d);
+    }
     function stageTrackerAfterActions() {
       _stageTrackerEtag = '';
       _stageTrackerSig = '';
@@ -15670,6 +15853,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
           if (req.once) once[req.url] = data;
+          if (id === 'accept-triage') stageTrackerPatchItem(it, stageTrackerTriageAccepted);
           results.push({ item: it, ok: true, data });
         } catch (e) {
           results.push({ item: it, ok: false, error: e && e.message ? e.message : 'network error' });
@@ -15713,19 +15897,27 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       for (const it of items) if (it.repo === repo && Number(it.number) === n) return 'A pull request cannot supersede itself';
       return true;
     }
+    // Pure: the sentinel preface for a Decide… dialog — one line per
+    // flagged PR, so the operator reads the security reason before
+    // choosing Approve; '' when nothing in items is flagged.
+    function stageTrackerSentinelPreface(items) {
+      return (items || []).filter(it => it && it.sentinel_alert).map(it => '⚠ ' + stageTrackerRefOf(it) + ' — ' + stageTrackerSentinelTip(it)).join('\n');
+    }
     async function stageTrackerActionPayload(items, id) {
       const refs = items.map(stageTrackerRefOf).join(', ');
       const who = window._hiveUser || 'you';
       const prs = items.length > 0 && items.every(it => it.kind === 'pr');
+      const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';
+      const preface = sentinel ? sentinel + '\n\n' : '';
       switch (id) {
         case 'decide:approve':
           if (prs) {
-            return (await hiveConfirm({ title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve' })) ? {} : null;
+            return (await hiveConfirm({ title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
           }
           return (await hiveConfirm({ title: 'Approve direction', message: 'Record "/hive approve" on ' + refs + ' as ' + who + '? The hive un-parks the issue' + (items.length > 1 ? 's' : '') + ' and carries on; nothing is merged.', confirmLabel: 'Approve' })) ? {} : null;
         case 'decide:direction': {
           const v = await hivePrompt(prs
-            ? { title: 'Give direction', label: 'What should the hive change on ' + refs + '? (recorded as "/hive decision …"; the author agent pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' }
+            ? { title: 'Give direction', label: preface + 'What should the hive change on ' + refs + '? (recorded as "/hive decision …"; the author agent pushes a new head)', placeholder: 'e.g. drop the retry loop and keep the flag', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' }
             : { title: 'Send back to the hive', label: 'Direction for the hive on ' + refs + ' (recorded as "/hive decision …")', placeholder: 'e.g. take option B and keep the API as is', validate: s => s ? true : 'A direction is required', confirmLabel: 'Send' });
           return v == null ? null : { comment: v };
         }
@@ -19174,7 +19366,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const REPO_ISSUE_BAND_DEFAULTS = {
-      waitingLabels: ['blocked', 'stage/045-needs-decision', 'stage/085-needs-decision', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+      waitingLabels: ['blocked', 'stage/045-needs-decision', 'stage/085-needs-decision', 'stage/017-possible-existing', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
       doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
@@ -25187,7 +25379,8 @@ function burnAreaChart() {
       const rows = refs.map(costLaunchRowHtml).join('');
       const total = Number(lc.total_tokens) || 0;
       const rate = total > 0 ? Math.round((Number(lc.attributed_tokens) || 0) / total * 100) : null;
-      const more = (lc.by_ref || []).length > refs.length ? ` · showing top ${refs.length} of ${(lc.by_ref || []).length}` : '';
+      const refTotal = lc.by_ref_total ?? (lc.by_ref || []).length;
+      const more = refTotal > refs.length ? ` · showing top ${refs.length} of ${refTotal}` : '';
       return `<div class="cost-subsection" data-cost-sub="launch">
         <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('launch')}" aria-controls="cost-sub-launch-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="launch" data-keys="*" title="Estimated cost per issue / PR, from the work each kick was launched for joined against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('launch')}" aria-hidden="true">▼</span>cost by work item <span class="cost-badge est">inferred</span></div>
         <div class="cost-sub-body${costSubCollapsedCls('launch')}" id="cost-sub-launch-body">
@@ -25203,9 +25396,8 @@ function burnAreaChart() {
 
     async function fetchLaunchCost() {
       try {
-        const r = await fetch('/api/launch-cost');
-        if (!r.ok) return;
-        lastLaunchCost = await r.json();
+        const data = await fetchDashboardHistory('/api/launch-cost');
+        if (data !== null) lastLaunchCost = data;
       } catch (e) { /* transient — keep the last good attribution */ }
     }
 
@@ -29453,6 +29645,11 @@ function burnAreaChart() {
     let _kbSearchQuery = '';
     let _kbSelectedFact = null;
     let _kbFacts = [];
+    const _kbPageSize = 50;
+    let _kbPageOffset = 0;
+    let _kbServerPaged = false;
+    let _kbHasMore = false;
+    let _kbRequest = 0;
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
@@ -29593,7 +29790,19 @@ function burnAreaChart() {
       kbSearch();
     }
 
-    async function kbSearch() {
+    function kbSearch() {
+      return kbLoadFacts(0);
+    }
+
+    function kbChangePage(direction) {
+      const offset = Math.max(0, _kbPageOffset + direction * _kbPageSize);
+      if (_kbServerPaged) return kbLoadFacts(offset);
+      _kbPageOffset = offset;
+      renderKnowledgeFacts();
+    }
+
+    async function kbLoadFacts(offset) {
+      const request = ++_kbRequest;
       const query = _kbSearchQuery;
       const layer = _kbSelectedLayer;
       const typeFilter = _kbSelectedType;
@@ -29615,18 +29824,28 @@ function burnAreaChart() {
         if (typeFilter) url += (url.includes('?') ? '&' : '?') + 'type=' + encodeURIComponent(typeFilter);
       } else {
         url = '/api/knowledge';
-        const params = [];
+        const params = ['limit=' + _kbPageSize, 'offset=' + offset];
         if (typeFilter) params.push('type=' + encodeURIComponent(typeFilter));
         if (params.length) url += '?' + params.join('&');
       }
       try {
         const r = await fetch(url);
-        if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
+        if (!r.ok) throw new Error('Knowledge request failed');
         const data = await r.json();
+        if (request !== _kbRequest) return;
+        _kbServerPaged = !query && (!layer || layer === 'all');
+        _kbPageOffset = offset;
+        _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
         _kbSelectedFact = null;
         renderKnowledgeFacts();
-      } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
+      } catch (e) {
+        if (request !== _kbRequest) return;
+        _kbFacts = [];
+        _kbHasMore = false;
+        _kbPageOffset = 0;
+        renderKnowledgeFacts();
+      }
     }
 
     async function kbReadFact(slug, layer) {
@@ -30575,13 +30794,11 @@ function burnAreaChart() {
       if (!el) return;
 
       const visibleFacts = _kbFacts.filter(f => !kbIsDividerOnlyFact(f));
-      if (visibleFacts.length === 0) {
-        el.innerHTML = '<div class="kb-empty"><div class="kb-empty-icon">🔍</div>No facts found. Try a different search or layer.</div>';
-        return;
-      }
-
-      let html = '';
-      for (const f of visibleFacts) {
+      const start = _kbServerPaged ? 0 : _kbPageOffset;
+      const page = visibleFacts.slice(start, start + _kbPageSize);
+      const hasNext = _kbServerPaged ? _kbHasMore : start + _kbPageSize < visibleFacts.length;
+      let html = page.length ? '' : '<div class="kb-empty"><div class="kb-empty-icon">🔍</div>No facts found. Try a different search or layer.</div>';
+      for (const f of page) {
         const conf = typeof f.confidence === 'number' ? f.confidence : 0;
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -30600,6 +30817,12 @@ function burnAreaChart() {
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
         if (f.status) html += `<span class="kb-layer-badge" style="background:var(--bg);color:var(--muted)">${escapeHtml(f.status)}</span>`;
         html += '</div></div></div>';
+      }
+      if (_kbPageOffset > 0 || hasNext) {
+        html += '<div class="kb-pagination" role="group" aria-label="Knowledge fact pages">';
+        html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbPreviousPage"' + (_kbPageOffset === 0 ? ' disabled' : '') + '>Previous</button>';
+        html += '<span> Page ' + (Math.floor(_kbPageOffset / _kbPageSize) + 1) + ' </span>';
+        html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbNextPage"' + (!hasNext ? ' disabled' : '') + '>Next</button></div>';
       }
       el.innerHTML = html;
     }
@@ -31793,6 +32016,9 @@ function burnAreaChart() {
         const r = await fetch('/api/knowledge/vaults/' + encodeURIComponent(name) + '/facts');
         if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
         _kbFacts = await r.json();
+        _kbServerPaged = false;
+        _kbPageOffset = 0;
+        _kbHasMore = false;
         renderKnowledgeFacts();
       } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
     }
@@ -33227,8 +33453,12 @@ function burnAreaChart() {
 
     function validDashboardTimeZone(tz) {
       if (!tz || typeof tz !== 'string') return '';
+      const cache = validDashboardTimeZone.cache || (validDashboardTimeZone.cache = new Map());
+      if (cache.has(tz)) return cache.get(tz);
       try {
         new Intl.DateTimeFormat([], { timeZone: tz }).format(new Date());
+        if (cache.size >= 64) cache.clear();
+        cache.set(tz, tz);
         return tz;
       } catch (e) {
         return '';
@@ -33236,8 +33466,14 @@ function burnAreaChart() {
     }
 
     function browserDashboardTimeZone() {
+      // Recheck occasionally so OS timezone changes still reach a long-lived tab.
+      const now = Date.now();
+      if (browserDashboardTimeZone.expires > now) return browserDashboardTimeZone.value;
       try {
-        return (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+        const tz = (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+        browserDashboardTimeZone.value = tz;
+        browserDashboardTimeZone.expires = now + 60000;
+        return tz;
       } catch (e) {
         return '';
       }
@@ -33271,11 +33507,18 @@ function burnAreaChart() {
       return ['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','Europe/London','Europe/Berlin','Asia/Kolkata','Asia/Tokyo','Australia/Sydney'];
     }
 
+    const _dashboardDateFormatters = new Map();
     function dashboardDateFormatter(options) {
       const opts = Object.assign({}, options || {});
       const tz = selectedDashboardTimeZone();
       if (tz) opts.timeZone = tz;
-      return new Intl.DateTimeFormat([], opts);
+      const key = JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
+      if (_dashboardDateFormatters.has(key)) return _dashboardDateFormatters.get(key);
+      const formatter = new Intl.DateTimeFormat([], opts);
+      // Bound memory even when callers supply arbitrary option combinations.
+      if (_dashboardDateFormatters.size >= 64) _dashboardDateFormatters.delete(_dashboardDateFormatters.keys().next().value);
+      _dashboardDateFormatters.set(key, formatter);
+      return formatter;
     }
 
     function formatDashboardDateTime(value, options, fallback) {
@@ -34305,7 +34548,7 @@ function burnAreaChart() {
     }
 
     function stopInceptionPoll() {
-      if (_inceptionPollTimer) { clearInterval(_inceptionPollTimer); _inceptionPollTimer = null; }
+      if (_inceptionPollTimer) { dashboardClearInterval('inception-activity'); _inceptionPollTimer = null; }
     }
 
     function _inceptionAuthHeaders() {
@@ -43034,7 +43277,7 @@ function burnAreaChart() {
     }
 
     function orStartCreditPolling() {
-      if (_openrouterPoll) clearInterval(_openrouterPoll);
+      if (_openrouterPoll) dashboardClearInterval('openrouter-credit');
       const OR_POLL_MS = 4000;
       _openrouterPoll = dashboardSetInterval('openrouter-credit', orCheckCredit, OR_POLL_MS);
     }
@@ -43046,7 +43289,7 @@ function burnAreaChart() {
         if (!res.ok) return;
         const d = await res.json();
         if (!d.connected) return;
-        if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+        if (_openrouterPoll) { dashboardClearInterval('openrouter-credit'); _openrouterPoll = null; }
         let creditLine = '';
         if (d.limit_remaining != null) creditLine = ' — $' + Number(d.limit_remaining).toFixed(2) + ' remaining';
         else if (d.limit == null) creditLine = ' — unlimited';
@@ -43056,7 +43299,7 @@ function burnAreaChart() {
     }
 
     function closeOpenRouterFund() {
-      if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+      if (_openrouterPoll) { dashboardClearInterval('openrouter-credit'); _openrouterPoll = null; }
       const host = document.getElementById('openrouter-fund-host');
       if (host) host.innerHTML = '';
     }
@@ -49926,6 +50169,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Clarity gate ${yamlHint('runs.triage.clarity_gate.enabled')} ${settingHelpMark('settings', 'features', 'Clarity gate', `Before an agent claims a human-filed issue, score how clearly it states a goal, acceptance criteria and scope. Below the threshold Hive asks the author once and parks the issue with needs-spec instead of claiming it. Works without Run triage. Off by default.`)}</span>
           </div>
           <div class="config-field"><label>Clarity threshold ${yamlHint('runs.triage.clarity_gate.threshold')} ${settingHelpMark('settings', 'features', 'Clarity threshold', `Clarity score (0-100) an issue needs to stay in the agent queue (default ${esc(String(runsDefaults.runsTriageClarityGateThreshold || 60))}). Goal 25, acceptance criteria 35, scope 20, detail 20; an open choice or TBD subtracts 30. 0 uses the default.`)}</label><input type="number" min="0" max="100" step="1" value="${esc(String(f.runsTriageClarityGateThreshold || ''))}" placeholder="${esc(String(runsDefaults.runsTriageClarityGateThreshold || 60))}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriageClarityGateThreshold" data-arg-types="s,s,N"><div class="config-help">0 = default.</div></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.runsTriagePriorArtEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="runsTriagePriorArtEnabled"></div>
+            <span class="config-toggle-label">Prior-art gate ${yamlHint('runs.triage.prior_art.enabled')} ${settingHelpMark('settings', 'features', 'Prior-art gate', `Before an agent claims a feature, RFC or epic issue, search knowledge beads, settings, merged PRs, closed issues, docs and code for something that already covers it. At or above the threshold a human-filed issue is parked at stage/017-possible-existing with the findings until the author replies /hive decision proceed — <gap> or /hive decision exists; a clanker-filed one auto-closes after runs.triage.prior_art.bot_close_ttl; hive-filed issues get a findings note only. kinds, max_findings, max_parks_per_cycle and bot_close_ttl are yaml-only. On by default.`)}</span>
+          </div>
+          <div class="config-field"><label>Prior-art threshold ${yamlHint('runs.triage.prior_art.threshold')} ${settingHelpMark('settings', 'features', 'Prior-art threshold', `Match confidence (0-100) the best finding needs before the gate parks an issue (default ${esc(String(runsDefaults.runsTriagePriorArtThreshold || 70))}): the share of the issue's weighted key terms (identifiers 4, title words 3, body words 1) the finding covers. 0 uses the default.`)}</label><input type="number" min="0" max="100" step="1" value="${esc(String(f.runsTriagePriorArtThreshold || ''))}" placeholder="${esc(String(runsDefaults.runsTriagePriorArtThreshold || 70))}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriagePriorArtThreshold" data-arg-types="s,s,N"><div class="config-help">0 = default.</div></div>
           <div class="settings-subsection-title mt-5">Spek recheck ${settingHelpMark('spektacular', '', 'Spek recheck', `Continuous convergence: re-runs the spec for opted-in campaigns on a cadence and imports changed or new plan tasks. The source lists (runs.spektacular.recheck.sources, runs.spektacular.recheck.discovery.sources) and runs.spektacular.recheck.egress_allowlist are yaml-only.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.spektacularRecheckEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularRecheckEnabled"></div>
@@ -55354,6 +55602,8 @@ function burnAreaChart() {
       gh15: function (event, A) { _kbSearchQuery=this.value;kbSearch(); },
       gh16: function (event, A) { _kbSearchQuery=this.value; },
       gh17: function (event, A) { kbReadFact(A[0]); },
+      kbPreviousPage: function () { kbChangePage(-1); },
+      kbNextPage: function () { kbChangePage(1); },
       gh18: function (event, A) { kbRemoveGitSource(A[0],A[1]); },
       gh19: function (event, A) { this.style.display='none'; },
       gh20: function (event, A) { this.style.borderColor='var(--blue)'; },

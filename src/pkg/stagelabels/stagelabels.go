@@ -103,6 +103,15 @@ const (
 	// its own). Appended for the same persisted-enum reason as
 	// NeedsDecision.
 	TriageNeeded
+	// PossiblyExisting is stage/017-possible-existing: an ISSUE the
+	// prior-art gate parked because something that looks like it already
+	// exists (a merged PR, a closed issue, a doc, a setting, a knowledge
+	// bead or a code symbol). The author must confirm the gap (`/hive
+	// decision proceed — <what is missing>`) or close it (`/hive decision
+	// exists`) before any agent picks it up. Issue-only, open-ended, the
+	// label itself is the park signal (hard suppress, like 045). Appended
+	// for the same persisted-enum reason as NeedsDecision.
+	PossiblyExisting
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -181,8 +190,8 @@ type Item int
 
 const (
 	// IssueItem: an issue. Only Issue:true stages (010–045; 015 is the
-	// untriaged actionable issue, 045 the issue parked on a person) may
-	// land on it.
+	// untriaged actionable issue, 017 the issue parked on its author by
+	// the prior-art gate, 045 the issue parked on a person) may land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
 	PRItem
@@ -237,6 +246,7 @@ func (s Stage) For(k Item) Stage {
 var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
 	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
+	{Stage: PossiblyExisting, Number: PossiblyExistingNumber, Slug: PossiblyExistingSlug, Description: "Possibly exists · needs author: prior art found; confirm the gap or close before an agent takes it", Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent has a PR under way for this issue (branch pushed or PR request in flight)", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
@@ -291,6 +301,14 @@ const PreMergeSoakDwell = 45 * time.Minute
 // triaged one — a quiet 015 past a day means nobody, hive or human, has
 // touched it.
 const TriageNeededDwell = 24 * time.Hour
+
+// PossiblyExistingNumber and PossiblyExistingSlug name stage/017: the
+// prior-art park sits after 015 triage-needed and before 020 claimed, since
+// the gate runs before any claim (hivecommons/hive#13575).
+const (
+	PossiblyExistingNumber = 17
+	PossiblyExistingSlug   = "possible-existing"
+)
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
 // stages are inserted between existing numbers, never above 100.
@@ -574,8 +592,48 @@ func LabelDefsFor(kinds authorkind.Names) []LabelDef {
 		out = append(out, roleDefs[r])
 	}
 	out = append(out, authorKindDefs(kinds)...)
-	out = append(out, dcoDefs[DCOYes], dcoDefs[DCONo])
+	out = append(out, dcoDefs[DCOYes], dcoDefs[DCONo], mergeCommitDef)
 	return out
+}
+
+// Merge-method label (hivecommons/hive#13623 follow-up). A role/trusted PR
+// whose head mixes the contributor's commits with hive commits, every one
+// signed off by its own author, cannot be squashed without the landing
+// commit misattributing the hive's sign-off to the contributor — the
+// `Sign-off survives the squash` gate exists for exactly that. A merge
+// commit lands every commit as it is, so the lane selects one instead of
+// parking the PR for a person. The label is the lane's commitment: the
+// attribution check reads it and accepts a bot's self-signed commit under
+// it, and the merge sweeps honour it with `merge_method=merge`. Written by
+// the stage pass whenever the commit check has spoken; never squash a PR
+// wearing it.
+const MergeCommitLabel = "merge-method/merge"
+
+// MergeCommitColor is the stage orange: the label is lane state, not a verdict.
+const MergeCommitColor = StageColor
+
+var mergeCommitDef = LabelDef{Name: MergeCommitLabel, Color: MergeCommitColor, Description: "Hive merges this PR with a merge commit (mixed authorship, each commit self-signed); never squash"}
+
+// MergeCommitState is the stage pass's merge-method verdict for a head.
+type MergeCommitState int
+
+const (
+	// MergeCommitUnknown leaves the label as found (commit check not read).
+	MergeCommitUnknown MergeCommitState = iota
+	// MergeCommitWanted puts `merge-method/merge` on the PR.
+	MergeCommitWanted
+	// MergeCommitNotWanted takes it off.
+	MergeCommitNotWanted
+)
+
+// HasMergeCommitLabel reports whether labels carry `merge-method/merge`.
+func HasMergeCommitLabel(labels []string) bool {
+	for _, l := range labels {
+		if strings.TrimSpace(l) == MergeCommitLabel {
+			return true
+		}
+	}
+	return false
 }
 
 // DCO labels (hivecommons/hive#12542). The operator wanted "the label and
@@ -683,6 +741,9 @@ type Desired struct {
 	// DCO is the commit check's verdict for the head; DCOUnknown leaves the
 	// item's existing DCO labels (own or legacy) untouched.
 	DCO DCOState
+	// MergeCommit is the merge-method verdict for the head;
+	// MergeCommitUnknown leaves `merge-method/merge` as found.
+	MergeCommit MergeCommitState
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -692,8 +753,8 @@ type Desired struct {
 // label from a previous table and the retired `author/<tier>` role
 // spellings — is removed. With Kind unset, `author/<kind>` labels are kept
 // as found. The `dco` / `no-dco` pair is reconciled only when want.DCO is
-// known. Non-hive labels — including Prow's `dco-signoff: *` — are never
-// touched.
+// known, and `merge-method/merge` only when want.MergeCommit is. Non-hive
+// labels — including Prow's `dco-signoff: *` — are never touched.
 func Plan(current []string, want Desired) (add, remove []string) {
 	wanted := map[string]bool{}
 	if l := want.Stage.Label(); l != "" {
@@ -711,6 +772,9 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if l := want.DCO.Label(); l != "" {
 		wanted[l] = true
 	}
+	if want.MergeCommit == MergeCommitWanted {
+		wanted[MergeCommitLabel] = true
+	}
 	have := map[string]bool{}
 	for _, l := range current {
 		l = strings.TrimSpace(l)
@@ -725,6 +789,12 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		// has spoken; an unread head keeps its pill.
 		if dcoOwned(l) {
 			if want.DCO != DCOUnknown {
+				remove = append(remove, l)
+			}
+			continue
+		}
+		if l == MergeCommitLabel {
+			if want.MergeCommit == MergeCommitNotWanted {
 				remove = append(remove, l)
 			}
 			continue

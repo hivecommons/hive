@@ -1,0 +1,1 @@
+- Crux design doc: Stage 1 marked shipped, measured outbound edge table and Stage 2 (nested module) prerequisites recorded, how to run the Crux package set alone (#13536).

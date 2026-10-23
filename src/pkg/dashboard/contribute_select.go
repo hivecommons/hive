@@ -801,9 +801,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				return
 			}
 			// hivecommons/hive#13579: an item contributors keep dropping is
-			// withheld from every contributor for the cool-off; the hive's
-			// own agents take it meanwhile.
-			if _, ok := h.inContributorCoolOff(itemKey); ok {
+			// withheld from the contributor that dropped it for the cool-off
+			// (#13763); other contributors and the hive's agents still take it.
+			if _, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(c), itemKey)); ok {
 				return
 			}
 			if activeIssues[itemKey] {

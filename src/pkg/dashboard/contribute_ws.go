@@ -3556,11 +3556,11 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// resumable either. The lease was issued before the drops that
 			// tripped the cool-off; letting the same relay re-take it now is
 			// exactly the reconnect loop the cool-off exists to break.
-			if co, ok := h.inContributorCoolOff(lease.key); ok {
+			if co, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(s.contributor), lease.key)); ok {
 				reason := co.Reason()
 				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
 					msg.TaskID, canonRepo, msg.Number,
-					"refused: "+reason+"; withheld from contributors until "+co.Until.UTC().Format(time.RFC3339))
+					"refused: "+reason+"; withheld from this contributor until "+co.Until.UTC().Format(time.RFC3339))
 				h.logger.Info("[contribute-ws] task_progress resume refused: issue in contributor cool-off (#13579)",
 					"username", s.contributor.profile.GitHubUsername,
 					"task", msg.TaskID, "repo", canonRepo, "number", msg.Number,

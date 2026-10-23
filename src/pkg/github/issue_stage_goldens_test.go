@@ -121,26 +121,27 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 	const repo = "hivecommons/hive"
 	buckets := []string{"", workBucketClaimed, inProgressWorkBucket, workBucketClaimedByPR, workBucketFiltered, "draft"}
 	labelSets := map[string][]string{
-		"nolabel":          nil,
-		"bug":              {"bug", "good first issue"},
-		"likely-done":      {LikelyDoneLabel},
-		"needs-human":      {issueNeedsHumanLabel},
-		"stage-045":        {NeedsDecisionStageLabel},
-		"stage-085":        {legacyIssueNeedsDecisionStageLabel},
-		"needs-spec":       {issueNeedsSpecLabel},
-		"needs-decision":   {issueNeedsDecisionLabel},
-		"needs-dir":        {issueNeedsDirectionLabel},
-		"park+stage030":    {issueNeedsDirectionLabel, stagelabels.PRInProgress.Label()},
-		"human+done":       {issueNeedsHumanLabel, LikelyDoneLabel},
-		"mixed-case":       {"Needs-Human "},
-		"epic":             {"Epic", "help wanted"},
-		"epic+stage030":    {"epic", stagelabels.PRInProgress.Label()},
-		"epic+needs-human": {"Epic", issueNeedsHumanLabel},
-		"blocked":          {BlockedLabel, "help wanted"},
-		"blocked+stage030": {"Blocked", stagelabels.PRInProgress.Label()},
+		"nolabel":           nil,
+		"bug":               {"bug", "good first issue"},
+		"likely-done":       {LikelyDoneLabel},
+		"needs-human":       {issueNeedsHumanLabel},
+		"stage-045":         {NeedsDecisionStageLabel},
+		"stage-085":         {legacyIssueNeedsDecisionStageLabel},
+		"needs-spec":        {issueNeedsSpecLabel},
+		"possible-existing": {PossiblyExistsStageLabel},
+		"needs-decision":    {issueNeedsDecisionLabel},
+		"needs-dir":         {issueNeedsDirectionLabel},
+		"park+stage030":     {issueNeedsDirectionLabel, stagelabels.PRInProgress.Label()},
+		"human+done":        {issueNeedsHumanLabel, LikelyDoneLabel},
+		"mixed-case":        {"Needs-Human "},
+		"epic":              {"Epic", "help wanted"},
+		"epic+stage030":     {"epic", stagelabels.PRInProgress.Label()},
+		"epic+needs-human":  {"Epic", issueNeedsHumanLabel},
+		"blocked":           {BlockedLabel, "help wanted"},
+		"blocked+stage030":  {"Blocked", stagelabels.PRInProgress.Label()},
 	}
 	claimKinds := []string{"", string(claims.KindAgent), string(claims.KindHuman), string(claims.KindContributor), "AGENT"}
-	reasons := []string{"", issueNeedsHumanLabel, issueNeedsSpecLabel, NeedsDecisionStageLabel, issueNeedsDirectionLabel, "wontfix", " needs-human "}
+	reasons := []string{"", issueNeedsHumanLabel, issueNeedsSpecLabel, PossiblyExistsStageLabel, NeedsDecisionStageLabel, issueNeedsDirectionLabel, "wontfix", " needs-human "}
 
 	out := map[string][]issueStageGoldenCase{}
 	add := func(file string, c issueStageGoldenCase) {

@@ -31,6 +31,8 @@ type Scheduler struct {
 	runAdmitter          RunAdmitter
 	triageCommenter      TriageCommenter
 	clarity              clarityGateState
+	priorArt             priorArtGateState
+	priorArtSearcher     PriorArtSearcher
 	questionAutocloser   QuestionAutocloser
 	lifecycle            timeline.Recorder
 	scanned              bool

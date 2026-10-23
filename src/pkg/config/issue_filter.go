@@ -58,6 +58,12 @@ const (
 	// bucket defaulted to; it is now a legacy alias of the decision bucket.
 	DefaultNeedsDirectionLabel = LegacyNeedsDirectionLabel
 	DefaultNeedsSpecLabel      = "needs-spec"
+	// PossiblyExistsStageLabel is the prior-art gate's park signal: the
+	// issue stage label itself, stage/017-possible-existing, exactly as
+	// stage/045 is the decision park (hivecommons/hive#13575). It is a hard
+	// suppress — no agent claims a parked issue — and it is not configurable:
+	// the stage table owns the spelling (stagelabels contract tests pin it).
+	PossiblyExistsStageLabel = "stage/017-possible-existing"
 
 	// LegacyNeedsDecisionLabel and LegacyNeedsDirectionLabel are the retired
 	// park labels. Every hive still reads them as the decision bucket so an
@@ -278,6 +284,9 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 			if labelMatches(configured, actual) {
 				return DefaultNeedsSpecLabel
 			}
+		}
+		if labelMatches(PossiblyExistsStageLabel, actual) {
+			return PossiblyExistsStageLabel
 		}
 	}
 	return ""

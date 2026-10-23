@@ -180,20 +180,20 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						return gh.StageFacts().ClaimReleased(ctx, gh.IssueStageRef(c.Repo, c.Issue), c.Holder)
 					})
 				}
-				// Every release that ends the claim BEFORE its until= posts
-				// the release marker: the 🔒 marker is never edited, and the
-				// forge-side reader (issueclaim.Latest, consulted ahead of the
-				// ledger by the governor's live-claim filter) keeps reading
-				// the hold as live until a release marker names it. Narrating
-				// only operator releases and relaunches left a relay's
-				// disconnect / revoke / lease-expiry release invisible to the
-				// forge, so hive agents kept "withholding issue: live issue
-				// claim" for the full until= while the relay flapped
-				// (hivecommons/hive#13579). Expiry is the one release that
-				// needs no marker: until= has already lapsed.
+				// Every early release needs a marker: the 🔒 comment is
+				// never edited, and issueclaim.Latest otherwise reads the
+				// hold as live until until=. This includes relay disconnect,
+				// revoke and lease-expiry releases: omitting them starved
+				// hive agents while relays flapped (hivecommons/hive#13579).
+				// TTL expiry needs no marker: until= has already lapsed.
+				// Relay task completions also revoke leases, so share the
+				// claim comment budget instead of posting without a cap
+				// (hivecommons/hive#13766). If a marker is suppressed,
+				// SetIssueClaimLedgerHive still prevents this hive from
+				// believing its own stale hold.
 				if comment && reason != claims.ReasonExpired {
 					run("release comment", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueComment(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
+						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
 					})
 				}
 			}()

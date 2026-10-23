@@ -14,12 +14,23 @@ import (
 func TestNeedsHumanPresetLabelsDefaultOrder(t *testing.T) {
 	got := needsHumanPresetLabels(nil, "")
 	want := append([]string{github.NeedsDecisionStageLabel, github.PRNeedsDecisionStageLabel, "needs-decision", "needs-direction", "needs-spec", "needs-signal", "needs-human"}, github.HoldLabels...)
-	want = append(want, stagelabels.NeedsAuthor.Label(), config.DefaultReporterTrustAwaitingLabel)
+	want = append(want, stagelabels.NeedsAuthor.Label(), config.DefaultSentinelLabel, config.DefaultReporterTrustAwaitingLabel)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default needs-human preset = %v, want %v", got, want)
 	}
-	if got[len(got)-2] != "stage/071-needs-author" || got[len(got)-1] != "needs-triage" {
-		t.Fatalf("needs-author and needs-triage must close the default set, got %v", got)
+	if got[len(got)-3] != "stage/071-needs-author" || got[len(got)-2] != "sentinel-alert" || got[len(got)-1] != "needs-triage" {
+		t.Fatalf("needs-author, sentinel-alert and needs-triage must close the default set, got %v", got)
+	}
+}
+
+// The sentinel alert label follows sentinel.label: a renamed label is
+// offered under its new spelling and the default is not.
+func TestNeedsHumanPresetLabelsSentinelLabel(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Sentinel.Label = "security/sentinel"
+	got := needsHumanPresetLabels(cfg, "")
+	if !slices.Contains(got, "security/sentinel") || slices.Contains(got, config.DefaultSentinelLabel) {
+		t.Fatalf("configured sentinel label must replace the default, got %v", got)
 	}
 }
 

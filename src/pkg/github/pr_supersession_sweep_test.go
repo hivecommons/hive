@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 type supersessionPRFixture struct {
@@ -27,6 +30,24 @@ type supersessionPRFixture struct {
 	Comments      []supersessionCommentFixture
 	Threads       []supersessionThreadFixture
 	ThreadsBroken bool
+	// Fields below drive the hive self-resolution path (#13799).
+	HeadSHA string
+	BaseRef string
+	BaseSHA string
+	// BehindBy is what compare base...head answers; 0 means the head
+	// contains the base tip.
+	BehindBy int
+	// UpdateBranchStatus, when non-zero, is the HTTP status the update-branch
+	// endpoint answers instead of 202.
+	UpdateBranchStatus int
+	// LabelEvents feed the needs-human attribution read (actor per label).
+	LabelEvents []supersessionLabelEventFixture
+}
+
+type supersessionLabelEventFixture struct {
+	Event string
+	Label string
+	Actor string
 }
 
 type supersessionCommentFixture struct {
@@ -51,16 +72,19 @@ type supersessionIssueFixture struct {
 }
 
 type supersessionObservations struct {
-	mu       sync.Mutex
-	closed   []int
-	comments map[int][]string
-	labels   map[int][]string
-	edits    map[int64]string
+	mu            sync.Mutex
+	closed        []int
+	comments      map[int][]string
+	labels        map[int][]string
+	removedLabels map[int][]string
+	edits         map[int64]string
+	bodies        map[int]string
+	updated       map[int]string // PR number → expected_head_sha sent to update-branch
 }
 
 func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionPRFixture, issues []supersessionIssueFixture) (*httptest.Server, *supersessionObservations) {
 	t.Helper()
-	obs := &supersessionObservations{comments: map[int][]string{}, labels: map[int][]string{}, edits: map[int64]string{}}
+	obs := &supersessionObservations{comments: map[int][]string{}, labels: map[int][]string{}, removedLabels: map[int][]string{}, edits: map[int64]string{}, bodies: map[int]string{}, updated: map[int]string{}}
 	now := time.Now().Format(time.RFC3339)
 	prByNumber := map[int]supersessionPRFixture{}
 	for _, pr := range prs {
@@ -127,6 +151,16 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			if state == "closed" && !pr.Merged {
 				continue
 			}
+			headSHA, baseRef, baseSHA := pr.HeadSHA, pr.BaseRef, pr.BaseSHA
+			if headSHA == "" {
+				headSHA = fmt.Sprintf("head%dsha0000000", pr.Number)
+			}
+			if baseRef == "" {
+				baseRef = "main"
+			}
+			if baseSHA == "" {
+				baseSHA = "basesha000000000"
+			}
 			entry := map[string]any{
 				"number":   pr.Number,
 				"title":    pr.Title,
@@ -134,6 +168,8 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 				"state":    "open",
 				"user":     map[string]any{"login": pr.Author, "type": "Bot"},
 				"html_url": fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, pr.Number),
+				"head":     map[string]any{"sha": headSHA, "ref": "topic/supersession"},
+				"base":     map[string]any{"sha": baseSHA, "ref": baseRef},
 			}
 			if len(pr.Labels) > 0 {
 				labels := []map[string]any{}
@@ -150,6 +186,17 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			wire = append(wire, entry)
 		}
 		_ = json.NewEncoder(w).Encode(wire)
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/compare/", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		spec := strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/compare/", org, repo))
+		_, head, _ := strings.Cut(spec, "...")
+		behind := 0
+		for _, pr := range prs {
+			if pr.HeadSHA != "" && pr.HeadSHA == head {
+				behind = pr.BehindBy
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": behind, "ahead_by": 1, "status": "ahead"})
 	})
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/commits/", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		sha := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/commits/", org, repo)), "/pulls")
@@ -173,6 +220,36 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		if len(parts) == 1 && r.Method == "GET" {
 			pr := prByNumber[n]
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "additions": pr.Additions, "deletions": 0})
+			return
+		}
+		if len(parts) == 1 && r.Method == "PATCH" {
+			var payload struct {
+				Body *string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			obs.mu.Lock()
+			if payload.Body != nil {
+				obs.bodies[n] = *payload.Body
+			}
+			obs.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open"})
+			return
+		}
+		if len(parts) == 2 && parts[1] == "update-branch" && r.Method == "PUT" {
+			var payload struct {
+				ExpectedHeadSHA string `json:"expected_head_sha"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			obs.mu.Lock()
+			obs.updated[n] = payload.ExpectedHeadSHA
+			obs.mu.Unlock()
+			if status := prByNumber[n].UpdateBranchStatus; status != 0 {
+				w.WriteHeader(status)
+				_ = json.NewEncoder(w).Encode(map[string]any{"message": "merge conflict between base and head"})
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "Updating pull request branch."})
 			return
 		}
 		if len(parts) == 2 && parts[1] == "files" {
@@ -247,6 +324,11 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			obs.comments[n] = append(obs.comments[n], body)
 			obs.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": n + 1000, "body": body})
+		case len(parts) == 3 && parts[1] == "labels" && r.Method == "DELETE":
+			obs.mu.Lock()
+			obs.removedLabels[n] = append(obs.removedLabels[n], parts[2])
+			obs.mu.Unlock()
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case len(parts) == 2 && parts[1] == "labels" && r.Method == "POST":
 			var labels []string
 			_ = json.NewDecoder(r.Body).Decode(&labels)
@@ -260,6 +342,9 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			if issue.ClosingCommit != "" {
 				wire = append(wire, map[string]any{"event": "closed", "commit_id": issue.ClosingCommit, "created_at": now})
 			}
+			for i, ev := range prByNumber[n].LabelEvents {
+				wire = append(wire, map[string]any{"id": i + 1, "event": ev.Event, "label": map[string]any{"name": ev.Label}, "actor": map[string]any{"login": ev.Actor}, "created_at": now})
+			}
 			_ = json.NewEncoder(w).Encode(wire)
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -272,6 +357,29 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 		_ = json.NewEncoder(w).Encode(map[string]any{"name": SupersededLabel})
 	})
 	return httptest.NewServer(mux), obs
+}
+
+// newSupersessionTestClient is newTestClient with the hive App identity set
+// and a recording stage FactSink installed, so a test can assert the sweep
+// parked a PR through the stage engine (and never wrote a stage label itself).
+func newSupersessionTestClient(t *testing.T, server *httptest.Server, org, repo string) (*Client, *stageenginetest.Recorder) {
+	t.Helper()
+	c := newTestClient(t, server, org, []string{repo})
+	c.SetAppBotLogin("hive-app[bot]")
+	rec := &stageenginetest.Recorder{}
+	c.SetStageFactSink(rec)
+	return c, rec
+}
+
+// parkedPRs lists the PR numbers the recorder saw Parked with needs-human.
+func parkedPRs(rec *stageenginetest.Recorder) []int {
+	var out []int
+	for _, f := range rec.All() {
+		if f.Method == "Parked" && f.Label == issueNeedsHumanLabel && f.Ref.Kind == stagelabels.PRItem {
+			out = append(out, f.Ref.Number)
+		}
+	}
+	return out
 }
 
 func TestSweepSupersededOpenPRs_ClosedByPullRequestReferenceClosesOwnAtL6(t *testing.T) {
@@ -357,8 +465,7 @@ func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 	)
 	defer server.Close()
 
-	c := newTestClient(t, server, org, []string{repo})
-	c.SetAppBotLogin("hive-app[bot]")
+	c, rec := newSupersessionTestClient(t, server, org, repo)
 	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
 	if err != nil {
 		t.Fatalf("SweepSupersededOpenPRs: %v", err)
@@ -368,6 +475,9 @@ func TestSweepSupersededOpenPRs_BelowL6LabelsOwnPR(t *testing.T) {
 	}
 	if got := obs.labels[13]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
 		t.Fatalf("labels on #13 = %v, want needs-human", got)
+	}
+	if got := parkedPRs(rec); len(got) != 1 || got[0] != 13 {
+		t.Fatalf("Parked facts = %v, want #13 parked at 085 through the stage engine", got)
 	}
 }
 
@@ -531,17 +641,19 @@ func TestSweepSupersededOpenPRs_AllClosingClaimsClosedEscalates(t *testing.T) {
 			)
 			defer server.Close()
 
-			c := newTestClient(t, server, org, []string{repo})
-			c.SetAppBotLogin("hive-app[bot]")
+			c, rec := newSupersessionTestClient(t, server, org, repo)
 			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
 			if err != nil {
 				t.Fatalf("SweepSupersededOpenPRs: %v", err)
 			}
-			if len(res.Commented) != 1 || res.Commented[0].Issue != 30 || res.Commented[0].CloserPR != 40 || res.Commented[0].Action != "commented-needs-human" {
+			if len(res.Commented) != 1 || res.Commented[0].Issue != 30 || res.Commented[0].CloserPR != 40 || res.Commented[0].Action != SupersessionActionEscalated {
 				t.Fatalf("expected needs-human escalation on #30 via #40: %+v", res)
 			}
 			if got := obs.labels[21]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
 				t.Fatalf("labels on #21 = %v, want needs-human", got)
+			}
+			if got := parkedPRs(rec); len(got) != 1 || got[0] != 21 {
+				t.Fatalf("Parked facts = %v, want #21 parked at 085", got)
 			}
 		})
 	}
@@ -557,8 +669,9 @@ func TestSweepSupersededOpenPRs_DoesNotReapplyNeedsHumanAfterClear(t *testing.T)
 	// repo is "hive" and the GraphQL closer resolves to org/repo.
 	closer := supersessionCloser{Repo: org + "/" + repo, Number: 40, URL: fmt.Sprintf("https://github.com/%s/%s/pull/40", org, repo), MergedAt: time.Date(2026, 10, 10, 11, 40, 0, 0, time.UTC)}
 	event := SupersessionSweepEvent{Repo: repo, Number: 22, Author: "hive-app[bot]", IssueRepo: repo, Issue: 30, CloserPR: 40}
-	sameBody := renderSupersessionComment(event, closer, "this hive is below ACMM L6, so the sweep will not close PRs automatically. A human should decide whether to close this PR.")
-	staleBody := renderSupersessionComment(event, supersessionCloser{Repo: closer.Repo, Number: 39, URL: "https://github.com/x/y/pull/39"}, "this hive is below ACMM L6, so the sweep will not close PRs automatically. A human should decide whether to close this PR.")
+	const belowL6 = "this hive is below ACMM L6, so the sweep will not close or update PRs automatically. A human should decide whether to close this PR."
+	sameBody := renderSupersessionComment(event, closer, belowL6)
+	staleBody := renderSupersessionComment(event, supersessionCloser{Repo: closer.Repo, Number: 39, URL: "https://github.com/x/y/pull/39"}, belowL6)
 
 	for _, tc := range []struct {
 		name       string
@@ -580,11 +693,13 @@ func TestSweepSupersededOpenPRs_DoesNotReapplyNeedsHumanAfterClear(t *testing.T)
 			)
 			defer server.Close()
 
-			c := newTestClient(t, server, org, []string{repo})
-			c.SetAppBotLogin("hive-app[bot]")
+			c, rec := newSupersessionTestClient(t, server, org, repo)
 			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
 			if err != nil {
 				t.Fatalf("SweepSupersededOpenPRs: %v", err)
+			}
+			if parked := parkedPRs(rec); (len(parked) == 1) != tc.wantLabel {
+				t.Fatalf("Parked facts = %v, want parked=%v", parked, tc.wantLabel)
 			}
 			if len(obs.comments[22]) != 0 {
 				t.Fatalf("marker comment must be edited in place, not duplicated: %v", obs.comments[22])

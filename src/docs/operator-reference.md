@@ -184,6 +184,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `issues.lift_hive_hard_suppress` | `true`. | Runs the hard-suppress reconcile (#12002): a `hold` or `blocked` label on an open issue is lifted when Hive provably applied it (newest label event is a `labeled` by the App bot; for `hold`, paired with the `<!-- hive:sha-hold -->` notice) and a PR cross-referencing the issue merged after it. Hive posts one note carrying `<!-- hive:hard-suppress-lifted -->`. Human-applied labels are never lifted. Skipped with the other unstick steps when the API budget is critical. |
 | `issues.hard_suppress_reconcile_interval` | `30m`. | Minimum time between hard-suppress reconcile passes. |
 | `issues.rfc_existing_check.enabled` | `false`. | Triage existing-coverage check (#13575): new open issues labelled `rfc`, `enhancement` or `kind/feature` get one comment that lists the existing settings that may already cover the request. Each setting links to Settings with the search set to its key. The comment carries `<!-- hive:rfc-existing-coverage -->` and is never posted twice. The check never labels or closes issues. Tuning keys are `post_when_nothing_found`, `labels`, `max_matches` and `max_age`; see [Triage: does this RFC already exist?](settings.md#triage-does-this-rfc-already-exist). |
+| `runs.triage.prior_art.enabled` | `true`. | Prior-art gate (#13575): before any agent claims a feature / RFC / epic issue, the scheduler searches knowledge beads, the Settings index, merged PRs (12 months), closed issues, docs and code for the issue's key terms. A human-filed issue whose best finding reaches `runs.triage.prior_art.threshold` (default `70`) is parked at `stage/017-possible-existing` with one `<!-- hive:prior-art-gate -->` comment quoting up to `max_findings` (default `5`) findings and the two replies (`/hive decision proceed — <gap>` / `/hive decision exists`); a clanker-filed one is parked the same way and closed `already-exists` after `bot_close_ttl` (default `72h`) with no reply; a hive-filed one is never parked (findings note only). `kinds` (default `feature, rfc, epic, enhancement`) picks the gated kinds; `max_parks_per_cycle` (default `5`) bounds one cycle. See [Prior-art gate](spektacular.md#prior-art-gate). |
 | `contribute.help_links` | Defaults to Hive contributor docs and the Hive issue tracker. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
 | `contribute.max_parallel_fixes` | `2`. | Ceiling on how many stage-072 `fix-pr` sub-sessions one contributor's relay may run beside its primary session ([#12436](https://github.com/hivecommons/hive/issues/12436)). The relay advertises its own count (`max_parallel_fixes`, from `HIVE_MAX_PARALLEL_FIXES`); the hub clamps it to this. A relay that advertises no `parallel_sessions` always has capacity 1 (preempt mode). Fixes beyond capacity queue server-side and are served before new work. Settings → Hub → Fix budget. |
 | `contribute.min_focus_window` | `30m`. | Preempt mode only: after a preempted primary task resumes, the hub does not preempt that contributor again until it has run uninterrupted for this long. Settings → Hub → Fix budget. |
@@ -418,6 +419,7 @@ advanced into the merge path.
 | `auto_merge.human_merge_paths` | unset | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge, e.g. `Danathar/goodreads-mcp: [".claude/settings.json", ".claude/hooks/**"]`. Every App merge path honors it: the automerge sweep lanes (App self-merge, trusted-author, label-queued) and the agent merge-request relay refuse a PR that touches a listed path, add `hold`, and post one `<!-- hive-human-merge-path -->` comment naming the path(s); a person must merge it. If the changed-file list cannot be fetched completely for a configured repo, the merge is withheld (#11038, #11039). |
 | `auto_merge.require_current_base` | unset (off) | Repo list (`owner/repo`) whose App self-merge, trusted-author and contributor lanes only merge a head that contains the current base tip. A green head tested against an older base is updated with GitHub update-branch (a merge commit; no author commit is rewritten) and merges once CI is green on the new head, so a semantic conflict with work merged since turns that PR red instead of breaking the base (#13634). Costs one compare call per merge candidate. |
 | `auto_merge.merge_forward_trusted_human` | unset (off) | Repo list (`owner/repo`) where a `role/trusted` + `author/human` PR on a same-repo branch that GitHub reports as conflicting (`dirty`) gets the base merged into its head as one App-authored, signed-off merge commit via the GitHub merges API (no human commit is rewritten), then merges once CI is green on the new head. A real conflict pushes nothing and posts one `<!-- hive:merge-forward-conflict head=… -->` note naming the files both sides changed. Fork heads are never written. Attempted once per head (#13636). |
+| `auto_merge.squash_only` | unset (no repo) | Repo list (`owner/repo`) whose branch policy forbids merge commits. Elsewhere, a `role/trusted` PR whose head mixes the contributor's commits with App-linked, App-signed ones (the hive's own in-place adoption fixes), every commit self-signed, is labelled `merge-method/merge` and merged with a merge commit instead of parking at `stage/085` as `adoption-stalled:hive-signoff-attribution`; a listed repo keeps the 085 stall and its note names this key (#13777). |
 | `auto_merge.bot_takeover.enabled` | `true` | When `github-actions[bot]` is in `auto_merge.trusted_bot_authors`, re-author its same-repo PRs whose required `pull_request` checks can never run (the bot opened them with a workflow `GITHUB_TOKEN`). After the head is older than both `min_head_age` and 30 minutes with no `pull_request` run, the App pushes the same change as one signed-off commit to `hive/takeover-<n>`, opens a PR with the original title/body plus `Supersedes #<n>`, comments `Superseded by #N` on the bot PR and closes it. One attempt per bot head SHA. See [hive-merge.md](hive-merge.md#github-actionsbot-pr-takeover). |
 | `auto_merge.trusted_authors.enabled` | `false` | Enables the opt-in human-authored PR tier: Hive may merge a green PR only when the author already holds the required hive role and, by default, GitHub push/maintain/admin permission on that repo. |
 | `auto_merge.trusted_authors.repos` | empty = all watched repos | Optional repo allow-list for the trusted-author tier. The dashboard renders this as a watched-repo multi-select; selecting nothing preserves the all-repos default. |
@@ -544,10 +546,27 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   alone — no notice, no label, no close (#12349: #12322, `Fixes` open
   #12117 and `Part of` closed #12080, was escalated to `needs-human`).
 - **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
-  touch was also touched by the merged PR; below L6 they get `needs-human`.
-  Once the notice is on the PR, the sweep re-applies `needs-human` only when
-  the notice changes (a different merged PR or reason); clearing the label
-  for an unchanged notice sticks.
+  touch was also touched by the merged PR. When they touch files the merged
+  PR did not, the hive resolves the overlap itself instead of asking a person
+  (`pr_supersession_resolve.go`): if the head is behind the base it requests
+  GitHub's update-branch (`branch_update` effect) and waits for the new head;
+  once the head is current it re-reads the files, and either closes the PR
+  (nothing left, or only files the merged PR already changed) or rewrites the
+  body's `Closes #N` to `Refs #N (closed by #M; this PR adds <files>)`, stamps
+  `<!-- hive:supersession-resolved issue=N closer=M -->`, edits the notice and
+  lets the PR continue in its lane. A refused update (conflict) is noted once
+  per head and left to the fix lane. The hive's own earlier `needs-human` is
+  released when it takes the resolution over; one a person applied is
+  honoured and the PR is left alone. Below L6 the PR is escalated instead.
+- **Escalation goes through the stage engine.** Whenever the sweep hands a
+  PR to a person (contributor PR with files the merged PR did not touch, or a
+  hive PR below L6) it adds `needs-human` *and* submits a `Parked` fact, so
+  the PR lands at `stage/085-needs-decision` in the same pass — never a bare
+  `needs-human` beside an active lane stage (#13782 wore
+  `stage/050-review-pending` + `needs-human` until the next auto-merge tick).
+  The notice names the files the merged PR did not touch. Once the notice is
+  on the PR, the sweep re-escalates only when the notice changes (a different
+  merged PR or reason); clearing the label for an unchanged notice sticks.
 - **Human-authored PRs** get the notice and are surfaced to operators in the
   dashboard Review Queue (below); they are never closed automatically
   unless `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).

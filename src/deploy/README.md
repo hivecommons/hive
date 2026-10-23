@@ -95,4 +95,4 @@ Why these binaries are removed in the image rather than switched off in the
 pod: `allowPrivilegeEscalation: false` would set `no_new_privs` and disable
 every setuid binary, `su-exec` included, which breaks agent launch. The
 trade-off is spelled out in the C6 comment in `k8s/deployment.yaml` and in
-[security-model.md](../docs/security-model.md#in-container-privilege-model).
+[security-model.md](../docs/security-model.md#3-agent-runtime-isolation).

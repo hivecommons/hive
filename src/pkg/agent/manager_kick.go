@@ -12,7 +12,6 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	"github.com/hivecommons/hive/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -105,7 +104,7 @@ func (m *Manager) SendKick(name string, message string) error {
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
 	// lifecycle. Ended before delivery bookkeeping via defer.
-	_, span := tracing.StartSpan(context.Background(), "agent.send_kick",
+	_, span := m.startSpan(context.Background(), "agent.send_kick",
 		attribute.String("agent.name", name))
 	defer span.End()
 
@@ -176,13 +175,13 @@ func (m *Manager) SendKick(name string, message string) error {
 	// showing a trust prompt or still initializing even though
 	// tmuxPaneHasCLI matched a broad marker like "Copilot".
 	m.mu.Unlock()
-	if !m.waitForInputPromptForAgentUnless(agent, m.kickEpochChangedFn(agent, epoch)) {
+	if ready, reason := m.waitForInputPromptForAgentReason(agent, m.kickEpochChangedFn(agent, epoch)); !ready {
 		m.mu.Lock()
 		if agent.kickEpoch != epoch {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
-		m.markKickUndeliverableLocked(agent, time.Now(), "CLI did not reach input prompt")
-		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
+		m.markKickUndeliverableLocked(agent, time.Now(), reason)
+		return kickPromptNotReadyErr(name, reason)
 	}
 	m.mu.Lock()
 	agent, ok = m.agents[name]
@@ -262,12 +261,20 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	defer agent.kickDelivering.Store(false)
 
 	visible := m.captureVisiblePaneForAgent(agent)
-	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) || paneShowsCopilotQuestionForm(visible) {
-		m.markKickUndeliverableLocked(agent, time.Now(), "pane not at a ready input prompt")
+	menuFooter := paneTUIMenuFooter(effectiveBackend(agent), visible)
+	if !paneShowsInputPrompt(visible) || paneShowsConsentScreen(visible) || paneShowsAgentWorking(visible) || paneShowsCopilotQuestionForm(visible) || menuFooter != "" {
+		reason := "pane not at a ready input prompt"
+		if menuFooter != "" {
+			reason = tuiMenuNotReadyReason(menuFooter)
+		}
+		m.markKickUndeliverableLocked(agent, time.Now(), reason)
 		m.logger.Warn("kick delivery skipped: CLI is not at a ready prompt; refusing to type kick into shell",
 			"agent", agent.Name, "trigger", trigger, "has_cli_marker", paneHasCLIMarker(visible),
 			"consent_screen", paneShowsConsentScreen(visible), "working", paneShowsAgentWorking(visible),
-			"question_form", paneShowsCopilotQuestionForm(visible))
+			"question_form", paneShowsCopilotQuestionForm(visible), "menu_footer", menuFooter)
+		if menuFooter != "" {
+			return fmt.Errorf("agent %s pane not at a ready input prompt: %s", agent.Name, reason)
+		}
 		return fmt.Errorf("agent %s pane not at a ready input prompt", agent.Name)
 	}
 

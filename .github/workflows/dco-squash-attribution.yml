@@ -15,7 +15,11 @@ name: DCO squash attribution
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # labeled/unlabeled: the hive's `merge-method/merge` label changes the
+    # verdict (see PR_MERGE_METHOD below), so the check re-runs when it moves.
+    # The job runs in full on every event — a skipped job would read as a
+    # pass on a required check.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 
 concurrency:
@@ -62,6 +66,13 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
           LANDED_REFS: origin/${{ github.event.repository.default_branch }}
+          # The hive labels a role/trusted PR whose head mixes the
+          # contributor's commits with its own self-signed ones and merges it
+          # with a merge commit; the script then accepts a bot-authored,
+          # bot-self-signed commit (and nothing else) because nothing is
+          # squashed. Labels need triage on the repo, so a contributor cannot
+          # set this themselves.
+          PR_MERGE_METHOD: ${{ contains(github.event.pull_request.labels.*.name, 'merge-method/merge') && 'merge' || '' }}
         run: |
           set -euo pipefail
           bash src/scripts/check-squash-signoff-attribution.sh \

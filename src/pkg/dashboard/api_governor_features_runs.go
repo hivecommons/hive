@@ -31,6 +31,9 @@ type featuresRunsBody struct {
 	RunsTriageClarityGateEnabled   *bool `json:"runsTriageClarityGateEnabled"`
 	RunsTriageClarityGateThreshold *int  `json:"runsTriageClarityGateThreshold"`
 
+	RunsTriagePriorArtEnabled   *bool `json:"runsTriagePriorArtEnabled"`
+	RunsTriagePriorArtThreshold *int  `json:"runsTriagePriorArtThreshold"`
+
 	RecheckEnabled         *bool   `json:"spektacularRecheckEnabled"`
 	RecheckDefaultInterval *string `json:"spektacularRecheckDefaultInterval"`
 	RecheckMaxDeltaTasks   *int    `json:"spektacularRecheckMaxDeltaTasks"`
@@ -71,6 +74,7 @@ func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), err
 		{b.RunsCheckpointPlan, func(c *config.Config) **bool { return &c.Runs.Checkpoints.Plan }},
 		{b.RunsCheckpointImplement, func(c *config.Config) **bool { return &c.Runs.Checkpoints.Implement }},
 		{b.RunsTriageClarifyComment, func(c *config.Config) **bool { return &c.Runs.Triage.ClarifyComment }},
+		{b.RunsTriagePriorArtEnabled, func(c *config.Config) **bool { return &c.Runs.Triage.PriorArt.Enabled }},
 	} {
 		if f.v == nil {
 			continue
@@ -124,6 +128,13 @@ func (b featuresRunsBody) prepare(cur *config.Config) (func(*config.Config), err
 			return nil, fmt.Errorf("runs triage clarity_gate threshold must be 0 (default) to 100")
 		}
 		steps = append(steps, func(c *config.Config) { c.Runs.Triage.ClarityGate.Threshold = v })
+	}
+	if b.RunsTriagePriorArtThreshold != nil {
+		v := *b.RunsTriagePriorArtThreshold
+		if v < 0 || v > 100 {
+			return nil, fmt.Errorf("runs triage prior_art threshold must be 0 (default) to 100")
+		}
+		steps = append(steps, func(c *config.Config) { c.Runs.Triage.PriorArt.Threshold = v })
 	}
 
 	if b.RunsWaitSeverity != nil {
@@ -247,6 +258,9 @@ func featuresRunsResponse(cfg *config.Config) map[string]interface{} {
 		"runsTriageClarityGateEnabled":   r.Triage.ClarityGate.Enabled,
 		"runsTriageClarityGateThreshold": r.Triage.ClarityGate.Threshold,
 
+		"runsTriagePriorArtEnabled":   r.Triage.PriorArt.IsEnabled(),
+		"runsTriagePriorArtThreshold": r.Triage.PriorArt.Threshold,
+
 		"spektacularRecheckEnabled":         r.Spektacular.Recheck.Enabled,
 		"spektacularRecheckDefaultInterval": settingsDurationString(r.Spektacular.Recheck.DefaultInterval),
 		"spektacularRecheckMaxDeltaTasks":   r.Spektacular.Recheck.MaxDeltaTasks,
@@ -274,6 +288,7 @@ func featuresRunsResponse(cfg *config.Config) map[string]interface{} {
 			"runsWaitSeverity":                  config.DefaultRunsWaitSeverity,
 			"runsTriageMinBodyChars":            config.DefaultTriageMinBodyChars,
 			"runsTriageClarityGateThreshold":    config.DefaultClarityGateThreshold,
+			"runsTriagePriorArtThreshold":       config.DefaultPriorArtGateThreshold,
 			"spektacularRecheckDefaultInterval": config.DefaultSpektacularRecheckInterval.String(),
 			"spektacularRecheckMaxDeltaTasks":   config.DefaultSpektacularMaxDeltaTasks,
 			"spektacularDiscoveryTimeout":       fmt.Sprintf("%ds", config.DefaultSpektacularDiscoveryTimeoutS),

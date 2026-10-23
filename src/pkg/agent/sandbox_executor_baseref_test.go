@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // Regression coverage for kubestellar/hive#4928 on the sandbox path: the
@@ -83,9 +83,9 @@ func (r *baseRefRunner) Run(ctx context.Context, dir string, env []string, name 
 // baseRefPRClient records the base the executor asked the hive to open against.
 type baseRefPRClient struct{ base string }
 
-func (p *baseRefPRClient) CreatePR(_ context.Context, _, _, base, _, _ string) (ghpkg.CreatePRResult, error) {
+func (p *baseRefPRClient) CreatePR(_ context.Context, _, _, base, _, _ string) (types.PRResult, error) {
 	p.base = base
-	return ghpkg.CreatePRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
+	return types.PRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
 }
 
 func runSandboxForBaseRef(t *testing.T, runner *baseRefRunner, specBase string) (*baseRefPRClient, SandboxKickResult, error) {

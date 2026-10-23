@@ -1,0 +1,1 @@
+- Dashboard tabs pause registered refresh timers while hidden, reuse date formatters, and release finished sparkline animation effects to reduce idle CPU and retained rendering work.

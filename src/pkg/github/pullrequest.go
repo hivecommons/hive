@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/logscrub"
@@ -167,37 +168,11 @@ func ResolveForwardMergeMethod(ctx context.Context, client *gh.Client, logger *s
 }
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
-type CreatePRResult struct {
-	Number int
-	URL    string
-	// Author is the login GitHub recorded on the created (or pre-existing) PR —
-	// the App bot the hive relayed as (e.g. "kubestellar-hive[bot]"). Taken from
-	// the API response, not assumed, so the audit log records the true author.
-	Author string
-	// AlreadyExisted is true when an open PR already covers this request, so we
-	// returned it instead of opening a duplicate. Two different findings set it:
-	// an open PR for the same HEAD BRANCH, and (see DuplicateTree) an open PR
-	// carrying the same CONTENT from a different branch.
-	AlreadyExisted bool
-	// DuplicateTree narrows AlreadyExisted to the content case (#5111): the
-	// reuse was decided because an open PR on the same base has an identical
-	// tree SHA, not because the head branch matched. Callers that report the
-	// outcome keep the two apart because they mean different things to whoever
-	// reads the result — "your retry was absorbed" versus "this change is
-	// already proposed as #N, go comment on it".
-	DuplicateTree bool
-	// DuplicateReason is set (with AlreadyExisted) when the PR-side guard
-	// redirected the request to an existing PR: one of the DuplicateReason*
-	// constants. The returned PR is the one to continue on.
-	DuplicateReason string
-}
-
-// IsDuplicate reports whether the returned PR was reused because it already
-// covers this request's content or issue, rather than because it is this
-// request's own earlier PR.
-func (r CreatePRResult) IsDuplicate() bool {
-	return r.DuplicateTree || r.DuplicateReason != ""
-}
+// It is the runtime's PRResult (pkg/crux/types) under this package's name,
+// so a *Client satisfies the agent runtime's PRCreator seam without the
+// runtime importing this package (hivecommons/hive#13536). DuplicateReason,
+// when set, is one of the DuplicateReason* constants below.
+type CreatePRResult = types.PRResult
 
 // CreatePR opens a pull request on behalf of THIS hive's GitHub App — so the PR
 // is authored by the App bot ("<slug>[bot]"), deterministically, regardless of

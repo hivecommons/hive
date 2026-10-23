@@ -88,3 +88,14 @@ func TestProviderStatusAliasesTrackTypes(t *testing.T) {
 		t.Fatalf("AuthState = %q, want %q", got[0].AuthState, ProviderAuthNeedsLogin)
 	}
 }
+
+func TestFatalNetworkErrorPatternsIsACopy(t *testing.T) {
+	got := FatalNetworkErrorPatterns()
+	if len(got) != len(agent.FatalNetworkErrorPatterns) || len(got) == 0 {
+		t.Fatalf("FatalNetworkErrorPatterns = %v, want the runtime's %v", got, agent.FatalNetworkErrorPatterns)
+	}
+	got[0] = "mutated"
+	if agent.FatalNetworkErrorPatterns[0] == "mutated" {
+		t.Fatal("FatalNetworkErrorPatterns must return a copy")
+	}
+}

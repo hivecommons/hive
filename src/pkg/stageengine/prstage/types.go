@@ -49,6 +49,12 @@ type Detail struct {
 	DCOUnsignedHive     int
 	DCOUnsignedOther    int
 	DCOSquashUnsafeHive int
+	// MergeCommit says the pass elected a merge commit for the head
+	// (mergeCommitElection); MergeCommitRefused names why it could not
+	// when squash-unsafe hive commits are present ("" when it did or the
+	// question never arose).
+	MergeCommit        bool
+	MergeCommitRefused string
 	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
 	// on the head (required-check set or reported status/check run): the
 	// detected "this repo enforces DCO" signal the 072 override needs when

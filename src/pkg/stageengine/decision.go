@@ -15,8 +15,10 @@ type Decision struct {
 	// plans against; zero means the authorkind defaults.
 	KindLabels authorkind.Names
 	DCO        stagelabels.DCOState
-	Stalled    bool
-	Terminal   bool // Stage == None because the item closed/merged/left
+	// MergeCommit is the pass's merge-method verdict (`merge-method/merge`).
+	MergeCommit stagelabels.MergeCommitState
+	Stalled     bool
+	Terminal    bool // Stage == None because the item closed/merged/left
 	// Covered is set on an issue whose stage is 040 because an open PR the
 	// lanes have staged at 040 or later covers it: the dwell clock then
 	// belongs to the PR and the sweep does not judge the issue stalled.
@@ -34,7 +36,7 @@ type Decision struct {
 // Desired renders the Decision as the full hive-owned label set the writer
 // should make the item carry.
 func (d Decision) Desired() stagelabels.Desired {
-	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO}
+	return stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit}
 }
 
 // abstain is the Decision for "no opinion" with a reason for the log.

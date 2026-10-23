@@ -1,0 +1,1 @@
+- `ioscan`'s red-team corpus now has a committed scorecard baseline (`src/pkg/ioscan/testdata/scorecard_baseline.json`) and a CI ratchet: the attack block rate may only go up and the benign false-positive count may only go down. `go test ./pkg/ioscan/ -run TestScorecardRatchet -v` prints the per-family table ([#6685](https://github.com/hivecommons/hive/issues/6685)).

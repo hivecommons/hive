@@ -78,6 +78,7 @@ type ParkFacts struct {
 	Holds             []string // stagelabels.Holds(labels), lower-cased
 	NeedsHuman        bool
 	DecisionLabel     string // configured issue park label present, or 085 on a PR
+	PossiblyExists    bool   // prior-art gate park: stage/017-possible-existing (#13575)
 	Sentinel          bool
 	HumanOnlyReason   string // lane rule unrelated to trust (workflow edits, tests removed, …)
 	ApprovedDirection bool   // /hive approve|decision recorded; un-park keeps needs-human (#12715)
@@ -221,6 +222,13 @@ type PRPassFacts struct {
 	DCORequired      bool
 	SquashUnsafeHive int
 	AuthorIsApp      bool
+	// MergeCommit is the pass's merge-method verdict for the head:
+	// MergeCommitWanted when it elected a merge commit (mixed authorship,
+	// each commit self-signed, role/trusted, repo not squash-only), in
+	// which case the attribution override does not apply and the writer
+	// puts `merge-method/merge` on; NotWanted takes it off; Unknown (commit
+	// check not read) leaves it as found.
+	MergeCommit stagelabels.MergeCommitState
 	// AdoptionLive is prev.AdoptionLive(head): the hive owns the PR, so a
 	// stage that yields to adoption reads 074. EscalationReason is set when
 	// the stalled-adoption escape moved it to 085 instead.

@@ -11767,6 +11767,26 @@ test('#10457 contributor review repairs fork base drift before review feedback',
   } finally { teardown(relay); }
 });
 
+test('#13787 the review prompt never stalls on command permission', () => {
+  // "Run these, and only these" made an agent ask "May I run additional
+  // commands…?" before reading review comments or resolving an UNKNOWN merge
+  // state — and no human is attached to answer.
+  const relay = loadRelay({});
+  try {
+    const prompt = relay.buildReviewPrompt(['foo/bar'], ['foo/bar'], 'ct-bot');
+    assert.ok(!/only these/.test(prompt), `the closed allowlist is the bug: ${prompt}`);
+    assert.match(prompt, /gh pr view <n> --repo <repo> --comments/);
+    assert.match(prompt, /--json mergeable,mergeStateStatus/);
+    assert.match(prompt, /gh pr checks <n> --repo <repo>/);
+    assert.match(prompt, /gh api repos\/<repo>\/pulls\/<n>\/comments/);
+    assert.match(prompt, /gh api repos\/<repo>\/pulls\/<n>\/reviews/);
+    assert.match(prompt, /never ask for permission or wait for confirmation/);
+    assert.match(prompt, /skip that check, note the limitation/);
+    assert.match(prompt, /name the skipped check and blocker in the reason/);
+    assert.match(prompt, /do not read, comment on, or push to a PR in any other repository/);
+  } finally { teardown(relay); }
+});
+
 test('#6908 the review prompt is scoped to authorized repos, not the account', () => {
   const relay = loadRelay({});
   try {

@@ -80,8 +80,8 @@ func TestDashboardHistoriesAreCapped(t *testing.T) {
 	}
 	checks := map[string]string{
 		"historyData":           "pushDashboardRing(historyData, snap, DASHBOARD_HISTORY_CAP)",
-		"_factHistory":          "_factHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP)",
-		"_costHistory":          "_costHistory = capDashboardArray(await r.json(), DASHBOARD_SERVER_HISTORY_CAP)",
+		"_factHistory":          "_factHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP)",
+		"_costHistory":          "_costHistory = capDashboardArray(history.concat(data), COST_HISTORY_POINTS)",
 		"_serverTrendHistory":   "_serverTrendHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP)",
 		"_overviewKPIHistory":   "_overviewKPIHistory = capDashboardArray(data, DASHBOARD_SERVER_HISTORY_CAP)",
 		"_promptHistoryEntries": "_promptHistoryEntries = capDashboardArray((data && data.entries) || [], DASHBOARD_LOG_CAP)",

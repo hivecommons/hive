@@ -17,6 +17,10 @@ import (
 // Like handleRepoCost, a not-ready collector reports ready=false with empty
 // lists rather than a fabricated $0.00.
 func (s *Server) handleLaunchCost(w http.ResponseWriter, r *http.Request) {
+	q, ok := parseHistoryQuery(w, r)
+	if !ok {
+		return
+	}
 	var resp collect.LaunchCostResponse
 	switch {
 	case s.deps != nil && s.deps.LaunchCost != nil:
@@ -24,7 +28,7 @@ func (s *Server) handleLaunchCost(w http.ResponseWriter, r *http.Request) {
 		if !ready {
 			resp = collect.ComputeLaunchCost(nil, nil, time.Time{})
 			resp.CollectedAt = time.Time{}
-			jsonResponse(w, resp)
+			launchCostResponse(w, r, resp, q)
 			return
 		}
 		resp = snap
@@ -42,7 +46,7 @@ func (s *Server) handleLaunchCost(w http.ResponseWriter, r *http.Request) {
 	if ref := strings.TrimSpace(r.URL.Query().Get("ref")); ref != "" {
 		resp = filterLaunchCostByRef(resp, ref)
 	}
-	jsonResponse(w, resp)
+	launchCostResponse(w, r, resp, q)
 }
 
 // filterLaunchCostByRef keeps only the ref entry and launches naming ref.

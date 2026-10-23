@@ -1,0 +1,1 @@
+- Claim release markers, including routine relay task completions, now share the per-issue automated comment budget with claim markers instead of posting without a cap; the local claim ledger remains authoritative when a release comment is suppressed ([#13766](https://github.com/hivecommons/hive/issues/13766)).

@@ -71,6 +71,14 @@ test('dialog data filters by case-insensitive substring and keeps selected label
   assert.strictEqual(h.stageTrackerLabelDialogData(fac, '').rows.length, 4);
 });
 
+test('needs-human patterns match new labels and the dialog lists covered ones', () => {
+  const set = h.stageTrackerNeedsHumanLabels({ needs_human_labels: ['sentinel-alert'] });
+  for (const l of ['needs-human-review', 'stage/099-needs-decision', 'ci-needs-author', 'sentinel-alert']) assert.strictEqual(h.stageTrackerLabelNeedsHuman(l, set), true, l);
+  for (const l of ['stage/010-actionable', 'unneeds-humans']) assert.strictEqual(h.stageTrackerLabelNeedsHuman(l, set), false, l);
+  const fac = h.stageTrackerLabelFacets([item(1, ['needs-human-review', 'stage/010-actionable']), item(2, ['sentinel-alert'])], F(), { needsHumanLabels: set });
+  assert.deepStrictEqual(fac.needsHuman.covered.map(c => c.label), ['needs-human-review', 'sentinel-alert']);
+});
+
 test('needs-human set: normalised from the payload, prefix children match, count is distinct items', () => {
   const set = h.stageTrackerNeedsHumanLabels({ needs_human_labels: ['stage/045-needs-decision', 'stage/085-needs-decision', 'needs-decision', 'needs-direction', 'needs-spec', 'needs-signal', 'Needs-Human', 'hold', 'on-hold', 'hold/review', 'stage/071-needs-author', 'needs-triage', ''] });
   assert.strictEqual(set.length, 12);

@@ -1,0 +1,1 @@
+- Dashboard history APIs now bound chart responses, accept timestamp cutoffs, and support conditional requests; cost polling transfers only new full-resolution samples, launch-cost detail is bounded without changing totals, and status snapshots support ETag revalidation ([#13789](https://github.com/hivecommons/hive/issues/13789)).

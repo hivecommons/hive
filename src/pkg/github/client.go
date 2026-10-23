@@ -4428,8 +4428,11 @@ type RepoIssueBreakdown struct {
 	// NeedsDecision counts issues parked on stage/045-needs-decision (and,
 	// until migrated, the pre-045 stage/085 and the retired needs-decision /
 	// needs-direction labels).
-	NeedsDecision        int `json:"needs_decision,omitempty"`
-	NeedsSpec            int `json:"needs_spec,omitempty"`
+	NeedsDecision int `json:"needs_decision,omitempty"`
+	NeedsSpec     int `json:"needs_spec,omitempty"`
+	// PossiblyExists counts issues parked at stage/017-possible-existing
+	// by the prior-art gate, waiting on their author (hivecommons/hive#13575).
+	PossiblyExists       int `json:"possibly_exists,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
 	Exempt               int `json:"exempt,omitempty"`
 	// Blocked counts open issues parked on an unmerged PR or other outside
@@ -4456,6 +4459,8 @@ func (b *RepoIssueBreakdown) addHardSuppress(label string) {
 		b.NeedsDecision++
 	case issueNeedsSpecLabel:
 		b.NeedsSpec++
+	case PossiblyExistsStageLabel:
+		b.PossiblyExists++
 	}
 }
 

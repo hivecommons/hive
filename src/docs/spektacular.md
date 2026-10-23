@@ -168,6 +168,75 @@ runs:
       threshold: 60            # 0-100; 0 uses the default
 ```
 
+### Prior-art gate
+
+`runs.triage.prior_art` ([#13575](https://github.com/hivecommons/hive/issues/13575))
+answers "does this already exist?" before any agent claims a feature request.
+It is ON by default and independent of `runs.triage.enabled`. For every
+unclaimed GitHub issue of a gated kind (`kinds`, default `feature`, `rfc`,
+`epic`, `enhancement` — matched as a bare or `kind/`-prefixed label, or as a
+leading `[RFC]` / `RFC:` / `Epic:` title tag; anything labelled `bug` is never
+gated) the scheduler derives the issue's key terms (backticked identifiers,
+config keys and `--flags` weigh 4, title words 3, the most frequent body
+words 1) and asks, without a model call:
+
+| Source | What it searches | Hit kind |
+|---|---|---|
+| knowledge | the hive's knowledge layers (`SearchAll`, deprecated/superseded facts dropped) | `knowledge` |
+| settings | the dashboard Settings search index, as the `rfc_existing_check` does | `setting` |
+| merged_prs | merged PRs in the repo from the last 12 months | `merged PR` |
+| closed_issues | closed issues in the repo (declined `not_planned` ones skipped unless `duplicate`) | `closed issue` |
+| docs | `README.md`, `CHANGELOG.md`, `docs/` by identifier or top terms (code search) | `doc` |
+| code | source files by identifier only (code search, two identifiers at most) | `code` / `setting` |
+
+Each candidate's confidence is the share of the issue's weighted terms it
+contains; a candidate needs two shared terms including a title term or an
+identifier to count at all. Every source is optional and soft (a failed
+search drops its candidates only), the whole search is bounded (20s, one
+query per source) and the report is cached per issue content hash, so an
+unchanged issue costs nothing on later cycles.
+
+When the best finding reaches `threshold` (default **70**: deliberately
+high because a park costs a person a round trip — 70 means the finding
+covers about three quarters of the issue's weighted vocabulary including a
+title term) what happens depends on who filed the issue:
+
+| Author | Detected by | What the gate does |
+|---|---|---|
+| a person | `author/human`, or the enumerator's human verdict | one `<!-- hive:prior-art-gate -->` comment quoting up to `max_findings` (default 5) findings with links and a one-line quote, the `stage/017-possible-existing` park label, and a `discoverability: <feature> was asked for though it exists` advisory bead so the docs can be improved. Never auto-closed. |
+| the hive's own agent | `author/hive`, the App login, or an `agent/*` / `origin/*` label | **never parked** — a `<!-- hive:prior-art-findings -->` note is attached once and the issue carries on; the claiming agent must open its claim comment with a *Gap vs existing* paragraph. At filing time the agent prompts make the search a precondition: a high-confidence match means do not file (record a knowledge bead), a medium one means file with the findings and a *Gap vs existing* section. |
+| a clanker (another hive, a contributor CLI, an external bot) | `author/clanker`, or a `[bot]` / non-human, non-hive login | parked like a person, with notice that silence closes it: after `bot_close_ttl` (default 72h) with no reply the resume sweep closes it `not_planned` with the `already-exists` label. Reopenable. |
+
+While an issue carries `stage/017-possible-existing` no agent claims it
+(it is a hard suppress, like 045). The resume sweep (every un-park cadence)
+answers the author's or a maintainer's reply:
+
+- `/hive decision proceed — <what is missing>` lifts the label, appends a
+  **Scope vs existing** section with the delta to the issue body as
+  acceptance criteria, and records the un-park so the issue re-derives
+  `stage/010-actionable`;
+- `/hive decision exists` adds `already-exists`, closes the issue
+  `not_planned` and replies with a pointer at the findings;
+- a plain reply lifts the label too (the claiming agent is told to state the
+  gap first).
+
+The gate's marker keeps it from asking twice; a `stage/017` a person added by
+hand is never lifted by the sweep. At most `max_parks_per_cycle` (default 5)
+issues are parked per enumeration cycle, so turning the gate on against a
+backlog never floods a repo.
+
+```yaml
+runs:
+  triage:
+    prior_art:
+      enabled: true            # default
+      threshold: 70            # 0-100; 0 uses the default
+      max_findings: 5
+      kinds: [feature, rfc, epic, enhancement]
+      max_parks_per_cycle: 5
+      bot_close_ttl: 72h       # clanker parks only; negative disables auto-close
+```
+
 ## What the runner does
 
 Every 30 seconds (the contribute hub's cleanup tick) the runner looks at every

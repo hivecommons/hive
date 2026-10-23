@@ -596,12 +596,16 @@ bound that:
   newest comment is a hive-bot verification less than 24h old — nothing has
   changed, so re-verifying is the loop, not new work. Any later comment lets
   the claim through.
-- **Per-issue daily budget.** The relay's `comment` kind, finding folds and
-  the agent claim mark share a cap of 5 comments per issue per rolling 24h per
+- **Per-issue daily budget.** The relay's `comment` kind, finding folds,
+  claim marks and release markers (including normal relay task completions)
+  share a cap of 5 comments per issue per rolling 24h per
   hub process (`HIVE_ISSUE_COMMENT_BUDGET_PER_DAY`; 0 disables). A suppressed
   comment is logged (`per-issue bot comment budget reached`); a relay comment
   over budget is denied rather than retried, and a fold over budget still
   folds (the result is `consolidated: true`) but leaves no comment that day.
+  A suppressed release marker leaves the original claim comment unchanged;
+  this hive uses its authoritative ledger to reject its own stale claim marker,
+  while other hives may still read the hold until its `until=` expires.
   Reviewer and operator-driven comments are not budgeted.
 
 ## Where things live

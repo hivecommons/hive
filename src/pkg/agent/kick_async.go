@@ -311,16 +311,16 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 	// wait also returns early the moment a restart invalidates this kick, so
 	// the goroutine does not linger for the whole relaunch.
 	m.mu.Unlock()
-	if !m.waitForInputPromptForAgentUnless(agent, m.kickEpochChangedFn(agent, epoch)) {
+	if ready, reason := m.waitForInputPromptForAgentReason(agent, m.kickEpochChangedFn(agent, epoch)); !ready {
 		if m.kickEpochChanged(agent, epoch) {
 			return fmt.Errorf("%w: agent %s restarted while the kick was waiting for its input prompt", errKickCancelledByRestart, name)
 		}
 		m.mu.Lock()
 		if current, ok := m.agents[name]; ok && current == agent && agent.kickEpoch == epoch {
-			m.markKickUndeliverableLocked(agent, time.Now(), "CLI did not reach input prompt")
+			m.markKickUndeliverableLocked(agent, time.Now(), reason)
 		}
 		m.mu.Unlock()
-		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
+		return kickPromptNotReadyErr(name, reason)
 	}
 
 	m.mu.Lock()

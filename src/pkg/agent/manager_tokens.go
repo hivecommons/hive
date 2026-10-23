@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-// AppTokenMinter is implemented by github.AppAuth to mint per-agent scoped tokens.
+// AppTokenMinter is implemented by the host's GitHub App auth (pkg/github.AppAuth)
+// to mint per-agent scoped tokens.
 type AppTokenMinter interface {
 	WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error
 }
@@ -909,7 +910,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		// match the launch injection — advisory agents stay GITHUB_TOKEN-less, and
 		// hives that have not opted in get nothing injected.
 		if m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
-			if data, err := os.ReadFile(ghpkg.AgentTokenCachePath(a.Name)); err == nil {
+			if data, err := os.ReadFile(types.AgentTokenCachePath(types.DefaultAgentTokenCacheDir, a.Name)); err == nil {
 				if tok := strings.TrimSpace(string(data)); tok != "" {
 					_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "GITHUB_TOKEN", tok).Run()
 				}

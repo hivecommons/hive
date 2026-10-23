@@ -6862,7 +6862,7 @@ const authorizedRepos = new Set();
 
 // isSafeRepoName reports whether `name` has the GitHub `owner/name` shape.
 // The names in authorizedRepos end up interpolated verbatim into shell command
-// lines the review prompt pre-authorizes ("Run these, and only these"), so a
+// lines the review prompt tells the agent to start with, so a
 // hub-supplied value must be proven to be an identifier — not a command
 // fragment — before it can cross from data into an executable line (#6938).
 const SAFE_REPO_NAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/;
@@ -6982,9 +6982,14 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
     .join('\n');
 
   return 'Check the open PRs you have filed, in the repositories this hive has assigned you work in, ' +
-    'for base drift first, then review comments. Run these, and only these:\n' +
+    'for base drift first, then review comments. Start by listing them with:\n' +
     commands + '\n' +
-    'Those repositories are the whole scope of this task. Do not search across your account, ' +
+    'Those repositories are the whole scope of this task. Within them you may run whatever gh and git ' +
+    'commands the follow-up needs on your own PRs — for example `gh pr view <n> --repo <repo> --comments`, ' +
+    '`gh pr view <n> --repo <repo> --json mergeable,mergeStateStatus`, `gh pr checks <n> --repo <repo>`, ' +
+    '`gh api repos/<repo>/pulls/<n>` (to resolve an UNKNOWN merge state), `gh api repos/<repo>/pulls/<n>/comments`, ' +
+    '`gh api repos/<repo>/pulls/<n>/reviews`, and git fetch, merge, rebase, commit and push on your PR branch. ' +
+    'Do not search across your account, ' +
     'and do not read, comment on, or push to a PR in any other repository — a PR outside that list ' +
     'was not opened on this hive\'s behalf, even if you have access to it. ' +
     'Before review work, repair your own PRs whose mergeStateStatus is DIRTY or BEHIND, including fork PRs. ' +
@@ -6993,8 +6998,11 @@ function buildReviewPrompt(shippedRepos, authorized, login) {
     'Reply on each repaired PR with a short hive-base-moved note naming the base commit. ' +
     'For each PR with review comments, read the comments, address the feedback, push fixes, and respond. ' +
     'If no PRs need base repair or have comments, say so and stop — do not look for other work. ' +
+    'No human is attached to this session: never ask for permission or wait for confirmation. ' +
+    'If a command is unavailable or refused, skip that check, note the limitation, and carry on with the rest. ' +
     'When you HAVE finished — every PR needing base repair or comment follow-up is addressed, or there were none — print, as the very ' +
-    'last thing you output and on a line by itself, in plain text, no Markdown formatting: ' +
+    'last thing you output and on a line by itself, in plain text, no Markdown formatting (if a check could not run, ' +
+    'still print it and name the skipped check and blocker in the reason): ' +
     "'HIVE_VERDICT: complete — <short reason>'. Print it exactly once, only when you are actually done.";
 }
 

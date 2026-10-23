@@ -507,6 +507,11 @@ func patchPullRequest(pr github.PullRequest, snap github.WebhookItemSnapshot) gi
 	pr.Title = snap.Title
 	pr.Labels = append([]string(nil), snap.Labels...)
 	pr.Draft = snap.Draft
+	// The re-read head keeps per-head lookups (the sentinel's evidence
+	// bundle) on the revision GitHub now reports.
+	if snap.HeadSHA != "" {
+		pr.HeadSHA = snap.HeadSHA
+	}
 	if !snap.UpdatedAt.IsZero() {
 		pr.UpdatedAt = snap.UpdatedAt
 	}

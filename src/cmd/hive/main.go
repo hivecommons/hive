@@ -66,6 +66,7 @@ import (
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/rfccoverage"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/sessionprune"
@@ -2164,6 +2165,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
 	}
 	b.agentMgr = agent.NewManager(b.cfg.EnabledAgents(), b.logger, b.projectCtx)
+	// The runtime's spans go through pkg/tracing so they carry the hive
+	// component attribute and count toward reach (#3973); the runtime itself
+	// only knows the OpenTelemetry API (#13536).
+	b.agentMgr.SetSpanStarter(tracing.StartSpan)
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
@@ -2714,6 +2719,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	})
 	// Through the client provider, not a captured b.ghClient (#9621).
 	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
+	// Prior-art gate search (hivecommons/hive#13575): knowledge, the
+	// Settings index and the forge, through the client provider.
+	b.sched.SetPriorArtSearcher(newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.logger))
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
 		store := b.beadStores[agentName]
 		if store == nil {
@@ -9383,8 +9391,8 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 		logger.Warn("supersession sweep failed", "error", err)
 		return
 	}
-	if len(result.Closed) > 0 || len(result.Commented) > 0 || result.Seen > 0 {
-		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "skipped", result.Skipped)
+	if len(result.Closed) > 0 || len(result.Commented) > 0 || len(result.Resolved) > 0 || result.Seen > 0 {
+		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "resolved", len(result.Resolved), "skipped", result.Skipped)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9393,6 +9401,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			"seen":      strconv.Itoa(result.Seen),
 			"closed":    strconv.Itoa(len(result.Closed)),
 			"commented": strconv.Itoa(len(result.Commented)),
+			"resolved":  strconv.Itoa(len(result.Resolved)),
 			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})

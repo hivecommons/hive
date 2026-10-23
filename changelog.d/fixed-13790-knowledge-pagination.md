@@ -1,0 +1,1 @@
+- Bound `/api/knowledge` responses with default pagination and add Previous/Next navigation to the dashboard Knowledge fact list, rendering at most 50 facts per page; expose `hivectl knowledge list --limit/--offset` so CLI users can retrieve subsequent pages (#13790).

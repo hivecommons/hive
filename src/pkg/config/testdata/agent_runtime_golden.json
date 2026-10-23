@@ -649,7 +649,8 @@
   "runs": {
     "checkpoints": {},
     "triage": {
-      "clarity_gate": {}
+      "clarity_gate": {},
+      "prior_art": {}
     },
     "spektacular": {
       "recheck": {
