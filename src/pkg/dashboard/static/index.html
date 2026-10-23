@@ -11499,8 +11499,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       dashboardClearInterval(key);
       const entry = { fn, ms, timer: null };
       DASHBOARD_INTERVALS[key] = entry;
-      if (!document.hidden) entry.timer = setInterval(fn, ms);
+      if (!document.hidden) dashboardStartInterval(entry);
       return entry;
+    }
+    function dashboardStartInterval(entry) {
+      entry.timer = setInterval(entry.fn, entry.ms);
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
@@ -11513,7 +11516,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         clearInterval(entry.timer);
         entry.timer = null;
         if (document.hidden) continue;
-        entry.timer = setInterval(entry.fn, entry.ms);
+        dashboardStartInterval(entry);
         // A refresh failure must not prevent the other panels from resuming.
         // Snapshot iteration also permits a callback to clear/replace itself.
         if (DASHBOARD_INTERVALS[key] === entry) {
