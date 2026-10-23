@@ -3706,7 +3706,7 @@ func (c *Client) PathExistsAtRef(ctx context.Context, owner, repo, path, ref str
 // remediation ("Filed issue #208, hold-gated PR #209"), this is the lookup that
 // settles whether that remediation landed.
 //
-// A 404 reports (zero, false, nil): not found is not closed. The caller retires
+// A 404 or 410 (deleted) reports (zero, false, nil): not found is not closed. The caller retires
 // a finding only when EVERY reference it names is closed, so an unreadable
 // reference keeps the finding open, which is the safe direction. Any other error
 // is returned so the caller can distinguish "open" from "could not tell".
@@ -3716,7 +3716,7 @@ func (c *Client) IssueClosedAt(ctx context.Context, owner, repo string, number i
 	}
 	issue, resp, err := c.client.Issues.Get(ctx, owner, repo, number)
 	if err != nil {
-		if resp != nil && resp.StatusCode == http.StatusNotFound {
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
 			return time.Time{}, false, nil
 		}
 		return time.Time{}, false, fmt.Errorf("reading %s/%s#%d: %w", owner, repo, number, err)
