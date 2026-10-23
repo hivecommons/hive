@@ -655,7 +655,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 				warnDeduped(logger, "chmod dir", "permissions watcher: chmod dir failed", path, err)
 			} else {
 				permWarnDedupe.clear(dedupeKey("chmod dir", path))
-				logger.Warn("permissions watcher: fixed directory permissions",
+				logger.Info("permissions watcher: fixed directory permissions",
 					"path", path,
 					"old_mode", mode.Perm().String(),
 					"new_mode", newMode.String(),
@@ -672,7 +672,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 				warnDeduped(logger, "chmod file", "permissions watcher: chmod file failed", path, err)
 			} else {
 				permWarnDedupe.clear(dedupeKey("chmod file", path))
-				logger.Warn("permissions watcher: fixed file permissions",
+				logger.Info("permissions watcher: fixed file permissions",
 					"path", path,
 					"old_mode", mode.Perm().String(),
 					"new_mode", newMode.String(),

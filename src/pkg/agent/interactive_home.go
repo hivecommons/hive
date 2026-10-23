@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -560,6 +562,12 @@ func (m *Manager) tightenInteractiveHome(agentName, home string, uid int) {
 		m.logger.Debug("interactive home left world-writable (chown unavailable)",
 			"agent", agentName, "dir", home, "error", err)
 		if cerr := os.Chmod(home, interactiveHomeSharedDirMode); cerr != nil {
+			// EPERM means we do not own the home (per-UID isolation); nothing to restore.
+			if errors.Is(cerr, fs.ErrPermission) {
+				m.logger.Debug("interactive home mode restore skipped (not owner)",
+					"agent", agentName, "dir", home, "error", cerr)
+				return
+			}
 			m.logger.Warn("failed to restore interactive home mode",
 				"agent", agentName, "dir", home, "error", cerr)
 		}

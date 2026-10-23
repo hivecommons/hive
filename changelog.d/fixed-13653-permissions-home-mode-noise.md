@@ -1,0 +1,1 @@
+- Permissions watcher fixes now log at Info, and the interactive-home mode restore no longer warns on EPERM for homes the process does not own, avoiding repeated self-report issues (#13653, #13654, #13655).
