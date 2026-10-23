@@ -59,6 +59,10 @@ type StageTrackerResponse struct {
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
 	AuthorKindLabels bool `json:"author_kind_labels"`
+	// NeedsHumanLabels is the "a person must act" label set
+	// (needsHumanPresetLabels) behind the tracker's synthetic Needs human
+	// facet, so the page and the Projects preset cannot disagree.
+	NeedsHumanLabels []string `json:"needs_human_labels,omitempty"`
 	// Engine is the ADR-0025 central stage engine's mode and counters for
 	// the tracker's status strip; absent when the hive has no engine.
 	Engine *stageengine.Status `json:"engine,omitempty"`
@@ -921,6 +925,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return resp
 	}
 	resp.HiveID = status.HiveID
+	var cfg *config.Config
+	if s.deps != nil {
+		cfg = s.deps.Config
+	}
+	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false

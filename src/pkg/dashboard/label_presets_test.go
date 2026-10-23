@@ -8,13 +8,39 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func TestNeedsHumanPresetLabelsDefaultOrder(t *testing.T) {
 	got := needsHumanPresetLabels(nil, "")
 	want := append([]string{github.NeedsDecisionStageLabel, github.PRNeedsDecisionStageLabel, "needs-decision", "needs-direction", "needs-spec", "needs-signal", "needs-human"}, github.HoldLabels...)
+	want = append(want, stagelabels.NeedsAuthor.Label(), config.DefaultReporterTrustAwaitingLabel)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("default needs-human preset = %v, want %v", got, want)
+	}
+	if got[len(got)-2] != "stage/071-needs-author" || got[len(got)-1] != "needs-triage" {
+		t.Fatalf("needs-author and needs-triage must close the default set, got %v", got)
+	}
+}
+
+// The reporter-trust awaiting label follows config: a renamed label is
+// offered under its new spelling, a disabled one ("" ) is dropped.
+func TestNeedsHumanPresetLabelsReporterTrustAwaiting(t *testing.T) {
+	renamed := "triage/needed"
+	cfg := &config.Config{}
+	cfg.Project.IssueFilter.ReporterTrust.AwaitingLabel = &renamed
+	got := needsHumanPresetLabels(cfg, "")
+	if !slices.Contains(got, renamed) || slices.Contains(got, config.DefaultReporterTrustAwaitingLabel) {
+		t.Fatalf("renamed awaiting label must replace the default, got %v", got)
+	}
+	disabled := ""
+	cfg.Project.IssueFilter.ReporterTrust.AwaitingLabel = &disabled
+	got = needsHumanPresetLabels(cfg, "")
+	if slices.Contains(got, "") || slices.Contains(got, config.DefaultReporterTrustAwaitingLabel) {
+		t.Fatalf("disabled awaiting label must not be offered, got %v", got)
+	}
+	if !slices.Contains(got, stagelabels.NeedsAuthor.Label()) {
+		t.Fatalf("stage/071-needs-author must always be offered, got %v", got)
 	}
 }
 
@@ -80,5 +106,23 @@ func TestStatusWithOverviewBandsCarriesLabelPresets(t *testing.T) {
 	out := s.statusWithOverviewBands(&StatusPayload{HiveID: "acme"}, time.Now())
 	if len(out.LabelPresets) == 0 || out.LabelPresets[0].Key != labelPresetNeedsHumanKey {
 		t.Fatalf("status payload must carry labelPresets with Needs human first, got %+v", out.LabelPresets)
+	}
+}
+
+// The tracker payload carries the same needs-human set the Projects
+// preset offers, so the two views cannot drift (one definition in Go).
+func TestStageTrackerCarriesNeedsHumanLabels(t *testing.T) {
+	srv := &Server{}
+	status := &StatusPayload{HiveID: "acme"}
+	tr := srv.buildStageTracker(status, nil, time.Now())
+	want := needsHumanPresetLabels(nil, "acme")
+	if !reflect.DeepEqual(tr.NeedsHumanLabels, want) {
+		t.Fatalf("tracker needs_human_labels = %v, want %v", tr.NeedsHumanLabels, want)
+	}
+	if !slices.Contains(tr.NeedsHumanLabels, "stage/071-needs-author") || !slices.Contains(tr.NeedsHumanLabels, "needs-triage") {
+		t.Fatalf("tracker set must include needs-author and needs-triage, got %v", tr.NeedsHumanLabels)
+	}
+	if tr := srv.buildStageTracker(nil, nil, time.Now()); len(tr.NeedsHumanLabels) != 0 {
+		t.Fatalf("no status, no label set: got %v", tr.NeedsHumanLabels)
 	}
 }

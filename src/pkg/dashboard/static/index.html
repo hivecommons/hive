@@ -1334,7 +1334,13 @@
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
-    .ham-labels-more { align-self: center; font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-labels-more { color: var(--text-faint); border-style: dashed; }
+    /* Synthetic "Needs human" facet: first in the row, attention-coloured so it reads as a verdict, not a label. */
+    .ham-needs-human-chip { color: var(--status-attention); border-color: var(--status-attention); font-weight: 600; }
+    .ham-needs-human-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--status-attention) 16%, transparent); color: var(--text); border-color: var(--status-attention); }
+    .ham-label-dialog-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .ham-label-dialog-tools .ham-input { flex: 1 1 14rem; }
+    .ham-label-dialog .ham-labels { margin-bottom: var(--sp-2); }
     .ham-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: var(--sp-3); }
     .ham-meta-foot { margin: var(--sp-3) 0 0; }
     .ham-meta:empty { display: none; }
@@ -13625,9 +13631,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var _stageTrackerGroup = STAGE_TRACKER_GROUP_DEFAULT;
     var _stageTrackerCollapsed = {};
     function stageTrackerDefaultFilter() {
-      return { kind: 'all', repo: '', q: '', labels: [], age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+      return { kind: 'all', repo: '', q: '', labels: [], needsHuman: false, age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
     }
     var _stageTrackerFilter = stageTrackerDefaultFilter();
+    // Type-to-filter text of the "all labels" dialog (not persisted).
+    var _stageTrackerLabelQuery = '';
 
     function stageTrackerHeadline(item) {
       const n = Number(item.stage) || 0;
@@ -14593,6 +14601,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return '';
     }
 
+    // label facet helpers begin
+    // The "a person must act" label set comes from the payload
+    // (needs_human_labels, one Go definition shared with the Projects
+    // preset). A label matches an entry exactly or as `entry/...`.
+    function stageTrackerNeedsHumanLabels(d) {
+      return (d && Array.isArray(d.needs_human_labels) ? d.needs_human_labels : []).map(l => String(l || '').trim().toLowerCase()).filter(Boolean);
+    }
+    function stageTrackerLabelNeedsHuman(label, set) {
+      const l = String(label || '').toLowerCase();
+      return (set || []).some(s => l === s || l.startsWith(s + '/'));
+    }
+    function stageTrackerItemNeedsHuman(item, set) {
+      if (!set || !set.length) return false;
+      return (item && Array.isArray(item.labels) ? item.labels : []).some(l => stageTrackerLabelNeedsHuman(l, set));
+    }
+
+    // Chip order: every stage/NNN-* label first by NNN, then everything
+    // else alphabetically, case-insensitive.
+    function stageTrackerLabelCompare(a, b) {
+      a = String(a || ''); b = String(b || '');
+      const sa = /^stage\/(\d+)/i.exec(a), sb = /^stage\/(\d+)/i.exec(b);
+      if (sa && sb) return (Number(sa[1]) - Number(sb[1])) || a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b);
+      if (sa) return -1;
+      if (sb) return 1;
+      return a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b);
+    }
+    // label facet helpers end
+
     // Normalise a filter object: unknown values fall back to the default.
     function stageTrackerNormalizeFilter(raw) {
       const d = stageTrackerDefaultFilter();
@@ -14601,6 +14637,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       f.repo = typeof f.repo === 'string' ? f.repo : '';
       f.q = typeof f.q === 'string' ? f.q : '';
       f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
+      f.needsHuman = !!f.needsHuman;
       if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
       if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
       f.attention = !!f.attention;
@@ -14613,7 +14650,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // True when any narrowing filter (not sort / paging) is set.
     function stageTrackerFilterActive(f) {
-      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.age !== 'any' || f.author !== 'any' || f.attention;
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.needsHuman || f.age !== 'any' || f.author !== 'any' || f.attention;
     }
 
     // Does one item pass the narrowing filters? ctx.nowMs anchors the age
@@ -14637,6 +14674,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         f.labels.forEach(l => { const fam = stageTrackerLabelFamily(l) || l; (byFamily[fam] = byFamily[fam] || []).push(l); });
         for (const fam in byFamily) if (!byFamily[fam].some(l => have.has(l))) return false;
       }
+      if (f.needsHuman && !stageTrackerItemNeedsHuman(item, ctx.needsHumanLabels)) return false;
       if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
       if (f.attention && !stageTrackerNeedsAttention(item)) return false;
       if (f.age !== 'any') {
@@ -14694,19 +14732,39 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { rows: (rows || []).slice(from ? from - 1 : 0, to), page, pages, from, to, total, size: f.size };
     }
 
-    // Label chips: every label of a known family, then other labels carried
-    // by two or more items, most common first; selected labels always stay.
-    function stageTrackerLabelFacets(items, f) {
+    // label facet model begin
+    // Label chips: every label on any item, stage/NNN first by number then
+    // the rest alphabetically (stageTrackerLabelCompare). The row shows the
+    // first STAGE_TRACKER_LABEL_CHIP_LIMIT plus every selected label; `all`
+    // is the complete list the "+N more" dialog offers, so no label is ever
+    // out of reach. `needsHuman` is the synthetic facet: its count is the
+    // number of distinct items carrying any label of the needs-human set.
+    function stageTrackerLabelFacets(items, f, opts) {
       f = stageTrackerNormalizeFilter(f);
+      opts = opts || {};
       const counts = {};
       (items || []).forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
-      const famRank = l => { const i = STAGE_TRACKER_LABEL_FAMILIES.indexOf(stageTrackerLabelFamily(l)); return i < 0 ? STAGE_TRACKER_LABEL_FAMILIES.length : i; };
-      const all = Object.keys(counts).filter(l => f.labels.indexOf(l) >= 0 || stageTrackerLabelFamily(l) || counts[l] > 1)
-        .sort((a, b) => (famRank(a) - famRank(b)) || (counts[b] - counts[a]) || a.localeCompare(b));
+      const all = Object.keys(counts).sort(stageTrackerLabelCompare);
       const shown = all.slice(0, STAGE_TRACKER_LABEL_CHIP_LIMIT);
       f.labels.forEach(l => { if (counts[l] && shown.indexOf(l) < 0) shown.push(l); });
-      return { chips: shown.map(l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 })), hidden: Math.max(0, all.length - shown.length) };
+      shown.sort(stageTrackerLabelCompare);
+      const chip = l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 });
+      const set = Array.isArray(opts.needsHumanLabels) ? opts.needsHumanLabels : [];
+      const needsHuman = set.length ? { count: (items || []).filter(it => stageTrackerItemNeedsHuman(it, set)).length, on: f.needsHuman, labels: set.slice() } : null;
+      return { chips: shown.map(chip), all: all.map(chip), hidden: Math.max(0, all.length - shown.length), needsHuman };
     }
+
+    // Rows of the "all labels" dialog: `facets.all` narrowed by a
+    // case-insensitive substring query; selected labels always stay listed
+    // so they can be cleared.
+    function stageTrackerLabelDialogData(facets, query) {
+      const q = String(query || '').trim().toLowerCase();
+      const all = facets && Array.isArray(facets.all) ? facets.all : [];
+      const rows = q ? all.filter(c => c.on || c.label.indexOf(q) >= 0) : all;
+      const selected = all.filter(c => c.on).length + (facets && facets.needsHuman && facets.needsHuman.on ? 1 : 0);
+      return { rows, total: all.length, selected, query: q, needsHuman: facets ? facets.needsHuman : null };
+    }
+    // label facet model end
 
     // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
     // With `open` ({issues, prs} — the payload's open_issues/open_prs, i.e. the
@@ -14832,6 +14890,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
         case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
         case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
+        case 'needsHuman': f.needsHuman = value === 'toggle' ? !f.needsHuman : !!value; break;
+        case 'labelsClear': f.labels = []; f.needsHuman = false; break;
         case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
         case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
       }
@@ -14860,10 +14920,86 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (reset) reset.hidden = !stageTrackerFilterActive(f);
     }
 
+    function stageTrackerLabelChipHtml(c) {
+      return `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`;
+    }
+    function stageTrackerNeedsHumanChipHtml(nh) {
+      if (!nh) return '';
+      const tip = (nh.on ? 'Remove the Needs human filter' : 'Show only items a person must act on') + ' — any of: ' + nh.labels.join(', ');
+      return `<button type="button" class="ham-chip ham-needs-human-chip" data-action="hamFilter" data-arg0="needsHuman" data-arg1="toggle" aria-pressed="${nh.on ? 'true' : 'false'}" title="${esc(tip)}">🙋 Needs human<span class="ham-chip-n">${nh.count}</span></button>`;
+    }
     function stageTrackerLabelsHtml(facets) {
-      if (!facets.chips.length) return '';
-      return facets.chips.map(c => `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`).join('')
-        + (facets.hidden ? `<span class="ham-labels-more" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
+      if (!facets.chips.length && !facets.needsHuman) return '';
+      return stageTrackerNeedsHumanChipHtml(facets.needsHuman)
+        + facets.chips.map(stageTrackerLabelChipHtml).join('')
+        + (facets.hidden ? `<button type="button" class="ham-chip ham-labels-more" data-action="openStageTrackerLabelDialog" aria-haspopup="dialog" title="Show all ${facets.all.length} labels with counts; pick any to filter">+${facets.hidden} more</button>` : '');
+    }
+
+    // "All labels" dialog: every label with its count, same order as the
+    // row, a type-to-filter box, the same toggle the chips use and Clear.
+    // In-app modal (config-overlay recipe), never a native prompt.
+    function stageTrackerLabelDialogHtml(data) {
+      return `<div class="ham-label-dialog-tools"><input type="search" class="ham-input" id="activity-monitor-labels-q" placeholder="Type to filter labels…" autocomplete="off" spellcheck="false" aria-label="Filter the label list" value="${esc(data.query)}" data-input-action="stageTrackerLabelDialogQuery" data-arg-types="w"><span class="ham-count">${esc(stageTrackerLabelDialogCountText(data))}</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="hamFilter" data-arg0="labelsClear"${data.selected ? '' : ' disabled'} title="Clear every label filter">Clear</button></div>`
+        + (data.needsHuman ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}</div>` : '')
+        + `<div class="ham-labels ham-label-dialog-list" role="group" aria-label="All labels">${stageTrackerLabelDialogListHtml(data)}</div>`;
+    }
+    function stageTrackerLabelDialogListHtml(data) {
+      return data.rows.length ? data.rows.map(stageTrackerLabelChipHtml).join('') : `<div class="ham-empty">No label matches “${esc(data.query)}”</div>`;
+    }
+    function stageTrackerLabelDialogCountText(data) {
+      return (data.rows.length === data.total ? data.total + ' labels' : data.rows.length + ' of ' + data.total + ' labels') + ' · ' + data.selected + ' selected';
+    }
+    // Redraw the open dialog. While the filter box has focus only the list,
+    // the count, the Clear button and the Needs human chip are patched so a
+    // poll-driven render never steals the caret.
+    function stageTrackerRenderLabelDialog() {
+      const body = document.getElementById('activity-monitor-labels-body');
+      if (!body || !_stageTracker || !Array.isArray(_stageTracker.items)) return;
+      const facets = stageTrackerLabelFacets(_stageTracker.items, _stageTrackerFilter, { needsHumanLabels: stageTrackerNeedsHumanLabels(_stageTracker) });
+      const data = stageTrackerLabelDialogData(facets, _stageTrackerLabelQuery);
+      const q = document.getElementById('activity-monitor-labels-q');
+      if (!q || document.activeElement !== q) { setIfChanged(body, stageTrackerLabelDialogHtml(data)); return; }
+      const list = body.querySelector('.ham-label-dialog-list');
+      if (list) setIfChanged(list, stageTrackerLabelDialogListHtml(data));
+      const count = body.querySelector('.ham-label-dialog-tools .ham-count');
+      if (count && count.textContent !== stageTrackerLabelDialogCountText(data)) count.textContent = stageTrackerLabelDialogCountText(data);
+      const clear = body.querySelector('.ham-label-dialog-tools .hv-btn');
+      if (clear) clear.disabled = !data.selected;
+      const nh = body.querySelector('.ham-label-dialog-needs-human');
+      if (nh) setIfChanged(nh, stageTrackerNeedsHumanChipHtml(data.needsHuman));
+    }
+    var _stageTrackerLabelDialogReturnFocus = null;
+    function openStageTrackerLabelDialog() {
+      if (document.getElementById('activity-monitor-labels-overlay')) return;
+      _stageTrackerLabelDialogReturnFocus = document.activeElement;
+      const overlay = document.createElement('div');
+      overlay.id = 'activity-monitor-labels-overlay';
+      overlay.className = 'config-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = `<div class="config-modal overview-settings-modal ham-label-dialog" role="dialog" aria-modal="true" aria-labelledby="activity-monitor-labels-title">
+        <div class="config-header">
+          <h2 class="config-title" id="activity-monitor-labels-title">All labels</h2>
+          <button type="button" class="config-close" data-action="closeStageTrackerLabelDialog" aria-label="Close the label list">&times;</button>
+        </div>
+        <div class="config-body overview-settings-body modal-scroll" id="activity-monitor-labels-body"></div>
+      </div>`;
+      overlay.addEventListener('click', e => { if (e.target === overlay) closeStageTrackerLabelDialog(); });
+      document.body.appendChild(overlay);
+      stageTrackerRenderLabelDialog();
+      const q = document.getElementById('activity-monitor-labels-q');
+      if (q) setTimeout(() => q.focus(), 0);
+    }
+    function closeStageTrackerLabelDialog() {
+      const overlay = document.getElementById('activity-monitor-labels-overlay');
+      if (overlay) overlay.remove();
+      _stageTrackerLabelQuery = '';
+      const ret = _stageTrackerLabelDialogReturnFocus;
+      _stageTrackerLabelDialogReturnFocus = null;
+      if (ret && ret.focus && document.contains(ret)) setTimeout(() => ret.focus({ preventScroll: true }), 0);
+    }
+    function stageTrackerLabelDialogQuery(value) {
+      _stageTrackerLabelQuery = String(value || '');
+      stageTrackerRenderLabelDialog();
     }
 
     function stageTrackerPagerHtml(page) {
@@ -14928,7 +15064,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
       stageTrackerSyncToolbar(f);
-      const ctx = { nowMs, stages, moves: _stageTrackerMoves };
+      const ctx = { nowMs, stages, moves: _stageTrackerMoves, needsHumanLabels: stageTrackerNeedsHumanLabels(d) };
       // Repo chips ride the setting against how many repos the payload spans.
       if (stageTrackerRepoChipOn(stageTrackerRepoChipSetting(), repos.length)) ctx.repoChips = { primary: stageTrackerPrimaryRepo(), active: f.repo };
       const visible = stageTrackerVisible(d.items, f, ctx);
@@ -14955,7 +15091,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       if (badge) { badge.textContent = String(counts.badge); badge.title = counts.badgeTitle; if (counts.badge) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
       const labelsEl = document.getElementById('activity-monitor-labels');
-      if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
+      if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f, { needsHumanLabels: ctx.needsHumanLabels })));
+      stageTrackerRenderLabelDialog();
       const meta = document.getElementById('activity-monitor-meta');
       if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerEngineHtml(d)}${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
       const foot = document.getElementById('activity-monitor-meta-foot');
@@ -40168,6 +40305,7 @@ function burnAreaChart() {
       add(document.getElementById('config-overlay'), closeConfigDialog, 10000);
       add(document.getElementById('overview-chart-settings-overlay'), closeOverviewChartSettings, 10000);
       add(document.getElementById('activity-monitor-settings-overlay'), closeStageTrackerSettings, 10000);
+      add(document.getElementById('activity-monitor-labels-overlay'), closeStageTrackerLabelDialog, 10000);
       add(document.getElementById('acmm-overlay'), closeACMMDialog, 10000);
       const nousOverlay = document.getElementById('nous-config-overlay');
       add(nousOverlay, function() { if (typeof closeNousConfig === 'function') closeNousConfig(); else nousOverlay.style.display = 'none'; }, 1000);
