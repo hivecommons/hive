@@ -20,29 +20,30 @@ function treeControls() {
   treeRoot.setAttribute('aria-busy', String(treeBusy));
 }
 const SAVED_TEXT = {
-  'profiles-and-projection-saved': 'your choices are written to profiles.yml and contributor.env.',
-  'profiles-saved/projection-failed': 'profiles.yml was written but contributor.env was not. Press Apply again to retry.',
-  'not-saved': 'nothing was saved.',
-  'unchanged': 'nothing changed, so nothing was saved.'
+  'profiles-and-projection-saved': 'written to profiles.yml and contributor.env.',
+  'profiles-saved/projection-failed': 'profiles.yml written, contributor.env not. Press Apply again.',
+  'not-saved': 'nothing saved.',
+  'unchanged': 'nothing changed.'
 };
 const RELOAD_TEXT = {
-  'notified': 'the running relay was asked to reload your choices.',
-  'pending-failed': 'the running relay could not be reached. Your choices apply the next time it starts.',
-  'no-managed-relay-found': 'no running relay was found, so your choices apply the next time it starts.',
-  'not-requested': 'a relay reload was not requested.'
+  'notified': 'the running relay was asked to reload.',
+  'pending-failed': 'couldn’t reach the running relay; changes apply when it next starts.',
+  'no-managed-relay-found': 'no relay running; changes apply when it next starts.',
+  'not-requested': 'not requested.'
 };
 const ACK_TEXT = {
-  'pending': 'not confirmed yet. The relay has not reported that it adopted this change.',
+  'pending': 'not yet — the relay hasn’t confirmed it picked this up.',
   'unknown': 'unknown.'
 };
-// Plain sentence first, the machine value in brackets so it can still be quoted in a bug report.
+// Plain sentences; the raw codes stay on the element (data-codes) for bug reports.
 function describeReceipt(saved, reload, ack) {
   // The server may append " — explanation" to a code; key on the code alone.
   const code = v => String(v).split(' — ')[0];
-  return 'Saved: ' + (SAVED_TEXT[code(saved)] || saved) + ' [' + code(saved) + ']' +
-    '\nRelay reload: ' + (RELOAD_TEXT[code(reload)] || reload) + ' [' + code(reload) + ']' +
-    '\nAcknowledged: ' + (ACK_TEXT[code(ack)] || ack) + ' [' + code(ack) + ']' +
-    '\nChange saved does not prove relay adoption. In-flight tasks finish under their original lease.';
+  receiptText.dataset.codes = [code(saved), code(reload), code(ack)].join(' / ');
+  return 'Saved: ' + (SAVED_TEXT[code(saved)] || saved) +
+    '\nRelay: ' + (RELOAD_TEXT[code(reload)] || reload) +
+    '\nConfirmed by relay: ' + (ACK_TEXT[code(ack)] || ack) +
+    '\nA task that is already running finishes first.';
 }
 function diffText(d) {
   const at = t => t.repository + ' on ' + t.subscription, lines = [];
@@ -88,7 +89,7 @@ async function editTree(change) {
   if(treeBusy || !review) return;
   if(review.diff.stale) { say('Discard the stale review and review again before editing.','error'); return; }
   treeBusy = true; treeControls();
-  try { await treeRequest('/api/tree/diff', change); say('Staged for review. Nothing saved.'); }
+  try { await treeRequest('/api/tree/diff', change); say('Changed. Press Apply to save.'); }
   catch(e) { say(e.message, 'error'); }
   finally { treeBusy = false; treeControls(); }
 }
@@ -119,6 +120,22 @@ function groupText(s, members) {
   if(s.membership_incomplete) parts.push('Membership incomplete');
   return parts.join('; ');
 }
+// Short row text: the long wording lives in the info panel.
+function shortText(s) {
+  if(s.legacy_unrestricted) return 'Unrestricted';
+  const parts = [s.selected + ' of ' + s.repositories + ' on'];
+  if(s.excluded) parts.push(s.excluded + ' excluded');
+  if(s.unreviewed) parts.push(s.unreviewed + ' new');
+  if(s.membership_incomplete) parts.push('not checked');
+  return parts.join(' · ');
+}
+function shortGroup(s, members) {
+  const legacy = members.filter(m => m.selection.legacy_unrestricted), restricted = members.filter(m => !m.selection.legacy_unrestricted);
+  if(!legacy.length) return shortText(s);
+  const sel = restricted.reduce((n, m) => n + m.selection.selected, 0), total = restricted.reduce((n, m) => n + m.selection.repositories, 0);
+  return (restricted.length ? sel + ' of ' + total + ' on · ' : '') + legacy.length + ' unrestricted';
+}
+const shortId = id => id.replace(/^github\/github\.com\//, '');
 function visibleRepoCount() { return visibleItems().filter(i => !i.hasAttribute('aria-expanded')).length; }
 function matchingCandidates() {
   const q = document.getElementById('tree-search').value.toLowerCase();
@@ -141,9 +158,11 @@ let activeRow = null;
 function activateRow(item) {
   treeRoot.querySelectorAll('[role=treeitem]').forEach(e => e.tabIndex = -1);
   treeRoot.querySelectorAll('.tree-row button, .tree-row input').forEach(c => c.tabIndex = -1);
+  treeRoot.querySelectorAll('.tree-row.active').forEach(r => r.classList.remove('active'));
   activeRow = item || null;
   if(!item) return;
   item.tabIndex = 0;
+  item.querySelector(':scope > .tree-row').classList.add('active');
   item.querySelectorAll(':scope > .tree-row button, :scope > .tree-row input').forEach(c => c.tabIndex = 0);
 }
 function focusItem(item) {
@@ -184,18 +203,18 @@ async function setFollowAll(subs, value) {
 async function acceptNew(list, where) {
   if(treeBusy || !list.length) return;
   const noun = list.length === 1 ? 'repository' : 'repositories';
-  if(!await styledConfirm('Stage selection of ' + list.length + ' new ' + noun + ' in ' + where + '? Excluded repositories are skipped. Nothing is saved until Apply.', 'Stage selection')) return;
-  if(await stageList(list)) say('Staged ' + list.length + ' new ' + noun + '. Nothing saved.');
+  if(!await styledConfirm('Turn on ' + list.length + ' new ' + noun + ' in ' + where + '? Excluded ones are skipped. Nothing is saved until Apply.', 'Turn on')) return;
+  if(await stageList(list)) say('Turned on ' + list.length + ' new ' + noun + '. Apply to save.');
 }
 function acceptBox(context, fs, key, toggle) {
   const wrap = node('label', undefined, 'accept');
   const c = document.createElement('input'); c.type = 'checkbox'; c.dataset.focusKey = key;
-  c.checked = fs.state === 'on'; c.indeterminate = fs.state === 'mixed'; c.disabled = fs.state === 'na';
+  c.checked = fs.state === 'on'; c.indeterminate = fs.state === 'mixed';
   c.setAttribute('aria-checked', c.indeterminate ? 'mixed' : String(c.checked));
-  c.setAttribute('aria-label', 'Accept all new repositories: ' + context);
+  c.setAttribute('aria-label', 'Accept all new: ' + context);
   c.onchange = () => { c.checked = fs.state === 'on'; c.indeterminate = fs.state === 'mixed'; toggle(fs.state !== 'on'); };
-  wrap.append(c, node('span', 'Accept all new repositories'));
-  if(fs.state === 'na') wrap.title = 'Restrict this Hive first: an unrestricted — legacy Hive already receives everything.';
+  wrap.append(c, node('span', 'Accept all new'));
+  wrap.title = 'Also turn on repositories added later (picked up when you check for new).';
   return wrap;
 }
 let shownItem = null;
@@ -203,7 +222,7 @@ function setInfo(item) {
   const box = document.getElementById('tree-info'), info = item && nodeInfo.get(item);
   if(item === shownItem && box.childNodes.length) return;
   shownItem = item; box.textContent = '';
-  if(!info) { box.append(node('p', 'Hover or focus a hub, Hive or repository to see what it means here.', 'muted')); return; }
+  if(!info) { box.append(node('p', 'Point at or select a row to see what it means and what else you can do with it.', 'muted')); return; }
   box.append(node('p', info.kind, 'info-kind'), node('p', info.title, 'info-title'));
   info.lines.forEach(l => box.append(node('p', l, 'info-line')));
 }
@@ -213,17 +232,23 @@ function treeItem(parent, key, label, selection, change, branch, text, info) {
   const row = node('div', undefined, 'tree-row'); item.appendChild(row); parent.appendChild(item);
   if(branch) {
     item.setAttribute('aria-expanded', String(!collapsed.has(key)));
-    row.appendChild(button(collapsed.has(key) ? 'Expand' : 'Collapse', () => expandItem(item), key + ':expand', label));
+    const toggle = node('button', collapsed.has(key) ? '▸' : '▾', 'toggle'); toggle.type = 'button'; toggle.dataset.focusKey = key + ':expand';
+    toggle.setAttribute('aria-label', (collapsed.has(key) ? 'Expand' : 'Collapse') + ': ' + label); toggle.onclick = () => expandItem(item);
+    row.appendChild(toggle);
   }
   const check = document.createElement('input'); check.type = 'checkbox'; check.dataset.focusKey = key + ':select';
   check.checked = selection.state === 'all-current'; check.indeterminate = selection.state === 'partial';
   check.setAttribute('aria-checked', check.indeterminate ? 'mixed' : String(check.checked));
-  check.setAttribute('aria-label', 'Select current ' + label);
+  check.setAttribute('aria-label', 'Turn on: ' + label);
   check.onchange = () => { check.checked = selection.state === 'all-current'; check.indeterminate = selection.state === 'partial'; editTree({...change, value:selection.state !== 'all-current'}); };
-  row.append(check, node('span', label, 'identity'), node('span', text || selectionText(selection), 'tree-meta'));
+  row.append(check, node('span', label, 'identity'));
+  const meta = text === undefined ? shortText(selection) : text;
+  if(meta) row.append(node('span', meta, 'tree-meta'));
+  // Secondary actions live here and show only on the active row (CSS), so every row is not a toolbar.
+  const more = node('span', undefined, 'more'); row.append(more);
   const group = node('ul'); group.setAttribute('role','group'); group.hidden = collapsed.has(key);
   if(branch) item.appendChild(group);
-  return {item, row, group, check};
+  return {item, row, group, check, more};
 }
 function expandItem(item, expanded) {
   if(!item.hasAttribute('aria-expanded')) return;
@@ -232,8 +257,16 @@ function expandItem(item, expanded) {
   item.setAttribute('aria-expanded', String(value));
   item.querySelector(':scope > [role=group]').hidden = !value;
   const toggle = item.querySelector(':scope > .tree-row > button');
-  toggle.textContent = value ? 'Collapse' : 'Expand';
-  toggle.setAttribute('aria-label', toggle.textContent + ': ' + item.getAttribute('aria-label'));
+  toggle.textContent = value ? '▾' : '▸';
+  toggle.setAttribute('aria-label', (value ? 'Collapse' : 'Expand') + ': ' + item.getAttribute('aria-label'));
+}
+// One short line of what is staged; the list of exact changes is one click away.
+function summaryText(d) {
+  if(d.stale) return 'Out of date — discard and check again before Apply.';
+  if(!hasTreeEdits()) return 'No changes yet.';
+  const n = (list, word) => list && list.length ? list.length + ' ' + word : '';
+  const parts = [d.selected_count && d.selected_count + ' turned on', d.deselected_count && d.deselected_count + ' turned off', d.excluded_count && d.excluded_count + ' excluded', d.cleared_exclusion_count && d.cleared_exclusion_count + ' allowed again', n(d.follow, 'auto-accept change' + ((d.follow || []).length === 1 ? '' : 's')), n(d.enabled, 'paused or resumed'), n(d.legacy_conversions, 'restricted')].filter(Boolean);
+  return parts.join(' · ') + ' — saved when you press Apply.';
 }
 function renderTree() {
   if(!review) return;
@@ -250,75 +283,75 @@ function renderTree() {
     if(!hubMatch && !members.some(matches)) continue;
     const hkey = JSON.stringify(['hub',hub.id]);
     const hubFollow = followState(members), hubNew = newRepos(members);
-    const hubTitle = hub.name + ' (' + hub.id + ')';
-    const h = treeItem(treeRoot, hkey, hubTitle, hub.selection, {operation:'current', target:hub.id, hub:true}, true, groupText(hub.selection, members), {kind: 'Hub', title: hubTitle, lines: [
-      groupText(hub.selection, members),
-      hubFollow.state === 'na' ? 'Accept all new repositories: not available — every Hive here is unrestricted — legacy. Restrict one first.' : 'Accept all new repositories: ' + ({on: 'on for all ' + hubFollow.eligible.length + ' restricted Hives', mixed: 'on for ' + hubFollow.on + ' of ' + hubFollow.eligible.length + ' restricted Hives', off: 'off'}[hubFollow.state]) + '. Ticking the box sets it on every restricted Hive under this hub.',
-      hubNew.length ? hubNew.length + ' new ' + (hubNew.length === 1 ? 'repository is' : 'repositories are') + ' waiting for your choice across these Hives.' : 'No new repositories are waiting.',
-      'The hub’s own follow policy is separate and unchanged: ' + hub.follow + '.',
-      'Readiness and activity: unavailable (no relay evidence).']});
-    h.row.append(node('span','Follow: ' + hub.follow + ' · Readiness: unavailable · Activity: unavailable','tree-meta'));
-    h.row.append(acceptBox(hub.name, hubFollow, hkey+':accept', value => setFollowAll(members, value)));
-    if(hubNew.length) h.row.append(button('Accept ' + hubNew.length + ' new', () => acceptNew(hubNew, hub.name), hkey+':acceptnew', hub.name));
-    h.row.append(button('Deselect current', () => editTree({operation:'current',target:hub.id,hub:true,value:false}),hkey+':off', hub.name));
-    h.row.append(button('Enable Hives', () => editTree({operation:'enabled',target:hub.id,hub:true,value:true}),hkey+':enable', hub.name));
-    h.row.append(button('Disable Hives and stop hub following', () => editTree({operation:'enabled',target:hub.id,hub:true,value:false}),hkey+':disable', hub.name));
+    const hubTitle = hub.direct ? 'Added directly' : hub.name, hubText = shortGroup(hub.selection, members);
+    const h = treeItem(treeRoot, hkey, hubTitle, hub.selection, {operation:'current', target:hub.id, hub:true}, true, hubText, {kind: hub.direct ? 'Group' : 'Hub', title: hubTitle, lines: [
+      hubText + '.',
+      hubFollow.state === 'na' ? 'Accept all new isn’t available: every Hive here is unrestricted.' : 'Accept all new: ' + ({on: 'on for every Hive here', mixed: 'on for ' + hubFollow.on + ' of ' + hubFollow.eligible.length + ' Hives', off: 'off'}[hubFollow.state]) + '. Tick it to switch it on for all of them.',
+      hubNew.length ? hubNew.length + ' new ' + (hubNew.length === 1 ? 'repository' : 'repositories') + ' waiting.' : 'Nothing new waiting.',
+      hub.direct ? '' : 'Address: ' + hub.id].filter(Boolean)});
+    if(hubFollow.state !== 'na') h.row.append(acceptBox(hubTitle, hubFollow, hkey+':accept', value => setFollowAll(members, value)));
+    if(hubNew.length) h.row.append(button('Accept ' + hubNew.length + ' new', () => acceptNew(hubNew, hubTitle), hkey+':acceptnew', hubTitle));
+    h.more.append(button('Deselect all', () => editTree({operation:'current',target:hub.id,hub:true,value:false}), hkey+':off', hubTitle));
+    h.more.append(button('Resume all', () => editTree({operation:'enabled',target:hub.id,hub:true,value:true}), hkey+':enable', hubTitle));
+    const pauseAll = button('Pause all', () => editTree({operation:'enabled',target:hub.id,hub:true,value:false}), hkey+':disable', hubTitle);
+    pauseAll.title = 'Pauses every Hive here and turns off this hub’s automatic joining of new Hives.';
+    h.more.append(pauseAll);
     for(const sub of members.filter(matches)) {
       const skey = JSON.stringify([hub.id,sub.id]);
-      const subFollow = followState([sub]), subNew = newRepos([sub]), subTitle = sub.id + ' (' + sub.hive_id + ')';
-      const s = treeItem(h.group, skey, subTitle, sub.selection, {operation:'current',target:sub.id}, true, undefined, {kind: 'Hive', title: subTitle, lines: [
-        selectionText(sub.selection),
-        sub.selection.legacy_unrestricted ? 'Unrestricted — legacy: it receives work from every repository it offers whatever the boxes below show. Use “Review and restrict” to choose.' : (sub.follow_new_repositories ? 'Accepting all new repositories: they are chosen automatically when membership is refreshed.' : 'New repositories wait for your choice and get no work until you select them.'),
-        subNew.length ? subNew.length + ' new ' + (subNew.length === 1 ? 'repository is' : 'repositories are') + ' waiting for your choice.' : 'No new repositories are waiting.',
-        (sub.disabled ? 'Disabled: saved choices are kept but no new work is requested. ' : '') + (sub.shared_across_hubs > 1 ? 'Shared across ' + sub.shared_across_hubs + ' hubs: a change here appears under each of them.' : ''),
-        sub.sources && sub.sources.length ? 'Selection sources: ' + sub.sources.join(', ') + ' (per-repository provenance unavailable).' : '',
-        'Endpoint: ' + sub.hive_id].filter(Boolean)});
-      s.row.append(node('span',(sub.disabled ? 'Disabled; saved scope retained · ' : '') + (sub.shared_across_hubs > 1 ? 'Shared across ' + sub.shared_across_hubs + ' hubs · ' : '') + 'Follow: ' + (sub.follow_new_repositories ? 'on' : 'off') + ' · Readiness: unavailable · Activity: unavailable','tree-meta'));
-      s.row.append(button(sub.disabled ? 'Enable Hive' : 'Disable Hive', () => editTree({operation:'enabled',target:sub.id,value:sub.disabled}),skey+':enabled', sub.id));
-      s.row.append(acceptBox(sub.id, subFollow, skey+':accept', value => editTree({operation:'follow', target:sub.id, value})));
+      const subFollow = followState([sub]), subNew = newRepos([sub]), legacy = sub.selection.legacy_unrestricted;
+      const subText = [shortText(sub.selection), sub.disabled && 'Paused', sub.shared_across_hubs > 1 && 'in ' + sub.shared_across_hubs + ' hubs'].filter(Boolean).join(' · ');
+      const s = treeItem(h.group, skey, sub.id, sub.selection, {operation:'current',target:sub.id}, true, subText, {kind: 'Hive', title: sub.id, lines: [
+        legacy ? 'Unrestricted: gets work from every repository it offers, whatever is ticked. “Choose what to allow” limits it.' : sub.selection.selected + ' of ' + sub.selection.repositories + ' repositories on.',
+        legacy ? '' : (sub.follow_new_repositories ? 'New repositories are turned on automatically when you check for new.' : 'New repositories wait until you turn them on.'),
+        subNew.length ? subNew.length + ' new ' + (subNew.length === 1 ? 'repository' : 'repositories') + ' waiting.' : 'Nothing new waiting.',
+        sub.disabled ? 'Paused: your choices are kept, but no new work is requested.' : '',
+        sub.shared_across_hubs > 1 ? 'Listed under ' + sub.shared_across_hubs + ' hubs; a change here shows in each.' : '',
+        sub.sources && sub.sources.length ? 'Chosen from: ' + sub.sources.join(', ') + '.' : '',
+        'Address: ' + sub.hive_id].filter(Boolean)});
+      if(subFollow.state !== 'na') s.row.append(acceptBox(sub.id, subFollow, skey+':accept', value => editTree({operation:'follow', target:sub.id, value})));
       if(subNew.length) s.row.append(button('Accept ' + subNew.length + ' new', () => acceptNew(subNew, sub.id), skey+':acceptnew', sub.id));
-      if(sub.selection.legacy_unrestricted) {
-        s.row.append(button('Review and restrict', async () => {
-          if(await styledConfirm('Restrict ' + sub.id + ' to the repositories it offers now? All ' + sub.repositories.length + ' start selected; afterwards use “Deselect current” and tick only the ones you want. Following stays off. Nothing is saved until Apply.', 'Stage restriction')) editTree({operation:'restrict',target:sub.id});
-        },skey+':restrict', sub.id));
-      } else {
-        s.row.append(button('Deselect current', () => editTree({operation:'current',target:sub.id,value:false}),skey+':off', sub.id));
-        const add = node('form');
-        const input = document.createElement('input'); input.type = 'text'; input.required = true; input.placeholder = 'github/github.com/owner/repo'; input.setAttribute('aria-label','Repository to add to ' + sub.id); input.dataset.focusKey = skey+':add-input';
-        const submit = node('button','Stage repository'); submit.type = 'submit'; submit.dataset.focusKey = skey+':add'; submit.setAttribute('aria-label', 'Stage repository: add to ' + sub.id);
-        add.append(input,submit); add.onsubmit = e => { e.preventDefault(); editTree({operation:'repository',target:sub.id,repository:input.value,value:true}); }; s.row.appendChild(add);
+      if(legacy) {
+        s.row.append(button('Choose what to allow', async () => {
+          if(await styledConfirm('Only allow the repositories you choose in ' + sub.id + '? All ' + sub.repositories.length + ' start on; turn off the ones you don’t want. Nothing is saved until Apply.', 'Continue')) editTree({operation:'restrict',target:sub.id});
+        }, skey+':restrict', sub.id));
       }
-      if(sub.sources && sub.sources.length) s.row.append(node('span','Selection sources: ' + sub.sources.join(', ') + '; per-repository provenance unavailable','tree-meta'));
+      s.more.append(button(sub.disabled ? 'Resume' : 'Pause', () => editTree({operation:'enabled',target:sub.id,value:sub.disabled}), skey+':enabled', sub.id));
+      if(!legacy) {
+        s.more.append(button('Deselect all', () => editTree({operation:'current',target:sub.id,value:false}), skey+':off', sub.id));
+        const add = node('form');
+        const input = document.createElement('input'); input.type = 'text'; input.required = true; input.placeholder = 'github/github.com/owner/repo'; input.setAttribute('aria-label','Add a repository to ' + sub.id); input.dataset.focusKey = skey+':add-input';
+        const submit = node('button','Add'); submit.type = 'submit'; submit.dataset.focusKey = skey+':add'; submit.setAttribute('aria-label', 'Add: repository to ' + sub.id);
+        add.append(input,submit); add.onsubmit = e => { e.preventDefault(); editTree({operation:'repository',target:sub.id,repository:input.value,value:true}); }; s.more.appendChild(add);
+      }
       for(const repo of sub.repositories) {
         if(!hubMatch && !(sub.id + ' ' + sub.hive_id).toLowerCase().includes(search) && !repo.id.toLowerCase().includes(search)) continue;
         const rkey = JSON.stringify([hub.id,sub.id,repo.id]);
         const sel = {state:repo.selected ? 'all-current':'off',selected:repo.selected ? 1:0,repositories:1,excluded:(repo.excluded_by || []).length ? 1:0,unreviewed:repo.unreviewed ? 1:0};
         const excl = repo.excluded_by || [];
-        const r = treeItem(s.group,rkey,repo.id,sel,{operation:'repository',target:sub.id,repository:repo.id},false,undefined,{kind: 'Repository', title: repo.id, lines: [
-          repo.selected ? 'Selected: your machine may receive work from it.' : repo.unreviewed ? 'New: you have not chosen it yet, so it receives no work until you select it.' : 'Not selected.',
-          excl.length ? 'Excluded by ' + excl.join(', ') + ': a veto that selecting a parent never overrides.' : '',
-          sub.selection.legacy_unrestricted ? 'This Hive is unrestricted — legacy, so it receives this repository whatever the box shows. Restrict the Hive first.' : '',
-          'Offered by ' + sub.id + ': ' + repo.offered + '.'].filter(Boolean)});
-        r.row.append(node('span','Offered: ' + repo.offered + ' · Readiness: unavailable · Activity: unavailable','tree-meta'));
-        if((repo.excluded_by || []).length) r.row.append(node('span','Excluded by ' + repo.excluded_by.join(', '),'pill'));
-        if(repo.unreviewed) r.row.append(node('span','Unreviewed','pill'));
-        if(!sub.selection.legacy_unrestricted) {
-          const excludedHere = (repo.excluded_by || []).includes(sub.id);
-          r.row.append(button(excludedHere ? 'Clear this exclusion' : 'Exclude here', () => editTree({operation:'exclude',target:sub.id,repository:repo.id,value:!excludedHere}),rkey+':exclude', repo.id + ' in ' + sub.id));
+        const r = treeItem(s.group, rkey, shortId(repo.id), sel, {operation:'repository',target:sub.id,repository:repo.id}, false, '', {kind: 'Repository', title: repo.id, lines: [
+          repo.selected ? 'On: this machine may work on it.' : repo.unreviewed ? 'New: not chosen yet, so it gets no work until you turn it on.' : 'Off.',
+          excl.length ? 'Excluded: stays off even if you turn the group on.' : '',
+          legacy ? 'This Hive is unrestricted, so it gets this repository anyway.' : '',
+          'From ' + sub.id + '.'].filter(Boolean)});
+        if(excl.length) r.row.append(node('span','Excluded','pill'));
+        if(repo.unreviewed) r.row.append(node('span','New','pill'));
+        if(!legacy) {
+          const excludedHere = excl.includes(sub.id);
+          r.more.append(button(excludedHere ? 'Allow again' : 'Exclude', () => editTree({operation:'exclude',target:sub.id,repository:repo.id,value:!excludedHere}), rkey+':exclude', repo.id + ' in ' + sub.id));
         }
       }
       if(search) expandItem(s.item,true);
     }
     if(search) expandItem(h.item,true);
   }
-  if(!treeRoot.children.length) treeRoot.appendChild(node('li','No matching saved subscriptions. Use profile management to subscribe.'));
+  if(!treeRoot.children.length) treeRoot.appendChild(node('li','Nothing matches. Use “Manage Hives” below to add one.'));
   const d = review.diff;
-  document.getElementById('diff-summary').textContent = d.stale ? 'Stale review — discard and review again before Apply.' : hasTreeEdits() ? '+' + d.selected_count + ' repositories selected, −' + d.deselected_count + ' deselected, ' + d.excluded_count + ' exclusions added, ' + d.cleared_exclusion_count + ' cleared; follow changes: ' + (d.follow || []).length + '; Hives enabled or disabled: ' + (d.enabled || []).length + '; unrestricted Hives being restricted: ' + (d.legacy_conversions || []).length + '. Open “Named targets and shared effects” for the full list.' : 'No staged changes.';
+  document.getElementById('diff-summary').textContent = summaryText(d);
   document.getElementById('tree-diff').textContent = hasTreeEdits() ? diffText(d) : '';
   document.getElementById('tree-diff-raw').textContent = hasTreeEdits() ? JSON.stringify(d,null,2) : '';
   const candidates = matchingCandidates(), selectMatching = document.getElementById('tree-select-matching');
   selectMatching.hidden = !candidates.length;
-  selectMatching.textContent = 'Select ' + candidates.length + ' matching ' + (candidates.length === 1 ? 'repository' : 'repositories');
+  selectMatching.textContent = 'Turn on ' + candidates.length + ' matching';
   // Restore the initiating control, never move focus into a status message.
   const items = visibleItems();
   const restored = focusKey && Array.from(treeRoot.querySelectorAll('[data-focus-key]')).find(e => e.dataset.focusKey === focusKey && !e.closest('[hidden]'));
@@ -381,7 +414,7 @@ treeRoot.addEventListener('focusin', e => {
 applyButton.onclick = async () => {
   if(treeBusy || !hasTreeEdits() || review.diff.stale) return;
   treeBusy = true; treeControls();
-  try { await treeRequest('/api/tree/apply'); say('Apply finished. Review Saved, Relay reload and Acknowledged below.', 'ok'); }
+  try { await treeRequest('/api/tree/apply'); say('Saved. Details below.', 'ok'); }
   catch(e) { say(e.message, 'error'); }
   finally { treeBusy = false; treeControls(); }
 };
@@ -392,7 +425,7 @@ async function discardTree() {
 discardButton.onclick = async () => {
   if(treeBusy || !review || review.projection_pending || (!hasTreeEdits() && !review.diff.stale)) return;
   treeBusy = true; treeControls();
-  try { await discardTree(); await loadTree(); say('Staged changes discarded.'); }
+  try { await discardTree(); await loadTree(); say('Changes discarded.'); }
   catch(e) { say(e.message,'error'); }
   finally { treeBusy = false; treeControls(); }
 };
@@ -407,9 +440,9 @@ document.getElementById('tree-refresh').onclick = async () => {
   // Ordinary refresh keeps pending edits and focus; renewed discovery requires
   // explicitly discarding the old reviewed snapshot, never replaying its edits.
   try {
-    if(hasTreeEdits() && !review.diff.stale) { await loadTree(); say('Staged edits preserved. Apply or Discard before discovering new membership.'); return; }
+    if(hasTreeEdits() && !review.diff.stale) { await loadTree(); say('Your changes are kept. Apply or Discard them before checking for new.'); return; }
     if(!await leaveTreeEdits()) return;
-    treeBusy = true; treeControls(); say('Checking each Hive for its current repositories…'); await loadTree(true); say('Membership refreshed for review. Nothing saved.');
+    treeBusy = true; treeControls(); say('Checking for new repositories…'); await loadTree(true); say('Up to date. Nothing saved.');
   } catch(e) { say(e.message,'error'); }
   finally { treeBusy = false; treeControls(); }
 };
@@ -440,11 +473,11 @@ document.getElementById('tree-select-matching').onclick = async () => {
   const list = matchingCandidates();
   if(!list.length || treeBusy) return;
   const q = document.getElementById('tree-search').value;
-  if(!await styledConfirm('Stage selection of ' + list.length + ' repositories whose names match “' + q + '”? Excluded repositories and unrestricted Hives are skipped. Nothing is saved until Apply.', 'Stage selection')) return;
-  if(await stageList(list)) say('Staged ' + list.length + ' ' + (list.length === 1 ? 'repository' : 'repositories') + '. Nothing saved.');
+  if(!await styledConfirm('Turn on ' + list.length + ' repositories matching “' + q + '”? Excluded ones and unrestricted Hives are skipped. Nothing is saved until Apply.', 'Turn on')) return;
+  if(await stageList(list)) say('Turned on ' + list.length + ' ' + (list.length === 1 ? 'repository' : 'repositories') + '. Apply to save.');
 };
 document.getElementById('skip-apply').onclick = () => applyButton.focus();
-document.getElementById('skip-profiles').onclick = () => document.getElementById('profiles-title').focus();
+document.getElementById('skip-profiles').onclick = () => { document.getElementById('manage').open = true; document.getElementById('profiles-title').focus(); };
 // "/" jumps to search from anywhere that is not a text field or dialog.
 document.addEventListener('keydown', e => {
   if(e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.target.closest('input,textarea,select,dialog')) return;
