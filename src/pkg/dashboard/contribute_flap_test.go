@@ -205,6 +205,7 @@ func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 	setStatusIssues(s,
 		intgIssue(1, "flappy", "someone", nil),
 		intgIssue(2, "free", "someone", nil),
+		intgIssue(3, "free-too", "someone", nil),
 	)
 	now := time.Now()
 	flappy := &ContributorConnection{
@@ -224,9 +225,11 @@ func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 	if msg := hub.selectTask(flappy); msg == nil || msg.Number != 2 {
 		t.Fatalf("the cooled-off contributor should be offered #2 only, got %+v", msg)
 	}
-	// Rotating the client-chosen session label must not mint a fresh key.
+	// Rotating the client-chosen session label must not mint a fresh key:
+	// #2 is now leased to the first session, so the rotated one gets #3,
+	// never the cooled-off #1.
 	rotated := &ContributorConnection{profile: flappy.profile, session: "b", lastPong: now}
-	if msg := hub.selectTask(rotated); msg == nil || msg.Number != 2 {
+	if msg := hub.selectTask(rotated); msg == nil || msg.Number != 3 {
 		t.Fatalf("a rotated session label should still be withheld #1, got %+v", msg)
 	}
 	if contributorFlapIdentity(rotated) != "c-flappy" || contributorFlapIdentity(&ContributorConnection{profile: &ContributorProfile{GitHubUsername: "noid"}, session: "x"}) != "noid" {
