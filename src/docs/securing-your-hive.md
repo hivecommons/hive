@@ -1,5 +1,7 @@
 # Securing your hive: a first-time operator's guide
 
+Last reviewed: 2026-10-23
+
 You have connected a hive to a repository. Before you pick a level and walk
 away, you need one answer: **who can make Hive do what in my repo?** The
 mechanisms are documented in [security-model.md](security-model.md), the

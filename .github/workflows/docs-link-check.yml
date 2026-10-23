@@ -49,6 +49,7 @@ on:
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -71,6 +72,7 @@ on:
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
       - 'src/pkg/dashboard/**'
@@ -121,6 +123,14 @@ jobs:
       # 11 or lower for SECURITY.md and the src/docs/security*/ioscan* set.
       - name: Check security docs readability
         run: bash src/scripts/check-security-docs-readability.sh --verbose
+
+      # Security docs must also stay current: a `Last reviewed:` date no
+      # older than 120 days, and no "tracked in #N" sentence whose issue has
+      # since closed. GITHUB_TOKEN lets the script ask GitHub for issue state.
+      - name: Check security docs rot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash src/scripts/check-security-docs-rot.sh
 
       # Repo-root docs/ was covered by nothing until #5491: it was absent from
       # both paths: filters and had no step, so a PR breaking a relative link

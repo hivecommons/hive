@@ -1,12 +1,17 @@
 # ioscan red-team evaluation
 
+Last reviewed: 2026-10-23
+
 `ioscan` is a partial mitigation. Against a corpus of 43 attack payloads, its
 deterministic rules withheld 42% from the agent. 58% reached the agent
 unchanged: 40% matched no rule, and 19% matched a rule whose severity does
 not block. The control that bounds a successful injection is the network
 proxy's denial of `POST /pulls` and `PUT /pulls/{n}/merge` for every agent
-mode, which this evaluation also verifies. Tracking issue:
-[#6685](https://github.com/hivecommons/hive/issues/6685).
+mode, which this evaluation also verifies. The original evaluation closed
+[#6685](https://github.com/hivecommons/hive/issues/6685). Follow-up
+hardening is in progress under
+[PR #13808](https://github.com/hivecommons/hive/pull/13808), which adds a
+corpus scorecard with a committed baseline.
 
 ## Method
 

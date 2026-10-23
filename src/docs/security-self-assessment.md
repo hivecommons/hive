@@ -1,5 +1,7 @@
 # Hive Security Self-Assessment
 
+Last reviewed: 2026-10-23
+
 ## Table of contents
 
 * [Metadata](#metadata)

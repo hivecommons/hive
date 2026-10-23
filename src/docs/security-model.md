@@ -1,5 +1,7 @@
 # Security model: how Hive keeps autonomous agents from doing damage
 
+Last reviewed: 2026-10-23
+
 Hive runs AI coding agents against real repositories. This page is the
 inventory of the controls that limit what an agent can do, with the file or
 setting behind each one. Hive's design rule is that anything a human would
@@ -156,8 +158,12 @@ merge-eligible list at that commit.
 `HIVE_PROXY_INJECT_GH_AUTH=true`, the agent's token file holds only a
 placeholder and the proxy swaps in the real token on GitHub API requests. It
 requires GitHub App authentication and is refused if advisory proxy mode is
-also set, because advisory mode trusts a self-asserted agent name. Open work
-is tracked in [#9586](https://github.com/hivecommons/hive/issues/9586).
+also set, because advisory mode trusts a self-asserted agent name. A
+default-on version with a signing sidecar was proposed in
+[#9586](https://github.com/hivecommons/hive/issues/9586) and declined in
+September 2026; injection stays opt-in. Rotation of contributor registration
+tokens is a separate open item
+([#13804](https://github.com/hivecommons/hive/issues/13804)).
 
 **Forced egress.** The entrypoint installs an iptables rule redirecting all
 outbound port-443 traffic through the proxy, so agents cannot bypass it with

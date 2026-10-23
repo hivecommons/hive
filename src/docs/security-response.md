@@ -1,5 +1,7 @@
 # Security response process
 
+Last reviewed: 2026-10-23
+
 This page says who handles a security bug report and what happens next. To
 send a report, see [SECURITY.md](../../SECURITY.md).
 

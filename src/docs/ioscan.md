@@ -1,5 +1,7 @@
 # ioscan: scanning untrusted text before agents read it
 
+Last reviewed: 2026-10-23
+
 Issue titles, bodies, labels, author names and comments are written by
 anyone on GitHub. `ioscan` scans that text before Hive builds it into an
 agent's task, and checks what agents send out for planted secrets. It is on

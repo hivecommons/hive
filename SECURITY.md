@@ -1,5 +1,7 @@
 # Security Policy
 
+Last reviewed: 2026-10-23
+
 The Hive maintainers take the security of this project seriously. Thank you for
 helping keep Hive and its users safe by disclosing vulnerabilities responsibly.
 
