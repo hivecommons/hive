@@ -1,1 +1,1 @@
-proxy: timeout and client-read log paths share one level-parameterised helper
+- proxy: the GitHub proxy timeout and client-read log paths share one level-parameterised helper, so both keep their levels and `isTimeoutError` gating from a single place ([#13678](https://github.com/hivecommons/hive/issues/13678)).
