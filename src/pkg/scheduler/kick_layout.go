@@ -111,6 +111,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	// Dynamic tail, in reading order.
 	message = s.addHeldPRCoordination(a.agent, a.actionable, message)
 	message = s.addRedMainNotice(a.agent, a.actionable, message)
+	message = s.addOpenHeldPRCapNotice(a.agent, a.actionable, message)
 	message = s.addRedPRFixFirst(a.agent, message)
 	message = s.addReviewThreadFixFirst(a.agent, message)
 	message = s.addPRFollowUpHandoff(a.agent, message)

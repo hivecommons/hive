@@ -424,6 +424,15 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Open-held-PR cap (#13645): once the repo holds max_open_held_prs open
+	// hive PRs that still wait on a human, a new one only lengthens the
+	// queue. Existing PRs never come through here and issue filing is a
+	// separate relay; both keep going.
+	if reason := c.openHeldPRCapRefusal(req.Repo); reason != "" {
+		c.rejectPRRequest(path, req, "capacity", reason, nowFn)
+		return
+	}
+
 	// Cheap local body checks first — before anything that spends API quota.
 	// An empty body, or a body missing the reference to its declared
 	// originating issue, is lost content (the observed failure: hive-open-pr
@@ -695,6 +704,9 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"needs_human_reason", reporter.NeedsHumanReason(),
 		"duplicate_tree", strconv.FormatBool(res.DuplicateTree),
 		"duplicate_reason", res.DuplicateReason)
+	if !res.IsDuplicate() && !res.AlreadyExisted && (holdByLevel || selfAuth.Held || reporter.Held) {
+		c.noteOpenHeldPROpened(req.Repo)
+	}
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.

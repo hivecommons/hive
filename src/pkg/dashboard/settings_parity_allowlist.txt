@@ -541,6 +541,7 @@ project.merge_front_timeout # TODO #11854
 project.red_main_threshold # TODO #11854
 project.repo_policies[].merge_strategy # TODO #11854
 project.repo_policies[].merge_front_timeout # TODO #11854
+project.repo_policies[].max_open_held_prs # per-repo opt-in; yaml-only (#13645)
 project.repo_policies[].red_main_threshold # TODO #11854
 project.repo_policies[].release_on_approve # TODO #11854
 runs.spektacular.hub_executor.backend # TODO #11854

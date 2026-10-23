@@ -103,6 +103,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateRedMainThreshold(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.RedMainThreshold); err != nil {
 			return err
 		}
+		if err := ValidateMaxOpenHeldPRs(fmt.Sprintf("project.repo_policies: repo %q", rp.Repo), rp.MaxOpenHeldPRs); err != nil {
+			return err
+		}
 	}
 	if err := ValidateMergeFrontTimeout("project", c.Project.MergeFrontTimeout); err != nil {
 		return err
