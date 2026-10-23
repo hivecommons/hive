@@ -22,7 +22,7 @@ func TestCaptureReviewEvidenceClosures(t *testing.T) {
 		case "/repos/o/r/issues/1":
 			fmt.Fprintf(w, `{"state":"closed","closed_at":%q,"body":"question"}`, at.Format(time.RFC3339))
 		case "/repos/o/r/issues/1/comments":
-			fmt.Fprintf(w, `[{"body":%q}]`, clarityGateEvidenceMarker)
+			fmt.Fprintf(w, `[{"body":%q}]`, ClarityGateMarker)
 		case "/repos/o/other/issues/2/comments":
 			fmt.Fprint(w, `[]`)
 		case "/repos/o/other/issues/2":
