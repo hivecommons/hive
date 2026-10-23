@@ -1013,6 +1013,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if hasRec && stageTrackerStaleDecisionRecord(rec, labels) {
 			rec, hasRec = stagelabels.Record{}, false
 		}
+		// Likewise a 015 record on an issue whose labels already say
+		// triage was accepted (the row menu's Accept triage): 010 until the
+		// engine re-derives it.
+		if hasRec && s.stageTrackerAcceptedTriageRecord(rec, labels) {
+			rec, hasRec = stagelabels.Record{}, false
+			if stage == stagelabels.None || stage == stagelabels.TriageNeeded {
+				stage = stagelabels.Actionable
+			}
+		}
 		if hasRec && rec.Stage != stagelabels.None {
 			stage = rec.Stage
 			t := rec.EnteredAt

@@ -24,6 +24,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsConstBlock(t, html, "STAGE_TRACKER_ACTION_LABELS"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_WRITE"),
 		jsConstLine(t, html, "STAGE_TRACKER_WHY_ROLE"),
+		jsConstLine(t, html, "STAGE_TRACKER_TRIAGE_STAGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_ACTIONABLE_STAGE"),
 		"var _stageTrackerSel = new Set(); var _stageTrackerSelAnchor = ''; var _stageTrackerMenu = null; var _stageTracker = null; var _statusSeqFloor = 0; var _stageTrackerEtag = 'e'; var _stageTrackerSig = 's';",
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "repoParts"),
@@ -41,6 +43,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
 		jsFunc(t, html, "stageTrackerSupersederValid"),
+		jsFunc(t, html, "stageTrackerTriageNeeded"),
+		jsFunc(t, html, "stageTrackerTriageAccepted"),
 		jsFunc(t, html, "stageTrackerRowActions"),
 		jsFunc(t, html, "stageTrackerFlatActions"),
 		jsFunc(t, html, "stageTrackerSelectionActions"),
@@ -51,6 +55,7 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerActionLabel"),
 		jsFunc(t, html, "stageTrackerActionRequest"),
 		jsFunc(t, html, "stageTrackerActionSummary"),
+		jsFunc(t, html, "stageTrackerPatchItem"),
 		jsFunc(t, html, "stageTrackerRunActions"),
 	}, "\n")
 }

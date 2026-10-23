@@ -512,6 +512,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
+	// Activity monitor row menu: Accept triage (api_repo_item_accept_triage.go).
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/accept-triage", s.handleRepoItemAcceptTriage)
 }
 
 var (

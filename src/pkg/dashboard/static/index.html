@@ -15299,9 +15299,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTION_LABELS = {
       'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
-      hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'needs-human': 'Mark needs-human',
+      hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
     };
+    // Accept triage shows on an issue the chevron calls "Triage needed":
+    // stage 015, or the needs-triage pill on another stage (a claimed or
+    // covered issue the reporter-trust gate still holds). Never on a PR.
+    const STAGE_TRACKER_TRIAGE_STAGE = 15;
+    const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
     var _stageTrackerSel = new Set();
@@ -15435,6 +15440,26 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       out.push({ id: 'decide:close-wontfix', label: "Close as won't-fix…", enabled, why, danger: true });
       return out;
     }
+    // Pure: whether a row is an issue waiting on a maintainer's triage.
+    function stageTrackerTriageNeeded(item) {
+      if (!item || item.kind === 'pr') return false;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      return (Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE || mods.indexOf('needs-triage') >= 0;
+    }
+    // Pure: the item as it reads once triage is accepted — 010 Actionable,
+    // the needs-triage pill and the 👤 next-move gone — for the optimistic
+    // re-render before the tracker's next payload confirms it.
+    function stageTrackerTriageAccepted(item) {
+      const next = Object.assign({}, item);
+      next.modifiers = (Array.isArray(item.modifiers) ? item.modifiers : []).filter(m => m !== 'needs-triage');
+      if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE) {
+        next.stage = STAGE_TRACKER_ACTIONABLE_STAGE;
+        next.stage_slug = 'actionable';
+        next.stage_label = 'stage/010-actionable';
+        next.caption = ''; next.actor = ''; next.reason = '';
+      }
+      return next;
+    }
     // Pure: the actions that apply to one row in its current state.
     function stageTrackerRowActions(item, ctx) {
       ctx = ctx || {};
@@ -15451,6 +15476,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
+      if (stageTrackerTriageNeeded(item)) out.push({ id: 'accept-triage', label: 'Accept triage', hint: 'triage/accepted', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE });
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
       out.push({ id: 'copy', label: 'Copy link', enabled: !!item.url, why: item.url ? '' : 'No GitHub link' });
@@ -15711,6 +15737,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
+        case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
       }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
@@ -15742,6 +15769,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         done(msg, type) { if (el) dismissToast(el, msg, type); else showToast(msg, type); },
       };
     }
+    // Replace one item in the current tracker payload with fn(item) and
+    // re-render, so the row reads its new state before the next fetch.
+    function stageTrackerPatchItem(item, fn) {
+      const d = _stageTracker;
+      if (!d || !Array.isArray(d.items)) return;
+      const key = stageTrackerItemKey(item);
+      const i = d.items.findIndex(x => stageTrackerItemKey(x) === key);
+      if (i < 0) return;
+      d.items[i] = fn(d.items[i]);
+      if (typeof renderStageTracker === 'function') renderStageTracker(d);
+    }
     function stageTrackerAfterActions() {
       _stageTrackerEtag = '';
       _stageTrackerSig = '';
@@ -15767,6 +15805,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
           if (req.once) once[req.url] = data;
+          if (id === 'accept-triage') stageTrackerPatchItem(it, stageTrackerTriageAccepted);
           results.push({ item: it, ok: true, data });
         } catch (e) {
           results.push({ item: it, ok: false, error: e && e.message ? e.message : 'network error' });
