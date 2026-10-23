@@ -49,7 +49,7 @@ Start with [Zero to Automation: Getting Started with Hive](getting-started.md). 
   or assignment helpers.
 - [Release channels](release-channels.md) — what `stable`, `candidate`, and `edge` each mean and what to expect from them.
 - [Security model](security-model.md) — agent safety control inventory, threats, enforcement modes, residual gaps and operator audit checklist.
-- Security docs rule: `SECURITY.md` and every `src/docs/security*.md` / `ioscan*.md` page must score Flesch-Kincaid grade 11 or lower (CI: `src/scripts/check-security-docs-readability.sh`).
+- Security docs rule: `SECURITY.md` and every `src/docs/security*.md` / `ioscan*.md` page, plus `landscape.md`, must score Flesch-Kincaid grade 11 or lower (CI: `src/scripts/check-security-docs-readability.sh`).
 - [Data collection and telemetry](telemetry.md)
 - [Securing your hive: a first-time operator's guide](securing-your-hive.md)
 - [Community and support](community.md)

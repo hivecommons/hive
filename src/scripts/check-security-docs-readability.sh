@@ -2,7 +2,7 @@
 # check-security-docs-readability.sh — fail when a security document is harder
 # to read than a 20-year-old non-expert can follow.
 #
-# Every file in the fixed list below must score a Flesch-Kincaid grade of 11
+# Every file in the fixed list below (the security set plus landscape.md) must score a Flesch-Kincaid grade of 11
 # or lower. Grade is 0.39 * (words / sentences) + 11.8 * (syllables / words)
 # - 15.59, computed over prose only: fenced code, tables, headings, URLs,
 # inline code and link targets are dropped first so that a long Markdown
@@ -33,6 +33,7 @@ FILES=(
   src/docs/securing-your-hive.md
   src/docs/ioscan.md
   src/docs/ioscan-red-team.md
+  src/docs/landscape.md
 )
 
 python3 - "$MAX_GRADE" "$@" "${FILES[@]}" <<'PY'
