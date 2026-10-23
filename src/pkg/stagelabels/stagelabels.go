@@ -854,6 +854,30 @@ func CarriesStageAtLeast(labels []string, min Stage) bool {
 	return cur != None && !cur.Before(min)
 }
 
+// CoversIssue reports whether s, read off an ISSUE, says an open PR covers
+// it: 040 covered-by-pr itself, or a PR-only stage an older build mirrored
+// onto the issue (Enforce clamps it back to 040 on its next pass). It is
+// For(IssueItem) == CoveredByPR, so the parking stages drop out by identity,
+// not by number: 045 is the issue's own park, and 085 asked of an issue
+// clamps to 045. A number test (>= 040) cannot tell them apart, and called
+// every parked issue covered.
+func (s Stage) CoversIssue() bool {
+	return s.For(IssueItem) == CoveredByPR
+}
+
+// IssueCoveredByPR reports whether any label in labels is a stage (current
+// spelling or a Renames entry) that CoversIssue. Each label is read on its
+// own, so an issue carrying 040 next to a stale park label mid-migration
+// still reads as covered.
+func IssueCoveredByPR(labels []string) bool {
+	for _, l := range labels {
+		if Current([]string{l}).CoversIssue() {
+			return true
+		}
+	}
+	return false
+}
+
 // Owned reports whether label belongs to a hive-owned family this package
 // reconciles (including the retired labels it replaces).
 func Owned(label string) bool {
@@ -874,10 +898,13 @@ var Renames = map[string]Stage{
 // Current returns the stage a label set carries, or None. An unknown
 // `stage/*` label (stale table entry, health marker) yields None. Should an
 // item transiently carry two stage labels (mid-migration, before the
-// reconciler's next pass), the furthest along wins.
+// reconciler's next pass), the furthest along wins. Labels are normalized
+// (lowercased and trimmed) before matching, so Current and IssueCoveredByPR
+// agree on case handling.
 func Current(labels []string) Stage {
 	cur := None
 	for _, l := range labels {
+		l = strings.ToLower(strings.TrimSpace(l))
 		if s, ok := Renames[l]; ok && cur.Before(s) {
 			cur = s
 		}
