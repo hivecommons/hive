@@ -730,12 +730,12 @@ func TestMatchesExplicitClass(t *testing.T) {
 }
 
 func TestIsBenignMessage(t *testing.T) {
-	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----"} {
+	for _, m := range []string{"read tcp 1.2.3.4: i/o timeout", "keepalive ping: i/o timeout", "fetch: context canceled", "permissions watcher: fixed file permissions path=/x old_mode=-rw-r----- new_mode=-rw-rw-----", "permissions watcher: fixed ownership path=/x uid=1000"} {
 		if !IsBenignMessage(m) {
 			t.Fatalf("%q not benign", m)
 		}
 	}
-	for _, m := range []string{"write failed: i/o timeout", "request failed: 500"} {
+	for _, m := range []string{"write failed: i/o timeout", "request failed: 500", "permissions watcher: chmod failed path=/x"} {
 		if IsBenignMessage(m) {
 			t.Fatalf("%q wrongly benign", m)
 		}

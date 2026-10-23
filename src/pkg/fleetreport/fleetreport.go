@@ -691,18 +691,33 @@ func benignIOTimeout(class, component string) bool {
 	return strings.Contains(class, "i/o timeout") && (strings.Contains(component, "read") || strings.Contains(component, "keepalive"))
 }
 
+// benignSubstrings are lower-case fragments whose presence marks a log line
+// as noise for the generic repeated-error feed (see IsBenignMessage). Keep
+// each entry specific enough that it cannot swallow a real defect.
+var benignSubstrings = []string{
+	// Shutdown and per-request deadlines log cancellation on purpose.
+	"context canceled",
+	"context cancelled",
+	// The permissions watcher's "fixed ..." lines (file/directory/mode
+	// permissions, ownership) record a repair that already succeeded:
+	// self-healing housekeeping, whatever level the producer logs at.
+	"permissions watcher: fixed ",
+}
+
 // IsBenignMessage reports whether a raw log message is noise the generic
 // repeated-error feed must not report: the read/keepalive i/o timeout rule
-// above applied to the whole line, plus context cancellation (shutdown and
-// per-request deadlines log it on purpose) and the permissions watcher
-// reporting that it already repaired a file mode (self-healing housekeeping).
+// above applied to the whole line, plus every benignSubstrings entry.
 func IsBenignMessage(msg string) bool {
 	m := strings.ToLower(msg)
 	if benignIOTimeout(m, m) {
 		return true
 	}
-	return strings.Contains(m, "context canceled") || strings.Contains(m, "context cancelled") ||
-		strings.Contains(m, "permissions watcher: fixed file permissions")
+	for _, s := range benignSubstrings {
+		if strings.Contains(m, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // openTrigger is the trigger of a persisted entry; entries written before
