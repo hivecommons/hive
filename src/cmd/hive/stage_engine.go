@@ -6,7 +6,6 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -42,7 +41,7 @@ func stageEngineOptions(cfg *config.Config, logger *slog.Logger) *stageengine.Op
 			Mode:    stageEngineConfiguredMode(cfg),
 			Store:   stagelabels.Shared(),
 			Issue:   github.IssueDeriver(),
-			PR:      automerge.PRDeriver(),
+			PR:      stageengine.PRDeriver(),
 			Logger:  logger,
 			Metrics: stageengine.DefaultCounters(),
 		}
