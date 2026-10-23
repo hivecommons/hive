@@ -1281,7 +1281,7 @@ func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
 // hive defect.
 func isClientHangup(err error) bool {
 	return isTimeoutError(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, net.ErrClosed)
 }
 
 // logClientRead logs a client-side request read failure at Debug: an idle or
@@ -3300,7 +3300,11 @@ func (p *GitHubProxy) sniffCopilotOnTLS(clientConn net.Conn, host, agentName str
 	handshakeErr := tlsClientConn.Handshake()
 	_ = clientConn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
-		p.logger.Warn("copilot sniff: client TLS handshake failed", "error", handshakeErr)
+		if isClientHangup(handshakeErr) {
+			p.logger.Debug("copilot sniff: client hung up before TLS handshake", "error", handshakeErr)
+		} else {
+			p.logger.Warn("copilot sniff: client TLS handshake failed", "error", handshakeErr)
+		}
 		return
 	}
 	defer func() { _ = tlsClientConn.Close() }()

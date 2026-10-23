@@ -3,11 +3,12 @@ package proxy
 import (
 	"errors"
 	"io"
-	"syscall"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -31,6 +32,9 @@ func TestAllTLSUpstreamDialsAreBound(t *testing.T) {
 		t.Fatalf("read github_proxy.go: %v", err)
 	}
 	text := string(body)
+	if got := strings.Count(text, "copilot sniff: client hung up before TLS handshake"); got != 1 {
+		t.Fatalf("copilot sniff handshake hangup demotion sites = %d, want 1", got)
+	}
 	if strings.Contains(text, "tls.DialWithDialer(markDialer(0)") {
 		t.Fatal("TLS upstream dials must not use an unbounded zero-timeout dialer")
 	}
@@ -123,10 +127,13 @@ func TestHTTPRelayDeadlinesAreBoundAndObservable(t *testing.T) {
 }
 
 func TestIsClientHangup(t *testing.T) {
-	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, os.ErrDeadlineExceeded} {
+	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, os.ErrDeadlineExceeded, net.ErrClosed} {
 		if !isClientHangup(err) {
 			t.Fatalf("isClientHangup(%v) = false, want true", err)
 		}
+	}
+	if !isClientHangup(&net.OpError{Op: "read", Err: os.ErrDeadlineExceeded}) {
+		t.Fatal("net.Error timeouts must count as client hangups")
 	}
 	if isClientHangup(errors.New("tls: failed to verify certificate")) {
 		t.Fatal("certificate errors must stay WARN")
