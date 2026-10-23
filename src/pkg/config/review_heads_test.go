@@ -163,7 +163,7 @@ func TestExpectedReviewHeadsFollowReviewerAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(cfg.ExpectedReviewHeads(), ",")
-	if got != "code-reviewer-sonnet,code-reviewer-sol" {
+	if got != "code-reviewer-sol,code-reviewer-sonnet" {
 		t.Fatalf("expected heads = %q; heads of a base reviewer_agents does not name must not be waited on", got)
 	}
 	cfg.Review.ReviewerAgents = nil
