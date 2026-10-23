@@ -29558,6 +29558,11 @@ function burnAreaChart() {
     let _kbSearchQuery = '';
     let _kbSelectedFact = null;
     let _kbFacts = [];
+    const _kbPageSize = 50;
+    let _kbPageOffset = 0;
+    let _kbServerPaged = false;
+    let _kbHasMore = false;
+    let _kbRequest = 0;
     const KB_POLL_MS = 30000;
     const KB_LAYER_ICONS = { personal: '🔒', project: '📁', org: '🏢', community: '🌍' };
     const KB_LAYER_LABELS = { personal: 'Personal', project: 'Project', org: 'Org', community: 'Community' };
@@ -29698,7 +29703,19 @@ function burnAreaChart() {
       kbSearch();
     }
 
-    async function kbSearch() {
+    function kbSearch() {
+      return kbLoadFacts(0);
+    }
+
+    function kbChangePage(direction) {
+      const offset = Math.max(0, _kbPageOffset + direction * _kbPageSize);
+      if (_kbServerPaged) return kbLoadFacts(offset);
+      _kbPageOffset = offset;
+      renderKnowledgeFacts();
+    }
+
+    async function kbLoadFacts(offset) {
+      const request = ++_kbRequest;
       const query = _kbSearchQuery;
       const layer = _kbSelectedLayer;
       const typeFilter = _kbSelectedType;
@@ -29720,18 +29737,28 @@ function burnAreaChart() {
         if (typeFilter) url += (url.includes('?') ? '&' : '?') + 'type=' + encodeURIComponent(typeFilter);
       } else {
         url = '/api/knowledge';
-        const params = [];
+        const params = ['limit=' + _kbPageSize, 'offset=' + offset];
         if (typeFilter) params.push('type=' + encodeURIComponent(typeFilter));
         if (params.length) url += '?' + params.join('&');
       }
       try {
         const r = await fetch(url);
-        if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
+        if (!r.ok) throw new Error('Knowledge request failed');
         const data = await r.json();
+        if (request !== _kbRequest) return;
+        _kbServerPaged = !query && (!layer || layer === 'all');
+        _kbPageOffset = offset;
+        _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
         _kbSelectedFact = null;
         renderKnowledgeFacts();
-      } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
+      } catch (e) {
+        if (request !== _kbRequest) return;
+        _kbFacts = [];
+        _kbHasMore = false;
+        _kbPageOffset = 0;
+        renderKnowledgeFacts();
+      }
     }
 
     async function kbReadFact(slug, layer) {
@@ -30680,13 +30707,11 @@ function burnAreaChart() {
       if (!el) return;
 
       const visibleFacts = _kbFacts.filter(f => !kbIsDividerOnlyFact(f));
-      if (visibleFacts.length === 0) {
-        el.innerHTML = '<div class="kb-empty"><div class="kb-empty-icon">🔍</div>No facts found. Try a different search or layer.</div>';
-        return;
-      }
-
-      let html = '';
-      for (const f of visibleFacts) {
+      const start = _kbServerPaged ? 0 : _kbPageOffset;
+      const page = visibleFacts.slice(start, start + _kbPageSize);
+      const hasNext = _kbServerPaged ? _kbHasMore : start + _kbPageSize < visibleFacts.length;
+      let html = page.length ? '' : '<div class="kb-empty"><div class="kb-empty-icon">🔍</div>No facts found. Try a different search or layer.</div>';
+      for (const f of page) {
         const conf = typeof f.confidence === 'number' ? f.confidence : 0;
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -30705,6 +30730,12 @@ function burnAreaChart() {
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
         if (f.status) html += `<span class="kb-layer-badge" style="background:var(--bg);color:var(--muted)">${escapeHtml(f.status)}</span>`;
         html += '</div></div></div>';
+      }
+      if (_kbPageOffset > 0 || hasNext) {
+        html += '<div class="kb-pagination" role="group" aria-label="Knowledge fact pages">';
+        html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbPreviousPage"' + (_kbPageOffset === 0 ? ' disabled' : '') + '>Previous</button>';
+        html += '<span> Page ' + (Math.floor(_kbPageOffset / _kbPageSize) + 1) + ' </span>';
+        html += '<button class="hv-btn btn-secondary btn-sm" data-action="kbNextPage"' + (!hasNext ? ' disabled' : '') + '>Next</button></div>';
       }
       el.innerHTML = html;
     }
@@ -31898,6 +31929,9 @@ function burnAreaChart() {
         const r = await fetch('/api/knowledge/vaults/' + encodeURIComponent(name) + '/facts');
         if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
         _kbFacts = await r.json();
+        _kbServerPaged = false;
+        _kbPageOffset = 0;
+        _kbHasMore = false;
         renderKnowledgeFacts();
       } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
     }
@@ -55481,6 +55515,8 @@ function burnAreaChart() {
       gh15: function (event, A) { _kbSearchQuery=this.value;kbSearch(); },
       gh16: function (event, A) { _kbSearchQuery=this.value; },
       gh17: function (event, A) { kbReadFact(A[0]); },
+      kbPreviousPage: function () { kbChangePage(-1); },
+      kbNextPage: function () { kbChangePage(1); },
       gh18: function (event, A) { kbRemoveGitSource(A[0],A[1]); },
       gh19: function (event, A) { this.style.display='none'; },
       gh20: function (event, A) { this.style.borderColor='var(--blue)'; },

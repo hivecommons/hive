@@ -165,13 +165,47 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit, offset := knowledgeListPagination(r)
 	typeFilter := r.URL.Query().Get("type")
 	facts := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
-	jsonResponse(w, map[string]interface{}{
-		"enabled": true,
-		"count":   len(facts),
-		"facts":   facts,
+	// Search merges multiple stores; impose a stable order before slicing pages.
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Layer != facts[j].Layer {
+			return facts[i].Layer < facts[j].Layer
+		}
+		return facts[i].Slug < facts[j].Slug
 	})
+	total := len(facts)
+	if offset > total {
+		offset = total
+	}
+	end := offset + min(limit, total-offset)
+	page := append([]knowledge.Fact{}, facts[offset:end]...)
+	jsonResponse(w, map[string]interface{}{
+		"enabled":  true,
+		"count":    len(page),
+		"total":    total,
+		"limit":    limit,
+		"offset":   offset,
+		"has_more": end < total,
+		"facts":    page,
+	})
+}
+
+// knowledgeListPagination bounds list responses, including omitted or invalid limits.
+func knowledgeListPagination(r *http.Request) (limit, offset int) {
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 // titleCaseWords capitalizes the first letter following each run of
