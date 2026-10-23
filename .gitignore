@@ -19,7 +19,7 @@ node_modules/
 _inline.js
 
 # Generated local artifacts
-/cov.out
+/cov*.out
 /dash.js
 /pr-body.md
 
