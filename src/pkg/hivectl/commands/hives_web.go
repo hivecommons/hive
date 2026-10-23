@@ -518,15 +518,38 @@ var commonsWebTemplate = template.Must(template.New("commons").Parse(`<!doctype 
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>The Commons — Hive</title>
 <style>
-:root{--card:Canvas;--border:GrayText;color-scheme:light dark;font-family:system-ui,sans-serif;line-height:1.4}body{max-width:920px;margin:2rem auto;padding:0 1rem}button,input,select{font:inherit}table{width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid #8884;padding:.45rem;text-align:left}.muted{color:#595959}.row-actions{white-space:nowrap}.error{color:#b00020}.ok{color:#087f23}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}input[type=text]{min-width:min(16rem,100%);flex:1}.pill{border:1px solid #8886;border-radius:999px;padding:.1rem .45rem;font-size:.85em}
-
-:focus-visible{outline:3px solid #327bd6;outline-offset:3px}button{cursor:pointer}button:disabled,button[aria-disabled=true]{cursor:default;opacity:.65}#contribution-tree,[role=group]{list-style:none;padding-left:1rem}.tree-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.4rem;border-bottom:1px solid #8884}.identity{overflow-wrap:anywhere;flex:1;min-width:10rem}.tree-meta{font-size:.85em;overflow-wrap:anywhere}.staging{position:sticky;bottom:0;background:Canvas;border:1px solid GrayText;padding:.7rem;z-index:2}.staging h3{margin:.2rem 0}.staging p{margin:.3rem 0}.staging pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:15rem;overflow:auto}.tree-tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}table{display:block;overflow:auto}#tree-receipt{white-space:pre-wrap}dialog{background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:12px;max-width:28rem}dialog::backdrop{background:#0008}.skip{position:absolute;left:-9999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:10;background:Canvas;color:CanvasText;padding:.5rem;border:2px solid #327bd6}dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}@media (prefers-color-scheme:dark){.muted{color:#a8a8a8}.error{color:#ff8a9b}.ok{color:#6fdc8c}}@media (max-width:480px){body{margin:1rem auto}#contribution-tree,[role=group]{padding-left:.25rem}.identity{min-width:0}}
-select{max-width:100%}#path,#envpath{overflow-wrap:anywhere}@media (max-width:480px),(max-height:600px){.staging{position:static}}
+:root{color-scheme:dark light;--surface-0:#080b0f;--surface-1:#0d1218;--surface-2:#121922;--surface-3:#17212d;--line:#263545;--line-strong:#4a5d73;--text:#f6f8fb;--text-muted:#a8b3c2;--brand:#f4c75f;--brand-ink:#17120a;--ok:#74df9a;--err:#ff8a9b;--ring:#80bfff;--hover:#17212d;--r:6px;--r-lg:12px;--font-ui:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;--font-mono:'SF Mono','Cascadia Code','Fira Code',ui-monospace,monospace}
+@media (prefers-color-scheme:light){:root{--surface-0:#f7f8fa;--surface-1:#eef1f5;--surface-2:#fff;--surface-3:#f8fafc;--line:#d9e0e8;--line-strong:#7d8a9b;--text:#111827;--text-muted:#4b5563;--brand:#9a5f0b;--brand-ink:#fff;--ok:#166534;--err:#b91c1c;--ring:#1d4ed8;--hover:#e8edf3}}
+*{box-sizing:border-box}
+body{font-family:var(--font-ui);background:var(--surface-0);color:var(--text);line-height:1.45;max-width:980px;margin:0 auto;padding:0 1rem 2rem}
+.brandbar{display:flex;align-items:center;gap:.8rem;margin:0 -1rem 1.2rem;padding:.9rem 1rem;background:var(--surface-1);border-bottom:1px solid var(--line)}
+.bee{font-size:2rem;line-height:1}.eyebrow{font-size:.68rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--brand)}h1{font-size:1.25rem;margin:0}h2{font-size:1.05rem}.brandbar .pill{margin-left:auto}
+main>section[aria-labelledby]{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-lg);padding:1rem}
+button,input,select{font:inherit;color:inherit}button{background:var(--surface-3);border:1px solid var(--line-strong);border-radius:var(--r);padding:.25rem .65rem;cursor:pointer}button:hover:not(:disabled):not([aria-disabled=true]){border-color:var(--brand)}button:disabled,button[aria-disabled=true]{cursor:default;opacity:.6}
+#tree-apply{background:var(--brand);color:var(--brand-ink);border-color:var(--brand);font-weight:700}
+input[type=text],input[type=search],select{background:var(--surface-1);border:1px solid var(--line-strong);border-radius:var(--r);padding:.3rem .5rem}input[type=text]{min-width:min(16rem,100%);flex:1}select{max-width:100%}
+:focus-visible{outline:3px solid var(--ring);outline-offset:2px}[role=treeitem]:focus{outline:none}
+table{display:block;overflow:auto;width:100%;border-collapse:collapse;margin-top:1rem}th,td{border-bottom:1px solid var(--line);padding:.45rem;text-align:left}.row-actions{white-space:nowrap}
+.muted{color:var(--text-muted)}.error{color:var(--err)}.ok{color:var(--ok)}form{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}#path,#envpath{overflow-wrap:anywhere}
+.pill{border:1px solid var(--line-strong);border-radius:999px;padding:.1rem .5rem;font-size:.78em;color:var(--text-muted)}
+kbd{font-family:var(--font-mono);font-size:.78em;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:4px;padding:0 .3em;background:var(--surface-3)}.keys{font-size:.82rem}
+#contribution-tree,[role=group]{list-style:none;margin:0;padding-left:1.25rem}#contribution-tree{padding-left:0}
+.tree-row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;padding:.35rem .5rem;border-radius:var(--r);border-bottom:1px solid var(--line)}.tree-row:hover{background:var(--hover)}
+[role=treeitem]:focus>.tree-row{background:var(--hover);outline:2px solid var(--ring);outline-offset:-2px;box-shadow:inset 4px 0 0 var(--brand)}
+.identity{overflow-wrap:anywhere;flex:1;min-width:10rem;cursor:default}.tree-meta{font-size:.85em;overflow-wrap:anywhere}.accept{display:inline-flex;align-items:center;gap:.35rem;font-size:.85em}
+.tree-tools{display:flex;gap:.5rem;flex-wrap:wrap;margin:1rem 0}
+.staging{position:sticky;bottom:0;background:var(--surface-2);border:1px solid var(--line-strong);border-radius:var(--r-lg);padding:.7rem;z-index:2;display:grid;grid-template-columns:minmax(0,1fr);gap:.7rem;box-shadow:0 -4px 16px rgba(0,0,0,.25);max-height:42vh;overflow:auto}.staging h3{margin:.2rem 0}.staging p{margin:.3rem 0}.staging pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:8rem;overflow:auto}
+@media (min-width:860px){.staging{grid-template-columns:minmax(0,5fr) minmax(0,6fr)}#tree-info{border-right:1px solid var(--line);padding-right:.7rem}}
+#tree-info{font-size:.85rem;min-height:5.5rem;overflow:visible}.info-kind{margin:0;font-size:.68rem;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--brand)}.info-title{margin:.1rem 0 .3rem;font-weight:700;overflow-wrap:anywhere}.info-line{margin:.15rem 0}
+#tree-receipt{white-space:pre-wrap}dialog{background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--r-lg);max-width:28rem}dialog::backdrop{background:#0008}dialog button{margin:.25rem .25rem 0 0}
+.skip{position:absolute;left:-9999px;top:0}.skip:focus{left:1rem;top:1rem;z-index:10;background:var(--surface-2);color:var(--text);padding:.5rem;border:2px solid var(--ring)}
+dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}summary{cursor:pointer}
+@media (max-width:480px),(max-height:600px){.staging{position:static}}@media (max-width:480px){#contribution-tree,[role=group]{padding-left:.25rem}[role=group]{padding-left:.5rem}.identity{min-width:0}}
 </style>
 <button type="button" class="skip" id="skip-apply">Skip to staged changes and Apply</button>
 <button type="button" class="skip" id="skip-profiles">Skip to profile management</button>
 <main>
-<h1>The Commons</h1>
+<header class="brandbar"><span class="bee" aria-hidden="true">🐝</span><div><div class="eyebrow">Hive · local console</div><h1>The Commons</h1></div><span class="pill">loopback only</span></header>
 <p class="muted">This loopback-only page edits the same local profile store as <code>hivectl hives</code> and the TUI. Registration tokens are never displayed.</p>
 <section aria-labelledby="tree-title">
 <h2 id="tree-title">Contribution tree</h2>
@@ -538,12 +561,14 @@ select{max-width:100%}#path,#envpath{overflow-wrap:anywhere}@media (max-width:48
 <dt>Unrestricted — legacy</dt><dd>An older subscription with no repository choices saved. It can receive work from every repository the Hive offers. “Review and restrict” lets you choose.</dd>
 <dt>Unreviewed</dt><dd>A repository the Hive offers that you have not chosen or excluded yet. It receives no work until you select it.</dd>
 <dt>Excluded</dt><dd>A repository you have vetoed. Selecting a whole Hive or hub never brings it back.</dd>
-<dt>Follow future repositories</dt><dd>Also choose repositories the Hive adds later. Off by default.</dd>
+<dt>Accept all new repositories</dt><dd>Also choose repositories the Hive adds later (picked up whenever membership is refreshed). Off by default. “Accept N new” chooses the ones already waiting.</dd>
+<dt>Tick-down</dt><dd>Like folders in a file manager: ticking a hub ticks every Hive under it, ticking a Hive ticks all its repositories, and a partly ticked parent shows a dash. Anything you excluded stays excluded.</dd>
 <dt>Apply / Discard</dt><dd>Nothing is saved until you press Apply. Discard throws the staged changes away.</dd>
 </dl></details>
+<p class="muted keys" id="tree-keys">Keyboard: <kbd>↑</kbd> <kbd>↓</kbd> move · <kbd>←</kbd> collapse or go to parent · <kbd>→</kbd> expand or go to first child · <kbd>Space</kbd> select · <kbd>Enter</kbd> expand/collapse · <kbd>*</kbd> expand everything below · type a name to jump · <kbd>Tab</kbd> for the row's other controls.</p>
 <div class="tree-tools"><label>Search (press /) <input id="tree-search" type="search"></label><button id="tree-select-matching" hidden>Select matching</button><button id="tree-collapse-all">Collapse all</button><button id="tree-expand-all">Expand all</button><button id="tree-refresh">Refresh membership</button><button id="tree-leave">Leave page</button></div>
 <ul id="contribution-tree" role="tree" aria-label="Hub, Hive and repository contributions"></ul>
-<div class="staging" aria-labelledby="diff-title"><h3 id="diff-title">Staged changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No staged changes.</p><details><summary>Named targets and shared effects</summary><pre id="tree-diff"></pre><details><summary>Raw diff (JSON)</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div>
+<div class="staging"><div id="tree-info" role="region" aria-label="Details of the focused or hovered row"></div><div class="staging-main" aria-labelledby="diff-title"><h3 id="diff-title">Staged changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No staged changes.</p><details><summary>Named targets and shared effects</summary><pre id="tree-diff"></pre><details><summary>Raw diff (JSON)</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div></div>
 </section>
 <h2 id="profiles-title" tabindex="-1">Profile management</h2>
 <p>These existing controls save separately. Apply or discard tree edits first.</p>
@@ -572,6 +597,7 @@ select{max-width:100%}#path,#envpath{overflow-wrap:anywhere}@media (max-width:48
 <script>
 const token = {{.Token}};
 history.replaceState(null, '', location.pathname);
+{ const icon = document.createElement('link'); icon.rel = 'icon'; icon.href = 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>"); document.head.appendChild(icon); }
 const headers = {'Content-Type':'application/json', 'X-Hive-Commons-Token': token};
 const message = document.getElementById('message');
 const nameInput = document.getElementById('name');
