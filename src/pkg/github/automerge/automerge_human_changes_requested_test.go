@@ -99,7 +99,7 @@ func TestTrySweepSelfAuthoredPRHonoursHumanChangesRequested(t *testing.T) {
 			if req.Actor != "bob" || req.Body != body || req.Source != review.HumanChangeRequestSourceReview || req.SourceID != 1 {
 				t.Fatalf("recorded request = %+v", req)
 			}
-			if got := classifyStage(stageObservation{SelfAuthored: true, Reason: reason}); got.Stage != stagelabels.Fixing {
+			if got := classifyStage(stageObservation{Lane: stageLaneSelf, Reason: reason}); got.Stage != stagelabels.Fixing {
 				t.Fatalf("%q routes to %v, want fixing (070)", reason, got.Stage)
 			}
 			if _, asks, _ := nudgeDiagnosis(reason, stageDetail{}); len(asks) != 1 || !strings.Contains(asks[0], "maintainer requested changes") {
