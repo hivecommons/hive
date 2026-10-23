@@ -332,6 +332,28 @@ func TestSyncIssuePRClaimLabels_RetrofitsHiveRefsClaim(t *testing.T) {
 	}
 }
 
+func TestRewriteRefsIssueLinkToClosingPreservesWatcherDowngrade(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"bare-reference", "Refs #7", true},
+		{"watcher-downgrade", "Refs #7" + downgradeNote("unfinished-delegated-work"), false},
+		{"watcher-downgrade-multiple-refs", "Refs #7" + downgradeNote("unfinished-delegated-work") + "\nRefs #8", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, ok := rewriteRefsIssueLinkToClosing(tc.body, "hivecommons/hive", 7)
+			if ok != tc.want {
+				t.Fatalf("rewrite = %v (%q), want %v", ok, body, tc.want)
+			}
+			if !ok && body != "" {
+				t.Fatalf("refused rewrite returned body %q", body)
+			}
+		})
+	}
+}
+
 type issueStagePRLinkFixture struct {
 	body          string
 	base          string

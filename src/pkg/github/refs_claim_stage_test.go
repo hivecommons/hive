@@ -55,7 +55,7 @@ func TestRefsClaimStagesAsCovered(t *testing.T) {
 }
 
 func TestRefsCoverageDoesNotUpgradeClosingScope(t *testing.T) {
-	for _, marker := range []string{"children", "partial-label"} {
+	for _, marker := range []string{"children", "partial-label", "delegating-body-one", "delegating-body-two", "watcher-note"} {
 		t.Run(marker, func(t *testing.T) {
 			fake := newIssueStageServer(t)
 			// A bare Refs link on a default-branch Hive PR must stay non-closing
@@ -68,10 +68,19 @@ func TestRefsCoverageDoesNotUpgradeClosingScope(t *testing.T) {
 			store := stagelabels.NewStore("", stageNow)
 			result := &ActionableResult{}
 			issue := Issue{Repo: "acme/widgets", Number: 4}
-			if marker == "children" {
+			switch marker {
+			case "children":
 				issue.Children = &IssueChildren{Total: 3}
-			} else {
+			case "partial-label":
 				issue.Labels = []string{PartiallyAddressedLabel}
+			case "delegating-body-one":
+				issue.Body = "- [ ] #99"
+			case "delegating-body-two":
+				issue.Body = "- [ ] #99\n- [ ] #100"
+			case "watcher-note":
+				// Work-detail callers may have no issue body. The PR's
+				// watcher note must independently prevent link repair.
+				fake.prBodies[42] += downgradeNote("unfinished-delegated-work")
 			}
 			annotateIssueWithClaim(&issue, IssueClaim{PRNumber: 42, PRRepo: issue.Repo, PRURL: "https://x/pr/42", Reference: true})
 			result.Issues = IssueResultFromItems([]Issue{issue})

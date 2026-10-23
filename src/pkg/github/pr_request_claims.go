@@ -470,11 +470,15 @@ func downgradeClosingReferences(text, defaultRepo string, downgrade map[string]s
 	})
 }
 
+// closingKeywordWithheldNote marks a reference the watcher deliberately made
+// non-closing; later link repair must not upgrade it back to a closing keyword.
+const closingKeywordWithheldNote = "closing keyword withheld by the hive watcher"
+
 // downgradeNote renders the inline explanation appended to a rewritten
 // reference. Kept separate so the wording is asserted in one place by the
 // tests rather than spelled out at each call site.
 func downgradeNote(reason string) string {
-	return " — closing keyword withheld by the hive watcher: `" + reason +
+	return " — " + closingKeywordWithheldNote + ": `" + reason +
 		"`. Merging this PR will not close the issue."
 }
 

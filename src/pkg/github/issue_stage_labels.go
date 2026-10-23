@@ -163,6 +163,9 @@ type IssueStageInput struct {
 	Claim     *IssueClaimContext
 	// Children is set on a decomposed parent (hivecommons/hive#12857).
 	Children *IssueChildren
+	// DelegatesWork mirrors the watcher's unchecked issue-task predicate.
+	// Unlike Children, it includes body-only delegation without ledger entries.
+	DelegatesWork bool
 	// Held is set for an issue the enumeration put in the Hold list
 	// (Client.isHeld: the hive's hold-label matcher, including the
 	// configured hive-pause/<id> label). IssueStageFor also reads the
@@ -297,7 +300,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue)})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), DelegatesWork: hasUnfinishedDelegatedWork(issue.Body)})
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
 	// work-detail row). They still have to be walked so a stage label
@@ -642,7 +645,7 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 		return false, false
 	}
 	claim := in.Claim
-	if claim.Reference && (in.Children != nil && in.Children.Open() > 0 || issueHasLabel(in.Labels, PartiallyAddressedLabel)) {
+	if claim.Reference && (in.DelegatesWork || in.Children != nil && in.Children.Open() > 0 || issueHasLabel(in.Labels, PartiallyAddressedLabel)) {
 		// Coverage is display-only for a delegating tracker (#13747).
 		// Keep its non-closing scope, without mutating the shared claim.
 		copy := *claim

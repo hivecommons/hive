@@ -337,7 +337,9 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 }
 
 func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) {
-	if body == "" || issue <= 0 || strings.Contains(body, issueLinkFixedMarker) {
+	// A watcher downgrade is intentional, even when the caller has no issue
+	// body or child ledger available. Never re-arm auto-close through repair.
+	if body == "" || issue <= 0 || strings.Contains(body, issueLinkFixedMarker) || strings.Contains(body, closingKeywordWithheldNote) {
 		return "", false
 	}
 	if _, ok := FindClosingKeywordReference(body, repo, repo, issue); ok {
