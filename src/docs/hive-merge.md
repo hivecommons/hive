@@ -114,6 +114,13 @@ reason that says the fork PR workflow runs are awaiting maintainer approval.
 The operator alert links to the repository Actions settings and tells the owner
 to approve the runs manually or relax "Approval for running fork pull request
 workflows". The hive does not call GitHub's workflow-run approval API.
+Two refinements (#13818): a held run whose workflow already has a successful
+run on the same head under another event (a `GITHUB_TOKEN`-opened PR whose
+opener dispatches the same workflows by `workflow_dispatch`) is listed as
+ignored and does not block — the verdict is on the head through the twin's
+check runs; and when the PR is not from a fork the reason says so, because
+GitHub also holds `pull_request` runs for same-repo PRs opened by a bot token
+and the approval setting may already be at its minimum.
 
 "Merge blocked" operator alerts retire themselves. Besides clearing on the next
 successful App merge in that repo, the watcher re-checks live alerts every

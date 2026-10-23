@@ -204,6 +204,13 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 			key:     "fork-run-approval",
 			message: fmt.Sprintf("Merge blocked for %s: fork PR workflow runs are awaiting maintainer approval. Approve the runs manually or relax the repo setting at https://github.com/%s/settings/actions (Approval for running fork pull request workflows).", repo, repo),
 		}, true
+	case strings.Contains(lower, "same-repo pr workflow runs are awaiting maintainer approval"):
+		// Same key as the fork case: revalidation clears both by the same
+		// evidence (no action_required runs left on the head).
+		return mergeFailureAlert{
+			key:     "fork-run-approval",
+			message: fmt.Sprintf("Merge blocked for %s: workflow runs on a same-repo PR opened by a bot token are awaiting maintainer approval (GitHub applies the fork-PR approval policy to GITHUB_TOKEN-opened PRs). Approve the runs manually, have the opener dispatch the required workflows on the branch, or relax the repo setting at https://github.com/%s/settings/actions (Approval for running fork pull request workflows).", repo, repo),
+		}, true
 	case strings.Contains(lower, "resource not accessible by integration") ||
 		(strings.Contains(lower, "403") && (strings.Contains(lower, "contents") || strings.Contains(lower, "pull request") || strings.Contains(lower, "pull_requests"))) ||
 		strings.Contains(lower, "contents:write") || strings.Contains(lower, "contents write") ||

@@ -695,6 +695,101 @@ func TestMergeCIGate_QueuedZeroJobRunWaits(t *testing.T) {
 	mustExist(t, reqPath, "request parked on queued run")
 }
 
+// #13818: a GITHUB_TOKEN-opened PR gets its pull_request runs held for
+// approval while the opener dispatches the same workflows by
+// workflow_dispatch on the branch. The dispatch twin succeeded and its check
+// runs are on the head, so the held copy is not evidence of anything and must
+// not turn a green head red.
+func TestMergeCIGate_HeldRunIgnoredWhenWorkflowSucceededUnderAnotherEvent(t *testing.T) {
+	f := &ciFixture{
+		defaultHead:    "abc",
+		checks:         []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
+		requiredChecks: []string{"build"},
+		runs: []ciRun{
+			{id: 41, workflowID: 4, name: "Build", event: "pull_request", status: "completed", conc: "action_required", jobs: 0},
+			{id: 42, workflowID: 4, name: "Build", event: "workflow_dispatch", status: "completed", conc: "success", jobs: 1},
+		},
+	}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if got := merges.Load(); got != 1 {
+		t.Fatalf("held run with a successful dispatch twin must not block, got %d merges (%+v)", got, readMergeResult(t, reqPath))
+	}
+	if len(sink.adds) != 0 {
+		t.Fatalf("no approval alert may be raised when the workflow already succeeded, got %+v", sink.adds)
+	}
+}
+
+// A held run whose workflow has NOT succeeded under any other event still
+// blocks: a different workflow's success is not this workflow's verdict.
+func TestMergeCIGate_HeldRunStillBlocksWhenOnlyOtherWorkflowSucceeded(t *testing.T) {
+	f := &ciFixture{
+		defaultHead: "abc",
+		checks:      []ciCheck{{name: "build", status: "completed", conclusion: "success"}},
+		runs: []ciRun{
+			{id: 41, workflowID: 4, name: "Vitest", event: "pull_request", status: "completed", conc: "action_required", jobs: 0},
+			{id: 42, workflowID: 5, name: "Build", event: "workflow_dispatch", status: "completed", conc: "success", jobs: 1},
+		},
+	}
+	var merges atomic.Int32
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("held run without a same-workflow success must still block")
+	}
+	if resp := readMergeResult(t, reqPath); !strings.Contains(resp.Error, "awaiting maintainer approval") || !strings.Contains(resp.Error, `"Vitest"(41)`) {
+		t.Fatalf("expected approval refusal naming the held run, got %+v", resp)
+	}
+}
+
+// A same-repo PR (head and base in the same repository) whose runs are held
+// is not a fork PR; the operator message must say so rather than send them
+// looking for a fork that does not exist (#13818).
+func TestMergeCIGate_ActionRequiredSameRepoRunNamesBotTokenCause(t *testing.T) {
+	var merges atomic.Int32
+	f := &ciFixture{
+		defaultHead: "abc",
+		author:      "github-actions[bot]",
+		authorType:  "Bot",
+		runs:        []ciRun{{id: 41, workflowID: 4, name: "CI", status: "completed", conc: "action_required", jobs: 0}},
+	}
+	srv := ciGateServer(t, f, &merges)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+
+	reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+	c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+	if merges.Load() != 0 {
+		t.Fatalf("action_required workflow runs must not merge, got %d merges", merges.Load())
+	}
+	resp := readMergeResult(t, reqPath)
+	if resp.Attempts != 1 || !strings.Contains(resp.Error, "same-repo PR workflow runs are awaiting maintainer approval") || strings.Contains(resp.Error, "fork PR workflow runs") {
+		t.Fatalf("expected a same-repo refusal, not a fork one, got %+v", resp)
+	}
+	if len(sink.adds) != 1 || !strings.Contains(sink.adds[0].message, "same-repo PR opened by a bot token") || !strings.Contains(sink.adds[0].message, "https://github.com/o/r/settings/actions") {
+		t.Fatalf("expected same-repo approval alert, got %+v", sink.adds)
+	}
+	if sink.adds[0].id == "" {
+		t.Fatalf("alert must carry an id, got %+v", sink.adds[0])
+	}
+}
+
 func TestMergeCIGate_ActionRequiredForkRunAlerts(t *testing.T) {
 	var merges, approvals atomic.Int32
 	f := &ciFixture{

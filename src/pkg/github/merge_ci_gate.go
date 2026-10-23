@@ -242,7 +242,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	case len(opaque.pending) > 0:
 		return mergeCIPending, fmt.Sprintf("ci gate: workflow run(s) %s still in flight without a job yet", strings.Join(opaque.pending, ", ")), nil
 	case len(opaque.actionRequired) > 0:
-		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired), nil
+		return mergeCIRed, forkRunApprovalReason(owner, name, opaque.actionRequired, pullRequestIsFromFork(pr)), nil
 	case st.Evidence == 0:
 		// Per-repo no-CI opt-in (#6281): a repo with genuinely no CI (docs-
 		// only, config-only) can never produce evidence, so "unverified"
@@ -254,7 +254,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		}
 		return mergeCIUnverified, fmt.Sprintf("ci gate: no commit statuses, check runs, or workflow runs found on %s - absent CI is not passing", shortSHA(sha)), nil
 	}
-	return mergeCIGreen, fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha)), nil
+	green := fmt.Sprintf("ci gate: %d status/check run(s) on %s, all gating checks succeeded", st.Evidence, shortSHA(sha))
+	if len(opaque.heldButVerified) > 0 {
+		green += fmt.Sprintf("; held run(s) %s ignored: the same workflow(s) succeeded on this head under another event", strings.Join(opaque.heldButVerified, ", "))
+	}
+	return mergeCIGreen, green, nil
 }
 
 func (c *Client) warnRequiredChecksMismatch(owner, repo string, declared, actual, observed map[string]bool) {
@@ -302,7 +306,10 @@ func requiredChecksSortedKeys(set map[string]bool) []string {
 type opaqueWorkflowRunResult struct {
 	failed         []string
 	actionRequired []string
-	pending        []string
+	// heldButVerified lists action_required runs whose workflow already
+	// succeeded on the same head under another event; reported, not gating.
+	heldButVerified []string
+	pending         []string
 	// inFlight counts every latest workflow run on the SHA whose status is
 	// not completed, with or without jobs.
 	inFlight int
@@ -356,11 +363,23 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 		return opaqueWorkflowRunResult{}, nil
 	}
 	var out opaqueWorkflowRunResult
-	for _, run := range latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns) {
+	latest := latestWorkflowRunsByWorkflowAndEvent(runs.WorkflowRuns)
+	succeeded := workflowsWithSuccessfulRun(latest)
+	for _, run := range latest {
 		if run == nil {
 			continue
 		}
 		status, conclusion := run.GetStatus(), run.GetConclusion()
+		if status == "completed" && conclusion == "action_required" && succeeded[run.GetWorkflowID()] {
+			// The held run has a twin on the same head that already ran to
+			// success under another event (a GITHUB_TOKEN-opened PR whose
+			// pull_request runs GitHub holds for approval while the opener
+			// dispatches the same workflows by workflow_dispatch, #13818).
+			// The workflow's verdict is on the head through that twin's
+			// check runs; the held copy adds no evidence and must not block.
+			out.heldButVerified = append(out.heldButVerified, fmt.Sprintf("%q(%d)", run.GetName(), run.GetID()))
+			continue
+		}
 		started := run.GetRunStartedAt().Time
 		if started.IsZero() {
 			started = run.GetCreatedAt().Time
@@ -444,8 +463,33 @@ func workflowRunIsNewer(candidate, current *gh.WorkflowRun) bool {
 	}
 }
 
-func forkRunApprovalReason(owner, repo string, labels []string) string {
-	return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+// workflowsWithSuccessfulRun returns the workflow IDs that have a completed,
+// successful run among runs (any event).
+func workflowsWithSuccessfulRun(runs []*gh.WorkflowRun) map[int64]bool {
+	out := make(map[int64]bool)
+	for _, run := range runs {
+		if run != nil && run.GetStatus() == "completed" && run.GetConclusion() == "success" {
+			out[run.GetWorkflowID()] = true
+		}
+	}
+	return out
+}
+
+// pullRequestIsFromFork reports whether the PR head lives in a different
+// repository than its base. GitHub holds workflow runs for approval on fork
+// PRs AND on same-repo PRs opened by a bot the approval policy treats as a
+// new contributor (github-actions[bot] via GITHUB_TOKEN), and the operator
+// message must name which it is (#13818).
+func pullRequestIsFromFork(pr *gh.PullRequest) bool {
+	head, base := pr.GetHead().GetRepo().GetFullName(), pr.GetBase().GetRepo().GetFullName()
+	return head != "" && base != "" && !strings.EqualFold(head, base)
+}
+
+func forkRunApprovalReason(owner, repo string, labels []string, fromFork bool) string {
+	if fromFork {
+		return fmt.Sprintf("ci gate: fork PR workflow runs are awaiting maintainer approval (action_required): %s. Approve the runs or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
+	}
+	return fmt.Sprintf("ci gate: same-repo PR workflow runs are awaiting maintainer approval (action_required): %s. The PR is not from a fork; GitHub holds runs for PRs opened by a bot token (GITHUB_TOKEN) under the fork-PR approval policy. Approve the runs, have the opener dispatch the required workflows on the branch, or relax the repo setting at https://github.com/%s/%s/settings/actions (Approval for running fork pull request workflows)", strings.Join(labels, ", "), owner, repo)
 }
 
 // logCIVerdict records the gate's decision for the operator with the same
