@@ -670,7 +670,7 @@ func (m *Manager) claimRateLimitRelaunch(agent *AgentProcess, now time.Time) boo
 // per (requested, running) tuple and at Debug afterwards. The warned tuple
 // survives relaunches (the CLI substitutes identically every launch), so a
 // persistently-wrong config does not re-warn each restart (#13659).
-func (m *Manager) logCopilotModelFallback(agent *Agent, requested, running string) {
+func (m *Manager) logCopilotModelFallback(agent *AgentProcess, requested, running string) {
 	tuple := requested + "\x00" + running
 	level := slog.LevelDebug
 	if agent.copilotModelFallbackWarned != tuple {

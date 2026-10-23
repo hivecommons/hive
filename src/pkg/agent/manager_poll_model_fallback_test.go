@@ -13,7 +13,7 @@ func TestLogCopilotModelFallbackWarnsOnce(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	m := &Manager{logger: logger}
-	a := &Agent{Name: "telemetry"}
+	a := &AgentProcess{Name: "telemetry"}
 
 	warns := func() int { return strings.Count(buf.String(), "level=WARN") }
 
