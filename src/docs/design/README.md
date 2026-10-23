@@ -28,6 +28,17 @@ that status is the thing to check before treating a page as current behaviour:
 
 - [External workflow admission](external-workflow-admission.md) - **Gate 0 decided; Gate 1 pilot shipped (v5, default off).** Records the #8201 Gate 0 selection for #8302 (option 2, one bounded report-only Flue generation workflow through the existing contributor protocol, the source-to-guarantee matrix, native Flue receipt probe, conformance split) and the #8361 Gate 1 pilot: the engine-neutral `pkg/extwork` binding, the Flue adapter and deterministic fixture, the side-effect inventory, operational status and recovery, and the local-versus-binding comparison, and the OMP workbench as the second host behind the same adapter (#8361 step 9, answering #6899: relay-channel frames, accept before context, progress events, receipt binding, confinement note). Publication remains deferred.
 
+- [Mobile checkpoint payload](mobile-checkpoint.md) — **shipped (v5).** The
+  single server-owned `RunCheckpointPayload` behind `GET /api/runs/{key}/checkpoint`
+  that mobile, chat, push and PWA checkpoint prompts render instead of rebuilding
+  run state per surface (`src/pkg/dashboard/api_runs_checkpoint.go`).
+
+- [Headroom library boundary](headroom-library.md) — **shipped (v5).** The
+  `rotation.HeadroomSource` seam ([#8753](https://github.com/hivecommons/hive/issues/8753))
+  that lets the provider headroom probers live in the standalone `ccleft`
+  library while `pkg/rotation` keeps the Hive-facing reading types
+  (`src/pkg/rotation/ccleft.go`).
+
 - [Run artifacts](run-artifacts.md) — **shipped (v5).** How long-running runs
   keep review state in the existing plan and lease artifacts with no new store,
   CRD, DSL, or GitHub credential path: multi-repo wave annotations and the wave

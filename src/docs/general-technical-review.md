@@ -1,7 +1,7 @@
 # General Technical Review — Hive
 
 This document answers the CNCF [General Technical Review
-questions](https://github.com/cncf/toc/blob/main/toc_subprojects/project-reviews-subproject/general-technical-questions.md)
+questions](https://github.com/cncf/toc/blob/main/operations/project-reviews/general-technical-questions.md)
 (v1.0.1) for the `hivecommons/hive` project, following that template's exact
 question wording and section order. It is written from, and cited against,
 this repository at `v4` (`src/` prefix for source and most docs).

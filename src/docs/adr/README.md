@@ -55,6 +55,7 @@ What becomes easier, harder, safer, or riskier because of this decision?
 - [ADR-0017: Quadlet `.container`/`.pod` units as the Podman persistent lifecycle](0017-podman-quadlet-lifecycle.md)
 - [ADR-0018: Shared dashboard design tokens and component layer](0018-dashboard-design-tokens.md)
 - [ADR-0019: Escalate to direction, spec, signal, or meta-issue instead of stalling](0019-escalation-over-stalling.md)
+- [ADR-0020: Spek continuous convergence](0020-spek-continuous-convergence.md)
 - [ADR-0022: Opt-in redemption of earned Codex resets](0022-opt-in-earned-codex-reset-redemption.md)
 - [ADR-0023: Hive may merge PRs whose author could merge them](0023-trusted-author-automerge.md)
 - [ADR-0024: Provider credential lifecycle](0024-provider-credential-lifecycle.md)

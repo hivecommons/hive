@@ -120,7 +120,7 @@ you're doing a *real* deployment.
 GitHub — no clone:
 
 ```bash
-kubectl apply -k "https://github.com/hivecommons/hive//src/deploy/kustomize/overlays/standalone?ref=v4"
+kubectl apply -k "https://github.com/hivecommons/hive//src/deploy/kustomize/overlays/standalone?ref=v5"
 ```
 
 (Note the `//` between the repo and the sub-path — kustomize needs it to find
@@ -318,9 +318,9 @@ resources:
   # ── Public hive standalone overlay, pinned to a reviewed git ref ──────────
   # kubectl/kustomize fetches this from GitHub at apply time — no local clone.
   # Bump the ref= value in a git commit when you want to upgrade; review the
-  # diff of what changed upstream before you do. A git TAG (v4.0.0) or a full
-  # commit SHA is immutable; a branch (v4) moves under you.
-  - https://github.com/hivecommons/hive//src/deploy/kustomize/overlays/standalone?ref=v4.0.0
+  # diff of what changed upstream before you do. A git TAG (v5.186.4) or a full
+  # commit SHA is immutable; a branch (v5) moves under you.
+  - https://github.com/hivecommons/hive//src/deploy/kustomize/overlays/standalone?ref=v5.186.4
   #
   # OpenShift only: add your Route here alongside the remote base.
   # On plain Kubernetes, use an Ingress resource instead.
@@ -345,8 +345,8 @@ patches:
   # - path: patch-advisory-mode.yaml
 ```
 
-> **`ref=` branch vs tag:** `?ref=v4` follows the branch — every `apply` may
-> get a different manifest from the last one. `?ref=v4.0.0` (a git tag) or
+> **`ref=` branch vs tag:** `?ref=v5` follows the branch — every `apply` may
+> get a different manifest from the last one. `?ref=v5.186.4` (a git tag) or
 > `?ref=<full-sha>` is immutable — the same apply produces the same result
 > every time. For a production cluster, always pin a tag or SHA; bump it
 > deliberately in a git commit so you have a record of every upgrade. Git tags
@@ -505,11 +505,11 @@ To update a key later: `kubectl patch secret hive-secrets -n hive --type=merge -
 
 **Option 2 — Sealed Secrets (safe to commit, GitOps-native)**
 
-If you want everything in git (including secrets), [Bitnami Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) encrypts Secrets with the cluster's public key — only that cluster can decrypt. The encrypted `SealedSecret` object is safe to commit:
+If you want everything in git (including secrets), [Bitnami Sealed Secrets](https://github.com/bitnami/sealed-secrets) encrypts Secrets with the cluster's public key — only that cluster can decrypt. The encrypted `SealedSecret` object is safe to commit:
 
 ```bash
 # Install controller once (cluster-admin):
-kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/latest/download/controller.yaml
+kubectl apply -f https://github.com/bitnami/sealed-secrets/releases/latest/download/controller.yaml
 
 # Seal your secret:
 kubectl create secret generic hive-secrets -n hive \
