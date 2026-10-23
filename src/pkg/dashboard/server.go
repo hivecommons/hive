@@ -569,12 +569,16 @@ type StatusPayload struct {
 	HiddenAgents     []HiddenAgentInfo         `json:"hiddenAgents,omitempty"`
 	ConfiguredAgents []FrontendConfiguredAgent `json:"configuredAgents"`
 	Governor         FrontendGovernor          `json:"governor"`
-	Tokens           FrontendTokens            `json:"tokens"`
-	Repos            []FrontendRepo            `json:"repos"`
-	Swarm            SwarmStatus               `json:"swarm"`
-	Beads            FrontendBeads             `json:"beads"`
-	Planning         FrontendPlanning          `json:"planning"`
-	Runs             []RunSummary              `json:"runs"`
+	// YourTurn is the hive-wide your-turn count and its collapsed root
+	// causes (computeCriticalPath); the phone widget's YOUR TURN cells read
+	// the root causes.
+	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
+	Tokens   FrontendTokens    `json:"tokens"`
+	Repos    []FrontendRepo    `json:"repos"`
+	Swarm    SwarmStatus       `json:"swarm"`
+	Beads    FrontendBeads     `json:"beads"`
+	Planning FrontendPlanning  `json:"planning"`
+	Runs     []RunSummary      `json:"runs"`
 	// RunHistory is the bounded public run block (#8349): live runs plus the
 	// most recent finished ones, titles scrubbed. Omitted (nil) when the run
 	// registry is unavailable so snapshot consumers render unknown, not zero.
@@ -1171,7 +1175,15 @@ type FrontendRepo struct {
 	// #N waiting on <who>". Empty while the default branch is green.
 	RedMain     *github.RedMainFact `json:"redMain,omitempty"`
 	RedMainLine string              `json:"redMainLine,omitempty"`
-	AutoMerge   bool                `json:"autoMerge"`
+	// YourTurn is the repository's your-turn critical path summary
+	// (hivecommons/hive#13646): the your-turn items ordered by how many
+	// others they unblock, the dependents collapsed under their root cause,
+	// the root-cause counts and the red-main banner input. CriticalPath is
+	// the per-row half, keyed by ownershipKey like Ownership; response
+	// copies attach each entry to its row (computeCriticalPath).
+	YourTurn     *RepoYourTurn           `json:"yourTurn,omitempty"`
+	CriticalPath map[string]CriticalPath `json:"-"`
+	AutoMerge    bool                    `json:"autoMerge"`
 	// MergeStrategy is the repo's merge_strategy (direct or hive-serialized).
 	MergeStrategy string `json:"mergeStrategy"`
 	// Upstream is the upstream a fork repo follows (hivecommons/hive#11433):
@@ -1387,6 +1399,11 @@ type TrendHistoryEntry struct {
 	GovPrs    int `json:"govPrs"`
 	GovTotal  int `json:"govTotal"`
 	GovHold   int `json:"govHold"`
+	// YourTurnRootIssues / YourTurnRootPrs are the collapsed your-turn root
+	// causes (FrontendYourTurn) the phone widget plots. Pointers so entries
+	// recorded before they existed omit them instead of reading 0.
+	YourTurnRootIssues *int `json:"yourTurnRootIssues,omitempty"`
+	YourTurnRootPrs    *int `json:"yourTurnRootPrs,omitempty"`
 	// Overview KPI row counts. These are sampled with the same persisted ring as
 	// the governor pressure history so the Admin overview tiles have restart-safe
 	// sparkline data without a second PVC file.
@@ -3807,6 +3824,9 @@ type StatusSummaryPayload struct {
 	Agents         []StatusSummaryAgent  `json:"agents"`
 	Governor       StatusSummaryGovernor `json:"governor"`
 	Budget         FrontendBudget        `json:"budget"`
+	// YourTurn is StatusPayload.YourTurn: the phone widget's live
+	// your-turn root-cause counts.
+	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
 }
 
 type StatusSummaryAgent struct {
@@ -3836,6 +3856,7 @@ func buildStatusSummary(status *StatusPayload) StatusSummaryPayload {
 	return StatusSummaryPayload{
 		Timestamp: status.Timestamp, StatusSeq: status.StatusSeq, StatusInstance: status.StatusInstance,
 		HiveID: status.HiveID, Agents: agents, Governor: StatusSummaryGovernor{Mode: status.Governor.Mode}, Budget: status.Budget,
+		YourTurn: status.YourTurn,
 	}
 }
 
@@ -4153,6 +4174,10 @@ func (s *Server) appendTrendHistoryAt(status *StatusPayload, at time.Time) {
 		GovHold:         status.Hold.Total,
 		BeadsWorkers:    status.Beads.Workers,
 		BeadsSupervisor: status.Beads.Supervisor,
+	}
+	if status.YourTurn != nil {
+		entry.YourTurnRootIssues = intPtr(status.YourTurn.RootIssues)
+		entry.YourTurnRootPrs = intPtr(status.YourTurn.RootPRs)
 	}
 	if overviewKPISnapshotComplete(status) {
 		s.attachOverviewKPI(&entry, status, at)

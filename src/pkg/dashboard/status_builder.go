@@ -430,7 +430,9 @@ func BuildFrontendStatus(
 	generatedAt := time.Now().UTC()
 	attachRepoMergeVerdicts(repos, options.mergeVerdicts)
 	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub, options.ownershipEnvAdjust)
+	yourTurn := computeCriticalPath(repos)
 	payload := &StatusPayload{
+		YourTurn:              yourTurn,
 		Timestamp:             generatedAt.Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
 		HiveID:                cfg.HiveID,

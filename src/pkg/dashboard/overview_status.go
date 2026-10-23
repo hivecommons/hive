@@ -15,12 +15,17 @@ type OverviewBands struct {
 	Issues []BandSpec `json:"issues"`
 	PRs    []BandSpec `json:"prs"`
 }
+
+// Each row type embeds the item's *CriticalPath (critical_path.go): set on
+// your-turn rows only, so waits_on, unblocks, may_conflict_with and action
+// appear on exactly those rows.
 type overviewStatusIssue struct {
 	github.Issue
 	IssueBandInfo
 	Ownership    *Ownership `json:"ownership,omitempty"`
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
+	*CriticalPath
 }
 type overviewStatusHold struct {
 	github.HoldItem
@@ -28,6 +33,7 @@ type overviewStatusHold struct {
 	Ownership    *Ownership `json:"ownership,omitempty"`
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
+	*CriticalPath
 }
 type overviewStatusPR struct {
 	FrontendPR
@@ -35,6 +41,7 @@ type overviewStatusPR struct {
 	Ownership    *Ownership `json:"ownership,omitempty"`
 	ChartSlice   string     `json:"chart_slice,omitempty"`
 	OverviewTerm string     `json:"overview_term,omitempty"`
+	*CriticalPath
 }
 
 // overviewStatusNonActionable is a non-actionable issue row with its
@@ -53,6 +60,7 @@ type overviewStatusNonActionable struct {
 	Ownership    *Ownership             `json:"ownership,omitempty"`
 	ChartSlice   string                 `json:"chart_slice,omitempty"`
 	OverviewTerm string                 `json:"overview_term,omitempty"`
+	*CriticalPath
 }
 
 // parkedIssueLinkedPRs lists the open and held pull requests of repo whose
@@ -95,6 +103,11 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		out.StageEngine = &st
 	}
 	out.Repos = append([]FrontendRepo(nil), status.Repos...)
+	if out.YourTurn == nil {
+		// A snapshot built without the status builder (tests, a restored
+		// cache) gets its critical path on this response copy.
+		out.YourTurn = computeCriticalPath(out.Repos)
+	}
 	countSlice := func(specs []BandSpec, key string) {
 		for i := range specs {
 			if specs[i].Key == key {
@@ -102,7 +115,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			}
 		}
 	}
-	issues := func(items []any, held bool, repoName string, decisions map[string]Ownership) []any {
+	issues := func(items []any, held bool, repoName string, decisions map[string]Ownership, paths map[string]CriticalPath) []any {
 		if items == nil {
 			return nil
 		}
@@ -123,13 +136,14 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			slice := overviewIssueChartSlice(issue, ownership)
 			term := overviewIssueTerm(ownership, held)
 			countSlice(slices.Issues, slice)
+			path := criticalPathFor(paths, ownershipKindIssue, issue.Number)
 			switch v := raw.(type) {
 			case github.HoldItem:
-				result = append(result, overviewStatusHold{v, info, ownership, slice, term})
+				result = append(result, overviewStatusHold{v, info, ownership, slice, term, path})
 			case *github.HoldItem:
-				result = append(result, overviewStatusHold{*v, info, ownership, slice, term})
+				result = append(result, overviewStatusHold{*v, info, ownership, slice, term, path})
 			default:
-				result = append(result, overviewStatusIssue{issue, info, ownership, slice, term})
+				result = append(result, overviewStatusIssue{issue, info, ownership, slice, term, path})
 			}
 		}
 		return result
@@ -146,7 +160,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 				continue
 			}
 			ownership := ownershipFor(repo.Ownership, ownershipKindIssue, item.Number)
-			row := overviewStatusNonActionable{RepoWorkIssue: item, Ownership: ownership, ChartSlice: overviewNonActionableChartSlice(ownership), OverviewTerm: overviewNonActionableTerm(ownership)}
+			row := overviewStatusNonActionable{RepoWorkIssue: item, Ownership: ownership, ChartSlice: overviewNonActionableChartSlice(ownership), OverviewTerm: overviewNonActionableTerm(ownership), CriticalPath: criticalPathFor(repo.CriticalPath, ownershipKindIssue, item.Number)}
 			if nonActionableIssueBand(item) != "" {
 				info := nonActionableIssueInfo(item, repoName, cfg, now, selfAuthorizationHoldActive)
 				row.IssueBandInfo = &info
@@ -160,7 +174,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		}
 		return result
 	}
-	prs := func(items []any, held bool, decisions map[string]Ownership) []any {
+	prs := func(items []any, held bool, decisions map[string]Ownership, paths map[string]CriticalPath) []any {
 		if items == nil {
 			return nil
 		}
@@ -177,18 +191,18 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 			slice := overviewPRChartSlice(entry.pr, entry.verdict, ownership, autoMergeLabel)
 			term := overviewPRTerm(ownership, held || len(holdLabels(entry.pr.Labels, status.HiveID)) > 0, entry.pr, entry.verdict, autoMergeLabel)
 			countSlice(slices.PRs, slice)
-			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info, ownership, slice, term})
+			result = append(result, overviewStatusPR{FrontendPR{entry.pr, entry.verdict}, info, ownership, slice, term, criticalPathFor(paths, ownershipKindPR, entry.pr.Number)})
 		}
 		return result
 	}
 	for i := range out.Repos {
 		repo := &out.Repos[i]
 		repoName := overviewRepoName(*repo)
-		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName, repo.Ownership)
-		repo.HeldIssues = issues(repo.HeldIssues, true, repoName, repo.Ownership)
+		repo.ActionableIssues = issues(repo.ActionableIssues, false, repoName, repo.Ownership, repo.CriticalPath)
+		repo.HeldIssues = issues(repo.HeldIssues, true, repoName, repo.Ownership, repo.CriticalPath)
 		repo.NonActionableIssues = nonActionable(repo.NonActionableIssues, *repo, repoName)
-		repo.OpenPrs = prs(repo.OpenPrs, false, repo.Ownership)
-		repo.HeldPrs = prs(repo.HeldPrs, true, repo.Ownership)
+		repo.OpenPrs = prs(repo.OpenPrs, false, repo.Ownership, repo.CriticalPath)
+		repo.HeldPrs = prs(repo.HeldPrs, true, repo.Ownership, repo.CriticalPath)
 	}
 	out.OverviewTotals = overviewTotals(status)
 	var fullCfg *config.Config
@@ -643,4 +657,17 @@ func overviewValue(values []string) string {
 func overviewReporterValue(meta overviewPartitionMeta) string {
 	return fmt.Sprintf("enabled=%t; trusted_associations=%s; untrusted_require_labels=%s; awaiting_label=%s",
 		meta.ReporterTrustEnabled, overviewValue(meta.ReporterTrustTrusted), overviewValue(meta.ReporterTrustRequiredLabels), meta.ReporterTrustAwaitingLabel)
+}
+
+// criticalPathFor returns the critical path stored for a row, or nil when
+// the row is not your turn.
+func criticalPathFor(paths map[string]CriticalPath, kind string, number int) *CriticalPath {
+	if paths == nil || number <= 0 {
+		return nil
+	}
+	path, ok := paths[ownershipKey(kind, number)]
+	if !ok {
+		return nil
+	}
+	return &path
 }

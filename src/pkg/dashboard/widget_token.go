@@ -203,13 +203,41 @@ func (s *Server) handleWidgetSummary(w http.ResponseWriter, r *http.Request) {
 	if s.deps != nil && s.deps.Governor != nil {
 		history = s.historyPayload()
 	}
+	var yourTurn *FrontendYourTurn
+	if status != nil {
+		yourTurn = status.YourTurn
+	}
 
 	w.Header().Set("Cache-Control", "no-store")
 	jsonResponse(w, map[string]any{
 		"hiveId":  hiveID,
 		"history": history,
 		"agents":  agents,
+		// The YOUR TURN cells count collapsed root causes
+		// (hivecommons/hive#13646): the live counts and their history.
+		"yourTurn":        yourTurn,
+		"yourTurnHistory": s.yourTurnRootHistory(),
 	})
+}
+
+// widgetRootPoint is one your-turn root-cause sample of the trend history.
+type widgetRootPoint struct {
+	Timestamp          int64 `json:"t"`
+	YourTurnRootIssues int   `json:"yourTurnRootIssues"`
+	YourTurnRootPrs    int   `json:"yourTurnRootPrs"`
+}
+
+// yourTurnRootHistory is the trend history's root-cause samples, oldest
+// first; entries recorded before the counts existed are skipped.
+func (s *Server) yourTurnRootHistory() []widgetRootPoint {
+	out := []widgetRootPoint{}
+	for _, e := range s.TrendHistory() {
+		if e.YourTurnRootIssues == nil || e.YourTurnRootPrs == nil {
+			continue
+		}
+		out = append(out, widgetRootPoint{Timestamp: e.Timestamp, YourTurnRootIssues: *e.YourTurnRootIssues, YourTurnRootPrs: *e.YourTurnRootPrs})
+	}
+	return out
 }
 
 func (s *Server) handleWidgetTokenStatus(w http.ResponseWriter, r *http.Request) {

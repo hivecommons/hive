@@ -189,6 +189,7 @@ func (c *Client) enrichBaseBranchRed(ctx context.Context, prs []PullRequest) {
 			c.logger.Debug("PR file listing unavailable or truncated; red stays author-facing", "repo", pr.Repo, "pr", pr.Number)
 			continue
 		}
+		pr.ChangedPaths = files
 		pr.BaseRedChecks = BaseRedChecksFor(pr.FailingChecks, red, files)
 	}
 }
