@@ -120,7 +120,15 @@ cd src
 go test ./pkg/ioscan/ -run TestRedTeamCorpusReport -v
 go test ./pkg/ioscan/ -run TestRedTeamCorpusOutcomesAreStable
 go test ./pkg/ioscan/ -run TestRedTeamContainmentHoldsForEveryMode
+go test ./pkg/ioscan/ -run TestScorecardRatchet -v                  # the per-family scorecard
 ```
+
+`TestScorecardRatchet` rolls the corpus up into two numbers: the attack block
+rate and the benign false-positive count. It compares them with
+`src/pkg/ioscan/testdata/scorecard_baseline.json`. The gate is one-way. The
+rate may not fall and the false-positive count may not rise. A PR that improves
+either re-records the file with `IOSCAN_SCORECARD_UPDATE=1`. The diff of that
+file is the before/after evidence for the change.
 
 Adding a payload is a two-line change to `redTeamCorpus`. Record the outcome
 observed; a miss is a result and belongs in the table.
