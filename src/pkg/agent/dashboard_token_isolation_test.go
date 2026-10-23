@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // #8348: a hub-launched agent must never be handed the dashboard bearer, in

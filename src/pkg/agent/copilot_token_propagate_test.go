@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // copilotAgent is a running copilot agent with a tmux session, which is the

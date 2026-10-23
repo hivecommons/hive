@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 func writeFakeTmux(t *testing.T, script string) string {

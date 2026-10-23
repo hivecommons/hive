@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestAgentCopilotConfigPaths_PerUIDFirst locks down the ORDERING contract of
@@ -240,12 +240,10 @@ func TestManagerBackendBinaryName_ConfiguredGatewayResolvesToClaude(t *testing.T
 }
 
 func TestAcceptedBackendsAreLaunchableByConstruction(t *testing.T) {
-	g := config.GovernorConfig{
-		AgentRuntimeGovernorConfig: config.AgentRuntimeGovernorConfig{
-			Gateways: []config.GatewayConfig{
-				{Name: "openrouter", Kind: config.GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1"},
-				{Name: "Corp-Watsonx", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
-			},
+	g := config.AgentRuntimeGovernorConfig{
+		Gateways: []config.GatewayConfig{
+			{Name: "openrouter", Kind: config.GatewayKindOpenRouter, Endpoint: "https://openrouter.ai/api/v1"},
+			{Name: "Corp-Watsonx", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
 		},
 	}
 	m := NewManager(nil, discardLogger(), ProjectContext{})

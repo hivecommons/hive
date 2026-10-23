@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // SharedDevUID feeds the uid_isolation health check (#11713): it must report

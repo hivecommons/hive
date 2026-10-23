@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestSendKick_DeliversToReadyPane covers SendKick's full success path

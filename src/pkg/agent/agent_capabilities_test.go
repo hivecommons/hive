@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // AgentCapabilities must return exactly the mode's CanCreateIssues/CanPush/

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestPaneShowsAgentWorking is the regression guard for #7085: modern TUI

@@ -1,6 +1,8 @@
 // Command crux runs, observes and controls agents through crux.Runtime
 // (hivecommons/hive#13536; src/docs/crux-cli.md). All behaviour lives in
-// pkg/crux/cli; this file is the process boundary: signals and exit code.
+// pkg/crux/cli; this package is the process boundary: signals, exit code and
+// the Hive-backed definition loader (definitions.go) the CLI programs
+// against through cli.DefinitionLoader.
 package main
 
 import (
@@ -26,5 +28,5 @@ func signalContext() (context.Context, context.CancelFunc) {
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, ctxFn func() (context.Context, context.CancelFunc)) int {
 	ctx, stop := ctxFn()
 	defer stop()
-	return cli.Main(ctx, args, stdin, stdout, stderr)
+	return cli.Main(ctx, args, stdin, stdout, stderr, hiveLoader{})
 }

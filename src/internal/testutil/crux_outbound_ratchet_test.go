@@ -49,28 +49,31 @@ import (
 // agentaudit aliases them; pkg/toolapprove followed), pkg/tracing (the kick
 // span goes through Manager.SetSpanStarter, which cmd/hive wires to
 // tracing.StartSpan) and the test-only pkg/review edge (the prompt trigger
-// test moved to pkg/review against crux.FatalNetworkErrorPatterns). What
-// remains is dominated by pkg/config (60 distinct symbols from pkg/agent:
-// AgentConfig and the Bob*, Explain*, KickLogSource*, Sandbox* and backend
-// vocabularies), which is the Stage 2 prerequisite, and by the
+// test moved to pkg/review against crux.FatalNetworkErrorPatterns). The
+// pkg/config edge (60 distinct symbols from pkg/agent: AgentConfig and the
+// Bob*, Explain*, KickLogSource*, Sandbox* and backend vocabularies) was the
+// first Stage 2 prerequisite: the runtime-relevant types moved into the
+// stdlib-only pkg/crux/config leaf (pkg/config aliases them) and pkg/agent,
+// pkg/crux and pkg/crux/cli import the leaf. pkg/crux/cli's hive.yaml and
+// AgentDefinition reading moved behind cli.DefinitionLoader; the Hive-backed
+// implementation lives in cmd/crux (the process boundary, where cmd/hive's
+// equivalent wiring also lives), which is why cmd/crux now carries those two
+// edges — they moved, they were not added. What remains is the
+// inference/proxy/toolapprove/watchdog pkg/config edges and the
 // fleetreport/pushbroker/watchdog cluster that pkg/config drags in.
 var cruxOutboundBaseline = map[string][]string{
+	"cmd/crux": {
+		"pkg/config",
+		"pkg/defsrc",
+	},
 	"pkg/agent": {
 		"internal/testutil (test)",
-		"pkg/config",
 		"pkg/effects",
 		"pkg/fleetreport",
 		"pkg/gitidentity",
 		"pkg/jev",
 		"pkg/outputschema",
 		"pkg/pushbroker",
-	},
-	"pkg/crux": {
-		"pkg/config",
-	},
-	"pkg/crux/cli": {
-		"pkg/config",
-		"pkg/defsrc",
 	},
 	"pkg/inference": {
 		"internal/testutil (test)",

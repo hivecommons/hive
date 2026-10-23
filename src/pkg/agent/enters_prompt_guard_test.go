@@ -15,7 +15,7 @@ import (
 
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // syncBuffer is a bytes.Buffer safe for a logger that may be written from

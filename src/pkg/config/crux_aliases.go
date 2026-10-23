@@ -106,6 +106,10 @@ const (
 	FieldOwnerPack                      = cruxconfig.FieldOwnerPack
 	FieldOwnerSpec                      = cruxconfig.FieldOwnerSpec
 	GatewayKindCustom                   = cruxconfig.GatewayKindCustom
+	LegacyLiteLLMGatewayName            = cruxconfig.LegacyLiteLLMGatewayName
+	GatewayKindGroq                     = cruxconfig.GatewayKindGroq
+	GatewayKindVLLM                     = cruxconfig.GatewayKindVLLM
+	GatewayKindLLMD                     = cruxconfig.GatewayKindLLMD
 	GatewayKindLiteLLM                  = cruxconfig.GatewayKindLiteLLM
 	GatewayKindOpenRouter               = cruxconfig.GatewayKindOpenRouter
 	GatewayKindWatsonx                  = cruxconfig.GatewayKindWatsonx

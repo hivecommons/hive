@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // stageSharedClaudeCredential points the shared credential path at a temp file

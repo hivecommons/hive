@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // codexLaunchCmd builds the codex launch command the way Start does for an

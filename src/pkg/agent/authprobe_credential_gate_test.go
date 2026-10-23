@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // writeExpiredClaudeCreds writes a credentials.json whose OAuth token expired

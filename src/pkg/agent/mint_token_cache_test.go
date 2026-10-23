@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // These tests cover the per-agent mint-token cache plumbing end to end:

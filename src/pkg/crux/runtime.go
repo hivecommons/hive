@@ -27,7 +27,7 @@ import (
 	"context"
 
 	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
@@ -35,6 +35,11 @@ import (
 // kick history, pane-derived conditions. It is what Observer.GetStatus and
 // Observer.AllStatuses return.
 type Process = agent.AgentProcess
+
+// ProjectContext is the host-derived project facts (org, repos, policy dir,
+// pause state) a runtime is built with. It is on the Crux surface so a host
+// such as cmd/crux can build one without naming pkg/agent.
+type ProjectContext = agent.ProjectContext
 
 // ProcessState is the runtime's intent for an agent (running, stopped,
 // paused, …), as distinct from what its pane is observed to be doing.

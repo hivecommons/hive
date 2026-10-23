@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // Delivering a kick is not instantaneous: deliverKickLocked types the message

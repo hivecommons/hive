@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // codexHooksMenuPane is the live Codex 0.163 /hooks screen from #13765. Its

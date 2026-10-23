@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"go.opentelemetry.io/otel/attribute"
 )

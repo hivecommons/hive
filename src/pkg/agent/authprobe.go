@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/claude"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // interactiveAuthBackends are the CLI backends whose credentials come from an
