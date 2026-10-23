@@ -805,6 +805,15 @@ the heartbeat project-config callback; otherwise the hub provisions a hosted
 lite spoke. Lite mode is advisory-only and capped at ACMM L2. It writes no
 repository PAT or long-lived secret.
 
+### contribute — registration token recovery and operator controls
+
+`hivectl contribute login [profile]` rotates and saves a registration token using
+GitHub identity proof; omitting the profile uses the active saved hive. Operator
+commands `hivectl contribute tokens list`, `tokens revoke <contributor>`, and
+`tokens revoke --all --yes` inspect ages and invalidate credentials without changing
+trust tiers. See [token expiry and incident response](contributor-token-policy.md)
+for policy settings, API equivalents, migration and relay restart instructions.
+
 ### hives — named profiles for the hives you contribute to
 
 ```bash
