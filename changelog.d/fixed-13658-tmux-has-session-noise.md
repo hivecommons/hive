@@ -1,0 +1,1 @@
+- Stopped agents no longer flood WARN logs and self-report issues: `tmux has-session` failing because the per-UID tmux server is not running is now treated as "no session" rather than a probe failure (#13658).

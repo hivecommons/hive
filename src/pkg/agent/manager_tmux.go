@@ -420,6 +420,14 @@ var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 	if err == nil {
 		return true
 	}
+	stderr := strings.TrimSpace(string(output))
+	if tmuxStderrMeansNoSession(stderr) {
+		if m != nil && m.logger != nil && agent != nil {
+			m.logger.Debug("tmux has-session: no session",
+				"name", agent.Name, "session", agent.tmuxSession, "stderr", stderr)
+		}
+		return false
+	}
 	if m != nil && m.logger != nil && agent != nil {
 		m.logger.Warn("tmux has-session failed",
 			"name", agent.Name,
@@ -427,9 +435,20 @@ var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 			"uid", agent.UID,
 			"socket", agent.tmuxSocket,
 			"error", err,
-			"stderr", strings.TrimSpace(string(output)))
+			"stderr", stderr)
 	}
 	return false
+}
+
+// tmuxStderrMeansNoSession reports whether has-session stderr is tmux's normal
+// "nothing there" answer: the per-UID server is not running (its socket is
+// absent or refuses connections) or the named session does not exist.
+func tmuxStderrMeansNoSession(stderr string) bool {
+	return strings.Contains(stderr, "no server running") ||
+		strings.Contains(stderr, "can't find session") ||
+		(strings.Contains(stderr, "error connecting to") &&
+			(strings.Contains(stderr, "No such file or directory") ||
+				strings.Contains(stderr, "Connection refused")))
 }
 
 func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {

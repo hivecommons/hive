@@ -63,6 +63,26 @@ exit 1
 	}
 }
 
+func TestTmuxSessionExistsMissingServerIsNotWarning(t *testing.T) {
+	writeFakeTmux(t, `#!/bin/sh
+echo "error connecting to /tmp/tmux-2013/hive-supervisor (No such file or directory)" >&2
+exit 1
+`)
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, nil))
+	m := NewManager(map[string]config.AgentConfig{"guide": {Backend: "claude"}}, logger, ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["guide"]
+	m.mu.RUnlock()
+
+	if m.tmuxSessionExistsForAgent(agent) {
+		t.Fatal("tmuxSessionExistsForAgent = true, want false")
+	}
+	if logs := logBuf.String(); strings.Contains(logs, "WARN") {
+		t.Fatalf("missing server logged a warning: %s", logs)
+	}
+}
+
 func TestCrashRestartDuplicateSessionDoesNotIncrementRestartCount(t *testing.T) {
 	writeFakeTmux(t, `#!/bin/sh
 case "$*" in
