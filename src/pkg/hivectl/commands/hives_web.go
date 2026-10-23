@@ -574,7 +574,7 @@ dl dt{font-weight:bold;margin-top:.5rem}dl dd{margin:0 0 0 1rem}summary{cursor:p
 <div class="staging"><div id="tree-info" role="region" aria-label="Details of the focused or hovered row"></div><div class="staging-main" aria-labelledby="diff-title"><h3 id="diff-title">Your changes</h3><p id="tree-status" aria-hidden="true"></p><p id="diff-summary">No changes yet.</p><details><summary>Exact changes</summary><pre id="tree-diff"></pre><details><summary>Technical detail</summary><pre id="tree-diff-raw"></pre></details></details><button id="tree-apply" disabled>Apply</button> <button id="tree-discard" disabled>Discard</button><p id="tree-receipt"></p></div></div>
 </section>
 <div id="message" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
-<details id="manage"><summary id="profiles-title" tabindex="-1">Manage Hives</summary>
+<details id="manage"><summary id="profiles-title">Manage Hives</summary>
 <p class="muted">Add a Hive, change the order work is taken in, or remove one. These save straight away, separately from the list above.</p>
 <section>
   <label>How to pick the next Hive

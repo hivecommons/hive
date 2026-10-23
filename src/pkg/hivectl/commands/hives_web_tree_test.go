@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/hivectl"
+	"golang.org/x/net/html"
 )
 
 const webTreeRepo = "github/github.com/org/repo"
@@ -443,6 +445,48 @@ func TestCommonsPageEmbedsTokenAsSingleJSStringLiteral(t *testing.T) {
 		var got string
 		if err := json.Unmarshal([]byte(literal), &got); err != nil || got != token {
 			t.Errorf("token literal %s decodes to %q (err %v), want exactly %q", literal, got, err, token)
+		}
+	}
+}
+
+// "Manage Hives" is a <details>. Its <summary> is natively focusable, so a
+// negative tabindex takes it out of the Tab order and leaves keyboard users
+// with only the skip link. Parse the rendered page and check the element.
+func TestCommonsPageManageDisclosureIsReachableByTab(t *testing.T) {
+	var page bytes.Buffer
+	if err := commonsWebTemplate.Execute(&page, map[string]string{"Token": "local-token"}); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := html.Parse(&page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var find func(*html.Node) *html.Node
+	find = func(n *html.Node) *html.Node {
+		if n.Type == html.ElementNode {
+			for _, a := range n.Attr {
+				if a.Key == "id" && a.Val == "profiles-title" {
+					return n
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if f := find(c); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	node := find(doc)
+	if node == nil || node.Data != "summary" || node.Parent == nil || node.Parent.Data != "details" {
+		t.Fatalf("#profiles-title must be the <summary> of a <details>, got %+v", node)
+	}
+	for _, a := range node.Attr {
+		if a.Key != "tabindex" {
+			continue
+		}
+		if n, err := strconv.Atoi(a.Val); err != nil || n < 0 {
+			t.Errorf("summary has tabindex=%q, which removes it from the Tab order", a.Val)
 		}
 	}
 }

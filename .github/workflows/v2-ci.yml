@@ -857,6 +857,12 @@ jobs:
         working-directory: .
         run: node --test src/pkg/dashboard/*.test.js
 
+      # The Commons web page script (src/pkg/hivectl/commands/hives_web_tree.js)
+      # runs in a vm against a fake DOM; keyboard-focus regressions live here.
+      - name: Commons web page tests
+        working-directory: .
+        run: node --test src/pkg/hivectl/commands/*.test.js
+
       # bin/contributor-relay.js used to carry the source under a misleading
       # .sh name (kubestellar/hive#6429), which needed a copy trick for
       # node --check. It is a real .js file now; check it and its lib/ module

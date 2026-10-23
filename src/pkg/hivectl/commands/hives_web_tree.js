@@ -355,7 +355,8 @@ function renderTree() {
   // Restore the initiating control, never move focus into a status message.
   const items = visibleItems();
   const restored = focusKey && Array.from(treeRoot.querySelectorAll('[data-focus-key]')).find(e => e.dataset.focusKey === focusKey && !e.closest('[hidden]'));
-  if(restored) { restored.closest('[role=treeitem]').tabIndex = 0; restored.focus(); }
+  // Secondary controls are display:none until their row is .active, so activate the row first or focus() silently fails.
+  if(restored) { activateRow(restored.closest('[role=treeitem]')); restored.focus(); }
   else if(oldIndex >= 0) focusItem(items[Math.min(oldIndex,items.length-1)]);
   else if(items[0]) items[0].tabIndex = 0;
   activateRow((treeRoot.contains(document.activeElement) && document.activeElement.closest('[role=treeitem]')) || items[0]);
