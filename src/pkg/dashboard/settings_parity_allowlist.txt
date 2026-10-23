@@ -394,6 +394,10 @@ review.recommendations.labels[] # TODO #11854
 review.recommendations.repos[] # TODO #11854
 review.reviewer_agents[] # TODO #11854
 review.revise_repos[] # TODO #11854
+review.verdict_labels.approve # TODO #13833
+review.verdict_labels.changes_requested # TODO #13833
+review.verdict_labels.requires_human # TODO #13833
+review.verdict_labels.reviewing # TODO #13833
 runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
 runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
 runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854

@@ -146,6 +146,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateReviewPerspectiveModels(); err != nil {
 		return err
 	}
+	if err := c.Review.VerdictLabels.Validate(); err != nil {
+		return err
+	}
 	if err := c.validateReviewHeads(); err != nil {
 		return err
 	}

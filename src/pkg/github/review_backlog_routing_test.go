@@ -265,7 +265,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 		t.Fatalf("created = %d, want 2 (daily cap) below-line items", len(sink.created))
 	}
 	first := sink.created[0]
-	if first.Repo != "o/r" || first.Title != "Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit" {
+	if first.Repo != "o/r" || first.Title != "Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit,blocked" {
 		t.Fatalf("first item = %+v", first)
 	}
 	for _, want := range []string{
@@ -451,8 +451,8 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 	if len(issueBodies) != 1 {
 		t.Fatalf("issues = %d, want 1 (the P3 nit only)", len(issueBodies))
 	}
-	if strings.Join(issueLabels[0], ",") != "nit,agent/reviewer" {
-		t.Fatalf("labels = %v, want nit plus the agent/reviewer fallback label", issueLabels[0])
+	if strings.Join(issueLabels[0], ",") != "nit,blocked,agent/reviewer" {
+		t.Fatalf("labels = %v, want nit, blocked (#13833) and the agent/reviewer fallback label", issueLabels[0])
 	}
 	if !strings.Contains(issueBodies[0], "https://github.com/o/r/blob/abc/pkg/a.go#L3") || !strings.Contains(issueBodies[0], "filed by Hive review backlog") {
 		t.Fatalf("issue body = %q", issueBodies[0])

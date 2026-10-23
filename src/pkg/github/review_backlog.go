@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
@@ -102,7 +104,18 @@ type reviewBacklogFiled struct {
 	// folded is true when the finding was appended to an existing open item
 	// instead of becoming its own (hivecommons/hive#13604).
 	folded bool
+	// status is how this pass touched the item, for the decided review's
+	// Follow-ups section (hivecommons/hive#13833).
+	status string
 }
+
+// How a review's finding maps to a backlog item, as listed in the decided
+// review's Follow-ups section.
+const (
+	reviewBacklogListedFiled   = "filed"
+	reviewBacklogListedUpdated = "re-raised"
+	reviewBacklogListedTracked = "already tracked"
+)
 
 func newReviewBacklogLedger() *reviewBacklogLedger {
 	return &reviewBacklogLedger{
@@ -179,7 +192,26 @@ func (l *reviewBacklogLedger) save(path string, now time.Time) error {
 // appended to the existing item instead of filed again. Every item filed or
 // updated counts toward the per-PR daily cap, and each pass that wrote
 // anything leaves one batch audit entry.
+//
+// Every item filed from a review of an open PR is parked on that PR
+// (hivecommons/hive#13833): a below-line or out-of-scope finding is almost
+// always about lines the PR changes, so fixing it on the base branch before
+// the PR lands is wrong or conflicts. ReconcileReviewBacklogBlocks lifts the
+// block when the PR merges and cancels the item when it closes unmerged.
 func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequest, now time.Time) error {
+	return c.fileReviewBacklog(ctx, req, now, nil)
+}
+
+// reviewBacklogLedgerMu serialises read-modify-write passes over the backlog
+// ledger: the relay files from the watcher goroutine while the governor's
+// block sweep resolves items from the eval loop.
+var reviewBacklogLedgerMu sync.Mutex
+
+// fileReviewBacklog is fileOutOfScopeReviewBacklog with the review the relay
+// just posted for this request. In heads mode that review is the decision
+// step's, and the items filed (or found already tracked) are listed in it,
+// edited in place, instead of in a once-per-PR summary comment.
+func (c *Client) fileReviewBacklog(ctx context.Context, req ReviewRequest, now time.Time, posted *gh.PullRequestReview) error {
 	outOfScopeEnabled, outOfScopeCap := c.reviewBacklogConfig()
 	routing, routed := c.reviewBacklogRoutingConfig()
 	belowLine := routing.belowLineBacklogEnabled()
@@ -193,7 +225,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 	if err != nil {
 		return nil
 	}
-	reports = c.acceptedReviewBacklogReports(req, reports)
+	reports, decided := c.acceptedReviewBacklogReports(req, reports)
 	if len(reports) == 0 {
 		return nil
 	}
@@ -215,6 +247,10 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 	// is parked on the PR, not offered as work.
 	baseProbe := c.newReviewBacklogBaseProbe(req.Repo, req.Number)
 	var filedIssues []reviewBacklogFiled
+	// listed is every item this pass's findings map to — filed, re-raised
+	// onto an existing item, or already tracked for this PR — for the
+	// decided review's Follow-ups section.
+	var listed []reviewBacklogFiled
 	var updated, capped int
 	for _, report := range reports {
 		for _, finding := range report.Findings {
@@ -229,7 +265,8 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				continue
 			}
 			key := reviewBacklogKey(req.Repo, req.Number, report.Perspective, finding)
-			if _, ok := ledger.Items[key]; ok {
+			if prev, ok := ledger.Items[key]; ok {
+				listed = append(listed, reviewBacklogFiled{number: prev.IssueNumber, key: prev.ItemKey, url: prev.IssueURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
 				continue
 			}
 			fp := ReviewFindingFingerprint(finding)
@@ -260,6 +297,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				record.IssueNumber, record.IssueURL, record.ItemKey = known.ItemNumber, known.ItemURL, known.ItemKey
 				if known.hasPR(req.Number) {
 					ledger.Items[key] = record
+					listed = append(listed, reviewBacklogFiled{number: known.ItemNumber, key: known.ItemKey, url: known.ItemURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedTracked})
 					continue
 				}
 				if dailyRemaining <= 0 {
@@ -276,6 +314,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				ledger.PRDailyCount[dayKey]++
 				dailyRemaining--
 				updated++
+				listed = append(listed, reviewBacklogFiled{number: known.ItemNumber, key: known.ItemKey, url: known.ItemURL, title: reviewBacklogIssueTitle(report.Perspective, finding), status: reviewBacklogListedUpdated})
 				continue
 			}
 			if dailyRemaining <= 0 || (outOfScope && outOfScopeRemaining <= 0) {
@@ -283,12 +322,16 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				continue
 			}
 			title := reviewBacklogIssueTitle(report.Perspective, finding)
-			itemLabels := labels
+			// Every item is parked on the reviewed PR (#13833). The note
+			// says why: the cited file only exists in the PR (#13093), or
+			// the finding is about code the PR is changing.
+			blocked := true
+			itemLabels := blockedBacklogLabels(labels)
 			body := c.reviewBacklogIssueBody(req, report.Perspective, finding, headSHA, routing.Severity.BlockAt, fp)
-			blocked := baseProbe.FileMissingOnBase(ctx, finding.File)
-			if blocked {
-				itemLabels = blockedBacklogLabels(labels)
+			if baseProbe.FileMissingOnBase(ctx, finding.File) {
 				body = blockedBacklogNote(req.Repo, req.Number, finding.File, baseProbe.BaseRef(ctx)) + body
+			} else {
+				body = blockedOnReviewedPRNote(req.Repo, req.Number) + body
 			}
 			ref, err := sink.CreateItem(ctx, ReviewBacklogItem{
 				Repo:        req.Repo,
@@ -333,7 +376,7 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 			}
 			record.IssueNumber, record.IssueURL, record.ItemKey = ref.Number, ref.URL, ref.Key
 			ledger.Items[key] = record
-			ledger.setFingerprint(req.Repo, fp, reviewBacklogFingerprintRecord{
+			fpRecord := reviewBacklogFingerprintRecord{
 				Destination: destination,
 				ItemID:      ref.ID,
 				ItemKey:     ref.Key,
@@ -342,14 +385,24 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				PRs:         []int{req.Number},
 				FiledAt:     now.UTC(),
 				UpdatedAt:   now.UTC(),
-			})
+			}
+			if !ref.Reused {
+				// A filing folded into an open twin keeps the twin's own
+				// state (#13364); only an item this pass created waits on
+				// the PR.
+				fpRecord.BlockedOnPR = req.Number
+				fpRecord.BlockState = reviewBacklogBlockBlocked
+			}
+			ledger.setFingerprint(req.Repo, fp, fpRecord)
 			if outOfScope {
 				ledger.PRFiledIssueCount[prKey]++
 				outOfScopeRemaining--
 			}
 			ledger.PRDailyCount[dayKey]++
 			dailyRemaining--
-			filedIssues = append(filedIssues, reviewBacklogFiled{number: ref.Number, key: ref.Key, url: ref.URL, title: title, folded: ref.Reused})
+			filed := reviewBacklogFiled{number: ref.Number, key: ref.Key, url: ref.URL, title: title, folded: ref.Reused, status: reviewBacklogListedFiled}
+			filedIssues = append(filedIssues, filed)
+			listed = append(listed, filed)
 			if createErr != nil {
 				// The item exists but a follow-up step (Projects column,
 				// Jira status) failed: keep the ledger entry so a retry
@@ -371,6 +424,18 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 			"review_agent", req.Agent)
 	}
 	ledger.pruneDailyCounts(now)
+	if decided {
+		// Heads mode (#13833): list what this head's findings map to in the
+		// decided review itself, every head, instead of a once-per-PR
+		// summary comment that later heads never update.
+		if err := ledger.save("", now); err != nil {
+			return err
+		}
+		if len(listed) > 0 {
+			c.appendReviewFollowUps(ctx, req, posted, listed, capped)
+		}
+		return nil
+	}
 	if len(filedIssues) == 0 {
 		return ledger.save("", now)
 	}
@@ -409,18 +474,32 @@ func (c *Client) ensureReviewBacklogLabels(ctx context.Context, repo string, num
 	return err
 }
 
-func (c *Client) acceptedReviewBacklogReports(req ReviewRequest, reports []review.PerspectiveReport) []review.PerspectiveReport {
+// acceptedReviewBacklogReports keeps the reports the relay would record and
+// reports whether any is a review-heads decided report. A raw head report
+// (hivecommons/hive#13542) is dropped: in heads mode only the decision step's
+// reconciled findings become backlog items, otherwise each head files its own
+// wording of the same finding, the fingerprint misses the near-duplicates, and
+// the duplicates spend the PR's daily cap (hivecommons/hive#13833).
+func (c *Client) acceptedReviewBacklogReports(req ReviewRequest, reports []review.PerspectiveReport) ([]review.PerspectiveReport, bool) {
 	accepted := make([]review.PerspectiveReport, 0, len(reports))
+	decided := false
 	for _, report := range reports {
 		if !strings.EqualFold(strings.TrimSpace(report.Repo), strings.TrimSpace(req.Repo)) || report.Number != req.Number {
 			continue
 		}
-		if !c.verdictDispatchAuthorized(report, req).OK {
+		auth := c.verdictDispatchAuthorized(report, req)
+		if !auth.OK {
 			continue
+		}
+		if auth.ReviewHead != "" && !auth.Decided {
+			continue
+		}
+		if auth.Decided {
+			decided = true
 		}
 		accepted = append(accepted, report)
 	}
-	return accepted
+	return accepted, decided
 }
 
 func findingHasEvidence(f outputschema.Finding) bool {

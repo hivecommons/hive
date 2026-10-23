@@ -131,7 +131,7 @@ func TestBlockedBacklogLabels(t *testing.T) {
 // the base branch) is filed blocked — marker in the body, `blocked` label,
 // no `help wanted` — while a finding on a file the base already has files
 // as before.
-func TestReviewBacklogFilesBlockedWhenFileMissingOnBase(t *testing.T) {
+func TestReviewBacklogFilesEveryItemBlockedOnItsPR(t *testing.T) {
 	withReviewBacklogState(t)
 	var issues []struct {
 		Body   string   `json:"body"`
@@ -191,31 +191,34 @@ func TestReviewBacklogFilesBlockedWhenFileMissingOnBase(t *testing.T) {
 	if len(issues) != 2 {
 		t.Fatalf("issues = %d, want 2", len(issues))
 	}
-	var blocked, plain int
+	// Every item is parked on the reviewed PR (#13833); only the note's
+	// reason differs between a file the PR introduces and one already on
+	// the base branch.
+	var missing, onBase int
 	for _, is := range issues {
+		if _, pr, ok := ParseBlockedOnMarker(is.Body); !ok || pr != 5 {
+			t.Errorf("body lacks the blocked-on marker for PR 5: %q", is.Body)
+		}
+		if !strings.Contains(is.Body, "Blocked on PR #5") {
+			t.Errorf("body = %q", is.Body)
+		}
+		if strings.Join(is.Labels, ",") != "nit,blocked,agent/reviewer" {
+			t.Errorf("labels = %v, want nit,blocked,agent/reviewer (no help wanted)", is.Labels)
+		}
 		if strings.Contains(is.Body, "pkg/new.go") {
-			blocked++
-			if _, pr, ok := ParseBlockedOnMarker(is.Body); !ok || pr != 5 {
-				t.Errorf("blocked body lacks marker: %q", is.Body)
-			}
-			if !strings.Contains(is.Body, "Blocked on PR #5") || !strings.Contains(is.Body, "does not exist on `v5`") {
-				t.Errorf("blocked body = %q", is.Body)
-			}
-			if strings.Join(is.Labels, ",") != "nit,blocked,agent/reviewer" {
-				t.Errorf("blocked labels = %v, want nit,blocked,agent/reviewer (no help wanted)", is.Labels)
+			missing++
+			if !strings.Contains(is.Body, "does not exist on `v5`") {
+				t.Errorf("file-missing body = %q", is.Body)
 			}
 		} else {
-			plain++
-			if _, _, ok := ParseBlockedOnMarker(is.Body); ok {
-				t.Errorf("base-file finding carries marker: %q", is.Body)
-			}
-			if strings.Join(is.Labels, ",") != "nit,help wanted,agent/reviewer" {
-				t.Errorf("plain labels = %v", is.Labels)
+			onBase++
+			if !strings.Contains(is.Body, "about code that PR is changing") {
+				t.Errorf("on-base body = %q", is.Body)
 			}
 		}
 	}
-	if blocked != 1 || plain != 1 {
-		t.Fatalf("blocked=%d plain=%d", blocked, plain)
+	if missing != 1 || onBase != 1 {
+		t.Fatalf("missing=%d onBase=%d", missing, onBase)
 	}
 	var sawBlocked bool
 	for _, r := range *recs {

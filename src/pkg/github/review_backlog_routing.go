@@ -427,6 +427,13 @@ type reviewBacklogFingerprintRecord struct {
 	PRs         []int     `json:"prs"`
 	FiledAt     time.Time `json:"filed_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// BlockedOnPR is the reviewed PR the item was filed from and waits on
+	// (hivecommons/hive#13833); 0 for items filed before blocking applied to
+	// every item, and for filings folded into an existing twin.
+	BlockedOnPR int `json:"blocked_on_pr,omitempty"`
+	// BlockState is blocked, lifted or cancelled; ReconcileReviewBacklogBlocks
+	// moves it on when BlockedOnPR merges or closes.
+	BlockState string `json:"block_state,omitempty"`
 }
 
 func (r reviewBacklogFingerprintRecord) ref() ReviewBacklogRef {

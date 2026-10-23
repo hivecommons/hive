@@ -7316,6 +7316,14 @@ type ReviewConfig struct {
 	// a repo that does not already have them is skipped. Off by default: a
 	// label on every PR is churn a repo must ask for.
 	PriorityLabels bool `yaml:"priority_labels,omitempty" json:"priority_labels,omitempty"`
+	// VerdictLabels mirrors the review swarm's state for each PR's current
+	// head onto exactly one label (hivecommons/hive#13833): reviewing while
+	// the head's review is pending, then the settled verdict. Independent of
+	// the automerge engine's stage labels, so a hive with repo auto-merge
+	// off still shows the outcome on the PR. Like HumanDecisionLabel the
+	// labels are never created; a repo without them is skipped. Labels are
+	// informational and never block.
+	VerdictLabels ReviewVerdictLabelsConfig `yaml:"verdict_labels,omitempty" json:"verdict_labels,omitempty"`
 	// OutOfScopeBacklogDisabled opts out of filing cited out-of-scope review
 	// findings as follow-up issues. Default is enabled: the review can stay
 	// narrow without losing real adjacent defects.
