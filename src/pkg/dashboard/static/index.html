@@ -9534,6 +9534,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!collapsed && section) replaySparklinesIn(section, { force: true });
       if (sectionId === 'overview-section' && !collapsed) triggerOverviewAnimations('expand');
       if (sectionId === 'lifecycle-section' && !collapsed && typeof lcScheduleLayout === 'function') lcScheduleLayout();
+      if (sectionId === 'logs-section' && !collapsed && typeof agentLogsResumeIfSkipped === 'function') agentLogsResumeIfSkipped();
     }
     /** Apply persisted collapsed state to a section after render */
     function applySectionCollapse(sectionId) {
@@ -14938,6 +14939,38 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // The endpoint is served from a server-side cache with an ETag; a poll
     // that matches it costs one 304 and no re-render. The filter/sort state
     // is restored from storage on the first fetch.
+    // SSE nudges arrive once per status publish and once per webhook
+    // delivery, uncoalesced: a busy hive sent ~36 a minute, each a refetch
+    // and a reconcile of the list. The first nudge in a window fetches at
+    // once; the rest collapse into one trailing fetch when the window ends.
+    // A nudge that lands while the tab is hidden is remembered and served
+    // on the next visibilitychange instead.
+    const STAGE_TRACKER_NUDGE_COALESCE_MS = 2000;
+    let _stageTrackerNudgeTimer = null;
+    let _stageTrackerNudgeAt = 0;
+    let _stageTrackerNudgeSkipped = false;
+    function stageTrackerNudge(now) {
+      now = typeof now === 'number' ? now : Date.now();
+      if (document.hidden) { _stageTrackerNudgeSkipped = true; return false; }
+      const wait = _stageTrackerNudgeAt + STAGE_TRACKER_NUDGE_COALESCE_MS - now;
+      if (wait <= 0) { _stageTrackerNudgeAt = now; fetchStageTracker(); return true; }
+      if (!_stageTrackerNudgeTimer) {
+        _stageTrackerNudgeTimer = setTimeout(() => {
+          _stageTrackerNudgeTimer = null;
+          _stageTrackerNudgeAt = Date.now();
+          if (document.hidden) { _stageTrackerNudgeSkipped = true; return; }
+          fetchStageTracker();
+        }, wait);
+      }
+      return false;
+    }
+    function stageTrackerResumeIfSkipped() {
+      if (!_stageTrackerNudgeSkipped) return;
+      _stageTrackerNudgeSkipped = false;
+      _stageTrackerNudgeAt = Date.now();
+      fetchStageTracker();
+    }
+
     async function fetchStageTracker() {
       try {
         if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadGrouping();
@@ -34920,7 +34953,28 @@ function burnAreaChart() {
 
     // ── Logs section ──
     const LOGS_REFRESH_MS = 5000;
+    // Lines shown per agent in the "all agents" view; the poll asks the
+    // server for only that many instead of its 100-line default.
+    const LOGS_ALL_VIEW_LINES = 15;
     let _logsData = {};
+    // Set when a poll tick was skipped because nothing could see the result
+    // (tab hidden, section collapsed or not displayed); the next time the
+    // section becomes visible one fetch runs immediately instead of waiting
+    // for the interval.
+    let _logsPollSkipped = false;
+    // Polling 16 agents' panes every 5s (~6.5 MB/min) while the Logs section
+    // was collapsed, or the tab in the background, was pure waste.
+    function agentLogsVisible() {
+      if (document.hidden) return false;
+      const section = document.getElementById('logs-section');
+      if (!section || section.offsetParent === null) return false;
+      return !isSectionCollapsed('logs-section');
+    }
+    function agentLogsResumeIfSkipped() {
+      if (!_logsPollSkipped || !agentLogsVisible()) return;
+      _logsPollSkipped = false;
+      fetchAgentLogs();
+    }
     // Agents whose /api/pane returned 404, keyed by name → the agent's state
     // at the time. A disabled or stopped agent has no tmux window, so polling
     // it again every 5s only produces console noise (#12512); the entry is
@@ -34942,6 +34996,8 @@ function burnAreaChart() {
       return out;
     }
     async function fetchAgentLogs() {
+      if (!agentLogsVisible()) { _logsPollSkipped = true; return; }
+      _logsPollSkipped = false;
       const allAgents = window._lastAgents || [];
       const agents = agentPaneCandidates(allAgents);
       const select = document.getElementById('logs-agent-select');
@@ -34959,9 +35015,10 @@ function burnAreaChart() {
       }
 
       const toFetch = current === 'all' ? agents : agents.filter(a => a.name === current);
+      const lines = current === 'all' ? '?lines=' + LOGS_ALL_VIEW_LINES : '';
       for (const a of toFetch) {
         try {
-          const res = await fetch(`/api/pane/${a.name}`);
+          const res = await fetch(`/api/pane/${a.name}${lines}`);
           if (res.ok) {
             const d = await res.json();
             _logsData[a.name] = capDashboardArray(d.lines || [], DASHBOARD_LOG_CAP);
@@ -35020,7 +35077,7 @@ function burnAreaChart() {
         for (const [name, data] of Object.entries(_logsData)) {
           if (data.length > 0) {
             lines.push(`\x1b[0m── ${name} ──`);
-            lines.push(...data.slice(-15));
+            lines.push(...data.slice(-LOGS_ALL_VIEW_LINES));
             lines.push('');
           }
         }
@@ -39272,7 +39329,7 @@ function burnAreaChart() {
       // STAGE_TRACKER_POLL_MS tick. Only once the panel has loaded itself.
       source.addEventListener('stage-tracker', () => {
         noteSSEFrame();
-        if (_stageTrackerSig || _stageTrackerEtag) fetchStageTracker();
+        if (_stageTrackerSig || _stageTrackerEtag) stageTrackerNudge();
       });
 
       source.addEventListener('agent-status', (e) => {
@@ -39396,6 +39453,7 @@ function burnAreaChart() {
     dashboardSetInterval('sse-watchdog', function() { sseWatchdogTick(false); }, SSE_WATCHDOG_TICK_MS);
     document.addEventListener('visibilitychange', function() {
       if (document.visibilityState === 'visible') sseWatchdogTick(true);
+      if (document.visibilityState === 'visible') { agentLogsResumeIfSkipped(); stageTrackerResumeIfSkipped(); }
     });
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];

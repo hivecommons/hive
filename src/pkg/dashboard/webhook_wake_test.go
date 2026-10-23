@@ -148,7 +148,8 @@ func TestIndexHTMLRefetchesStageTrackerOnSSENudge(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`source.addEventListener('stage-tracker', () => {`,
-		`if (_stageTrackerSig || _stageTrackerEtag) fetchStageTracker();`,
+		`if (_stageTrackerSig || _stageTrackerEtag) stageTrackerNudge();`,
+		`const wait = _stageTrackerNudgeAt + STAGE_TRACKER_NUDGE_COALESCE_MS - now;`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
