@@ -158,3 +158,11 @@ func TestNudgeIfPollingCISkipsReviewer(t *testing.T) {
 		})
 	}
 }
+
+func TestCIPollReportWorthy(t *testing.T) {
+	for polls, want := range map[int]bool{0: false, 1: false, 2: true, 7: true} {
+		if got := ciPollReportWorthy(polls); got != want {
+			t.Errorf("ciPollReportWorthy(%d) = %v, want %v", polls, got, want)
+		}
+	}
+}

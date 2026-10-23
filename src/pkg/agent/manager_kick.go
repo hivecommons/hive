@@ -1438,13 +1438,23 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	// Self-report (#13470, was the hive-code-defect "CI-poll nudge" counter):
 	// the harness caps the nudge at one per kick, so every observation is a
 	// distinct kick the agent spent polling its own CI.
-	fleetreport.Observe(fleetreport.ClassCIPollNudge, agent.Name,
-		fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
-		fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s\n--- pane tail (%d lines) ---\n%s",
-			agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+	// A lone poll past the wall clock is a normal post-push check, so only
+	// repeated polling reaches the fleet; the in-session nudge is unchanged.
+	if ciPollReportWorthy(newPolls) {
+		fleetreport.Observe(fleetreport.ClassCIPollNudge, agent.Name,
+			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
+			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s\n--- pane tail (%d lines) ---\n%s",
+				agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+	}
 
 	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
 	m.tmuxSendLiteralForAgent(agent, ciPollNudgeMessage)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
+}
+
+// ciPollReportWorthy reports whether a CI-poll nudge is repeated polling
+// (more than one poll command since the kick) rather than a single check.
+func ciPollReportWorthy(newPolls int) bool {
+	return newPolls > 1
 }
