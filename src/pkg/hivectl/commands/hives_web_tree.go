@@ -70,9 +70,9 @@ func discoverCommonsTree(ctx context.Context, set *hivectl.ProfileSet) ([]hivect
 }
 
 func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if id := r.URL.Query().Get("session"); id != "" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		stage := s.stages[id]
 		if stage == nil {
 			http.Error(w, "review expired; reload and review again", http.StatusConflict)
@@ -81,24 +81,17 @@ func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
 		s.writeTree(w, id, stage, nil, nil, false)
 		return
 	}
-	// Bound abandoned browser sessions without silently evicting active reviews.
-	for id, stage := range s.stages {
-		if time.Since(stage.touched) > 8*time.Hour {
-			delete(s.stages, id)
-		}
-	}
-	if len(s.stages) >= 64 {
-		http.Error(w, "too many open reviews; discard an unused review first", http.StatusTooManyRequests)
-		return
-	}
-	set, err := s.reviewSet()
-	if err != nil {
-		writeCommonsError(w, err)
+	set, ok := s.beginTreeReview(w)
+	if !ok {
 		return
 	}
 	hubs, repos := hivectl.SavedTreeHubs(set), map[string]hivectl.TreeRepositorySnapshot(nil)
 	if r.URL.Query().Get("discover") == "1" {
+		// Discovery can take up to its timeout on an unreachable hub, so it runs
+		// outside s.mu; discoverMu keeps it single-flight as it was under s.mu.
+		s.discoverMu.Lock()
 		hubs, repos = s.discover(r.Context(), set)
+		s.discoverMu.Unlock()
 	}
 	edits, err := hivectl.NewStagedEdits(set, hubs, repos)
 	if err != nil {
@@ -110,9 +103,39 @@ func (s *commonsWebServer) handleTree(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot create contribution review", http.StatusInternalServerError)
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Other tabs may have opened reviews while discovery ran unlocked.
+	if len(s.stages) >= 64 {
+		http.Error(w, "too many open reviews; discard an unused review first", http.StatusTooManyRequests)
+		return
+	}
 	stage := &commonsWebStage{edits: edits, revision: set.Revision(), touched: time.Now()}
 	s.stages[id] = stage
 	s.writeTree(w, id, stage, nil, nil, false)
+}
+
+// beginTreeReview prunes abandoned sessions, enforces the open-review cap and
+// loads the profile snapshot under s.mu. On failure it has written the response.
+func (s *commonsWebServer) beginTreeReview(w http.ResponseWriter) (*hivectl.ProfileSet, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Bound abandoned browser sessions without silently evicting active reviews.
+	for id, stage := range s.stages {
+		if time.Since(stage.touched) > 8*time.Hour {
+			delete(s.stages, id)
+		}
+	}
+	if len(s.stages) >= 64 {
+		http.Error(w, "too many open reviews; discard an unused review first", http.StatusTooManyRequests)
+		return nil, false
+	}
+	set, err := s.reviewSet()
+	if err != nil {
+		writeCommonsError(w, err)
+		return nil, false
+	}
+	return set, true
 }
 
 func (s *commonsWebServer) handleTreeEdit(w http.ResponseWriter, r *http.Request) {

@@ -473,3 +473,35 @@ func TestCommonsTreePublicDiscoveryAndOutage(t *testing.T) {
 		})
 	}
 }
+
+func TestCommonsTreeDiscoveryDoesNotHoldServerMutex(t *testing.T) {
+	server, _, _, _ := webTreeFixture(t)
+	handler := server.Config.Handler.(*commonsWebServer)
+	entered, release := make(chan struct{}), make(chan struct{})
+	handler.discover = func(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot) {
+		close(entered)
+		<-release
+		return nil, nil
+	}
+	existing := treeCall(t, server, "/api/tree", nil, commonsTreeEdit{}, http.StatusOK)
+	slow := make(chan commonsTreeResponse, 1)
+	go func() { slow <- treeCall(t, server, "/api/tree?discover=1", nil, commonsTreeEdit{}, http.StatusOK) }()
+	<-entered
+	// Discovery is blocked on an unreachable hub; an unrelated request must still be served.
+	other := make(chan commonsTreeResponse, 1)
+	go func() {
+		other <- treeCall(t, server, "/api/tree?session="+existing.Session, nil, commonsTreeEdit{}, http.StatusOK)
+	}()
+	select {
+	case got := <-other:
+		if got.Session != existing.Session {
+			t.Fatalf("session=%q want %q", got.Session, existing.Session)
+		}
+	case <-slow:
+		t.Fatal("discovery finished before it was released")
+	}
+	close(release)
+	if got := <-slow; got.Session == "" {
+		t.Fatal("missing session from discovered review")
+	}
+}

@@ -113,11 +113,13 @@ func randomCommonsWebToken() (string, error) {
 }
 
 type commonsWebServer struct {
-	deps     *hivesDeps
-	token    string
-	mu       sync.Mutex
-	stages   map[string]*commonsWebStage
-	discover func(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot)
+	deps  *hivesDeps
+	token string
+	mu    sync.Mutex
+	// discoverMu serializes discovery without holding mu across slow hubs.
+	discoverMu sync.Mutex
+	stages     map[string]*commonsWebStage
+	discover   func(context.Context, *hivectl.ProfileSet) ([]hivectl.TreeHubSnapshot, map[string]hivectl.TreeRepositorySnapshot)
 }
 
 func newCommonsWebServer(deps *hivesDeps, token string) http.Handler {
