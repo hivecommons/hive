@@ -37,7 +37,7 @@ func (c *Engine) requireCurrentBaseFor(repo string) bool {
 //
 // stop is false when the merge may proceed; otherwise the caller returns the
 // event, reason and error as-is.
-func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string) (AutoMergeSweepEvent, string, bool, error) {
+func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo string, number int, baseBranch, headSHA string, branchUpdateAllowed bool, holdReason string, fork bool) (AutoMergeSweepEvent, string, bool, error) {
 	if !c.requireCurrentBaseFor(owner+"/"+repo) || c.gh == nil {
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
@@ -56,6 +56,6 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 		return AutoMergeSweepEvent{}, holdReason, true, nil
 	}
 	c.info("automerge head is behind the current base; updating before merge", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy())
-	event, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, currentBaseUpdateReason)
+	event, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, currentBaseUpdateReason, fork)
 	return event, reason, true, err
 }

@@ -969,7 +969,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		if relay {
 			return eval, "behind", nil
 		}
-		_, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind")
+		_, reason, err := c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", c.isForkPR(pr))
 		return eval, reason, err
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
@@ -1028,7 +1028,7 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	// Current-base gate (hivecommons/hive#13634): only a green, soaked,
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.
-	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind"); stop {
+	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind", c.isForkPR(pr)); stop {
 		return eval, reason, err
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
@@ -1069,7 +1069,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	})
 	if err != nil {
 		if requiredChecksExpectedMergeError(err) {
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected")
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}

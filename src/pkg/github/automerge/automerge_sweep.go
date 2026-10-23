@@ -1591,7 +1591,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			// state and not author work (hivecommons/hive#12607).
 			return AutoMergeSweepEvent{}, autoMergeReasonBehindBudgetExhausted, nil
 		}
-		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind")
+		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind", c.isForkPR(pr))
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
 		return AutoMergeSweepEvent{}, "conflicting", nil
@@ -1663,7 +1663,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// head is the author's to fix and must not be re-based under them, and a
 	// head policy refuses would be updated for nothing. Sits before the desk
 	// so the desk is only asked about a head that would merge this tick.
-	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted); stop {
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted, c.isForkPR(pr)); stop {
 		return ev, reason, err
 	}
 
@@ -1731,7 +1731,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			if !branchUpdateAllowed {
 				return AutoMergeSweepEvent{}, "check-pending", nil
 			}
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected")
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}
@@ -2024,7 +2024,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		if headSHA == "" {
 			return AutoMergeSweepEvent{}, "missing-head-sha", nil
 		}
-		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind")
+		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", c.isForkPR(pr))
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
 		return AutoMergeSweepEvent{}, "conflicting", nil
@@ -2070,7 +2070,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	// Current-base gate (hivecommons/hive#13634): only a green head that
 	// every gate above lets through is worth an update-branch commit.
-	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind"); stop {
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind", c.isForkPR(pr)); stop {
 		return ev, reason, err
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
@@ -2112,7 +2112,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	})
 	if err != nil {
 		if requiredChecksExpectedMergeError(err) {
-			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected")
+			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(pr))
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}
@@ -2168,9 +2168,9 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 	return headRepo != "" && baseRepo != "" && !strings.EqualFold(headRepo, baseRepo)
 }
 
-func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string) (AutoMergeSweepEvent, string, error) {
+func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, fork bool) (AutoMergeSweepEvent, string, error) {
 	if err := c.executeUpdateBranchEffect(ctx, owner, repo, number, headSHA, reason); err != nil {
-		switch classifyUpdateBranchError(err) {
+		switch classifyUpdateBranchError(err, fork) {
 		case updateBranchUpToDate:
 			return AutoMergeSweepEvent{}, "check-pending", nil
 		case updateBranchForkNotEditable:
@@ -2198,9 +2198,10 @@ const (
 
 // classifyUpdateBranchError separates the update-branch failures GitHub
 // reports with overlapping statuses: 422 covers conflicts and an already
-// current branch, while 403 (or a 422 naming maintainer edits) means the app
-// cannot write to the fork head. An unrecognised 422 stays a conflict.
-func classifyUpdateBranchError(err error) updateBranchFailure {
+// current branch, while a 422 naming maintainer edits (or a 403 on a fork PR)
+// means the app cannot write to the fork head. A 403 on a same-repo branch is
+// a plain permission or rate-limit failure. An unrecognised 422 stays a conflict.
+func classifyUpdateBranchError(err error, fork bool) updateBranchFailure {
 	var ghErr *gh.ErrorResponse
 	if !errors.As(err, &ghErr) || ghErr.Response == nil {
 		return updateBranchOther
@@ -2208,14 +2209,16 @@ func classifyUpdateBranchError(err error) updateBranchFailure {
 	msg := strings.ToLower(ghErr.Message)
 	switch ghErr.Response.StatusCode {
 	case http.StatusForbidden:
-		return updateBranchForkNotEditable
+		if fork {
+			return updateBranchForkNotEditable
+		}
 	case http.StatusUnprocessableEntity:
 		switch {
 		case strings.Contains(msg, "maintainer") || strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
 			return updateBranchForkNotEditable
 		case strings.Contains(msg, "merge conflict"):
 			return updateBranchConflict
-		case strings.Contains(msg, "up to date") || strings.Contains(msg, "up-to-date"):
+		case strings.Contains(msg, "up to date") || strings.Contains(msg, "up-to-date") || strings.Contains(msg, "no new commits"):
 			return updateBranchUpToDate
 		}
 		return updateBranchConflict

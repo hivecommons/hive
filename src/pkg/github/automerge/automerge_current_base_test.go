@@ -67,7 +67,7 @@ func TestCurrentBaseGate(t *testing.T) {
 			c.requireCurrentBase = func(repo string) bool {
 				return tc.optIn && strings.EqualFold(repo, "acme/widget")
 			}
-			event, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, tc.updateAllowed, "behind")
+			event, reason, stop, err := c.currentBaseGate(context.Background(), "acme/widget", "acme", "widget", 7, "main", head, tc.updateAllowed, "behind", false)
 			if stop != tc.wantStop || reason != tc.wantReason {
 				t.Fatalf("stop, reason = %v, %q; want %v, %q", stop, reason, tc.wantStop, tc.wantReason)
 			}
