@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -36,38 +37,79 @@ func (c *Client) SetPriorArtFilingGate(gate func() config.PriorArtGateConfig, fi
 // request: DoNotFile refuses (naming the match) and records a knowledge
 // bead; FileWithFindings requires a "Gap vs existing" section in the body
 // and pre-attaches the findings note; FileAsIs files body unchanged.
-// refusal is non-empty when the request must not be filed.
-func (c *Client) priorArtFilingVerdict(ctx context.Context, req IssueRequest, body string) (newBody, refusal string) {
+// refusal is non-empty when the request must not be filed; match then
+// names the top finding so the caller can audit the refusal.
+func (c *Client) priorArtFilingVerdict(ctx context.Context, req IssueRequest, body string) (newBody, refusal string, match priorArtMatch) {
 	if c == nil || c.priorArtFilingGate == nil || c.priorArtFilingFind == nil {
-		return body, ""
+		return body, "", priorArtMatch{}
 	}
 	gate := c.priorArtFilingGate()
 	if !gate.IsEnabled() || !priorart.IsFeatureKind(req.Title, req.Labels, gate.EffectiveKinds()) {
-		return body, ""
+		return body, "", priorArtMatch{}
 	}
 	threshold := gate.EffectiveThreshold()
 	report := c.priorArtFilingFind(ctx, priorart.Issue{Repo: req.Repo, Title: req.Title, Body: req.Body, Labels: req.Labels})
 	switch priorart.FilingVerdictFor(report, threshold) {
 	case priorart.DoNotFile:
 		best := report.Findings[0]
-		match := priorArtFindingName(best)
+		match = newPriorArtMatch(best, report.Confidence, threshold, "do_not_file")
+		name := priorArtFindingName(best)
+		kind := priorart.KindLabel(best.Kind)
 		if c.priorArtFilingRecord != nil {
 			c.priorArtFilingRecord(
 				"prior art: "+strings.TrimSpace(req.Title)+" not filed, already exists",
-				fmt.Sprintf("%s asked the relay to file %q in %s; refused at %d%% confidence (threshold %d): already covered by %s %s.", req.Agent, req.Title, req.Repo, report.Confidence, threshold, best.Kind, match),
-				req.Agent, firstNonEmptyString(best.URL, best.Ref, best.Title))
+				fmt.Sprintf("%s asked the relay to file %q in %s; refused at %d%% confidence (threshold %d): already covered by %s %s.", req.Agent, req.Title, req.Repo, report.Confidence, threshold, kind, name),
+				req.Agent, match.Ref)
 		}
 		c.logger.Info("issue-request watcher: create refused, prior art matches",
 			slog.String("repo", req.Repo), slog.String("agent", req.Agent),
-			slog.Int("confidence", report.Confidence), slog.Int("threshold", threshold), slog.String("match", match))
-		return body, fmt.Sprintf("not filed: prior art matches at %d%% confidence (threshold %d): %s %s; do not re-file — a knowledge bead recorded the refusal. If the existing item truly lacks something, file that gap with a \"## Gap vs existing\" section naming it", report.Confidence, threshold, best.Kind, match)
+			slog.Int("confidence", report.Confidence), slog.Int("threshold", threshold), slog.String("match", name))
+		return body, fmt.Sprintf("not filed: prior art matches at %d%% confidence (threshold %d): %s %s; do not re-file — a knowledge bead recorded the refusal. If the existing item truly lacks something, file that gap with a \"## Gap vs existing\" section naming it", report.Confidence, threshold, kind, name), match
 	case priorart.FileWithFindings:
 		if !hasGapVsExistingSection(req.Body) {
-			return body, fmt.Sprintf("not filed: prior art found at %d%% confidence (threshold %d); add a \"## Gap vs existing\" section to the body that states what the existing items do not cover, then re-submit. Template:\n\n%s", report.Confidence, threshold, priorart.RenderGapSection(report))
+			match = newPriorArtMatch(report.Findings[0], report.Confidence, threshold, "missing_gap_section")
+			return body, fmt.Sprintf("not filed: prior art found at %d%% confidence (threshold %d); add a \"## Gap vs existing\" section to the body that states what the existing items do not cover, then re-submit. Template:\n\n%s", report.Confidence, threshold, priorart.RenderGapSection(report)), match
 		}
-		return strings.TrimRight(body, "\n") + "\n\n" + priorart.RenderFindingsNote(report), ""
+		return strings.TrimRight(body, "\n") + "\n\n" + priorart.RenderFindingsNote(report), "", priorArtMatch{}
 	}
-	return body, ""
+	return body, "", priorArtMatch{}
+}
+
+// priorArtMatch is the top finding behind a prior-art refusal, in the shape
+// the write audit records it.
+type priorArtMatch struct {
+	// Ref is the match's URL, falling back to its handle or title.
+	Ref        string
+	URL        string
+	Kind       string
+	Confidence int
+	Threshold  int
+	// Verdict is why the request was refused: "do_not_file" (high match)
+	// or "missing_gap_section" (medium match without a gap section).
+	Verdict string
+}
+
+func newPriorArtMatch(f priorart.Finding, confidence, threshold int, verdict string) priorArtMatch {
+	return priorArtMatch{
+		Ref:        firstNonEmpty(f.URL, f.Ref, f.Title),
+		URL:        strings.TrimSpace(f.URL),
+		Kind:       string(f.Kind),
+		Confidence: confidence,
+		Threshold:  threshold,
+		Verdict:    verdict,
+	}
+}
+
+// auditPairs is the match as recordWriteAudit extra pairs.
+func (m priorArtMatch) auditPairs() []string {
+	return []string{
+		"verdict", m.Verdict,
+		"match", m.Ref,
+		"url", m.URL,
+		"kind", m.Kind,
+		"confidence", strconv.Itoa(m.Confidence),
+		"threshold", strconv.Itoa(m.Threshold),
+	}
 }
 
 // priorArtFindingName is the finding's number, title and URL for a refusal.
@@ -86,15 +128,6 @@ func quoteIfSet(s string) string {
 		return ""
 	}
 	return fmt.Sprintf("%q", s)
-}
-
-func firstNonEmptyString(vs ...string) string {
-	for _, v := range vs {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // hasGapVsExistingSection reports whether body carries a "Gap vs existing"

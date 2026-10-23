@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -74,12 +75,15 @@ func TestIssueRequestWatcher_PriorArtFilingVerdict(t *testing.T) {
 		wantErr      []string
 		wantBody     []string
 		wantNoBody   []string
+		// wantAudit is the verdict pair an agent_issue_prior_art_refused
+		// audit record must carry; empty means no such record.
+		wantAudit string
 	}{
 		{
 			name:  "do not file: high confidence refuses and records a bead",
 			title: "[feature] relay retry backoff", body: gapBody, confidence: 90,
-			wantSearched: true, wantBead: true,
-			wantErr: []string{"not filed", "90%", "#42", "Add retry backoff to the relay", "https://github.example/o/r/pull/42", "knowledge bead"},
+			wantSearched: true, wantBead: true, wantAudit: "do_not_file",
+			wantErr: []string{"not filed", "90%", "#42", "merged PR", "Add retry backoff to the relay", "https://github.example/o/r/pull/42", "knowledge bead"},
 		},
 		{
 			name:  "file with findings: gap section present files with the findings note",
@@ -90,8 +94,8 @@ func TestIssueRequestWatcher_PriorArtFilingVerdict(t *testing.T) {
 		{
 			name:  "file with findings: missing gap section is refused with what to add",
 			title: "[feature] relay retry backoff", body: "Relays should back off.", confidence: 60,
-			wantSearched: true,
-			wantErr:      []string{"not filed", "add a \"## Gap vs existing\" section", "## Gap vs existing", "https://github.example/o/r/pull/42"},
+			wantSearched: true, wantAudit: "missing_gap_section",
+			wantErr: []string{"not filed", "add a \"## Gap vs existing\" section", "## Gap vs existing", "https://github.example/o/r/pull/42"},
 		},
 		{
 			name:  "file as is: low confidence files unchanged",
@@ -124,6 +128,12 @@ func TestIssueRequestWatcher_PriorArtFilingVerdict(t *testing.T) {
 
 			searched := false
 			var beads []priorArtBead
+			var audits []AuditRecord
+			c.SetAttributionAuditRecord(func(rec AuditRecord) {
+				if rec.Action == AuditActionAgentIssuePriorArtRefused {
+					audits = append(audits, rec)
+				}
+			})
 			c.SetPriorArtFilingGate(
 				func() config.PriorArtGateConfig { return tc.gate },
 				func(ctx context.Context, issue priorart.Issue) priorart.Report {
@@ -187,8 +197,23 @@ func TestIssueRequestWatcher_PriorArtFilingVerdict(t *testing.T) {
 			if tc.wantBead {
 				bead := beads[0]
 				if bead.agent != "scanner" || bead.ref != "https://github.example/o/r/pull/42" ||
-					!strings.Contains(bead.title, "relay retry backoff") || !strings.Contains(bead.detail, "#42") {
+					!strings.Contains(bead.title, "relay retry backoff") || !strings.Contains(bead.detail, "#42") ||
+					!strings.Contains(bead.detail, "merged PR") {
 					t.Errorf("unexpected bead: %+v", bead)
+				}
+			}
+			if got := len(audits) == 1; got != (tc.wantAudit != "") {
+				t.Fatalf("prior-art refusal audits = %d, want one = %v", len(audits), tc.wantAudit != "")
+			}
+			if tc.wantAudit != "" {
+				rec := audits[0]
+				for _, want := range []string{"verdict=" + tc.wantAudit, "match=https://github.example/o/r/pull/42", "kind=merged_pr", "confidence=" + strconv.Itoa(tc.confidence)} {
+					if !strings.Contains(rec.Detail, want) {
+						t.Errorf("audit detail %q missing %q", rec.Detail, want)
+					}
+				}
+				if rec.Agent != "scanner" || rec.Repo != "o/r" {
+					t.Errorf("audit agent/repo = %q/%q, want scanner/o/r", rec.Agent, rec.Repo)
 				}
 			}
 		})
