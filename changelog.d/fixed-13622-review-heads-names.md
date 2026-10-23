@@ -1,1 +1,1 @@
-Reject `review_heads` agent names whose `hive-<name>` group exceeds 32 characters with an `alias` hint, and log `groupadd` failures in the entrypoint (#13622).
+- Reject `review_heads` agent names whose `hive-<name>` group exceeds 32 characters with an `alias` hint, and log `groupadd` failures in the entrypoint (#13622).
