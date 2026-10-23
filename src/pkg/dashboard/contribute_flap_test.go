@@ -1,10 +1,12 @@
 package dashboard
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -184,8 +186,9 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 	}
 }
 
-// An issue in contributor cool-off is skipped by selectTask for every
-// contributor, and the governor-facing accessor reports why.
+// The cool-off is scoped to the contributor that dropped the issue (#13763):
+// that contributor is not offered it, others still are, and the issue-wide
+// governor accessor does not report it as withheld.
 func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 	hub, s, _ := claimsHub(t)
 	setStatusIssues(s,
@@ -194,22 +197,28 @@ func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 	)
 	now := time.Now()
 	for i := 0; i < config.DefaultContributorFlapThreshold; i++ {
-		hub.noteContributorDrop("myorg/repo1#1", now)
+		hub.noteContributorDrop(contributorFlapKey("c-flappy", "myorg/repo1#1"), now)
 	}
-	reason, ok := s.ContributorCoolOffReason("myorg/repo1", 1)
-	if !ok || !strings.HasPrefix(reason, "contributor cool-off: 3 drops in ") {
-		t.Fatalf("accessor = %q ok=%v", reason, ok)
+	if _, ok := hub.inContributorCoolOff(contributorFlapKey("c-flappy", "myorg/repo1#1")); !ok {
+		t.Fatal("the dropping contributor should be in cool-off")
 	}
-	if _, ok := s.ContributorCoolOffReason("myorg/repo1", 2); ok {
-		t.Fatal("#2 is not in cool-off")
+	if _, ok := s.ContributorCoolOffReason("myorg/repo1", 1); ok {
+		t.Fatal("one contributor's cool-off must not withhold the issue from everyone")
+	}
+	flappy := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "flappy", ContributorID: "c-flappy", TrustTier: "contributor"},
+		lastPong: now,
+	}
+	if msg := hub.selectTask(flappy); msg == nil || msg.Number != 2 {
+		t.Fatalf("the cooled-off contributor should be offered #2 only, got %+v", msg)
 	}
 	c := &ContributorConnection{
 		profile:  &ContributorProfile{GitHubUsername: "arteeh", ContributorID: "c-arteeh", TrustTier: "contributor"},
 		lastPong: now,
 	}
 	msg := hub.selectTask(c)
-	if msg == nil || msg.Number != 2 {
-		t.Fatalf("contributor should be offered #2 only, got %+v", msg)
+	if msg == nil || msg.Number != 1 {
+		t.Fatalf("a contributor that did not drop #1 should still be offered it, got %+v", msg)
 	}
 }
 
@@ -223,4 +232,116 @@ func TestClaimReleaseReasons(t *testing.T) {
 	if claimReleaseReasonDisconnect == claims.ReasonExpired || claims.ReasonLeaseExpired == claims.ReasonExpired {
 		t.Fatal("lease release reasons must not collide with the ledger expiry reason")
 	}
+}
+
+// flapResumeSetup assigns one issue to a fresh relay, drops the socket and
+// reconnects under the same registration, returning the new connection and
+// the original assignment so the caller can send the resume task_progress.
+func flapResumeSetup(t *testing.T, number int) (*Server, *websocket.Conn, WSMessage, string) {
+	t.Helper()
+	s, ts := setupWSTest(t)
+	t.Cleanup(ts.Close)
+	s.deps = &Dependencies{GHAppAuth: newSucceedingAppAuth(t, "ghs_flap_resume")}
+	s.contributeHub.server = s
+	l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.deps.IssueClaims = l
+	seedOneIssue(s, number, "Flappy relay work")
+
+	conn, reg := registerAndAuth(t, s, ts, "flap-resume-user")
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 1})
+	assign := readMsg(t, conn)
+	if assign.Type != "task_assign" || assign.Number != number {
+		t.Fatalf("expected task_assign for #%d, got type=%s number=%d", number, assign.Type, assign.Number)
+	}
+	identity := onlyLeaseIdentity(t, s.contributeHub)
+	conn.Close()
+	waitForFailureCooldown(t, s.contributeHub, "myorg/repo1", number)
+
+	conn2, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("reconnect dial: %v", err)
+	}
+	t.Cleanup(func() { conn2.Close() })
+	readMsg(t, conn2) // auth_challenge
+	conn2.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	readMsg(t, conn2) // auth_ok
+	return s, conn2, assign, identity
+}
+
+// A relay that dropped the issue into its own cool-off is refused the resume:
+// the lease is revoked and the relay is told why (#13579, #13767).
+func TestContributorFlap_ResumeRefusedInCoolOff(t *testing.T) {
+	s, conn2, assign, identity := flapResumeSetup(t, 13767)
+	hub := s.contributeHub
+	hub.leaseMu.Lock()
+	lease := hub.leases[leaseKey(identity, assign.TaskID)]
+	hub.leaseMu.Unlock()
+	if lease == nil {
+		t.Fatal("precondition: lease survives the disconnect")
+	}
+	now := time.Now()
+	for i := 0; i < config.DefaultContributorFlapThreshold; i++ {
+		hub.noteContributorDrop(contributorFlapKey(identity, lease.key), now)
+	}
+
+	conn2.WriteJSON(WSMessage{Type: "task_accepted", Seq: 3, TaskID: assign.TaskID})
+	conn2.WriteJSON(WSMessage{
+		Type: "task_progress", Seq: 4, TaskID: assign.TaskID, TaskGen: assign.TaskGen,
+		Repo: assign.Repo, Number: assign.Number, Kind: "issue", Title: assign.Title,
+		Status: "working",
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		m := readMsg(t, conn2)
+		if m.Type == "task_revoke" {
+			if !strings.HasPrefix(m.Reason, "contributor cool-off: ") {
+				t.Fatalf("revoke reason = %q, want the cool-off clause", m.Reason)
+			}
+			break
+		}
+		if m.Type == "task_assign" || time.Now().After(deadline) {
+			t.Fatalf("expected task_revoke for the cooled-off resume, got %+v", m)
+		}
+	}
+	if hub.lookupLease(identity, assign.TaskID, assign.Repo, assign.Number, assign.TaskGen, time.Now()) != nil {
+		t.Fatal("the refused resume left the lease live")
+	}
+	if hubHoldsTask(hub, assign.TaskID) {
+		t.Fatal("the refused resume left the task held on the connection")
+	}
+}
+
+// A resume after a disconnect release re-asserts the issue claim the release
+// dropped (#13579, #13767).
+func TestContributorFlap_ResumeReassertsIssueClaim(t *testing.T) {
+	s, conn2, assign, identity := flapResumeSetup(t, 13768)
+	hub := s.contributeHub
+	l := s.deps.IssueClaims
+	hub.releaseClaimForLease(identity, "myorg/repo1#13768", claimReleaseReasonDisconnect)
+	if got, ok := l.Lookup("myorg/repo1", 13768); ok {
+		t.Fatalf("precondition: released claim still live: %+v", got)
+	}
+
+	conn2.WriteJSON(WSMessage{Type: "task_accepted", Seq: 3, TaskID: assign.TaskID})
+	conn2.WriteJSON(WSMessage{
+		Type: "task_progress", Seq: 4, TaskID: assign.TaskID, TaskGen: assign.TaskGen,
+		Repo: assign.Repo, Number: assign.Number, Kind: "issue", Title: assign.Title,
+		Status: "working",
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, ok := l.Lookup("myorg/repo1", 13768); ok {
+			if got.HolderID != identity {
+				t.Fatalf("re-asserted claim held by %q, want %q", got.HolderID, identity)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("resume did not re-assert the issue claim released on disconnect")
 }

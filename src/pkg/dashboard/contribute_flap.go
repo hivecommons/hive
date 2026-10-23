@@ -62,6 +62,17 @@ func (h *ContributeWSHub) contributorFlapSettings() (threshold int, window, cool
 	return h.server.deps.Config.Governor.Claims.EffectiveContributorFlap()
 }
 
+// contributorFlapKey scopes the flap tracker to one contributor's drops of
+// one item (#13763): the contributor that keeps dropping an issue is cooled
+// off from it, while other contributors are still offered it. The select,
+// resume and release paths all derive the key here so they agree.
+func contributorFlapKey(identity, itemKey string) string {
+	if itemKey == "" {
+		return ""
+	}
+	return identity + "\x00" + itemKey
+}
+
 // noteContributorDrop records one disconnect release of the item at now.
 // It returns the cool-off and true the moment the threshold trips (exactly
 // once per cool-off: further drops inside an active cool-off extend
@@ -132,7 +143,9 @@ func (h *ContributeWSHub) inContributorCoolOff(itemKey string) (ContributorCoolO
 }
 
 // ContributorCoolOffReason is the governor-facing seam: the cool-off clause
-// for a GitHub issue, or "" when none is active. cmd/hive hands it to the
+// for a GitHub issue, or "" when none is active. Cool-offs are scoped per
+// contributor (#13763), so the issue-wide lookup only reports an unscoped
+// cool-off; a single contributor's cool-off no longer withholds the issue. cmd/hive hands it to the
 // live-claim filter so the work detail says why contributors are not being
 // offered an issue the hive's agents may take.
 func (s *Server) ContributorCoolOffReason(repo string, number int) (string, bool) {
@@ -164,16 +177,16 @@ func (h *ContributeWSHub) releaseContributorClaimOnDisconnect(c *ContributorConn
 	}
 	h.clearLeaseClaim(identityOf(c), task.TaskID)
 	h.releaseClaimForLease(identityOf(c), key, claimReleaseReasonDisconnect)
-	if co, tripped := h.noteContributorDrop(key, now); tripped {
+	if co, tripped := h.noteContributorDrop(contributorFlapKey(identityOf(c), key), now); tripped {
 		username := ""
 		if c.profile != nil {
 			username = c.profile.GitHubUsername
 		}
-		h.logger.Info("[contribute-ws] contributor cool-off: issue withheld from contributors after repeated disconnect releases (#13579)",
+		h.logger.Info("[contribute-ws] contributor cool-off: issue withheld from the dropping contributor after repeated disconnect releases (#13579)",
 			"repo", task.Repo, "number", task.Number, "key", key, "last_username", username,
 			"drops", co.Drops, "window", co.Window.String(), "until", co.Until.UTC().Format(time.RFC3339))
 		h.recordDecision(username, decisionAbandoned, task.TaskID, task.Repo, task.Number,
-			co.Reason()+"; withheld from contributors until "+co.Until.UTC().Format(time.RFC3339))
+			co.Reason()+"; withheld from this contributor until "+co.Until.UTC().Format(time.RFC3339))
 	}
 }
 
