@@ -718,6 +718,9 @@ func TestMatchesExplicitClass(t *testing.T) {
 	if !MatchesExplicitClass("Kick FAILED for agent quality") {
 		t.Fatal("kick failed not matched")
 	}
+	if !MatchesExplicitClass("continuous re-kick backed off after failed kick") {
+		t.Fatal("self-healing re-kick backoff not matched")
+	}
 	if !MatchesExplicitClass("issue-request watcher: request exceeded retry horizon") {
 		t.Fatal("issue-request watcher keyword not matched")
 	}

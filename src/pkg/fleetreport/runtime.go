@@ -117,7 +117,7 @@ type ClassSpec struct {
 // Classes is the runtime error allow-list.
 var Classes = map[string]ClassSpec{
 	ClassRestartStorm:             {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"restart storm", "restart-storm"}},
-	ClassKickFailedRepeatedly:     {Component: "agent-runtime", Severity: "medium", MinCount: kickFailureStreak, Keywords: []string{"kick failed", "undeliverable kick", "kicks undeliverable"}},
+	ClassKickFailedRepeatedly:     {Component: "agent-runtime", Severity: "medium", MinCount: kickFailureStreak, Keywords: []string{"kick failed", "undeliverable kick", "kicks undeliverable", "re-kick backed off"}},
 	ClassPanicRecovered:           {Component: "dashboard", Severity: "high", MinCount: 1, Keywords: []string{"panic recovered", "recovered panic"}},
 	ClassModelDiscoveryDegraded:   {Component: "inference-gateway", Severity: "medium", MinCount: 1, MinDuration: degradedMinDuration, Keywords: []string{"model discovery degraded", "model discovery failed"}},
 	ClassInferenceAuthFailed:      {Component: "backend-auth", Severity: "high", MinCount: 1, Keywords: []string{"litellm 401", "inference 401", "inference 403", "authentication failure"}},
