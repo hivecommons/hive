@@ -10283,12 +10283,17 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 			}
 		}
 	}
+	failing := map[string]struct{}{}
+	defer func() { humanLabelWarn.retain(failing) }()
 	for _, hold := range plan.State.Human {
 		if labeled[strings.ToLower(fmt.Sprintf("%s#%d", fullRepoName(hold.Repo, org), hold.Number))] {
 			continue
 		}
 		if err := ghClient.ApplyHumanDecisionLabel(ctx, hold.Repo, hold.Number, label); err != nil {
-			logger.Warn("human decision label not applied; review marker still stands",
+			// Warn once per PR; the hold is re-evaluated every cycle (#13677).
+			key := prWarnKey(hold.Repo, hold.Number)
+			failing[key] = struct{}{}
+			logger.Log(ctx, humanLabelWarn.level(key), "human decision label not applied; review marker still stands",
 				"repo", hold.Repo, "pr", hold.Number, "label", label, "error", err)
 			continue
 		}
@@ -10493,9 +10498,14 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 	for _, sk := range plan.SkippedReviewModels {
 		logger.Info("review model fallback skipped perspective", "repo", sk.Repo, "pr", sk.Number, "head", sk.HeadSHA, "perspective", sk.Perspective, "agent", sk.Agent, "author_model", sk.AuthorModel)
 	}
+	expiredNow := map[string]struct{}{}
 	for _, e := range plan.Expired {
-		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
+		// Warn once per PR while it keeps expiring (#13687).
+		key := prWarnKey(e.Repo, e.Number)
+		expiredNow[key] = struct{}{}
+		logger.Log(context.Background(), reviewExpiredWarn.level(key), "review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
 	}
+	reviewExpiredWarn.retain(expiredNow)
 	for _, h := range plan.Exhausted {
 		logger.Warn("review dispatch exhausted; holding PR for a human", "repo", h.Repo, "pr", h.Number, "head", h.HeadSHA, "reason", h.Reason)
 	}
