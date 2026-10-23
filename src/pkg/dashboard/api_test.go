@@ -867,6 +867,10 @@ func TestHandleChat_BangCommandsStillUseDashboardBot(t *testing.T) {
 }
 
 func TestHandleChat_SpekCommandsUseRunDataWithoutProbe(t *testing.T) {
+	// Completed runs come from the process-wide lifecycle timeline; journeys
+	// recorded by earlier tests would otherwise leak into the run listing.
+	resetLifecycleStore()
+	t.Cleanup(resetLifecycleStore)
 	s := newFullServer(t)
 	s.SetSpektacularStatus(FrontendSpektacular{Present: false, Binary: "spektacular"})
 	rec := doPost(s, "/api/chat", map[string]interface{}{"query": "spek: spec runs"})
