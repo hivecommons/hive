@@ -33,6 +33,16 @@ type TriageLabeler interface {
 	AddLabels(ctx context.Context, repo string, number int, labels []string) error
 }
 
+// TriageParkHistory is the optional third part of the gate's forge surface:
+// whether the park label ever landed on an issue, present or not. With it the
+// gate tells a park label write that failed before a restart (the question
+// is on the issue, the label never was: retry it) from an issue a person
+// un-parked (the label was there and came off: run it). Without it the
+// marker alone is read as un-parked.
+type TriageParkHistory interface {
+	IssueLabelEverApplied(ctx context.Context, repo string, number int, label string) (bool, error)
+}
+
 // clarityGateState is the gate's process memory, keyed owner/repo#n.
 type clarityGateState struct {
 	mu sync.Mutex
@@ -41,7 +51,9 @@ type clarityGateState struct {
 	// the same issue to an agent before the next enumeration drops it.
 	parkedAt map[string]time.Time
 	// pendingLabel holds issues whose question was posted but whose park
-	// label write failed; the label is retried before anything else.
+	// label write failed; the label is retried before anything else. Across
+	// a restart the same case is recovered from the forge via
+	// TriageParkHistory rather than from this map.
 	pendingLabel map[string]bool
 	// asked holds issues known to carry the marker and no park label: the
 	// author was asked and the issue has since been un-parked, so it runs.
@@ -160,6 +172,22 @@ func (s *Scheduler) parkUnclearIssue(commenter TriageCommenter, labeler TriageLa
 		return true
 	}
 	if seen {
+		if issueHasLabel(issue, label) {
+			return true
+		}
+		landed, err := s.clarityParkLabelLanded(ctx, labeler, issue, label)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("clarity gate park history read failed", "repo", issue.Repo, "number", issue.Number, "label", label, "error", err)
+			}
+			return true
+		}
+		if !landed {
+			// The question went out but the park never did, and the
+			// process that would have retried it is gone: park now.
+			s.addClarityParkLabel(ctx, labeler, issue, key, label, now)
+			return true
+		}
 		st.mu.Lock()
 		st.asked[key] = true
 		st.mu.Unlock()
@@ -176,6 +204,17 @@ func (s *Scheduler) parkUnclearIssue(commenter TriageCommenter, labeler TriageLa
 		s.logger.Info("clarity gate parked issue", "repo", issue.Repo, "number", issue.Number, "score", a.Score, "threshold", threshold, "label", label)
 	}
 	return true
+}
+
+// clarityParkLabelLanded reports whether the park label was ever on the
+// issue. A labeler without TriageParkHistory cannot tell, and is read as yes
+// so that the marker keeps meaning "asked and un-parked", as before.
+func (s *Scheduler) clarityParkLabelLanded(ctx context.Context, labeler TriageLabeler, issue github.Issue, label string) (bool, error) {
+	history, ok := labeler.(TriageParkHistory)
+	if !ok {
+		return true, nil
+	}
+	return history.IssueLabelEverApplied(ctx, issue.Repo, issue.Number, label)
 }
 
 func (s *Scheduler) addClarityParkLabel(ctx context.Context, labeler TriageLabeler, issue github.Issue, key, label string, now time.Time) {

@@ -137,6 +137,10 @@ per missing signal and adds the `needs-spec` hard-suppress label (the first
 label of `project.issue_filter.hard_suppress_labels.needs_spec`). The issue then
 derives `stage/045-needs-decision` ("parked on a person: needs-spec"), leaves
 enumeration and is refused by the claim gate. The marker is never posted twice.
+If the comment posts but the label write fails, the issue stays withheld and the
+label is retried on the next kick; a restart in between does not lose the
+retry, because the gate reads the issue's label history and tells a park that
+never landed from one a person removed.
 
 The issue resumes on its own once somebody answers
 ([#13588](https://github.com/hivecommons/hive/issues/13588)). While the gate is

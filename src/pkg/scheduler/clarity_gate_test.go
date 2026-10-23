@@ -16,15 +16,19 @@ import (
 // fakeClarityForge records the clarity gate's comments and labels; the
 // marker scan reads back what was posted, like GitHub would.
 type fakeClarityForge struct {
-	comments   map[string][]string
-	labels     map[string][]string
+	comments map[string][]string
+	labels   map[string][]string
+	// applied is the label history GitHub's timeline would hold: every
+	// label that ever landed on the issue, whether it is still there.
+	applied    map[string][]string
 	labelErr   error
 	scanErr    error
+	historyErr error
 	scanCalled int
 }
 
 func newFakeClarityForge() *fakeClarityForge {
-	return &fakeClarityForge{comments: map[string][]string{}, labels: map[string][]string{}}
+	return &fakeClarityForge{comments: map[string][]string{}, labels: map[string][]string{}, applied: map[string][]string{}}
 }
 
 func clarityKey(repo string, number int) string {
@@ -56,7 +60,15 @@ func (f *fakeClarityForge) AddLabels(ctx context.Context, repo string, number in
 	}
 	k := clarityKey(repo, number)
 	f.labels[k] = append(f.labels[k], labels...)
+	f.applied[k] = append(f.applied[k], labels...)
 	return nil
+}
+
+func (f *fakeClarityForge) IssueLabelEverApplied(ctx context.Context, repo string, number int, label string) (bool, error) {
+	if f.historyErr != nil {
+		return false, f.historyErr
+	}
+	return slices.Contains(f.applied[clarityKey(repo, number)], label), nil
 }
 
 func clarityGateScheduler(t *testing.T, enabled bool, forge *fakeClarityForge) *Scheduler {
@@ -141,6 +153,7 @@ func TestClarityGateSkipsIssuesItDoesNotJudge(t *testing.T) {
 func TestClarityGateResumesAnsweredIssue(t *testing.T) {
 	forge := newFakeClarityForge()
 	forge.comments[clarityKey("o/r", 1)] = []string{ClarityGateMarker + "\nquestions"}
+	forge.applied[clarityKey("o/r", 1)] = []string{config.DefaultNeedsSpecLabel}
 	s := clarityGateScheduler(t, true, forge)
 	refs := kickedRefs(s, []github.Issue{{Repo: "o/r", Number: 1, Title: "vague", Body: "make it better", AuthorIsHuman: true}})
 	if !slices.Contains(refs, "o/r#1") {
@@ -166,6 +179,67 @@ func TestClarityGateRetriesFailedParkLabel(t *testing.T) {
 	if len(forge.comments[clarityKey("o/r", 1)]) != 1 || !slices.Equal(forge.labels[clarityKey("o/r", 1)], []string{config.DefaultNeedsSpecLabel}) {
 		t.Fatalf("comments=%v labels=%v", forge.comments, forge.labels)
 	}
+}
+
+// The question was posted but the park label write failed, and the hive
+// restarted before the in-process retry could land it: a fresh scheduler
+// finds the marker, sees from the forge that the label never landed, and
+// parks the issue instead of handing it to an agent.
+func TestClarityGateRetriesFailedParkLabelAcrossRestart(t *testing.T) {
+	forge := newFakeClarityForge()
+	forge.comments[clarityKey("o/r", 1)] = []string{ClarityGateMarker + "\nquestions"}
+	s := clarityGateScheduler(t, true, forge)
+	issues := []github.Issue{{Repo: "o/r", Number: 1, Title: "vague", Body: "make it better", AuthorIsHuman: true}}
+	if refs := kickedRefs(s, issues); slices.Contains(refs, "o/r#1") {
+		t.Fatalf("issue kicked although its park label never landed: %v", refs)
+	}
+	if len(forge.comments[clarityKey("o/r", 1)]) != 1 || !slices.Equal(forge.labels[clarityKey("o/r", 1)], []string{config.DefaultNeedsSpecLabel}) {
+		t.Fatalf("comments=%v labels=%v", forge.comments, forge.labels)
+	}
+}
+
+// A park history that cannot be read withholds the issue for this cycle,
+// without asking again or guessing at the label.
+func TestClarityGateWithholdsWhenParkHistoryUnreadable(t *testing.T) {
+	forge := newFakeClarityForge()
+	forge.comments[clarityKey("o/r", 1)] = []string{ClarityGateMarker + "\nquestions"}
+	forge.historyErr = errors.New("timeline down")
+	s := clarityGateScheduler(t, true, forge)
+	issues := []github.Issue{{Repo: "o/r", Number: 1, Title: "vague", Body: "make it better", AuthorIsHuman: true}}
+	if refs := kickedRefs(s, issues); slices.Contains(refs, "o/r#1") {
+		t.Fatalf("issue kicked with park history unreadable: %v", refs)
+	}
+	if len(forge.comments[clarityKey("o/r", 1)]) != 1 || len(forge.labels) != 0 {
+		t.Fatalf("comments=%v labels=%v", forge.comments, forge.labels)
+	}
+}
+
+// A labeler that keeps no park history reads the marker as un-parked, as
+// the gate did before the history check existed.
+func TestClarityGateWithoutParkHistoryTrustsMarker(t *testing.T) {
+	forge := newFakeClarityForge()
+	forge.comments[clarityKey("o/r", 1)] = []string{ClarityGateMarker + "\nquestions"}
+	s := clarityGateScheduler(t, true, historylessClarityForge{forge: forge})
+	refs := kickedRefs(s, []github.Issue{{Repo: "o/r", Number: 1, Title: "vague", Body: "make it better", AuthorIsHuman: true}})
+	if !slices.Contains(refs, "o/r#1") || len(forge.labels) != 0 {
+		t.Fatalf("refs=%v labels=%v", refs, forge.labels)
+	}
+}
+
+// historylessClarityForge hides IssueLabelEverApplied; a named field, not
+// an embedding, so the method is not promoted.
+type historylessClarityForge struct{ forge *fakeClarityForge }
+
+func (h historylessClarityForge) IssueCommentsContain(ctx context.Context, repo string, number int, needle string) (bool, error) {
+	return h.forge.IssueCommentsContain(ctx, repo, number, needle)
+}
+
+func (h historylessClarityForge) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	return h.forge.CreateIssueComment(ctx, repo, number, body)
+}
+
+func (h historylessClarityForge) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	return h.forge.AddLabels(ctx, repo, number, labels)
 }
 
 func TestClarityGateUsesConfiguredNeedsSpecLabel(t *testing.T) {

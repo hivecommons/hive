@@ -463,6 +463,12 @@ func TestLiveTriageCommenterWithoutClient(t *testing.T) {
 		if err := l.CreateIssueComment(context.Background(), "widgets", 1, "x"); !errors.Is(err, github.ErrNoGitHubClient) {
 			t.Errorf("%s: CreateIssueComment err = %v, want ErrNoGitHubClient", name, err)
 		}
+		if err := l.AddLabels(context.Background(), "widgets", 1, []string{"x"}); !errors.Is(err, github.ErrNoGitHubClient) {
+			t.Errorf("%s: AddLabels err = %v, want ErrNoGitHubClient", name, err)
+		}
+		if _, err := l.IssueLabelEverApplied(context.Background(), "widgets", 1, "x"); !errors.Is(err, github.ErrNoGitHubClient) {
+			t.Errorf("%s: IssueLabelEverApplied err = %v, want ErrNoGitHubClient", name, err)
+		}
 	}
 }
 

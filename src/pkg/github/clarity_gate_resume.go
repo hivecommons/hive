@@ -128,7 +128,7 @@ func (c *Client) tryClarityGateResume(ctx context.Context, displayRepo, owner, r
 		return nil, err
 	}
 	asked, ok := c.clarityGateMarkerAt(comments)
-	if !ok || !clarityGateHasLaterHumanComment(c, comments, asked) {
+	if !ok || !c.clarityGateHasLaterHumanComment(comments, asked) {
 		return nil, nil
 	}
 	events, err := c.listIssueLabelEvents(ctx, owner, repo, number)
@@ -173,7 +173,7 @@ func (c *Client) clarityGateMarkerAt(comments []*gh.IssueComment) (time.Time, bo
 
 // clarityGateHasLaterHumanComment is the free pre-check before the timeline
 // and permission reads: has any person commented after the question?
-func clarityGateHasLaterHumanComment(c *Client, comments []*gh.IssueComment, after time.Time) bool {
+func (c *Client) clarityGateHasLaterHumanComment(comments []*gh.IssueComment, after time.Time) bool {
 	for _, cm := range comments {
 		if cm != nil && cm.GetCreatedAt().Time.After(after) && c.clarityGatePerson(cm.GetUser()) {
 			return true
@@ -217,4 +217,23 @@ func (c *Client) clarityGateAnswer(ctx context.Context, owner, repo, author stri
 // login and additional bot logins).
 func (c *Client) clarityGatePerson(user *gh.User) bool {
 	return c.isHumanAuthor(user) && !c.isHiveAccount(user)
+}
+
+// IssueLabelEverApplied reports whether label was ever added to the issue,
+// present or not, from its timeline. The scheduler's clarity gate asks this
+// when it finds its own question comment on an issue that does not carry the
+// park label: a label that never landed means the park write failed before
+// a restart and is retried; one that landed and came off means the issue
+// was un-parked and runs (hivecommons/hive#13577).
+func (c *Client) IssueLabelEverApplied(ctx context.Context, repo string, number int, label string) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	events, err := c.listIssueLabelEvents(ctx, owner, name, number)
+	if err != nil {
+		return false, err
+	}
+	_, ok := lastLabeledEvent(events, label)
+	return ok, nil
 }

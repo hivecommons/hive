@@ -9,8 +9,6 @@ import (
 	"github.com/hivecommons/hive/pkg/evidence"
 )
 
-const clarityGateEvidenceMarker = "<!-- hive:clarity-gate -->"
-
 // Capture only confirmed closures, never bare references or already-closed
 // issues. A failed issue fetch is unknown and is left out of both cohorts.
 func (c *Client) captureReviewEvidenceClosures(ctx context.Context, b *evidence.Bundle, pr *gh.PullRequest) {
@@ -36,11 +34,11 @@ func (c *Client) captureReviewEvidenceClosures(ctx context.Context, b *evidence.
 		if issue.IsPullRequest() || issue.GetState() != "closed" || at.IsZero() || at.Before(pr.GetMergedAt().Time) || at.After(pr.GetMergedAt().Add(time.Minute)) {
 			continue
 		}
-		gated := strings.Contains(issue.GetBody(), clarityGateEvidenceMarker)
+		gated := strings.Contains(issue.GetBody(), ClarityGateMarker)
 		if !gated {
 			// The gate asks its question in a marker comment, not in the issue body.
 			// A failed comment listing is unknown, never an ungated observation.
-			gated, err = hasMarkerComment(ctx, c.client, owner, name, ref.Issue, clarityGateEvidenceMarker)
+			gated, err = hasMarkerComment(ctx, c.client, owner, name, ref.Issue, ClarityGateMarker)
 			if err != nil {
 				continue
 			}
