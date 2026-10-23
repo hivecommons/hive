@@ -161,32 +161,37 @@ func TestTrackerClassificationConversionThreshold(t *testing.T) {
 
 func TestTrackerTaskProgress(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		wantTotal int
-		wantChip  bool
+		name       string
+		body       string
+		isTracker  bool
+		wantTotal  int
+		wantChip   bool
 	}{
 		{
 			name:      "three items render as tracker chip",
 			body:      "- [x] #1 done\n- [ ] acme/widgets#2 remaining\n- [X] #3 done\n",
+			isTracker: true,
 			wantTotal: 3,
 			wantChip:  true,
 		},
 		{
-			name:      "single item does not render as tracker chip",
+			name:      "single item: progress tracked but not a chip (#13772)",
 			body:      "- [ ] #1 pending",
-			wantTotal: 0,
+			isTracker: false,
+			wantTotal: 0, // Below trackerTaskListMin threshold
 			wantChip:  false,
 		},
 		{
-			name:      "two items do not render as tracker chip",
+			name:      "two items: progress tracked but not a chip",
 			body:      "- [x] #1 done\n- [ ] #2 remaining",
-			wantTotal: 0,
+			isTracker: false,
+			wantTotal: 0, // Below trackerTaskListMin threshold
 			wantChip:  false,
 		},
 		{
 			name:      "ordinary task without reference is not progress",
 			body:      "- [ ] ordinary task",
+			isTracker: false,
 			wantTotal: 0,
 			wantChip:  false,
 		},
@@ -204,7 +209,7 @@ func TestTrackerTaskProgress(t *testing.T) {
 				}
 			}
 
-			row := repoWorkIssueFromIssue(Issue{Body: tt.body}, "claimed", "test")
+			row := repoWorkIssueFromIssue(Issue{Body: tt.body, IsTracker: tt.isTracker}, "claimed", "test")
 			if row.IsTracker != tt.wantChip {
 				t.Errorf("repoWorkIssueFromIssue IsTracker = %v, want %v", row.IsTracker, tt.wantChip)
 			}
