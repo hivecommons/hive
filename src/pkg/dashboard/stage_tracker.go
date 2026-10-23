@@ -218,7 +218,11 @@ type StageTrackerItem struct {
 	Author string `json:"author,omitempty"`
 	// Head is the PR head SHA the lane last evaluated ("" for issues), so
 	// a "waiting for a verdict" caption can name the revision it waits on.
-	Head string `json:"head,omitempty"`
+	Head           string                `json:"head,omitempty"`
+	BaseRef        string                `json:"base_ref,omitempty"`
+	ClaimReference bool                  `json:"claim_reference,omitempty"`
+	IsTracker      bool                  `json:"is_tracker,omitempty"`
+	Children       *github.IssueChildren `json:"children,omitempty"`
 	// Labels are the item's GitHub labels as the snapshot saw them, so the
 	// dashboard can offer a label filter without a second endpoint.
 	Labels    []string   `json:"labels,omitempty"`
@@ -333,6 +337,7 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
+	BaseRef    string     `json:"base_ref,omitempty"`
 	Number     int        `json:"number"`
 	Title      string     `json:"title,omitempty"`
 	URL        string     `json:"url,omitempty"`
@@ -1063,7 +1068,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		seen[key] = true
 		resp.Items = append(resp.Items, it)
 	}
-	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string) {
+	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string, progress *github.IssueChildren) {
 		// A closed issue has no stage; a stage label it closed wearing is
 		// the closed-issue sweep's to remove, not a row to render
 		// (hivecommons/homebrew-hive#127).
@@ -1076,6 +1081,15 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		it.Children = issue.Children
+		if it.Children == nil {
+			it.Children = progress
+		}
+		if it.Children == nil {
+			it.Children = github.TrackerTaskProgress(issue.Body)
+		}
+		it.IsTracker = issue.IsTracker || it.Children != nil || slices.Contains(issue.Labels, github.PartiallyAddressedLabel)
+		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference
 		if issue.AuthorIsHuman {
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
@@ -1119,6 +1133,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
+		it.BaseRef = pr.BaseRef
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
 		if it.AuthorKindSource == authorKindSrcLabel {
 			resp.AuthorKindLabels = true
@@ -1145,7 +1160,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		for _, it := range repoOpenItems(repo) {
 			switch {
 			case it.Kind == "issue" && !it.Sidelined:
-				addIssue(repoName, it.Issue, "", "")
+				addIssue(repoName, it.Issue, "", "", nil)
 			case it.Kind == "pr" && !it.Sidelined:
 				addPR(repoName, it.PR.pr, it.PR.verdict, "", "")
 			case it.Kind == "issue":
@@ -1153,7 +1168,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 				// bucket, the open items the first tracker never showed.
 				w := it.WorkIssue
 				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
-					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext}, w.Bucket, w.Reason)
+					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext, IsTracker: w.IsTracker, Children: w.Children}, w.Bucket, w.Reason, w.TrackerProgress)
 			default:
 				w := it.WorkPR
 				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
@@ -1486,6 +1501,7 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
 				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
 				lp.SentinelAlert, lp.SentinelReason, lp.Head = pr.SentinelAlert, pr.SentinelReason, pr.Head
+				lp.BaseRef = pr.BaseRef
 				if len(pr.Modifiers) > 0 {
 					lp.Modifiers = append([]string(nil), pr.Modifiers...)
 				}

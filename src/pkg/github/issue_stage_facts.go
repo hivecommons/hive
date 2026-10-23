@@ -19,6 +19,9 @@ import (
 // prStage resolves the covering PR's stage from the shared store (nil =
 // unknown), exactly as SyncIssueStageLabels passes it to IssueStageFor.
 func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) stageengine.Facts {
+	if in.Claim != nil && in.Claim.PRNumber > 0 && !in.Claim.MergedPR && in.Claim.Decision == "covered_by_open_pr" {
+		in.Bucket = workBucketClaimedByPR
+	}
 	owner, repo, _ := strings.Cut(strings.TrimSpace(in.Repo), "/")
 	f := stageengine.Facts{
 		Ref:    stageengine.Ref{Owner: owner, Repo: repo, Number: in.Number, Kind: stagelabels.IssueItem},

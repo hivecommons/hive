@@ -1872,6 +1872,8 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// A MERGED strong claim (#6867) never takes the valve: its work is on
 		// main, so there is no dead PR to release the issue from.
 		if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
+			issue.ClaimContext.Decision = "released_red_stale_pr"
+			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
 				logger.Info("releasing issue: claiming PR red+stale",
@@ -1927,7 +1929,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
-				logger.Info("keeping issue actionable: open PR weakly claims it",
+				logger.Info("keeping weak PR claim visible: issue staged as covered",
 					"repo", issue.Repo,
 					"issue", issue.Number,
 					"issue_title", issue.Title,

@@ -4353,6 +4353,10 @@ type RepoWorkIssue struct {
 	// github.Issue fields of the same name, copied as-is.
 	LinkedPRs    []IssueLinkedPR    `json:"linked_prs,omitempty"`
 	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
+	// Tracker metadata is retained for rows outside the actionable set.
+	IsTracker bool `json:"is_tracker,omitempty"`
+	// TrackerProgress is display-only checklist progress, never a parent-close signal.
+	TrackerProgress *IssueChildren `json:"tracker_progress,omitempty"`
 	// Children is Issue.Children, copied for the issue stage reconciler.
 	Children *IssueChildren `json:"children,omitempty"`
 	// RecheckAfter and OpsTracking are read from a blocked issue's body
@@ -4366,24 +4370,27 @@ type RepoWorkIssue struct {
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
+	progress := TrackerTaskProgress(issue.Body)
 	return RepoWorkIssue{
-		Repo:           issue.Repo,
-		Number:         issue.Number,
-		Title:          issue.Title,
-		Author:         issue.Author,
-		Labels:         append([]string(nil), issue.Labels...),
-		Assignees:      append([]string(nil), issue.Assignees...),
-		CreatedAt:      issue.CreatedAt,
-		UpdatedAt:      issue.UpdatedAt,
-		URL:            issue.URL,
-		Bucket:         bucket,
-		Reason:         reason,
-		ClaimKind:      issue.ClaimKind,
-		ClaimedBy:      issue.ClaimedBy,
-		ClaimPRStarted: issue.ClaimPRStarted,
-		LinkedPRs:      append([]IssueLinkedPR(nil), issue.LinkedPRs...),
-		ClaimContext:   issue.ClaimContext,
-		Children:       issue.Children,
+		Repo:            issue.Repo,
+		Number:          issue.Number,
+		Title:           issue.Title,
+		Author:          issue.Author,
+		Labels:          append([]string(nil), issue.Labels...),
+		Assignees:       append([]string(nil), issue.Assignees...),
+		CreatedAt:       issue.CreatedAt,
+		UpdatedAt:       issue.UpdatedAt,
+		URL:             issue.URL,
+		Bucket:          bucket,
+		Reason:          reason,
+		ClaimKind:       issue.ClaimKind,
+		ClaimedBy:       issue.ClaimedBy,
+		ClaimPRStarted:  issue.ClaimPRStarted,
+		LinkedPRs:       append([]IssueLinkedPR(nil), issue.LinkedPRs...),
+		ClaimContext:    issue.ClaimContext,
+		Children:        issue.Children,
+		TrackerProgress: progress,
+		IsTracker:       issue.IsTracker || progress != nil || issueHasLabel(issue.Labels, PartiallyAddressedLabel),
 	}
 }
 
@@ -4404,17 +4411,19 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		return RepoWorkIssue{Repo: repo, Labels: append([]string(nil), labels...), Bucket: bucket, Reason: reason}
 	}
 	return RepoWorkIssue{
-		Repo:      repo,
-		Number:    issue.GetNumber(),
-		Title:     issue.GetTitle(),
-		Author:    safeGetLogin(issue.GetUser()),
-		Labels:    append([]string(nil), labels...),
-		Assignees: extractAssignees(issue.Assignees),
-		CreatedAt: issue.GetCreatedAt().Time,
-		UpdatedAt: issue.GetUpdatedAt().Time,
-		URL:       issue.GetHTMLURL(),
-		Bucket:    bucket,
-		Reason:    reason,
+		Repo:            repo,
+		Number:          issue.GetNumber(),
+		Title:           issue.GetTitle(),
+		Author:          safeGetLogin(issue.GetUser()),
+		Labels:          append([]string(nil), labels...),
+		Assignees:       extractAssignees(issue.Assignees),
+		CreatedAt:       issue.GetCreatedAt().Time,
+		UpdatedAt:       issue.GetUpdatedAt().Time,
+		URL:             issue.GetHTMLURL(),
+		IsTracker:       isTracker(issue.GetTitle(), labels, issue.GetBody()) || issueHasLabel(labels, PartiallyAddressedLabel),
+		TrackerProgress: TrackerTaskProgress(issue.GetBody()),
+		Bucket:          bucket,
+		Reason:          reason,
 	}
 }
 
