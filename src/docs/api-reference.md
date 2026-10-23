@@ -11,17 +11,17 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/version` | Dashboard auth/session | Build/version metadata; includes `upgradeMarker` (`target`, `current`, `attempts`, `maxAttempts`, `failed`, `requestedAt`, `lastError`) while a self-upgrade is in flight or has failed ([#6765](https://github.com/hivecommons/hive/issues/6765)), the hub-delivered `upgradePolicy` (`hub_managed`, `spoke_managed`, `schedule`, `schedule_hour`, `schedule_timezone`, `schedule_weekday`, `paused`, `branch`, `channel`, `target_sha`, `target_resolved`, `armed_target`, and `next_update_at` — the hub's RFC3339 ETA for the next promotion into the `stable` channel, omitted when unknown ([#10256](https://github.com/hivecommons/hive/issues/10256))) when available, and an `autoUpdate` object (`enabled`, `state` — one of `disabled`/`up_to_date`/`behind`/`retrying`/`failed`/`unknown` — `healthy`, `period`, `targetBranch`, `targetCommit`, `currentCommit`, `commitsBehind`, `lastAttemptAt`, `lastError`, `detail`, and `nextUpdateAt` — the hub's RFC3339 ETA for the next update, omitted when unknown, disabled or paused ([#10257](https://github.com/hivecommons/hive/issues/10257))) that never reports a failed or unknown update as healthy ([#6962](https://github.com/hivecommons/hive/issues/6962), [#6963](https://github.com/hivecommons/hive/issues/6963)) | `pkg/dashboard/api.go:37` |
 | `GET` | `/api/version/release-notes` | Dashboard auth/session | Changelog gap between two revisions: `?from=<sha>&to=<channel-branch-tag-or-sha>` returns `{from:{sha,version?}, to:{sha,ref,version?}, sections:[{version,date,categories:{added,changed,fixed,security,deprecated}}], unreleased?, truncated, source, error?}` — the `CHANGELOG.md` release sections present at `to` and absent at `from`, newest first, plus (when `to` is not a release tag) the `changelog.d/` fragments new at `to` under an `Unreleased (in this build)` section. Fetch failures return `source: "unavailable"` with `error` rather than an error status; results are cached per (from, to) for an hour ([#11065](https://github.com/hivecommons/hive/issues/11065)) | `pkg/dashboard/api.go:38` |
 | `POST` | `/api/release-channel` | Owner only | Hosted spoke self-service release-channel selector; relays `stable`/`candidate`/`edge` to the hub's existing switch-branch endpoint with the spoke dashboard-token proof, and reports the requested channel as pending until the Deployment image lands | `pkg/dashboard/api.go:59` |
-| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:1435` |
-| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:1436` |
-| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:1437` |
-| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: ****** (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1443` |
-| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; `labelPresets[]` (`{key,label,description,labels[],states[]}`) lists the built-in label-filter presets for the Projects cards, led by `needs-human` whose `labels[]` are the effective hard-suppress labels plus `needs-signal` and the hold labels (#12172); accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip`; `agents[]` includes busy-pane visibility fields (`kicksUndeliverable`, `busySince`, `lastTranscriptActivity`, `condition`, `conditionMessage`) when a Working pane cannot accept kicks; `sla` (fleet) and `repos[].sla` (per repo) carry the Delivery SLA block derived from the lifecycle timeline with no extra GitHub calls: `windows.{7d,30d}.{open_to_triage,triage_to_start,start_to_pr,pr_to_merge,open_to_merge}` as `{p50_h,p95_h,n}` (hours, nearest-rank), `history[]` of up to 30 daily buckets `{day,start_to_pr_p50,pr_to_merge_p50,open_to_merge_p50,n_started,n_pr,n_merged}` persisted under `/data/sla-history.json`, `stale_in_progress[]` (`{number,repo,started_at,age_h,agent}` — issues carrying `hive/in-progress` longer than the agent claim TTL with no linked PR), `stale_count`, `merged_7d`, `claim_ttl_s` and, on the fleet block, the effective `targets` (`start_to_pr_h`, `pr_to_merge_h`, `open_to_merge_h`); `staleSince` and `repos[].countsStale` / `countsStaleSince` mark totals served from last-good figures — the previous enumeration (#13382) or the ForgeState cache's last-good counts (#13376) | `pkg/dashboard/server.go:1448` |
-| `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1449` |
-| `GET` | `/api/overview/issues.csv` | Dashboard auth/session | Cached Overview issue-band export as browser-compatible CSV; filters `band`, `repo`/`repos`, `stale`, and `held` are ANDed. | `pkg/dashboard/server.go:1450` |
-| `GET` | `/api/overview/issues.json` | Dashboard auth/session | Cached Overview issue-band export as typed JSON with `bands[]` metadata and row fields matching the CSV columns. | `pkg/dashboard/server.go:1451` |
-| `GET` | `/api/overview/prs.csv` | Dashboard auth/session | Cached Overview PR-band export as browser-compatible CSV; filters `band`, `repo`/`repos`, `stale`, and `held` are ANDed. | `pkg/dashboard/server.go:1452` |
-| `GET` | `/api/overview/prs.json` | Dashboard auth/session | Cached Overview PR-band export as typed JSON with `bands[]` metadata and row fields matching the CSV columns. | `pkg/dashboard/server.go:1453` |
-| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1454` |
+| `GET` | `/api/health` | Public | Basic health probe | `pkg/dashboard/server.go:1437` |
+| `GET` | `/api/health/deep` | Public | Deep health probe | `pkg/dashboard/server.go:1438` |
+| `GET` | `/api/livez` | Public | Kubernetes liveness probe | `pkg/dashboard/server.go:1439` |
+| `GET` | `/metrics` | Registered only when `HIVE_METRICS_ENABLED`; requires `Authorization: ****** (403 if the token is unset) | Prometheus metrics | `pkg/dashboard/server.go:1445` |
+| `GET` | `/api/status` | Dashboard auth/session | Dashboard aggregate status; `labelPresets[]` (`{key,label,description,labels[],states[]}`) lists the built-in label-filter presets for the Projects cards, led by `needs-human` whose `labels[]` are the effective hard-suppress labels plus `needs-signal` and the hold labels (#12172); accepts `?fields=a,b` for top-level selection and `?omit=repos` to drop heavy sections, and honors `Accept-Encoding: gzip`; `agents[]` includes busy-pane visibility fields (`kicksUndeliverable`, `busySince`, `lastTranscriptActivity`, `condition`, `conditionMessage`) when a Working pane cannot accept kicks; `sla` (fleet) and `repos[].sla` (per repo) carry the Delivery SLA block derived from the lifecycle timeline with no extra GitHub calls: `windows.{7d,30d}.{open_to_triage,triage_to_start,start_to_pr,pr_to_merge,open_to_merge}` as `{p50_h,p95_h,n}` (hours, nearest-rank), `history[]` of up to 30 daily buckets `{day,start_to_pr_p50,pr_to_merge_p50,open_to_merge_p50,n_started,n_pr,n_merged}` persisted under `/data/sla-history.json`, `stale_in_progress[]` (`{number,repo,started_at,age_h,agent}` — issues carrying `hive/in-progress` longer than the agent claim TTL with no linked PR), `stale_count`, `merged_7d`, `claim_ttl_s` and, on the fleet block, the effective `targets` (`start_to_pr_h`, `pr_to_merge_h`, `open_to_merge_h`); `staleSince` and `repos[].countsStale` / `countsStaleSince` mark totals served from last-good figures — the previous enumeration (#13382) or the ForgeState cache's last-good counts (#13376) | `pkg/dashboard/server.go:1450` |
+| `GET` | `/api/status/summary` | Dashboard auth/session | Compact agent/governor/budget status summary for pollers; honors `Accept-Encoding: gzip` | `pkg/dashboard/server.go:1451` |
+| `GET` | `/api/overview/issues.csv` | Dashboard auth/session | Cached Overview issue-band export as browser-compatible CSV; filters `band`, `repo`/`repos`, `stale`, and `held` are ANDed. | `pkg/dashboard/server.go:1452` |
+| `GET` | `/api/overview/issues.json` | Dashboard auth/session | Cached Overview issue-band export as typed JSON with `bands[]` metadata and row fields matching the CSV columns. | `pkg/dashboard/server.go:1453` |
+| `GET` | `/api/overview/prs.csv` | Dashboard auth/session | Cached Overview PR-band export as browser-compatible CSV; filters `band`, `repo`/`repos`, `stale`, and `held` are ANDed. | `pkg/dashboard/server.go:1454` |
+| `GET` | `/api/overview/prs.json` | Dashboard auth/session | Cached Overview PR-band export as typed JSON with `bands[]` metadata and row fields matching the CSV columns. | `pkg/dashboard/server.go:1455` |
+| `GET` | `/api/events` | Dashboard auth/session | Server-sent event stream | `pkg/dashboard/server.go:1456` |
 | `GET` | `/api/swarm` | Dashboard auth/session | Current swarm status: display name, duration, active repo, expiry, persisted prep metrics when available, and idle-unlock fields. | `pkg/dashboard/swarm.go:310` |
 | `POST` | `/api/swarm` | Owner only | Start a 24h repo swarm for a configured repo, returning 409 when another swarm is active and 423 when a previous swarm keeps the next swarm locked until enough agents are idle unless body `{"repo":"owner/name","force":true}` is used; saves the active record before repo prep, persists prep metrics, and announces the start to Discord when configured. | `pkg/dashboard/swarm.go:311` |
 | `DELETE` | `/api/swarm` | Owner only | End the active swarm, score issues closed and PRs merged in the window, append it to history, and announce the result to Discord when configured. | `pkg/dashboard/swarm.go:312` |
@@ -64,7 +64,7 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
 | `GET` | `/api/style` | Public | Sanitized custom dashboard CSS | `pkg/dashboard/api.go:39` |
-| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1515` |
+| `GET` | `/branding/custom.css` | Dashboard auth/session | Operator branding stylesheet override, read per request (see [branding](branding.md)) | `pkg/dashboard/server.go:1517` |
 | `GET` | `/api/snapshot/frame-ancestors` | Public | Snapshot framing allowlist | `pkg/dashboard/api.go:72` |
 | `GET` | `/api/snapshot` | Public | Snapshot data | `pkg/dashboard/api.go:73` |
 | `GET` | `/snapshot` | Public | Public read-only snapshot page | `pkg/dashboard/api.go:74` |
@@ -92,9 +92,9 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:47` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:48` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:49` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1455` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1456` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1457` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1457` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1458` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1459` |
 
 ## Configuration
 
@@ -589,7 +589,7 @@ always resolved server-side from the validated token.
 | `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:266` |
 | `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:267` |
 | `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:268` |
-| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1462` |
+| `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1464` |
 
 ## Hub SaaS
 
@@ -719,31 +719,31 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:528` |
 | `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:377` |
 | `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:519` |
-| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1734` |
-| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1735` |
-| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1675` |
-| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1676` |
-| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1684` |
-| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1685` |
-| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1686` |
-| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1687` |
+| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1736` |
+| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1737` |
+| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1677` |
+| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1678` |
+| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1686` |
+| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1687` |
+| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1688` |
+| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1689` |
 | `GET` | `/api/hub/evidence` | Hub admin | Read-only cross-hive evidence drill-down from each spoke's stored heartbeat `evidence` summary ([#12116](https://github.com/hivecommons/hive/issues/12116)); non-admins get `403`. Returns `spokes`, `reporting`, pooled `calibration` (bucket 0–5 → `{n, bad, rate, lo, hi}`; the hub view folds the six buckets into four reviewer-confidence ranges), `findings[]` (the plain-language *What this says* sentences, generated from the same fields; [#12456](https://github.com/hivecommons/hive/issues/12456)), `by_acmm_level` (`level`, `hives`, `merged_90d`, `revert_rate`, and `time_to_merge` — `median_of_hive_medians_s`, `hives`, `n` — the median of the level's per-hive median time-to-merge, omitted when no hive at the level reports one; [#12464](https://github.com/hivecommons/hive/issues/12464)), `family_false_approve_rate` (`same`/`cross`/`mixed`, hives classed by their reviewer vs author family sets), fleet `record_coverage` (merged PRs with an evidence record over `prs_merged_90d`), fleet panels ([#12370](https://github.com/hivecommons/hive/issues/12370)) `outcomes_by_author_kind[]` (`kind`, `hives`, `n`, `merged`, `reverted`, `merge_rate`, `revert_rate`), `write_counters[]` (`tier`, `hives`, `attempted`, `blocked`, `block_rate`) and `shadow_gate` (`review_gate` / `intent` → `held` / `passed` outcomes with `revert_rate`), each omitted while no spoke reports it and repeated per `by_acmm_level[]` row, and per hive `hives[]` with `acmm_level`, `prs_merged_90d`, `record_coverage`, `family_mix`, false-approve / false-block / revert rates, families, a calibration series the raw `counts` behind them (including `by_author_kind`) so the drill-down can re-pool a hive / ACMM-level selection client-side, and `criteria[]`: the per-axis criteria table derived hub-side from the quadrant criteria (`axis`, `label`, `scored`, `criteria[]` with `name`, `label`, `status` `met`/`unmet`/`not_reported`, `display`/`score` when measured, `reason` otherwise; offline, evidence-less or unscored hives are `not_reported`, never `unmet`; [#12463](https://github.com/hivecommons/hive/issues/12463)). Every rate is `{n, rate, lo, hi}` with a 95% Wilson interval; `rate`/`lo`/`hi` are null when `n` < 10. Window selection ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)): `?hours=24|168|720` pools each hive's matching heartbeat `windows` block instead of its 90-day block (any other or absent `hours` → 90 days); `?from=YYYY-MM-DD|RFC3339[&to=…]` (date-only `to` is inclusive, `to` defaults to now, `to` ≥ `from`, span ≤ 366 days, else `400`) is served from the smallest reported window that reaches back to `from` and flagged `window.approximate`. The response carries `window` (`hours`, `key`, `label`, `from`, `to`, `approximate`, `coverage_available` — `record_coverage` is only computed for the 90-day window because `prs_merged_90d` is a 90-day count), `window_unreported` and per-hive `window_unreported` for hives whose spoke predates per-window reporting. `?hive=<id>[,<id>…]` (repeatable) and `?level=<n>` restrict the registry server-side to those hives / that ACMM level before pooling. Hub admins open it from the Fleet quadrant card or its **🔬 Evidence** button ([#12117](https://github.com/hivecommons/hive/issues/12117)), pick a window (24h / 7d / 30d / 90d / custom), filter it by hive and ACMM level and read each section's ⓘ explainer; the per-hive author-kind revert counts behind the *Revert rate by author kind* panel are `hives[].counts.by_author_kind` ([#12326](https://github.com/hivecommons/hive/issues/12326)). Never consulted by merge decisions | `pkg/hub/evidence.go` |
 | `GET` | `/api/hub/evidence/report` | Hub admin | Plain-language report of the hub evidence view ([#12456](https://github.com/hivecommons/hive/issues/12456)), rendered server-side from the same `EvidenceView` as `/api/hub/evidence` so every figure reconciles with the modal; non-admins get `403`. Same `hours=` / `from=` / `to=` window and `hive=` / `level=` filter parameters. `format=md` (default, `text/markdown`) or `format=html` (standalone page, inline CSS, no scripts or external assets, hive names escaped); any other value → `400`. `download=1` sets `Content-Disposition: attachment; filename="hive-evidence-<hive|fleet>-<from>-<to>.md|html"`, otherwise inline. Sections: Summary (the generated findings), What we measured and why, The numbers, How to read these, What is not reported yet and why, Grade per section, footer link to `review-evidence.md`. `Cache-Control: no-store`. Read-only; never consulted by merge decisions | `pkg/hub/evidence_report.go` |
-| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1692` |
-| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1702` |
-| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1703` |
-| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1704` |
-| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1705` |
-| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1706` |
-| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1707` |
-| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1708` |
-| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1709` |
-| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1712` |
-| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1715` |
-| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1716` |
-| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1723` |
-| `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1724` |
-| `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1725` |
-| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1742` |
-| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1747` |
-| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1749` |
+| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1694` |
+| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1704` |
+| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1705` |
+| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1706` |
+| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1707` |
+| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1708` |
+| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1709` |
+| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1710` |
+| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1711` |
+| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1714` |
+| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1717` |
+| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1718` |
+| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1725` |
+| `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1726` |
+| `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1727` |
+| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1744` |
+| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1749` |
+| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1751` |
