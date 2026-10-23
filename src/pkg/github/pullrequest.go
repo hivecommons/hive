@@ -527,12 +527,19 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 	if expectedHeadSHA != "" || observedBaseSHA != "" {
 		inputs = map[string]string{"expected_head_sha": expectedHeadSHA, "observed_base_sha": observedBaseSHA}
 	}
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	observe := func(ctx context.Context) (effects.ExternalState, error) {
+		pr, _, getErr := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:reconcile_branch_update"), owner, repo, number)
+		if getErr != nil {
+			return effects.ExternalState{}, getErr
+		}
+		return BranchUpdateState(pr, expectedHeadSHA, owner+"/"+repo+"#"+strconv.Itoa(number)), nil
+	}
+	_, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindBranchUpdate,
 		Target: strconv.Itoa(number),
 		Inputs: inputs,
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		var opts *gh.PullRequestBranchUpdateOptions
 		if expectedHeadSHA != "" {
 			opts = &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHeadSHA)}
@@ -548,6 +555,22 @@ func (c *Client) updateBranch(ctx context.Context, repo string, number int, expe
 		return fmt.Errorf("updating branch for PR %s/%s#%d: %w", owner, repo, number, err)
 	}
 	return nil
+}
+
+// BranchUpdateState is the authoritative observation of a branch update the
+// mutation journal holds as unresolved. With an expected head, a PR whose head
+// has moved off it is the update having landed (or the branch having moved on,
+// which makes the same guarded update moot either way). With no expected head,
+// or a head still at it, the update is reported not applied: update-branch is
+// safe to repeat — GitHub answers an up-to-date branch with a refusal rather
+// than a second merge commit — so a retry cannot duplicate anything.
+func BranchUpdateState(pr *gh.PullRequest, expectedHeadSHA, provenance string) effects.ExternalState {
+	expected := strings.TrimSpace(expectedHeadSHA)
+	head := strings.TrimSpace(pr.GetHead().GetSHA())
+	if expected != "" && head != "" && !strings.EqualFold(head, expected) {
+		return effects.ExternalState{Applied: true, Provenance: provenance}
+	}
+	return effects.ExternalState{}
 }
 
 // findOpenPRForHead returns the open PR whose head branch matches, or nil. The

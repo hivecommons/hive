@@ -490,7 +490,8 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			created, _, err = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
 		}
 	} else {
-		_, err = effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+		provenance := owner + "/" + repoName + "#" + strconv.Itoa(req.Number)
+		_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 			Repo:   owner + "/" + repoName,
 			Kind:   effects.KindReviewSubmit,
 			Target: strconv.Itoa(req.Number),
@@ -501,10 +502,12 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, nowFn 
 			// replay. Without this the journal refused the second one as
 			// already applied and the request retried until quarantine.
 			Inputs: map[string]string{"event": apiEvent, "body": effects.StableDigest(body), "request": filepath.Base(path)},
-		}, func(ctx context.Context) (effects.Result, error) {
+		}, func(ctx context.Context) (effects.ExternalState, error) {
+			return c.observeReviewSubmit(ctx, owner, repoName, req.Number, body, "", provenance)
+		}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			var apiErr error
 			created, _, apiErr = c.client.PullRequests.CreateReview(ctx, owner, repoName, req.Number, reviewReq)
-			return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(req.Number)}, apiErr
+			return effects.Result{Provenance: provenance}, apiErr
 		})
 	}
 	if errors.Is(err, errReviseNotAllowlisted) {

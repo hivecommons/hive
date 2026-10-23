@@ -2242,13 +2242,20 @@ func classifyUpdateBranchError(err error, fork bool) updateBranchFailure {
 
 func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo string, number int, headSHA, reason string) error {
 	inputs := map[string]string{"expected_head_sha": headSHA, "reason": reason}
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+	observe := func(ctx context.Context) (effects.ExternalState, error) {
+		pr, _, getErr := c.gh.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:automerge_reconcile_branch_update"), owner, repo, number)
+		if getErr != nil {
+			return effects.ExternalState{}, getErr
+		}
+		return hgithub.BranchUpdateState(pr, headSHA, owner+"/"+repo+"#"+strconv.Itoa(number)), nil
+	}
+	_, err := effects.ExecuteReconciling(ctx, c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindBranchUpdate,
 		Target: strconv.Itoa(number),
 		Actor:  "automerge",
 		Inputs: inputs,
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		var opts *gh.PullRequestBranchUpdateOptions
 		if strings.TrimSpace(headSHA) != "" {
 			opts = &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(headSHA)}

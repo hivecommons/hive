@@ -2795,12 +2795,15 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
-	_, err = effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	provenance := owner + "/" + repoName + "#" + strconv.Itoa(number)
+	_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindReviewSubmit,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"event": "APPROVE", "head_sha": headSHA, "body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observeReviewSubmit(ctx, owner, repoName, number, body, headSHA, provenance)
+	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.PullRequests.CreateReview(ctx, owner, repoName, number, &gh.PullRequestReviewRequest{
 			CommitID: gh.Ptr(headSHA),
 			Body:     gh.Ptr(body),
@@ -2824,6 +2827,46 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		c.bindProwLgtm(ctx, owner, repoName, number, headSHA, queuedBy)
 	}
 	return nil
+}
+
+// observeReviewSubmit is the authoritative observation of a review submission
+// the mutation journal holds as unresolved: the earlier attempt applied when
+// the PR already carries a review with the same body (and, when commitID is
+// set, on the same commit). Bodies are compared after normalising line endings
+// and surrounding whitespace, which GitHub does not preserve byte-for-byte.
+func (c *Client) observeReviewSubmit(ctx context.Context, owner, repoName string, number int, body, commitID, provenance string) (effects.ExternalState, error) {
+	if c == nil || c.client == nil {
+		return effects.ExternalState{}, ErrNoGitHubClient
+	}
+	want := normalizeReviewBody(body)
+	if want == "" {
+		// Nothing distinguishes an empty-bodied review from anyone else's;
+		// leave the operation to the TTL expiry rather than guess.
+		return effects.ExternalState{}, errors.New("review has no body to match against")
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := c.client.PullRequests.ListReviews(WithRESTCaller(ctx, "hive:reconcile_review_submit"), owner, repoName, number, opts)
+		if err != nil {
+			return effects.ExternalState{}, err
+		}
+		for _, r := range reviews {
+			if commitID != "" && !strings.EqualFold(r.GetCommitID(), commitID) {
+				continue
+			}
+			if normalizeReviewBody(r.GetBody()) == want {
+				return effects.ExternalState{Applied: true, Provenance: provenance}, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return effects.ExternalState{}, nil
+		}
+		opts.Page = resp.NextPage
+	}
+}
+
+func normalizeReviewBody(body string) string {
+	return strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
 }
 
 // prowLgtmLabel is Prow's approval label; prowLgtmStatusContext is the

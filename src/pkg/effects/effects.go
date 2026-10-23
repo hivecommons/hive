@@ -107,6 +107,51 @@ func ExpireUnresolved(ctx context.Context, boundary Boundary, claim Claim, ttl t
 	return e.ExpireUnresolved(ctx, claim, ttl)
 }
 
+// DefaultUnresolvedTTL bounds how long an operation may stay unresolved when
+// its external state cannot be observed before ExecuteReconciling expires it
+// so a retry may run. It outlasts a single GitHub incident while keeping a
+// stuck entry from fencing identical requests for days.
+const DefaultUnresolvedTTL = time.Hour
+
+// ExecuteReconciling runs effect through boundary like Execute, but does not
+// leave an unresolved operation fencing retries forever. When the boundary
+// refuses with ErrNeedsReconciliation (an earlier attempt at the SAME logical
+// operation was journaled Unknown or never acknowledged), observe reads the
+// authoritative external state, the operation is resolved from it and the
+// same logical operation is replayed once: an applied observation replays as
+// idempotent success without running effect, a not-applied one runs it again.
+// When observe is nil or fails, the operation is expired to not-applied once
+// its last transition is older than ttl (DefaultUnresolvedTTL when zero) and
+// effect runs again; a younger entry keeps the refusal.
+func ExecuteReconciling(ctx context.Context, boundary Boundary, claim Claim, observe func(context.Context) (ExternalState, error), ttl time.Duration, effect func(context.Context) (Result, error)) (Result, error) {
+	out, err := Execute(ctx, boundary, claim, effect)
+	if !errors.Is(err, ErrNeedsReconciliation) {
+		return out, err
+	}
+	journalErr := err
+	lookupErr := errors.New("no external observation for " + claim.Kind)
+	if observe != nil {
+		var state ExternalState
+		if state, lookupErr = observe(ctx); lookupErr == nil {
+			if recErr := Reconcile(ctx, boundary, claim, state); recErr != nil {
+				return Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
+			}
+			return Execute(ctx, boundary, claim, effect)
+		}
+	}
+	if ttl <= 0 {
+		ttl = DefaultUnresolvedTTL
+	}
+	expired, expErr := ExpireUnresolved(ctx, boundary, claim, ttl)
+	if expErr != nil {
+		return Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v; expiry failed: %v)", journalErr, lookupErr, expErr)
+	}
+	if !expired {
+		return Result{}, fmt.Errorf("%w (reconciliation lookup failed: %v)", journalErr, lookupErr)
+	}
+	return Execute(ctx, boundary, claim, effect)
+}
+
 // Lookup is implemented by boundaries that journal effects and can report,
 // without running anything, whether claim's logical operation is already
 // applied. Callers use it to recognise an equivalent operation under a
