@@ -110,7 +110,20 @@ test('unknown stages and malformed items default to static', () => {
 
 test('CSS animates exactly the two moving buckets and respects reduced motion', () => {
   assert.ok(html.includes('.ham-seg.active { background: var(--amber); color: var(--surface-0); }'), 'bare lit rule has no animation');
-  assert.ok(html.includes('.ham-seg.active[data-motion="active"] { animation: ham-pulse'), 'active bucket pulses');
-  assert.ok(html.includes('.ham-seg.active[data-motion="needs-human"] { animation: ham-breathe-human'), 'needs-human bucket breathes');
-  assert.ok(/@media \(prefers-reduced-motion: reduce\) \{[^\n]*\.ham-seg\.active\[data-motion\] \{ animation: none; \}/.test(html), 'reduced motion silences both buckets');
+  assert.ok(html.includes('.ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse'), 'active bucket pulses');
+  assert.ok(html.includes('.ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human'), 'needs-human bucket breathes');
+  assert.ok(/@media \(prefers-reduced-motion: reduce\) \{[^\n]*\.ham-seg\.active\[data-motion\]::before \{ display: none; \}/.test(html), 'reduced motion removes the pulse overlay');
+});
+
+// The infinite pulses must stay on the compositor thread (#13764): only
+// opacity / transform inside the keyframes, never filter, box-shadow,
+// background(-color) or color, which force a main-thread restyle per frame.
+test('pulse keyframes animate only compositor-safe properties', () => {
+  for (const name of ['ham-pulse', 'ham-breathe-human']) {
+    const m = html.match(new RegExp('@keyframes ' + name + ' \\{([^\\n]*)\\}\\n'));
+    assert.ok(m, name + ' keyframes not found');
+    const props = Array.from(m[1].matchAll(/([a-z-]+)\s*:/g)).map(x => x[1]);
+    assert.ok(props.length > 0, name + ' has no declarations');
+    for (const prop of props) assert.ok(prop === 'opacity' || prop === 'transform', name + ' animates ' + prop);
+  }
 });

@@ -1,0 +1,1 @@
+- Hive activity monitor: the stage-chevron pulse and needs-human breathe now animate only the opacity of an overlay (compositor thread) instead of `filter` / `background` on the chevron, so an idle dashboard tab no longer restyles the page every frame.

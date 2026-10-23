@@ -42,8 +42,11 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`@keyframes ham-pulse`,
 		// The bare lit rule carries no animation: Open, Open · hold and Claimed are steady.
 		`.ham-seg.active { background: var(--amber); color: var(--surface-0); }`,
-		`.ham-seg.active[data-motion="active"] { animation: ham-pulse 1.6s ease-in-out infinite;`,
-		`.ham-seg.active[data-motion="needs-human"] { animation: ham-breathe-human`,
+		`.ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite;`,
+		`.ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human`,
+		// Compositor-safe (#13764): the infinite pulses animate only opacity on an overlay.
+		`@keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }`,
+		`@keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }`,
 		`@keyframes ham-breathe-human`,
 		`function stageTrackerMotion(item)`,
 		`.ham-seg.active.ham-open-hold`,

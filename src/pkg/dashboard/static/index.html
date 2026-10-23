@@ -1460,19 +1460,24 @@
     .ham-seg.blank { visibility: hidden; }
     .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
     /* Only the two moving buckets animate (see stageTrackerMotion): the hive
-       acting = gentle brightness pulse; waiting on a person = slower
-       amber→red breathe. A lit step with no data-motion (Open, Open · hold,
-       Claimed, …) is a steady fill. */
+       acting = gentle pulse; waiting on a person = slower amber→red breathe.
+       A lit step with no data-motion (Open, Open · hold, Claimed, …) is a
+       steady fill. The pulse lives on a ::before overlay that animates only
+       opacity, so it runs on the compositor thread; animating filter /
+       background on the segment itself forced a main-thread style+paint+
+       layerize pass of the page every vsync (#13764). ::after is the
+       movement effects' (flash / ripple / wash). */
     .ham-seg.active { background: var(--amber); color: var(--surface-0); }
-    .ham-seg.active[data-motion="active"] { animation: ham-pulse 1.6s ease-in-out infinite; }
-    .ham-seg.active[data-motion="needs-human"] { animation: ham-breathe-human 2.8s ease-in-out infinite; }
+    .ham-seg.active[data-motion]::before { content: ''; position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+    .ham-seg.active[data-motion="active"]::before { background: white; animation: ham-pulse 1.6s ease-in-out infinite; }
+    .ham-seg.active[data-motion="needs-human"]::before { background: var(--red); animation: ham-breathe-human 2.8s ease-in-out infinite; }
     .ham-seg.active.ham-open-hold { background: var(--yellow); color: var(--surface-0); }
     .ham-seg.active.ham-open-hold .ham-seg-t::before { content: '⏸'; margin-right: var(--sp-1); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
     .ham-active-ico { display: none; }
-    @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
-    @keyframes ham-breathe-human { 0%, 100% { background: var(--amber); } 50% { background: color-mix(in srgb, var(--amber) 45%, var(--red)); } }
+    @keyframes ham-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.3; } }
+    @keyframes ham-breathe-human { 0%, 100% { opacity: 0; } 50% { opacity: 0.55; } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
     /* Row actions: a left gutter holds the select checkbox and the ⋯ kebab.
        The gutter is part of every selectable row's markup and is always
@@ -1511,10 +1516,9 @@
     .ham-selbar[hidden] { display: none; }
     .ham-selbar .ham-sel-count { font-weight: var(--fw-semibold); color: var(--text); margin-right: var(--sp-2); }
     .ham-selbar .ham-chip[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
-    /* Reduced motion: no animation at all; the attribute selectors outrank
-       the bare .ham-seg.active rule, so they are silenced here explicitly and
+    /* Reduced motion: no animation at all — the pulse overlay is removed and
        a needs-human step keeps a steady red tint so it still stands out. */
-    @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } .ham-seg.active[data-motion] { animation: none; } .ham-seg.active[data-motion="needs-human"] { background: color-mix(in srgb, var(--amber) 45%, var(--red)); } }
+    @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } .ham-seg.active[data-motion]::before { display: none; } .ham-seg.active[data-motion="needs-human"] { background: color-mix(in srgb, var(--amber) 45%, var(--red)); } }
     @media (max-width: 1100px) {
       /* Keep the aligned progress strip compact; put its active step in a
          wrapping caption instead of squeezing actionable words into a chevron. */
