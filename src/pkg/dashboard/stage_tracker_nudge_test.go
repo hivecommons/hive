@@ -3,6 +3,8 @@ package dashboard
 import (
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 func TestStageTrackerNudgerCoalescesWithinInterval(t *testing.T) {
@@ -55,6 +57,26 @@ func TestStageTrackerETagIgnoresGeneratedAt(t *testing.T) {
 	now := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
 	s, _ := stageTrackerFixture(t, now)
 	status := s.status
+	// Drop the pre-merge-soak rows (PR 102 and issue 7, which mirrors it):
+	// their soak_remaining_seconds legitimately counts down with now, so
+	// they would move the ETag for a reason other than generated_at.
+	repo := status.Repos[0]
+	var prs []any
+	for _, raw := range repo.OpenPrs {
+		if pr, ok := raw.(FrontendPR); ok && pr.Number == 102 {
+			continue
+		}
+		prs = append(prs, raw)
+	}
+	var issues []any
+	for _, raw := range repo.ActionableIssues {
+		if is, ok := raw.(github.Issue); ok && is.Number == 7 {
+			continue
+		}
+		issues = append(issues, raw)
+	}
+	repo.OpenPrs, repo.ActionableIssues = prs, issues
+	status.Repos[0] = repo
 	_, etag1, at1, fresh1 := s.stageTrackerPayload(status, now)
 	s.invalidateStageTrackerCache()
 	later := now.Add(7 * time.Second)
