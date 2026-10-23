@@ -108,6 +108,13 @@ func TestStageTrackerRows(t *testing.T) {
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerWaitSince"),
 		jsFunc(t, html, "stageTrackerLabelFamily"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_FACET"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_LABELS"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_PATTERNS"),
+		jsFunc(t, html, "stageTrackerIsNeedsHumanLabel"),
+		jsFunc(t, html, "stageTrackerLabelHit"),
+		jsFunc(t, html, "stageTrackerLabelStageNumber"),
+		jsFunc(t, html, "stageTrackerLabelCompare"),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerFilterActive"),
 		jsFunc(t, html, "stageTrackerMatches"),
@@ -619,6 +626,13 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsFunc(t, html, "stageTrackerNeedsAttention"),
 		jsFunc(t, html, "stageTrackerWaitSince"),
 		jsFunc(t, html, "stageTrackerLabelFamily"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_FACET"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_LABELS"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_HUMAN_PATTERNS"),
+		jsFunc(t, html, "stageTrackerIsNeedsHumanLabel"),
+		jsFunc(t, html, "stageTrackerLabelHit"),
+		jsFunc(t, html, "stageTrackerLabelStageNumber"),
+		jsFunc(t, html, "stageTrackerLabelCompare"),
 		jsFunc(t, html, "stageTrackerNormalizeFilter"),
 		jsFunc(t, html, "stageTrackerFilterActive"),
 		jsFunc(t, html, "stageTrackerMatches"),
@@ -727,14 +741,21 @@ c = stageTrackerCountsText(stageTrackerPage([], F()), 5, 0);
 assert.strictEqual(c.showing, 'showing 0 of 0 (5 filtered out)');
 assert.strictEqual(c.header, '0 of 5 items · nothing needs attention');
 
-// Label facets: family labels always offered, others only when shared; selected chips stay.
+// Label facets: stage labels first by number, then everything else alpha;
+// every label in the snapshot is offered (no singleton filter); the
+// needs-human facet is absent when nothing matches it.
 let fac = stageTrackerLabelFacets(items, F());
-assert.deepStrictEqual(fac.chips.map(x => x.label), ['stage/010-actionable', 'stage/020-claimed', 'stage/050-review', 'stage/080-merge-gate', 'needs-rebase', 'author/clanker', 'author/hive', 'author/human', 'role/docs', 'bug']);
+assert.deepStrictEqual(fac.chips.map(x => x.label), ['stage/010-actionable', 'stage/020-claimed', 'stage/050-review', 'stage/080-merge-gate', 'author/clanker', 'author/hive', 'author/human', 'bug', 'needs-rebase', 'role/docs']);
+assert.deepStrictEqual(fac.all.map(x => x.label), fac.chips.map(x => x.label), 'nothing hidden below the chip limit');
+assert.strictEqual(fac.hidden, 0);
 assert.deepStrictEqual(fac.chips.find(x => x.label === 'author/clanker').count, 2);
 assert.ok(stageTrackerLabelFacets(items.concat([{ kind: 'pr', repo: 'a/b', number: 6, labels: ['do-not-merge/hold'] }]), F()).chips.some(x => x.label === 'do-not-merge/hold'), 'hold labels are offered even when only one item is held');
 fac = stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 6, labels: ['lonely'] }]), F({ labels: ['lonely'] }));
-assert.ok(fac.chips.some(x => x.label === 'lonely' && x.on), 'a selected single-item label is still offered so it can be cleared');
-assert.strictEqual(stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 7, labels: ['solo'] }]), F()).chips.some(x => x.label === 'solo'), false);
+assert.ok(fac.chips.some(x => x.label === 'lonely' && x.on), 'a selected single-item label is offered so it can be cleared');
+assert.ok(stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 7, labels: ['solo'] }]), F()).chips.some(x => x.label === 'solo'), 'single-item labels are offered too');
+fac = stageTrackerLabelFacets(items, F({ labels: ['gone'] }));
+assert.ok(fac.chips.some(x => x.label === 'gone' && x.on && x.count === 0), 'a selected label no item carries stays as a 0-count chip so it can be cleared');
+assert.strictEqual(fac.hidden, 0, 'a 0-count chip does not count as hidden');
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

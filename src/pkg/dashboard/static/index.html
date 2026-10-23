@@ -1334,7 +1334,26 @@
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
-    .ham-labels-more { align-self: center; font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-facet-chip { font-family: var(--font-ui); font-weight: var(--fw-semibold); }
+    .ham-facet-chip[aria-pressed="true"] { color: var(--status-attention); border-color: var(--status-attention); }
+    .ham-labels-more { font-family: var(--font-ui); color: var(--text-faint); border-style: dashed; }
+    /* Facet modal (hive-dialog + .modal-scroll recipe; token-only, ADR-0018). */
+    .ham-facet-dialog { width: 560px; }
+    .ham-facet-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-4); }
+    .ham-facet-tools .ham-facet-search { flex: 1 1 14em; width: auto; }
+    .ham-facet-summary { font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+    .ham-facet-list { white-space: normal; padding-right: var(--sp-2); }
+    .ham-facet-group + .ham-facet-group { margin-top: var(--sp-4); }
+    .ham-facet-group-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); position: sticky; top: 0; background: var(--panel); color: var(--muted); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; padding: var(--sp-1) 0; }
+    .ham-facet-group-hint { text-transform: none; letter-spacing: normal; font-weight: var(--fw-medium); font-family: var(--font-mono); color: var(--text-faint); }
+    .ham-facet-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-1) var(--sp-2); border-radius: var(--r-sm); cursor: pointer; color: var(--text); font-size: var(--fs-sm); }
+    .ham-facet-row:hover { background: var(--panel-strong); }
+    .ham-facet-row[hidden] { display: none; }
+    .ham-facet-row .ham-facet-check { flex: 0 0 auto; margin: 0; accent-color: var(--accent); }
+    .ham-facet-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .ham-facet-mono { font-family: var(--font-mono); }
+    .ham-facet-empty { color: var(--text-faint); font-size: var(--fs-sm); padding: var(--sp-3) var(--sp-2); }
+    .ham-facet-empty[hidden] { display: none; }
     .ham-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: var(--sp-3); }
     .ham-meta-foot { margin: var(--sp-3) 0 0; }
     .ham-meta:empty { display: none; }
@@ -13594,11 +13613,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_PAGE_SIZES = [25, 50, 100];
     const STAGE_TRACKER_DEFAULT_PAGE_SIZE = 50;
     const STAGE_TRACKER_LABEL_CHIP_LIMIT = 24;
+    // Selected label facets also persist on their own key (same mechanism
+    // as hive.tracker.repochip / hive.tracker.group) so the pick survives a
+    // filter reset of the older blob and can be read by other surfaces.
+    const STAGE_TRACKER_LABELS_KEY = 'hive.tracker.labels';
+    // "Needs human (any)": one synthetic facet that matches an item carrying
+    // ANY label a person has to act on. The id lives in f.labels beside real
+    // labels ('@' cannot start a GitHub label, so it never collides); the
+    // facet modal shows the expansion under a group header so operators can
+    // see what it covers. Exact names first, then the prefix / suffix rules
+    // that pick up future stage labels of the same kinds.
+    const STAGE_TRACKER_NEEDS_HUMAN_FACET = '@needs-human';
+    const STAGE_TRACKER_NEEDS_HUMAN_LABELS = ['needs-human', 'stage/045-needs-decision', 'stage/085-needs-decision', 'stage/071-needs-author', 'sentinel-alert'];
+    const STAGE_TRACKER_NEEDS_HUMAN_PATTERNS = [/^needs-human/, /needs-decision$/, /needs-author$/];
     const STAGE_TRACKER_CLOCK_MS = 10000;
     const STAGE_TRACKER_AGE_MS = { '1h': 3600000, '1d': 86400000, '1w': 604800000 };
     const STAGE_TRACKER_ATTENTION_STAGES = [45, 71, 72, 85, 90];
-    // Label families a chip row is built from, in display order; other
-    // labels follow when at least two items carry them.
+    // Label families: chips from one family OR together, families AND
+    // together (stageTrackerMatches). The chip row itself is ordered stage
+    // labels by number, then everything else alphabetically.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/', 'hold', 'on-hold', 'do-not-merge', 'hive-pause/'];
     const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
     // Repo chip + group-by-repo. The chip before an item's number names its
@@ -14593,6 +14626,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return '';
     }
 
+    // Is this label one a person has to act on (the "Needs human (any)" set)?
+    function stageTrackerIsNeedsHumanLabel(label) {
+      const l = String(label || '').toLowerCase();
+      return STAGE_TRACKER_NEEDS_HUMAN_LABELS.indexOf(l) >= 0 || STAGE_TRACKER_NEEDS_HUMAN_PATTERNS.some(re => re.test(l));
+    }
+    // Does a lower-cased label Set satisfy one selected facet? Real labels
+    // match by name; the synthetic needs-human facet by any member label.
+    function stageTrackerLabelHit(have, sel) {
+      if (sel === STAGE_TRACKER_NEEDS_HUMAN_FACET) { for (const l of have) if (stageTrackerIsNeedsHumanLabel(l)) return true; return false; }
+      return have.has(sel);
+    }
+    // Chip row / facet modal order: stage/NNN-* first by the number, then
+    // every other label alphabetically, case-insensitive.
+    function stageTrackerLabelStageNumber(label) {
+      const m = /^stage\/(\d+)/.exec(String(label || '').toLowerCase());
+      return m ? Number(m[1]) : NaN;
+    }
+    function stageTrackerLabelCompare(a, b) {
+      const na = stageTrackerLabelStageNumber(a), nb = stageTrackerLabelStageNumber(b);
+      if (!isNaN(na) && !isNaN(nb)) return (na - nb) || String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+      if (!isNaN(na)) return -1;
+      if (!isNaN(nb)) return 1;
+      return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+    }
+
     // Normalise a filter object: unknown values fall back to the default.
     function stageTrackerNormalizeFilter(raw) {
       const d = stageTrackerDefaultFilter();
@@ -14635,7 +14693,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const have = new Set((Array.isArray(item.labels) ? item.labels : []).map(l => String(l).toLowerCase()));
         const byFamily = {};
         f.labels.forEach(l => { const fam = stageTrackerLabelFamily(l) || l; (byFamily[fam] = byFamily[fam] || []).push(l); });
-        for (const fam in byFamily) if (!byFamily[fam].some(l => have.has(l))) return false;
+        for (const fam in byFamily) if (!byFamily[fam].some(l => stageTrackerLabelHit(have, l))) return false;
       }
       if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
       if (f.attention && !stageTrackerNeedsAttention(item)) return false;
@@ -14694,18 +14752,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { rows: (rows || []).slice(from ? from - 1 : 0, to), page, pages, from, to, total, size: f.size };
     }
 
-    // Label chips: every label of a known family, then other labels carried
-    // by two or more items, most common first; selected labels always stay.
+    // Label facets. `all` is every label on any item in the snapshot (stage
+    // labels by number, then alpha); `chips` is the inline row — the
+    // synthetic "Needs human (any)" facet when it matches anything, then the
+    // first STAGE_TRACKER_LABEL_CHIP_LIMIT labels, plus any selected label so
+    // a pick never disappears; `hidden` is how many `all` entries the row
+    // left out (the "+N more" button opens the modal that lists them all).
     function stageTrackerLabelFacets(items, f) {
       f = stageTrackerNormalizeFilter(f);
       const counts = {};
-      (items || []).forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
-      const famRank = l => { const i = STAGE_TRACKER_LABEL_FAMILIES.indexOf(stageTrackerLabelFamily(l)); return i < 0 ? STAGE_TRACKER_LABEL_FAMILIES.length : i; };
-      const all = Object.keys(counts).filter(l => f.labels.indexOf(l) >= 0 || stageTrackerLabelFamily(l) || counts[l] > 1)
-        .sort((a, b) => (famRank(a) - famRank(b)) || (counts[b] - counts[a]) || a.localeCompare(b));
+      let needsHumanCount = 0;
+      (items || []).forEach(it => {
+        const have = new Set((Array.isArray(it.labels) ? it.labels : []).map(l => String(l).toLowerCase()));
+        have.forEach(k => { counts[k] = (counts[k] || 0) + 1; });
+        if (stageTrackerLabelHit(have, STAGE_TRACKER_NEEDS_HUMAN_FACET)) needsHumanCount++;
+      });
+      const on = l => f.labels.indexOf(l) >= 0;
+      const all = Object.keys(counts).sort(stageTrackerLabelCompare).map(l => ({ label: l, count: counts[l], on: on(l) }));
+      const needsHuman = {
+        label: STAGE_TRACKER_NEEDS_HUMAN_FACET, text: 'Needs human (any)', count: needsHumanCount, on: on(STAGE_TRACKER_NEEDS_HUMAN_FACET),
+        expands: all.filter(x => stageTrackerIsNeedsHumanLabel(x.label)).map(x => x.label),
+      };
       const shown = all.slice(0, STAGE_TRACKER_LABEL_CHIP_LIMIT);
-      f.labels.forEach(l => { if (counts[l] && shown.indexOf(l) < 0) shown.push(l); });
-      return { chips: shown.map(l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 })), hidden: Math.max(0, all.length - shown.length) };
+      all.slice(STAGE_TRACKER_LABEL_CHIP_LIMIT).forEach(x => { if (x.on) shown.push(x); });
+      // A selected label no item carries any more stays as a 0-count chip so it can be cleared.
+      f.labels.forEach(l => { if (l !== STAGE_TRACKER_NEEDS_HUMAN_FACET && !counts[l]) shown.push({ label: l, count: 0, on: true }); });
+      const chips = (needsHuman.count || needsHuman.on) ? [needsHuman].concat(shown) : shown;
+      const hidden = all.filter(x => shown.indexOf(x) < 0).length;
+      return { chips, all, needsHuman, hidden };
     }
 
     // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
@@ -14752,10 +14826,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function stageTrackerLoadFilter() {
       try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      const labels = stageTrackerLoadLabels();
+      if (labels) _stageTrackerFilter.labels = labels;
       _stageTrackerFilter.page = 1;
     }
     function stageTrackerSaveFilter() {
       try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
+      stageTrackerSaveLabels(_stageTrackerFilter.labels);
+    }
+    // Selected label facets under hive.tracker.labels; null when unset or unreadable.
+    function stageTrackerLoadLabels() {
+      try {
+        const raw = localStorage.getItem(STAGE_TRACKER_LABELS_KEY);
+        if (raw == null) return null;
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : null;
+      } catch { return null; }
+    }
+    function stageTrackerSaveLabels(labels) {
+      try { localStorage.setItem(STAGE_TRACKER_LABELS_KEY, JSON.stringify(Array.isArray(labels) ? labels : [])); } catch {}
     }
     // Repo chip / group settings and the per-repo collapsed set (localStorage).
     function stageTrackerRepoChipSetting() {
@@ -14832,6 +14921,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
         case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
         case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
+        case 'labels': f.labels = (Array.isArray(value) ? value : []).map(l => String(l || '').toLowerCase()).filter(Boolean); break;
         case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
         case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
       }
@@ -14862,8 +14952,97 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function stageTrackerLabelsHtml(facets) {
       if (!facets.chips.length) return '';
-      return facets.chips.map(c => `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`).join('')
-        + (facets.hidden ? `<span class="ham-labels-more" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
+      const chip = c => {
+        const synthetic = c.label === STAGE_TRACKER_NEEDS_HUMAN_FACET;
+        const text = synthetic ? (c.text || 'Needs human (any)') : c.label;
+        const tip = synthetic
+          ? (c.on ? 'Remove the needs-human facet' : 'Items carrying any needs-human label') + ' (' + (c.expands && c.expands.length ? c.expands.join(', ') : STAGE_TRACKER_NEEDS_HUMAN_LABELS.join(', ')) + ')'
+          : (c.on ? 'Remove label filter ' : 'Filter by label ') + c.label;
+        return `<button type="button" class="ham-chip ham-label-chip${synthetic ? ' ham-facet-chip' : ''}" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc(tip)}">${esc(text)}<span class="ham-chip-n">${c.count}</span></button>`;
+      };
+      return facets.chips.map(chip).join('')
+        + (facets.hidden ? `<button type="button" class="ham-chip ham-labels-more" data-action="hamLabelsMore" data-stop="1" aria-haspopup="dialog" title="${esc('Pick from all ' + facets.all.length + ' labels')}">+${facets.hidden} more…</button>` : '');
+    }
+
+    // The facet modal (shared .hive-dialog + .modal-scroll recipe, so it is a
+    // full-screen sheet on phones): every label in the snapshot in chip-row
+    // order with a count and a checkbox, the needs-human facet under a
+    // header listing what it expands to, a search box, Clear and Apply. The
+    // draft selection lives in the overlay (never in the chip row), so the
+    // 1 Hz renderStageTracker publish — which only rewrites
+    // #activity-monitor-labels and the keyed rows — cannot reset it.
+    function stageTrackerFacetText(x) {
+      return x.label === STAGE_TRACKER_NEEDS_HUMAN_FACET ? (x.text || 'Needs human (any)') : x.label;
+    }
+    // Does a facet row survive the search box? The needs-human row also
+    // matches when the query hits one of the labels it expands to.
+    function stageTrackerFacetHit(x, q) {
+      if (!q) return true;
+      return stageTrackerFacetText(x).toLowerCase().indexOf(q) >= 0 || (x.label === STAGE_TRACKER_NEEDS_HUMAN_FACET && (x.expands || []).some(l => l.indexOf(q) >= 0));
+    }
+    function stageTrackerFacetRowHtml(x, draft, q) {
+      const synthetic = x.label === STAGE_TRACKER_NEEDS_HUMAN_FACET;
+      const text = stageTrackerFacetText(x);
+      const hit = stageTrackerFacetHit(x, q);
+      // The input is wrapped by its label, so no id/for pair is needed.
+      return `<label class="ham-facet-row"${hit ? '' : ' hidden'}><input type="checkbox" class="ham-facet-check" data-label="${esc(x.label)}"${draft.indexOf(x.label) >= 0 ? ' checked' : ''}><span class="ham-facet-name${synthetic ? '' : ' ham-facet-mono'}">${esc(text)}</span><span class="ham-chip-n">${x.count}</span></label>`;
+    }
+    function stageTrackerFacetModalHtml(facets, draft, q) {
+      q = String(q || '').trim().toLowerCase();
+      draft = Array.isArray(draft) ? draft : [];
+      const nh = facets.needsHuman;
+      const nhRows = nh && (nh.count || nh.on || nh.expands.length) ? [nh] : [];
+      const nhHint = nh ? 'expands to: ' + (nh.expands.length ? nh.expands.join(', ') : STAGE_TRACKER_NEEDS_HUMAN_LABELS.join(', ')) : '';
+      const stage = facets.all.filter(x => !isNaN(stageTrackerLabelStageNumber(x.label)));
+      const other = facets.all.filter(x => isNaN(stageTrackerLabelStageNumber(x.label)));
+      const group = (title, rows, hint) => rows.length ? `<div class="ham-facet-group"><div class="ham-facet-group-title">${esc(title)}${hint ? `<span class="ham-facet-group-hint">${esc(hint)}</span>` : ''}</div>${rows.map(x => stageTrackerFacetRowHtml(x, draft, q)).join('')}</div>` : '';
+      const body = group('Needs human', nhRows, nhHint) + group('Stage labels', stage) + group('Other labels', other);
+      const total = nhRows.length + facets.all.length;
+      const visible = nhRows.concat(facets.all).filter(x => stageTrackerFacetHit(x, q)).length;
+      return `<div class="hive-dialog ham-facet-dialog" role="dialog" aria-modal="true" aria-labelledby="ham-facet-title">
+          <div id="ham-facet-title" class="hive-dialog-title">Filter by label</div>
+          <div class="ham-facet-tools"><input type="search" class="hive-dialog-input ham-facet-search" placeholder="Search labels…" aria-label="Search labels" autocomplete="off" spellcheck="false" value="${esc(q)}" data-initial-focus><span class="ham-facet-summary" aria-live="polite">${draft.length} selected · ${visible} of ${total} shown</span></div>
+          <div class="hive-dialog-body long modal-scroll ham-facet-list">${body || '<div class="ham-facet-empty">No labels on any tracked item.</div>'}<div class="ham-facet-empty ham-facet-nomatch"${visible || !total ? ' hidden' : ''}>No label matches the search.</div></div>
+          <div class="hive-dialog-buttons">
+            <button type="button" class="hv-btn btn-secondary ham-facet-clear" title="Untick every label (applies when you press Apply)">Clear</button>
+            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
+            <button type="button" class="hv-btn btn-primary hive-dialog-btn primary">Apply</button>
+          </div></div>`;
+    }
+    function hamLabelsMore() {
+      const d = _stageTracker;
+      if (!d || !Array.isArray(d.items)) return;
+      const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      const facets = stageTrackerLabelFacets(d.items, f);
+      const draft = f.labels.slice();
+      const overlay = document.createElement('div');
+      overlay.className = 'hive-dialog-overlay';
+      hiveRememberModalOpen(overlay);
+      overlay.innerHTML = stageTrackerFacetModalHtml(facets, draft, '');
+      document.body.appendChild(overlay);
+      // Re-render only the rows on search / Clear so the dialog, its focus
+      // and the ticks stay put; checkbox changes update the draft in place.
+      const refresh = q => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = stageTrackerFacetModalHtml(facets, draft, q);
+        const list = overlay.querySelector('.ham-facet-list'), nextList = wrap.querySelector('.ham-facet-list');
+        if (list && nextList) list.innerHTML = nextList.innerHTML;
+        const sum = overlay.querySelector('.ham-facet-summary'), nextSum = wrap.querySelector('.ham-facet-summary');
+        if (sum && nextSum) sum.textContent = nextSum.textContent;
+      };
+      const search = overlay.querySelector('.ham-facet-search');
+      if (search) search.addEventListener('input', () => refresh(search.value));
+      overlay.addEventListener('change', e => {
+        const cb = e.target && e.target.classList && e.target.classList.contains('ham-facet-check') ? e.target : null;
+        if (!cb) return;
+        const l = cb.dataset.label, i = draft.indexOf(l);
+        if (cb.checked && i < 0) draft.push(l); else if (!cb.checked && i >= 0) draft.splice(i, 1);
+        const sum = overlay.querySelector('.ham-facet-summary');
+        if (sum) sum.textContent = sum.textContent.replace(/^\d+ selected/, draft.length + ' selected');
+      });
+      const clear = overlay.querySelector('.ham-facet-clear');
+      if (clear) clear.addEventListener('click', () => { draft.length = 0; refresh(search ? search.value : ''); });
+      hiveWireDialog(overlay, () => {}, null, '.primary', '.cancel', close => { hamFilter('labels', draft.slice()); close(true); });
     }
 
     function stageTrackerPagerHtml(page) {
