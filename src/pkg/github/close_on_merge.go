@@ -439,7 +439,9 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber) {
 		res.WrongRefs = true
 		if opts.Logger != nil {
-			opts.Logger.Warn("close-on-merge: PR used non-closing Refs for its claimed issue",
+			// This is PR metadata, not a failed runtime operation. WARN would
+			// turn repeated sweeps into an unclassified fleet self-report.
+			opts.Logger.Info("close-on-merge: PR used non-closing Refs for its claimed issue",
 				"repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "author", author)
 		}
 	}

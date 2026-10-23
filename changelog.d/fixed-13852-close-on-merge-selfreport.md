@@ -1,0 +1,1 @@
+- Close-on-merge logs non-closing PR references as informational diagnostics so repeated sweeps do not file spurious runtime-error self-reports ([#13852](https://github.com/hivecommons/hive/issues/13852)).

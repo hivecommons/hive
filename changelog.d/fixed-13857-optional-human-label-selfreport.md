@@ -1,0 +1,1 @@
+- Missing optional human-decision labels now log an informational notice instead of a warning, preventing false fleet self-reports across held PRs while preserving warnings for API and label-write failures and leaving the review marker intact ([#13857](https://github.com/hivecommons/hive/issues/13857)).

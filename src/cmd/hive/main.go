@@ -10323,10 +10323,20 @@ func applyHumanDecisionLabels(ctx context.Context, cfg *config.Config, ghClient 
 			continue
 		}
 		if err := ghClient.ApplyHumanDecisionLabel(ctx, hold.Repo, hold.Number, label); err != nil {
-			// Warn once per PR; the hold is re-evaluated every cycle (#13677).
+			// Missing optional labels are configuration notices, not runtime
+			// failures: first warnings across different PRs can trigger fleet
+			// reports even with per-PR deduplication (#13857).
 			key := prWarnKey(hold.Repo, hold.Number)
+			missing := errors.Is(err, github.ErrHumanDecisionLabelMissing)
+			if missing {
+				key += ":missing-label"
+			}
 			failing[key] = struct{}{}
-			logger.Log(ctx, humanLabelWarn.level(key), "human decision label not applied; review marker still stands",
+			level := humanLabelWarn.level(key)
+			if missing && level == slog.LevelWarn {
+				level = slog.LevelInfo
+			}
+			logger.Log(ctx, level, "human decision label not applied; review marker still stands",
 				"repo", hold.Repo, "pr", hold.Number, "label", label, "error", err)
 			continue
 		}
