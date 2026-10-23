@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -206,12 +207,12 @@ func validCommonsOrigin(r *http.Request) bool {
 
 func (s *commonsWebServer) authorized(r *http.Request) bool {
 	token := strings.TrimSpace(r.Header.Get(commonsWebAuthHeader))
-	return token != "" && token == s.token
+	return token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
 }
 
 func (s *commonsWebServer) servePage(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
-	if token != s.token {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
 		http.Error(w, "open the tokenized URL printed by hivectl hives web", http.StatusUnauthorized)
 		return
 	}
