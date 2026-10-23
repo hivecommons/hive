@@ -48,10 +48,13 @@ const (
 	reasonNoHoldQueue   = "hold and review queues not reported"
 	reasonNoSLA         = "SLA counts not reported"
 	reasonNoTimeToMerge = "spokes do not report time-to-merge yet"
-	reasonNoLaunchCost  = "per-launch cost stays on the spoke's launch-cost API; not on the heartbeat yet"
-	reasonNoHoldLift    = "hold-lift latency is not reported yet"
-	reasonNoReturn      = "contributor return rate is not reported yet"
-	reasonNoPulse       = "no direct feedback signal exists yet; a thumbs up/down on agent output would feed it"
+	// reasonNoActivityForSource: work source is a setting, so it only counts
+	// once the hive has reported activity for it to describe.
+	reasonNoActivityForSource = "no merges or PR counts reported yet, so the work source alone cannot score the axis"
+	reasonNoLaunchCost        = "per-launch cost stays on the spoke's launch-cost API; not on the heartbeat yet"
+	reasonNoHoldLift          = "hold-lift latency is not reported yet"
+	reasonNoReturn            = "contributor return rate is not reported yet"
+	reasonNoPulse             = "no direct feedback signal exists yet; a thumbs up/down on agent output would feed it"
 )
 
 // trustCriteria: how much rope the humans have given this hive AND whether the
@@ -292,11 +295,18 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 		out = append(out, unmeasured(critEngagement, "no contributors enrolled"))
 	}
 
-	// WorkSource is empty for the default GitHub Issues source, so this is
-	// always measured: an empty string is a real answer.
-	if in.workSource != "" && in.workSource != "issues" {
+	// WorkSource is empty for the default GitHub Issues source, so an empty
+	// string is a real answer — but only once the hive has reported some
+	// activity. On its own it is configuration, not throughput: a hive that
+	// has reported nothing else would otherwise score Productivity 0 or 100
+	// from this one setting, and a fleet of such hives would drag the median
+	// to 0 (the "PROD 0 while the median hive ships 0.5 merges/week" bug).
+	switch {
+	case in.mergesPerWeek == nil && in.prsMerged90d == nil:
+		out = append(out, unmeasured(critWorkSource, reasonNoActivityForSource))
+	case in.workSource != "" && in.workSource != "issues":
 		out = append(out, measured(critWorkSource, 1, "finds its own work", ""))
-	} else {
+	default:
 		out = append(out, measured(critWorkSource, 0, "works only human-filed issues", "All work is human-filed — let the scanner find work"))
 	}
 

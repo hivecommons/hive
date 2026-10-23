@@ -228,35 +228,47 @@ func TestStatusFilterBarShowsChipsOnlyWhileNarrowed(t *testing.T) {
 	}
 }
 
-// TestFleetQuadrantScopeLabelNeverClaimsInView: the fleet median is computed
-// server-side over every hive and does not follow the table's filters, so the
-// card says "all N hives" and, while the table is narrowed, says the filters
-// do not apply — instead of "N hives in view" beside a "Showing 1 of 57" table.
-func TestFleetQuadrantScopeLabelNeverClaimsInView(t *testing.T) {
+// TestFleetQuadrantScopeLabelNamesActivePopulation: the fleet median is
+// computed server-side over the ACTIVE hives (assigned and online) and does
+// not follow the table's filters, so the card says "N active hives", how many
+// placeholders / offline hives were left out, and, while the table is
+// narrowed, that the filters do not apply — never "N hives in view" beside a
+// "Showing 1 of 57" table, and never "all 101 hives" when 54 are silent.
+func TestFleetQuadrantScopeLabelNamesActivePopulation(t *testing.T) {
 	src := strings.Join([]string{
 		activeFilterHarness(t),
-		"var plain = fleetQuadrantScopeLabel(99), one = fleetQuadrantScopeLabel(1);",
+		"var plain = fleetQuadrantScopeLabel({n: 47, excluded: 54}), one = fleetQuadrantScopeLabel({n: 1});",
+		"var all = fleetQuadrantScopeLabel({n: 99, excluded: 0});",
 		"_alertTypeFilter = 'advisory-stale';",
-		"var narrowed = fleetQuadrantScopeLabel(99);",
-		"result = {plain: plain, narrowed: narrowed, one: one};",
+		"var narrowed = fleetQuadrantScopeLabel({n: 47, excluded: 54});",
+		"result = {plain: plain, narrowed: narrowed, one: one, all: all};",
 	}, "\n")
-	var got struct{ Plain, Narrowed, One string }
+	var got struct{ Plain, Narrowed, One, All string }
 	runEvidenceJS(t, src, &got)
-	if got.Plain != "all 99 hives" {
+	if got.Plain != "47 active hives · 54 offline or unassigned excluded" {
 		t.Errorf("unfiltered scope label = %q", got.Plain)
 	}
-	if got.Narrowed != "all 99 hives (table filters not applied)" {
+	if got.Narrowed != "47 active hives · 54 offline or unassigned excluded (table filters not applied)" {
 		t.Errorf("narrowed scope label = %q", got.Narrowed)
 	}
-	if got.One != "all 1 hive" {
+	if got.One != "1 active hive" {
 		t.Errorf("singular scope label = %q", got.One)
 	}
-	header := jsFunc(t, "fleetQuadrantHeaderHTML")
-	if strings.Contains(header, "in view") {
-		t.Error("fleetQuadrantHeaderHTML still claims the median is over hives \"in view\"")
+	if got.All != "99 active hives" {
+		t.Errorf("nothing-excluded scope label = %q", got.All)
 	}
-	if !strings.Contains(header, "fleetQuadrantScopeLabel(") {
-		t.Error("fleetQuadrantHeaderHTML does not use fleetQuadrantScopeLabel for its hive count")
+	header := jsFunc(t, "fleetQuadrantHeaderHTML")
+	if strings.Contains(header, "in view") || strings.Contains(header, "'all '") {
+		t.Error("fleetQuadrantHeaderHTML still claims the median is over hives \"in view\" or \"all\" hives")
+	}
+	if !strings.Contains(header, "fleetQuadrantScopeLabel(q)") {
+		t.Error("fleetQuadrantHeaderHTML does not pass the fleet quadrant to fleetQuadrantScopeLabel")
+	}
+	if !strings.Contains(header, "quadrantSummaryHTML(q, true)") {
+		t.Error("fleet card must render every scored axis's summary, not only the weakest")
+	}
+	if !strings.Contains(header, "quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet', q.n)") {
+		t.Error("fleet axis tiles must receive the population so they can say \"n of N measured\"")
 	}
 }
 

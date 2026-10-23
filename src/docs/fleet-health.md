@@ -496,15 +496,27 @@ a reader can check any number by hand:
   left out of the average — it is never scored 0. An axis with no measured
   criterion is unscored and draws collapsed to the centre of the kite with a
   "—".
-- **The fleet card is the per-axis median across the hives in view**, with
-  `n` shown ("median of 61"). A median cannot be dragged by one runaway hive
+- **The fleet card is the per-axis median across the *active* hives** —
+  assigned (not an unassigned `available-*` placeholder slot) and online (the
+  same heartbeat-staleness flag the table's status column shows). The header
+  names that population ("47 active hives · 54 offline or unassigned
+  excluded"); a hive that is not reporting has nothing to say about the fleet,
+  and counting it would turn its silence into zeros. Per axis the median is
+  over the active hives that *measured* the axis, and each axis tile says so
+  ("47 of 61 measured"); a hive with no measured criterion on an axis never
+  enters that axis as a zero. A median cannot be dragged by one runaway hive
   the way the previous fleet mean could. Each hive's `delta` is against that
-  median.
+  same active-hive median.
 - **The ⓘ beside each axis label** opens the same explainer on the fleet card
   and in the per-hive hover: *What this covers* (each criterion with its
   current value, sub-score and weight, or its not-measured reason), *How it's
-  scored*, *What good looks like* and *What ours shows*. A one-line plain
-  summary of the weakest scored axis sits under the glyph.
+  scored*, *What good looks like* and *What ours shows*. Under the fleet glyph
+  there is one plain line per scored axis, weakest first — "Productivity 26:
+  median over 47 of 61 hives · merges per active repo per week 0.5
+  merges/repo/week (47 hives) · …" — and an axis at or below 50 also names the
+  criterion with the lowest median score, so a 0 is never shown without the
+  fact that produced it. The per-hive hover keeps the single line for its
+  weakest axis.
 
 Weights: ×3 is the criterion the axis is named for, ×2 a major signal, ×1
 supporting. "Measured when" states the input and its minimum sample. Linear
@@ -525,7 +537,7 @@ past either end clamp.
 | Productivity | Merges per active repo per week | Σ `repo_activity[].merges` / weeks / active repos; falls back to org-wide `prs_merged_90d` per enrolled repo | log 0.1 → 10 per week | ×3 | PR counts reported |
 | Productivity | Contributor-relay tasks (7d) | `tasks_completed_7d` | linear 0 → 20 | ×1 | relay reported |
 | Productivity | Contributors active | active / enrolled contributors | linear 0% → 100% | ×1 | contributors reported |
-| Productivity | Finds its own work | scanner-sourced vs human-filed | yes = 100, no = 0 | ×1 | always |
+| Productivity | Finds its own work | scanner-sourced vs human-filed | yes = 100, no = 0 | ×1 | merges or PR counts reported (a setting alone must not score the axis) |
 | Productivity | Items waiting on a human | hold labels + plans awaiting review | linear 20 → 0 | ×1 | queues reported |
 | Productivity | Items past SLA | `sla_violations` | linear 10 → 0 | ×1 | SLA counts reported |
 | Productivity | Time to merge | median open → merge | log 14 days → 0.5 day | ×2 | *not yet* — spokes do not report it |
@@ -547,6 +559,22 @@ percentile population, so a fleet where most spokes had not yet shipped the
 evidence heartbeat was declared "too small" everywhere. It is now scored for
 any hive that reports ten verdicts or six hive-state samples, and where it is
 still unscored the explainer says exactly which input is missing.
+
+Reading the merge-throughput curve: it is logarithmic from 0.1 to 10
+merges per active repo per week, so 0.1/week (one merge a quarter) scores 0,
+0.5/week scores 35, 1/week 50, 3/week 74 and 10/week 100. A hive shipping
+0.5 merges/repo/week is therefore a 35 on the headline criterion, not a 0 —
+a Productivity 0 on the fleet card used to come from counting silent hives,
+not from this curve.
+
+Why Productivity used to read 0 for the whole fleet while the card's own
+line said the median hive merged 0.5 merges/repo/week across 47 hives: the
+median ran over every row in the view (101, including 44 unassigned
+placeholders and 10 offline hives), and "Finds its own work" was always
+measured, so a hive that had reported nothing else still scored Productivity
+0 from that one setting. 54 zeros out of 101 made the median 0. The
+population is now the active hives only, and work source is unmeasured until
+the hive reports merges or PR counts.
 
 The quadrant is reporting only: it reads the heartbeat evidence summary
 (read-only, see above) and never feeds a merge decision.

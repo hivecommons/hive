@@ -373,7 +373,7 @@ func TestFleetMedianNotMean(t *testing.T) {
 	if c := criterionOf(t, tr, critRevert); c.Measured || c.Reason == "" {
 		t.Errorf("a criterion no hive measured must be unmeasured with a reason on the fleet, got %+v", c)
 	}
-	if !strings.Contains(tr.Summary, "median of 10 hives") {
+	if !strings.Contains(tr.Summary, "median over 10 of 10 hives") {
 		t.Errorf("fleet summary = %q", tr.Summary)
 	}
 	sat, _ := axisOf(fleet, AxisSatisfaction)

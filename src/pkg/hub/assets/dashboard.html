@@ -397,6 +397,7 @@
     .quadrant-axis-label { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
     .quadrant-axis-score { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
     .quadrant-axis-score.is-unscored { color: var(--muted); }
+    .quadrant-axis-coverage { font-size: var(--fs-2xs); color: var(--muted); white-space: nowrap; }
     .quadrant-info { background: none; border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); width: 1.4em; height: 1.4em; padding: var(--sp-0); font: inherit; font-size: var(--fs-2xs); line-height: 1; cursor: pointer; flex-shrink: 0; text-transform: none; letter-spacing: 0; }
     .quadrant-info:hover, .quadrant-info:focus-visible, .quadrant-info[aria-expanded="true"] { color: var(--hub-dashboard-accent); border-color: var(--hub-dashboard-accent); outline: none; }
     .quadrant-explainer { position: absolute; left: 0; top: 100%; z-index: 70; width: max-content; max-width: 26rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-xs); color: var(--text); line-height: 1.45; box-shadow: var(--shadow-lg, 0 8px 24px var(--overlay-scrim)); text-align: left; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: default; }
@@ -1235,27 +1236,44 @@
     }
 
     /* quadrantAxisTileHTML is one labelled axis (label + ⓘ + score) with its
-       hidden explainer; shared by the fleet card and the per-hive hover. */
-    function quadrantAxisTileHTML(a, prefix) {
+       hidden explainer; shared by the fleet card and the per-hive hover.
+       population is the fleet card's active-hive count: when given, the tile
+       adds "n of N measured" so a median over 12 hives is never mistaken for
+       one over the whole fleet. */
+    function quadrantAxisTileHTML(a, prefix, population) {
       var id = quadrantExplainerId(prefix, a.axis);
       var val = a.scored ? String(a.score) : '—';
       return '<div class="quadrant-axis">' +
         '<span class="quadrant-axis-label">' + esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + quadrantInfoButtonHTML(a, id) + '</span>' +
         '<span class="quadrant-axis-score' + (a.scored ? '' : ' is-unscored') + '">' + esc(val) + '</span>' +
+        quadrantAxisCoverageHTML(a, population) +
         quadrantExplainerHTML(a, id) +
         '</div>';
     }
 
-    /* quadrantSummaryHTML is the one-line plain reading under the glyph:
-       the strongest and weakest measured criteria of the weakest scored axis,
-       or the first axis summary the server sent. */
-    function quadrantSummaryHTML(q) {
+    /* quadrantAxisCoverageHTML is the "n of N measured" line under a fleet
+       axis score. Empty when no population was given (per-hive tiles). */
+    function quadrantAxisCoverageHTML(a, population) {
+      var total = Number(population) || 0;
+      if (!total) return '';
+      var n = a.scored ? (Number(a.n) || 0) : 0;
+      return '<span class="quadrant-axis-coverage">' + n + ' of ' + total + ' measured</span>';
+    }
+
+    /* quadrantSummaryHTML is the plain reading under the glyph. By default
+       one line: the weakest scored axis's summary. With every=true (the fleet
+       card) one line per scored axis, weakest first, so a 0 on any axis
+       carries its own reason instead of hiding behind another axis's line —
+       the Oct 23 card explained Productivity 0 and said nothing about
+       Satisfaction 0. */
+    function quadrantSummaryHTML(q, every) {
       if (!q) return '';
       var scored = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
         .filter(function(a) { return a.scored && a.summary; });
       if (!scored.length) return '';
       scored.sort(function(x, y) { return x.score - y.score; });
-      return '<div class="quadrant-summary">' + esc(scored[0].summary) + '</div>';
+      var lines = every ? scored : [scored[0]];
+      return lines.map(function(a) { return '<div class="quadrant-summary">' + esc(a.summary) + '</div>'; }).join('');
     }
 
     function quadrantCloseExplainers() {
@@ -1331,13 +1349,16 @@
        nudges, it is one platform problem, and only the aggregate shows that.
 
        It does NOT follow the table's filters. The median, its per-criterion
-       medians, summaries and nudges are all computed server-side over every
-       row (attachQuadrants), and the reference polygon behind each row's kite
-       is that same fleet — re-aggregating client-side over a filtered subset
-       would make the header disagree with the ghosts in the rows and would
-       have to drop the explainers. So the label says "all N hives" and, while
-       the table is narrowed, says so explicitly; it used to claim "in view",
-       which contradicted a "Showing 1 of 57" table in the same viewport.
+       medians, summaries and nudges are all computed server-side over the
+       ACTIVE hives — assigned and online, the same predicates the table's
+       status column uses (attachQuadrants / fleetQuadrantEligible) — and the
+       reference polygon behind each row's kite is that same fleet.
+       Re-aggregating client-side over a filtered subset would make the header
+       disagree with the ghosts in the rows and would have to drop the
+       explainers. So the label says "N active hives" (plus how many
+       placeholders / offline hives were left out) and, while the table is
+       narrowed, says the filters do not apply; it used to claim "all 101
+       hives", counting 54 silent hives as zeros.
 
        Renders nothing when nothing scored, rather than an empty chart: at that
        point there is no finding to show, and a collapsed aggregate would read
@@ -1348,11 +1369,11 @@
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
       if (!q || !q.scored_axes) return '';
-      var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');
-      /* n is the number of hives the median was taken over; it can be smaller
-         than the fleet total because unscored hives do not enter the median. */
-      var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');
-      var scope = fleetQuadrantScopeLabel((_allDashHives || []).length);
+      var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet', q.n); }).join('');
+      /* The population (q.n) is named by the scope label; each axis tile says
+         how many of those hives measured it. */
+      var agg = q.aggregate || 'median';
+      var scope = fleetQuadrantScopeLabel(q);
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
       return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
@@ -1362,19 +1383,22 @@
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
               '<span>Fleet quadrant · ' + esc(scope) + ' <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
             '<div class="quadrant-axes">' + axes + '</div>' +
-            quadrantSummaryHTML(q) +
+            quadrantSummaryHTML(q, true) +
             fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
     }
 
-    /* fleetQuadrantScopeLabel names the set the fleet median is over. Plain
-       "all N hives" normally; when the table is narrowed it adds that the
-       filters do not apply here, so the two counts on screen cannot read as a
-       contradiction. */
-    function fleetQuadrantScopeLabel(total) {
-      var n = Number(total) || 0;
-      var base = 'all ' + n + (n === 1 ? ' hive' : ' hives');
+    /* fleetQuadrantScopeLabel names the population the fleet median is over:
+       "N active hives", plus "· M offline or unassigned excluded" when the
+       server left some of the view out (q.excluded). When the table is
+       narrowed it adds that the filters do not apply here, so the two counts
+       on screen cannot read as a contradiction. */
+    function fleetQuadrantScopeLabel(q) {
+      var n = Number(q && q.n) || 0;
+      var excluded = Number(q && q.excluded) || 0;
+      var base = n + ' active ' + (n === 1 ? 'hive' : 'hives');
+      if (excluded > 0) base += ' · ' + excluded + ' offline or unassigned excluded';
       return activeFilterCount() > 0 ? base + ' (table filters not applied)' : base;
     }
 

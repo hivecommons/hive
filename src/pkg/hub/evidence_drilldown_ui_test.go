@@ -164,7 +164,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"function quadrantAxisTileHTML(a) { return '<div class=\"quadrant-axis\">' + a.axis + '</div>'; }",
 		"function quadrantSummaryHTML() { return ''; }",
 		"var _allDashHives = [{}, {}];",
-		"var _fleetQuadrant = {scored_axes: 4};",
+		"var _fleetQuadrant = {scored_axes: 4, n: 2, excluded: 1};",
 		"var _isAdmin = false;",
 		"function activeFilterCount() { return 0; }",
 		jsFunc(t, "fleetQuadrantScopeLabel"),
@@ -205,7 +205,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}
 	}
-	if !strings.Contains(got.Member, "Fleet quadrant · all 2 hives") {
+	if !strings.Contains(got.Member, "Fleet quadrant · 2 active hives · 1 offline or unassigned excluded") {
 		t.Errorf("member fleet card lost its content:\n%s", got.Member)
 	}
 }

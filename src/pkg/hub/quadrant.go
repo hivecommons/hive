@@ -110,9 +110,18 @@ type Quadrant struct {
 	ScoredAxes int `json:"scored_axes"`
 
 	// Aggregate and N are set on the fleet quadrant only: how the per-hive
-	// scores were collapsed ("median") and over how many hives.
+	// scores were collapsed ("median") and the population it was taken over.
+	// N counts the ACTIVE hives — assigned and online (fleetQuadrantEligible)
+	// — whether or not each one scored a given axis; per axis, AxisScore.N
+	// says how many of those N measured it.
 	Aggregate string `json:"aggregate,omitempty"`
 	N         int    `json:"n,omitempty"`
+
+	// Excluded is, on the fleet quadrant only, how many hives in the caller's
+	// view were left out of the population because they are unassigned
+	// placeholders or offline. A hive that is not reporting has nothing to
+	// say about the fleet, and counting it would read its silence as zeros.
+	Excluded int `json:"excluded,omitempty"`
 }
 
 // quadrantInputs is the per-hive evidence the scorer consumes. It is a distinct

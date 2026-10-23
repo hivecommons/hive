@@ -148,11 +148,16 @@ func ScoreFleet(inputs []quadrantInputs) []Quadrant {
 // polygon drawn behind each row's kite and at the top of the dashboard.
 //
 // Per axis it takes the MEDIAN over the hives that scored that axis and
-// records n. A median rather than a mean because a few very active hives
-// would otherwise drag the fleet number away from what most hives show. Per
+// records n, so a hive that measured nothing on an axis never enters it as a
+// zero. A median rather than a mean because a few very active hives would
+// otherwise drag the fleet number away from what most hives show. Per
 // criterion it likewise takes the median value and score over the hives that
 // measured it, so the fleet explainer can say "what ours shows" honestly. An
 // axis nobody scored comes back unscored.
+//
+// The summary names the population ("median over 47 of 61 hives"), the
+// headline fact, and — when the axis is weak — the criterion with the lowest
+// median score, so a 0 is never shown without the fact that produced it.
 func FleetMedian(qs []Quadrant) Quadrant {
 	fleet := Quadrant{Axes: make([]AxisScore, 0, len(QuadrantAxisOrder)), Aggregate: QuadrantFleetAggregate, N: len(qs)}
 	type critSample struct {
@@ -187,6 +192,7 @@ func FleetMedian(qs []Quadrant) Quadrant {
 	for _, axis := range QuadrantAxisOrder {
 		as := AxisScore{Axis: axis, N: len(axisScores[axis])}
 		var facts []string
+		var weakest *CriterionScore
 		for _, name := range quadrantCriteriaOrder[axis] {
 			spec := criterionSpecs[name]
 			cs := CriterionScore{Name: name, Label: spec.label, Weight: spec.weight, How: spec.howText(), Good: spec.good}
@@ -197,21 +203,29 @@ func FleetMedian(qs []Quadrant) Quadrant {
 				cs.Display = spec.format(cs.Value)
 				cs.Score = medianOf(s.scores)
 				as.Measured++
-				facts = append(facts, fmt.Sprintf("%s %s (%s)", strings.ToLower(spec.label), cs.Display, pluralHives(cs.N)))
+				facts = append(facts, fleetFact(cs))
 			} else {
 				cs.Reason = "no hive in view reports this yet"
 				as.Unmeasured++
 			}
 			as.Criteria = append(as.Criteria, cs)
+			if c := &as.Criteria[len(as.Criteria)-1]; c.Measured && (weakest == nil || c.Score < weakest.Score) {
+				weakest = c
+			}
 		}
 		if as.N > 0 {
 			as.Score = medianOf(axisScores[axis])
 			as.Scored = true
 			total += as.Score
 			scored++
-			summary := fmt.Sprintf("%s %d: median of %s", QuadrantAxisLabels[axis], as.Score, pluralHives(as.N))
+			summary := fmt.Sprintf("%s %d: median over %d of %s", QuadrantAxisLabels[axis], as.Score, as.N, pluralHives(len(qs)))
 			if len(facts) > 0 {
 				summary += " · " + facts[0]
+			}
+			// A weak axis names what is pulling it down, unless the headline
+			// fact already is the weakest criterion.
+			if as.Score <= fleetWeakAxisScore && weakest != nil && fleetFact(*weakest) != facts[0] {
+				summary += fmt.Sprintf(" · lowest: %s scores %d", fleetFact(*weakest), weakest.Score)
 			}
 			if as.Unmeasured > 0 {
 				summary += fmt.Sprintf(" · %d of %d criteria not measured by any hive yet", as.Unmeasured, as.Measured+as.Unmeasured)
@@ -228,6 +242,47 @@ func FleetMedian(qs []Quadrant) Quadrant {
 		fleet.Composite = clampScore(int(math.Round(float64(total) / float64(scored))))
 	}
 	return fleet
+}
+
+// fleetWeakAxisScore is the fleet axis score at or below which the summary
+// also names the lowest-scoring criterion. Same line as the per-hive nudge.
+const fleetWeakAxisScore = 50
+
+// fleetFact renders one fleet-median criterion as a summary clause:
+// "merges per active repo per week 0.5 merges/repo/week (47 hives)".
+func fleetFact(cs CriterionScore) string {
+	return fmt.Sprintf("%s %s (%s)", strings.ToLower(cs.Label), cs.Display, pluralHives(cs.N))
+}
+
+// alignDeltas re-bases every scored axis's Delta on the fleet median actually
+// shown, so a row's "+12" is against the same population as the header kite.
+// ScoreFleet computes Delta against the whole set it scored; when the fleet
+// population is a subset (active hives only) the two would otherwise differ.
+func alignDeltas(qs []Quadrant, fleet Quadrant) {
+	medians := map[string]int{}
+	scoredAxis := map[string]bool{}
+	for _, a := range fleet.Axes {
+		if a.Scored {
+			medians[a.Axis] = a.Score
+			scoredAxis[a.Axis] = true
+		}
+	}
+	for i := range qs {
+		for j := range qs[i].Axes {
+			a := &qs[i].Axes[j]
+			switch {
+			case !a.Scored:
+				a.Delta = 0
+			case scoredAxis[a.Axis]:
+				a.Delta = a.Score - medians[a.Axis]
+			default:
+				// No fleet reference for this axis: the hive is the only
+				// thing in view that measured it, so there is nothing to be
+				// above or below.
+				a.Delta = 0
+			}
+		}
+	}
 }
 
 // pluralHives renders "1 hive" / "n hives" for the fleet summaries.

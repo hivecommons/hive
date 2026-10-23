@@ -35,6 +35,7 @@ func quadrantExplainerHarness(t *testing.T) string {
 		jsFunc(t, "quadrantExplainerHTML"),
 		jsFunc(t, "quadrantInfoButtonHTML"),
 		jsFunc(t, "quadrantAxisTileHTML"),
+		jsFunc(t, "quadrantAxisCoverageHTML"),
 		jsFunc(t, "quadrantSummaryHTML"),
 		jsFunc(t, "quadrantCloseExplainers"),
 		jsFunc(t, "quadrantToggleExplainer"),
@@ -49,9 +50,23 @@ func TestQuadrantExplainerRendersCriteria(t *testing.T) {
 		"var a = " + quadrantExplainerFixtureJS + ";\n" +
 		"var tile = quadrantAxisTileHTML(a, 'fleet');\n" +
 		"var unscored = quadrantAxisTileHTML({axis: 'satisfaction', scored: false, reason: 'Not measured yet: no reviewer verdicts', criteria: []}, 'fleet');\n" +
-		"result = {tile: tile, unscored: unscored};"
-	var got struct{ Tile, Unscored string }
+		"var fleet = quadrantAxisTileHTML({axis: 'productivity', scored: true, score: 26, n: 47, criteria: []}, 'fleet', 61);\n" +
+		"var fleetUnscored = quadrantAxisTileHTML({axis: 'satisfaction', scored: false, criteria: []}, 'fleet', 61);\n" +
+		"result = {tile: tile, unscored: unscored, fleet: fleet, fleetUnscored: fleetUnscored};"
+	var got struct{ Tile, Unscored, Fleet, FleetUnscored string }
 	runEvidenceJS(t, src, &got)
+
+	// A fleet tile says how many of the active hives measured the axis; a
+	// per-hive tile (no population) carries no such line.
+	if !strings.Contains(got.Fleet, `<span class="quadrant-axis-coverage">47 of 61 measured</span>`) {
+		t.Errorf("fleet tile lacks the n-of-N line: %s", got.Fleet)
+	}
+	if !strings.Contains(got.FleetUnscored, `<span class="quadrant-axis-coverage">0 of 61 measured</span>`) {
+		t.Errorf("unscored fleet tile should say 0 of N: %s", got.FleetUnscored)
+	}
+	if strings.Contains(got.Tile, "quadrant-axis-coverage") {
+		t.Errorf("per-hive tile must not carry a coverage line: %s", got.Tile)
+	}
 
 	for _, want := range []string{
 		`class="quadrant-axis"`,
@@ -154,11 +169,16 @@ var q = {scored_axes: 2, axes: [
   {axis: 'efficiency', scored: true, score: 30, summary: 'Efficiency 30: tokens per merge are high'},
   {axis: 'satisfaction', scored: false, reason: 'Not measured yet'}
 ]};
-result = {some: quadrantSummaryHTML(q), none: quadrantSummaryHTML({scored_axes: 0, axes: []}), nil: quadrantSummaryHTML(null)};`
-	var got struct{ Some, None, Nil string }
+result = {some: quadrantSummaryHTML(q), every: quadrantSummaryHTML(q, true), none: quadrantSummaryHTML({scored_axes: 0, axes: []}), nil: quadrantSummaryHTML(null)};`
+	var got struct{ Some, Every, None, Nil string }
 	runEvidenceJS(t, src, &got)
 	if got.Some != `<div class="quadrant-summary">Efficiency 30: tokens per merge are high</div>` {
 		t.Errorf("summary: %q", got.Some)
+	}
+	// The fleet card asks for every scored axis, weakest first, so a 0 on one
+	// axis never hides behind another axis's line.
+	if got.Every != `<div class="quadrant-summary">Efficiency 30: tokens per merge are high</div><div class="quadrant-summary">Trust 70: fine</div>` {
+		t.Errorf("every-axis summary: %q", got.Every)
 	}
 	if got.None != "" || got.Nil != "" {
 		t.Errorf("empty summary expected, got %q / %q", got.None, got.Nil)
@@ -171,10 +191,11 @@ result = {some: quadrantSummaryHTML(q), none: quadrantSummaryHTML({scored_axes: 
 func TestQuadrantExplainersWiredIntoBothSurfaces(t *testing.T) {
 	html := dashScript(t)
 	for _, want := range []string{
-		"return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');",
+		"return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet', q.n); }).join('');",
 		"return quadrantAxisTileHTML(quadrantAxis(q, name), 'hive'); }).join('');",
-		"var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');",
+		"var agg = q.aggregate || 'median';",
 		`<span class="fleet-quadrant-n">· ' + esc(agg) + '</span>`,
+		"quadrantSummaryHTML(q, true) +",
 		"quadrantSummaryHTML(q) +",
 		"if (typeof quadrantCloseExplainers === 'function' && quadrantCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }",
 	} {
@@ -182,10 +203,10 @@ func TestQuadrantExplainersWiredIntoBothSurfaces(t *testing.T) {
 			t.Errorf("dashboard script is missing %q", want)
 		}
 	}
-	if strings.Count(html, "quadrantSummaryHTML(q) +") != 2 {
-		t.Error("the plain one-line summary must sit under both the fleet glyph and the per-hive hover")
+	if strings.Count(html, "quadrantSummaryHTML(q") != 3 { // definition + fleet card + per-hive hover
+		t.Error("the plain summary must sit under both the fleet glyph and the per-hive hover")
 	}
-	for _, cls := range []string{".quadrant-info {", ".quadrant-explainer {", ".quadrant-explainer[hidden]", ".quadrant-criteria li.is-unmeasured", ".quadrant-summary {", ".quadrant-axis-score.is-unscored"} {
+	for _, cls := range []string{".quadrant-info {", ".quadrant-explainer {", ".quadrant-explainer[hidden]", ".quadrant-criteria li.is-unmeasured", ".quadrant-summary {", ".quadrant-axis-score.is-unscored", ".quadrant-axis-coverage {"} {
 		if !strings.Contains(dashboardHTML, cls) {
 			t.Errorf("dashboard CSS is missing %q", cls)
 		}

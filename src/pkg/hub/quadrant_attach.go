@@ -186,16 +186,33 @@ func canSeeQuadrant(role string, isAdmin bool) bool {
 	return isAdmin || strings.TrimSpace(role) != ""
 }
 
+// fleetQuadrantEligible reports whether a row belongs in the fleet quadrant's
+// population: assigned (not an unassigned placeholder slot) AND active (the
+// same Online flag the table's status column shows, cleared by
+// markStaleHives when a heartbeat goes stale). Both predicates are the ones
+// the table already uses, so the card's "N active hives" matches what the
+// operator can count in the rows below it.
+//
+// A placeholder has no repo and nothing to measure; an offline hive's last
+// heartbeat may be days old and its silence must not read as a fleet of
+// zeros. Per-hive scores are still attached to every row that scored — this
+// only decides who the median is taken over.
+func fleetQuadrantEligible(h MyHiveEntry) bool {
+	return h.Online && !isPlaceholderEntry(h)
+}
+
 // attachQuadrants scores a dashboard payload in place.
 //
-// The population is exactly the rows passed in — the caller's filtered view —
-// which is what keeps a row's score and the header's aggregate consistent with
-// each other. Ranking against the whole registry instead would let the header
-// polygon disagree with the rows it summarises, which is worse than either
-// being imprecise.
+// Every row passed in — the caller's filtered view — is scored, and the fleet
+// median is taken over the ACTIVE subset of those rows (fleetQuadrantEligible).
+// Keeping both inside the caller's view is what keeps a row's score and the
+// header's aggregate consistent with each other; ranking against the whole
+// registry instead would let the header polygon disagree with the rows it
+// summarises, which is worse than either being imprecise.
 //
-// Returns the fleet median for the same population so the caller can render
-// the reference polygon and the header without scoring twice.
+// Returns the fleet median so the caller can render the reference polygon and
+// the header without scoring twice. Its N is the active population and
+// Excluded is how many rows were left out as placeholders or offline.
 func attachQuadrants(rows []MyHiveEntry, isAdmin bool, now time.Time) Quadrant {
 	if len(rows) == 0 {
 		return Quadrant{}
@@ -208,11 +225,19 @@ func attachQuadrants(rows []MyHiveEntry, isAdmin bool, now time.Time) Quadrant {
 
 	scores := ScoreFleet(inputs)
 
-	// The median is computed over EVERY row, including ones this caller may
-	// not see individually. That is deliberate: the reference polygon should
-	// describe the fleet the hive is actually being compared with, and it
-	// discloses nothing about any single hive.
-	avg := FleetMedian(scores)
+	// The median is computed over every ACTIVE row, including ones this
+	// caller may not see individually. That is deliberate: the reference
+	// polygon should describe the fleet the hive is actually being compared
+	// with, and it discloses nothing about any single hive.
+	population := make([]Quadrant, 0, len(rows))
+	for i := range rows {
+		if fleetQuadrantEligible(rows[i]) {
+			population = append(population, scores[i])
+		}
+	}
+	avg := FleetMedian(population)
+	avg.Excluded = len(rows) - len(population)
+	alignDeltas(scores, avg)
 
 	for i := range rows {
 		if !canSeeQuadrant(rows[i].Role, isAdmin) {
