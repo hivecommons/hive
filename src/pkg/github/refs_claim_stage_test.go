@@ -55,32 +55,57 @@ func TestRefsClaimStagesAsCovered(t *testing.T) {
 }
 
 func TestRefsCoverageDoesNotUpgradeClosingScope(t *testing.T) {
-	fake := newIssueStageServer(t)
-	// Bare Refs links on Hive-authored PRs are intentionally retrofitted to
-	// closing links by EnsureIssueStagePRLink. Use an explicitly partial
-	// claim to verify that coverage alone does not expand closing scope.
-	fake.prBodies[42] = "Part of #4; leaves follow-up work open."
-	fake.prBases[42] = "v5"
-	fake.prAuthors[42] = "hive[bot]"
-	client := issueStageTestClient(t, fake.srv, true)
-	client.SetAppBotLogin("hive[bot]")
-	store := stagelabels.NewStore("", stageNow)
-	result := &ActionableResult{}
-	issue := Issue{Repo: "acme/widgets", Number: 4}
-	annotateIssueWithClaim(&issue, IssueClaim{PRNumber: 42, PRRepo: issue.Repo, PRURL: "https://x/pr/42", Reference: true})
-	result.Issues = IssueResultFromItems([]Issue{issue})
-	res := syncSeeded(t, fake, client, result, store, stageNow())
-	if res.PRBodiesEdited != 0 {
-		t.Fatalf("coverage upgraded a non-closing claim: %+v", res)
+	for _, marker := range []string{"children", "partial-label"} {
+		t.Run(marker, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			// A bare Refs link on a default-branch Hive PR must stay non-closing
+			// while the issue delegates work, even after coverage moves it to 040.
+			fake.prBodies[42] = "Refs #4"
+			fake.prBases[42] = "v5"
+			fake.prAuthors[42] = "hive[bot]"
+			client := issueStageTestClient(t, fake.srv, true)
+			client.SetAppBotLogin("hive[bot]")
+			store := stagelabels.NewStore("", stageNow)
+			result := &ActionableResult{}
+			issue := Issue{Repo: "acme/widgets", Number: 4}
+			if marker == "children" {
+				issue.Children = &IssueChildren{Total: 3}
+			} else {
+				issue.Labels = []string{PartiallyAddressedLabel}
+			}
+			annotateIssueWithClaim(&issue, IssueClaim{PRNumber: 42, PRRepo: issue.Repo, PRURL: "https://x/pr/42", Reference: true})
+			result.Issues = IssueResultFromItems([]Issue{issue})
+			res := syncSeeded(t, fake, client, result, store, stageNow())
+			if res.PRBodiesEdited != 0 {
+				t.Fatalf("coverage upgraded a non-closing claim: %+v", res)
+			}
+			rec, ok := store.Get(stagelabels.Key(issue.Repo, issue.Number))
+			if !ok || rec.Stage != stagelabels.CoveredByPR {
+				t.Fatalf("refs issue record = %+v, present = %v", rec, ok)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.prPatches[42] != "" {
+				t.Fatalf("PR body was edited: %q", fake.prPatches[42])
+			}
+			if issue.ClaimContext.KeepReference {
+				t.Fatal("stage safeguard mutated shared claim")
+			}
+			if len(fake.commentBodies[4]) == 0 {
+				t.Fatal("non-closing coverage should still post a stage link")
+			}
+		})
 	}
-	rec, ok := store.Get(stagelabels.Key(issue.Repo, issue.Number))
-	if !ok || rec.Stage != stagelabels.CoveredByPR {
-		t.Fatalf("refs issue record = %+v, present = %v", rec, ok)
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.prPatches[42] != "" {
-		t.Fatalf("PR body was edited: %q", fake.prPatches[42])
+}
+
+func TestDraftWorkPRRetainsBaseRef(t *testing.T) {
+	client := &Client{}
+	row := client.repoWorkPR("acme/widgets", &gh.PullRequest{
+		Number: gh.Ptr(42), Draft: gh.Ptr(true),
+		Base: &gh.PullRequestBranch{Ref: gh.Ptr("v6")},
+	}, nil, false, workBucketPRDraft, "draft")
+	if row.BaseRef != "v6" || !row.Draft {
+		t.Fatalf("draft work PR lost target branch: %+v", row)
 	}
 }
 

@@ -304,7 +304,7 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		return res, nil
 	}
 	if claim.Reference {
-		if body, ok := rewriteRefsIssueLinkToClosing(pr.Body, owner+"/"+name, issueNumber); ok && c.isOwnBotLogin(pr.Author.Login) {
+		if body, ok := rewriteRefsIssueLinkToClosing(pr.Body, owner+"/"+name, issueNumber); !claim.KeepReference && ok && c.isOwnBotLogin(pr.Author.Login) {
 			if _, _, err := c.client.PullRequests.Edit(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), owner, name, claim.PRNumber, &gh.PullRequest{Body: gh.Ptr(body)}); err != nil {
 				return res, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d edit body: %w", repo, issueNumber, claim.PRNumber, err)
 			}

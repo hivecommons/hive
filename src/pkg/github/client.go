@@ -760,15 +760,18 @@ type IssueDependency struct {
 // IssueClaimContext is prompt/API evidence that an actionable issue is related
 // to a PR claim that no longer suppresses the issue.
 type IssueClaimContext struct {
-	PRNumber       int       `json:"pr_number"`
-	PRRepo         string    `json:"pr_repo"`
-	PRURL          string    `json:"pr_url,omitempty"`
-	PRAuthor       string    `json:"pr_author,omitempty"`
-	ExternalAuthor bool      `json:"external_author,omitempty"`
-	Closing        bool      `json:"closing,omitempty"`
-	Reference      bool      `json:"reference,omitempty"`
-	MergedPR       bool      `json:"merged_pr,omitempty"`
-	MergedAt       time.Time `json:"merged_at,omitempty"`
+	PRNumber       int    `json:"pr_number"`
+	PRRepo         string `json:"pr_repo"`
+	PRURL          string `json:"pr_url,omitempty"`
+	PRAuthor       string `json:"pr_author,omitempty"`
+	ExternalAuthor bool   `json:"external_author,omitempty"`
+	Closing        bool   `json:"closing,omitempty"`
+	Reference      bool   `json:"reference,omitempty"`
+	// KeepReference prevents the stage-link safeguard from upgrading a
+	// delegating tracker's Refs link to a closing keyword. Process-local.
+	KeepReference bool      `json:"-"`
+	MergedPR      bool      `json:"merged_pr,omitempty"`
+	MergedAt      time.Time `json:"merged_at,omitempty"`
 	// ReopenedAt is set with Decision ClaimDecisionReopenedAfterMerge: when a
 	// person reopened the issue after the PR named here merged.
 	ReopenedAt time.Time `json:"reopened_at,omitempty"`
@@ -4290,6 +4293,8 @@ type RepoWorkPR struct {
 	URL            string    `json:"url,omitempty"`
 	Bucket         string    `json:"bucket"`
 	Reason         string    `json:"reason,omitempty"`
+	// BaseRef is the target branch, retained for the covering-PR chip.
+	BaseRef string `json:"base_ref,omitempty"`
 	// LinkedIssues mirrors PullRequest.LinkedIssues so a sidelined PR can
 	// still stand under the issue its `Fixes #N` names in the activity
 	// monitor. Stamped by EnrichReviewSignalsAndWorkPRs, not by the
@@ -4320,6 +4325,7 @@ func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hi
 		CreatedAt:      pr.GetCreatedAt().Time,
 		UpdatedAt:      pr.GetUpdatedAt().Time,
 		URL:            pr.GetHTMLURL(),
+		BaseRef:        prBaseRef(pr),
 		Bucket:         bucket,
 		Reason:         reason,
 		// The list payload carries the body, so the soft issue links cost

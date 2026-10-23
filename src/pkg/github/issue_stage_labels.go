@@ -641,7 +641,15 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 	if in.Claim.PRURL == "" && in.Claim.PRRepo == "" && in.Claim.PRAuthor == "" && !in.Claim.Closing && !in.Claim.Reference {
 		return false, false
 	}
-	link, err := client.EnsureIssueStagePRLink(ctx, in.Repo, in.Number, in.Claim)
+	claim := in.Claim
+	if claim.Reference && (in.Children != nil && in.Children.Open() > 0 || issueHasLabel(in.Labels, PartiallyAddressedLabel)) {
+		// Coverage is display-only for a delegating tracker (#13747).
+		// Keep its non-closing scope, without mutating the shared claim.
+		copy := *claim
+		copy.KeepReference = true
+		claim = &copy
+	}
+	link, err := client.EnsureIssueStagePRLink(ctx, in.Repo, in.Number, claim)
 	if err != nil {
 		if logger != nil {
 			logger.Warn("issue stage labels: PR issue-link safeguard failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
