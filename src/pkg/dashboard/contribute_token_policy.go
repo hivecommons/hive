@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -108,10 +109,7 @@ func authenticateContributorToken(token string, policy contributorTokenPolicy) (
 		if p.TrustTier == "revoked" {
 			return nil, "Access has been revoked"
 		}
-		p.TokenLastUsedAt = now
-		if err := saveContributorProfileTokenCAS(&p, false, true); err != nil {
-			return nil, "Token state changed; retry authentication"
-		}
+		policy.touchLastUsed(&p, hash, now)
 		return &p, ""
 	}
 	return nil, "Invalid registration token"
@@ -146,18 +144,42 @@ func (h *ContributeWSHub) registrationTokenSessionValid(c *ContributorConnection
 	if policy.expired(p, now) {
 		return false
 	}
-	// A live, pong-responsive connection is activity. Throttle persistence to avoid
-	// writing on every ping, but never let throttling consume the idle window.
+	// A live, pong-responsive connection is activity.
+	policy.touchLastUsed(p, hash, now)
+	return true
+}
+
+// touchLastUsed records token activity. It is bookkeeping only and never fails
+// authentication: it reloads the current profile, updates only TokenLastUsedAt
+// while the same token hash is still stored, and treats a version conflict from
+// a concurrent writer as a retry (then gives up silently). Writes are throttled
+// to avoid persisting on every request, but never enough to consume the idle window.
+func (policy contributorTokenPolicy) touchLastUsed(p *ContributorProfile, hash string, now time.Time) {
 	interval := time.Minute
 	if policy.idleMax > 0 && policy.idleMax/2 < interval {
 		interval = policy.idleMax / 2
 	}
-	if now.Sub(p.TokenLastUsedAt) >= interval {
-		p.TokenLastUsedAt = now
-		// A concurrent mutation wins. The next heartbeat reloads its result.
-		_ = saveContributorProfileTokenCAS(p, false, true)
+	for attempt := 0; attempt < 3; attempt++ {
+		cur, err := loadContributorProfile(p.GitHubUsername)
+		if err != nil || cur.RegistrationToken == "" || !secureCompare(cur.RegistrationToken, hash) || now.Sub(cur.TokenLastUsedAt) < interval {
+			return
+		}
+		base := cur.Version
+		cur.TokenLastUsedAt = now
+		err = saveContributorProfileTokenCAS(cur, false, true)
+		if err == nil {
+			p.TokenLastUsedAt = now
+			// Only our own touch moved the version: keep the caller's copy
+			// current so its later CAS saves do not conflict with the touch.
+			if p.Version == base {
+				p.Version = cur.Version
+			}
+			return
+		}
+		if !errors.Is(err, errProfileConflict) {
+			return
+		}
 	}
-	return true
 }
 
 // Token revocation preserves trust; GitHub-authenticated reissue restores access.

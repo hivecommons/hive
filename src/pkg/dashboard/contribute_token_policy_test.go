@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -216,5 +217,113 @@ func TestContributorTokenPolicyEnvironment(t *testing.T) {
 	t.Setenv("HIVE_CONTRIBUTE_TOKEN_MAX_AGE", "0")
 	if defaultContributorTokenPolicy().maxAge != 90*24*time.Hour {
 		t.Fatal("zero disabled mandatory expiry")
+	}
+}
+
+// A last-used touch is bookkeeping: version drift from a concurrent writer must
+// never turn a valid token into an authentication failure (#13811 review).
+func TestContributorTokenLastUsedTouchToleratesVersionDrift(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	policy := contributorTokenPolicy{maxAge: 90 * 24 * time.Hour}
+	p, token := createContributorProfile("drift", policy)
+	stale, err := loadContributorProfile("drift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().Add(-time.Hour)
+	stale.TokenLastUsedAt = old
+	if err := saveContributorProfileTokenCAS(stale, false, true); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated writer advances the version past every in-flight copy.
+	bumped, err := loadContributorProfile("drift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bumped.TasksCompleted++
+	if err := saveContributorProfileCAS(bumped, false); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	policy.touchLastUsed(p, sha256Hex(token), now)
+	cur, err := loadContributorProfile("drift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cur.TokenLastUsedAt.Equal(now) || cur.TasksCompleted != bumped.TasksCompleted {
+		t.Fatalf("touch lost data: last_used=%v tasks=%d", cur.TokenLastUsedAt, cur.TasksCompleted)
+	}
+	if p.Version == cur.Version {
+		t.Fatal("drifted caller copy was promoted to the current version")
+	}
+
+	for i := 0; i < 2; i++ {
+		got, reason := authenticateContributorToken(token, policy)
+		if got == nil {
+			t.Fatalf("auth %d after version drift: %s", i, reason)
+		}
+		next, err := loadContributorProfile("drift")
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.TasksCompleted++
+		if err := saveContributorProfileCAS(next, false); err != nil {
+			t.Fatal(err)
+		}
+		cur = next
+	}
+
+	// The touch never writes once the token it authenticated has been replaced.
+	if fresh := reissueContributorToken(cur, policy); fresh == "" {
+		t.Fatal("reissue failed")
+	}
+	before, err := loadContributorProfile("drift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.touchLastUsed(p, sha256Hex(token), now.Add(time.Hour))
+	after, err := loadContributorProfile("drift")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Version != before.Version || !after.TokenLastUsedAt.Equal(before.TokenLastUsedAt) {
+		t.Fatal("touch wrote to a profile whose token was rotated")
+	}
+}
+
+func TestContributorTokenConcurrentAuthenticationNeverFails(t *testing.T) {
+	t.Setenv("HIVE_CONTRIBUTORS_DIR", t.TempDir())
+	policy := contributorTokenPolicy{maxAge: 90 * 24 * time.Hour, idleMax: time.Hour}
+	_, token := createContributorProfile("busy", policy)
+	p, err := loadContributorProfile("busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.TokenLastUsedAt = time.Now().UTC().Add(-30 * time.Minute)
+	if err := saveContributorProfileTokenCAS(p, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	failures := make(chan string, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got, reason := authenticateContributorToken(token, policy); got == nil {
+				failures <- reason
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for reason := range failures {
+		t.Errorf("valid token rejected under concurrency: %s", reason)
+	}
+	cur, err := loadContributorProfile("busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(cur.TokenLastUsedAt) > time.Minute {
+		t.Fatalf("last-used not recorded: %v", cur.TokenLastUsedAt)
 	}
 }
