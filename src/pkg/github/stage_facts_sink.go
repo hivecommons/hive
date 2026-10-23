@@ -39,8 +39,8 @@ func (c *Client) SetStageFactSink(sink stageengine.FactSink) {
 // StageFacts returns the FactSink the client's out-of-cycle writers use.
 // The default is the engine's FactSink over an enforce-mode Reconciler that
 // shares stagelabels.Shared() with the enumeration cycle, derives with this
-// package's issue deriver (the PR side delegates to whatever cmd/hive
-// registered via stageengine.SetDerivers) and writes through the client's
+// package's label-resolving issue deriver (the PR side is the deriver
+// pkg/github/automerge registers at init) and writes through the client's
 // one StageWriter (stage_writer.go), so a fact racing the sweep on an item
 // queues behind it. Each submission re-reads the item first
 // (enrichStageFacts) so the derivation and the write plan see the labels
@@ -134,7 +134,7 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 		}
 	}
 	if f.Issue != nil {
-		f.Issue.LikelyDone = issueHasLabel(f.Labels, LikelyDoneLabel)
+		resolveIssueLabelFacts(issueInputFrom(f), &f)
 		f.Issue.Stalled = issueHasLabel(f.Labels, stagelabels.StalledLabel)
 	}
 	if f.Author.Login == "" {

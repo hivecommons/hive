@@ -16,9 +16,13 @@ type Decision struct {
 	KindLabels authorkind.Names
 	DCO        stagelabels.DCOState
 	Stalled    bool
-	Terminal   bool               // Stage == None because the item closed/merged/left
-	Reason     string             // stored on the Record, rendered in comments/tracker
-	Human      *stagelabels.Route // set when the stage is a hand-off (085/090)
+	Terminal   bool // Stage == None because the item closed/merged/left
+	// Covered is set on an issue whose stage is 040 because an open PR the
+	// lanes have staged at 040 or later covers it: the dwell clock then
+	// belongs to the PR and the sweep does not judge the issue stalled.
+	Covered bool
+	Reason  string             // stored on the Record, rendered in comments/tracker
+	Human   *stagelabels.Route // set when the stage is a hand-off (085/090)
 	// Abstain means the deriver has no opinion: nothing it saw classifies
 	// the item (today's stageRankNone), so the reconciler leaves the labels
 	// and the Store untouched. It is distinct from Stage == None, which is a

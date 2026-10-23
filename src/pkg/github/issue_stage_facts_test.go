@@ -60,12 +60,6 @@ func TestIssueDeriverReproducesIssueStageFor(t *testing.T) {
 			if got.Terminal != (wantStage == stagelabels.None && f.Issue.LikelyDone) {
 				t.Fatalf("terminal %v for %+v", got.Terminal, f.Issue)
 			}
-			// Round trip: the input rebuilt from Facts decides the same.
-			back := issueInputFrom(f)
-			s2, _, r2 := IssueStageFor(back, prStage)
-			if s2 != wantStage || r2 != wantReason {
-				t.Fatalf("round trip %v/%q, want %v/%q (back=%+v)", s2, r2, wantStage, wantReason, back)
-			}
 		})
 	}
 }

@@ -119,8 +119,8 @@ func has(labels []string, label string) bool {
 // Options tunes NewSink.
 type Options struct {
 	// Issue and PR are the derivers; nil uses the engine's registered ones
-	// (stageengine.IssueDeriver / PRDeriver), which abstain until a
-	// composition root calls stageengine.SetDerivers.
+	// (stageengine.IssueDeriver / PRDeriver): the built-in issue deriver
+	// and the PR deriver automerge registers at init (abstains until then).
 	Issue, PR stageengine.Deriver
 	// Enrich is the sink's Enrich hook. The default marks the item open and
 	// tops its labels up with what the Writer holds, standing in for the

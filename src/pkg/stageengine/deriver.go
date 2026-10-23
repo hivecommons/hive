@@ -36,18 +36,21 @@ const (
 )
 
 var (
-	deriversMu    sync.RWMutex
-	issueDeriver  Deriver
+	deriversMu sync.RWMutex
+	// issueDeriver is built in (deriveIssue); SetDerivers can still replace
+	// it, which tests use to inject a canned opinion.
+	issueDeriver  Deriver = DeriverFunc(stagelabels.IssueItem, deriveIssue)
 	prDeriver     Deriver
 	issueDeriverF = DeriverFunc(stagelabels.IssueItem, func(f Facts) Decision { return delegate(stagelabels.IssueItem, f) })
 	prDeriverF    = DeriverFunc(stagelabels.PRItem, func(f Facts) Decision { return delegate(stagelabels.PRItem, f) })
 )
 
 // SetDerivers installs the kind-specific derivers DeriveIssue and DerivePR
-// delegate to. Until the derivation bodies move into this package (plan
-// PR-F) these are the adapters in pkg/github (issue) and
-// pkg/github/automerge (PR), wired by cmd/hive. A nil argument leaves that
-// kind's registration unchanged.
+// delegate to. The issue deriver is built in (deriveIssue, plan PR-F); the
+// PR deriver is the lane-backed adapter pkg/github/automerge registers at
+// init, because classifyStage reads the lane opinions and their reason
+// vocabulary (hivecommons/hive#13011 follow-up tracks moving it). A nil
+// argument leaves that kind's registration unchanged.
 func SetDerivers(issue, pr Deriver) {
 	deriversMu.Lock()
 	defer deriversMu.Unlock()

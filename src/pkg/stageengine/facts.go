@@ -132,6 +132,28 @@ type IssueFacts struct {
 	// parent (hivecommons/hive#12857). A parent waiting on children keeps
 	// its stage with the wait named in the reason and is never stalled.
 	OpenChildren int
+	// The label-family verdicts below are resolved by the enumeration
+	// (pkg/github reads the hive's configured hold, park, umbrella and
+	// reporter-trust labels); the deriver only reads them, so it stays
+	// free of configuration. Each is "" when the family is absent.
+	//
+	// HoldLabel is the hold-class label that pauses the issue (hold,
+	// on-hold, do-not-merge/*, hive-pause/<id>, …; hivecommons/hive#13012).
+	HoldLabel string
+	// BlockedReason is set when the issue wears `blocked`: the
+	// enumeration's reason ("blocked on owner/repo#N", "blocked until …")
+	// or the bare label (hivecommons/hive#13093).
+	BlockedReason string
+	// NeedsHumanLabel names the needs-human label when Park.NeedsHuman is
+	// set (the reason cites it).
+	NeedsHumanLabel string
+	// UmbrellaLabel is the never-claim label the issue carries
+	// (governor.claims.never_claim_labels, default `epic`).
+	UmbrellaLabel string
+	// TriageAwaiting is why an actionable issue is still untriaged (015):
+	// the reporter-trust awaiting label it carries or the gate's
+	// reporter_triage bucket.
+	TriageAwaiting string
 }
 
 // ClaimFact is the live claim on an issue.

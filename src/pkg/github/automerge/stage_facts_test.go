@@ -252,3 +252,46 @@ func TestPRDeriverPassCarriesStalledAndKindLabels(t *testing.T) {
 		t.Fatalf("terminal decision must be a zero Desired: %+v", term)
 	}
 }
+
+// TestVerdictStateFold pins the ReviewFacts.State fold ADR-0025 defines
+// (review-state fold, resolved in plan PR-F): the one verdict fact the PR
+// deriver routes on.
+func TestVerdictStateFold(t *testing.T) {
+	cases := []struct {
+		name string
+		d    stageDetail
+		want stagelabels.VerdictState
+	}{
+		{"unknown", stageDetail{}, stagelabels.VerdictPending},
+		{"approved", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true}}, stagelabels.VerdictApproved},
+		{"no reviewer", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{}}, stagelabels.VerdictUnavailable},
+		{"changes requested", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}, stagelabels.VerdictChangesRequested},
+		{"reject", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "Reject"}}, stagelabels.VerdictChangesRequested},
+		{"requires human", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}}, stagelabels.VerdictRequiresHuman},
+		{"decision requested", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "approve", DecisionRequested: true}}, stagelabels.VerdictRequiresHuman},
+		{"pending verdict", stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true}}, stagelabels.VerdictPending},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := verdictStateFrom(tc.d); got != tc.want {
+				t.Fatalf("verdictStateFrom = %v, want %v", got, tc.want)
+			}
+			r := reviewFactsFrom(tc.d, "abc")
+			if r.State != tc.want {
+				t.Fatalf("ReviewFacts.State = %v, want %v", r.State, tc.want)
+			}
+			v := verdictFrom(r)
+			if v.Approved != (tc.want == stagelabels.VerdictApproved) || v.Configured != (tc.want != stagelabels.VerdictUnavailable) {
+				t.Fatalf("verdictFrom(%v) = %+v", tc.want, v)
+			}
+		})
+	}
+	// HumanApprover rides along only for the head it approved.
+	d := stageDetail{HumanApprover: "ann", HumanApprovalHead: "abc"}
+	if r := reviewFactsFrom(d, "abc"); r.HumanApprover != "ann" {
+		t.Fatalf("approver at head: %+v", r)
+	}
+	if r := reviewFactsFrom(d, "def"); r.HumanApprover != "" {
+		t.Fatalf("approver for a stale head kept: %+v", r)
+	}
+}

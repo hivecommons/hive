@@ -9,14 +9,14 @@
 // through, and the expected-transition table (Expected) that turns a
 // surprising from→to hop into a metric rather than a rejected write.
 //
-// It imports stagelabels, authorkind and claims only. pkg/github and
-// pkg/github/automerge import it and register their derivers through
-// SetDerivers; nothing here knows about lanes, buckets or the forge.
+// It imports stagelabels, authorkind and claims only. The issue derivation
+// (derive_issue.go) is built in over IssueFacts whose label families
+// pkg/github resolves; pkg/github/automerge registers the lane-backed PR
+// deriver through SetDerivers. Nothing here knows about lanes or the forge.
 //
-// Until the derivation bodies move in (plan PR-F part 2), DeriveIssue and
-// DerivePR delegate to the adapters registered by those packages, which
-// wrap today's IssueStageFor and resolveStage unchanged. The engine is the
-// only writer: ModeEnforce writes its Decision, ModeShadow derives and
+// DeriveIssue is the engine's own body; DerivePR delegates to the
+// registered lane-backed deriver, which wraps automerge's resolveStage
+// unchanged (the PR goldens pin it). The engine is the only writer: ModeEnforce writes its Decision, ModeShadow derives and
 // counts without writing (a pause); the legacy comparator that let shadow
 // write the sweep's own derivation during the rollout is gone.
 package stageengine

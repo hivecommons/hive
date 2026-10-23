@@ -439,12 +439,26 @@ sources need no signature change.
   the pipeline shape (010–045 vs 050–100); forcing one function recreates the
   clamp special-cases that `Stage.For` exists to handle.
 
-## Open question (placeholder)
+## Review-state fold (resolved)
 
-*Review-pending stuck (050 after reviews)* — the concurrent investigation's
-finding goes here as the definition of `ReviewFacts.State` folding
-(`Verdict`, `HumanApprover` at `HeadSHA`, `HumanReviews`); until it lands,
-`DerivePR` reproduces the current behaviour exactly (golden-pinned).
+`ReviewFacts.State` is the one verdict fact the PR deriver routes on; it is
+folded for `HeadSHA` by `verdictStateFrom` in `pkg/github/automerge`:
+
+| Evidence at `HeadSHA` | `State` |
+|---|---|
+| no verdict recorded yet | `VerdictPending` |
+| aggregate verdict approved (merge-eligible) | `VerdictApproved` |
+| no reviewer configured for the repo | `VerdictUnavailable` |
+| `changes_requested` / `reject` / `rejected` / `request_changes` | `VerdictChangesRequested` |
+| `requires_human`, or the reviewer asked for a decision | `VerdictRequiresHuman` |
+| anything else | `VerdictPending` |
+
+`HumanApprover` is set only when the recorded human approval is for
+`HeadSHA`; `HumanReviews` is the review count the stall rule reads. The raw
+verdict string is carried for the reason text (`reviewer-verdict:<verdict>`),
+never for routing. The "review-pending stuck at 050 after reviews" case that
+prompted the placeholder was fixed in hivecommons/hive#13112 (a
+`requires_human` verdict routes 085, not 050), pinned by the PR goldens.
 
 ## References
 

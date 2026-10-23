@@ -70,7 +70,7 @@ without moving its logic.
   - `src/pkg/github/issue_stage_facts.go`: `factsFrom(IssueStageInput) stageengine.Facts`
     and `issueDeriverAdapter` wrapping `IssueStageFor`.
   - Both adapters are what `stageengine.DeriveIssue`/`DerivePR` delegate to
-    until PR-F moves the logic in; the engine package exposes
+    until PR-F moved the issue body in; the engine package exposes
     `SetDerivers(issue, pr Deriver)` for the wiring in `cmd/hive`.
 - Property test `TestReconcileIdempotent`: for random `Facts`, `Reconcile`
   twice with a fake writer → second call writes nothing and the item carries
@@ -207,13 +207,30 @@ Shipped as three PRs (hivecommons/hive#13011):
   init. Retiring the comparator exposed that the PR adapter's enforce-mode
   Decision dropped the pass's `Stalled` and configured `KindLabels`
   (`PRPassFacts` now carries both) and kept the role on a terminal PR.
-- **F2 — move derivation in**: `classifyStage`/`resolveStage` bodies into
-  `stageengine.DerivePR` and `IssueStageFor` into `DeriveIssue`; delete
-  the adapters and `SetDerivers`; goldens from PR-A move to
-  `src/pkg/stageengine/testdata` and must pass unchanged.
-- **F3 — `ReviewFacts.State` fold**: land the review-pending-stuck finding
-  (its own golden update) — the first semantic change, after parity is
-  proven — and close the ADR's open question.
+- **F2 — issue derivation moves in, review-state fold closed** (landed):
+  `IssueStageFor`'s body is `stageengine.deriveIssue` over `IssueFacts`
+  that now carry the resolved label families (`HoldLabel`, `BlockedReason`,
+  `UmbrellaLabel`, `TriageAwaiting`, `NeedsHumanLabel`); `Decision.Covered`
+  replaces the shim's second return. `pkg/github` keeps the one place the
+  hive's configurable label vocabulary meets the engine
+  (`resolveIssueLabelFacts`, used by the sweep's facts builder, the sink's
+  fresh-read enrichment and the `github.IssueDeriver` wrapper), so the
+  issue goldens stay in `pkg/github` and replay through the shim unchanged
+  — the corpus is keyed on labels, and the labels are configuration.
+  `cmd/hive/stageengine_wire.go` is gone: the issue deriver is built in and
+  automerge registers the PR deriver at init. The ADR's open question is
+  closed: `ReviewFacts.State` is the fold `verdictStateFrom` defines
+  (Approved → `VerdictApproved`; unconfigured → `VerdictUnavailable`;
+  `changes_requested`/`reject`/`request_changes` → `VerdictChangesRequested`;
+  `requires_human` or a decision request → `VerdictRequiresHuman`; else
+  `VerdictPending`), the 050-after-reviews stall was fixed in
+  hivecommons/hive#13112, and the PR deriver reads `State` for the
+  verdict's routing while the raw verdict string stays for the reason text.
+- **PR derivation body** (`classifyStage`/`resolveStage`, ~1,200 lines over
+  the lanes' reason vocabulary) stays in `pkg/github/automerge` behind the
+  `PRDeriver` adapter and the PR goldens; moving it is a pure relocation
+  that the goldens pin and is tracked separately (see #13011's close-out
+  comment) rather than held against the epic.
 
 ## Acceptance metrics
 
