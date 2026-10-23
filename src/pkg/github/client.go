@@ -4396,7 +4396,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		ClaimContext:    issue.ClaimContext,
 		Children:        issue.Children,
 		TrackerProgress: progress,
-		IsTracker:       issue.IsTracker || progress != nil || issueHasLabel(issue.Labels, PartiallyAddressedLabel),
+		IsTracker:       RendersAsTracker(issue.IsTracker, issue.Labels, progress),
 	}
 }
 
@@ -4416,6 +4416,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 	if issue == nil {
 		return RepoWorkIssue{Repo: repo, Labels: append([]string(nil), labels...), Bucket: bucket, Reason: reason}
 	}
+	progress := TrackerTaskProgress(issue.GetBody())
 	return RepoWorkIssue{
 		Repo:            repo,
 		Number:          issue.GetNumber(),
@@ -4426,8 +4427,8 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		CreatedAt:       issue.GetCreatedAt().Time,
 		UpdatedAt:       issue.GetUpdatedAt().Time,
 		URL:             issue.GetHTMLURL(),
-		IsTracker:       isTracker(issue.GetTitle(), labels, issue.GetBody()) || issueHasLabel(labels, PartiallyAddressedLabel),
-		TrackerProgress: TrackerTaskProgress(issue.GetBody()),
+		IsTracker:       RendersAsTracker(isTracker(issue.GetTitle(), labels, issue.GetBody()), labels, progress),
+		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
 	}

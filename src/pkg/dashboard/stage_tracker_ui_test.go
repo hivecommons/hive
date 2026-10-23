@@ -436,6 +436,12 @@ assert.deepStrictEqual(stageTrackerPRIssueSlot({ linked_issues: [{ number: 6, st
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 113, kind: 'pr', title: 'Fix', stage: 50, linked_issues: [{ number: 77, state: 'open', title: 'Closed by it' }] }, stages, ctx);
 assert.ok(!row.includes('ham-issue-refs-chip'), 'closing link draws no refs chip: ' + row);
 
+// Refs-only issue coverage shows tracker progress and the covering PR's base.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Tracker', stage: 40, claim_reference: true, is_tracker: true, children: { total: 3, completed: 1 }, linked_prs: [{ number: 203, title: 'Draft work', stage: 10, base_ref: 'v6' }] }, stages, ctx);
+assert.ok(row.includes('<span class="ham-badge ham-issue-refs-chip" title="' + STAGE_TRACKER_SOFT_LINK_TIP + '">refs</span>'), 'issue refs chip: ' + row);
+assert.ok(row.includes('<span class="ham-badge">tracker 1/3</span>'), 'tracker progress: ' + row);
+assert.ok(row.includes('<span class="ham-badge">v6</span>'), 'covering PR base: ' + row);
+
 // 040 shares the PR in progress column with 030; the chevron tooltip names the real stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, B, B, B, 'blank cap']);

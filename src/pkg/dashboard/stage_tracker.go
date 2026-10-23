@@ -1088,7 +1088,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if it.Children == nil {
 			it.Children = github.TrackerTaskProgress(issue.Body)
 		}
-		it.IsTracker = issue.IsTracker || it.Children != nil || slices.Contains(issue.Labels, github.PartiallyAddressedLabel)
+		it.IsTracker = github.RendersAsTracker(issue.IsTracker, issue.Labels, it.Children)
 		it.ClaimReference = issue.ClaimContext != nil && !issue.ClaimContext.MergedPR && issue.ClaimContext.Reference
 		if issue.AuthorIsHuman {
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer

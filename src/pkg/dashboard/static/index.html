@@ -14236,7 +14236,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             ${stageTrackerIcon('issue', 'ham-kind-ico')}${chip}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener" title="${esc(stageTrackerTooltip(shown, nowMs))}">#${Number(item.number) || 0}</a>
             <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
-            ${item.claim_reference ? '<span class="ham-badge ham-issue-refs-chip" title="PR works towards this issue; does not auto-close it">refs</span>' : ''}
+            ${item.claim_reference ? '<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>' : ''}
             ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
           </div>`;
       } else {

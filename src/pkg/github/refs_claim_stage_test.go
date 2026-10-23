@@ -111,7 +111,7 @@ func TestDraftWorkPRRetainsBaseRef(t *testing.T) {
 
 func TestTrackerClassificationConversionThreshold(t *testing.T) {
 	for _, count := range []int{1, 2, 3} {
-		for _, marker := range []string{"none", "title", "label"} {
+		for _, marker := range []string{"none", "title", "label", "partial-label"} {
 			t.Run(fmt.Sprintf("%d/%s", count, marker), func(t *testing.T) {
 				body := ""
 				for i := 1; i <= count; i++ {
@@ -124,6 +124,9 @@ func TestTrackerClassificationConversionThreshold(t *testing.T) {
 				}
 				if marker == "label" {
 					labels = []string{"tracker"}
+				}
+				if marker == "partial-label" {
+					labels = []string{" Hive/Partially-Addressed "}
 				}
 				want := count >= trackerTaskListMin || marker != "none"
 				issue := Issue{Title: title, Labels: labels, Body: body, IsTracker: isTracker(title, labels, body)}

@@ -294,6 +294,12 @@ func (c IssueClaim) ReopenedAfterMerge() bool {
 // remainder", never "verify once".
 const ClaimDecisionReopenedAfterMerge = "reopened_after_merge"
 
+// ClaimDecisionCoveredByOpenPR marks a live claim, including non-closing Refs.
+const ClaimDecisionCoveredByOpenPR = "covered_by_open_pr"
+
+// ClaimDecisionReleasedRedStalePR releases coverage for a red, stale PR.
+const ClaimDecisionReleasedRedStalePR = "released_red_stale_pr"
+
 // ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
 // verified no_work_needed verdict reason (hivecommons/hive#7871).
 const ClaimSourceVerdict = "verdict"
@@ -1796,7 +1802,7 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	// (hivecommons/hive#13316).
 	synthesized := !issueHasLabel(issue.Labels, CoveredByPRLabel)
 	issue.Labels = addIssueLabel(issue.Labels, CoveredByPRLabel)
-	issue.ClaimContext = claimContext(claim, "covered_by_open_pr")
+	issue.ClaimContext = claimContext(claim, ClaimDecisionCoveredByOpenPR)
 	issue.ClaimContext.CoveredLabelSynthesized = synthesized
 }
 
@@ -1872,7 +1878,7 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		// A MERGED strong claim (#6867) never takes the valve: its work is on
 		// main, so there is no dead PR to release the issue from.
 		if !claim.MergedPR && redStale != nil && redStale(claim.PRRepo, claim.PRNumber) {
-			issue.ClaimContext.Decision = "released_red_stale_pr"
+			issue.ClaimContext.Decision = ClaimDecisionReleasedRedStalePR
 			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
