@@ -99,6 +99,8 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetRepoPausedFunc(b.cfg.IsRepoPaused)
 	// Red-main circuit breaker threshold (#13630), live per repo.
 	client.SetRedMainThresholdFunc(b.cfg.RepoRedMainThreshold)
+	// Open-held-PR cap (#13645), live per repo.
+	client.SetMaxOpenHeldPRsFunc(b.cfg.RepoMaxOpenHeldPRs)
 	// Per-repo custom agents (#6204). A live predicate over the shared
 	// config, so the hive-open-pr / hive-merge / hive-open-issue relays
 	// refuse an out-of-scope request without a restart.

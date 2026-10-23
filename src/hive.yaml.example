@@ -168,6 +168,11 @@ project:
 #       # Downgrading to a Hive without this key silently ignores it, and the
 #       # repo goes back to direct.
 #       merge_strategy: hive-serialized
+#     - repo: busy-repo
+#       # Cap on open hive PRs still waiting on a human (#13645). At the cap
+#       # hive-open-pr refuses new PRs here; issue filing is unaffected. 0 means
+#       # the default of 12; omit the key for no cap.
+#       max_open_held_prs: 0
   # Optional: how the issues and PRs your agents file should read. Rendered as
   # ${WRITING_GUIDE} in every default policy that files an issue or PR, right
   # before the body template the agent fills in — next to the template, which

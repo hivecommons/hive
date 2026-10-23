@@ -7569,6 +7569,9 @@ func runEvalCycle(
 	// Red-main circuit breaker (#13630): stamp each red default branch and
 	// the PRs that fix it before ranking, so those PRs rank first.
 	ghClient.StampRedMain(actionable, github.CachedPRChangedPaths, time.Now())
+	// Open-held-PR cap (#13645): recount each capped repo's open held hive
+	// PRs for the hive-open-pr refusal and the kick.
+	ghClient.StampOpenHeldPRs(actionable)
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
 	// Only the reconcile pass publishes the snapshot: a cached cycle works

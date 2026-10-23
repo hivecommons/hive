@@ -32,6 +32,12 @@ type RepoPolicy struct {
 	// the default branch before the red-main circuit breaker trips. A Go
 	// duration such as "6h".
 	RedMainThreshold string `yaml:"red_main_threshold,omitempty" json:"red_main_threshold,omitempty"`
+	// MaxOpenHeldPRs caps the PRs the hive App opened in this repo that still
+	// carry a hold (hivecommons/hive#13645). At the cap hive-open-pr refuses
+	// new PRs in the repo and PR-opening agents are told so in their kick.
+	// Unset (the default) means no cap; 0 means DefaultMaxOpenHeldPRs; a
+	// positive value is the cap. See RepoMaxOpenHeldPRs.
+	MaxOpenHeldPRs *int `yaml:"max_open_held_prs,omitempty" json:"max_open_held_prs,omitempty"`
 	// LabelDrivenSupersedeParkActors overrides
 	// project.label_driven_supersede_park_actors for this repo
 	// (hivecommons/hive#13605). Only read when LabelDriven is set.
@@ -398,7 +404,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && rp.RedMainThreshold == "" && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && !rp.ReleaseOnApprove && rp.ReleaseVersionSource == "" && rp.MergeStrategy == "" && rp.MergeFrontTimeout == "" && rp.RedMainThreshold == "" && rp.MaxOpenHeldPRs == nil && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
@@ -493,6 +499,39 @@ func (c *Config) RepoRedMainThreshold(repo string) time.Duration {
 		return d
 	}
 	return redmain.DefaultThreshold
+}
+
+// DefaultMaxOpenHeldPRs is the cap repo_policies[].max_open_held_prs: 0
+// stands for (hivecommons/hive#13645).
+const DefaultMaxOpenHeldPRs = 12
+
+// ValidateMaxOpenHeldPRs accepts nil (unset), 0 (the default cap) or a
+// positive cap.
+func ValidateMaxOpenHeldPRs(field string, value *int) error {
+	if value != nil && *value < 0 {
+		return fmt.Errorf("%s: invalid max_open_held_prs %d (must be 0 for the default of %d, or a positive number)", field, *value, DefaultMaxOpenHeldPRs)
+	}
+	return nil
+}
+
+// RepoMaxOpenHeldPRs returns how many open, still-held PRs the hive App may
+// have in repo before new PRs there are refused (hivecommons/hive#13645), or
+// 0 when repo has no cap. The cap is per repo, never per agent, and opt-in:
+// repo_policies[].max_open_held_prs unset means no cap, 0 means
+// DefaultMaxOpenHeldPRs, a positive value is the cap. A negative value counts
+// as unset.
+func (c *Config) RepoMaxOpenHeldPRs(repo string) int {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || rp.MaxOpenHeldPRs == nil {
+		return 0
+	}
+	switch n := *rp.MaxOpenHeldPRs; {
+	case n == 0:
+		return DefaultMaxOpenHeldPRs
+	case n > 0:
+		return n
+	}
+	return 0
 }
 
 func parseMergeFrontTimeout(raw string) time.Duration {

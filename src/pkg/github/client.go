@@ -227,6 +227,10 @@ type Client struct {
 	redMain redMainState
 	// redMainMu guards redMain.
 	redMainMu sync.Mutex
+	// openHeld is the per-repo open-held-PR cap state (open_held_prs.go,
+	// hivecommons/hive#13645). Guarded by openHeldMu.
+	openHeld   openHeldPRState
+	openHeldMu sync.Mutex
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -1147,6 +1151,10 @@ type ActionableResult struct {
 	// threshold, with the open PRs detected as fixing it (StampRedMain,
 	// hivecommons/hive#13630). Absent when every default branch is green.
 	RedMain map[string]*redmain.Fact `json:"red_main,omitempty"`
+	// OpenHeldPRs holds, per "owner/repo", the open held hive PRs counted
+	// against each repo's max_open_held_prs cap (StampOpenHeldPRs,
+	// hivecommons/hive#13645). Absent for repos without a cap.
+	OpenHeldPRs map[string]OpenHeldPRs `json:"open_held_prs,omitempty"`
 }
 
 // ItemPatchMeta is the audit record of one webhook-driven upsert.

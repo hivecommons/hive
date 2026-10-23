@@ -232,6 +232,7 @@ Go callers keep reading `cfg.Agents`, `cfg.Governor.Gateways` and so on through 
 | `project.repo_policies[].release_on_approve` | Off (unset) for every repo. | Opt in to the hub App creating the exact tag and GitHub Release from an eligible maintainer's `/hive approve` on a typed `kind=release` owner step. Immediately before creating it, Hive verifies target ancestry, tag absence, required checks, and any configured version source. Success posts the release URL, audits the write, and clears Hive's parking labels; refusal leaves the issue parked. Agents remain unable to run `gh release create`. |
 | `project.repo_policies[].release_version_source` | Unset (version-file check disabled). | Optional repository-relative text file, for example `VERSION`, read at the proposed release target. Its trimmed value must match the proposed tag; a single leading `v` is ignored on either value. Invalid paths, unreadable content, and mismatches refuse the release while leaving the issue parked. Only used with `release_on_approve: true`. |
 | `project.repo_policies[].companion_repos` | Unset (no companions). | List of sibling repositories (`name` in the project org, or `org/name`) that this repo's tooling expects checked out beside it under the agent workspace root — for example a docs/website repo a spec tool registers at `<workspace>/<org>/<sibling>/…`. Contributor task prompts and resident-agent kicks carry a shallow-clone plan for each companion at `<workspace root>/<org>/<sibling>` (`$HIVE_WORKSPACE_DIR` for contributor agents, `$HOME/workspace` for resident agents), and agents are told that a tool reporting one of those paths missing means *clone it*, never park the issue. Self-references and malformed entries are dropped. See [running-at-level-6.md](running-at-level-6.md#needless-parks). |
+| `project.repo_policies[].max_open_held_prs` | Unset (no cap) for every repo. | Per-repo cap on open hive PRs still waiting on a human ([#13645](https://github.com/hivecommons/hive/issues/13645)). `0` means the default of `12`; a positive number is the cap. At the cap `hive-open-pr` refuses new PRs in that repo and PR-opening agents are told "repo at capacity: review or close existing PRs first". See [Open held PR cap](#open-held-pr-cap-max_open_held_prs). |
 | `project.label_driven_approval_labels` | `["triage/accepted"]` | Labels whose trusted addition approves an issue on every label-driven repo without its own list. Ignored by repos without `label_driven: true`. Dashboard: Settings → Repos → "Default approval labels". |
 | `project.label_driven_trust_org_members` | `true` | Whether a public member of the repo's owning org who applies an approval label is trusted (Prow's own rule). Dashboard: Settings → Repos → "trust public org members". |
 | `project.label_driven_trusted_bots` | `["kubestellar-prow[bot]"]` | Bot logins whose label additions count as a trusted triager (Prow command bots relaying `/triage accepted`). `github-actions[bot]` is not in the default because it is the shared identity of every workflow in the repo, including ones triggered by untrusted events; operators whose Prow emulation runs as `github-actions[bot]` must add it explicitly per deployment. Dashboard: Settings → Repos → "Trusted bots". |
@@ -979,6 +980,40 @@ project:
   repo_policies:
     - repo: dakota-iso
       red_main_threshold: 2h          # this repository only
+```
+
+## Open held PR cap (`max_open_held_prs`)
+
+Agents can open PRs faster than people review them. With a cap set, a repo
+stops receiving new hive PRs while too many are already waiting on a human
+([#13645](https://github.com/hivecommons/hive/issues/13645), part of
+[#13617](https://github.com/hivecommons/hive/issues/13617)). The cap is per
+repository, never per agent, and off unless configured.
+
+- **What counts:** open PRs authored by the hive's GitHub App that still carry
+  a hold label (the level `hold`, or any other hold Hive recognises). Human
+  PRs, other bots' PRs and issues never count. A test-only or docs-only PR
+  counts until it is auto-released
+  ([#13606](https://github.com/hivecommons/hive/issues/13606)); once its hold
+  is removed — by that release or by a person — it stops counting, as does a
+  PR that is merged or closed. The count is refreshed every governor cycle
+  (`src/pkg/github/open_held_prs.go`).
+- **At the cap:** `hive-open-pr` refuses the request with gate `capacity` and
+  the line `repo at capacity: review or close existing PRs first`, and
+  PR-opening agents get the same line in their kick under the repo's name.
+  Existing PRs keep going and issue filing is unaffected. Trust levels, the
+  trusted-merger definition and the self-merge floor are unchanged.
+
+Set it per repository under `project.repo_policies`: `0` means the default of
+`12`, a positive number is the cap, and leaving the key out means no cap.
+
+```yaml
+project:
+  repo_policies:
+    - repo: console
+      max_open_held_prs: 0            # cap at the default, 12
+    - repo: docs
+      max_open_held_prs: 5            # this repository only
 ```
 
 ## Suspicious-activity alerts (`sentinel`)
