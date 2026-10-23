@@ -992,9 +992,6 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return eval, reason, nil
 	}
-	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind"); stop {
-		return eval, reason, err
-	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
@@ -1027,6 +1024,12 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return eval, humanReason, err
+	}
+	// Current-base gate (hivecommons/hive#13634): only a green, soaked,
+	// approved head is worth an update-branch commit; a relay evaluation
+	// never updates the branch.
+	if _, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, !relay, "behind"); stop {
+		return eval, reason, err
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
 		return eval, gateReason, err

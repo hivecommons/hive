@@ -1605,9 +1605,6 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted); stop {
-		return ev, reason, err
-	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, evaluatedHeadSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
@@ -1659,6 +1656,15 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, intentReason, err
 	} else if intentReason != "" {
 		return AutoMergeSweepEvent{}, intentReason, nil
+	}
+
+	// Current-base gate (hivecommons/hive#13634). Consulted only once the
+	// head is green and every policy gate above has passed: a red or pending
+	// head is the author's to fix and must not be re-based under them, and a
+	// head policy refuses would be updated for nothing. Sits before the desk
+	// so the desk is only asked about a head that would merge this tick.
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, evaluatedHeadSHA, branchUpdateAllowed, autoMergeReasonBehindBudgetExhausted); stop {
+		return ev, reason, err
 	}
 
 	// Approval desk (RFC #4000). Consulted AFTER the sweep's own eligibility
@@ -2048,9 +2054,6 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind"); stop {
-		return ev, reason, err
-	}
 	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
@@ -2064,6 +2067,11 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
+	}
+	// Current-base gate (hivecommons/hive#13634): only a green head that
+	// every gate above lets through is worth an update-branch commit.
+	if ev, reason, stop, err := c.currentBaseGate(ctx, displayRepo, owner, repo, number, baseBranch, headSHA, true, "behind"); stop {
+		return ev, reason, err
 	}
 	if gateReason, err := c.forgestateMergeGate(ctx, owner, repo, number, headSHA); gateReason != "" || err != nil {
 		return AutoMergeSweepEvent{}, gateReason, err
