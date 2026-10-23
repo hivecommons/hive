@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -1262,12 +1263,17 @@ func isTimeoutError(err error) bool {
 	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
-func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
+// logUpstreamEvent logs an upstream timeout event at the given level.
+func (p *GitHubProxy) logUpstreamEvent(level slog.Level, msg string, err error, attrs ...any) {
 	if !isTimeoutError(err) {
 		return
 	}
 	attrs = append(attrs, "error", err)
-	p.logger.Warn(msg, attrs...)
+	p.logger.Log(context.Background(), level, msg, attrs...)
+}
+
+func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
+	p.logUpstreamEvent(slog.LevelWarn, msg, err, attrs...)
 }
 
 // isClientHangup reports a client that went away (EOF, reset, broken pipe) or
@@ -1281,11 +1287,7 @@ func isClientHangup(err error) bool {
 // logClientRead logs a client-side request read failure at Debug: an idle or
 // departed client is expected, unlike an upstream stall.
 func (p *GitHubProxy) logClientRead(msg string, err error, attrs ...any) {
-	if !isTimeoutError(err) {
-		return
-	}
-	attrs = append(attrs, "error", err)
-	p.logger.Debug(msg, attrs...)
+	p.logUpstreamEvent(slog.LevelDebug, msg, err, attrs...)
 }
 
 // proxyHTTP relays a MITM'd GitHub connection with ACMM enforcement applied.
