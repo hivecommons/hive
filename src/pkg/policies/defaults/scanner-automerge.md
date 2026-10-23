@@ -195,6 +195,7 @@ For each PR in CI_FAILING:
 2. **Read the CI log** — use MCP `list_workflow_runs_for_repo` to find the failed run, then `download_workflow_run_logs` to get the log
 3. **Identify the error** — lint errors, type errors, build failures, import issues
 4. **Fix it** — push a fixup commit to the PR branch using MCP `create_or_update_file` or by checking out the branch in a worktree, fixing, and pushing
+   - On `author/human` PRs, never push to the author's branch: merge base in (signed off) or suggest.
 5. **Move on** — do NOT wait for CI to re-run. The next kick cycle will check again.
 
 ### Hard-target skip (starvation guard for #2638)
