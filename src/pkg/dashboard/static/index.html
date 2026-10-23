@@ -1461,18 +1461,25 @@
     .ham-active-ico { display: none; }
     @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
     .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
-    /* Row actions: a left gutter holds the select checkbox and the ⋯ kebab
-       (shown on hover/focus, the checkbox always once anything is
-       selected); the context menu is a fixed, viewport-clamped menu; the
-       selection bar sits above the list. Tokens only (ADR-0018). */
+    /* Row actions: a left gutter holds the select checkbox and the ⋯ kebab.
+       The gutter is part of every selectable row's markup and is always
+       visible: dimmed at rest (--ham-tool-rest-opacity), full emphasis on
+       the hovered / focused row and on every row while a selection or the
+       context menu is open. Nothing is tied to viewport position, row
+       index or the pointer's history — a hover-only reveal left rows
+       "randomly" with and without their gutter as the 1 Hz reconcile
+       swapped nodes under a still pointer. The context menu is a fixed,
+       viewport-clamped menu; the selection bar sits above the list.
+       Tokens only (ADR-0018). */
     #activity-monitor-panel { position: relative; padding-left: var(--ham-gutter); }
     .ham-row { position: relative; }
     .ham-row:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--r-sm); }
     .ham-row.ham-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset var(--sp-1) 0 0 var(--accent); border-radius: var(--r-sm); }
     .ham-row-tools { position: absolute; left: calc(-1 * var(--ham-gutter)); top: var(--sp-5); width: var(--ham-gutter); display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); }
-    .ham-sel, .ham-kebab { appearance: none; -webkit-appearance: none; margin: 0; padding: 0; width: var(--ham-tool-size); height: var(--ham-tool-size); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1; cursor: pointer; opacity: 0; transition: opacity var(--ham-tool-fade-ms); }
-    .ham-row:hover .ham-sel, .ham-row:hover .ham-kebab, .ham-row:focus-within .ham-sel, .ham-row:focus-within .ham-kebab, .ham-row:focus-visible .ham-sel, .ham-row:focus-visible .ham-kebab, .ham-has-sel .ham-sel, .ham-row.ham-selected .ham-sel { opacity: 1; }
+    .ham-sel, .ham-kebab { appearance: none; -webkit-appearance: none; margin: 0; padding: 0; width: var(--ham-tool-size); height: var(--ham-tool-size); border: var(--line-width) solid var(--line-strong); border-radius: var(--r-sm); background: var(--panel); color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 1; cursor: pointer; opacity: var(--ham-tool-rest-opacity); transition: opacity var(--ham-tool-fade-ms); }
+    .ham-row:hover .ham-sel, .ham-row:hover .ham-kebab, .ham-row:focus-within .ham-sel, .ham-row:focus-within .ham-kebab, .ham-row.ham-selected .ham-sel, .ham-row.ham-selected .ham-kebab, .ham-has-sel .ham-sel, .ham-has-sel .ham-kebab, .ham-menu-open .ham-sel, .ham-menu-open .ham-kebab { opacity: 1; }
     @media (hover: none) { .ham-sel, .ham-kebab { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .ham-sel, .ham-kebab { transition: none; } }
     .ham-sel:hover, .ham-kebab:hover { color: var(--text); border-color: var(--accent); }
     .ham-sel[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface-0); }
     .ham-sel[aria-checked="true"]::before { content: '✓'; font-weight: var(--fw-bold); }
@@ -15197,10 +15204,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       else i = (i + dir + items.length) % items.length;
       items[i].focus();
     }
+    // While the context menu is open every row shows its gutter at full
+    // emphasis (the CSS keys on .ham-menu-open on the panel), so the row
+    // the menu acts on is not the only one with visible controls.
+    function stageTrackerSetMenuOpen(el, on) {
+      if (!el || !el.classList) return;
+      if (on) el.classList.add('ham-menu-open'); else el.classList.remove('ham-menu-open');
+    }
     function stageTrackerCloseMenu(refocus) {
       const m = _stageTrackerMenu;
       if (!m) return;
       _stageTrackerMenu = null;
+      stageTrackerSetMenuOpen(document.getElementById('activity-monitor-panel'), false);
       document.removeEventListener('pointerdown', m.onAway, true);
       document.removeEventListener('keydown', m.onKey, true);
       window.removeEventListener('resize', m.onAway);
@@ -15259,6 +15274,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       window.addEventListener('resize', m.onAway);
       window.addEventListener('scroll', m.onAway, true);
       _stageTrackerMenu = m;
+      stageTrackerSetMenuOpen(document.getElementById('activity-monitor-panel'), true);
       if (at.expandDecide) { const d = el.querySelector('[data-ham-act="decide"]'); if (d && d.getAttribute('aria-disabled') !== 'true') d.setAttribute('aria-expanded', 'true'); }
       stageTrackerMenuFocus(el, 'first');
     }

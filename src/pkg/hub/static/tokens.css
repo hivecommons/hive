@@ -154,10 +154,12 @@
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
-  /* Tracker row actions: the select/kebab gutter and its hover fade. */
+  /* Tracker row actions: the select/kebab gutter, its resting emphasis
+     and the (hover-only) fade up to full emphasis. */
   --ham-gutter: 1.75em;
   --ham-tool-size: 1.1em;
-  --ham-tool-fade-ms: var(--duration-fast);
+  --ham-tool-rest-opacity: 0.45;
+  --ham-tool-fade-ms: 120ms;
   --opacity-disabled: 0.55;
   --component-status: var(--status-neutral);
   --component-tint-soft: 8%;
