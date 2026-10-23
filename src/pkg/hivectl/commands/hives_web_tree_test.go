@@ -484,24 +484,57 @@ func TestCommonsTreeDiscoveryDoesNotHoldServerMutex(t *testing.T) {
 		return nil, nil
 	}
 	existing := treeCall(t, server, "/api/tree", nil, commonsTreeEdit{}, http.StatusOK)
-	slow := make(chan commonsTreeResponse, 1)
-	go func() { slow <- treeCall(t, server, "/api/tree?discover=1", nil, commonsTreeEdit{}, http.StatusOK) }()
+	// Requests are built here and only the round-trip runs in goroutines, so no
+	// t.Fatal can fire off the test goroutine; results are asserted below.
+	type rawResult struct {
+		status int
+		body   []byte
+		err    error
+	}
+	roundTrip := func(req *http.Request) <-chan rawResult {
+		out := make(chan rawResult, 1)
+		go func() {
+			resp, err := server.Client().Do(req)
+			if err != nil {
+				out <- rawResult{err: err}
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			out <- rawResult{status: resp.StatusCode, body: body, err: err}
+		}()
+		return out
+	}
+	decode := func(path string, res rawResult) commonsTreeResponse {
+		t.Helper()
+		if res.err != nil {
+			t.Fatalf("%s: %v", path, res.err)
+		}
+		if res.status != http.StatusOK {
+			t.Fatalf("%s status=%d want=%d body=%s", path, res.status, http.StatusOK, res.body)
+		}
+		var got commonsTreeResponse
+		if err := json.Unmarshal(res.body, &got); err != nil {
+			t.Fatalf("decode %s: %v (%s)", path, err, res.body)
+		}
+		return got
+	}
+	slowPath, otherPath := "/api/tree?discover=1", "/api/tree?session="+existing.Session
+	slow := roundTrip(commonsReq(t, server, http.MethodGet, slowPath, nil))
 	<-entered
 	// Discovery is blocked on an unreachable hub; an unrelated request must still be served.
-	other := make(chan commonsTreeResponse, 1)
-	go func() {
-		other <- treeCall(t, server, "/api/tree?session="+existing.Session, nil, commonsTreeEdit{}, http.StatusOK)
-	}()
+	other := roundTrip(commonsReq(t, server, http.MethodGet, otherPath, nil))
 	select {
-	case got := <-other:
-		if got.Session != existing.Session {
+	case res := <-other:
+		if got := decode(otherPath, res); got.Session != existing.Session {
 			t.Fatalf("session=%q want %q", got.Session, existing.Session)
 		}
-	case <-slow:
+	case res := <-slow:
+		decode(slowPath, res)
 		t.Fatal("discovery finished before it was released")
 	}
 	close(release)
-	if got := <-slow; got.Session == "" {
+	if got := decode(slowPath, <-slow); got.Session == "" {
 		t.Fatal("missing session from discovered review")
 	}
 }
