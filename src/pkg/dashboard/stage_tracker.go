@@ -1276,12 +1276,22 @@ func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body
 	// serves verbatim, and what the ETag validates. The building request
 	// alone rewrites the marker to fresh on its way out (handleStageTracker).
 	resp.Source = "cache"
+	// The ETag hashes the body with generated_at zeroed: the timestamp moves
+	// on every rebuild, so including it would turn an unchanged tracker into
+	// a 200 each time (the client revalidates with this ETag and gets a 304).
+	var hashBuf bytes.Buffer
+	hashResp := resp
+	hashResp.GeneratedAt = time.Time{}
+	if err := json.NewEncoder(&hashBuf).Encode(hashResp); err != nil {
+		slogWarnOverviewEncode(err)
+		return nil, "", now, true
+	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
 		slogWarnOverviewEncode(err)
 		return nil, "", now, true
 	}
-	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(buf.Bytes()), now
+	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(hashBuf.Bytes()), now
 	return c.body, c.etag, c.generatedAt, true
 }
 
@@ -1332,7 +1342,7 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age="+strconv.FormatInt(int64(remaining/time.Second), 10))
 	w.Header().Set("X-Hive-Stage-Tracker-Source", map[bool]string{true: "fresh", false: "cache"}[fresh])
-	if match := r.Header.Get("If-None-Match"); match != "" && !fresh && strings.Contains(match, etag) {
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, etag) {
 		github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusNotModified)
 		w.WriteHeader(http.StatusNotModified)
 		return

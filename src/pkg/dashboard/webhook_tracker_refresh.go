@@ -268,7 +268,7 @@ func (s *Server) invalidateStageTrackerForWebhook() {
 		s.statusMu.RLock()
 		seq := s.statusSeq
 		s.statusMu.RUnlock()
-		s.broadcastFrame(stageTrackerSSEFrame(seq))
+		s.nudgeStageTracker(seq)
 	}
 }
 

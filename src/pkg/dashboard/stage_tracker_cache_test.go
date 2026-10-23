@@ -155,14 +155,16 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 	s.stageTrackerCacheMu.Lock()
 	s.stageTrackerCache.generatedAt = s.stageTrackerCache.generatedAt.Add(-21 * time.Second)
 	s.stageTrackerCacheMu.Unlock()
-	if again := get(etag); again.Code != http.StatusOK || again.Header().Get("X-Hive-Stage-Tracker-Source") != "fresh" {
+	// The rebuilt payload differs only in generated_at, which the ETag
+	// excludes, so the revalidation is a 304 even though the build was fresh.
+	if again := get(etag); again.Code != http.StatusNotModified || again.Header().Get("X-Hive-Stage-Tracker-Source") != "fresh" {
 		t.Fatalf("after TTL: %d src=%q", again.Code, again.Header().Get("X-Hive-Stage-Tracker-Source"))
 	}
 
 	// The REST accounting store is process-wide, so other tests in the
 	// package also drive this caller; only the delta from this test counts.
 	after := stageTrackerRESTAccounting()
-	if after.Requests-before.Requests != 5 || after.Charged != before.Charged || after.NotModified-before.NotModified != 1 {
+	if after.Requests-before.Requests != 5 || after.Charged != before.Charged || after.NotModified-before.NotModified != 2 {
 		t.Fatalf("accounting delta: before=%+v after=%+v", before, after)
 	}
 }
