@@ -506,10 +506,14 @@ func containsSentinelFinding(have []evidence.SentinelFinding, f evidence.Sentine
 // evidenceWriteDenied remembers paths whose write already failed with a permission error.
 var evidenceWriteDenied sync.Map
 
+// evidenceDirMode is group-writable and setgid so writers running under
+// different uids that share a group can all add bundles to one directory.
+const evidenceDirMode = os.FileMode(0o775) | os.ModeSetgid
+
 // writeReviewEvidence commits b with write-then-rename so a reader never
 // observes a half-written bundle.
 func writeReviewEvidence(path string, b *evidence.Bundle) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := mkdirEvidenceDirs(filepath.Dir(path)); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(b, "", "  ")
@@ -523,6 +527,31 @@ func writeReviewEvidence(path string, b *evidence.Bundle) error {
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	return nil
+}
+
+// mkdirEvidenceDirs creates dir and any missing parents, applying
+// evidenceDirMode to each component it created (MkdirAll is subject to umask
+// and ignores setgid). Pre-existing directories are left untouched.
+func mkdirEvidenceDirs(dir string) error {
+	var missing []string
+	for d := dir; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(d); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		missing = append(missing, d)
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	if err := os.MkdirAll(dir, evidenceDirMode); err != nil {
+		return err
+	}
+	for _, d := range missing {
+		_ = os.Chmod(d, evidenceDirMode)
 	}
 	return nil
 }
