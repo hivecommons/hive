@@ -105,6 +105,12 @@ func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 }
 
 func (s *Server) registerContributeRoutes() {
+	// Persist legacy token timestamps at migration, not their original signup.
+	for _, p := range listContributorProfiles() {
+		if err := s.contributorTokenPolicy().migrate(&p, time.Now().UTC()); err != nil {
+			s.logger.Error("contributor token migration failed", "username", p.GitHubUsername, "error", err)
+		}
+	}
 	if s.contributeHub != nil {
 		s.contributeHub.Close()
 	}
@@ -139,6 +145,7 @@ func (s *Server) registerContributeRoutes() {
 	// tier gate cannot be delegated to the middleware. UI hiding is UX only.
 	s.mux.HandleFunc("POST /api/contribute/invite", s.handleContributeInvite)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
+	s.mux.HandleFunc("GET /api/contribute/token", s.handleContributeTokenStatus)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	// Contribution-eligible repositories (hivecommons/hive#12805): the ids a
 	// relay may put in a repo_scope. Public like /status; no counts, no PII.
@@ -226,6 +233,8 @@ func (s *Server) registerContributeRoutes() {
 	// above; identity resolved server-side, every field optional. See dossier.go.
 	s.mux.HandleFunc("GET /api/contribute/dossier", s.handleContributeDossier)
 	s.mux.HandleFunc("POST /api/contribute/dossier", s.handleContributeDossier)
+	s.mux.HandleFunc("POST /api/contributors/tokens/revoke-all", s.handleContributorTokenRevoke)
+	s.mux.HandleFunc("POST /api/contributors/{id}/token/revoke", s.handleContributorTokenRevoke)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("POST /api/contributors/{id}/wall-mute", s.handleContributorWallMute)
@@ -402,7 +411,7 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	profile, token := createContributorProfile(username)
+	profile, token := createContributorProfile(username, s.contributorTokenPolicy())
 
 	// Attribution (issue #2598): if a valid trusted invite token accompanies the
 	// registration, record who invited them. This is attribution ONLY — the tier
@@ -576,7 +585,11 @@ func (s *Server) handleContributeReissueToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	newToken := reissueContributorToken(profile)
+	newToken := reissueContributorToken(profile, s.contributorTokenPolicy())
+	if newToken == "" {
+		jsonError(w, "Token update failed; retry reissue-token", http.StatusConflict)
+		return
+	}
 	s.logger.Info("contributor token reissued via GitHub auth", "username", username, "id", profile.ContributorID)
 
 	jsonResponse(w, map[string]string{

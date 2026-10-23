@@ -100,6 +100,10 @@ project:
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).
 # Prefer discord.gg invites over discord.com/channels URLs for new contributors.
 # contribute:
+#   # Registration tokens: mandatory lifetime; optional inactivity cutoff.
+#   # Env overrides: HIVE_CONTRIBUTE_TOKEN_MAX_AGE / HIVE_CONTRIBUTE_TOKEN_IDLE_MAX.
+#   token_max_age: 2160h # 90 days (Go durations do not accept days)
+#   token_idle_max: 0s # off
 #   help_links:
 #     - label: Contributor docs
 #       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
