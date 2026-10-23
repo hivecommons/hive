@@ -501,10 +501,25 @@ a.nav-chip:active,
   display: inline-block;
   flex: none;
   inline-size: var(--status-dot-size);
+  position: relative;
 }
 
+/* The pulse ring is a pseudo-element that only animates opacity, so it runs
+   on the compositor thread; animating box-shadow on the dot itself forced a
+   main-thread paint of the page every frame. */
 .status-dot[data-status][data-pulse="active"] {
+  box-shadow: var(--shadow-status-pulse-rest);
+}
+
+.status-dot[data-status][data-pulse="active"]::after {
   animation: hv-status-pulse var(--duration-status-pulse) ease-in-out infinite;
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-status-pulse-active);
+  content: '';
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
 .toolbar {
@@ -763,10 +778,10 @@ a.nav-chip:active,
 @keyframes hv-status-pulse {
   from,
   to {
-    box-shadow: var(--shadow-status-pulse-rest);
+    opacity: 0;
   }
   50% {
-    box-shadow: var(--shadow-status-pulse-active);
+    opacity: 1;
   }
 }
 
