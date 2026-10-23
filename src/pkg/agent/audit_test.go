@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // recordedAudit is one captured audit event.

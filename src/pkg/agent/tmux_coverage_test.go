@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // tmuxAvailable reports whether a usable tmux binary is on PATH. All tmux-based

@@ -9,7 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/crux/types"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // StartFailureClass and its values are defined in pkg/crux/types as part of

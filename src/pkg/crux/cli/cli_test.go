@@ -12,9 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // fakeRuntime is a crux.Runtime that records the calls the CLI makes and
@@ -206,7 +205,7 @@ type harness struct {
 	ticks  chan time.Time
 	// defs and project are what the factory was last handed.
 	defs    map[string]config.AgentConfig
-	project agent.ProjectContext
+	project crux.ProjectContext
 }
 
 func newHarness(t *testing.T) *harness {
@@ -216,7 +215,8 @@ func newHarness(t *testing.T) *harness {
 		Stdin:  strings.NewReader(""),
 		Stdout: h.stdout,
 		Stderr: h.stderr,
-		newRuntime: func(defs map[string]config.AgentConfig, project agent.ProjectContext) crux.Runtime {
+		Loader: fakeLoader{},
+		newRuntime: func(defs map[string]config.AgentConfig, project crux.ProjectContext) crux.Runtime {
 			h.defs = defs
 			h.project = project
 			for name, cfg := range defs {
@@ -476,7 +476,7 @@ func TestPSTableAndJSONFromConfig(t *testing.T) {
 	if _, ok := h.defs["scout"]; !ok || len(h.defs) != 1 {
 		t.Fatalf("defs = %v, want only the enabled agent", h.defs)
 	}
-	if h.project.Org != "hivecommons" || h.project.PolicyDir != defaultPoliciesLocalDir {
+	if h.project.Org != "hivecommons" || h.project.PolicyDir != fakePolicyDir {
 		t.Fatalf("project = %+v", h.project)
 	}
 	out := h.stdout.String()
@@ -617,79 +617,9 @@ func TestStop(t *testing.T) {
 	}
 }
 
-func TestLoadDefinitionFile(t *testing.T) {
-	dir := t.TempDir()
-	name, cfg, err := loadDefinitionFile(writeFile(t, filepath.Join(dir, "a.yaml"), portableDefinition))
-	if err != nil || name != "scout-agent" || cfg.Backend != "claude" || cfg.DisplayName != "Scout" || cfg.Replicas != 1 {
-		t.Fatalf("portable: %q %+v %v", name, cfg, err)
-	}
-
-	name, cfg, err = loadDefinitionFile(writeFile(t, filepath.Join(dir, "fixer.yaml"), overlayDefinition))
-	if err != nil || name != "fixer" || cfg.Backend != "codex" || cfg.ID != "fixer" || !cfg.Managed {
-		t.Fatalf("overlay: %q %+v %v", name, cfg, err)
-	}
-
-	if _, _, err := loadDefinitionFile(filepath.Join(dir, "missing.yaml")); err == nil {
-		t.Fatal("missing file: want error")
-	}
-	if _, _, err := loadDefinitionFile(writeFile(t, filepath.Join(t.TempDir(), "x.yaml"), "kind: AgentDefinition\nmetadata: {}\n")); err == nil {
-		t.Fatal("portable without name: want error")
-	}
-	if _, _, err := loadDefinitionFile(writeFile(t, filepath.Join(t.TempDir(), "Bad Name.yaml"), overlayDefinition)); err == nil {
-		t.Fatal("bad overlay name: want error")
-	}
-	if _, _, err := loadDefinitionFile(writeFile(t, filepath.Join(t.TempDir(), "x.yaml"), "kind: AgentDefinition\nmetadata:\n  name: 'a/b'\n")); err == nil {
-		t.Fatal("portable with path name: want error")
-	}
-	if _, _, err := loadDefinitionFile(writeFile(t, filepath.Join(t.TempDir(), "x.yml"), overlayDefinition)); err == nil {
-		t.Fatal(".yml overlay: want error (hive only reads .yaml)")
-	}
-	if _, _, err := loadDefinitionFile(writeFile(t, filepath.Join(t.TempDir(), "x.yaml"), ":\n  - [")); err == nil {
-		t.Fatal("malformed yaml: want error")
-	}
-	if isPortableDefinition([]byte(":\n  - [")) {
-		t.Fatal("malformed yaml is not a portable definition")
-	}
-	if isDefinitionPath("scout") || !isDefinitionPath("scout.YAML") {
-		t.Fatal("isDefinitionPath")
-	}
-}
-
-func TestValidateDefinitionName(t *testing.T) {
-	if err := validateDefinitionName(""); err == nil {
-		t.Fatal("empty")
-	}
-	if err := validateDefinitionName(strings.Repeat("a", maxDefinitionNameLen+1)); err == nil {
-		t.Fatal("too long")
-	}
-	if err := validateDefinitionName("ok-name_1"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestProjectContextFromConfig(t *testing.T) {
-	if pc := projectContextFromConfig(nil); pc.Org != "" {
-		t.Fatalf("nil: %+v", pc)
-	}
-	cfg, err := config.Load(hiveYAML(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Policies.LocalDir = "/x"
-	cfg.Policies.Path = "p"
-	pc := projectContextFromConfig(cfg)
-	if pc.Org != "hivecommons" || len(pc.Repos) != 1 || pc.PolicyDir != "/x/p" || pc.RepoPaused == nil || pc.AgentRepos == nil {
-		t.Fatalf("pc = %+v", pc)
-	}
-	cfg.GitHub.APIURL = "https://github.example.com/api/v3"
-	if pc := projectContextFromConfig(cfg); pc.GHHost == "" {
-		t.Fatalf("GHE host not derived: %+v", pc)
-	}
-}
-
 func TestNewManagerRuntimeBuildsAManager(t *testing.T) {
 	t.Setenv(envWorkDir, t.TempDir())
-	rt := newManagerRuntime(map[string]config.AgentConfig{"scout": {Backend: "claude", ID: "scout"}}, agent.ProjectContext{})
+	rt := newManagerRuntime(map[string]config.AgentConfig{"scout": {Backend: "claude", ID: "scout"}}, crux.ProjectContext{})
 	if rt == nil {
 		t.Fatal("nil runtime")
 	}
@@ -716,7 +646,7 @@ func TestDefaultsFillCollaborators(t *testing.T) {
 
 func TestMainEntryPoint(t *testing.T) {
 	var stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"--workdir", t.TempDir(), "help"}, strings.NewReader(""), &bytes.Buffer{}, &stderr); code != ExitOK {
+	if code := Main(context.Background(), []string{"--workdir", t.TempDir(), "help"}, strings.NewReader(""), &bytes.Buffer{}, &stderr, nil); code != ExitOK {
 		t.Fatalf("code %d stderr %q", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "usage: crux") {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent/tmux"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // paneCaptureSleep is a pacing var, not a const, for the same reason as the

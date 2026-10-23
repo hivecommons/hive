@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // A kick is typed into the pane as 400-rune chunks via `tmux send-keys -l`.

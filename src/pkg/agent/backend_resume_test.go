@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // Backend resume-handle capture (hivecommons/hive#9606). Each test lays out

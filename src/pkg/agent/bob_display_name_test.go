@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestBobSessionLabelEnvPair pins #11273: bob-backed agents get an optional

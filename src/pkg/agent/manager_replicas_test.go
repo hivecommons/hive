@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 func TestReconcileAgentsAddsReplicaWithUIDAndRemovesExtra(t *testing.T) {

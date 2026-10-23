@@ -26,9 +26,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // Exit codes. Usage errors are distinct from runtime failures so wrappers can
@@ -65,18 +64,21 @@ type globalOptions struct {
 
 // runtimeFactory builds the Runtime a command operates on. Production uses
 // newManagerRuntime; tests inject a fake.
-type runtimeFactory func(defs map[string]config.AgentConfig, project agent.ProjectContext) crux.Runtime
+type runtimeFactory func(defs map[string]config.AgentConfig, project crux.ProjectContext) crux.Runtime
 
 // tickerFactory returns a channel that fires every d and a stop function.
 // Tests substitute a channel they drive by hand.
 type tickerFactory func(d time.Duration) (<-chan time.Time, func())
 
-// Env is what a command needs beyond its arguments: the streams, the runtime
-// factory and the clock.
+// Env is what a command needs beyond its arguments: the streams, the
+// definition loader, the runtime factory and the clock.
 type Env struct {
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
+	// Loader reads --config and definition files. Nil means this build cannot
+	// read them (see noLoader); cmd/crux wires the Hive-backed one.
+	Loader DefinitionLoader
 
 	newRuntime runtimeFactory
 	ticker     tickerFactory
@@ -86,8 +88,9 @@ type Env struct {
 
 // Main runs the crux command line and returns its exit code. ctx ending
 // interrupts `run` (which then stops its agent) and any in-flight command.
-func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	env := &Env{Stdin: stdin, Stdout: stdout, Stderr: stderr}
+// loader is how --config and definition files are read; see DefinitionLoader.
+func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, loader DefinitionLoader) int {
+	env := &Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Loader: loader}
 	return env.Run(ctx, args)
 }
 
@@ -152,7 +155,7 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 // local runs an observer/control subcommand against a runtime built from
 // --config in this process.
 func (e *Env) local(ctx context.Context, opts globalOptions, name string, args []string) int {
-	defs, project, err := loadConfigDefinitions(opts.config)
+	defs, project, err := e.Loader.LoadConfig(opts.config)
 	if err != nil {
 		fmt.Fprintln(e.Stderr, "crux:", err)
 		return ExitError
@@ -191,6 +194,9 @@ func (e *Env) defaults() {
 	}
 	if e.Stderr == nil {
 		e.Stderr = io.Discard
+	}
+	if e.Loader == nil {
+		e.Loader = noLoader{}
 	}
 	if e.newRuntime == nil {
 		e.newRuntime = newManagerRuntime

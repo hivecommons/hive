@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claude"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // Regression coverage for kubestellar/hive#5730.

@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 const (
@@ -349,8 +349,8 @@ func TestKickLogSourceResolver_LiveApply(t *testing.T) {
 		t.Fatalf("KickLogSource() before resolver = %q", got)
 	}
 
-	live := config.LoggingConfig{KickLogSource: config.KickLogSourceTranscript}
-	m.SetKickLogSourceResolver(func() string { return live.ResolveKickLogSource() })
+	live := config.KickLogSourceTranscript
+	m.SetKickLogSourceResolver(func() string { return config.NormalizeKickLogSource(live) })
 	if got := m.KickLogSource(); got != kickLogSourceTranscript {
 		t.Fatalf("KickLogSource() with resolver = %q, want transcript", got)
 	}
@@ -361,7 +361,7 @@ func TestKickLogSourceResolver_LiveApply(t *testing.T) {
 		t.Errorf("resolver-selected transcript not used:\n%s", body)
 	}
 
-	live.KickLogSource = "bogus"
+	live = "bogus"
 	if got := m.KickLogSource(); got != kickLogSourceScrollback {
 		t.Errorf("unknown resolver value = %q, want scrollback", got)
 	}

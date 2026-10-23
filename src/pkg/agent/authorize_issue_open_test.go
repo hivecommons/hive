@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // AuthorizeIssueOpen is the gate for the file-based issue-request relay

@@ -104,8 +104,8 @@ func TestResolvedGatewaysBackCompat(t *testing.T) {
 	if len(gws) != 1 {
 		t.Fatalf("expected 1 synthesized gateway, got %d", len(gws))
 	}
-	if gws[0].Name != legacyLiteLLMGatewayName {
-		t.Fatalf("synthesized gateway name = %q, want %q", gws[0].Name, legacyLiteLLMGatewayName)
+	if gws[0].Name != LegacyLiteLLMGatewayName {
+		t.Fatalf("synthesized gateway name = %q, want %q", gws[0].Name, LegacyLiteLLMGatewayName)
 	}
 	if gws[0].Endpoint != "https://litellm.example.com" || gws[0].DefaultModel != "gpt-4o" {
 		t.Fatalf("synthesized gateway did not carry legacy fields: %+v", gws[0])

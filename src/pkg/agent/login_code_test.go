@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/config"
 )
 
 // TestValidateLoginCodeRejectsCommandInjection is the security property of the

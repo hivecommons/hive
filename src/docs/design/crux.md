@@ -276,17 +276,25 @@ PRs: a ring package that takes `*config.Config` narrows to the
 `AgentRuntimeConfig` / `AgentRuntimeGovernorConfig` value or to a small
 interface the host fills in, the same shape as `agent.SpanStarter`.
 
+Migration so far (the `config` row leaves a package's outbound baseline in
+the same change that swaps its imports):
+
+| Ring package | Moved | Inverted |
+|---|---|---|
+| `pkg/agent` | import-path swap in 13 + 112 test files; `GovernorConfig.ResolvedGateways` / `ResolveGateway` / `ValidateBackend` and `LegacyLiteLLMGatewayName` moved onto `AgentRuntimeGovernorConfig` (they read only `Gateways` and `LiteLLM`; `GovernorConfig` embeds it, so `cfg.Governor.ResolveGateway` still promotes); the kick-transcript test drives `NormalizeKickLogSource` instead of `LoggingConfig` | — |
+| `pkg/crux` | import-path swap; `crux.ProjectContext` re-exports `agent.ProjectContext` so a host can build one without naming `pkg/agent` | — |
+| `pkg/crux/cli` | import-path swap | `cli.DefinitionLoader` (`LoadConfig`, `LoadDefinitionFile`) on `cli.Env`, passed to `cli.Main`. The Hive-backed implementation — `config.Load`, `config.LoadAgentOverrides`, `Config.ApplyAgentDefaults`, `defsrc.ParseDefinition` / `MergeAllowedFields`, cmd/hive's `ProjectContext` derivation — is `cmd/crux/definitions.go`. `pkg/defsrc` stays outside: beyond the portable-YAML parser it holds `ApplyToConfig(*config.Config)` and the governor `Cadence`, so moving it in would drag `Config`. |
+
 ## Outbound edges
 
 Imports from ring packages to Hive packages outside the ring, as the
-outbound ratchet records them after #13785. Entries marked *(test)* appear
-only in `_test.go` files.
+outbound ratchet records them after the agent / crux / crux-cli config
+migration. Entries marked *(test)* appear only in `_test.go` files.
 
 | Ring package | Outside Hive imports |
 |---|---|
-| `pkg/agent` | `config`, `effects`, `fleetreport`, `gitidentity`, `jev`, `outputschema`, `pushbroker`, `internal/testutil` *(test)* |
-| `pkg/crux` | `config` |
-| `pkg/crux/cli` | `config`, `defsrc` |
+| `cmd/crux` | `config`, `defsrc` (the `DefinitionLoader` implementation; moved here from `pkg/crux/cli`, see [Configuration leaf](#configuration-leaf)) |
+| `pkg/agent` | `effects`, `fleetreport`, `gitidentity`, `jev`, `outputschema`, `pushbroker`, `internal/testutil` *(test)* |
 | `pkg/inference` | `config`, `watsonx`, `internal/testutil` *(test)* |
 | `pkg/proxy` | `config`, `github`, `inferencehealth`, `ioscan`, `issueshape`, `tokens` |
 | `pkg/toolapprove` | `config`, `ioscan` |

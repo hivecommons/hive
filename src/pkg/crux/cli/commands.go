@@ -52,7 +52,7 @@ func (e *Env) cmdRun(ctx context.Context, opts globalOptions, args []string) int
 	}
 	target := fs.Arg(0)
 
-	defs, project, err := loadConfigDefinitions(opts.config)
+	defs, project, err := e.Loader.LoadConfig(opts.config)
 	if err != nil {
 		fmt.Fprintln(e.Stderr, "crux:", err)
 		return ExitError
@@ -61,7 +61,7 @@ func (e *Env) cmdRun(ctx context.Context, opts globalOptions, args []string) int
 
 	name := target
 	if isDefinitionPath(target) {
-		defName, cfg, err := loadDefinitionFile(target)
+		defName, cfg, err := e.Loader.LoadDefinitionFile(target)
 		if err != nil {
 			fmt.Fprintln(e.Stderr, "crux:", err)
 			return ExitError
