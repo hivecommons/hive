@@ -10210,7 +10210,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
       });
       if (!experimentOn) {
-        if (_nousPollTimer) { clearInterval(_nousPollTimer); _nousPollTimer = null; }
+        if (_nousPollTimer) { dashboardClearInterval('nous-status'); _nousPollTimer = null; }
         _nousPollStarted = false;
         const panel = document.getElementById('nous-panel');
         if (panel) panel.innerHTML = '';
@@ -11496,15 +11496,31 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return capDashboardArray(arr, max || CLIENT_HISTORY_MAX_SAMPLES);
     }
     function dashboardSetInterval(key, fn, ms) {
-      if (DASHBOARD_INTERVALS[key]) clearInterval(DASHBOARD_INTERVALS[key]);
-      DASHBOARD_INTERVALS[key] = setInterval(fn, ms);
-      return DASHBOARD_INTERVALS[key];
+      dashboardClearInterval(key);
+      const entry = { fn, ms, timer: null };
+      DASHBOARD_INTERVALS[key] = entry;
+      if (!document.hidden) entry.timer = setInterval(fn, ms);
+      return entry;
     }
     function dashboardClearInterval(key) {
       if (!DASHBOARD_INTERVALS[key]) return;
-      clearInterval(DASHBOARD_INTERVALS[key]);
+      clearInterval(DASHBOARD_INTERVALS[key].timer);
       delete DASHBOARD_INTERVALS[key];
     }
+    document.addEventListener('visibilitychange', () => {
+      for (const [key, entry] of Object.entries(DASHBOARD_INTERVALS)) {
+        if (DASHBOARD_INTERVALS[key] !== entry) continue;
+        clearInterval(entry.timer);
+        entry.timer = null;
+        if (document.hidden) continue;
+        entry.timer = setInterval(entry.fn, entry.ms);
+        // A refresh failure must not prevent the other panels from resuming.
+        // Snapshot iteration also permits a callback to clear/replace itself.
+        if (DASHBOARD_INTERVALS[key] === entry) {
+          try { Promise.resolve(entry.fn()).catch(console.error); } catch (err) { console.error(err); }
+        }
+      }
+    });
     let historyData = (() => {
       try {
         const stored = localStorage.getItem(SPARKLINE_STORAGE_KEY);
@@ -11660,6 +11676,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (svg.getClientRects && svg.getClientRects().length === 0) return false;
       return true;
     }
+    function animateSparklinePart(element, frames, options) {
+      const animation = element.animate(frames, options);
+      animation.onfinish = () => {
+        // Persist the final appearance before releasing the forwards-fill effect.
+        const last = frames[frames.length - 1];
+        for (const [property, value] of Object.entries(last)) element.style[property] = String(value);
+        animation.cancel();
+      };
+      return animation;
+    }
     function animateSparklineSvg(svg, length) {
       if (!svg || !svg.isConnected) return;
       cancelSparklineWork(svg, false);
@@ -11674,9 +11700,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.classList.add('is-redrawing', 'is-glowing');
       line.style.strokeDasharray = String(len);
       line.style.strokeDashoffset = String(len);
-      line.animate([{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
-      if (area) area.animate([{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
-      if (dot) dot.animate([{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
+      animateSparklinePart(line, [{ strokeDashoffset: len }, { strokeDashoffset: 0 }], { duration: SPARKLINE_ANIMATION_MS, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'forwards' });
+      if (area) animateSparklinePart(area, [{ opacity: 0 }, { opacity: 0.14 }], { duration: SPARKLINE_ANIMATION_MS - 120, delay: 90, easing: 'ease-out', fill: 'forwards' });
+      if (dot) animateSparklinePart(dot, [{ opacity: 0, transform: 'scale(0.35)' }, { opacity: 1, transform: 'scale(1.35)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, delay: SPARKLINE_ANIMATION_MS - 140, easing: 'cubic-bezier(.2,1.8,.4,1)', fill: 'forwards' });
       const cleanupTimer = setTimeout(() => {
         _sparklineCleanupTimers.delete(wrap);
         if (!line.isConnected) return;
@@ -33059,8 +33085,12 @@ function burnAreaChart() {
 
     function validDashboardTimeZone(tz) {
       if (!tz || typeof tz !== 'string') return '';
+      const cache = validDashboardTimeZone.cache || (validDashboardTimeZone.cache = new Map());
+      if (cache.has(tz)) return cache.get(tz);
       try {
         new Intl.DateTimeFormat([], { timeZone: tz }).format(new Date());
+        if (cache.size >= 64) cache.clear();
+        cache.set(tz, tz);
         return tz;
       } catch (e) {
         return '';
@@ -33068,8 +33098,14 @@ function burnAreaChart() {
     }
 
     function browserDashboardTimeZone() {
+      // Recheck occasionally so OS timezone changes still reach a long-lived tab.
+      const now = Date.now();
+      if (browserDashboardTimeZone.expires > now) return browserDashboardTimeZone.value;
       try {
-        return (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+        const tz = (Intl && Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || '';
+        browserDashboardTimeZone.value = tz;
+        browserDashboardTimeZone.expires = now + 60000;
+        return tz;
       } catch (e) {
         return '';
       }
@@ -33103,11 +33139,18 @@ function burnAreaChart() {
       return ['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles','America/Phoenix','America/Anchorage','Pacific/Honolulu','Europe/London','Europe/Berlin','Asia/Kolkata','Asia/Tokyo','Australia/Sydney'];
     }
 
+    const _dashboardDateFormatters = new Map();
     function dashboardDateFormatter(options) {
       const opts = Object.assign({}, options || {});
       const tz = selectedDashboardTimeZone();
       if (tz) opts.timeZone = tz;
-      return new Intl.DateTimeFormat([], opts);
+      const key = JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
+      if (_dashboardDateFormatters.has(key)) return _dashboardDateFormatters.get(key);
+      const formatter = new Intl.DateTimeFormat([], opts);
+      // Bound memory even when callers supply arbitrary option combinations.
+      if (_dashboardDateFormatters.size >= 64) _dashboardDateFormatters.delete(_dashboardDateFormatters.keys().next().value);
+      _dashboardDateFormatters.set(key, formatter);
+      return formatter;
     }
 
     function formatDashboardDateTime(value, options, fallback) {
@@ -34137,7 +34180,7 @@ function burnAreaChart() {
     }
 
     function stopInceptionPoll() {
-      if (_inceptionPollTimer) { clearInterval(_inceptionPollTimer); _inceptionPollTimer = null; }
+      if (_inceptionPollTimer) { dashboardClearInterval('inception-activity'); _inceptionPollTimer = null; }
     }
 
     function _inceptionAuthHeaders() {
@@ -42840,7 +42883,7 @@ function burnAreaChart() {
     }
 
     function orStartCreditPolling() {
-      if (_openrouterPoll) clearInterval(_openrouterPoll);
+      if (_openrouterPoll) dashboardClearInterval('openrouter-credit');
       const OR_POLL_MS = 4000;
       _openrouterPoll = dashboardSetInterval('openrouter-credit', orCheckCredit, OR_POLL_MS);
     }
@@ -42852,7 +42895,7 @@ function burnAreaChart() {
         if (!res.ok) return;
         const d = await res.json();
         if (!d.connected) return;
-        if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+        if (_openrouterPoll) { dashboardClearInterval('openrouter-credit'); _openrouterPoll = null; }
         let creditLine = '';
         if (d.limit_remaining != null) creditLine = ' — $' + Number(d.limit_remaining).toFixed(2) + ' remaining';
         else if (d.limit == null) creditLine = ' — unlimited';
@@ -42862,7 +42905,7 @@ function burnAreaChart() {
     }
 
     function closeOpenRouterFund() {
-      if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+      if (_openrouterPoll) { dashboardClearInterval('openrouter-credit'); _openrouterPoll = null; }
       const host = document.getElementById('openrouter-fund-host');
       if (host) host.innerHTML = '';
     }
