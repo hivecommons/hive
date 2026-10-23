@@ -23,7 +23,7 @@ func capRepos(caps map[string]int) func(string) int {
 	}
 }
 
-func heldPR(repo string, number int, author string) HoldItem {
+func heldHoldItem(repo string, number int, author string) HoldItem {
 	return HoldItem{Repo: repo, Number: number, Type: "pr", Author: author, Labels: []string{"hold"}}
 }
 
@@ -32,12 +32,12 @@ func heldPR(repo string, number int, author string) HoldItem {
 func TestCountOpenHeldHivePRs(t *testing.T) {
 	c := &Client{org: "o", appBotLogin: openHeldTestBot}
 	items := []HoldItem{
-		heldPR("r", 1, openHeldTestBot),
-		heldPR("o/r", 2, "Hive-App[bot]"),
-		heldPR("r", 3, "alice"),
-		heldPR("r", 4, "dependabot[bot]"),
+		heldHoldItem("r", 1, openHeldTestBot),
+		heldHoldItem("o/r", 2, "Hive-App[bot]"),
+		heldHoldItem("r", 3, "alice"),
+		heldHoldItem("r", 4, "dependabot[bot]"),
 		{Repo: "r", Number: 5, Type: "issue", Author: openHeldTestBot},
-		heldPR("other", 6, openHeldTestBot),
+		heldHoldItem("other", 6, openHeldTestBot),
 	}
 	got := c.countOpenHeldHivePRs(items)
 	if got["o/r"] != 2 || got["o/other"] != 1 || len(got) != 2 {
@@ -54,7 +54,7 @@ func TestOpenHeldPRCap_DefaultOff(t *testing.T) {
 	c := &Client{org: "o", appBotLogin: openHeldTestBot}
 	a := &ActionableResult{}
 	for i := 1; i <= 40; i++ {
-		a.Hold.Items = append(a.Hold.Items, heldPR("r", i, openHeldTestBot))
+		a.Hold.Items = append(a.Hold.Items, heldHoldItem("r", i, openHeldTestBot))
 	}
 	c.StampOpenHeldPRs(a)
 	if a.OpenHeldPRs != nil {
@@ -80,9 +80,9 @@ func TestOpenHeldPRCap_RefusesAtCapAndReleases(t *testing.T) {
 	c := &Client{org: "o", appBotLogin: openHeldTestBot}
 	c.SetMaxOpenHeldPRsFunc(capRepos(map[string]int{"r": 2}))
 	a := &ActionableResult{Hold: HoldResult{Items: []HoldItem{
-		heldPR("r", 1, openHeldTestBot),
-		heldPR("r", 2, openHeldTestBot),
-		heldPR("r", 3, "alice"),
+		heldHoldItem("r", 1, openHeldTestBot),
+		heldHoldItem("r", 2, openHeldTestBot),
+		heldHoldItem("r", 3, "alice"),
 	}}}
 	c.StampOpenHeldPRs(a)
 	o, ok := OpenHeldPRsFor(a.OpenHeldPRs, "r")
@@ -100,7 +100,7 @@ func TestOpenHeldPRCap_RefusesAtCapAndReleases(t *testing.T) {
 	}
 
 	// PR #2's hold is removed: it is no longer in the hold list.
-	a.Hold.Items = []HoldItem{heldPR("r", 1, openHeldTestBot), heldPR("r", 3, "alice")}
+	a.Hold.Items = []HoldItem{heldHoldItem("r", 1, openHeldTestBot), heldHoldItem("r", 3, "alice")}
 	c.StampOpenHeldPRs(a)
 	if r := c.openHeldPRCapRefusal("r"); r != "" {
 		t.Errorf("a released PR still counts: %s", r)
@@ -126,7 +126,7 @@ func TestPRRequestWatcher_RefusesRepoAtCapacity(t *testing.T) {
 	c := testClient(t, srv.URL)
 	c.appBotLogin = openHeldTestBot
 	c.SetMaxOpenHeldPRsFunc(capRepos(map[string]int{"r": 1}))
-	c.StampOpenHeldPRs(&ActionableResult{Hold: HoldResult{Items: []HoldItem{heldPR("r", 9, openHeldTestBot)}}})
+	c.StampOpenHeldPRs(&ActionableResult{Hold: HoldResult{Items: []HoldItem{heldHoldItem("r", 9, openHeldTestBot)}}})
 
 	dir := t.TempDir()
 	old := prRequestDirForTest
