@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
@@ -80,6 +81,9 @@ type boot struct {
 	// sweep on the current client. adoptGitHubClient swaps both on every
 	// rebuild (#9621); see github_client_provider.go.
 	ghClientLive atomic.Pointer[githubClientRef]
+	// priorArtSearcher is the prior-art gate's Searcher, shared by the
+	// scheduler's park and the issue relay's filing verdict (#13879).
+	priorArtSearcher atomic.Pointer[priorart.Searcher]
 
 	// forgeState is the per-repo GitHub state cache the governor work
 	// source reads from when `forgestate.enabled` is on (#13375). Built

@@ -174,6 +174,11 @@ type Client struct {
 	// so the self-approval guard treats a base and its replicas as one
 	// author. nil compares exact lane names.
 	agentBase func(agent string) string
+	// priorArtFiling* enforce the prior-art filing verdict on relayed issue
+	// creates (issue_request_prior_art.go, hivecommons/hive#13879).
+	priorArtFilingGate   func() config.PriorArtGateConfig
+	priorArtFilingFind   PriorArtFinder
+	priorArtFilingRecord PriorArtRefusalRecorder
 	// confidenceScore gates the Confidence line on review comments.
 	confidenceScore      func() bool
 	reviewBacklog        func() (enabled bool, cap int) // out-of-scope finding filing on/off and per-PR cap

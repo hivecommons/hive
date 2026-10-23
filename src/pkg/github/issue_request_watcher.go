@@ -541,6 +541,18 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		// spoke-local, so the body carries the relation too.
 		body = withParentMarker(body, req.Parent)
 	}
+	if kind == "issue" {
+		// Prior-art filing verdict (hivecommons/hive#13879). A refusal is
+		// terminal: retrying the same request cannot change the match.
+		var refusal string
+		body, refusal = c.priorArtFilingVerdict(ctx, req, body)
+		if refusal != "" {
+			c.writeIssueResult(path, IssueResponse{OK: false, Error: refusal, At: nowFn().UTC().Format(time.RFC3339)})
+			_ = os.Remove(path)
+			c.issueClearRetry(path)
+			return
+		}
+	}
 	if c.attributionTrailerOn() {
 		body = AppendTrailer(body, meta)
 	}

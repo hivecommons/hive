@@ -117,6 +117,7 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// gates which issues become actionable at all, so it must be installed
 	// even when no exempt labels are configured.
 	client.SetIssueFilter(b.cfg.Project.IssueFilter)
+	b.applyPriorArtFilingGate(client)
 	client.SetAgentIssueDecisionPolicy(b.cfg.Project.EffectiveAgentIssueDecisionPolicy())
 	client.SetReporterConfirmationEnabledFunc(func() bool {
 		return b.cfg.Issues.ReporterConfirmationEnabled()
