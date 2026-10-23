@@ -30,6 +30,9 @@ const (
 	selfReportRecoverAction    = "recover"
 	selfReportObservationClass = "observation"
 	selfReportObservationLabel = "hive-observation"
+	// selfReportCreateDeferredReason answers a join_only request that found no
+	// issue to join; cmd/hive mirrors this literal.
+	selfReportCreateDeferredReason = "create_deferred"
 )
 
 // selfReportRate reuses the feedback limiter shape (per-hive, 24h window,
@@ -64,6 +67,9 @@ type selfReportRelayRequest struct {
 	Evidence    json.RawMessage `json:"evidence,omitempty"`
 	Observation json.RawMessage `json:"observation,omitempty"`
 	HiveState   json.RawMessage `json:"hive_state,omitempty"`
+	// JoinOnly: join an existing issue only; never create (the spoke's
+	// per-hive new-filing cap/gap is exhausted).
+	JoinOnly bool `json:"join_only,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -347,6 +353,14 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 			s.logger.Info("selfreport relay: joined existing issue", "hive", req.HiveID, "issue", existing.Number, "class", req.Class)
 		}
 		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL, Joined: true})
+		return
+	}
+
+	if req.JoinOnly {
+		if s.logger != nil {
+			s.logger.Info("selfreport relay: create deferred by spoke cap", "hive", req.HiveID, "class", req.Class)
+		}
+		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: selfReportCreateDeferredReason})
 		return
 	}
 

@@ -1,0 +1,1 @@
+- Hosted spokes that relay self-reports through the hub now honour the same per-hive new-filing cap and minimum gap as direct filers, so a restarting spoke can no longer file a burst of ten issues in one second; over-cap reports are deferred and retried on the next cycle.

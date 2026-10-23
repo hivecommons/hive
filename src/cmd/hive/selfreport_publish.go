@@ -47,6 +47,10 @@ import (
 const selfReportHubRelayPath = "/api/selfreport/ingest"
 const selfReportObservationClass = "observation"
 
+// selfReportCreateDeferredReason is the hub's answer to a join_only request
+// with no existing issue; must match selfReportCreateDeferredReason in pkg/hub.
+const selfReportCreateDeferredReason = "create_deferred"
+
 // selfReportRelayTimeout bounds one relay POST.
 const selfReportRelayTimeout = 20 * time.Second
 
@@ -88,6 +92,10 @@ type selfReportRelayRequest struct {
 	Observation *fleetreport.ObservationFinding `json:"observation,omitempty"`
 	// HiveState is the reporting hive's 24 h / 7 d state trends (#12339).
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
+	// JoinOnly: the hub may only join an existing issue for this fingerprint;
+	// it must not create one (the spoke's per-hive new-filing cap/gap is
+	// exhausted).
+	JoinOnly bool `json:"join_only,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -284,15 +292,6 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			} else {
 				err = errSelfReportNoDirectWriter
 			}
-			if err != nil && errors.Is(err, errSelfReportCreateDeferred) {
-				logger.Info("fleet report: new filing deferred", "fingerprint", report.Fingerprint, "class", report.Class, "reason", reason)
-				dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
-					o := st.Open[report.Fingerprint]
-					o.Deferred = reason
-					st.Open[report.Fingerprint] = o
-				})
-				continue
-			}
 			if err != nil && deps.relay != nil && selfReportShouldRelay(err) {
 				logger.Info("fleet report: no write access to report repo; relaying to hub", "fingerprint", report.Fingerprint, "error", err)
 				var relayed selfReportRelayResponse
@@ -301,10 +300,20 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 					Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
 					InstanceID: report.InstanceID, Repos: report.Repos, Owners: report.Owners, OwnersHidden: report.OwnersHidden,
 					HiveName: report.HiveName, SpokeURL: report.SpokeURL,
+					JoinOnly: !allowNew,
 				})
 				if err == nil {
 					write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}
 				}
+			}
+			if err != nil && errors.Is(err, errSelfReportCreateDeferred) {
+				logger.Info("fleet report: new filing deferred", "fingerprint", report.Fingerprint, "class", report.Class, "reason", reason)
+				dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+					o := st.Open[report.Fingerprint]
+					o.Deferred = reason
+					st.Open[report.Fingerprint] = o
+				})
+				continue
 			}
 		}
 		if err != nil {
@@ -538,6 +547,9 @@ func hubSelfReportRelay(hubURL string, bearer func() string) selfReportRelay {
 		var out selfReportRelayResponse
 		if err := json.Unmarshal(raw, &out); err != nil {
 			return selfReportRelayResponse{}, err
+		}
+		if !out.OK && out.Reason == selfReportCreateDeferredReason {
+			return selfReportRelayResponse{}, fmt.Errorf("hub: %w", errSelfReportCreateDeferred)
 		}
 		if !out.OK && req.Action != "recover" {
 			return selfReportRelayResponse{}, errors.New("hub declined the self-report")

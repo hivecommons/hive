@@ -536,6 +536,46 @@ func TestHubSelfReportIngestRateLimitsCreatesNotJoins(t *testing.T) {
 	}
 }
 
+func TestHubSelfReportIngestJoinOnlyDefersCreate(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportGitHubScript(false)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := strings.Replace(selfReportValidBody, `"version"`, `"join_only":true,"version"`, 1)
+	for i := 0; i < feedbackHubMaxPerHivePerWindow+1; i++ {
+		rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var out selfReportRelayResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if out.OK || out.Reason != "create_deferred" {
+			t.Fatalf("response = %s", rec.Body.String())
+		}
+	}
+	if joined := strings.Join(*paths, ","); strings.Contains(joined, "POST /repos/hivecommons/hive/issues") {
+		t.Fatalf("join_only created an issue: %v", *paths)
+	}
+	// The deferrals did not consume the hub budget.
+	if rec := selfReportIngest(s, selfReportValidBody, s.heartbeatKeyFor("h1")); rec.Code != http.StatusCreated {
+		t.Fatalf("create after deferrals status=%d", rec.Code)
+	}
+}
+
+func TestHubSelfReportIngestJoinOnlyStillJoinsExisting(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, _ := selfReportGitHubScript(true)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := strings.Replace(selfReportValidBody, `"version"`, `"join_only":true,"version"`, 1)
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	var out selfReportRelayResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK || !out.OK || !out.Joined || out.Number != 7 {
+		t.Fatalf("status=%d response = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHubSelfReportIngestErrorPaths(t *testing.T) {
 	resetSelfReportRate(t)
 	// No hub secret → 503 before any auth work.

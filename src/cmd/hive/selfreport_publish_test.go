@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -291,6 +292,56 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-net", fleetreport.ClassRestartStorm)}}, deps)
 	if len(relayed) != 1 {
 		t.Fatalf("generic error was relayed: %d", len(relayed))
+	}
+}
+
+func TestPublishFleetReportsRelayCarriesJoinOnlyWhenCapExhausted(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	deps := selfReportDeps(&fakeSelfReportWriter{}, &now)
+	deps.gh = nil
+	deps.limits = fleetreport.DefaultFilingLimits.WithMaxPerDay(1)
+	srv.UpdateFleetReportState(func(st *fleetreport.State) { fleetreport.RecordFiling(st, now.Add(-2*time.Hour)) })
+	var relayed []selfReportRelayRequest
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{}, errSelfReportCreateDeferred
+	}
+	res := &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-cap", fleetreport.ClassRestartStorm)}}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
+	if len(relayed) != 1 || !relayed[0].JoinOnly {
+		t.Fatalf("relayed = %#v", relayed)
+	}
+	wire, _ := json.Marshal(relayed[0])
+	if !strings.Contains(string(wire), `"join_only":true`) {
+		t.Fatalf("wire payload lacks join_only: %s", wire)
+	}
+	o := srv.FleetReportState().Open["fp-cap"]
+	if !strings.Contains(o.Deferred, "daily cap") || o.Number != 0 {
+		t.Fatalf("deferral not recorded: %#v", o)
+	}
+
+	// Under the cap the relay is a normal create request.
+	relayed = nil
+	deps.limits = fleetreport.DefaultFilingLimits.WithMaxPerDay(5)
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{OK: true, Number: 9, URL: "u9"}, nil
+	}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-ok", fleetreport.ClassRestartStorm)}}, deps)
+	if len(relayed) != 1 || relayed[0].JoinOnly {
+		t.Fatalf("relayed under cap = %#v", relayed)
+	}
+}
+
+func TestHubSelfReportRelayMapsCreateDeferred(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":false,"reason":"create_deferred"}`))
+	}))
+	defer ts.Close()
+	relay := hubSelfReportRelay(ts.URL, func() string { return "k" })
+	if _, err := relay(context.Background(), selfReportRelayRequest{HiveID: "h", Fingerprint: "fp", JoinOnly: true}); !errors.Is(err, errSelfReportCreateDeferred) {
+		t.Fatalf("err = %v", err)
 	}
 }
 

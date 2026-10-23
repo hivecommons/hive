@@ -30,6 +30,11 @@ governor:
 - `enabled: false` forces dry-run everywhere;
 - `enabled: true` (or the legacy `file_upstream: true`) forces filing.
 
+The cap and the minimum gap between filings also apply when a hosted spoke
+relays through the hub: an exhausted spoke sends a join-only request, the hub
+answers `create_deferred` when there is no existing issue to join, and the
+spoke records the deferral and retries next cycle.
+
 Dry-run means the hive evaluates everything, shows you the reports it
 *would* file on the dashboard, and writes nothing upstream. The publish path
 returns immediately when dry-run is set, before any GitHub client is touched.
