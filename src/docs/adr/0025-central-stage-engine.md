@@ -29,14 +29,15 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-58
    `SyncIssueStageLabels` (`src/pkg/github/issue_stage_labels.go:145`,
    `src/pkg/github/issue_stage_labels.go:233`) from the enumeration bucket. PRs
    are staged by the automerge engine: each lane calls `recordStage`
-   (`src/pkg/github/automerge/automerge_stage_labels.go:397`), observations are
+   (`src/pkg/github/automerge/automerge_stage_labels.go:365`), observations are
    sorted by `stageLanePrecedence` (self 3 > trusted 2 > contributor 1,
-   `src/pkg/github/automerge/automerge_stage_labels.go:167`), each is classified
-   by `classifyStage` (`src/pkg/github/automerge/automerge_stage_labels.go:806`)
-   into a ranked opinion (`stageRankNone..stageRankOwned`,
-   `src/pkg/github/automerge/automerge_stage_labels.go:619-624`), and
-   `resolveStage` picks the winner
-   (`src/pkg/github/automerge/automerge_stage_labels.go:946`). Shared concepts —
+   `src/pkg/github/automerge/automerge_stage_labels.go:177`), each is classified
+   by `ClassifyStage` (`src/pkg/stageengine/derive_pr_classify.go:252`)
+   into a ranked opinion (`prstage.RankNone..prstage.RankOwned`,
+   `src/pkg/stageengine/prstage/types.go:145-148`), and
+   `ResolveStage` picks the winner
+   (`src/pkg/stageengine/derive_pr_classify.go:445`). These PR helpers now
+   live in the engine (#13779); automerge keeps only gathering-side previews. Shared concepts —
    parking (045/085, `needs-human`, hold labels), author kind (070/071/072),
    adoption (074), terminal states, `origin/*` — are modelled twice with
    different field names, so every taxonomy change lands in both:
@@ -47,7 +48,7 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-58
    [#12737](https://github.com/hivecommons/hive/pull/12737) (8),
    [#12856](https://github.com/hivecommons/hive/pull/12856) (44).
 2. *Not one writer.* Automerge writes through its own
-   `engineStageLabeler` (`src/pkg/github/automerge/automerge_stage_labels.go:1428`);
+   `engineStageLabeler` (now retired in favour of `pkg/github/stage_writer.go`);
    the issue path uses `Client.StageLabeler` + `Enforce`
    (`src/pkg/github/stage_labeler.go:63`); the claim relay and ledger hooks
    write `stage/020` / `stage/030` directly as a side effect of a claim

@@ -6,50 +6,24 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-func TestDeriveDelegatesToRegisteredDerivers(t *testing.T) {
-	prevIssue, prevPR := Derivers()
-	t.Cleanup(func() {
-		deriversMu.Lock()
-		issueDeriver, prDeriver = prevIssue, prevPR
-		deriversMu.Unlock()
-	})
-	deriversMu.Lock()
-	issueDeriver, prDeriver = nil, nil
-	deriversMu.Unlock()
-
-	issue := Facts{Ref: Ref{Kind: stagelabels.IssueItem}}
-	pr := Facts{Ref: Ref{Kind: stagelabels.PRItem}}
-	if d := DeriveIssue(issue); !d.Abstain || d.Reason != reasonNoDeriver {
-		t.Fatalf("unregistered issue deriver: %+v", d)
+// The engine must derive PRs without importing automerge for init side effects.
+func TestBuiltInDerivers(t *testing.T) {
+	issue := Facts{Ref: Ref{Kind: stagelabels.IssueItem}, Open: true, Issue: &IssueFacts{}}
+	pr := Facts{Ref: Ref{Kind: stagelabels.PRItem}, Open: true, PR: &PRFacts{Lanes: []LaneFact{{Lane: "self-authored", Reason: "conflicting"}}}}
+	if d := DerivePR(pr); d.Abstain || d.Stage != stagelabels.Fixing {
+		t.Fatalf("built-in PR: %+v", d)
 	}
-	if d := DerivePR(pr); !d.Abstain || d.Reason != reasonNoDeriver {
-		t.Fatalf("unregistered pr deriver: %+v", d)
+	if d := DeriveIssue(issue); d.Abstain {
+		t.Fatalf("built-in issue: %+v", d)
 	}
-
-	SetDerivers(
-		DeriverFunc(stagelabels.IssueItem, func(Facts) Decision { return Decision{Stage: stagelabels.Claimed, Reason: "issue"} }),
-		DeriverFunc(stagelabels.PRItem, func(Facts) Decision { return Decision{Stage: stagelabels.MergeQueue, Reason: "pr"} }),
-	)
-	if d := DeriveIssue(issue); d.Stage != stagelabels.Claimed || d.Reason != "issue" {
-		t.Fatalf("issue: %+v", d)
-	}
-	if d := DerivePR(pr); d.Stage != stagelabels.MergeQueue || d.Reason != "pr" {
-		t.Fatalf("pr: %+v", d)
-	}
-	// Each asserts the kind: issue facts to DerivePR abstain, and vice versa.
 	if d := DerivePR(issue); !d.Abstain || d.Reason != reasonKindMismatch {
-		t.Fatalf("pr deriver on issue facts: %+v", d)
+		t.Fatalf("PR on issue: %+v", d)
 	}
 	if d := DeriveIssue(pr); !d.Abstain || d.Reason != reasonKindMismatch {
-		t.Fatalf("issue deriver on pr facts: %+v", d)
+		t.Fatalf("issue on PR: %+v", d)
 	}
 	if IssueDeriver().Kind() != stagelabels.IssueItem || PRDeriver().Kind() != stagelabels.PRItem {
 		t.Fatal("deriver kinds")
-	}
-	// nil leaves a registration alone.
-	SetDerivers(nil, nil)
-	if d := DeriveIssue(issue); d.Stage != stagelabels.Claimed {
-		t.Fatalf("SetDerivers(nil, nil) changed the issue deriver: %+v", d)
 	}
 }
 

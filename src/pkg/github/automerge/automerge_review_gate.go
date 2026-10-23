@@ -9,6 +9,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // Review gate modes (governor.review_gate.mode, hivecommons/hive#12592).
@@ -21,9 +22,9 @@ const (
 // Review gate outcomes for one head. changes-requested is reported as
 // "changes-requested:<perspective,...>".
 const (
-	ReviewGateOutcomeNoBundle         = "no-review-bundle"
-	ReviewGateOutcomeAwaiting         = "awaiting-review-approval"
-	ReviewGateOutcomeChangesRequested = "changes-requested"
+	ReviewGateOutcomeNoBundle         = prstage.ReviewGateOutcomeNoBundle
+	ReviewGateOutcomeAwaiting         = prstage.ReviewGateOutcomeAwaiting
+	ReviewGateOutcomeChangesRequested = prstage.ReviewGateOutcomeChangesRequested
 	ReviewGateOutcomeApproved         = "approved"
 	ReviewGateOutcomeHumanApproved    = "human-approved"
 	// ReviewGateOutcomeRequiresHuman is an aggregate requires_human /
@@ -37,7 +38,7 @@ const (
 
 // autoMergeReasonReviewGatePrefix prefixes the sweep skip reason when an
 // enforcing review gate holds a self-merge: "review-gate:<outcome>".
-const autoMergeReasonReviewGatePrefix = "review-gate:"
+const autoMergeReasonReviewGatePrefix = prstage.AutoMergeReasonReviewGatePrefix
 
 // ReviewGateVerdict is the swarm review aggregate for one PR head, read from
 // review-verdicts.json by the same loader the human merge lane uses.

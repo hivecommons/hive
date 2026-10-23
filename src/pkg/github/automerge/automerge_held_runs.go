@@ -41,6 +41,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 const (
@@ -48,7 +49,7 @@ const (
 	requiredCheckMissingPrefix = "required-check-missing:"
 	// workflowApprovalRequiredPrefix: the head's workflow runs exist but GitHub
 	// is waiting for maintainer approval before starting them.
-	workflowApprovalRequiredPrefix = "workflow-approval-required:"
+	workflowApprovalRequiredPrefix = prstage.WorkflowApprovalRequiredPrefix
 	// requiredCheckNeverStartedPrefix: no `pull_request` run exists for a head
 	// older than heldRunNeverStartedGrace; polling cannot make one appear.
 	requiredCheckNeverStartedPrefix = "required-check-never-started:"

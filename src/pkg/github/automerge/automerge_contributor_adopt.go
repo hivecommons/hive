@@ -411,7 +411,7 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	case rec.AdoptionAttemptedNothingOpened(obs.HeadSHA):
 		return fmt.Sprintf("the hive tried to re-home this PR onto `%s%d` (`%s`) and could not open the superseding PR.", adoptBranchPrefix, obs.Number, rec.AdoptReason)
 	}
-	if name := obs.Detail.redCheck(obs.HeadSHA); name != "" {
+	if name := obs.Detail.RedCheck(obs.HeadSHA); name != "" {
 		return fmt.Sprintf("check `%s` is red on this head and no fix landed.", name)
 	}
 	if strings.HasPrefix(obs.LaneReason, "required-check-failing:") || strings.HasPrefix(obs.LaneReason, "check-failing:") {

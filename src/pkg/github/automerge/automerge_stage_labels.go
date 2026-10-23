@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -168,119 +169,17 @@ const stageStorePruneAge = 14 * 24 * time.Hour
 
 // Lane names as recorded on observations.
 const (
-	stageLaneSelf        = "self-authored"
-	stageLaneTrusted     = "trusted-author"
+	stageLaneSelf        = prstage.StageLaneSelf
+	stageLaneTrusted     = prstage.StageLaneTrusted
 	stageLaneContributor = contributorLaneTier
 )
 
 var stageLanePrecedence = map[string]int{stageLaneSelf: 3, stageLaneTrusted: 2, stageLaneContributor: 1}
 
-// stageDetail is what a lane's deep evaluation learned beyond the reason:
-// the reviewer verdict for the head and the author's admission tier.
-type stageDetail struct {
-	Verdict      ContributorLaneVerdict
-	VerdictKnown bool
-	// HumanApprover is a trusted human whose APPROVED review exactly matches
-	// HumanApprovalHead. It resolves a requires_human reviewer verdict without
-	// overriding changes_requested/reject.
-	HumanApprover     string
-	HumanApprovalHead string
-	Role              stagelabels.Role
-	// RedChecks names the completed-red, non-required checks the CI gate
-	// walked past on RedChecksHead (sorted). The lane ignores them by
-	// design; the stage engine must not call the PR merge-queued or
-	// awaiting admission while the rollup on its head shows a red check
-	// (hivecommons/hive#12538, seen on #12457).
-	RedChecks     []string
-	RedChecksHead string
-	// Comments is the PR's issue + review comment count from the deep
-	// fetch (the list payload has none); CommentsKnown says it was seen.
-	// OwnComments counts the comments this engine posted after that fetch
-	// (creditOwnComment); a later fetch resets it.
-	Comments      int
-	CommentsKnown bool
-	OwnComments   int
-	// Reviews is the number of review submissions by people (the hive
-	// app's excluded) from a lane's ListReviews walk; ReviewsKnown says it
-	// was seen this cycle.
-	Reviews      int
-	ReviewsKnown bool
-	// DCO, DCOTotal and DCOUnsigned are the stage pass's own commit check
-	// for the head (hivecommons/hive#12542); filled by ApplyStageLabels,
-	// not by the lanes.
-	DCO                 stagelabels.DCOState
-	DCOTotal            int
-	DCOUnsigned         int
-	DCOUnsignedHive     int
-	DCOUnsignedOther    int
-	DCOSquashUnsafeHive int
-	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
-	// on the head (required-check set or reported status/check run): the
-	// detected "this repo enforces DCO" signal the 072 override needs when
-	// no per-repo override is configured.
-	DCOGate     bool
-	DCOGateHead string
-}
+type stageDetail = prstage.Detail
+type stageObservation = prstage.Observation
 
-// redCheck returns the first red non-required check on head, or "".
-func (d stageDetail) redCheck(head string) string {
-	if len(d.RedChecks) == 0 || (head != "" && d.RedChecksHead != "" && d.RedChecksHead != head) {
-		return ""
-	}
-	return d.RedChecks[0]
-}
-
-// stageReasonOptionalCheckFailing prefixes the recorded reason when a red
-// non-required check put the PR in its repair stage.
-const stageReasonOptionalCheckFailing = "optional-check-failing:"
-
-// stageObservation is one lane's view of one PR in one cycle.
-type stageObservation struct {
-	Lane    string
-	Display string
-	Owner   string
-	Repo    string
-	Number  int
-	HeadSHA string
-	Labels  []string
-	Reason  string
-	// LaneReason is the lane's own skip reason before the reviewer verdict
-	// or the human route replaced Reason; it is what still says whether CI
-	// is red, pending or green on the head.
-	LaneReason string
-	Merged     bool
-	Err        bool
-	Detail     stageDetail
-	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
-	Author string
-	// AuthorKind is who wrote the PR (authorkind.Detect), set on the
-	// resolved observation by ApplyStageLabels before the nudge/adoption
-	// hooks run: only an author/clanker PR has a hive to interrupt.
-	AuthorKind authorkind.Kind
-	Title      string
-	URL        string
-	OpenedAt   time.Time
-	// BaseRef and Body feed the stage-074 adoption (superseding PR target
-	// and the Closes lines to carry over); both come from the list payload.
-	BaseRef string
-	Body    string
-	// HeadRepo is the head's owner/repo (differs from Display on a fork).
-	HeadRepo string
-	// ForwardMerge is set for a sync/top-up head between release lines
-	// (head-ref match only: the title is contributor-controlled).
-	ForwardMerge bool
-	// Route is set by ApplyStageLabels when the lane handed the PR to a
-	// human and the evidence routed it (feeds the entry comments and the
-	// 072 nudge diagnosis).
-	Route *stagelabels.Route
-	// SharedCIIncident is the open shared-CI incident the head is deferred
-	// to (StageLabelPolicy.SharedCIIncident), 0 when none.
-	SharedCIIncident int
-	// BaseRedChecks are the head's failing checks that are also red on the
-	// base branch (StageLabelPolicy.BaseBranchRed); non-empty only when
-	// every failing check is.
-	BaseRedChecks []string
-}
+const stageReasonOptionalCheckFailing = prstage.ReasonOptionalCheckFailing
 
 // StageTracker accumulates observations across the lanes of one cycle. One
 // tracker is shared process-wide (sharedStageTracker) because the governor
@@ -664,459 +563,36 @@ func dcoRequired(policy StageLabelPolicy, obs stageObservation) bool {
 	return obs.Detail.DCOGate && (obs.Detail.DCOGateHead == "" || obs.HeadSHA == "" || obs.Detail.DCOGateHead == obs.HeadSHA)
 }
 
-// stageVerdict is a lane's opinion about a PR's stage.
-type stageVerdict struct {
-	Stage stagelabels.Stage
-	// Rank orders competing opinions; see the stageRank* constants.
-	Rank int
-	// Terminal means the PR left the pipeline (merged/closed/gone): remove
-	// every hive-owned label and forget its timing.
-	Terminal bool
-	// Reason, when set, replaces the lane's skip reason as the explanation
-	// recorded with the stage (store, regression/stall comments, log): the
-	// lane's reason may be a CI state while the stage was really decided
-	// by the reviewer verdict.
-	Reason string
-	// Human marks a hand-off to a person (085/090 candidate) that
-	// ApplyStageLabels refines against the head's evidence
-	// (stagelabels.RouteHuman) before it is written.
-	Human bool
-}
-
-// Opinion ranks. A lane that cannot vouch for the author has only a weak
-// opinion ("needs a human, as far as this lane can tell"): another lane may
-// admit the same author, and its owned opinion wins. The contributor lane's
-// admission reasons name the registry/claim tier, so they outrank the
-// trusted-author lane's bare role check when both are weak.
-const (
-	stageRankNone      = 0
-	stageRankRole      = 1
-	stageRankAdmission = 2
-	stageRankOwned     = 3
-)
-
-// ciReasonKind classifies a commitGreenForPR reason.
-type ciReasonKind int
+type stageVerdict = prstage.Verdict
+type ciReasonKind = stageengine.CIReasonKind
 
 const (
-	ciReasonNone ciReasonKind = iota
-	ciReasonPending
-	ciReasonRed
+	stageRankNone                   = prstage.RankNone
+	stageRankRole                   = prstage.RankRole
+	stageRankAdmission              = prstage.RankAdmission
+	stageRankOwned                  = prstage.RankOwned
+	ciReasonNone                    = stageengine.CIReasonNone
+	ciReasonPending                 = stageengine.CIReasonPending
+	ciReasonRed                     = stageengine.CIReasonRed
+	stageReasonVerdictRequiresHuman = stageengine.StageReasonVerdictRequiresHuman
+	stageReasonDecisionRequested    = stageengine.StageReasonDecisionRequested
 )
 
-// String is the stable name persisted in Record.ActivityDigest
-// (/data/stage-labels.json); it must not follow the iota, or an upgrade
-// that renumbers the enum would read every PR as active and reset its
-// quiet clock.
-func (k ciReasonKind) String() string {
-	switch k {
-	case ciReasonPending:
-		return "pending"
-	case ciReasonRed:
-		return "red"
-	}
-	return "none"
-}
-
-func classifyCIReason(reason string) ciReasonKind {
-	switch {
-	case reason == "":
-		return ciReasonNone
-	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
-		strings.HasPrefix(reason, "required-check-pending:"), ciReasonInconclusive(reason):
-		return ciReasonPending
-	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
-		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs",
-		strings.HasPrefix(reason, stageReasonBaseBranchRed):
-		return ciReasonRed
-	}
-	return ciReasonNone
-}
-
-// ciReasonInconclusive matches a check that finished without a verdict
-// (neutral, skipped). commitGreenForPR never blocks on these, but should a
-// reason ever carry one it is "not red": the PR is waiting, not failing.
-func ciReasonInconclusive(reason string) bool {
-	for _, c := range []string{"neutral", "skipped"} {
-		if strings.HasSuffix(reason, "-"+c) {
-			return true
-		}
-	}
-	return false
-}
-
-// stageReasonVerdictRequiresHuman is stageVerdictReason for requires_human.
-const stageReasonVerdictRequiresHuman = "reviewer-verdict:requires_human"
-
-const stageReasonDecisionRequested = "contributor-lane:decision-requested"
-
-func normalizeStageDetail(d stageDetail) stageDetail {
-	if d.VerdictKnown {
-		d.Verdict = normalizeContributorLaneVerdict(d.Verdict)
-	}
-	return d
-}
-
-// stageVerdictReason is the recorded reason when the reviewer verdict, not
-// the lane's skip reason, decided the stage.
-func stageVerdictReason(d stageDetail) string {
-	d = normalizeStageDetail(d)
-	if d.Verdict.DecisionRequested {
-		return stageReasonDecisionRequested
-	}
-	return "reviewer-verdict:" + strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
-}
-
-// verdictBlocks reports whether a known reviewer verdict asks for changes.
-func verdictBlocks(d stageDetail) bool {
-	d = normalizeStageDetail(d)
-	if !d.VerdictKnown || d.Verdict.Approved {
-		return false
-	}
-	v := strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
-	return v == "changes_requested" || v == "reject" || v == "rejected" || v == "request_changes"
-}
-
-// verdictNeedsHuman reports whether a known reviewer verdict defers the PR to
-// a human rather than approving or asking for changes. Only requires_human
-// qualifies: it is the one such verdict hive-review can emit
-// (approve / changes_requested / requires_human / reject), and the 085 reason
-// documented for operators is reviewer-verdict:requires_human.
-func verdictNeedsHuman(d stageDetail) bool {
-	d = normalizeStageDetail(d)
-	if !d.VerdictKnown || d.Verdict.Approved {
-		return false
-	}
-	if d.Verdict.DecisionRequested {
-		return true
-	}
-	return strings.ToLower(strings.TrimSpace(d.Verdict.Verdict)) == "requires_human"
-}
-
+func classifyCIReason(reason string) ciReasonKind    { return stageengine.ClassifyCIReason(reason) }
+func normalizeStageDetail(d stageDetail) stageDetail { return stageengine.NormalizeStageDetail(d) }
+func verdictBlocks(d stageDetail) bool               { return stageengine.VerdictBlocks(d) }
+func verdictNeedsHuman(d stageDetail) bool           { return stageengine.VerdictNeedsHuman(d) }
 func trustedHumanApprovedRequiresHuman(d stageDetail, head string) bool {
-	d = normalizeStageDetail(d)
-	return verdictNeedsHuman(d) && strings.TrimSpace(d.HumanApprover) != "" && strings.TrimSpace(d.HumanApprovalHead) != "" && strings.TrimSpace(d.HumanApprovalHead) == strings.TrimSpace(head)
+	return stageengine.TrustedHumanApprovedRequiresHuman(d, head)
 }
-
-func withHumanApprovalReason(v stageVerdict, reason string) stageVerdict {
-	if reason != "" && v.Rank != stageRankNone && !v.Terminal && v.Reason == "" {
-		v.Reason = reason
-	}
-	return v
-}
-
-func stageHumanApprovalReason(d stageDetail, head string) string {
-	if !trustedHumanApprovedRequiresHuman(d, head) {
-		return ""
-	}
-	return stageReasonVerdictRequiresHuman + ":human-approved@" + strings.TrimSpace(d.HumanApprover)
-}
-
-// stageHandoffReasons are reasons that mean "not this lane's PR".
-var stageHandoffReasons = map[string]bool{
-	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
-	contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
-	"fetch-pr": true, "fetch-pr-recheck": true,
-}
-
-// stageAdmissionReasons are reasons that mean "this lane cannot vouch for
-// the author": the trusted-author lane's role check and the contributor
-// lane's registry/claim admission. They yield a WEAK opinion
-// (stageRankRole / stageRankAdmission): another lane that admits the author
-// owns the stage. The opinion is normally a 090 candidate, which is dropped
-// altogether when the resolved tier is trusted (hivecommons/hive#12403 was
-// flipped to 090 by the trusted-author lane's role check whenever the
-// contributor lane — which admitted the author from the registry — had no
-// classified opinion). When the reviewer verdict for the head is already
-// requires_human the weak opinion is 085 instead, and that one is kept
-// whatever the tier: a person owes a decision, not a merge click
-// (hivecommons/hive#13115).
-var stageAdmissionReasons = map[string]int{
-	"untrusted-author-role":      stageRankRole,
-	contributorLaneReasonNoClaim: stageRankAdmission, contributorLaneReasonClaimAuthor: stageRankAdmission,
-	contributorLaneReasonClaimOtherHive: stageRankAdmission, contributorLaneReasonNoLinkedIssue: stageRankAdmission,
-	contributorLaneReasonClaimTier: stageRankAdmission, contributorLaneReasonClaimUnverified: stageRankAdmission,
-	contributorLaneReasonAuthorAssociation: stageRankAdmission,
-}
-
-// stageNeedsHumanReasons are reasons that mean the hive will not merge this
-// PR unattended whoever the author is: a person owes a DECISION (stage
-// 085), not merely a merge click.
-var stageNeedsHumanReasons = map[string]bool{
-	contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
-	contributorLaneReasonNoReviewer: true, contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
-	contributorLaneReasonNoAppBotLogin: true, contributorLaneReasonFilesEvidence: true,
-	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
-	autoMergeReasonIntentUnauthorized: true, autoMergeReasonIntentEvidence: true,
-	"approval-desk-withheld": true, "author-permission-missing": true, "fork-non-member": true,
-	"held": true, "label:hold": true, "label:needs-human": true, "exempt-label": true, "sentinel": true,
-	autoMergeReasonNoAppBotLogin: true, "self-authorization-hold-released": true,
-}
-
-// stageMergeQueueReasons are reasons reached only after every gate passed,
-// soak included: the merge is imminent or waiting on GitHub. The soaking
-// reason itself is 095 pre-merge-soak (classifyStage).
-var stageMergeQueueReasons = map[string]bool{
-	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
-	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
-	autoMergeReasonBehindBudgetExhausted: true,
-}
-
-// stageFixingReasons are reasons an agent (or the author) must fix the head.
-var stageFixingReasons = map[string]bool{
-	"changes-requested": true, autoMergeReasonHumanChangesRequested: true, contributorLaneReasonChangesRequested: true, "conflicting": true, "not-mergeable": true,
-	"label:needs-rebase": true, autoMergeReasonForkNotEditable: true,
-}
-
-// fixingStage is the rework stage for the lane: a hive agent reworks its
-// own (self-authored lane) PR at 070, while a contributor's PR (trusted-
-// author or contributor lane) is handed back to its author with the
-// diagnosis — 072 for a clanker, 071 for a human. Before the author kind
-// is known (resolveStage runs on raw observations) a non-self PR reads as
-// 071; the apply pass re-derives once stageAuthorKind has run.
-func fixingStage(o stageObservation) stagelabels.Stage {
-	return stagelabels.FixingStageFor(o.Lane == stageLaneSelf, o.AuthorKind)
-}
-
-// classifyStage maps one lane observation to a stage opinion. Reason
-// strings are the lane constants; see the maps above for the groups.
-func classifyStage(o stageObservation) stageVerdict {
-	o.Detail = normalizeStageDetail(o.Detail)
-	reason := o.Reason
-	fixing := fixingStage(o)
-	humanApprovalReason := stageHumanApprovalReason(o.Detail, o.HeadSHA)
-	if o.Merged && reason == "" {
-		return stageVerdict{Terminal: true, Rank: stageRankOwned}
-	}
-	if o.Err {
-		// The lane tripped before deciding. If every author-side gate is
-		// already satisfied the PR is waiting on the hive, not the author.
-		if v, ok := sharedCIDeferredStage(o); ok {
-			return v
-		}
-		if v, ok := baseBranchRedStage(o); ok {
-			return v
-		}
-		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
-			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
-		}
-		if authorSideDone(o) {
-			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}
-		}
-		return stageVerdict{}
-	}
-	switch reason {
-	case "closed", "gone", "label-removed":
-		return stageVerdict{Terminal: true, Rank: stageRankOwned}
-	case "draft":
-		// Not in the pipeline yet: no stage, but clear a stale one.
-		return stageVerdict{Stage: stagelabels.None, Rank: stageRankOwned}
-	}
-	if stageHandoffReasons[reason] {
-		return stageVerdict{}
-	}
-	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
-		if hasLabelFold(o.Labels, "needs-rebase") {
-			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-		}
-		if v, ok := requiresHumanStage(o, rank); ok {
-			// The reviewer already asked for a person: a 090 candidate would
-			// be dropped for the non-approve verdict and fall to 050, where
-			// the quiet dwell stalls it (hivecommons/hive#13115). The opinion
-			// stays as weak as the admission reason that carries it, so a
-			// lane that evaluated the head (conflict, red check) still owns.
-			return v
-		}
-		// Trust is the only thing this lane holds against the PR: a 090
-		// candidate, refined by ApplyStageLabels against the head's evidence.
-		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}, humanApprovalReason)
-	}
-	if strings.HasPrefix(reason, workflowApprovalRequiredPrefix) {
-		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
-	}
-	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
-		if hasLabelFold(o.Labels, "needs-rebase") {
-			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-		}
-		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
-	}
-	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-	}
-	if verdictBlocks(o.Detail) {
-		// The swarm asked for changes at this head; the lane's own reason
-		// (CI pending, no-verdict, …) is not what the author has to act on.
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
-	}
-	if v, ok := requiresHumanStage(o, stageRankOwned); ok {
-		// The reviewer DID answer — requires_human / needs-decision — but
-		// the lane folds every non-approve verdict into non-mergeable reasons
-		// such as no-verdict or pending CI. Hand it to a person instead of
-		// leaving it in review-pending while the reviewer skips it as already
-		// reviewed (hive #12417/#12438).
-		return v
-	}
-	if v, ok := sharedCIDeferredStage(o); ok {
-		// The red is the shared incident's, not the head's.
-		return v
-	}
-	if v, ok := baseBranchRedStage(o); ok {
-		// The red is the base branch's, not the head's.
-		return v
-	}
-	if classifyCIReason(reason) == ciReasonRed {
-		// A red required check is the lane's own diagnosis; it outranks a
-		// red optional one in the recorded reason.
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-	}
-	if name := o.Detail.redCheck(o.HeadSHA); name != "" {
-		// The lane gates on required checks only, so it soaks (and merges)
-		// past a red optional check and its reason reads as queued or
-		// pending. A red check on the head is red CI to its author: the
-		// repair stage, with the check named, never 080 or 100.
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
-	}
-	if strings.HasPrefix(reason, contributorLaneReasonSoaking) {
-		// The lane admitted the head and is sitting out the soak window:
-		// 095, not 100 — the merge has not been attempted yet.
-		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.PreMergeSoak, Rank: stageRankOwned}, humanApprovalReason)
-	}
-	if stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
-		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}, humanApprovalReason)
-	}
-	if reason == contributorLaneReasonNoVerdict {
-		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
-	}
-	if v, ok := reviewGateStage(reason, fixing); ok {
-		return v
-	}
-	if classifyCIReason(reason) == ciReasonPending {
-		if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
-			return stageVerdict{Stage: stagelabels.Reviewed, Rank: stageRankOwned}
-		}
-		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
-	}
-	if authorSideDone(o) {
-		// Green CI and an approve verdict, yet the lane stopped for a reason
-		// no stage claims: admission is pending on the hive's side.
-		return withHumanApprovalReason(stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}, humanApprovalReason)
-	}
-	return stageVerdict{}
-}
-
-// reviewGateStage is the opinion for a trusted-author head the enforcing
-// review gate holds ("review-gate:<outcome>"): no bundle yet or awaiting
-// the swarm's approval is 060 review-pending; a swarm changes_requested is
-// the author's rework stage. Without it the PR carried no stage at all
-// until the verdict was noted — the OWNERS PRs of 2026-10-20 sat unlabelled
-// through the whole review wait.
-func reviewGateStage(reason string, fixing stagelabels.Stage) (stageVerdict, bool) {
-	if !strings.HasPrefix(reason, autoMergeReasonReviewGatePrefix) {
-		return stageVerdict{}, false
-	}
-	outcome := strings.TrimPrefix(reason, autoMergeReasonReviewGatePrefix)
-	switch {
-	case outcome == ReviewGateOutcomeNoBundle, outcome == ReviewGateOutcomeAwaiting:
-		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}, true
-	case strings.HasPrefix(outcome, ReviewGateOutcomeChangesRequested):
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
-	}
-	return stageVerdict{}, false
-}
-
-// requiresHumanStage is the 085 opinion for a head whose reviewer verdict
-// is requires_human / needs-decision and that no trusted human has approved
-// since; rank is the strength the caller's reason carries.
-func requiresHumanStage(o stageObservation, rank int) (stageVerdict, bool) {
-	if !verdictNeedsHuman(o.Detail) || trustedHumanApprovedRequiresHuman(o.Detail, o.HeadSHA) {
-		return stageVerdict{}, false
-	}
-	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: rank, Human: true, Reason: stageVerdictReason(o.Detail)}, true
-}
-
+func fixingStage(o stageObservation) stagelabels.Stage { return stageengine.FixingStage(o) }
+func classifyStage(o stageObservation) stageVerdict    { return stageengine.ClassifyStage(o) }
 func preserveNormalizedFixingStage(prev stagelabels.Record, hadPrev bool, obs stageObservation, verdict stageVerdict) (stageVerdict, bool) {
-	if !hadPrev || prev.Stage != stagelabels.Fixing || prev.Reason != stagelabels.LaneReasonChangesRequested {
-		return stageVerdict{}, false
-	}
-	if prev.ActivityHead == "" || obs.HeadSHA == "" || prev.ActivityHead != obs.HeadSHA {
-		return stageVerdict{}, false
-	}
-	if verdict.Stage != stagelabels.NeedsDecision || verdict.Reason != stageReasonVerdictRequiresHuman {
-		return stageVerdict{}, false
-	}
-	if !obs.Detail.VerdictKnown {
-		return stageVerdict{}, false
-	}
-	raw := strings.ToLower(strings.TrimSpace(obs.Detail.Verdict.Verdict))
-	normalized := strings.ToLower(strings.TrimSpace(normalizeContributorLaneVerdict(obs.Detail.Verdict).Verdict))
-	if raw != "requires_human" || normalized != "changes_requested" {
-		return stageVerdict{}, false
-	}
-	return stageVerdict{Stage: stagelabels.Fixing, Rank: stageRankOwned, Reason: stagelabels.LaneReasonChangesRequested}, true
+	return stageengine.PreserveNormalizedFixingStage(prev, hadPrev, obs, verdict)
 }
-
-// authorSideDone reports whether the PR has nothing left for its author to
-// do: the reviewer verdict for this head is approve and the lane's reason
-// is not a CI state.
-func authorSideDone(o stageObservation) bool {
-	return o.Detail.VerdictKnown && o.Detail.Verdict.Approved && !verdictBlocks(o.Detail) && classifyCIReason(o.Reason) == ciReasonNone
-}
-
-func hasLabelFold(labels []string, want string) bool {
-	for _, l := range labels {
-		if strings.EqualFold(strings.TrimSpace(l), want) {
-			return true
-		}
-	}
-	return false
-}
-
-// resolveStage picks the owning opinion among a PR's lane observations
-// (already sorted by lane precedence) and the role tier to show.
+func hasLabelFold(labels []string, want string) bool { return stageengine.HasLabelFold(labels, want) }
 func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stageObservation) {
-	var best stageVerdict
-	var bestObs stageObservation
-	role := stagelabels.RoleNone
-	for _, o := range list {
-		v := classifyStage(o)
-		if v.Rank > best.Rank {
-			best, bestObs = v, o
-		}
-		if o.AuthorKind == authorkind.Hive || hasLabelFold(o.Labels, "author/hive") {
-			role = role.Merge(stagelabels.RoleTrusted)
-		}
-		if v.Rank < stageRankOwned {
-			role = role.Merge(stagelabels.RoleOf(o.Labels))
-		}
-		// The most specific tier wins: the contributor lane knows
-		// registry/claim tiers the trusted-author lane cannot see, so a
-		// trusted-author "trusted" is kept but its absence is refined.
-		role = role.Merge(o.Detail.Role)
-	}
-	// No lane reported a tier this pass (the contributor lane's deep
-	// evaluation does not run every cycle): keep the tier the PR already
-	// carries instead of dropping it, which flapped role/trusted (#13637).
-	if role == stagelabels.RoleNone {
-		for _, o := range list {
-			role = role.Merge(stagelabels.RoleOf(o.Labels))
-		}
-	}
-	if best.Rank < stageRankOwned {
-		switch {
-		case role == stagelabels.RoleNone:
-			role = stagelabels.RoleUntrusted
-		case best.Stage == stagelabels.ReadyForHumanMerge && role == stagelabels.RoleTrusted:
-			// Some lane admits this author; a lane that cannot vouch for
-			// them has nothing to say about the stage. Leave it as is. A
-			// weak 085 (requires_human verdict, #13115) is deliberately
-			// kept: the decision is owed whoever the author is.
-			best = stageVerdict{}
-		}
-	}
-	if best.Rank == stageRankNone {
-		bestObs = list[0]
-	}
-	return best, role, bestObs
+	return stageengine.ResolveStage(list)
 }
 
 // stageAuthorKind decides who wrote the PR from the observation and the

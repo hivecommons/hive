@@ -10,16 +10,17 @@ import (
 	"github.com/hivecommons/hive/pkg/evidence"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // Skip reasons reported by the self-authored sweep's intent-tier gate.
 const (
 	// autoMergeReasonIntentUnauthorized: the PR's intent tier refused the
 	// merge (e.g. Tier1 without a linked issue) and intent.enforce is on.
-	autoMergeReasonIntentUnauthorized = "intent-unauthorized"
+	autoMergeReasonIntentUnauthorized = prstage.AutoMergeReasonIntentUnauthorized
 	// autoMergeReasonIntentEvidence: the changed-file list needed to classify
 	// the PR could not be fetched, so the tier is unknown. Fails CLOSED.
-	autoMergeReasonIntentEvidence = "intent-evidence"
+	autoMergeReasonIntentEvidence = prstage.AutoMergeReasonIntentEvidence
 )
 
 // intentLaneSelfMerge is the lane recorded on intent evaluation counters by

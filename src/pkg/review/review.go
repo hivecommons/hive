@@ -16,6 +16,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/review/reviewtext"
 	"github.com/hivecommons/hive/pkg/sentinel"
 )
 
@@ -734,23 +735,7 @@ func reportRequiresRiskEscalation(r PerspectiveReport) bool {
 
 // ConcreteRemediationText reports whether review prose names an actionable
 // engineering fix instead of merely saying a person should decide.
-func ConcreteRemediationText(text string) bool {
-	q := strings.ToLower(strings.TrimSpace(text))
-	if q == "" {
-		return false
-	}
-	terms := []string{
-		"add ", "set ", "populate", "wire", "plumb", "compute", "copy", "reword",
-		"rename", "remove", "update", "route", "fix ", "use ", "producer",
-		"changelog", "fragment", "trim", "duplicate", "instead", "either add", "either adding", "file:", ".go:", ".ts:", ".tsx:",
-	}
-	for _, term := range terms {
-		if strings.Contains(q, term) {
-			return true
-		}
-	}
-	return false
-}
+func ConcreteRemediationText(text string) bool { return reviewtext.ConcreteRemediationText(text) }
 
 // RiskEscalationText reports whether review prose names a category that must
 // remain a human decision instead of being normalized to a fixer route.
@@ -781,16 +766,7 @@ func containsRiskEscalationTermFor(text string, permissionsTighteningOnly bool) 
 	return false
 }
 
-func riskEscalationTerms() []string {
-	return []string{
-		"security", "vulnerab", "secret", "credential", "authentication", "authorization", "permission", "privilege",
-		"data loss", "delete", "destructive", "irreversible", "migration", "public-facing",
-		"breaking", "policy", "governance", "license", "licensing", "copyright", "legal",
-		"spend", "cost", "billing", "privacy", "compliance", "unreadable", "could not read",
-		"cannot read", "can't read", "could not judge", "cannot judge", "missing context",
-		"unfamiliar subsystem", "ambiguous", "cannot test", "can't test", "high-risk",
-	}
-}
+func riskEscalationTerms() []string { return reviewtext.RiskEscalationTerms() }
 
 func resolveSelfAuthoredDecisionQuestions(reports []PerspectiveReport, opts AggregateOptions, questions []string, blocked bool) bool {
 	if blocked || strings.EqualFold(strings.TrimSpace(opts.SelfAuthoredDecisionPolicy), "escalate") {

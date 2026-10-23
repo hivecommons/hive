@@ -6,16 +6,17 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
 // Skip reasons reported by the human-merge-path gate (#11038).
 const (
 	// autoMergeReasonHumanMergePath: the PR touches a path listed in
 	// auto_merge.human_merge_paths for its repo; it is held for a person.
-	autoMergeReasonHumanMergePath = "human-merge-path"
+	autoMergeReasonHumanMergePath = prstage.AutoMergeReasonHumanMergePath
 	// autoMergeReasonHumanMergePathEvidence: the repo has human-merge paths
 	// but the complete changed-file list could not be fetched. Fails CLOSED.
-	autoMergeReasonHumanMergePathEvidence = "human-merge-path-evidence"
+	autoMergeReasonHumanMergePathEvidence = prstage.AutoMergeReasonHumanMergePathEvidence
 )
 
 // SetHumanMergePaths installs (or, with nil, removes) the per-repo

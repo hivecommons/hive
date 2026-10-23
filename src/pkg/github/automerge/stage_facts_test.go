@@ -84,7 +84,7 @@ func TestPRDeriverReproducesResolveStage(t *testing.T) {
 		}},
 		{"author/hive label lifts role", []stageObservation{obs(stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Labels: []string{"author/hive"}})}},
 	}
-	deriver := PRDeriver()
+	deriver := stageengine.PRDeriver()
 	if deriver.Kind() != stagelabels.PRItem {
 		t.Fatal("kind")
 	}
@@ -124,7 +124,7 @@ func TestPRDeriverReproducesResolveStage(t *testing.T) {
 }
 
 func TestPRDeriverAbstainsWithoutEvidence(t *testing.T) {
-	d := PRDeriver()
+	d := stageengine.PRDeriver()
 	if got := d.Derive(factsFrom(nil)); !got.Abstain {
 		t.Fatalf("empty list: %+v", got)
 	}
@@ -141,7 +141,7 @@ func TestPRDeriverAbstainsWithoutEvidence(t *testing.T) {
 // the fresh read) sits at 085 on the human route with the role it wears; an
 // un-park or a closed PR still abstains until the lanes speak.
 func TestPRDeriverParksUnobservedPR(t *testing.T) {
-	d := PRDeriver()
+	d := stageengine.PRDeriver()
 	base := stageengine.Facts{Ref: stageengine.Ref{Kind: stagelabels.PRItem}, Open: true, PR: &stageengine.PRFacts{}}
 
 	parked := base
@@ -195,7 +195,7 @@ func TestPRDeriverRequiresHumanBeatsAdmissionReason(t *testing.T) {
 			Cause:     stagelabels.CauseTrust,
 		},
 	}
-	got := PRDeriver().Derive(f)
+	got := stageengine.PRDeriver().Derive(f)
 	if got.Abstain || got.Stage != stagelabels.NeedsDecision {
 		t.Fatalf("engine derived %+v, want stage %v", got, stagelabels.NeedsDecision)
 	}
@@ -212,7 +212,7 @@ func TestPRDeriverRequiresHumanBeatsAdmissionReason(t *testing.T) {
 		f.PR.Lanes[i].Reason = contributorLaneReasonNoVerdict
 	}
 	f.PR.Review = stageengine.ReviewFacts{}
-	if got := PRDeriver().Derive(f); !got.Abstain && got.Stage == stagelabels.NeedsDecision {
+	if got := stageengine.PRDeriver().Derive(f); !got.Abstain && got.Stage == stagelabels.NeedsDecision {
 		t.Fatalf("pending verdict derived %+v, want not 085", got)
 	}
 }
@@ -229,7 +229,7 @@ func TestPRDeriverPassCarriesStalledAndKindLabels(t *testing.T) {
 	list := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}}}
 	f := factsFrom(list)
 	f.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
-	got := PRDeriver().Derive(f)
+	got := stageengine.PRDeriver().Derive(f)
 	if got.Abstain || got.Stage != stagelabels.ReviewPending {
 		t.Fatalf("derived %+v, want 050", got)
 	}
@@ -244,7 +244,7 @@ func TestPRDeriverPassCarriesStalledAndKindLabels(t *testing.T) {
 	closed := []stageObservation{{Owner: "acme", Repo: "widgets", Number: 9, Author: "dev", HeadSHA: "sha", Lane: stageLaneContributor, Reason: "closed", Detail: stageDetail{Role: stagelabels.RoleContributor}}}
 	tf := factsFrom(closed)
 	tf.PR.Pass = &stageengine.PRPassFacts{AuthorKind: authorkind.Human, Stalled: true, KindLabels: names}
-	term := PRDeriver().Derive(tf)
+	term := stageengine.PRDeriver().Derive(tf)
 	if term.Abstain || !term.Terminal || term.Stage != stagelabels.None {
 		t.Fatalf("closed derived %+v, want terminal", term)
 	}

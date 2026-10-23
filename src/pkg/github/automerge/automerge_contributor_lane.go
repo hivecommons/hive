@@ -65,11 +65,11 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/issueclaim"
-	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-const contributorLaneTier = "contributor-lane"
+const contributorLaneTier = prstage.StageLaneContributor
 
 // contributorLaneClaimKind is the hive:claim kind the contribute hub stamps
 // on an issue it dispatched to a relay contributor (claims.KindContributor;
@@ -80,25 +80,25 @@ const contributorLaneClaimKind = "contributor"
 // per-PR skip map can tell this tier's holds from the others'.
 const (
 	contributorLaneReasonPrefix            = contributorLaneTier + ":"
-	contributorLaneReasonNoClaim           = contributorLaneReasonPrefix + "no-claim"
-	contributorLaneReasonClaimAuthor       = contributorLaneReasonPrefix + "claim-author-mismatch"
-	contributorLaneReasonClaimOtherHive    = contributorLaneReasonPrefix + "claim-other-hive"
-	contributorLaneReasonNoLinkedIssue     = contributorLaneReasonPrefix + "no-linked-issue"
-	contributorLaneReasonNoVerdict         = contributorLaneReasonPrefix + "no-verdict"
-	contributorLaneReasonSoaking           = contributorLaneReasonPrefix + "soaking"
-	contributorLaneReasonSentinelBlocked   = contributorLaneReasonPrefix + "sentinel-blocked"
-	contributorLaneReasonReporterTrustHold = contributorLaneReasonPrefix + "reporter-trust-hold"
-	contributorLaneReasonChangesRequested  = contributorLaneReasonPrefix + "changes-requested"
-	contributorLaneReasonNoAppBotLogin     = contributorLaneReasonPrefix + "no-app-bot-login"
-	contributorLaneReasonAppAuthored       = contributorLaneReasonPrefix + "app-authored"
-	contributorLaneReasonNoAuthor          = contributorLaneReasonPrefix + "no-author"
-	contributorLaneReasonClaimTier         = contributorLaneReasonPrefix + "claim-tier-untrusted"
-	contributorLaneReasonClaimUnverified   = contributorLaneReasonPrefix + "claim-unverified"
-	contributorLaneReasonAuthorAssociation = contributorLaneReasonPrefix + "author-association"
-	contributorLaneReasonWorkflowPath      = contributorLaneReasonPrefix + "workflow-path"
-	contributorLaneReasonTestsRemoved      = contributorLaneReasonPrefix + "tests-removed"
-	contributorLaneReasonNoReviewer        = contributorLaneReasonPrefix + "no-reviewer"
-	contributorLaneReasonFilesEvidence     = contributorLaneReasonPrefix + "files-evidence"
+	contributorLaneReasonNoClaim           = prstage.ContributorLaneReasonNoClaim
+	contributorLaneReasonClaimAuthor       = prstage.ContributorLaneReasonClaimAuthor
+	contributorLaneReasonClaimOtherHive    = prstage.ContributorLaneReasonClaimOtherHive
+	contributorLaneReasonNoLinkedIssue     = prstage.ContributorLaneReasonNoLinkedIssue
+	contributorLaneReasonNoVerdict         = prstage.ContributorLaneReasonNoVerdict
+	contributorLaneReasonSoaking           = prstage.ContributorLaneReasonSoaking
+	contributorLaneReasonSentinelBlocked   = prstage.ContributorLaneReasonSentinelBlocked
+	contributorLaneReasonReporterTrustHold = prstage.ContributorLaneReasonReporterTrustHold
+	contributorLaneReasonChangesRequested  = prstage.ContributorLaneReasonChangesRequested
+	contributorLaneReasonNoAppBotLogin     = prstage.ContributorLaneReasonNoAppBotLogin
+	contributorLaneReasonAppAuthored       = prstage.ContributorLaneReasonAppAuthored
+	contributorLaneReasonNoAuthor          = prstage.ContributorLaneReasonNoAuthor
+	contributorLaneReasonClaimTier         = prstage.ContributorLaneReasonClaimTier
+	contributorLaneReasonClaimUnverified   = prstage.ContributorLaneReasonClaimUnverified
+	contributorLaneReasonAuthorAssociation = prstage.ContributorLaneReasonAuthorAssociation
+	contributorLaneReasonWorkflowPath      = prstage.ContributorLaneReasonWorkflowPath
+	contributorLaneReasonTestsRemoved      = prstage.ContributorLaneReasonTestsRemoved
+	contributorLaneReasonNoReviewer        = prstage.ContributorLaneReasonNoReviewer
+	contributorLaneReasonFilesEvidence     = prstage.ContributorLaneReasonFilesEvidence
 )
 
 // contributorLaneReasonRegistryTrusted is the admit reason logged when the
@@ -190,38 +190,10 @@ type ContributorLanePolicy struct {
 type ContributorRegistryTierFunc func(login string) (tier string, ok bool)
 
 // ContributorLaneVerdict is the reviewer relay's answer for one PR head.
-type ContributorLaneVerdict struct {
-	// Configured is false when no reviewer agent is enabled for the repo; the
-	// tier then skips with contributor-lane:no-reviewer.
-	Configured bool
-	// Approved is true when the aggregate verdict for the head is approve and
-	// merge-eligible.
-	Approved bool
-	// Verdict is the aggregate verdict for routing, if any.
-	Verdict           string
-	DecisionRequested bool
-	DecisionQuestion  string
-	HumanSummaries    []string
-	// HiveAuthoredKnown is true for verdicts read from aggregates that recorded
-	// authorship. The stage fallback normalizer leaves those alone: aggregation
-	// already applied the configured self-authored decision policy.
-	HiveAuthoredKnown bool
-	HiveAuthored      bool
-	// FixCycleCapReached preserves a human hold once review repair attempts are
-	// exhausted, even if the review text also names concrete remediation.
-	FixCycleCapReached bool
-}
+type ContributorLaneVerdict = prstage.ReviewVerdict
 
 func normalizeContributorLaneVerdict(v ContributorLaneVerdict) ContributorLaneVerdict {
-	if !v.Configured || v.Approved || v.DecisionRequested || (v.HiveAuthoredKnown && !v.HiveAuthored) || v.FixCycleCapReached || strings.ToLower(strings.TrimSpace(v.Verdict)) != string(review.VerdictRequiresHuman) {
-		return v
-	}
-	text := strings.TrimSpace(v.DecisionQuestion + "\n" + strings.Join(v.HumanSummaries, "\n"))
-	if review.RiskEscalationText(text) || !review.ConcreteRemediationText(text) {
-		return v
-	}
-	v.Verdict = string(review.VerdictChangesRequested)
-	return v
+	return prstage.NormalizeReviewVerdict(v)
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at

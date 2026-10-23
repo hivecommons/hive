@@ -19,6 +19,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -499,8 +500,8 @@ func nextSelfAuthoredSweepInterval(repos int, current time.Duration, result *Aut
 
 const (
 	autoMergeReasonNoHiveQueueApproval        = "no-hive-queue-approval"
-	autoMergeReasonHumanChangesRequested      = "human-changes-requested"
-	autoMergeReasonNoAppBotLogin              = "no-app-bot-login"
+	autoMergeReasonHumanChangesRequested      = prstage.AutoMergeReasonHumanChangesRequested
+	autoMergeReasonNoAppBotLogin              = prstage.AutoMergeReasonNoAppBotLogin
 	autoMergeReasonUntrustedQueueApproval     = "untrusted-hive-queue-approval"
 	autoMergeReasonUntrustedMerger            = "untrusted-merger"
 	autoMergeReasonNoMergerAuthz              = "no-merger-authorizer"
@@ -1810,7 +1811,7 @@ func (c *Engine) sweepLaneForAuthor(author string) (string, bool) {
 
 // trustedBotLaneSkipReason is the trusted-author tier's skip reason for a PR
 // it hands off to the self-authored sweep's "trusted-bot" lane.
-const trustedBotLaneSkipReason = "trusted-bot-lane"
+const trustedBotLaneSkipReason = prstage.TrustedBotLaneSkipReason
 
 // isTrustedBotLaneAuthor reports whether author falls in the "trusted-bot"
 // lane of sweepLaneForAuthor.
@@ -2200,7 +2201,7 @@ func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, re
 	return AutoMergeSweepEvent{Repo: displayRepo, Number: number, HeadSHA: headSHA, BranchUpdated: true}, "check-pending", nil
 }
 
-const autoMergeReasonForkNotEditable = "fork-not-editable"
+const autoMergeReasonForkNotEditable = prstage.AutoMergeReasonForkNotEditable
 
 type updateBranchFailure int
 

@@ -17,14 +17,24 @@ PR-A and PR-B are independent. PR-C and PR-D depend only on PR-B (they can
 be developed against PR-B's branch and rebased). PR-E depends on A, B, C.
 PR-F is a follow-up after 48 h in `enforce`.
 
+PR-F's remaining PR-side relocation (#13779) puts the classifier and pass
+post-steps in `pkg/stageengine/derive_pr*.go`. `pkg/stageengine/prstage`
+owns the lane reason vocabulary and shared observation shapes; automerge
+only gathers facts and previews through engine helpers. Both derivers are
+built in: the temporary `SetDerivers` registry and PR adapter are removed.
+The PR goldens now live in `pkg/stageengine/testdata/stage_goldens`; a thin
+automerge facts-fold parity replay is retained for one release. Review prose
+classification lives in the dependency-free `pkg/review/reviewtext` leaf,
+avoiding the `review` → `config` → `stageengine` import cycle.
+
 ## PR-A — golden fixtures and shadow harness (independent)
 
 Scope: freeze today's behaviour. No production code changes.
 
-- `src/pkg/github/automerge/testdata/stage_goldens/*.json`: one fixture per
+- `src/pkg/stageengine/testdata/stage_goldens/*.json`: one fixture per
   lane × reason × verdict × author-kind × adoption combination reachable in
-  `classifyStage`/`resolveStage` (`src/pkg/github/automerge/automerge_stage_labels.go:806`,
-  `src/pkg/github/automerge/automerge_stage_labels.go:946`), serialised as
+  `ClassifyStage`/`ResolveStage` (`src/pkg/stageengine/derive_pr_classify.go:252`,
+  `src/pkg/stageengine/derive_pr_classify.go:445`), serialised as
   `[]stageObservation` → `{stage, rank, reason, role, terminal}`. Generated
   by a `go test -run TestStageGoldens -update` flag; checked in.
 - `src/pkg/github/testdata/issue_stage_goldens/*.json`: one per bucket ×
@@ -69,9 +79,9 @@ without moving its logic.
     `final_stage` / `final_reason`.
   - `src/pkg/github/issue_stage_facts.go`: `factsFrom(IssueStageInput) stageengine.Facts`
     and `issueDeriverAdapter` wrapping `IssueStageFor`.
-  - Both adapters are what `stageengine.DeriveIssue`/`DerivePR` delegate to
-    until PR-F moved the issue body in; the engine package exposes
-    `SetDerivers(issue, pr Deriver)` for the wiring in `cmd/hive`.
+  - Both adapters originally backed `stageengine.DeriveIssue`/`DerivePR`
+    through `SetDerivers(issue, pr Deriver)`. PR-F moved both bodies into
+    the engine and removed that temporary registry (#13778, #13779).
 - Property test `TestReconcileIdempotent`: for random `Facts`, `Reconcile`
   twice with a fake writer → second call writes nothing and the item carries
   exactly one `stage/*` label.
@@ -91,7 +101,7 @@ Scope: one writer, every sweep uses it.
   `src/pkg/github/stage_labeler.go:63`. This is the only implementation.
 - `src/pkg/github/automerge/automerge_stage_labels.go`: `ApplyStageLabels`
   builds `Facts` per PR and calls `Reconciler.ReconcileBatch`; delete
-  `engineStageLabeler` (`src/pkg/github/automerge/automerge_stage_labels.go:1428`).
+  `engineStageLabeler` (replaced by `pkg/github/stage_writer.go`).
   The 072 nudge / 074 adoption hooks read the returned `Transition`s instead
   of the local verdict.
 - `src/pkg/github/issue_stage_labels.go`: `SyncIssueStageLabels` builds

@@ -213,14 +213,6 @@ func TestStageFacts_ParkOnPullRequestClampsToPRStage(t *testing.T) {
 	srv := newStageFactsServer(t, "kind/feature")
 	srv.isPR = true
 	c := testClient(t, srv.srv.URL)
-	prevIssue, prevPR := stageengine.Derivers()
-	t.Cleanup(func() { stageengine.SetDerivers(prevIssue, prevPR) })
-	stageengine.SetDerivers(nil, stageengine.DeriverFunc(stagelabels.PRItem, func(f stageengine.Facts) stageengine.Decision {
-		if f.Ref.Kind != stagelabels.PRItem || f.PR == nil || f.Issue != nil {
-			t.Errorf("PR facts not swapped: %+v", f)
-		}
-		return stageengine.Decision{Stage: stagelabels.NeedsDecision, Reason: "test", Human: &stagelabels.Route{Stage: stagelabels.NeedsDecision}}
-	}))
 
 	if err := c.StageFacts().Parked(context.Background(), c.IssueStageRef("o/r", 7), NeedsDecisionStageLabel); err != nil {
 		t.Fatal(err)
