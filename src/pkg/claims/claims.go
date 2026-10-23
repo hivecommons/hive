@@ -701,6 +701,17 @@ func (l *Ledger) ReleaseByHolderID(holderID, reason string, onlyKey ...string) [
 // instead of sitting at stage/020-claimed until the agent TTL lapses.
 const ReasonHolderRelaunched = "holding agent relaunched"
 
+// ReasonExpired is the release reason the ledger records when a claim's TTL
+// lapses without a renew. Hooks treat it as the one release that needs no
+// forge release marker: the marker's until= already says the claim is over.
+const ReasonExpired = "expired"
+
+// ReasonLeaseExpired is the release reason a contributor lease's claim is
+// dropped with when the lease itself aged out of its re-adoption window
+// unresumed (hivecommons/hive#13579). Unlike ReasonExpired the claim's own
+// until= may still be in the future, so the hooks post a release marker.
+const ReasonLeaseExpired = "lease expired"
+
 // ReleaseAgentClaims drops every live KindAgent claim held by agent and fires
 // OnReleased for each. Unlike ReleaseByHolderID it never touches a human or
 // contributor claim whose login happens to spell the agent's name.
@@ -817,7 +828,7 @@ func (l *Ledger) Expire() int {
 	l.mu.Unlock()
 	for _, c := range dropped {
 		if hooks.OnReleased != nil {
-			hooks.OnReleased(c, "expired")
+			hooks.OnReleased(c, ReasonExpired)
 		}
 	}
 	return len(dropped)
@@ -830,7 +841,7 @@ func fireExpired(hooks Hooks, expired []Claim) {
 		return
 	}
 	for _, c := range expired {
-		hooks.OnReleased(c, "expired")
+		hooks.OnReleased(c, ReasonExpired)
 	}
 }
 
@@ -840,7 +851,7 @@ func (l *Ledger) expireLocked(now time.Time) []Claim {
 		if c.Expired(now) {
 			dropped = append(dropped, c)
 			delete(l.claims, k)
-			l.endAttemptLocked(c, "expired", c.ExpiresAt)
+			l.endAttemptLocked(c, ReasonExpired, c.ExpiresAt)
 		}
 	}
 	l.pruneLocked(now)

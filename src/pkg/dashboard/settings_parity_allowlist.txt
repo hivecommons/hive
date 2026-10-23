@@ -171,6 +171,10 @@ governor.budget.coins.<key>.budget # TODO #11854
 governor.budget.coins.<key>.label # TODO #11854
 governor.budget.coins.<key>.tokens_per_coin # TODO #11854
 governor.budget.coins.<key>.usd_per_coin # TODO #11854
+governor.claims.contributor_flap_threshold # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_flap_window_s # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_flap_cooloff_s # contributor flap cool-off (#13579); yaml-only
+governor.claims.contributor_starvation_s # contributor starvation guard (#13579); yaml-only
 governor.cadence_owners.<key> # TODO #11854
 governor.gateways[].api_key_env # TODO #11854
 governor.gateways[].api_key_file # TODO #11854

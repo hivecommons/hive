@@ -1132,6 +1132,9 @@ type ContributeWSHub struct {
 	recentlyFinished map[string]time.Time
 	// graceBookings counts deferred #7838 bookings still pending or running.
 	graceBookings sync.WaitGroup
+	// contributorFlapState counts disconnect releases per issue for the
+	// contributor flap cool-off (hivecommons/hive#13579, contribute_flap.go).
+	contributorFlapState
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -2623,6 +2626,11 @@ func (h *ContributeWSHub) bookAbandonmentAfterGrace(c *ContributorConnection, ta
 			c.role, c.cliBackend, c.model, c.reasoningEffort, taskDescOf(task))
 		h.auditRelay(c, agentaudit.AuditRelayTaskAbandoned, task)
 		h.appendAbandonedRun(c, task, abandonCauseDisconnect, assignedAt)
+		// The relay did not come back inside the grace window: the issue
+		// claim it carried is released so hive agents can take the issue
+		// on their next eval cycle (hivecommons/hive#13579). The lease is
+		// left in place; a late resume re-asserts the claim.
+		h.releaseContributorClaimOnDisconnect(c, task, time.Now())
 	}
 	grace := disconnectAbandonGrace()
 	if grace <= 0 {
@@ -3544,6 +3552,25 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: "no active lease for this task"})
 				return
 			}
+			// hivecommons/hive#13579: an issue in contributor cool-off is not
+			// resumable either. The lease was issued before the drops that
+			// tripped the cool-off; letting the same relay re-take it now is
+			// exactly the reconnect loop the cool-off exists to break.
+			if co, ok := h.inContributorCoolOff(lease.key); ok {
+				reason := co.Reason()
+				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
+					msg.TaskID, canonRepo, msg.Number,
+					"refused: "+reason+"; withheld from contributors until "+co.Until.UTC().Format(time.RFC3339))
+				h.logger.Info("[contribute-ws] task_progress resume refused: issue in contributor cool-off (#13579)",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID, "repo", canonRepo, "number", msg.Number,
+					"drops", co.Drops, "until", co.Until.UTC().Format(time.RFC3339))
+				h.revokeLease(identity, msg.TaskID)
+				h.auditRelay(s.contributor, agentaudit.AuditRelayTaskRevoked,
+					&WSTaskAssign{TaskID: msg.TaskID, Repo: canonRepo, Number: msg.Number}, "reason", auditRelayText(reason))
+				_ = sendJSON(s.conn, WSMessage{Type: "task_revoke", Seq: h.nextSeq(), TaskID: msg.TaskID, Reason: reason})
+				return
+			}
 			// C4: re-run the same admission gates a fresh selectTask assignment
 			// must pass. A task assigned before the operator suspended the queue,
 			// disabled the tier, or revoked the contributor must NOT silently
@@ -3629,6 +3656,15 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// item on disconnect is the one withdrawn here; the key is "" for
 			// a synthetic task and the helper skips it.
 			h.clearReleaseCooldownKey(rebuilt.identityKey())
+
+			// hivecommons/hive#13579: a disconnect release that outlived the
+			// grace window released the issue claim. The relay is back, so
+			// re-assert it; if a hive agent took the issue meanwhile the
+			// ledger keeps the higher claim and the takeover hook preempts
+			// this relay the usual way.
+			if lease.number > 0 {
+				h.claimIssueForContributor(s.contributor, lease.repo, lease.number)
+			}
 
 			h.logger.Info("[contribute-ws] task resumed from server-issued lease",
 				"username", s.contributor.profile.GitHubUsername,

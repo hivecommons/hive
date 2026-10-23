@@ -191,6 +191,12 @@ type Client struct {
 	// carries no live marker: the 🔒 comment is budgeted and can be
 	// suppressed, and a claim the ledger holds must still read as a claim.
 	issueClaimLedger func(repo string, number int) (issueclaim.Claim, bool)
+	// issueClaimLedgerHive is the hive= this hub writes on its own markers;
+	// a live forge marker carrying it while the ledger holds nothing is a
+	// marker the hub already released (hivecommons/hive#13579).
+	// Resolved per call: the ledger is built after the client, and until it
+	// exists nothing is "released in the ledger".
+	issueClaimLedgerHive func() string
 	// inProgress resolves the hive/in-progress start-signal setting (see
 	// issue_inprogress.go). Nil → the label is not applied or swept.
 	inProgress func() InProgressSetting
@@ -736,6 +742,12 @@ type Issue struct {
 	// stage/030-pr-in-progress from stage/020-claimed; the claim's kind
 	// alone never does (hivecommons/hive#13069).
 	ClaimPRStarted bool `json:"claim_pr_started,omitempty"`
+	// ClaimAdvisory is set when the issue carries a live contributor claim
+	// the live-claim filter chose NOT to honour — the issue is in contributor
+	// cool-off, or contributor claims have kept hive agents off it past the
+	// starvation guard (hivecommons/hive#13579). It names the reason; the
+	// issue stays actionable and hive agents may claim it.
+	ClaimAdvisory string `json:"claim_advisory,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -2941,15 +2953,22 @@ func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int,
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	claim := effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
 		Inputs: labelMutationInputs(map[string]string{"labels": strings.Join(labels, ",")}, observed),
-	}, func(ctx context.Context) (effects.Result, error) {
+	}
+	effect := func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
-	})
+	}
+	_, err := effects.Execute(ctx, c.mutationBoundary(), claim, effect)
+	if errors.Is(err, effects.ErrNeedsReconciliation) {
+		_, err = c.reconcileLabelMutation(ctx, owner, repoName, number, claim, effect, err, func(current []string) bool {
+			return labelsAllPresent(current, labels)
+		})
+	}
 	if err == nil {
 		c.forgeWriteThrough(repo, number, forgestate.Mutation{Op: forgestate.OpLabelAdd, Labels: labels})
 	}
@@ -2972,22 +2991,81 @@ func (c *Client) removeLabelObserved(ctx context.Context, repo string, number in
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	claim := effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
 		Inputs: labelMutationInputs(map[string]string{"remove_label": label}, observed),
-	}, func(ctx context.Context) (effects.Result, error) {
+	}
+	effect := func(ctx context.Context) (effects.Result, error) {
 		_, apiErr := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, url.PathEscape(label))
 		if githubStatusError(apiErr, http.StatusNotFound) {
 			apiErr = nil
 		}
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
-	})
+	}
+	_, err := effects.Execute(ctx, c.mutationBoundary(), claim, effect)
+	if errors.Is(err, effects.ErrNeedsReconciliation) {
+		_, err = c.reconcileLabelMutation(ctx, owner, repoName, number, claim, effect, err, func(current []string) bool {
+			return !labelsAllPresent(current, []string{label})
+		})
+	}
 	if err == nil {
 		c.forgeWriteThrough(repo, number, forgestate.Mutation{Op: forgestate.OpLabelRemove, Labels: []string{label}})
 	}
 	return err
+}
+
+// reconcileLabelMutation resolves a label mutation the mutation journal holds
+// as unresolved — an earlier attempt at the SAME logical operation is still
+// Planned (a concurrent writer mid-call, or a process that died between
+// intent and acknowledgment) or ended Unknown (ambiguous API failure) — from
+// authoritative external state, then replays the mutation once. A label is
+// the easy case: it is either on the item or it is not, and one Issues.Get
+// says which. Before this the claimed-by label write simply failed with
+// "op:… is Planned" and the claim went un-labelled until the next renewal
+// (hivecommons/hive#13579). Nothing is expired blind: when the read itself
+// fails the needs-reconciliation refusal stands, and the boundary's OnStuck
+// reports the operation only once it has been unresolved past StuckAfter.
+func (c *Client) reconcileLabelMutation(ctx context.Context, owner, repoName string, number int, claim effects.Claim,
+	effect func(context.Context) (effects.Result, error), journalErr error, applied func(current []string) bool) (effects.Result, error) {
+	if c == nil || c.client == nil {
+		return effects.Result{}, journalErr
+	}
+	issue, _, lookupErr := c.client.Issues.Get(WithRESTCaller(ctx, "hive:reconcile_label_mutation"), owner, repoName, number)
+	if lookupErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (label read for reconciliation failed: %v)", journalErr, lookupErr)
+	}
+	state := effects.ExternalState{Applied: applied(extractLabels(issue.Labels)), Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}
+	if recErr := effects.Reconcile(ctx, c.mutationBoundary(), claim, state); recErr != nil {
+		return effects.Result{}, fmt.Errorf("%w (reconciliation failed: %v)", journalErr, recErr)
+	}
+	if c.logger != nil {
+		c.logger.Info("label mutation: reconciled unresolved operation against the item's current labels",
+			slog.String("repo", owner+"/"+repoName), slog.Int("number", number), slog.Bool("applied", state.Applied))
+	}
+	if state.Applied {
+		return effects.Result{Provenance: state.Provenance}, nil
+	}
+	return effects.Execute(ctx, c.mutationBoundary(), claim, effect)
+}
+
+// labelsAllPresent reports whether every wanted label is in current
+// (case-insensitively, as GitHub treats label names).
+func labelsAllPresent(current, wanted []string) bool {
+	for _, w := range wanted {
+		found := false
+		for _, l := range current {
+			if strings.EqualFold(l, w) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // labelMutationInputs adds the observed item state to a label mutation's

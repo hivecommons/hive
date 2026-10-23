@@ -129,6 +129,16 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
 	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
+	// A marker this hive wrote is live only while its ledger still holds the
+	// claim (hivecommons/hive#13579, issue_claims.go). The ledger itself is
+	// built after this client (main.go), so the hive is resolved per call
+	// and is empty — guard off — until the ledger exists.
+	client.SetIssueClaimLedgerHive(func() string {
+		if b.issueClaims == nil {
+			return ""
+		}
+		return b.cfg.HiveID
+	})
 	installReviewBots(client, b.cfg, b.logger)
 	installReviewRelaySettings(client, b.cfg, b.logger)
 	syncAutoMergePolicyToGitHubClient(b.cfg, client)

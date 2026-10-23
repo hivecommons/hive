@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/celtrigger"
+	"github.com/hivecommons/hive/pkg/claims"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -805,6 +806,28 @@ func (h *ContributeWSHub) setLeaseClaim(identity, taskID string, claim ghpkg.Iss
 	}
 }
 
+// clearLeaseClaim drops the lease's mirror of an issue claim the hub has
+// released while the lease itself stays resumable (a disconnect release,
+// hivecommons/hive#13579), so the runs API stops showing a claim the ledger
+// no longer holds. A lease that is not there is left alone.
+func (h *ContributeWSHub) clearLeaseClaim(identity, taskID string) {
+	if h == nil || identity == "" || taskID == "" {
+		return
+	}
+	h.leaseMu.Lock()
+	defer h.leaseMu.Unlock()
+	l := h.leases[leaseKey(identity, taskID)]
+	if l == nil || (l.claimedBy == "" && l.claimExpiresAt.IsZero()) {
+		return
+	}
+	l.claimedBy = ""
+	l.claimExpiresAt = time.Time{}
+	l.claimPosted = false
+	if err := h.saveLeasesLocked(); err != nil {
+		h.logger.Warn("[contribute-ws] lease claim clear not persisted", "task", taskID, "error", err)
+	}
+}
+
 func (h *ContributeWSHub) taskLeasesPath() string {
 	if h != nil && h.taskLeasesFile != "" {
 		return h.taskLeasesFile
@@ -1045,12 +1068,15 @@ func (h *ContributeWSHub) loadLeases() {
 // alongside the other stale-state reaping. Returns how many were dropped.
 func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	dropped := 0
-	var unknown []taskLease
+	var unknown, expired []taskLease
 	h.leaseMu.Lock()
 	for k, l := range h.leases {
 		if l == nil || l.expiresAt.IsZero() || now.After(l.expiresAt) {
 			if l != nil && l.restored && l.stage == StageImplement {
 				unknown = append(unknown, *l)
+			}
+			if l != nil {
+				expired = append(expired, *l)
 			}
 			delete(h.leases, k)
 			dropped++
@@ -1067,6 +1093,14 @@ func (h *ContributeWSHub) pruneExpiredLeases(now time.Time) int {
 	h.leaseMu.Unlock()
 	for _, l := range unknown {
 		h.recordWavefrontUnknown(l, now)
+	}
+	// A lease nobody resumed takes its issue claim with it
+	// (hivecommons/hive#13579): the relay is not coming back inside the
+	// re-adoption window, so nothing should keep hive agents off the issue.
+	for _, l := range expired {
+		if l.identity != "" && l.key != "" {
+			h.releaseClaimForLease(l.identity, l.key, claims.ReasonLeaseExpired)
+		}
 	}
 	return dropped
 }

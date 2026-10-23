@@ -3590,7 +3590,7 @@ func (b *boot) bootSupervision() {
 	// re-claimed, and a likely-done issue an agent already verified after the
 	// merge is withheld until the reporter or a maintainer acts.
 	b.sched.SetInflightLookup(composeInflight(b.dashSrv.LinearSessionHolder,
-		claimsInflightLookup(b.issueClaims, b.cfg.Project.Org),
+		contributorClaimOverrideLookup(contributorClaimGuard.Load, claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)),
 		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
 		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
 	// #9584: close answered question issues unless the author objects (default off).
@@ -3634,6 +3634,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
 	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
 	releaseClaimsOnAgentRelaunch(b.agentMgr, b.dashSrv.IssueClaims, b.logger)
+	installContributorClaimGuard(b.cfg, b.dashSrv, b.logger)
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -9852,8 +9853,11 @@ func applyDuplicatePRGuard(
 	// for every kick prompt (the scanner's included). The claim fields are
 	// only ever set while governor.claims.enabled is on, so with the feature
 	// off this touches nothing.
+	// hivecommons/hive#13579: a contributor claim on an issue in flap
+	// cool-off, or one that has starved hive agents past the configured
+	// window with no PR, is advisory — the issue stays actionable.
 	if cfg != nil && cfg.Governor.Claims.Enabled {
-		if withheld := github.FilterLiveIssueClaims(actionable, time.Now(), logger); withheld > 0 {
+		if withheld := contributorClaimGuard.Load().FilterLiveIssueClaims(actionable, time.Now(), logger); withheld > 0 {
 			logger.Info("issue-claim guard applied", "withheld", withheld)
 		}
 	}
