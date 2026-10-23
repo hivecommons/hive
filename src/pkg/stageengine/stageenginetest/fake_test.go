@@ -104,14 +104,13 @@ func TestNewSinkRunsTheRealReconciler(t *testing.T) {
 		t.Fatalf("after Unparked: %v", got)
 	}
 
-	// A PR ref with no PR deriver registered abstains: no write, no error.
+	// The built-in PR deriver handles PR facts without registration.
 	pr := stageengine.Ref{Owner: "o", Repo: "r", Number: 4, Kind: stagelabels.PRItem}
-	before := len(w.Applies())
 	if err := sink.Parked(ctx, pr, "needs-decision"); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.Applies()) != before {
-		t.Fatalf("an abstaining deriver must not write: %+v", w.Applies()[before:])
+	if got := w.LabelsOf(pr); stagelabels.Current(got) != stagelabels.NeedsDecision {
+		t.Fatalf("after PR Parked: %v, want needs-decision", got)
 	}
 }
 
