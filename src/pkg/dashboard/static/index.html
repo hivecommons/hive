@@ -23289,7 +23289,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             : (!isHeldIssue && showPlan ? `<button class="repo-issue-plan pill-icon" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Plan this issue" aria-label="Plan this issue">📋</button>` : '');
           const designBtn = (!isHeldIssue && !linked && showDesign) ? `<button class="repo-issue-plan pill-icon" data-action="designIssue" data-arg-types="t" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Design before planning" aria-label="Design before planning">📐</button>` : '';
           const holdBtn = holdToggleChip(cardRepo, i, 'issue', isHeldIssue, canToggleHold, heldTip);
-          const prBadge = (isHeldIssue ? '' : issueCoveringPRBadge(i)) + cpActionHTML(i);
+          const prBadge = isHeldIssue ? '' : issueCoveringPRBadge(i);
           const bandClass = info.band === 'ready' ? '' : ' ' + info.band;
           const heldClass = isHeldIssue ? ' held' : '';
           const staleClass = issueIsStale(i) ? ' stale' : '';
@@ -23297,7 +23297,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const issueUrl = i.url || (repoUrl + '/issues/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
           const statusKind = isHeldIssue ? 'issue:held' : (info.chip ? repoIssueChipKind(info.chip) : ('issue:' + info.band));
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge, planBtn, designBtn, holdBtn])}</span>`;
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge + cpActionHTML(i), planBtn, designBtn, holdBtn])}</span>`;
         };
         // Critical path (#13646): within a band the rows that unblock the
         // most come first, and a row waiting on another row of the same
@@ -23384,7 +23384,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const reviewPill = p.review_url
             ? `<a class="repo-pr-pill pill-reviewed pill-icon" href="${esc(p.review_url)}" target="_blank" rel="noopener" data-stop="1" title="${esc(reviewTip)}" aria-label="${esc(reviewTip)}">💬${p.review_count > 1 ? '×' + p.review_count : ''}</a>`
             : '';
-          const queueBtn = cpActionHTML(p) + (held
+          const queueBtn = held
             ? ''
             : (needsHuman
                 ? `<button type="button" class="repo-pr-pill needs-human pill-needs-human-badge pill-icon repo-pill-filter-toggle" title="${esc(needsHumanTip)}" aria-label="${esc(needsHumanTip)}"${repoPillFilterAttrs('needs-human')}>⚠</button>`
@@ -23394,7 +23394,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
                         : (notMergeable
                             ? `<button class="repo-pr-pill pill-icon" disabled title="${esc(notMergeableTip)}" aria-label="${esc(notMergeableTip)}">🔀</button>`
                             : `<button class="hv-btn repo-pr-pill pill-icon btn-primary" data-action="queuePRAutoMerge" data-arg0="${esc(owner)}" data-arg1="${esc(repoName)}" data-arg2="${p.number}" data-arg-types="s,s,j,t" data-stop="1" data-prevent="1" title="Queue auto-merge when checks pass" aria-label="Queue auto-merge when checks pass">🔀</button>`))
-                    : '')));
+                    : ''));
           const heldTip = held ? heldReason(p) : '';
           const holdBtn = holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip);
           const stateBadge = held && needsHuman
@@ -23423,7 +23423,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const prStatusTip = sentinelTip + (reviewClass ? ((held ? 'Held PR — review class: ' : 'Review class: ') + reviewClass) : (held ? heldTip : 'Open pull request'));
           const rowKinds = repoPRFilterKinds(p, held, bandInfo);
           const statusKind = sentinelFlagged ? 'pr:sentinel' : held ? 'pr:held' : (needsHuman ? 'needs-human' : (mergeState === 'eligible' ? 'pr:eligible' : (mergeState === 'outstanding' ? 'pr:outstanding' : ((reviewClass === 'fix') ? 'pr:fix' : 'pr:open'))));
-          return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(cardRepo, 'pr', p), `<button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button>`)}<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}${cpChipsHTML(p)}</a>${repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
+          return `<span class="repo-pr-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(cardRepo, 'pr', p), `<button type="button" class="repo-pill-status repo-pr-pill${heldClass}${tintClass} repo-pill-filter-toggle" title="${esc(prStatusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(prStatusText)}</button>`)}<a class="repo-pr-pill repo-pill-main${heldClass}${tintClass}${staleClass}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(prTip)}"><span class="pill-num">#${p.number}</span><span class="pill-title">${esc(title)}</span>${mergeIcon}${prSignalHTML(bandInfo)}${cpChipsHTML(p)}</a>${repoPillActionCluster([reviewPill, cpActionHTML(p) + queueBtn + stateBadge, issueBadge, holdBtn])}</span>`;
         };
         const cpPRFold = cpCardFold([].concat(...collapseView.prGroups.map(g => g.prs)), entry => entry.pr, 'pr');
         const prPills = collapseView.prGroups.map(g => {
