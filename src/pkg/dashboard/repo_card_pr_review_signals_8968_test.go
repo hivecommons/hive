@@ -75,7 +75,7 @@ func TestRepoCardPRReviewSignalsStaticWiring(t *testing.T) {
 		"function prRequestedReviews(pr)",
 		"function prConversation(pr)",
 		"function prLinkedIssues(pr)",
-		"repoPillActionCluster([reviewPill, queueBtn + stateBadge, issueBadge, holdBtn])",
+		"repoPillActionCluster([reviewPill, cpActionHTML(p) + queueBtn + stateBadge, issueBadge, holdBtn])",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
