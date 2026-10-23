@@ -1,0 +1,1 @@
+- Warn once per PR, not every cycle, when the human-decision label cannot be applied or a review pending entry expires (v6 backport of #13689).
