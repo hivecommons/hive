@@ -103,7 +103,7 @@ func TestGitHubPromptAllowlist_SeedOnly(t *testing.T) {
 			GitHubPromptAllowlist: nil,
 		}},
 		AgentRuntimeConfig: AgentRuntimeConfig{
-			Agents: map[string]AgentConfig{"scanner": {name: "scanner"}},
+			Agents: map[string]AgentConfig{"scanner": namedAgentConfig("scanner", AgentConfig{})},
 		},
 	}
 	// An overlay that tries to enable the feature — its Variables must be ignored.
@@ -116,4 +116,11 @@ func TestGitHubPromptAllowlist_SeedOnly(t *testing.T) {
 	if seed.GitHubPromptAllowed("attacker/evil") {
 		t.Error("overlay must not be able to enable/allow a repo (seed-only invariant)")
 	}
+}
+
+// namedAgentConfig returns a with its load-time name set, the way Load
+// stamps every entry from its YAML map key.
+func namedAgentConfig(name string, a AgentConfig) AgentConfig {
+	a.SetLoadState(name, a.SourceFile())
+	return a
 }

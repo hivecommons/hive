@@ -17,12 +17,14 @@ type Leaf struct {
 	Type string
 }
 
-// ConfigLeaves parses pkg/config and returns dotted YAML leaf paths rooted at Config.
+// ConfigLeaves parses pkg/config (and the stdlib-only pkg/crux/config leaf it
+// aliases) and returns dotted YAML leaf paths rooted at Config.
 func ConfigLeaves(repoRoot string) ([]Leaf, error) {
 	fset := token.NewFileSet()
 	structs := map[string]*ast.StructType{}
 	for _, dir := range []string{
 		filepath.Join(repoRoot, "src", "pkg", "config"),
+		filepath.Join(repoRoot, "src", "pkg", "crux", "config"),
 		filepath.Join(repoRoot, "src", "pkg", "dashboard", "theme"),
 	} {
 		if err := collectStructs(fset, dir, structs); err != nil {

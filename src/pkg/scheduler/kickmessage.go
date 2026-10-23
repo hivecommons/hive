@@ -317,7 +317,7 @@ func (s *Scheduler) BuildKickMessagesWithSkips(actionable *github.ActionableResu
 // thing however the review is dispatched. The third result is true when the
 // configured fallback was used; a "skip" fallback returns an empty model.
 func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.PullRequest) (string, string, bool) {
-	sel := agentCfg.ReviewModels.Select(pr.HiveModel, agentCfg.Backend, agentCfg.Model)
+	sel := config.SelectReviewModel(agentCfg.ReviewModels, pr.HiveModel, agentCfg.Backend, agentCfg.Model)
 	if sel.Skip {
 		return "", "", true
 	}

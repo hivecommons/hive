@@ -32,45 +32,45 @@ func TestReviewModelsSelect(t *testing.T) {
 		{Backend: "copilot", Model: " gpt-6-astra "},
 	}
 	t.Run("exclude author model only", func(t *testing.T) {
-		got := (ReviewModelsConfig{Pool: pool}).Select("claude-fable-5.1", "copilot", "claude-fable-5.1")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool}, "claude-fable-5.1", "copilot", "claude-fable-5.1")
 		if got.Model != "claude-opus-4-6" || got.Fallback || got.Skip || got.RequiresHuman {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("exclude author family trims and picks cross family", func(t *testing.T) {
-		got := (ReviewModelsConfig{Pool: pool, ExcludeAuthorFamily: true}).Select("Claude-Fable-5.1", "copilot", "claude-fable-5.1")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool, ExcludeAuthorFamily: true}, "Claude-Fable-5.1", "copilot", "claude-fable-5.1")
 		if got.Backend != "copilot" || got.Model != "gpt-6-astra" || got.Fallback {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("exclude author model disabled allows same model", func(t *testing.T) {
 		off := false
-		got := (ReviewModelsConfig{Pool: pool, ExcludeAuthorModel: &off}).Select("claude-fable-5.1", "copilot", "x")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool, ExcludeAuthorModel: &off}, "claude-fable-5.1", "copilot", "x")
 		if got.Model != "claude-fable-5.1" {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("pinned fallback", func(t *testing.T) {
-		got := (ReviewModelsConfig{Pool: pool[:1]}).Select("claude-fable-5.1", "copilot", "claude-fable-5.1")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool[:1]}, "claude-fable-5.1", "copilot", "claude-fable-5.1")
 		if !got.Fallback || got.Skip || got.RequiresHuman || got.Model != "claude-fable-5.1" || got.Backend != "copilot" {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("skip fallback", func(t *testing.T) {
-		got := (ReviewModelsConfig{Pool: pool[:1], Fallback: ReviewModelsFallbackSkip}).Select("claude-fable-5.1", "copilot", "pinned")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool[:1], Fallback: ReviewModelsFallbackSkip}, "claude-fable-5.1", "copilot", "pinned")
 		if !got.Fallback || !got.Skip || got.Model != "" {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("requires_human fallback keeps pinned model", func(t *testing.T) {
-		got := (ReviewModelsConfig{Pool: pool[:1], Fallback: ReviewModelsFallbackRequiresHuman}).Select("claude-fable-5.1", "copilot", "pinned")
+		got := SelectReviewModel(ReviewModelsConfig{Pool: pool[:1], Fallback: ReviewModelsFallbackRequiresHuman}, "claude-fable-5.1", "copilot", "pinned")
 		if !got.Fallback || !got.RequiresHuman || got.Skip || got.Model != "pinned" {
 			t.Fatalf("selection = %+v", got)
 		}
 	})
 	t.Run("WithPool keeps exclusions and fallback", func(t *testing.T) {
 		base := ReviewModelsConfig{Pool: pool, ExcludeAuthorFamily: true, Fallback: ReviewModelsFallbackSkip}
-		got := base.WithPool([]ReviewModelPoolEntry{{Backend: "copilot", Model: "claude-opus-4-6"}}).Select("claude-fable-5.1", "copilot", "pinned")
+		got := SelectReviewModel(base.WithPool([]ReviewModelPoolEntry{{Backend: "copilot", Model: "claude-opus-4-6"}}), "claude-fable-5.1", "copilot", "pinned")
 		if !got.Skip {
 			t.Fatalf("override pool should still apply family exclusion + skip fallback: %+v", got)
 		}

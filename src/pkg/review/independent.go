@@ -74,6 +74,6 @@ func chooseReviewModel(agent AgentCapability, perspective Perspective, authorMod
 	if !configured {
 		return ReviewModelChoice{}
 	}
-	sel := cfg.Select(authorModel, agent.Backend, agent.Model)
+	sel := config.SelectReviewModel(cfg, authorModel, agent.Backend, agent.Model)
 	return ReviewModelChoice{Backend: sel.Backend, Model: sel.Model, Fallback: sel.Fallback, Skip: sel.Skip, RequiresHuman: sel.RequiresHuman, Configured: true}
 }

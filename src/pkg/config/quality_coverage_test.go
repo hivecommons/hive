@@ -199,8 +199,8 @@ func TestAgentConfig_BaseName(t *testing.T) {
 		agent    AgentConfig
 		wantBase string
 	}{
-		{"replica returns ReplicaOf", AgentConfig{ReplicaOf: "scanner", name: "scanner-2", ID: "s2"}, "scanner"},
-		{"non-replica returns name", AgentConfig{name: "quality", ID: "q"}, "quality"},
+		{"replica returns ReplicaOf", namedAgentConfig("scanner-2", AgentConfig{ReplicaOf: "scanner", ID: "s2"}), "scanner"},
+		{"non-replica returns name", namedAgentConfig("quality", AgentConfig{ID: "q"}), "quality"},
 		{"no name returns ID", AgentConfig{ID: "q"}, "q"},
 	}
 	for _, tt := range tests {

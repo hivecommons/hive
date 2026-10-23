@@ -304,7 +304,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		// configured gateway name is valid too: naming a gateway as the backend
 		// routes that agent through it, matched case-insensitively to mirror
 		// ResolveGateway.
-		label := agentSourceLabel(name, agent.sourceFile)
+		label := agentSourceLabel(name, agent.SourceFile())
 		if err := c.Governor.ValidateBackend(agent.Backend); err != nil {
 			return fmt.Errorf("agent %s: %w", label, err)
 		}
@@ -346,13 +346,13 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			return fmt.Errorf("agent %s: continuous_budget_pct must be 0 (default) or between 1 and 100", name)
 		}
 		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.sourceFile), err)
+			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
 		bobSessionLabel := strings.TrimSpace(agent.Bob.SessionLabel)
 		if bobSessionLabel == "" {
@@ -362,7 +362,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 			bobSessionLabel = strings.TrimSpace(c.Governor.Bob.SessionPrefix) + name
 		}
 		if len(bobSessionLabel) > MaxBobSessionLabelLen {
-			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.sourceFile), bobSessionLabel, MaxBobSessionLabelLen)
+			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.SourceFile()), bobSessionLabel, MaxBobSessionLabelLen)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err

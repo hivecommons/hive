@@ -69,13 +69,11 @@ func TestSecretFilePathSymlinkEscape(t *testing.T) {
 	}
 
 	// Point the allowed root at a temp dir so the test does not need /data.
-	realRoots := secretFileRoots
 	root := filepath.Join(tmp, "secrets")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("mkdir root: %v", err)
 	}
-	secretFileRoots = []string{root}
-	defer func() { secretFileRoots = realRoots }()
+	defer SetSecretFileRootsForTest(root)()
 
 	// A regular file inside the root is fine.
 	inside := filepath.Join(root, "ok_key")
@@ -117,13 +115,11 @@ func TestResolveAPIKeyRefusesUnconfinedFile(t *testing.T) {
 
 	// Control: a file inside an allowed root still resolves, or the fix would
 	// have broken every legitimate gateway.
-	realRoots := secretFileRoots
 	root := filepath.Join(tmp, "secrets")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	secretFileRoots = []string{root}
-	defer func() { secretFileRoots = realRoots }()
+	defer SetSecretFileRootsForTest(root)()
 
 	good := filepath.Join(root, "gateway_key")
 	if err := os.WriteFile(good, []byte("  legit-key\n"), 0o600); err != nil {

@@ -46,8 +46,8 @@ func TestAgentRuntimeConfigGolden(t *testing.T) {
 
 	// Pre-refactor the fleet cap lived beside the agent map; it must still
 	// round-trip through the agents.github_api_hourly_cap scalar.
-	if cfg.AgentsGitHubAPIHourlyCap != 120 || !cfg.agentsGitHubAPIHourlyCapSet {
-		t.Fatalf("agents.github_api_hourly_cap not decoded: %d set=%v", cfg.AgentsGitHubAPIHourlyCap, cfg.agentsGitHubAPIHourlyCapSet)
+	if cfg.AgentsGitHubAPIHourlyCap != 120 || !cfg.AgentsGitHubAPIHourlyCapSet {
+		t.Fatalf("agents.github_api_hourly_cap not decoded: %d set=%v", cfg.AgentsGitHubAPIHourlyCap, cfg.AgentsGitHubAPIHourlyCapSet)
 	}
 	if got := cfg.AgentGitHubAPIHourlyCap("supervisor"); got != 60 {
 		t.Fatalf("per-agent cap = %d, want 60", got)

@@ -42,7 +42,7 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 			return nil, fmt.Errorf("parsing agent file %s: %w", path, err)
 		}
 		agent.Managed = true
-		agent.sourceFile = path
+		agent.SetLoadState(agent.Name(), path)
 		agents[name] = agent
 	}
 	return agents, nil
@@ -71,7 +71,7 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 		slog.Default().Warn("config: cleared invalid inference launch_cmd from per-agent overlay; inference and gateway backends launch through claude",
 			"hive_id", c.HiveID,
 			"agent", name,
-			"file", overlays[name].sourceFile)
+			"file", func() string { o := overlays[name]; return o.SourceFile() }())
 	}
 	kept := make(map[string]AgentConfig, len(overlays))
 	for name, agent := range overlays {
@@ -80,7 +80,7 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 			slog.Default().Error("config: rejected invalid per-agent overlay file - the hive is booting WITHOUT it so its dashboard stays reachable; fix the file or the agent via the dashboard API (#6024)",
 				"hive_id", c.HiveID,
 				"agent", name,
-				"file", agent.sourceFile,
+				"file", agent.SourceFile(),
 				"error", err.Error(),
 				"fell_back_to_base_config", hasBase,
 			)
@@ -221,9 +221,7 @@ func SaveAgentFile(dir, name string, agent AgentConfig) error {
 
 	// Don't persist internal-only fields
 	agent.Managed = false
-	agent.name = ""
-	agent.sourceFile = ""
-	agent.clearOnKickSet = false
+	agent.ClearLoadState()
 
 	data, err := yaml.Marshal(&agent)
 	if err != nil {
@@ -260,7 +258,7 @@ func (c *Config) ApplyAgentDefaults(name string) {
 	if !ok {
 		return
 	}
-	agent.name = name
+	agent.SetLoadState(name, agent.SourceFile())
 	if agent.ID == "" {
 		agent.ID = name
 	}
@@ -271,10 +269,10 @@ func (c *Config) ApplyAgentDefaults(name string) {
 		agent.BeadsDir = fmt.Sprintf("/data/beads/%s", name)
 	}
 	// Default to enabled unless the user explicitly set enabled: false.
-	if !agent.Enabled && !agent.enabledSet {
+	if !agent.Enabled && !agent.EnabledExplicitlySet() {
 		agent.Enabled = true
 	}
-	if !agent.clearOnKickSet {
+	if !agent.ClearOnKickExplicitlySet() {
 		agent.ClearOnKick = true
 	}
 	if agent.Role == "" {

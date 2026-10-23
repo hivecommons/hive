@@ -352,11 +352,11 @@ func TestContinuousBoolShorthandAllNonQuietModes(t *testing.T) {
 		{mode: "surge", want: true},
 		{mode: "quiet", want: false},
 	} {
-		if got := ac.ContinuousInMode(tc.mode, "1h"); got != tc.want {
+		if got := ac.ContinuousInMode(tc.mode, config.Cadence("1h")); got != tc.want {
 			t.Fatalf("ContinuousInMode(%q) = %v, want %v", tc.mode, got, tc.want)
 		}
 	}
-	if !(config.AgentConfig{}).ContinuousInMode("quiet", "continuous") {
+	if !(config.AgentConfig{}).ContinuousInMode("quiet", config.Cadence("continuous")) {
 		t.Fatal("explicit continuous cadence must opt quiet mode in")
 	}
 }

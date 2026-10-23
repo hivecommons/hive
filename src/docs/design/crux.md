@@ -173,7 +173,10 @@ cut buys the churn without the benefit. Prerequisites, in order:
    aliases so `hive.yaml` loading and every key position are unchanged.
    This alone removes the `config` row from `pkg/agent`, `pkg/crux`,
    `pkg/crux/cli`, `pkg/inference`, `pkg/proxy`, `pkg/toolapprove` and
-   `pkg/watchdog`.
+   `pkg/watchdog`. The leaf is `pkg/crux/config` (package name `config`,
+   so a consumer's migration is an import-path swap); what it holds and
+   what stays host-side is in
+   [Configuration leaf](#configuration-leaf).
 2. The remaining `pkg/agent` edges, each small once config is done:
    `fleetreport` behind a reporter interface the host injects;
    `outputschema` (the agent-report schema) moves into the ring; `jev`
@@ -228,6 +231,50 @@ command and has it serve a unix control socket (`<workdir>/crux.sock`) that
 single-work-dir convenience and is not the Stage 3 API; what Stage 3 has to
 add to `Runtime` (or beside it) is exactly the piece the socket papers over:
 a way for a process other than the launcher to own or adopt an agent.
+
+## Configuration leaf
+
+`pkg/crux/config` is the stdlib-only home of the agent runtime's
+configuration types (Stage 2 prerequisite 1). It was cut from `pkg/config`
+by declaration closure: every type the ring reads, every method on those
+types (Go cannot attach a method to an alias of another package's type, so
+a type's methods travel with it), and the constants and defaults they
+reference. `pkg/config` imports it as `cruxconfig` and re-exports each
+symbol in `pkg/config/crux_aliases.go` (`type AgentConfig =
+cruxconfig.AgentConfig`, `const JevModeAssist = cruxconfig.JevModeAssist`,
+`var InferenceBackends = cruxconfig.InferenceBackends`), the direction
+`pkg/crux/types` established in #13770: Crux owns, Hive aliases. Loading,
+validation that needs YAML or ACMM packs, overlays and `Config` itself stay
+in `pkg/config`; the two pieces of `AgentConfig` that needed a host-only
+type were reshaped rather than moved — `ReviewModelsConfig.Select` (uses
+`pkg/modelfamily`) became `config.SelectReviewModel`, and
+`AgentConfig.ContinuousInMode` takes a `ContinuousCadence` interface that
+the governor's `Cadence` satisfies instead of the `Cadence` type.
+
+The `pkg/config` symbols each ring package used before the cut, measured on
+v5 at `1fe983e` (Oct 24, 2026) by an AST walk over `config.<X>` selectors
+(distinct symbols; *test* counts only `_test.go` files):
+
+| Ring package | Non-test | Test-only | Files | Not in the leaf |
+|---|---|---|---|---|
+| `pkg/agent` | 58 | 21 | 13 + 112 test | `GovernorConfig`, `LoggingConfig` *(test)* |
+| `pkg/crux` | 1 | 0 | 1 + 1 test | — |
+| `pkg/crux/cli` | 5 | 0 | 3 + 2 test | `Config`, `Load`, `LoadAgentOverrides`, `PoliciesConfig` |
+| `pkg/inference` | 7 | 5 | 1 + 3 test | `Config`; `GovernorConfig` *(test)* |
+| `pkg/proxy` | 9 | 4 | 3 + 2 test | `OriginLaneFromAgent`, `WithIssueOriginLabel`; `LoadWithOverrides` *(test)* |
+| `pkg/toolapprove` | 7 | 4 | 4 + 3 test | `AutoMergeConfig`, `Config`, `PlanAutoApproveForLevel`, `PlanningConfig` |
+| `pkg/watchdog` | 1 | 3 | 1 + 1 test | — |
+
+111 distinct symbols across the ring; 99 are in the leaf, 12 are not. The
+12 are the whole-`Config` loaders (`Config`, `GovernorConfig`,
+`LoggingConfig`, `PoliciesConfig`, `Load`, `LoadAgentOverrides`,
+`LoadWithOverrides`), the ACMM plan-approval policy (`AutoMergeConfig`,
+`PlanningConfig`, `PlanAutoApproveForLevel`, which drags the embedded pack
+YAML) and the review origin-label vocabulary (`OriginLaneFromAgent`,
+`WithIssueOriginLabel`). These are the inversion work for the migration
+PRs: a ring package that takes `*config.Config` narrows to the
+`AgentRuntimeConfig` / `AgentRuntimeGovernorConfig` value or to a small
+interface the host fills in, the same shape as `agent.SpanStarter`.
 
 ## Outbound edges
 

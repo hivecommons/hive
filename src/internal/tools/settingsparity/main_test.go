@@ -50,6 +50,7 @@ func fixtureRepo(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "src", "pkg", "config", "config.go"), fixtureConfig)
 	writeFile(t, filepath.Join(root, "src", "pkg", "dashboard", "theme", "theme.go"), "package theme\n")
+	writeFile(t, filepath.Join(root, "src", "pkg", "crux", "config", "doc.go"), "package config\n")
 	writeFile(t, filepath.Join(root, "src", "hive.yaml.example"), fixtureExample)
 	writeFile(t, filepath.Join(root, "src", "pkg", "dashboard", "static", "index.html"), `<input data-key="hub.url">`)
 	writeFile(t, filepath.Join(root, "src", "pkg", "dashboard", "settings.go"), "package dashboard\n\nconst k = \"name\"\n")
