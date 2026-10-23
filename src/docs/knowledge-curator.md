@@ -523,7 +523,7 @@ Documentation" hints follow the same rule.
 
 When anything was dropped the block ends with a visible one-line marker,
 `_… truncated: N facts / M bytes omitted (size cap)._` (the same
-`… truncated:` prefix the code map uses), and the scheduler logs
+`… truncated:` prefix the code map uses), and the scheduler logs (at debug level, since the truncation is by design)
 `knowledge primer: dropped facts over the byte cap` with the counts and the
 cap, so a cap that is too tight for the vault is visible in the kick and in
 the log rather than silently thinning what agents are told.

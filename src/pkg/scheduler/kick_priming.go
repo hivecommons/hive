@@ -287,7 +287,7 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 		// The render carries its own marker; this is the operator-side half so
 		// a cap that is too tight for the vault shows up in logs, not only in
 		// a kick transcript (#12124).
-		s.logger.Warn("knowledge primer: dropped facts over the byte cap",
+		s.logger.Debug("knowledge primer: dropped facts over the byte cap",
 			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
 			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
