@@ -1,10 +1,12 @@
 package github
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -76,6 +78,44 @@ func TestRefsCoverageDoesNotUpgradeClosingScope(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.prPatches[42] != "" {
 		t.Fatalf("PR body was edited: %q", fake.prPatches[42])
+	}
+}
+
+func TestTrackerClassificationConversionThreshold(t *testing.T) {
+	for _, count := range []int{1, 2, 3} {
+		for _, marker := range []string{"none", "title", "label"} {
+			t.Run(fmt.Sprintf("%d/%s", count, marker), func(t *testing.T) {
+				body := ""
+				for i := 1; i <= count; i++ {
+					body += fmt.Sprintf("- [ ] #%d\n", i)
+				}
+				title := "Ordinary issue"
+				var labels []string
+				if marker == "title" {
+					title = "[epic] Coordination"
+				}
+				if marker == "label" {
+					labels = []string{"tracker"}
+				}
+				want := count >= trackerTaskListMin || marker != "none"
+				issue := Issue{Title: title, Labels: labels, Body: body, IsTracker: isTracker(title, labels, body)}
+				apiIssue := &gh.Issue{Title: &title, Body: &body}
+				for _, row := range []RepoWorkIssue{
+					repoWorkIssueFromIssue(issue, "claimed", "live claim"),
+					repoWorkIssue("acme/widgets", apiIssue, labels, "claimed", "live claim"),
+				} {
+					if row.IsTracker != want {
+						t.Fatalf("IsTracker = %v, want %v: %+v", row.IsTracker, want, row)
+					}
+					if (row.TrackerProgress != nil) != (count >= trackerTaskListMin) {
+						t.Fatalf("unexpected progress: %+v", row.TrackerProgress)
+					}
+					if row.Children != nil {
+						t.Fatal("display-only progress must not populate child ledger")
+					}
+				}
+			})
+		}
 	}
 }
 
