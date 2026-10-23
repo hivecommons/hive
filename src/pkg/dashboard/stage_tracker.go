@@ -371,7 +371,11 @@ const (
 	trackerNumberActionable    = 10
 	// trackerNumberTriageNeeded is the untriaged-actionable stage (015): it
 	// lights the Actionable column with the word "Triage needed".
-	trackerNumberTriageNeeded   = 15
+	trackerNumberTriageNeeded = 15
+	// trackerNumberPossiblyExists is the prior-art park (017): the issue
+	// lights the Actionable column with the word "Possibly exists" and
+	// waits on its author (hivecommons/hive#13575).
+	trackerNumberPossiblyExists = 17
 	stageTrackerHistoryMaxItems = stagelabels.HistoryLimit
 )
 
@@ -383,9 +387,12 @@ const (
 	modNeedsHuman    = "needs-human"
 	modNeedsDecision = "needs-decision"
 	modNeedsTriage   = "needs-triage"
-	modNeedsRebase   = "needs-rebase"
-	modBlocked       = "blocked"
-	modDraft         = "draft"
+	// modPossibleDupe: the issue carries the prior-art park label; the
+	// chip reads "possible dupe".
+	modPossibleDupe = "possible-dupe"
+	modNeedsRebase  = "needs-rebase"
+	modBlocked      = "blocked"
+	modDraft        = "draft"
 )
 
 // Lane names.
@@ -428,6 +435,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Actionable"
 	case stagelabels.TriageNeeded:
 		return "Triage needed"
+	case stagelabels.PossiblyExisting:
+		return "Possibly exists"
 	case stagelabels.Claimed:
 		return "Claimed"
 	case stagelabels.PRInProgress:
@@ -613,6 +622,8 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			// Still waiting on triage (reporter trust / maintainer look):
 			// the Open row's action chip reads "triage needed".
 			set[modNeedsTriage] = true
+		case stagelabels.PossiblyExisting.Label():
+			set[modPossibleDupe] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
 		case "blocked":
@@ -634,7 +645,7 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 		set[modDraft] = true
 	}
 	out := make([]string, 0, len(set))
-	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modNeedsRebase, modBlocked, modDraft} {
+	for _, m := range []string{modStalled, modRegressed, modHold, modNeedsHuman, modNeedsDecision, modNeedsTriage, modPossibleDupe, modNeedsRebase, modBlocked, modDraft} {
 		if set[m] {
 			out = append(out, m)
 		}
@@ -832,6 +843,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("Triaged and eligible; waiting for the scanner to pick it up", clause), "scanner"
 	case stagelabels.TriageNeeded:
 		return joinClause("Actionable, but no maintainer has looked at it yet; waiting for triage", clause), "maintainer"
+	case stagelabels.PossiblyExisting:
+		return joinClause("Prior art found; the author must confirm the gap (`/hive decision proceed — <gap>`) or close it (`/hive decision exists`)", clause), strings.TrimPrefix(who, "@")
 	case stagelabels.Claimed:
 		return joinClause("Claimed; work is about to start", clause), "claimant"
 	case stagelabels.PRInProgress:

@@ -29,6 +29,14 @@ At the start of every iteration, re-read:
 
 Before closing, commenting on, dispatching work for, or touching ANY issue or PR, check its labels. If it has a label containing "hold", STOP. Do NOT close, work on, dispatch for, or comment on it. Only the operator can un-hold.
 
+## Prior Art First — before filing or claiming
+
+People ask for things that already exist. Before you **file** an issue, RFC or epic, or **claim** one of kind feature/RFC/epic, search for prior art: the hive knowledge beads, existing settings, merged PRs and closed issues, `docs/`, `README`, `CHANGELOG`, and the code (identifiers, config keys, flags named in the request).
+
+- **Filing** (scanner, triage, guide, any lane allowed to open issues): a high-confidence match means **do not file** — record a knowledge bead naming the existing feature instead. A medium match means file, but attach the findings (links + one-line quotes) and an explicit **Gap vs existing** section that says what the existing thing does not do.
+- **Claiming** (coder, triage): open your claim comment with a one-paragraph **Gap vs existing** citing what you found (or "no prior art found: searched knowledge, PRs, docs, code").
+- **Never claim** an issue carrying `stage/017-possible-existing` ("Possibly exists · needs author"): the prior-art gate parked it and the author must reply `/hive decision proceed — <gap>` or `/hive decision exists`. Do not answer on the author's behalf.
+
 ## Git Discipline
 
 - NEVER commit directly to main — always use a feature branch or worktree

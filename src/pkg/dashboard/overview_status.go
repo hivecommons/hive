@@ -142,6 +142,7 @@ func overviewTotals(status *StatusPayload) FrontendOverviewTotals {
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_human", ib.NeedsHuman)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_decision", ib.NeedsDecision)
 			addOverviewBreakdown(totals.Issues.Breakdown, "needs_spec", ib.NeedsSpec)
+			addOverviewBreakdown(totals.Issues.Breakdown, "possibly_exists", ib.PossiblyExists)
 			addOverviewBreakdown(totals.Issues.Breakdown, "reporter_confirmation", ib.ReporterConfirmation)
 			addOverviewBreakdown(totals.Issues.Breakdown, "exempt", ib.Exempt)
 			addOverviewBreakdown(totals.Issues.Breakdown, "filtered", overviewGenericIssueFiltered(ib))
@@ -188,7 +189,7 @@ func addOverviewBreakdown(dst map[string]int, key string, count int) {
 }
 
 func overviewGenericIssueFiltered(b github.RepoIssueBreakdown) int {
-	named := b.NeedsHuman + b.NeedsDecision + b.NeedsSpec + b.ReporterConfirmation + b.Exempt
+	named := b.NeedsHuman + b.NeedsDecision + b.NeedsSpec + b.PossiblyExists + b.ReporterConfirmation + b.Exempt
 	return max(0, b.Filtered-named)
 }
 
@@ -395,6 +396,8 @@ type overviewPartitionMeta struct {
 	HardSuppressNeedsHuman      []string
 	HardSuppressNeedsDecision   []string
 	HardSuppressNeedsSpec       []string
+	PriorArtGateEnabled         bool
+	PriorArtGateThreshold       int
 }
 
 type overviewPartitionBreakdowns struct {
@@ -418,6 +421,8 @@ func overviewPartitionMetadataFromConfig(cfg *config.Config, hiveID string) over
 	meta.HardSuppressNeedsHuman = hs.EffectiveNeedsHuman()
 	meta.HardSuppressNeedsDecision = hs.EffectiveNeedsDecision()
 	meta.HardSuppressNeedsSpec = hs.EffectiveNeedsSpec()
+	meta.PriorArtGateEnabled = cfg.Runs.Triage.PriorArt.IsEnabled()
+	meta.PriorArtGateThreshold = cfg.Runs.Triage.PriorArt.EffectiveThreshold()
 	meta.ReporterTrustEnabled = rt.IsEnabled()
 	meta.ReporterTrustRequiredLabels = rt.EffectiveUntrustedRequireLabels()
 	meta.ReporterTrustTrusted = append([]string(nil), rt.EffectiveTrustedAssociations()...)
@@ -439,6 +444,8 @@ func overviewPartitionDefaults(hiveID string) overviewPartitionMeta {
 		HardSuppressNeedsHuman:      config.HardSuppressLabelsConfig{}.EffectiveNeedsHuman(),
 		HardSuppressNeedsDecision:   config.HardSuppressLabelsConfig{}.EffectiveNeedsDecision(),
 		HardSuppressNeedsSpec:       config.HardSuppressLabelsConfig{}.EffectiveNeedsSpec(),
+		PriorArtGateEnabled:         config.PriorArtGateConfig{}.IsEnabled(),
+		PriorArtGateThreshold:       config.PriorArtGateConfig{}.EffectiveThreshold(),
 	}
 }
 
@@ -452,6 +459,7 @@ func overviewPartitionDetails(totals FrontendOverviewTotals, issueOutside, prOut
 	issueRows := []FrontendActionableBreakdownTerm{
 		overviewBreakdownTerm("needs-decision", "needs human decision", totals.Issues.Breakdown["needs_decision"], "Issue carries stage/045-needs-decision (or a retired spelling awaiting migration: the pre-045 stage/085, needs-decision, needs-direction), so Hive waits for a maintainer decision before offering it to agents.", "project.issue_filter.hard_suppress_labels.needs_decision", overviewValue(meta.HardSuppressNeedsDecision), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
 		overviewBreakdownTerm("needs-spec", "needs-spec", totals.Issues.Breakdown["needs_spec"], "Issue carries a needs-spec hard-suppress label, so Hive waits for specification or acceptance criteria.", "project.issue_filter.hard_suppress_labels.needs_spec", overviewValue(meta.HardSuppressNeedsSpec), "Open Settings → Labels → Triage buckets to edit these labels, or remove the label from the issue.", "Labels", "/docs/dashboard-sections.md#overview"),
+		overviewBreakdownTerm("possibly-exists", "possibly exists", totals.Issues.Breakdown["possibly_exists"], "The prior-art gate parked the issue at stage/017-possible-existing: something that looks like the request already exists, and the author must confirm the gap or close it.", "runs.triage.prior_art.enabled", fmt.Sprintf("enabled=%t; threshold=%d", meta.PriorArtGateEnabled, meta.PriorArtGateThreshold), "Reply `/hive decision proceed — <gap>` or `/hive decision exists` on the issue, or turn the prior-art gate off under Settings → Features → Incoming issue triage.", "Features", "/docs/spektacular.md#prior-art-gate"),
 		overviewBreakdownTerm("exempt-labels", "exempt labels", issueExempt, "Issue matches governor.labels.exempt or a permanent exempt label such as do-not-merge.", "governor.labels.exempt", overviewValue(meta.ExemptLabels), "Open Settings → Labels to edit exempt labels, or edit hive.yaml governor.labels.exempt.", "Labels", "/docs/dashboard-sections.md#overview"),
 		overviewBreakdownTerm("reporter-triage", "reporter triage", issueReporter, "Reporter trust is enabled and the issue author is not trusted until a maintainer adds an allowed triage label.", "project.issue_filter.reporter_trust", overviewReporterValue(meta), "Open Settings → Labels → Reporter trust, or edit hive.yaml project.issue_filter.reporter_trust.", "Labels", "/docs/dashboard-sections.md#overview"),
 		overviewBreakdownTerm("project-issue-filter", "project issue filter", issueFiltered, "Issue lacks every label required by project.issue_filter.require_labels.", "project.issue_filter.require_labels", overviewValue(meta.RequireLabels), "Open Settings → Labels to change require labels, or edit hive.yaml project.issue_filter.require_labels.", "Labels", "/docs/dashboard-sections.md#overview"),

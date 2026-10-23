@@ -51,7 +51,7 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 		// The Store read is only spent when the deriver can reach 040: a
 		// done, held, blocked or parked issue never consults the PR
 		// (the goldens pin that the lookup does not happen).
-		parked := f.Issue.LikelyDone || f.Issue.HoldLabel != "" || f.Issue.BlockedReason != "" || f.Park.NeedsHuman || f.Park.DecisionLabel != ""
+		parked := f.Issue.LikelyDone || f.Issue.HoldLabel != "" || f.Issue.BlockedReason != "" || f.Park.NeedsHuman || f.Park.PossiblyExists || f.Park.DecisionLabel != ""
 		if prStage != nil && !parked {
 			f.Issue.CoveringPRStage = prStage(prRepo, in.Claim.PRNumber)
 		}
@@ -80,6 +80,7 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 	if f.Park.DecisionLabel == "" {
 		f.Park.DecisionLabel = parkedOnPersonLabel(in)
 	}
+	f.Park.PossiblyExists = f.Park.PossiblyExists || possiblyExistsParked(in)
 	is := f.Issue
 	is.LikelyDone = issueHasLabel(in.Labels, LikelyDoneLabel)
 	is.HoldLabel = issueHoldLabel(in)

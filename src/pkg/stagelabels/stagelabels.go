@@ -103,6 +103,15 @@ const (
 	// its own). Appended for the same persisted-enum reason as
 	// NeedsDecision.
 	TriageNeeded
+	// PossiblyExisting is stage/017-possible-existing: an ISSUE the
+	// prior-art gate parked because something that looks like it already
+	// exists (a merged PR, a closed issue, a doc, a setting, a knowledge
+	// bead or a code symbol). The author must confirm the gap (`/hive
+	// decision proceed — <what is missing>`) or close it (`/hive decision
+	// exists`) before any agent picks it up. Issue-only, open-ended, the
+	// label itself is the park signal (hard suppress, like 045). Appended
+	// for the same persisted-enum reason as NeedsDecision.
+	PossiblyExisting
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -181,8 +190,8 @@ type Item int
 
 const (
 	// IssueItem: an issue. Only Issue:true stages (010–045; 015 is the
-	// untriaged actionable issue, 045 the issue parked on a person) may
-	// land on it.
+	// untriaged actionable issue, 017 the issue parked on its author by
+	// the prior-art gate, 045 the issue parked on a person) may land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
 	PRItem
@@ -237,6 +246,7 @@ func (s Stage) For(k Item) Stage {
 var Table = []Definition{
 	{Stage: Actionable, Number: 10, Slug: "actionable", Description: "Triaged; eligible for the hive to pick up", Dwell: 24 * time.Hour, Issue: true},
 	{Stage: TriageNeeded, Number: 15, Slug: "triage-needed", Description: "Actionable but held by the reporter-trust gate: awaiting a maintainer's triage label", Dwell: TriageNeededDwell, Issue: true},
+	{Stage: PossiblyExisting, Number: PossiblyExistingNumber, Slug: PossiblyExistingSlug, Description: "Possibly exists · needs author: prior art found; confirm the gap or close before an agent takes it", Issue: true},
 	{Stage: Claimed, Number: 20, Slug: "claimed", Description: "Claimed by the scanner or a relay contributor", Dwell: 2 * time.Hour, Issue: true},
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent has a PR under way for this issue (branch pushed or PR request in flight)", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
@@ -291,6 +301,14 @@ const PreMergeSoakDwell = 45 * time.Minute
 // triaged one — a quiet 015 past a day means nobody, hive or human, has
 // touched it.
 const TriageNeededDwell = 24 * time.Hour
+
+// PossiblyExistingNumber and PossiblyExistingSlug name stage/017: the
+// prior-art park sits after 015 triage-needed and before 020 claimed, since
+// the gate runs before any claim (hivecommons/hive#13575).
+const (
+	PossiblyExistingNumber = 17
+	PossiblyExistingSlug   = "possible-existing"
+)
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
 // stages are inserted between existing numbers, never above 100.

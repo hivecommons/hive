@@ -84,6 +84,12 @@ func issueStage(f Facts) (stage stagelabels.Stage, covered bool, reason string) 
 	if f.Park.NeedsHuman {
 		return stagelabels.IssueNeedsDecision, false, "held for a person: " + is.NeedsHumanLabel
 	}
+	// The prior-art gate's park is its own stage, 017, not 045: nothing is
+	// being decided by a maintainer — the author is being asked whether
+	// the request already exists (hivecommons/hive#13575).
+	if f.Park.PossiblyExists {
+		return stagelabels.PossiblyExisting, false, "possibly exists: awaiting the author"
+	}
 	if f.Park.DecisionLabel != "" {
 		return stagelabels.IssueNeedsDecision, false, "parked on a person: " + f.Park.DecisionLabel
 	}

@@ -42,3 +42,42 @@ func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
 		t.Fatal("StageBySlugFor must resolve the shared slug per kind")
 	}
 }
+
+// TestPossiblyExistingLabelMatchesConfig pins the prior-art park signal
+// (hivecommons/hive#13575): config's hard-suppress reader and the stage
+// table must spell stage/017 the same way, or a parked issue would be
+// claimable.
+func TestPossiblyExistingLabelMatchesConfig(t *testing.T) {
+	if stagelabels.PossiblyExisting.Label() != config.PossiblyExistsStageLabel {
+		t.Fatalf("stage label %q != config.PossiblyExistsStageLabel %q", stagelabels.PossiblyExisting.Label(), config.PossiblyExistsStageLabel)
+	}
+	if got := (config.IssueFilterConfig{}).HardSuppressIssueBucket([]string{"bug", stagelabels.PossiblyExisting.Label()}); got != config.PossiblyExistsStageLabel {
+		t.Fatalf("HardSuppressIssueBucket = %q, want the 017 label", got)
+	}
+}
+
+// TestPossiblyExistingStage: 017 is an issue-only parking bay between 015
+// and 020; leaving it is never a regression.
+func TestPossiblyExistingStage(t *testing.T) {
+	s := stagelabels.PossiblyExisting
+	if s.Number() != 17 || s.Slug() != "possible-existing" || s.String() != "017-possible-existing" {
+		t.Fatalf("017 identity: %d %q %q", s.Number(), s.Slug(), s.String())
+	}
+	if !s.Applies(stagelabels.IssueItem) || s.Applies(stagelabels.PRItem) {
+		t.Fatal("017 must be issue-only")
+	}
+	if !stagelabels.TriageNeeded.Before(s) || !s.Before(stagelabels.Claimed) {
+		t.Fatal("017 sits between 015 and 020")
+	}
+	if s.Dwell() != 0 {
+		t.Fatalf("017 is open-ended (parked on the author), dwell %v", s.Dwell())
+	}
+	for _, to := range []stagelabels.Stage{stagelabels.Actionable, stagelabels.TriageNeeded} {
+		if stagelabels.IsRegression(s, to) {
+			t.Errorf("017 → %v flagged as regression", to)
+		}
+	}
+	if !stagelabels.IsRegression(stagelabels.Claimed, s) {
+		t.Fatal("020 → 017 must be a regression, like → 010")
+	}
+}

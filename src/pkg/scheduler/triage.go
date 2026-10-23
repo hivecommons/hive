@@ -36,6 +36,7 @@ func (s *Scheduler) applyRunTriage(issues []github.Issue) []github.Issue {
 		return issues
 	}
 	issues = s.applyClarityGate(issues)
+	issues = s.applyPriorArtGate(issues)
 	if !s.cfg.Runs.Triage.Enabled || len(issues) == 0 {
 		return issues
 	}

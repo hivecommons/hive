@@ -241,6 +241,15 @@ func issueHeldByNeedsHuman(in IssueStageInput) bool {
 // needs-direction and stage/030-pr-in-progress together for five hours: the
 // reconciler cleared the stage to none, which read as "actionable" to a
 // person while the hive had in fact handed it to one.
+// possiblyExistsParked reports the prior-art gate's park: the 017 label on
+// the issue, or an enumeration that filtered the issue for it.
+func possiblyExistsParked(in IssueStageInput) bool {
+	if issueHasLabel(in.Labels, PossiblyExistsStageLabel) {
+		return true
+	}
+	return in.Bucket == workBucketFiltered && strings.EqualFold(strings.TrimSpace(in.Reason), PossiblyExistsStageLabel)
+}
+
 func parkedOnPersonLabel(in IssueStageInput) string {
 	if label := hardSuppressIssueLabel(in.Labels); label != "" {
 		return label

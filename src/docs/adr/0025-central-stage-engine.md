@@ -393,6 +393,14 @@ field) selected by `Ref.Source`. The current epic (#12999) ships only the
 GitHub adapters and writer; `Ref.Source` is carried from PR-B so later
 sources need no signature change.
 
+**Prior-art park (`stage/017-possible-existing`, #13575).** Added after
+the epic: an issue-only stage between 015 and 020 with no dwell. The label is
+written by the scheduler's prior-art gate (not by the deriver) and read as an
+issue-level hard suppress; `DeriveIssue` reproduces it from the label (or the
+enumerator's filtered-reason) the way it reproduces 045 from `needs-spec`,
+and the resume sweep removes it on `/hive decision proceed` / `exists`.
+Leaving 017 for 010 or closed is never a regression.
+
 ## Consequences
 
 - A taxonomy change (new stage, renamed stage, new author kind) touches the

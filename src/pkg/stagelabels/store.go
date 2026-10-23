@@ -615,7 +615,9 @@ func IsRegression(from, to Stage) bool {
 			return false
 		}
 		return to != ReviewPending && to != Reviewed
-	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision:
+	case ReadyForHumanMerge, NeedsDecision, IssueNeedsDecision, PossiblyExisting:
+		// Leaving a parking bay (017 included: the author confirmed the
+		// gap) is never a step back.
 		return false
 	case TriageNeeded:
 		// 015 → 010 is a maintainer triaging the issue (triage/accepted,

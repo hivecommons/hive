@@ -129,7 +129,7 @@ func (c *Client) enrichStageFacts(ctx context.Context, f stageengine.Facts) (sta
 	f.Park.Holds = stagelabels.Holds(f.Labels)
 	f.Park.NeedsHuman = f.Park.NeedsHuman || hasIssueNeedsHumanLabel(f.Labels)
 	if f.Park.DecisionLabel == "" {
-		if label := hardSuppressIssueLabel(f.Labels); label != "" && !strings.EqualFold(label, issueNeedsHumanLabel) {
+		if label := hardSuppressIssueLabel(f.Labels); label != "" && !strings.EqualFold(label, issueNeedsHumanLabel) && !strings.EqualFold(label, PossiblyExistsStageLabel) {
 			f.Park.DecisionLabel = label
 		}
 	}

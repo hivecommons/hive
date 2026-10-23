@@ -451,3 +451,6 @@ variables.security.http_timeout_s # TODO #11854
 write_surface.allowlist.<key> # TODO #11854
 write_surface.enforce[] # TODO #11854
 write_surface.neutralize_mentions[] # TODO #11854
+runs.triage.prior_art.kinds[] # TODO prior-art gate tuning, yaml-only (#13575)
+runs.triage.prior_art.max_findings # TODO prior-art gate tuning, yaml-only (#13575)
+runs.triage.prior_art.max_parks_per_cycle # TODO prior-art gate tuning, yaml-only (#13575)

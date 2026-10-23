@@ -233,13 +233,13 @@ func rebuildIssueBreakdown(prev github.RepoIssueBreakdown, items []openItemRef) 
 			b.Other++
 		}
 	}
-	named := []*int{&prev.NeedsHuman, &prev.NeedsDecision, &prev.NeedsSpec, &prev.ReporterConfirmation, &prev.Exempt}
+	named := []*int{&prev.NeedsHuman, &prev.NeedsDecision, &prev.NeedsSpec, &prev.PossiblyExists, &prev.ReporterConfirmation, &prev.Exempt}
 	budget := b.Filtered
 	for _, n := range named {
 		*n = min(*n, budget)
 		budget -= *n
 	}
-	b.NeedsHuman, b.NeedsDecision, b.NeedsSpec, b.ReporterConfirmation, b.Exempt = prev.NeedsHuman, prev.NeedsDecision, prev.NeedsSpec, prev.ReporterConfirmation, prev.Exempt
+	b.NeedsHuman, b.NeedsDecision, b.NeedsSpec, b.PossiblyExists, b.ReporterConfirmation, b.Exempt = prev.NeedsHuman, prev.NeedsDecision, prev.NeedsSpec, prev.PossiblyExists, prev.ReporterConfirmation, prev.Exempt
 	b.Blocked = min(prev.Blocked, b.Filtered)
 	return b
 }

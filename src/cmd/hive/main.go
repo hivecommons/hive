@@ -66,6 +66,7 @@ import (
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/rfccoverage"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/sessionprune"
@@ -2718,6 +2719,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	})
 	// Through the client provider, not a captured b.ghClient (#9621).
 	b.sched.SetRunTriageDeps(b.dashSrv, liveTriageCommenter{client: b.currentGitHubClient})
+	// Prior-art gate search (hivecommons/hive#13575): knowledge, the
+	// Settings index and the forge, through the client provider.
+	b.sched.SetPriorArtSearcher(newPriorArtSearcher(b.cfg, func() *knowledge.KnowledgeAPI { return b.knowledgeAPI }, func() []rfccoverage.Setting { return b.rfcCoverageState().index(b.logger) }, b.currentGitHubClient, b.logger))
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
 		store := b.beadStores[agentName]
 		if store == nil {

@@ -60,7 +60,18 @@ var hardSuppressIssueLabels = []string{
 	issueNeedsSpecLabel,
 	issueNeedsDecisionLabel,
 	issueNeedsDirectionLabel,
+	PossiblyExistsStageLabel,
 }
+
+// PossiblyExistsStageLabel is the prior-art gate's park: the issue stage
+// label stage/017-possible-existing itself, as 045 is the decision park
+// (hivecommons/hive#13575). While an issue wears it no agent claims it; the
+// author's or a maintainer's reply lifts it (SweepPriorArtGateResume).
+const PossiblyExistsStageLabel = config.PossiblyExistsStageLabel
+
+// AlreadyExistsLabel marks an issue closed by `/hive decision exists`: the
+// request was already available and the gate comment says where.
+const AlreadyExistsLabel = "already-exists"
 
 // legacyDecisionLabels are the retired park labels the stage label replaced
 // and whose repo DEFINITIONS are deleted once nothing carries them. The
@@ -111,6 +122,10 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 	issueNeedsSpecLabel: {
 		color:       "bfd4f2",
 		description: "Hive needs a specification or acceptance criteria before continuing",
+	},
+	AlreadyExistsLabel: {
+		color:       "cfd3d7",
+		description: "Closed by the prior-art gate: the request was already available (see the findings comment)",
 	},
 	NeedsSignalLabel: {
 		color:       "fbca04",

@@ -1448,6 +1448,7 @@
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
     .ham-badge-mod.ham-mod-needs-triage { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); }
+    .ham-badge-mod.ham-mod-possible-dupe { color: var(--purple); border-color: color-mix(in srgb, var(--purple) 45%, transparent); }
     /* Sentinel-flagged PR, #13535 follow-up: the chip beside needs rebase /
        regressed, and the human-decision chevron itself when its word
        reads "Sentinel alert · needs human". Danger-tinted from the
@@ -13592,12 +13593,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // It lights the Actionable column too, with its own word; a maintainer's
     // move. The Open column is untouched by it.
     const STAGE_TRACKER_TRIAGE_NEEDED = 15;
+    // 017 possible-existing: the prior-art gate parked the issue on its
+    // author (hivecommons/hive#13575). Lights Actionable with its own word.
+    const STAGE_TRACKER_POSSIBLY_EXISTS = 17;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_PRE_MERGE_SOAK = 95;
-    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 15: 'Triage needed', 17: 'Possibly exists', 60: 'Ready for auto merge', 80: 'Ready for auto merge', 95: 'Soaking', 100: 'Ready for auto merge', 45: 'Needs human decision', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 15: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 15: 'human', 17: 'human', 20: 'claimant', 30: 'author', 40: 'author', 45: 'human', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 95: 'hive', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     // Motion bucket of the lit chevron: only a step the hive is acting on
     // ('active', gentle pulse) or one waiting on a person ('needs-human',
@@ -13714,6 +13718,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
         case 15: return 'Triage needed';
+        case 17: return 'Possibly exists · needs author';
         case 20: return 'Claimed';
         case 30: return 'PR in progress';
         case 40: return 'Covered by a PR, not yet in review';
@@ -13776,7 +13781,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerAnchor(stage, stages, kind) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
-      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
+      if (cur === STAGE_TRACKER_ISSUE_NEEDS_DECISION || cur === STAGE_TRACKER_TRIAGE_NEEDED || cur === STAGE_TRACKER_POSSIBLY_EXISTS) return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
@@ -13797,7 +13802,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const sentinelLane = stageTrackerSentinelInLane(item);
-      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== STAGE_TRACKER_TRIAGE_NEEDED && cur !== STAGE_TRACKER_POSSIBLY_EXISTS && cur !== 40 && cur !== 60 && cur !== STAGE_TRACKER_PRE_MERGE_SOAK && cur !== 100)
         ? { text: sentinelLane ? STAGE_TRACKER_SENTINEL_WORD : (STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur)), sentinel: sentinelLane } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
@@ -13815,8 +13820,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return segs;
     }
 
-    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'needs-rebase', 'blocked', 'draft'];
-    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed' };
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-triage', 'possible-dupe', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision', 'needs-triage': 'triage needed', 'possible-dupe': 'possible dupe' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -19274,7 +19279,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const REPO_ISSUE_BAND_DEFAULTS = {
-      waitingLabels: ['blocked', 'stage/045-needs-decision', 'stage/085-needs-decision', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+      waitingLabels: ['blocked', 'stage/045-needs-decision', 'stage/085-needs-decision', 'stage/017-possible-existing', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
       doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
@@ -50043,6 +50048,11 @@ function burnAreaChart() {
             <span class="config-toggle-label">Clarity gate ${yamlHint('runs.triage.clarity_gate.enabled')} ${settingHelpMark('settings', 'features', 'Clarity gate', `Before an agent claims a human-filed issue, score how clearly it states a goal, acceptance criteria and scope. Below the threshold Hive asks the author once and parks the issue with needs-spec instead of claiming it. Works without Run triage. Off by default.`)}</span>
           </div>
           <div class="config-field"><label>Clarity threshold ${yamlHint('runs.triage.clarity_gate.threshold')} ${settingHelpMark('settings', 'features', 'Clarity threshold', `Clarity score (0-100) an issue needs to stay in the agent queue (default ${esc(String(runsDefaults.runsTriageClarityGateThreshold || 60))}). Goal 25, acceptance criteria 35, scope 20, detail 20; an open choice or TBD subtracts 30. 0 uses the default.`)}</label><input type="number" min="0" max="100" step="1" value="${esc(String(f.runsTriageClarityGateThreshold || ''))}" placeholder="${esc(String(runsDefaults.runsTriageClarityGateThreshold || 60))}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriageClarityGateThreshold" data-arg-types="s,s,N"><div class="config-help">0 = default.</div></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.runsTriagePriorArtEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="runsTriagePriorArtEnabled"></div>
+            <span class="config-toggle-label">Prior-art gate ${yamlHint('runs.triage.prior_art.enabled')} ${settingHelpMark('settings', 'features', 'Prior-art gate', `Before an agent claims a feature, RFC or epic issue, search knowledge beads, settings, merged PRs, closed issues, docs and code for something that already covers it. At or above the threshold a human-filed issue is parked at stage/017-possible-existing with the findings until the author replies /hive decision proceed — <gap> or /hive decision exists; a clanker-filed one auto-closes after runs.triage.prior_art.bot_close_ttl; hive-filed issues get a findings note only. kinds, max_findings, max_parks_per_cycle and bot_close_ttl are yaml-only. On by default.`)}</span>
+          </div>
+          <div class="config-field"><label>Prior-art threshold ${yamlHint('runs.triage.prior_art.threshold')} ${settingHelpMark('settings', 'features', 'Prior-art threshold', `Match confidence (0-100) the best finding needs before the gate parks an issue (default ${esc(String(runsDefaults.runsTriagePriorArtThreshold || 70))}): the share of the issue's weighted key terms (identifiers 4, title words 3, body words 1) the finding covers. 0 uses the default.`)}</label><input type="number" min="0" max="100" step="1" value="${esc(String(f.runsTriagePriorArtThreshold || ''))}" placeholder="${esc(String(runsDefaults.runsTriagePriorArtThreshold || 70))}" data-change-action="markDirty" data-arg0="features" data-arg1="runsTriagePriorArtThreshold" data-arg-types="s,s,N"><div class="config-help">0 = default.</div></div>
           <div class="settings-subsection-title mt-5">Spek recheck ${settingHelpMark('spektacular', '', 'Spek recheck', `Continuous convergence: re-runs the spec for opted-in campaigns on a cadence and imports changed or new plan tasks. The source lists (runs.spektacular.recheck.sources, runs.spektacular.recheck.discovery.sources) and runs.spektacular.recheck.egress_allowlist are yaml-only.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.spektacularRecheckEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularRecheckEnabled"></div>

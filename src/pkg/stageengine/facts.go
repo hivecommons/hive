@@ -78,6 +78,7 @@ type ParkFacts struct {
 	Holds             []string // stagelabels.Holds(labels), lower-cased
 	NeedsHuman        bool
 	DecisionLabel     string // configured issue park label present, or 085 on a PR
+	PossiblyExists    bool   // prior-art gate park: stage/017-possible-existing (#13575)
 	Sentinel          bool
 	HumanOnlyReason   string // lane rule unrelated to trust (workflow edits, tests removed, …)
 	ApprovedDirection bool   // /hive approve|decision recorded; un-park keeps needs-human (#12715)
