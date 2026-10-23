@@ -504,6 +504,49 @@ overlap — a genuine new defect involving one more file files normally), a
 regression), a rejection older than 30 days, or a hive with no App-bot
 identity all fall through to a normal create.
 
+### Feature requests that already exist are not filed
+
+Rejection dedupe only catches a finding a maintainer has already turned down.
+The fourth failure mode ([#13879](https://github.com/hivecommons/hive/issues/13879))
+is an agent asking for something the hive *already has*: a setting, a merged
+PR, a doc page, a knowledge bead. A person who files such an issue is parked
+on `stage/017-possible-existing` and asked to confirm; a hive agent gets no
+such round trip, so the watcher applies the hive-agent filing rule
+(`priorart.FilingVerdictFor`) **before** creating, with the same searcher and
+`runs.triage.prior_art` settings the park uses:
+
+- **Feature kinds only.** The rule judges requests whose labels (or a leading
+  `[RFC]` / `RFC:` / `Epic:` title tag) name one of `runs.triage.prior_art.kinds`
+  (default `feature`, `rfc`, `epic`, `enhancement`). A request carrying a bug
+  label is never judged, whatever else it carries.
+- **At or above the threshold** (`runs.triage.prior_art.threshold`, default
+  `70`) the create is **refused**: the error names the top match and a
+  `decision` bead is written to the requesting agent's bead store (the
+  scanner's, then the supervisor's, then any store when the agent has none)
+  so the next scan finds the refusal instead of rediscovering the request.
+  The verdict depends only on the match confidence: re-submitting the same
+  request, with or without a gap section, is refused the same way. If the
+  existing item genuinely lacks something, that gap is a *different*,
+  narrower request.
+- **Within 20 points under the threshold** the request is filed **only if its
+  body carries a `## Gap vs existing` heading** (markdown heading or bold line,
+  any case) stating what the existing items do not cover; the watcher then
+  appends a findings note listing the matches to the body. Without the
+  heading the create is refused and the error carries a rendered template of
+  the section to add before re-submitting.
+- **Further under the threshold**, or with no findings at all, the request
+  files unchanged.
+
+Both refusals are **terminal** like the rejection gate: the request is
+consumed, never retried, and the result file is `ok: false` with the reason in
+`error`. There is no structured field for this class — the error text is the
+contract. The refusal is recorded in the audit log as
+`agent_issue_prior_art_refused` with the verdict (`do_not_file` or
+`missing_gap_section`), the match's URL and kind, and the confidence and
+threshold. Setting `runs.triage.prior_art.enabled: false` turns the rule off
+along with the park; until the hive has built its prior-art searcher at boot,
+requests file as before.
+
 ### Findings over the same files are consolidated
 
 Title dedupe also misses the third failure mode

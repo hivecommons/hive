@@ -80,17 +80,31 @@ func (b *boot) applyPriorArtFilingGate(client *github.Client) {
 	)
 }
 
+// beadStoreFor resolves the bead store an agent-attributed bead is written
+// to: the agent's own, then the scanner's, then the supervisor's, then any
+// store at all. Nil only when the hive has no bead store. Shared by the
+// ioscan advisory writer and the prior-art refusal writer so the two
+// resolve by one rule.
+func (b *boot) beadStoreFor(agentName string) *beads.Store {
+	if store := b.beadStores[agentName]; store != nil {
+		return store
+	}
+	for _, name := range []string{"scanner", "supervisor"} {
+		if store := b.beadStores[name]; store != nil {
+			return store
+		}
+	}
+	for _, store := range b.beadStores {
+		return store
+	}
+	return nil
+}
+
 // recordPriorArtRefusal writes the knowledge bead for a filing the relay
-// refused as already existing, in the requesting agent's bead store (the
-// scanner's or the supervisor's when it has none).
+// refused as already existing, in the requesting agent's bead store (see
+// beadStoreFor for the fallback order).
 func (b *boot) recordPriorArtRefusal(title, detail, agentName, ref string) {
-	store := b.beadStores[agentName]
-	if store == nil {
-		store = b.beadStores["scanner"]
-	}
-	if store == nil {
-		store = b.beadStores["supervisor"]
-	}
+	store := b.beadStoreFor(agentName)
 	if store == nil {
 		return
 	}

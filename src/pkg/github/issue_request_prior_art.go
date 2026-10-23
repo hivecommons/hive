@@ -64,7 +64,7 @@ func (c *Client) priorArtFilingVerdict(ctx context.Context, req IssueRequest, bo
 		c.logger.Info("issue-request watcher: create refused, prior art matches",
 			slog.String("repo", req.Repo), slog.String("agent", req.Agent),
 			slog.Int("confidence", report.Confidence), slog.Int("threshold", threshold), slog.String("match", name))
-		return body, fmt.Sprintf("not filed: prior art matches at %d%% confidence (threshold %d): %s %s; do not re-file — a knowledge bead recorded the refusal. If the existing item truly lacks something, file that gap with a \"## Gap vs existing\" section naming it", report.Confidence, threshold, kind, name), match
+		return body, fmt.Sprintf("not filed: prior art matches at %d%% confidence (threshold %d): %s %s; do not re-file — a knowledge bead recorded the refusal, and re-submitting this request (with or without a \"## Gap vs existing\" section) is refused the same way. If the existing item truly lacks something, open a separate, narrower request for that gap alone, titled and described by what is missing rather than by the existing item", report.Confidence, threshold, kind, name), match
 	case priorart.FileWithFindings:
 		if !hasGapVsExistingSection(req.Body) {
 			match = newPriorArtMatch(report.Findings[0], report.Confidence, threshold, "missing_gap_section")

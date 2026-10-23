@@ -2725,20 +2725,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.priorArtSearcher.Store(priorArtSearcher)
 	b.sched.SetPriorArtSearcher(priorArtSearcher)
 	b.sched.SetAdvisoryFunc(func(title, detail, agentName string) {
-		store := b.beadStores[agentName]
-		if store == nil {
-			store = b.beadStores["scanner"]
-		}
-		if store == nil {
-			store = b.beadStores["supervisor"]
-		}
-		if store == nil {
-			for _, candidate := range b.beadStores {
-				store = candidate
-				break
-			}
-		}
-		if store != nil {
+		if store := b.beadStoreFor(agentName); store != nil {
 			if b, err := store.Create(title, beads.TypeAdvisory, beads.PriorityHigh, agentName, ""); err == nil {
 				_ = store.SetMetadata(b.ID, "ioscan_classifier", detail)
 			}
