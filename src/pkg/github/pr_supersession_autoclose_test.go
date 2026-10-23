@@ -1,6 +1,8 @@
 package github
 
 import (
+	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+
 	"context"
 	"strings"
 	"testing"
@@ -138,6 +140,7 @@ func runAutoCloseSweep(t *testing.T, open supersessionPRFixture, opts Supersessi
 	defer server.Close()
 	c := newTestClient(t, server, autoCloseOrg, []string{autoCloseRepo})
 	c.SetAppBotLogin(autoCloseBot)
+	c.SetStageFactSink(&stageenginetest.Recorder{})
 	if opts.ACMMLevelForRepo == nil {
 		opts.ACMMLevelForRepo = func(string) int { return acmmLevelFullyAutonomous }
 	}
@@ -288,6 +291,21 @@ func TestSupersessionAutoClose_Guards(t *testing.T) {
 			res, obs := runAutoCloseSweep(t, tc.pr, tc.opts)
 			if len(obs.closed) != 0 || len(res.Closed) != 0 {
 				t.Fatalf("guard %q closed the PR: %v", tc.name, obs.closed)
+			}
+			if tc.name == "extra files" {
+				// A contributor PR with files the merged PR did not touch is
+				// a person's decision: parked at 085 with the files named
+				// (hivecommons/hive#13799), not left in the lane.
+				if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
+					t.Fatalf("guard %q result = %+v, want escalation", tc.name, res)
+				}
+				if got := obs.labels[12]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+					t.Fatalf("guard %q labels = %v, want needs-human", tc.name, got)
+				}
+				if got := obs.edits[900]; !strings.Contains(got, "Files the merged PR did not touch: `pkg/c.go`") {
+					t.Fatalf("guard %q notice does not name the extra files: %q", tc.name, got)
+				}
+				return
 			}
 			if len(obs.labels[12]) != 0 {
 				t.Fatalf("guard %q labeled the PR: %v", tc.name, obs.labels[12])

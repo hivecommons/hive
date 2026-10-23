@@ -9391,8 +9391,8 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 		logger.Warn("supersession sweep failed", "error", err)
 		return
 	}
-	if len(result.Closed) > 0 || len(result.Commented) > 0 || result.Seen > 0 {
-		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "skipped", result.Skipped)
+	if len(result.Closed) > 0 || len(result.Commented) > 0 || len(result.Resolved) > 0 || result.Seen > 0 {
+		logger.Info("supersession sweep complete", "seen", result.Seen, "closed", len(result.Closed), "commented", len(result.Commented), "resolved", len(result.Resolved), "skipped", result.Skipped)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9401,6 +9401,7 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			"seen":      strconv.Itoa(result.Seen),
 			"closed":    strconv.Itoa(len(result.Closed)),
 			"commented": strconv.Itoa(len(result.Commented)),
+			"resolved":  strconv.Itoa(len(result.Resolved)),
 			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})

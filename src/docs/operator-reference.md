@@ -545,10 +545,27 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   alone — no notice, no label, no close (#12349: #12322, `Fixes` open
   #12117 and `Part of` closed #12080, was escalated to `needs-human`).
 - **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
-  touch was also touched by the merged PR; below L6 they get `needs-human`.
-  Once the notice is on the PR, the sweep re-applies `needs-human` only when
-  the notice changes (a different merged PR or reason); clearing the label
-  for an unchanged notice sticks.
+  touch was also touched by the merged PR. When they touch files the merged
+  PR did not, the hive resolves the overlap itself instead of asking a person
+  (`pr_supersession_resolve.go`): if the head is behind the base it requests
+  GitHub's update-branch (`branch_update` effect) and waits for the new head;
+  once the head is current it re-reads the files, and either closes the PR
+  (nothing left, or only files the merged PR already changed) or rewrites the
+  body's `Closes #N` to `Refs #N (closed by #M; this PR adds <files>)`, stamps
+  `<!-- hive:supersession-resolved issue=N closer=M -->`, edits the notice and
+  lets the PR continue in its lane. A refused update (conflict) is noted once
+  per head and left to the fix lane. The hive's own earlier `needs-human` is
+  released when it takes the resolution over; one a person applied is
+  honoured and the PR is left alone. Below L6 the PR is escalated instead.
+- **Escalation goes through the stage engine.** Whenever the sweep hands a
+  PR to a person (contributor PR with files the merged PR did not touch, or a
+  hive PR below L6) it adds `needs-human` *and* submits a `Parked` fact, so
+  the PR lands at `stage/085-needs-decision` in the same pass — never a bare
+  `needs-human` beside an active lane stage (#13782 wore
+  `stage/050-review-pending` + `needs-human` until the next auto-merge tick).
+  The notice names the files the merged PR did not touch. Once the notice is
+  on the PR, the sweep re-escalates only when the notice changes (a different
+  merged PR or reason); clearing the label for an unchanged notice sticks.
 - **Human-authored PRs** get the notice and are surfaced to operators in the
   dashboard Review Queue (below); they are never closed automatically
   unless `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).

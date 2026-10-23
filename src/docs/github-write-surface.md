@@ -130,7 +130,7 @@ writes no entry.
 | Auto-merge sweep merges | `pkg/github/automerge/automerge_sweep.go` | yes (`pr_merged`, `automerge-sweep-merged`) | yes |
 | Attribution trailer reconcile | `attribution.go` (`ReconcilePRAttribution`) | yes (`pr_attribution_reconciled`) | yes |
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
-| Supersession sweep (notice, `hive/superseded` close) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go` | yes (`supersession-sweep-*`) | yes |
+| Supersession sweep (notice, `hive/superseded` close, own-PR update-branch + body `Closes`→`Refs` rewrite, `needs-human` + `Parked` fact on escalation) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go`, `pr_supersession_resolve.go` | yes (`supersession-sweep-*`) | yes |
 | Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
