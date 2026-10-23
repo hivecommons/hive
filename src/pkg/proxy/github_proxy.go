@@ -1222,7 +1222,11 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	handshakeErr := tlsClientConn.Handshake()
 	_ = conn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
-		p.logger.Warn("proxy client TLS handshake failed", "error", handshakeErr)
+		if isClientHangup(handshakeErr) {
+			p.logger.Debug("proxy client hung up before TLS handshake", "error", handshakeErr)
+		} else {
+			p.logger.Warn("proxy client TLS handshake failed", "error", handshakeErr)
+		}
 		return
 	}
 	defer func() { _ = tlsClientConn.Close() }()
@@ -1262,6 +1266,24 @@ func (p *GitHubProxy) logTimeout(msg string, err error, attrs ...any) {
 	p.logger.Warn(msg, attrs...)
 }
 
+// isClientHangup reports a client that went away (EOF, reset, broken pipe) or
+// stalled past the deadline: routine on restarts and liveness probes, not a
+// hive defect.
+func isClientHangup(err error) bool {
+	return isTimeoutError(err) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+}
+
+// logClientRead logs a client-side request read failure at Debug: an idle or
+// departed client is expected, unlike an upstream stall.
+func (p *GitHubProxy) logClientRead(msg string, err error, attrs ...any) {
+	if !isTimeoutError(err) {
+		return
+	}
+	attrs = append(attrs, "error", err)
+	p.logger.Debug(msg, attrs...)
+}
+
 // proxyHTTP relays a MITM'd GitHub connection with ACMM enforcement applied.
 // It is proxyHTTPHost with the GitHub host implied, which is what every
 // pre-existing caller means.
@@ -1293,7 +1315,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
 			_ = client.SetReadDeadline(time.Time{})
-			p.logTimeout("proxy client request read timed out", err, "agent", agentName)
+			p.logClientRead("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
 

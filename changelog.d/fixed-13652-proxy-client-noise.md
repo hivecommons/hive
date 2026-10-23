@@ -1,0 +1,1 @@
+- Proxy client read timeouts and pre-handshake disconnects no longer surface as repeated-error self-reports (#13652, #13657).

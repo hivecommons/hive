@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"errors"
+	"io"
+	"syscall"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -112,5 +115,16 @@ func TestHTTPRelayDeadlinesAreBoundAndObservable(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("deadline failures must be observable; missing log site %s", want)
 		}
+	}
+}
+
+func TestIsClientHangup(t *testing.T) {
+	for _, err := range []error{io.EOF, io.ErrUnexpectedEOF, syscall.ECONNRESET, os.ErrDeadlineExceeded} {
+		if !isClientHangup(err) {
+			t.Fatalf("isClientHangup(%v) = false, want true", err)
+		}
+	}
+	if isClientHangup(errors.New("tls: failed to verify certificate")) {
+		t.Fatal("certificate errors must stay WARN")
 	}
 }
