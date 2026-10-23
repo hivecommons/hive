@@ -120,7 +120,7 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 		t.Skip("hub has no config to tune")
 	}
 	base := time.Date(2026, 10, 23, 4, 0, 0, 0, time.UTC)
-	key := "myorg/repo1#13579"
+	key := contributorFlapKey("c-repires", "myorg/repo1#13579")
 
 	if _, tripped := hub.noteContributorDrop(key, base); tripped {
 		t.Fatal("one drop must not trip")
@@ -144,8 +144,18 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 	if got, ok := hub.contributorCoolOffAt(key, base.Add(5*time.Hour)); !ok || got.Drops != 3 {
 		t.Fatalf("cool-off should be active at +5h: %+v ok=%v", got, ok)
 	}
-	if _, ok := hub.contributorCoolOffAt("myorg/repo1#1", base.Add(time.Hour)); ok {
+	if _, ok := hub.contributorCoolOffAt(contributorFlapKey("c-repires", "myorg/repo1#1"), base.Add(time.Hour)); ok {
 		t.Fatal("cool-off leaked to another issue")
+	}
+	if _, ok := hub.contributorCoolOffAt(contributorFlapKey("c-other", "myorg/repo1#13579"), base.Add(time.Hour)); ok {
+		t.Fatal("cool-off leaked to another contributor")
+	}
+	// The governor's issue-wide view finds the per-contributor record.
+	if got, ok := hub.anyContributorCoolOffAt("myorg/repo1#13579", base.Add(time.Hour)); !ok || got.Drops != 3 {
+		t.Fatalf("issue-wide lookup missed the contributor's cool-off: %+v ok=%v", got, ok)
+	}
+	if _, ok := hub.anyContributorCoolOffAt("myorg/repo1#1", base.Add(time.Hour)); ok {
+		t.Fatal("issue-wide lookup leaked to another issue")
 	}
 	if _, ok := hub.contributorCoolOffAt(key, base.Add(40*time.Minute+config.DefaultContributorFlapCooloff+time.Second)); ok {
 		t.Fatal("cool-off should have lapsed")
@@ -156,7 +166,7 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 	}
 
 	// Drops older than the window do not count.
-	key2 := "myorg/repo1#2"
+	key2 := contributorFlapKey("c-repires", "myorg/repo1#2")
 	hub.noteContributorDrop(key2, base)
 	hub.noteContributorDrop(key2, base.Add(time.Hour))
 	if _, tripped := hub.noteContributorDrop(key2, base.Add(2*time.Hour+time.Minute)); tripped {
@@ -167,7 +177,7 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 	s.deps.Config.Governor.Claims.ContributorFlapThreshold = 2
 	s.deps.Config.Governor.Claims.ContributorFlapWindowS = 1800
 	s.deps.Config.Governor.Claims.ContributorFlapCooloffS = 600
-	key3 := "myorg/repo1#3"
+	key3 := contributorFlapKey("c-repires", "myorg/repo1#3")
 	hub.noteContributorDrop(key3, base)
 	co, tripped = hub.noteContributorDrop(key3, base.Add(time.Minute))
 	if !tripped || co.Drops != 2 || !co.Until.Equal(base.Add(11*time.Minute)) {
@@ -178,7 +188,7 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 	}
 	// Negative threshold turns the tracker off.
 	s.deps.Config.Governor.Claims.ContributorFlapThreshold = -1
-	key4 := "myorg/repo1#4"
+	key4 := contributorFlapKey("c-repires", "myorg/repo1#4")
 	for i := 0; i < 5; i++ {
 		if _, tripped := hub.noteContributorDrop(key4, base.Add(time.Duration(i)*time.Minute)); tripped {
 			t.Fatal("tracker should be off")
@@ -187,8 +197,9 @@ func TestContributorFlap_CoolOffTripsAndLapses(t *testing.T) {
 }
 
 // The cool-off is scoped to the contributor that dropped the issue (#13763):
-// that contributor is not offered it, others still are, and the issue-wide
-// governor accessor does not report it as withheld.
+// that contributor is not offered it — under any session label — others
+// still are, and the issue-wide governor accessor still reports the cool-off
+// so the dropper's live claim goes advisory for hive agents.
 func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 	hub, s, _ := claimsHub(t)
 	setStatusIssues(s,
@@ -196,21 +207,30 @@ func TestContributorFlap_SelectTaskWithholdsCooledOffIssue(t *testing.T) {
 		intgIssue(2, "free", "someone", nil),
 	)
 	now := time.Now()
-	for i := 0; i < config.DefaultContributorFlapThreshold; i++ {
-		hub.noteContributorDrop(contributorFlapKey("c-flappy", "myorg/repo1#1"), now)
-	}
-	if _, ok := hub.inContributorCoolOff(contributorFlapKey("c-flappy", "myorg/repo1#1")); !ok {
-		t.Fatal("the dropping contributor should be in cool-off")
-	}
-	if _, ok := s.ContributorCoolOffReason("myorg/repo1", 1); ok {
-		t.Fatal("one contributor's cool-off must not withhold the issue from everyone")
-	}
 	flappy := &ContributorConnection{
 		profile:  &ContributorProfile{GitHubUsername: "flappy", ContributorID: "c-flappy", TrustTier: "contributor"},
+		session:  "a",
 		lastPong: now,
+	}
+	for i := 0; i < config.DefaultContributorFlapThreshold; i++ {
+		hub.noteContributorDrop(contributorFlapKey(contributorFlapIdentity(flappy), "myorg/repo1#1"), now)
+	}
+	if _, ok := hub.inContributorCoolOff(contributorFlapKey("c-flappy", "myorg/repo1#1")); !ok {
+		t.Fatal("the dropping contributor should be in cool-off under its bare ContributorID")
+	}
+	if reason, ok := s.ContributorCoolOffReason("myorg/repo1", 1); !ok || !strings.HasPrefix(reason, "contributor cool-off: ") {
+		t.Fatalf("the governor accessor should report the contributor's cool-off, got %q ok=%v", reason, ok)
 	}
 	if msg := hub.selectTask(flappy); msg == nil || msg.Number != 2 {
 		t.Fatalf("the cooled-off contributor should be offered #2 only, got %+v", msg)
+	}
+	// Rotating the client-chosen session label must not mint a fresh key.
+	rotated := &ContributorConnection{profile: flappy.profile, session: "b", lastPong: now}
+	if msg := hub.selectTask(rotated); msg == nil || msg.Number != 2 {
+		t.Fatalf("a rotated session label should still be withheld #1, got %+v", msg)
+	}
+	if contributorFlapIdentity(rotated) != "c-flappy" || contributorFlapIdentity(&ContributorConnection{profile: &ContributorProfile{GitHubUsername: "noid"}, session: "x"}) != "noid" {
+		t.Fatal("flap identity must be the bare ContributorID, or username without one")
 	}
 	c := &ContributorConnection{
 		profile:  &ContributorProfile{GitHubUsername: "arteeh", ContributorID: "c-arteeh", TrustTier: "contributor"},

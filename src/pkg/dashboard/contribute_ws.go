@@ -3556,7 +3556,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			// resumable either. The lease was issued before the drops that
 			// tripped the cool-off; letting the same relay re-take it now is
 			// exactly the reconnect loop the cool-off exists to break.
-			if co, ok := h.inContributorCoolOff(contributorFlapKey(identity, lease.key)); ok {
+			if co, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(s.contributor), lease.key)); ok {
 				reason := co.Reason()
 				h.recordDecision(s.contributor.profile.GitHubUsername, decisionResumeRejected,
 					msg.TaskID, canonRepo, msg.Number,
