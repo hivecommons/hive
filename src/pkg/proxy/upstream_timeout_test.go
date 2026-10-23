@@ -69,6 +69,9 @@ func TestAllClientTLSHandshakesAreBound(t *testing.T) {
 	if got := strings.Count(text, "SetDeadline(time.Now().Add(clientTLSHandshakeTimeout))"); got != wantClientTLSHandshakes {
 		t.Fatalf("bounded client TLS handshakes = %d, want %d", got, wantClientTLSHandshakes)
 	}
+	if got := strings.Count(text, "isClientHangup(handshakeErr)"); got < 2 {
+		t.Fatalf("transparent and direct handshakes must demote client hangups; isClientHangup sites = %d", got)
+	}
 	for _, want := range []string{
 		`p.logger.Warn("transparent proxy TLS handshake failed"`,
 		`p.logger.Warn("proxy client TLS handshake failed"`,
@@ -111,6 +114,7 @@ func TestHTTPRelayDeadlinesAreBoundAndObservable(t *testing.T) {
 		`p.logTimeout("copilot sniff: upstream response read timed out"`,
 		`p.logTimeout("copilot sniff: response relay timed out"`,
 		`p.logTimeout("inference reroute: client request read timed out"`,
+		`p.logClientRead("copilot sniff: client request read timed out"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("deadline failures must be observable; missing log site %s", want)

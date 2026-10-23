@@ -807,7 +807,11 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 	handshakeErr := tlsClientConn.Handshake()
 	_ = conn.SetDeadline(time.Time{})
 	if handshakeErr != nil {
-		p.logger.Warn("transparent proxy TLS handshake failed", "error", handshakeErr)
+		if isClientHangup(handshakeErr) {
+			p.logger.Debug("proxy client hung up before TLS handshake", "error", handshakeErr)
+		} else {
+			p.logger.Warn("transparent proxy TLS handshake failed", "error", handshakeErr)
+		}
 		return
 	}
 	defer func() { _ = tlsClientConn.Close() }()
@@ -3330,7 +3334,7 @@ func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host,
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
 			_ = client.SetReadDeadline(time.Time{})
-			p.logTimeout("copilot sniff: client request read timed out", err, "agent", agentName, "host", host)
+			p.logClientRead("copilot sniff: client request read timed out", err, "agent", agentName, "host", host)
 			return
 		}
 
