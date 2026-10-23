@@ -291,10 +291,20 @@ func evidenceMergeClient(t *testing.T, f *evidenceMergeFixture, settings *Review
 func TestRecordPRMergedAuditPostsEvidencePointerOnce(t *testing.T) {
 	root := withEvidenceRoot(t)
 	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	writeTestEvidence(t, root, "head111", "", t0)
-	writeTestEvidence(t, root, "head222", evidence.BundleID("o/r", 7, "head111"), t0.Add(time.Hour))
-
 	seed := make([]byte, ed25519.SeedSize)
+	priv := ed25519.NewKeyFromSeed(seed)
+	for _, b := range []*evidence.Bundle{
+		writeTestEvidence(t, root, "head111", "", t0),
+		writeTestEvidence(t, root, "head222", evidence.BundleID("o/r", 7, "head111"), t0.Add(time.Hour)),
+	} {
+		if err := evidence.Sign(b, priv); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeReviewEvidence(ReviewEvidencePath(root, "o/r", 7, b.HeadSHA), b); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	keyFile := filepath.Join(t.TempDir(), "key")
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("00", ed25519.SeedSize)), 0o600); err != nil {
 		t.Fatal(err)
