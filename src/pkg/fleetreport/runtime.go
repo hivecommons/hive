@@ -51,6 +51,15 @@ const (
 	ClassEffectLedgerOpStuck = "effect_ledger_op_stuck"
 )
 
+// Log-fed classes: faults that have no dedicated hook site and are recognised
+// from their WARN+ log line by the slog feed (see LogFedClass).
+const (
+	ClassTmuxSessionCheckFailed  = "tmux_session_check_failed"
+	ClassProxyTLSHandshakeFailed = "proxy_tls_handshake_failed"
+	ClassAgentDirSetupFailed     = "agent_dir_setup_failed"
+	ClassReviewEvidenceWriteFail = "review_evidence_write_failed"
+)
+
 const (
 	// unclassifiedRepeatCount / unclassifiedRepeatWindow: the same unclassified
 	// error string must recur this many times inside the window before it
@@ -112,6 +121,10 @@ type ClassSpec struct {
 	// Keywords are the human phrasings used to find an existing issue about
 	// the same symptom (join-first search). Lower-case.
 	Keywords []string
+	// LogFed marks a class observed by the slog feed: a log line containing
+	// one of its Keywords is counted under the class instead of
+	// ClassUnclassifiedRepeated.
+	LogFed bool
 }
 
 // Classes is the runtime error allow-list.
@@ -132,6 +145,26 @@ var Classes = map[string]ClassSpec{
 	ClassCIPollNudge:              {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
 	ClassIssueRequestStuck:        {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
 	ClassEffectLedgerOpStuck:      {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
+	ClassTmuxSessionCheckFailed:   {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
+	ClassProxyTLSHandshakeFailed:  {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
+	ClassAgentDirSetupFailed:      {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
+	ClassReviewEvidenceWriteFail:  {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
+}
+
+// LogFedClass returns the LogFed class whose Keyword msg contains, or "".
+func LogFedClass(msg string) string {
+	msg = strings.ToLower(msg)
+	for class, spec := range Classes {
+		if !spec.LogFed {
+			continue
+		}
+		for _, kw := range spec.Keywords {
+			if kw != "" && strings.Contains(msg, kw) {
+				return class
+			}
+		}
+	}
+	return ""
 }
 
 // MatchesExplicitClass reports whether msg (lower-cased) contains a Keyword

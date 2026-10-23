@@ -345,6 +345,10 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassAgentCrashLoop, message: "agent crash loop: 5 failures within the backoff window"},
 		{class: ClassCIPollNudge, message: "ci-poll nudge: agent polling ci 4 times since last kick"},
 		{class: ClassIssueRequestStuck, message: "issue-request stuck: issue request failed 3 attempts over 7m"},
+		{class: ClassTmuxSessionCheckFailed, message: "tmux has-session failed"},
+		{class: ClassProxyTLSHandshakeFailed, message: "proxy client TLS handshake failed"},
+		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
+		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -824,5 +828,34 @@ func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
 	_ = tr.Evidence()
 	if cleared := tr.TakeCleared(); len(cleared) != 0 {
 		t.Fatalf("one-off recorded as cleared: %+v", cleared)
+	}
+}
+
+func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
+	fed := map[string]string{
+		"tmux has-session failed":                 ClassTmuxSessionCheckFailed,
+		"proxy client TLS handshake failed":       ClassProxyTLSHandshakeFailed,
+		"transparent proxy TLS handshake failed":  ClassProxyTLSHandshakeFailed,
+		"failed to restore per-agent dir mode":    ClassAgentDirSetupFailed,
+		"failed to restore interactive home mode": ClassAgentDirSetupFailed,
+		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
+		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
+	}
+	for msg, want := range fed {
+		if got := LogFedClass(msg); got != want {
+			t.Errorf("LogFedClass(%q) = %q, want %q", msg, got, want)
+		}
+		if !MatchesExplicitClass(msg) {
+			t.Errorf("%q not matched by an explicit class", msg)
+		}
+	}
+	for _, m := range []string{
+		"github REST 404 cached; suppressing repeated fetches",
+		"copilot token validation rate-limited by GitHub; relaunching after cooldown",
+		"permissions watcher: fixed file permissions",
+	} {
+		if !IsBenignMessage(m) {
+			t.Errorf("%q not benign", m)
+		}
 	}
 }

@@ -101,11 +101,22 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
+	class := fleetreport.ClassUnclassifiedRepeated
 	key := Key(r.Message)
 	if key == "" {
-		return
+		msg := strings.TrimSpace(r.Message)
+		if fleetreport.IsBenignMessage(msg) {
+			return
+		}
+		if class = fleetreport.LogFedClass(msg); class == "" {
+			return
+		}
+		key = fleetreport.NormalizeMessage(msg)
+		if len(key) > maxKeyBytes {
+			key = key[:maxKeyBytes]
+		}
 	}
-	h.observe(fleetreport.ClassUnclassifiedRepeated, key, r.Message, diagnostics(r, h.attrs))
+	h.observe(class, key, r.Message, diagnostics(r, h.attrs))
 }
 
 // diagnostics renders "level attr=value …" from the bound and record

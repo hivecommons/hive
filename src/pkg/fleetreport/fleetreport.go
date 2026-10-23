@@ -708,6 +708,11 @@ var benignSubstrings = []string{
 	// permissions, ownership) record a repair that already succeeded:
 	// self-healing housekeeping, whatever level the producer logs at.
 	"permissions watcher: fixed ",
+	// Self-healing, informational lines: a cached GitHub 404 suppressing
+	// repeat fetches, and a rate-limited Copilot token validation that the
+	// manager retries itself after a cooldown.
+	"cached; suppressing repeated fetches",
+	"token validation rate-limited by github; relaunching after cooldown",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic
