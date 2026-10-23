@@ -56,7 +56,10 @@ func TestRefsClaimStagesAsCovered(t *testing.T) {
 
 func TestRefsCoverageDoesNotUpgradeClosingScope(t *testing.T) {
 	fake := newIssueStageServer(t)
-	fake.prBodies[42] = "Refs #4"
+	// Bare Refs links on Hive-authored PRs are intentionally retrofitted to
+	// closing links by EnsureIssueStagePRLink. Use an explicitly partial
+	// claim to verify that coverage alone does not expand closing scope.
+	fake.prBodies[42] = "Part of #4; leaves follow-up work open."
 	fake.prBases[42] = "v5"
 	fake.prAuthors[42] = "hive[bot]"
 	client := issueStageTestClient(t, fake.srv, true)
