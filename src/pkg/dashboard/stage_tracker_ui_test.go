@@ -40,7 +40,12 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`function stageTrackerHeaderHtml(stages)`,
 		`const STAGE_TRACKER_ICONS = {`,
 		`@keyframes ham-pulse`,
-		`animation: ham-pulse 1.6s ease-in-out infinite;`,
+		// The bare lit rule carries no animation: Open, Open · hold and Claimed are steady.
+		`.ham-seg.active { background: var(--amber); color: var(--surface-0); }`,
+		`.ham-seg.active[data-motion="active"] { animation: ham-pulse 1.6s ease-in-out infinite;`,
+		`.ham-seg.active[data-motion="needs-human"] { animation: ham-breathe-human`,
+		`@keyframes ham-breathe-human`,
+		`function stageTrackerMotion(item)`,
 		`.ham-seg.active.ham-open-hold`,
 		`@media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none;`,
 	} {
@@ -113,6 +118,13 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
 		jsFunc(t, html, "stageTrackerActorKind"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_ACTIVE"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN"),
+		jsConstBlock(t, html, "STAGE_TRACKER_MOTION_BY_STAGE"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_AUTHOR_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOTION_HUMAN_MODS"),
+		jsFunc(t, html, "stageTrackerMotion"),
 		jsFunc(t, html, "stageTrackerHeaderHtml"),
 		jsFunc(t, html, "stageTrackerHoldLabels"),
 		jsFunc(t, html, "stageTrackerSoakLeft"),
@@ -542,7 +554,8 @@ assert.ok(/<a class="ham-ref"[^>]*title="[^"]*@ann[^"]*"/.test(row), 'the #N lin
 row = stageTrackerRowHtml(g[1], stages, ctx);
 expectTitles(row, ['a.ham-ref', 'span.ham-title', 'a.ham-pr-ref', 'li.ham-seg'], 'issue with one PR');
 assert.ok(/<a class="ham-pr-ref"[^>]*title="The one PR Author: hive · @hive-bot"/.test(row), row);
-assert.ok(/<li class="ham-seg active" title="Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: stage + whose move: ' + row);
+assert.ok(/<li class="ham-seg active" data-motion="active" title="Review pending · Next move: hive" aria-current="step">/.test(row), 'active chevron: stage + whose move (hive acting: pulses): ' + row);
+assert.ok(!/<li class="ham-seg active" data-motion=[^>]*title="Claimed"/.test(stageTrackerRowHtml(g[0], stages, ctx)), 'Claimed is static: no data-motion');
 // Issue with two PRs: #N link + title on the issue line, nothing lit there;
 // each sub-row has its PR link (full PR tooltip) and its active chevron.
 row = stageTrackerRowHtml(g[3], stages, ctx);
