@@ -178,6 +178,8 @@ of opening a second issue. Treat the issue it names as yours for this finding.
 
 ## Opening Hold-Gated PRs
 
+When the PR must land after another open PR or issue and you know the order, say so in the PR body: one `Depends-on: #N` line per prerequisite (`Depends-on: owner/repo#N` for another repository). The dashboard reads it as the authoritative merge order of the your-turn view and collapses the PR under its prerequisite; overlapping files alone are only shown as "may conflict with", never as an order. Leave it out when the PRs are independent.
+
 If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree cut from the branch the PR will target — the base this repository requires (its AGENTS.md, CONTRIBUTING or pull-request template may name one, and a repository on a promotion model takes PRs on an integration branch rather than on its released default), falling back to its default branch only when nothing names one, and never whatever branch the checkout happens to be on: `git worktree add /tmp/scanner-fix-<slug> -b scanner/fix-<slug> origin/<target-branch>`
