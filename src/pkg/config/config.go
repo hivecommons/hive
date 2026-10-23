@@ -8865,6 +8865,14 @@ type AutoMergeConfig struct {
 	// up as red CI instead of a broken base. Empty (the default) keeps the
 	// previous behavior: a green head merges even if the base has moved.
 	RequireCurrentBase []string `yaml:"require_current_base,omitempty" json:"require_current_base,omitempty"`
+	// MergeForwardTrustedHuman lists owner/repo names where a role/trusted
+	// author/human PR that GitHub reports as conflicting ("dirty") gets the
+	// base merged into its same-repo head branch as a new App-authored,
+	// signed-off merge commit; no human commit is rewritten. A real conflict
+	// leaves the branch untouched and posts one note naming the files both
+	// sides changed. Fork heads are never written. Empty (the default) keeps
+	// the PR parked for its author.
+	MergeForwardTrustedHuman []string `yaml:"merge_forward_trusted_human,omitempty" json:"merge_forward_trusted_human,omitempty"`
 }
 
 // AutoMergeRepoConfig carries per-repository auto-merge overrides.
@@ -9184,6 +9192,12 @@ func (a AutoMergeConfig) HumanMergePathsFor(repo string) []string {
 // case-insensitively) is listed in auto_merge.require_current_base.
 func (a AutoMergeConfig) RequireCurrentBaseFor(repo string) bool {
 	return repoListSet(a.RequireCurrentBase)[strings.ToLower(strings.TrimSpace(repo))]
+}
+
+// MergeForwardTrustedHumanFor reports whether repo (owner/repo, matched
+// case-insensitively) is listed in auto_merge.merge_forward_trusted_human.
+func (a AutoMergeConfig) MergeForwardTrustedHumanFor(repo string) bool {
+	return repoListSet(a.MergeForwardTrustedHuman)[strings.ToLower(strings.TrimSpace(repo))]
 }
 
 // RequiredCheckSet returns the global config-declared required-status-check set

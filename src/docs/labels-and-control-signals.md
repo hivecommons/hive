@@ -640,6 +640,24 @@ rules below name 072 — dwell/stall, needs-rebase → 07x, regression checks an
 the tracker's **CI / Review** column, which prints the stage word next to the
 author-kind icon.
 
+**Merge-forward for trusted human PRs** ([#13636](https://github.com/hivecommons/hive/issues/13636)).
+When a repo is listed in `auto_merge.merge_forward_trusted_human` and a
+`role/trusted` + `author/human` PR on a same-repo branch is `dirty`
+(conflicting), the trusted-author lane merges the base into the PR head
+through the GitHub merges API: one new App-authored merge commit with the
+App's `Signed-off-by`, no human commit rewritten. If the merge is clean the
+PR waits for CI on the new head (`check-pending`); if git hits a real
+conflict nothing is pushed and the author gets one
+`<!-- hive:merge-forward-conflict head=… -->` comment naming the files both
+sides changed, and the PR stays at 071. Fork heads are never written (the
+071 note still explains the conflict). `behind` keeps using GitHub
+update-branch. Default off.
+
+When the hive adds a fix to a human author's branch it prefers a
+merge-forward commit (base merged into the branch) or a GitHub suggestion
+comment the author applies; it never pushes a direct fix commit it would
+later have to strip from the human's history.
+
 ### Decomposed parents — closed by their children, never stalled
 
 When an agent splits an issue into ordered children it files each child

@@ -74,6 +74,10 @@ type Options struct {
 	// RequireCurrentBase returns the live auto_merge.require_current_base
 	// switch for an owner/repo (hivecommons/hive#13634). nil means off.
 	RequireCurrentBase func(repo string) bool
+	// MergeForwardTrustedHuman returns the live
+	// auto_merge.merge_forward_trusted_human membership for owner/repo
+	// (hivecommons/hive#13636); nil means off.
+	MergeForwardTrustedHuman func(repo string) bool
 	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
@@ -183,7 +187,8 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
-	requireCurrentBase func(repo string) bool
+	requireCurrentBase       func(repo string) bool
+	mergeForwardTrustedHuman func(repo string) bool
 
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
@@ -251,6 +256,7 @@ func New(transport Transport, opts Options) *Engine {
 		humanChangeRequests:               opts.HumanChangeRequests,
 		humanMergePaths:                   opts.HumanMergePaths,
 		requireCurrentBase:                opts.RequireCurrentBase,
+		mergeForwardTrustedHuman:          opts.MergeForwardTrustedHuman,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
@@ -2027,7 +2033,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "behind", c.isForkPR(pr))
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
-		return AutoMergeSweepEvent{}, "conflicting", nil
+		return c.mergeForwardOrConflict(ctx, displayRepo, owner, repo, pr, number)
 	}
 	headSHA := ""
 	if pr.GetHead() != nil {
