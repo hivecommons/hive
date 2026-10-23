@@ -1,11 +1,11 @@
 package hub
 
 import (
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
-func QuotaExhaustedProcessCount(statuses map[string]*agent.AgentProcess) int {
+func QuotaExhaustedProcessCount(statuses map[string]*crux.Process) int {
 	return spoke.QuotaExhaustedProcessCount(statuses)
 }
 

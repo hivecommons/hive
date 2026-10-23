@@ -32,6 +32,7 @@ import (
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/defsrc"
@@ -196,7 +197,7 @@ func defaultPersistPaths() persistPaths {
 
 // heartbeatProviders is the ADR-0024 per-provider auth/availability roll-up
 // sent in the hub heartbeat; nil when the provider-status knob is off.
-func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []agent.ProviderStatus {
+func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []crux.ProviderStatus {
 	if cfg == nil || !cfg.Providers.StatusEnabled() {
 		return nil
 	}
@@ -215,7 +216,7 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		LastActivityAt: proc.LastPaneChange,
 		SessionMissing: mgr.SessionMissing(name),
 	}
-	if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+	if status := proc.BackendAuth.Status; status != "" && status != crux.BackendAuthOK {
 		act.BackendAuthStatus = status
 		act.BackendAuthSince = proc.BackendAuth.Since
 		act.BackendAuthLastError = proc.BackendAuth.LastError
@@ -4805,7 +4806,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				ProviderLimitRebuffs:    providerLimitRebuffs,
 				ProviderLimitHiveWide:   providerLimitHiveWide,
 				ProviderLimitAgents:     providerLimitAgents,
-				Providers:               spoke.TimedSection("providers", func() []agent.ProviderStatus { return heartbeatProviders(b.cfg, agents) }),
+				Providers:               spoke.TimedSection("providers", func() []crux.ProviderStatus { return heartbeatProviders(b.cfg, agents) }),
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,

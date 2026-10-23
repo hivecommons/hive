@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -16,11 +16,11 @@ func TestSpokeProvidersWireCompat(t *testing.T) {
 	in := spoke.HeartbeatPayload{
 		Agents: []spoke.AgentSummary{{
 			Name: "scanner", Backend: "claude", Enabled: true,
-			BackendAuthStatus: agent.BackendAuthTokenExpired, BackendAuthSince: "2026-10-01T08:00:00Z",
+			BackendAuthStatus: crux.BackendAuthTokenExpired, BackendAuthSince: "2026-10-01T08:00:00Z",
 			BackendAuthRefreshable: &refreshable,
 		}},
-		Providers: []agent.ProviderStatus{{
-			Provider: "claude", AuthState: agent.ProviderAuthNeedsLogin, AvailabilityState: agent.ProviderAvailUnknown,
+		Providers: []crux.ProviderStatus{{
+			Provider: "claude", AuthState: crux.ProviderAuthNeedsLogin, AvailabilityState: crux.ProviderAvailUnknown,
 			Since: "2026-10-01T08:00:00Z", Evidence: "1 of 1 enabled agent: token-expired×1",
 			NextAction: "Log in to the provider once.", AffectedAgents: []string{"scanner"},
 		}},
@@ -33,7 +33,7 @@ func TestSpokeProvidersWireCompat(t *testing.T) {
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Agents) != 1 || out.Agents[0].BackendAuthStatus != agent.BackendAuthTokenExpired ||
+	if len(out.Agents) != 1 || out.Agents[0].BackendAuthStatus != crux.BackendAuthTokenExpired ||
 		out.Agents[0].BackendAuthRefreshable == nil || *out.Agents[0].BackendAuthRefreshable {
 		t.Fatalf("agent backend auth = %+v", out.Agents)
 	}
@@ -42,7 +42,7 @@ func TestSpokeProvidersWireCompat(t *testing.T) {
 		t.Fatalf("providers = %+v", got)
 	}
 	p := got[0]
-	if p.Provider != "claude" || p.AuthState != agent.ProviderAuthNeedsLogin || p.AvailabilityState != agent.ProviderAvailUnknown ||
+	if p.Provider != "claude" || p.AuthState != crux.ProviderAuthNeedsLogin || p.AvailabilityState != crux.ProviderAvailUnknown ||
 		p.Since != "2026-10-01T08:00:00Z" || p.Evidence != in.Providers[0].Evidence || p.NextAction != in.Providers[0].NextAction ||
 		len(p.AffectedAgents) != 1 || p.AffectedAgents[0] != "scanner" {
 		t.Fatalf("sanitized provider = %+v", p)
@@ -63,12 +63,12 @@ func TestSpokeProvidersWireCompat(t *testing.T) {
 }
 
 func TestSanitizeProviderStatusesClosesVocabulary(t *testing.T) {
-	in := []agent.ProviderStatus{
+	in := []crux.ProviderStatus{
 		{Provider: "claude<script>", AuthState: "totally-fine", AvailabilityState: "bogus", Evidence: "<b>x</b>", Since: "not-a-time"},
-		{Provider: "", AuthState: agent.ProviderAuthUsable},
+		{Provider: "", AuthState: crux.ProviderAuthUsable},
 	}
 	for i := 0; i < maxProviderStatuses+5; i++ {
-		in = append(in, agent.ProviderStatus{Provider: "p", AuthState: agent.ProviderAuthUsable, AvailabilityState: agent.ProviderAvailable})
+		in = append(in, crux.ProviderStatus{Provider: "p", AuthState: crux.ProviderAuthUsable, AvailabilityState: crux.ProviderAvailable})
 	}
 	got := sanitizeProviderStatuses(in)
 	if len(got) != maxProviderStatuses {
@@ -78,7 +78,7 @@ func TestSanitizeProviderStatusesClosesVocabulary(t *testing.T) {
 	if first.Provider != "claudescript" {
 		t.Errorf("provider = %q", first.Provider)
 	}
-	if first.AuthState != agent.ProviderAuthUnknown || first.AvailabilityState != agent.ProviderAvailUnknown {
+	if first.AuthState != crux.ProviderAuthUnknown || first.AvailabilityState != crux.ProviderAvailUnknown {
 		t.Errorf("unrecognised states must become unknown, got %q / %q", first.AuthState, first.AvailabilityState)
 	}
 	if first.Evidence != "bx/b" || first.Since != "" {
@@ -111,7 +111,7 @@ func TestHeartbeatStoresProviders(t *testing.T) {
 		if h.ID != "h1" {
 			continue
 		}
-		if len(h.Providers) != 1 || h.Providers[0].AuthState != agent.ProviderAuthRefreshable || h.Providers[0].AffectedAgents[0] != "scanner" {
+		if len(h.Providers) != 1 || h.Providers[0].AuthState != crux.ProviderAuthRefreshable || h.Providers[0].AffectedAgents[0] != "scanner" {
 			t.Fatalf("stored providers = %+v", h.Providers)
 		}
 		if len(h.Agents) != 1 || h.Agents[0].BackendAuthRefreshable == nil || !*h.Agents[0].BackendAuthRefreshable {

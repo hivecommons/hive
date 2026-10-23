@@ -500,7 +500,7 @@ type StatusPayload struct {
 	// Providers rolls Agents up per provider into two separate dimensions,
 	// auth_state and availability_state (ADR-0024, #12611). Redacted; the
 	// same block the hub heartbeat carries. Omitted when disabled.
-	Providers []agent.ProviderStatus `json:"providers,omitempty"`
+	Providers []crux.ProviderStatus `json:"providers,omitempty"`
 	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
 	// that were left out of Agents (the dashboard cards), each with the stable
 	// reason category it was omitted for. It exists so an operator whose

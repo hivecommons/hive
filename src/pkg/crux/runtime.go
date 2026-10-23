@@ -11,11 +11,14 @@
 // references each consumer still makes; this package is how that number goes
 // down.
 //
-// Stage 1 keeps this a façade: the value types below are aliases of their
-// pkg/agent definitions, so the adapter is zero-cost and nothing about the
-// runtime's behaviour changes. Each interface method is annotated with the
-// consumer that needs it today; a method with no consumer does not belong
-// here.
+// Stage 1 keeps this a façade: the observation value types below are aliases
+// of their pkg/agent definitions, so the adapter is zero-cost and nothing
+// about the runtime's behaviour changes. Value types this package owns (the
+// provider-status vocabulary in provider_status.go) are defined in the leaf
+// package pkg/crux/types and aliased both here and in pkg/agent, because this
+// package imports pkg/agent for Process and so cannot be imported by it. Each
+// interface method is annotated with the consumer that needs it today; a
+// method with no consumer does not belong here.
 package crux
 
 import (

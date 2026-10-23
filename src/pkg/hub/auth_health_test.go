@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 func agentAt(name, status string, since time.Time) AgentSummary {
@@ -19,7 +19,7 @@ func agentAt(name, status string, since time.Time) AgentSummary {
 func TestEvaluateAuthHealth_NoEnabledAgentsIsOK(t *testing.T) {
 	now := time.Now()
 	agents := []AgentSummary{
-		{Name: "scanner", Enabled: false, BackendAuthStatus: agent.BackendAuthUnlicensed},
+		{Name: "scanner", Enabled: false, BackendAuthStatus: crux.BackendAuthUnlicensed},
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthOK {
@@ -31,7 +31,7 @@ func TestEvaluateAuthHealth_AllOKIsOK(t *testing.T) {
 	now := time.Now()
 	agents := []AgentSummary{
 		{Name: "scanner", Enabled: true},
-		{Name: "outreach", Enabled: true, BackendAuthStatus: agent.BackendAuthOK},
+		{Name: "outreach", Enabled: true, BackendAuthStatus: crux.BackendAuthOK},
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthOK {
@@ -42,7 +42,7 @@ func TestEvaluateAuthHealth_AllOKIsOK(t *testing.T) {
 func TestEvaluateAuthHealth_SomeFailingIsDegraded(t *testing.T) {
 	now := time.Now()
 	agents := []AgentSummary{
-		agentAt("scanner", agent.BackendAuthUnlicensed, now.Add(-30*time.Minute)),
+		agentAt("scanner", crux.BackendAuthUnlicensed, now.Add(-30*time.Minute)),
 		{Name: "outreach", Enabled: true},
 	}
 	rep := evaluateAuthHealth(agents, now)
@@ -57,8 +57,8 @@ func TestEvaluateAuthHealth_SomeFailingIsDegraded(t *testing.T) {
 func TestEvaluateAuthHealth_AllFailingBelowThresholdIsDegraded(t *testing.T) {
 	now := time.Now()
 	agents := []AgentSummary{
-		agentAt("scanner", agent.BackendAuthUnlicensed, now.Add(-5*time.Minute)),
-		agentAt("outreach", agent.BackendAuthUnlicensed, now.Add(-3*time.Minute)),
+		agentAt("scanner", crux.BackendAuthUnlicensed, now.Add(-5*time.Minute)),
+		agentAt("outreach", crux.BackendAuthUnlicensed, now.Add(-3*time.Minute)),
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDegraded {
@@ -75,8 +75,8 @@ func TestEvaluateAuthHealth_AllFailingPastThresholdIsDown(t *testing.T) {
 	firstFailed := now.Add(-40 * time.Minute)
 	lastFailed := now.Add(-20 * time.Minute)
 	agents := []AgentSummary{
-		agentAt("scanner", agent.BackendAuthUnlicensed, firstFailed),
-		agentAt("outreach", agent.BackendAuthUnlicensed, lastFailed),
+		agentAt("scanner", crux.BackendAuthUnlicensed, firstFailed),
+		agentAt("outreach", crux.BackendAuthUnlicensed, lastFailed),
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDown {
@@ -95,14 +95,14 @@ func TestEvaluateAuthHealth_AllFailingPastThresholdIsDown(t *testing.T) {
 func TestEvaluateAuthHealth_RightAtThreshold(t *testing.T) {
 	now := time.Now()
 	since := now.Add(-AuthHealthDownThreshold())
-	agents := []AgentSummary{agentAt("scanner", agent.BackendAuthUnlicensed, since)}
+	agents := []AgentSummary{agentAt("scanner", crux.BackendAuthUnlicensed, since)}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDown {
 		t.Fatalf("Status at exactly the threshold = %q, want %q", rep.Status, AuthHealthDown)
 	}
 
 	belowThreshold := now.Add(-AuthHealthDownThreshold() + time.Minute)
-	agents = []AgentSummary{agentAt("scanner", agent.BackendAuthUnlicensed, belowThreshold)}
+	agents = []AgentSummary{agentAt("scanner", crux.BackendAuthUnlicensed, belowThreshold)}
 	rep = evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDegraded {
 		t.Fatalf("Status one minute short of threshold = %q, want %q", rep.Status, AuthHealthDegraded)
@@ -115,7 +115,7 @@ func TestEvaluateAuthHealth_MissingSinceNeverReadsAsDown(t *testing.T) {
 	// be read as "just started failing" (which would silently gate down
 	// forever) NOR immediately down (unknown duration is not evidence).
 	agents := []AgentSummary{
-		{Name: "scanner", Enabled: true, BackendAuthStatus: agent.BackendAuthUnlicensed},
+		{Name: "scanner", Enabled: true, BackendAuthStatus: crux.BackendAuthUnlicensed},
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDegraded {
@@ -127,8 +127,8 @@ func TestEvaluateAuthHealth_QuotaAndUnreachableClassesCount(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Hour)
 	agents := []AgentSummary{
-		agentAt("scanner", agent.BackendAuthQuota, past),
-		agentAt("outreach", agent.BackendAuthUnreachable, past),
+		agentAt("scanner", crux.BackendAuthQuota, past),
+		agentAt("outreach", crux.BackendAuthUnreachable, past),
 	}
 	rep := evaluateAuthHealth(agents, now)
 	if rep.Status != AuthHealthDown {
@@ -153,10 +153,10 @@ func TestAuthHealthDownThreshold_InvalidFallsBackToDefault(t *testing.T) {
 func TestAuthHealthReason_NamesUpToLimitThenSummarizes(t *testing.T) {
 	now := time.Now()
 	agents := []AgentSummary{
-		agentAt("a", agent.BackendAuthUnlicensed, now),
-		agentAt("b", agent.BackendAuthUnlicensed, now),
-		agentAt("c", agent.BackendAuthUnlicensed, now),
-		agentAt("d", agent.BackendAuthUnlicensed, now),
+		agentAt("a", crux.BackendAuthUnlicensed, now),
+		agentAt("b", crux.BackendAuthUnlicensed, now),
+		agentAt("c", crux.BackendAuthUnlicensed, now),
+		agentAt("d", crux.BackendAuthUnlicensed, now),
 	}
 	reason := authHealthReason(agents, 4)
 	if got := "4 of 4 enabled agents are failing backend auth: a (unlicensed), b (unlicensed), c (unlicensed) (+1 more)"; reason != got {

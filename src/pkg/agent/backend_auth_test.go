@@ -275,3 +275,10 @@ func TestMarkProviderErrorLockedTransientDoesNotSetBackendAuth(t *testing.T) {
 		t.Fatalf("transient rate_limit set BackendAuth.Status = %q, want empty", agent.BackendAuth.Status)
 	}
 }
+
+func TestRollUpProviderStatusAliasDelegates(t *testing.T) {
+	got := RollUpProviderStatus([]ProviderAgentEvidence{{Agent: "a", Provider: "copilot", Enabled: true, AuthStatus: BackendAuthUnlicensed}})
+	if len(got) != 1 || got[0].AuthState != ProviderAuthNeedsLogin {
+		t.Fatalf("RollUpProviderStatus = %+v, want one needs-login provider", got)
+	}
+}

@@ -8,12 +8,13 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
 // AgentActivityFor gathers the per-agent liveness evidence the hub needs to
 // tell a deliberately-paused agent from one that is running but unable to work.
-func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) AgentActivity {
+func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *crux.Process, onDemandFromPack map[string]bool) AgentActivity {
 	act := AgentActivity{
 		Paused: proc.Paused,
 		// Pause provenance (#4041): ride WHO/WHY/WHEN to the hub so the fleet
@@ -78,11 +79,11 @@ func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 // ApplyBackendAuth copies the agent's backend-auth canary (#6558) onto act,
 // plus whether its credential is refreshable without a human login
 // (ADR-0024). Shared by both heartbeat build paths so neither drops it.
-func ApplyBackendAuth(act *AgentActivity, mgr *agent.Manager, name string, proc *agent.AgentProcess) {
+func ApplyBackendAuth(act *AgentActivity, mgr *agent.Manager, name string, proc *crux.Process) {
 	if act == nil || proc == nil {
 		return
 	}
-	if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+	if status := proc.BackendAuth.Status; status != "" && status != crux.BackendAuthOK {
 		act.BackendAuthStatus = status
 		act.BackendAuthSince = proc.BackendAuth.Since
 		act.BackendAuthLastError = proc.BackendAuth.LastError
@@ -97,10 +98,10 @@ func ApplyBackendAuth(act *AgentActivity, mgr *agent.Manager, name string, proc 
 
 // ProviderStatusForHeartbeat rolls the heartbeat's agents up per provider
 // (ADR-0024, #12611). The provider is the agent's effective backend.
-func ProviderStatusForHeartbeat(agents []AgentSummary) []agent.ProviderStatus {
-	evidence := make([]agent.ProviderAgentEvidence, 0, len(agents))
+func ProviderStatusForHeartbeat(agents []AgentSummary) []crux.ProviderStatus {
+	evidence := make([]crux.ProviderAgentEvidence, 0, len(agents))
 	for _, a := range agents {
-		e := agent.ProviderAgentEvidence{
+		e := crux.ProviderAgentEvidence{
 			Agent:          a.Name,
 			Provider:       a.Backend,
 			Enabled:        a.Enabled,
@@ -114,10 +115,10 @@ func ProviderStatusForHeartbeat(agents []AgentSummary) []agent.ProviderStatus {
 		}
 		evidence = append(evidence, e)
 	}
-	return agent.RollUpProviderStatus(evidence)
+	return crux.RollUpProviderStatus(evidence)
 }
 
-func HeartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {
+func HeartbeatKickInterval(govState governor.State, name string, proc *crux.Process, onDemandFromPack map[string]bool) time.Duration {
 	if proc == nil || !proc.Config.UsesGovernorKick() || proc.Config.OnDemand || onDemandFromPack[name] {
 		return 0
 	}
@@ -140,7 +141,7 @@ func QuotaExhaustedAgentCount(agents []AgentSummary) int {
 	return count
 }
 
-func QuotaExhaustedProcessCount(statuses map[string]*agent.AgentProcess) int {
+func QuotaExhaustedProcessCount(statuses map[string]*crux.Process) int {
 	count := 0
 	for _, proc := range statuses {
 		if proc != nil && proc.QuotaExhausted && !proc.Paused && proc.State == agent.StateRunning {

@@ -3,32 +3,21 @@ package agent
 import (
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-// BackendAuth status values. These are the coarse states an operator or the
-// hub's fleet aggregator needs to distinguish; classifyProviderError's finer
-// error classes (rate_limit, overloaded, retrying, ...) are transient and
-// deliberately do NOT change this state — only failures that mean "this
-// agent's backend will not authenticate again without an operator" do.
+// BackendAuth status values live in pkg/crux/types as part of the Crux
+// runtime surface (hivecommons/hive#13536); these aliases keep pkg/agent's
+// names valid. See types.BackendAuthForbidden for why a bare 403 is its own
+// state (#6500).
 const (
-	BackendAuthOK           = "ok"
-	BackendAuthUnlicensed   = "unlicensed"
-	BackendAuthTokenExpired = "token-expired"
-	BackendAuthUnreachable  = "unreachable"
-	BackendAuthQuota        = "quota"
-	// BackendAuthForbidden is an auth-class rejection whose specific cause the
-	// pane text does NOT reveal — a bare HTTP 403 with no "not licensed" wording
-	// and no credential-rejection wording (#6500). The Copilot enterprise API
-	// returns exactly this: its entitlement failure is an HTTP 403 whose body is
-	// "unauthorized: not licensed to use Copilot", and when a CLI renders only
-	// the bare status the code cannot tell a revoked seat from a stale token
-	// from an org policy. Reporting "token-expired" here — as this file did
-	// before — asserts a credential expiry the code never verified and sends an
-	// operator to re-login, which cannot fix an entitlement 403. That confident
-	// wrong verdict IS the "false claim of lack of credentials" this issue is
-	// about, so an unattributable 403 is reported as its own honest state
-	// instead of being collapsed into a definitive expiry claim.
-	BackendAuthForbidden = "forbidden"
+	BackendAuthOK           = types.BackendAuthOK
+	BackendAuthUnlicensed   = types.BackendAuthUnlicensed
+	BackendAuthTokenExpired = types.BackendAuthTokenExpired
+	BackendAuthUnreachable  = types.BackendAuthUnreachable
+	BackendAuthQuota        = types.BackendAuthQuota
+	BackendAuthForbidden    = types.BackendAuthForbidden
 )
 
 // credentialRejectionSignals are the substrings in an auth-class pane line that
@@ -67,17 +56,9 @@ func lineIndicatesCredentialRejection(lower string) bool {
 // callers already apply to LastError elsewhere.
 const backendAuthErrorLimit = 200
 
-// BackendAuthState is the per-agent backend-auth canary (#6558): the spoke's
-// own record of whether this agent's inference backend currently
-// authenticates, when that became true, and the offending line if not. It is
-// exposed verbatim in the per-agent status JSON and in the heartbeat sent to
-// the hub. Zero value (Status == "") means "never classified an auth failure"
-// — read as ok, identical to an explicit BackendAuthOK.
-type BackendAuthState struct {
-	Status    string    `json:"status,omitempty"`
-	Since     time.Time `json:"since,omitempty"`
-	LastError string    `json:"lastError,omitempty"`
-}
+// BackendAuthState is the per-agent backend-auth canary (#6558); see
+// types.BackendAuthState.
+type BackendAuthState = types.BackendAuthState
 
 // classifyBackendAuthStatus maps a classifyProviderError verdict onto the
 // coarser BackendAuth states. ok=false means the class is transient (or

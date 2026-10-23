@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -35,7 +36,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, activityTestLogger(), agent.ProjectContext{})
 	pausedAt := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
 	lastPane := time.Date(2026, 8, 20, 8, 55, 0, 0, time.UTC)
-	proc := &agent.AgentProcess{
+	proc := &crux.Process{
 		Paused:         true,
 		PausedTrigger:  "dashboard-api",
 		PausedReason:   "manual pause",
@@ -69,7 +70,7 @@ func TestAgentActivityForRidesPauseProvenance(t *testing.T) {
 func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 	cfg := activityTestConfig()
 	mgr := agent.NewManager(cfg.Agents, activityTestLogger(), agent.ProjectContext{})
-	proc := &agent.AgentProcess{}
+	proc := &crux.Process{}
 
 	scheduled := AgentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
 	if !scheduled.ExpectedActive || !scheduled.Enabled {
@@ -88,7 +89,7 @@ func TestAgentActivityForExpectedActiveHonorsOnDemandPack(t *testing.T) {
 }
 
 func TestHeartbeatKickInterval(t *testing.T) {
-	proc := &agent.AgentProcess{}
+	proc := &crux.Process{}
 	govState := governor.State{Cadences: map[string]governor.AgentCadence{
 		"quality": {Interval: 2 * time.Hour},
 	}}
@@ -102,7 +103,7 @@ func TestHeartbeatKickInterval(t *testing.T) {
 }
 
 func TestQuotaExhaustedCountsAndReasons(t *testing.T) {
-	statuses := map[string]*agent.AgentProcess{
+	statuses := map[string]*crux.Process{
 		"counted":   {State: agent.StateRunning, QuotaExhausted: true},
 		"paused":    {State: agent.StateRunning, QuotaExhausted: true, Paused: true},
 		"stopped":   {State: agent.StateStopped, QuotaExhausted: true},

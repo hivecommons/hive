@@ -2,9 +2,9 @@
 
 Status: **partly shipped (v5).** Stage 1 is in progress in this repo: the
 boundary is named, the architecture ratchet and the tmux funnel are live,
-`crux.Runtime` exists and the dashboard is on it, and the remaining Stage 1
-items (hub onto the crux value types, CI path filters) are tracked on the
-RFC. Stages 2 and 3 are design only.
+`crux.Runtime` exists, the dashboard is on it, the hub and spoke are on the
+crux value types, and the remaining Stage 1 item (CI path filters) is
+tracked on the RFC. Stages 2 and 3 are design only.
 
 ## What Crux is
 
@@ -81,7 +81,7 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    `HasSession`); `pkg/tui` attaches through it and the ratchet's tmux
    baseline is zero everywhere else. Operations are added as call sites
    move behind the funnel, not ahead of them.
-3. `crux.Runtime` (dashboard shipped, hub pending): `src/pkg/crux/runtime.go`
+3. `crux.Runtime` (dashboard shipped, hub on the crux value types): `src/pkg/crux/runtime.go`
    is the exported runtime surface, grouped as `Lifecycle`, `Observer`,
    `Kicker`, `Definitions`, `Fleet` and `Credentials`; every method is
    annotated with the consumer that needs it and `*agent.Manager` satisfies
@@ -94,10 +94,20 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    `agent.<Symbol>` references; what remains is audit, commit-trailer,
    provider-status, Copilot-token and agent-mode helpers plus the test-only
    manager constructors, none of which a lifecycle interface covers.
-   `pkg/hub` holds no manager at all: its 18 references are the provider
-   status value types (`ProviderStatus`, `BackendAuth*`, `ProviderAuth*`),
-   which move to `pkg/crux` as the next step. `pkg/crux` is inside the
-   boundary for the ratchet's purposes.
+   `pkg/hub` holds no manager at all: its 18 references were the provider
+   status value types (`ProviderStatus`, `ProviderAgentEvidence`,
+   `RollUpProviderStatus`, `BackendAuthState`, the `BackendAuth*`,
+   `ProviderAuth*` and `Provider*` availability constants). Those now live in
+   `pkg/crux/types`, a leaf package that `pkg/agent` imports and aliases
+   (the alias direction is reversed for them: Crux defines, the runtime
+   implementation re-exports) and that `pkg/crux` re-exports as
+   `crux.<Name>`, so consumers never see the leaf. It is a separate package
+   only because `pkg/crux` still aliases `agent.AgentProcess` and therefore
+   imports `pkg/agent`, which cannot import it back; it folds into
+   `pkg/crux` once `Process` is its own type. That move took `pkg/hub` to 1
+   (`AgentAvailableAtACMMLevel`), `pkg/hub/spoke` 15 → 5, `pkg/dashboard`
+   51 → 39 and `cmd/hive` 37 → 33. `pkg/crux` and everything under it is
+   inside the boundary for the ratchet's purposes.
 4. Agent configuration as its own struct and file (shipped):
    `AgentRuntimeConfig` and `AgentRuntimeGovernorConfig` in
    `src/pkg/config/agent_config.go`, embedded inline in `Config` and

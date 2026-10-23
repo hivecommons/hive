@@ -3,7 +3,7 @@ package hub
 import (
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 // maxProviderStatuses bounds the spoke-reported providers block. A hive runs a
@@ -12,18 +12,18 @@ const maxProviderStatuses = 16
 
 var (
 	knownProviderAuthStates = map[string]bool{
-		agent.ProviderAuthUsable:            true,
-		agent.ProviderAuthRefreshable:       true,
-		agent.ProviderAuthNeedsLogin:        true,
-		agent.ProviderAuthStoreInaccessible: true,
-		agent.ProviderAuthUnknown:           true,
+		crux.ProviderAuthUsable:            true,
+		crux.ProviderAuthRefreshable:       true,
+		crux.ProviderAuthNeedsLogin:        true,
+		crux.ProviderAuthStoreInaccessible: true,
+		crux.ProviderAuthUnknown:           true,
 	}
 	knownProviderAvailabilityStates = map[string]bool{
-		agent.ProviderAvailable:      true,
-		agent.ProviderRateLimited:    true,
-		agent.ProviderQuotaExhausted: true,
-		agent.ProviderUnavailable:    true,
-		agent.ProviderAvailUnknown:   true,
+		crux.ProviderAvailable:      true,
+		crux.ProviderRateLimited:    true,
+		crux.ProviderQuotaExhausted: true,
+		crux.ProviderUnavailable:    true,
+		crux.ProviderAvailUnknown:   true,
 	}
 )
 
@@ -31,11 +31,11 @@ var (
 // (ADR-0024, #12611). States outside the closed vocabulary become "unknown"
 // rather than being dropped or trusted, so a newer spoke's state never reads
 // as healthy on an older hub. nil stays nil (old spoke: no signal).
-func sanitizeProviderStatuses(in []agent.ProviderStatus) []agent.ProviderStatus {
+func sanitizeProviderStatuses(in []crux.ProviderStatus) []crux.ProviderStatus {
 	if in == nil {
 		return nil
 	}
-	out := make([]agent.ProviderStatus, 0, len(in))
+	out := make([]crux.ProviderStatus, 0, len(in))
 	for _, p := range in {
 		if len(out) >= maxProviderStatuses {
 			break
@@ -46,13 +46,13 @@ func sanitizeProviderStatuses(in []agent.ProviderStatus) []agent.ProviderStatus 
 		}
 		auth := strings.TrimSpace(p.AuthState)
 		if !knownProviderAuthStates[auth] {
-			auth = agent.ProviderAuthUnknown
+			auth = crux.ProviderAuthUnknown
 		}
 		avail := strings.TrimSpace(p.AvailabilityState)
 		if !knownProviderAvailabilityStates[avail] {
-			avail = agent.ProviderAvailUnknown
+			avail = crux.ProviderAvailUnknown
 		}
-		out = append(out, agent.ProviderStatus{
+		out = append(out, crux.ProviderStatus{
 			Provider:          provider,
 			AuthState:         auth,
 			AvailabilityState: avail,

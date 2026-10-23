@@ -3,8 +3,8 @@ package dashboard
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 func TestBuildProviderStatusRollsUpEnabledAgents(t *testing.T) {
@@ -17,18 +17,18 @@ func TestBuildProviderStatusRollsUpEnabledAgents(t *testing.T) {
 		},
 	}}
 	agents := []FrontendAgent{
-		{Name: "scanner", GovBackend: "claude", BackendAuthStatus: agent.BackendAuthTokenExpired, BackendAuthSince: "2026-10-01T08:00:00Z", BackendAuthRefreshable: &refreshable},
-		{Name: "reviewer-2", ReplicaBase: "reviewer", GovBackend: "copilot", BackendAuthStatus: agent.BackendAuthQuota},
-		{Name: "idle", GovBackend: "codex", BackendAuthStatus: agent.BackendAuthUnlicensed},
+		{Name: "scanner", GovBackend: "claude", BackendAuthStatus: crux.BackendAuthTokenExpired, BackendAuthSince: "2026-10-01T08:00:00Z", BackendAuthRefreshable: &refreshable},
+		{Name: "reviewer-2", ReplicaBase: "reviewer", GovBackend: "copilot", BackendAuthStatus: crux.BackendAuthQuota},
+		{Name: "idle", GovBackend: "codex", BackendAuthStatus: crux.BackendAuthUnlicensed},
 	}
 	got := buildProviderStatus(agents, cfg)
 	if len(got) != 2 {
 		t.Fatalf("want claude + copilot (disabled codex skipped), got %+v", got)
 	}
-	if got[0].Provider != "claude" || got[0].AuthState != agent.ProviderAuthRefreshable || got[0].Since != "2026-10-01T08:00:00Z" {
+	if got[0].Provider != "claude" || got[0].AuthState != crux.ProviderAuthRefreshable || got[0].Since != "2026-10-01T08:00:00Z" {
 		t.Errorf("claude = %+v", got[0])
 	}
-	if got[1].Provider != "copilot" || got[1].AuthState != agent.ProviderAuthUsable || got[1].AvailabilityState != agent.ProviderQuotaExhausted {
+	if got[1].Provider != "copilot" || got[1].AuthState != crux.ProviderAuthUsable || got[1].AvailabilityState != crux.ProviderQuotaExhausted {
 		t.Errorf("replica copilot = %+v", got[1])
 	}
 

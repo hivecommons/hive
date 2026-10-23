@@ -36,8 +36,8 @@ func backendAuthErrorStatuses(cfg *config.Config, lastKick *time.Time) map[strin
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         clippedPaneLine,
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
-			BackendAuth: agent.BackendAuthState{
-				Status:    agent.BackendAuthUnreachable,
+			BackendAuth: crux.BackendAuthState{
+				Status:    crux.BackendAuthUnreachable,
 				Since:     time.Now(),
 				LastError: clippedPaneLine,
 			},

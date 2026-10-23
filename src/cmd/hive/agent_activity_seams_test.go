@@ -6,6 +6,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -76,13 +77,13 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
 	since := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
-	failing := &agent.AgentProcess{BackendAuth: agent.BackendAuthState{
-		Status:    agent.BackendAuthTokenExpired,
+	failing := &agent.AgentProcess{BackendAuth: crux.BackendAuthState{
+		Status:    crux.BackendAuthTokenExpired,
 		Since:     since,
 		LastError: "401 token expired",
 	}}
 	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", failing, nil)
-	if act.BackendAuthStatus != agent.BackendAuthTokenExpired ||
+	if act.BackendAuthStatus != crux.BackendAuthTokenExpired ||
 		!act.BackendAuthSince.Equal(since) ||
 		act.BackendAuthLastError != "401 token expired" {
 		t.Errorf("failing backend auth did not ride through: status=%q since=%v lastError=%q",
@@ -90,7 +91,7 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 	}
 
 	for name, proc := range map[string]*agent.AgentProcess{
-		"explicit ok":      {BackendAuth: agent.BackendAuthState{Status: agent.BackendAuthOK, Since: since, LastError: "stale"}},
+		"explicit ok":      {BackendAuth: crux.BackendAuthState{Status: crux.BackendAuthOK, Since: since, LastError: "stale"}},
 		"never classified": {},
 	} {
 		act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)

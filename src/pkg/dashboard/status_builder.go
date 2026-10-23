@@ -254,7 +254,7 @@ func agentInferenceLastError(proc *crux.Process, now time.Time) (msg string, at 
 		return "", time.Time{}, false
 	}
 	providerErr := proc.ProviderErrorClass != "" && now.Before(proc.ProviderErrorBackoffUntil)
-	backendAuthErr := proc.BackendAuth.Status != "" && proc.BackendAuth.Status != agent.BackendAuthOK
+	backendAuthErr := proc.BackendAuth.Status != "" && proc.BackendAuth.Status != crux.BackendAuthOK
 	duringTurn := proc.LastKick != nil && when.After(*proc.LastKick)
 	if !providerErr && !backendAuthErr && !duringTurn {
 		return "", time.Time{}, false
@@ -429,19 +429,19 @@ func BuildFrontendStatus(
 }
 
 // buildProviderStatus is the ADR-0024 per-provider auth/availability roll-up
-// for /api/status — the same agent.RollUpProviderStatus the hub heartbeat
+// for /api/status — the same crux.RollUpProviderStatus the hub heartbeat
 // carries, keyed by each agent's effective backend. nil when disabled.
-func buildProviderStatus(agents []FrontendAgent, cfg *config.Config) []agent.ProviderStatus {
+func buildProviderStatus(agents []FrontendAgent, cfg *config.Config) []crux.ProviderStatus {
 	if cfg == nil || !cfg.Providers.StatusEnabled() {
 		return nil
 	}
-	evidence := make([]agent.ProviderAgentEvidence, 0, len(agents))
+	evidence := make([]crux.ProviderAgentEvidence, 0, len(agents))
 	for _, a := range agents {
 		ac, ok := cfg.Agents[a.Name]
 		if !ok && a.ReplicaBase != "" {
 			ac, ok = cfg.Agents[a.ReplicaBase]
 		}
-		e := agent.ProviderAgentEvidence{
+		e := crux.ProviderAgentEvidence{
 			Agent:       a.Name,
 			Provider:    a.GovBackend,
 			Enabled:     ok && ac.Enabled,
@@ -454,7 +454,7 @@ func buildProviderStatus(agents []FrontendAgent, cfg *config.Config) []agent.Pro
 		}
 		evidence = append(evidence, e)
 	}
-	return agent.RollUpProviderStatus(evidence)
+	return crux.RollUpProviderStatus(evidence)
 }
 
 // staleSinceRFC3339 renders the snapshot's stale-since marker; the
@@ -1194,7 +1194,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			a.InferenceLastError = inferenceLastErr
 			a.InferenceLastErrorAt = formatOptionalTime(inferenceLastErrAt)
 		}
-		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+		if status := proc.BackendAuth.Status; status != "" && status != crux.BackendAuthOK {
 			a.BackendAuthStatus = status
 			a.BackendAuthSince = formatOptionalTime(proc.BackendAuth.Since)
 			a.BackendAuthLastError = proc.BackendAuth.LastError

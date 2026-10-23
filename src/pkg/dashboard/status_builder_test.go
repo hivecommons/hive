@@ -688,8 +688,8 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 			ProviderErrorClass:        "backend_auth_error",
 			ProviderErrorLine:         "Inference backend outage (401): Error querying the database: FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute",
 			ProviderErrorBackoffUntil: time.Now().Add(time.Minute),
-			BackendAuth: agent.BackendAuthState{
-				Status:    agent.BackendAuthUnreachable,
+			BackendAuth: crux.BackendAuthState{
+				Status:    crux.BackendAuthUnreachable,
 				Since:     time.Now(),
 				LastError: "Inference backend outage (401): Error querying the database",
 			},
@@ -707,7 +707,7 @@ func TestBuildFrontendStatus_BackendAuthErrorBlocksWithoutLogin(t *testing.T) {
 	if !strings.Contains(a.StatusEvidence, "backend_auth_error") || !strings.Contains(a.StatusEvidence, "Inference backend outage") {
 		t.Fatalf("StatusEvidence = %q, want backend auth outage detail", a.StatusEvidence)
 	}
-	if a.BackendAuthStatus != agent.BackendAuthUnreachable || a.BackendAuthLastError == "" {
+	if a.BackendAuthStatus != crux.BackendAuthUnreachable || a.BackendAuthLastError == "" {
 		t.Fatalf("backend auth fields = %q/%q, want unreachable with detail", a.BackendAuthStatus, a.BackendAuthLastError)
 	}
 }

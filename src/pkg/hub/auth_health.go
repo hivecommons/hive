@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/pkg/crux"
 )
 
 const (
@@ -81,7 +81,7 @@ func evaluateAuthHealth(agents []AgentSummary, now time.Time) AuthHealthReport {
 	var failing []AgentSummary
 	for _, a := range enabled {
 		status := strings.TrimSpace(a.BackendAuthStatus)
-		if status == "" || status == agent.BackendAuthOK {
+		if status == "" || status == crux.BackendAuthOK {
 			continue
 		}
 		failing = append(failing, a)

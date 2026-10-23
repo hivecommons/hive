@@ -22,8 +22,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
@@ -789,7 +789,7 @@ type HeartbeatPayload struct {
 	// (ADR-0024, #12611): redacted, no credential material. Omitted when the
 	// spoke disables provider status or has no enabled agent naming a
 	// backend; an old hub ignores it.
-	Providers []agent.ProviderStatus `json:"providers,omitempty"`
+	Providers []crux.ProviderStatus `json:"providers,omitempty"`
 	// Output-freshness telemetry is optional and backward compatible: older
 	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
 	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`

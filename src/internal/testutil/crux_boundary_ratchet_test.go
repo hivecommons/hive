@@ -46,12 +46,15 @@ import (
 // it moved onto crux.Runtime and the crux value aliases (#13536 Stage 1,
 // item 3); what remains there is audit, trailer, provider-status, Copilot
 // token and agent-mode helpers plus the test-only manager constructors.
+// Provider-status and backend-auth types then moved to pkg/crux/types
+// (re-exported by pkg/crux, aliased by pkg/agent): hub 18 → 1, spoke 15 → 5,
+// dashboard 51 → 39, cmd/hive 37 → 33.
 var cruxSymbolBaseline = map[string]int{
-	"cmd/hive":      37,
-	"pkg/dashboard": 51,
+	"cmd/hive":      33,
+	"pkg/dashboard": 39,
 	"pkg/discord":   1,
-	"pkg/hub":       18,
-	"pkg/hub/spoke": 15,
+	"pkg/hub":       1,
+	"pkg/hub/spoke": 5,
 	"pkg/ioscan":    5,
 	"pkg/loginscan": 7,
 	"pkg/proxy":     14,

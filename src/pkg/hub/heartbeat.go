@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -261,7 +261,7 @@ type HeartbeatPayload struct {
 	ProviderLimitRebuffs         int                             `json:"provider_limit_rebuffs,omitempty"`
 	ProviderLimitHiveWide        bool                            `json:"provider_limit_hive_wide,omitempty"`
 	ProviderLimitAgents          []string                        `json:"provider_limit_agents,omitempty"`
-	Providers                    []agent.ProviderStatus          `json:"providers,omitempty"`
+	Providers                    []crux.ProviderStatus           `json:"providers,omitempty"`
 	Health                       map[string]any                  `json:"health"`
 	DashboardURL                 string                          `json:"dashboard_url"`
 	LastWriteCapableKickAt       string                          `json:"last_write_capable_kick_at,omitempty"`

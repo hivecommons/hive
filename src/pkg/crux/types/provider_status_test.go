@@ -1,4 +1,4 @@
-package agent
+package types
 
 import (
 	"strings"
@@ -129,5 +129,34 @@ func TestRollUpProviderStatusLoginPrompt(t *testing.T) {
 	}
 	if p := findProvider(t, got, "copilot"); p.AuthState != ProviderAuthNeedsLogin {
 		t.Errorf("copilot login prompt = %q, want needs-login", p.AuthState)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestRollUpProviderStatusQuotaPaneAndUnknownStatus(t *testing.T) {
+	got := RollUpProviderStatus([]ProviderAgentEvidence{
+		{Agent: "a", Provider: "codex", Enabled: true, QuotaExhausted: true},
+		{Agent: "b", Provider: "gemini", Enabled: true, AuthStatus: "some-new-status"},
+	})
+	codex := findProvider(t, got, "codex")
+	if codex.AuthState != ProviderAuthUsable || codex.AvailabilityState != ProviderQuotaExhausted {
+		t.Errorf("pane quota = %q / %q, want usable / quota-exhausted", codex.AuthState, codex.AvailabilityState)
+	}
+	if !strings.Contains(codex.NextAction, "Quota exhausted") {
+		t.Errorf("quota next_action = %q", codex.NextAction)
+	}
+	gemini := findProvider(t, got, "gemini")
+	if gemini.AuthState != ProviderAuthUnknown || gemini.NextAction != "" {
+		t.Errorf("unrecognised status = %q / next_action %q, want unknown with no action", gemini.AuthState, gemini.NextAction)
+	}
+}
+
+func TestProviderNextActionStoreInaccessible(t *testing.T) {
+	if got := providerNextAction(ProviderAuthStoreInaccessible, "", nil); !strings.Contains(got, "credential store readable") {
+		t.Fatalf("store-inaccessible next_action = %q", got)
+	}
+	if got := providerNextAction(ProviderAuthNeedsLogin, "", map[string]int{BackendAuthUnlicensed: 1}); !strings.Contains(got, "licence/seat") {
+		t.Fatalf("unlicensed next_action = %q", got)
 	}
 }

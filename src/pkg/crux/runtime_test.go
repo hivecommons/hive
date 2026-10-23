@@ -48,3 +48,29 @@ func TestValueAliasesTrackAgent(t *testing.T) {
 		t.Fatal("Process alias does not share agent.AgentProcess's State type")
 	}
 }
+
+// TestProviderStatusAliasesTrackTypes pins that the provider-status surface
+// re-exported here is the same one pkg/agent aliases, so a hub comparing
+// crux.BackendAuthOK against a Process.BackendAuth.Status the runtime wrote
+// can never drift.
+func TestProviderStatusAliasesTrackTypes(t *testing.T) {
+	if BackendAuthOK != agent.BackendAuthOK || BackendAuthForbidden != agent.BackendAuthForbidden {
+		t.Fatal("backend auth constants diverged from pkg/agent")
+	}
+	if ProviderAuthNeedsLogin != agent.ProviderAuthNeedsLogin || ProviderAvailUnknown != agent.ProviderAvailUnknown {
+		t.Fatal("provider state constants diverged from pkg/agent")
+	}
+	var p Process
+	p.BackendAuth = BackendAuthState{Status: BackendAuthQuota}
+	if p.BackendAuth.Status != agent.BackendAuthQuota {
+		t.Fatal("BackendAuthState alias does not share agent.AgentProcess's BackendAuth type")
+	}
+	got := RollUpProviderStatus([]ProviderAgentEvidence{{Agent: "a", Provider: "copilot", Enabled: true, AuthStatus: BackendAuthUnlicensed}})
+	want := agent.RollUpProviderStatus([]agent.ProviderAgentEvidence{{Agent: "a", Provider: "copilot", Enabled: true, AuthStatus: BackendAuthUnlicensed}})
+	if len(got) != 1 || len(want) != 1 || got[0].AuthState != want[0].AuthState || got[0].Evidence != want[0].Evidence {
+		t.Fatalf("RollUpProviderStatus = %+v, agent wrapper = %+v", got, want)
+	}
+	if got[0].AuthState != ProviderAuthNeedsLogin {
+		t.Fatalf("AuthState = %q, want %q", got[0].AuthState, ProviderAuthNeedsLogin)
+	}
+}
