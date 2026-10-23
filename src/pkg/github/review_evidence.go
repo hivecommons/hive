@@ -526,18 +526,18 @@ func writeReviewEvidence(path string, b *evidence.Bundle) error {
 	if err != nil {
 		return err
 	}
-	err = writeEvidenceFile(path, data)
+	err = writeEvidenceBundleFile(path, data)
 	if !errors.Is(err, fs.ErrPermission) {
 		return err
 	}
 	fallback := reviewEvidenceFallbackPath(path)
-	if ferr := writeEvidenceFile(fallback, data); ferr != nil {
+	if ferr := writeEvidenceBundleFile(fallback, data); ferr != nil {
 		return fmt.Errorf("%w (fallback %s: %v)", err, fallback, ferr)
 	}
 	return nil
 }
 
-func writeEvidenceFile(path string, data []byte) error {
+func writeEvidenceBundleFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := mkdirEvidenceDirs(dir); err != nil {
 		return err
