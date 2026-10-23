@@ -275,6 +275,12 @@ func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
 	}
 	for _, dir := range dirs {
 		if err := mkdirAllNoFollow(sharedAgentHome, dir, interactiveHomeDirMode); err != nil {
+			// Permission errors mean we do not own this per-UID home; expected steady state.
+			if errors.Is(err, fs.ErrPermission) {
+				m.logger.Debug("per-agent XDG dir creation skipped (not owner)",
+					"agent", agentName, "dir", dir, "error", err)
+				return
+			}
 			m.logger.Warn("failed to create per-agent XDG dir",
 				"agent", agentName, "dir", dir, "error", err)
 			return
@@ -445,6 +451,11 @@ func (m *Manager) ownAgentDir(agentName, dir string, uid int) {
 		m.logger.Debug("per-agent dir left world-writable (chown unavailable)",
 			"agent", agentName, "dir", dir, "error", err)
 		if cerr := os.Chmod(dir, interactiveHomeSharedDirMode); cerr != nil {
+			if errors.Is(cerr, fs.ErrPermission) {
+				m.logger.Debug("per-agent dir mode restore skipped (not owner)",
+					"agent", agentName, "dir", dir, "error", cerr)
+				return
+			}
 			m.logger.Warn("failed to restore per-agent dir mode",
 				"agent", agentName, "dir", dir, "error", cerr)
 		}
