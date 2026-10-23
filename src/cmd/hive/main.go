@@ -2164,6 +2164,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
 	}
 	b.agentMgr = agent.NewManager(b.cfg.EnabledAgents(), b.logger, b.projectCtx)
+	// The runtime's spans go through pkg/tracing so they carry the hive
+	// component attribute and count toward reach (#3973); the runtime itself
+	// only knows the OpenTelemetry API (#13536).
+	b.agentMgr.SetSpanStarter(tracing.StartSpan)
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }

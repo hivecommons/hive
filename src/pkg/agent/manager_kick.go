@@ -12,7 +12,6 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
-	"github.com/hivecommons/hive/pkg/tracing"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -105,7 +104,7 @@ func (m *Manager) SendKick(name string, message string) error {
 	// (the default). SendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
 	// lifecycle. Ended before delivery bookkeeping via defer.
-	_, span := tracing.StartSpan(context.Background(), "agent.send_kick",
+	_, span := m.startSpan(context.Background(), "agent.send_kick",
 		attribute.String("agent.name", name))
 	defer span.End()
 

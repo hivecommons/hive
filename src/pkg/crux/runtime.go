@@ -107,6 +107,14 @@ type TurnInterruption = types.TurnInterruption
 // see Process.TurnLoss. cmd/hive: state persistence.
 type TurnLoss = types.TurnLoss
 
+// FatalNetworkErrorPatterns returns the pane substrings the runtime treats
+// as a fatal startup network failure and restarts the agent on. Hosts that
+// compose prompts echoed into the pane assert their text never contains one
+// (pkg/review's prompt builders; #7553). The slice is a copy.
+func FatalNetworkErrorPatterns() []string {
+	return append([]string(nil), agent.FatalNetworkErrorPatterns...)
+}
+
 // Lifecycle starts, stops, pauses and restarts agents.
 type Lifecycle interface {
 	// Start launches a configured agent. Dashboard: agent config and pack

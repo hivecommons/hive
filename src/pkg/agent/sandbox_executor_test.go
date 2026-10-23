@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 )
@@ -132,9 +132,9 @@ func (sandboxFakeMinter) MintPushToken(context.Context, string) (string, error) 
 
 type sandboxFakePR struct{ called bool }
 
-func (p *sandboxFakePR) CreatePR(context.Context, string, string, string, string, string) (ghpkg.CreatePRResult, error) {
+func (p *sandboxFakePR) CreatePR(context.Context, string, string, string, string, string) (types.PRResult, error) {
 	p.called = true
-	return ghpkg.CreatePRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
+	return types.PRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
 }
 
 func TestSandboxExecutorWorkspacePrepSanitizesCredentials(t *testing.T) {

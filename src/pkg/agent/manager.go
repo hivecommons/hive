@@ -755,6 +755,11 @@ type Manager struct {
 	// non-reentrant RWMutex, so reading the callback under a second Lock there
 	// would deadlock the kick path.
 	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
+	// spanStarter, when set, opens the trace spans the runtime emits
+	// (SendKick's agent.send_kick). Same atomic.Pointer discipline as
+	// recordPromptCallback: read on paths that hold m.mu. Nil falls back to
+	// the OpenTelemetry global tracer; see SetSpanStarter.
+	spanStarter atomic.Pointer[SpanStarter]
 	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
 	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
 	// manager's crash loop observes those two conditions without restarting

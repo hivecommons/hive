@@ -1,9 +1,10 @@
-package agent
+package review_test
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/crux"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -34,7 +35,7 @@ func TestReviewPromptsNeverContainFatalNetworkRestartTriggers(t *testing.T) {
 		variants["perspective-"+string(p)] = review.BuildPerspectivePromptWith(p, pr, review.PromptOptions{PostComments: true})
 	}
 	for name, prompt := range variants {
-		for _, pat := range FatalNetworkErrorPatterns {
+		for _, pat := range crux.FatalNetworkErrorPatterns() {
 			if strings.Contains(prompt, pat) {
 				t.Errorf("%s prompt contains %q, which the agent poller treats as a fatal network error and restarts the reviewer on", name, pat)
 			}

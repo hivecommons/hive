@@ -5,14 +5,20 @@ import (
 	"log/slog"
 	"testing"
 
-	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 )
 
 type wiringPRCreator struct{ id int }
 
-func (*wiringPRCreator) CreatePR(context.Context, string, string, string, string, string) (ghpkg.CreatePRResult, error) {
-	return ghpkg.CreatePRResult{}, nil
+// wiringMinter stands in for the host's pushbroker.GitHubAppMinter: the
+// manager only needs a distinguishable TokenMinter.
+type wiringMinter struct{ id int }
+
+func (*wiringMinter) MintPushToken(context.Context, string) (string, error) { return "", nil }
+
+func (*wiringPRCreator) CreatePR(context.Context, string, string, string, string, string) (types.PRResult, error) {
+	return types.PRResult{}, nil
 }
 
 // #9621: SandboxGitHubWiring reports what the sandbox executor will use, so
@@ -23,19 +29,18 @@ func TestSandboxGitHubWiringReportsLatestSetters(t *testing.T) {
 		t.Fatalf("fresh manager wiring = (%v, %v), want (nil, nil)", pr, minter)
 	}
 	first, second := &wiringPRCreator{id: 1}, &wiringPRCreator{id: 2}
-	firstAuth, secondAuth := &ghpkg.AppAuth{}, &ghpkg.AppAuth{}
+	firstMinter, secondMinter := &wiringMinter{id: 1}, &wiringMinter{id: 2}
 
 	m.SetSandboxPRClient(first)
-	m.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: firstAuth})
+	m.SetSandboxPushMinter(firstMinter)
 	m.SetSandboxPRClient(second)
-	m.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: secondAuth})
+	m.SetSandboxPushMinter(secondMinter)
 
 	pr, minter := m.SandboxGitHubWiring()
 	if pr != second {
 		t.Fatalf("PR client = %v, want the latest one set", pr)
 	}
-	got, ok := minter.(pushbroker.GitHubAppMinter)
-	if !ok || got.Auth != secondAuth {
-		t.Fatalf("push minter = %#v, want the latest AppAuth", minter)
+	if minter != pushbroker.TokenMinter(secondMinter) {
+		t.Fatalf("push minter = %#v, want the latest one set", minter)
 	}
 }

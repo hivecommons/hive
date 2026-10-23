@@ -1,31 +1,32 @@
 package agent
 
 import (
-	"github.com/hivecommons/hive/pkg/agentaudit"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
-// The audit vocabulary — action names, the AuditSink interface, and the
-// detail-string formatting — lives in the stdlib-only leaf pkg/agentaudit so
-// policy-layer packages can emit audit events without importing this runtime
-// package. The aliases below are the lifecycle actions this runtime itself
-// emits; the governor-side vocabulary (lease stages, commit trailers,
-// artifact links, FormatAuditDetail, Fields) is agentaudit's alone and is
-// referenced there directly (hivecommons/hive#13536).
+// The audit vocabulary this runtime emits — the lifecycle action names, the
+// AuditSink interface and the Fields helper — is DEFINED in the stdlib-only
+// leaf pkg/crux/types, so policy-layer packages can emit audit events without
+// importing this runtime package and the runtime does not import the
+// governor-side pkg/agentaudit (which aliases the same names for the
+// recorder). The governor-side vocabulary (lease stages, commit trailers,
+// artifact links, FormatAuditDetail) is agentaudit's alone and is referenced
+// there directly (hivecommons/hive#13536).
 const (
-	AuditAgentStarted     = agentaudit.AuditAgentStarted
-	AuditAgentStartFailed = agentaudit.AuditAgentStartFailed
-	AuditAgentStopped     = agentaudit.AuditAgentStopped
-	AuditAgentKicked      = agentaudit.AuditAgentKicked
-	AuditAgentPaused      = agentaudit.AuditAgentPaused
-	AuditAgentResumed     = agentaudit.AuditAgentResumed
-	AuditAgentAdded       = agentaudit.AuditAgentAdded
-	AuditAgentRemoved     = agentaudit.AuditAgentRemoved
-	AuditAgentBackendSet  = agentaudit.AuditAgentBackendSet
-	AuditAgentModelSet    = agentaudit.AuditAgentModelSet
-	AuditToolApproval     = agentaudit.AuditToolApproval
+	AuditAgentStarted     = types.AuditAgentStarted
+	AuditAgentStartFailed = types.AuditAgentStartFailed
+	AuditAgentStopped     = types.AuditAgentStopped
+	AuditAgentKicked      = types.AuditAgentKicked
+	AuditAgentPaused      = types.AuditAgentPaused
+	AuditAgentResumed     = types.AuditAgentResumed
+	AuditAgentAdded       = types.AuditAgentAdded
+	AuditAgentRemoved     = types.AuditAgentRemoved
+	AuditAgentBackendSet  = types.AuditAgentBackendSet
+	AuditAgentModelSet    = types.AuditAgentModelSet
+	AuditToolApproval     = types.AuditToolApproval
 
-	AuditCopilotTokenMissing = agentaudit.AuditCopilotTokenMissing
-	AuditClaudeTokenMissing  = agentaudit.AuditClaudeTokenMissing
+	AuditCopilotTokenMissing = types.AuditCopilotTokenMissing
+	AuditClaudeTokenMissing  = types.AuditClaudeTokenMissing
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
@@ -39,7 +40,7 @@ const auditActorSystem = "system"
 // AuditSink receives agent lifecycle events for durable, queryable recording.
 // See agentaudit.AuditSink for the contract; the alias exists because it is
 // the parameter type of SetAuditSink.
-type AuditSink = agentaudit.AuditSink
+type AuditSink = types.AuditSink
 
 // SetAuditSink installs the durable audit sink. Safe to leave unset: a nil
 // sink makes every audit call a no-op, which is what unit tests and any
@@ -72,7 +73,7 @@ func (m *Manager) auditWithActor(actor, action, agentName string, fields map[str
 }
 
 // auditFields builds a fields map from alternating key/value pairs; see
-// agentaudit.Fields.
+// types.Fields.
 func auditFields(kv ...any) map[string]any {
-	return agentaudit.Fields(kv...)
+	return types.Fields(kv...)
 }

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/effects"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/pushbroker"
@@ -41,7 +41,7 @@ func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name
 }
 
 type PRCreator interface {
-	CreatePR(ctx context.Context, repo, head, base, title, body string) (ghpkg.CreatePRResult, error)
+	CreatePR(ctx context.Context, repo, head, base, title, body string) (types.PRResult, error)
 }
 
 type SandboxKickSpec struct {
@@ -80,7 +80,7 @@ type SandboxKickResult struct {
 	TranscriptPath string
 	Sandbox        sandbox.Result
 	Broker         *pushbroker.Result
-	PR             *ghpkg.CreatePRResult
+	PR             *types.PRResult
 	TimedOut       bool
 	Error          string
 }

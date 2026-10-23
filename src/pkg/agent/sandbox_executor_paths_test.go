@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 )
@@ -57,9 +57,9 @@ type fakePRClient struct {
 	called bool
 }
 
-func (c *fakePRClient) CreatePR(ctx context.Context, repo, head, base, title, body string) (ghpkg.CreatePRResult, error) {
+func (c *fakePRClient) CreatePR(ctx context.Context, repo, head, base, title, body string) (types.PRResult, error) {
 	c.called = true
-	return ghpkg.CreatePRResult{URL: "https://example.invalid/pr/1"}, c.err
+	return types.PRResult{URL: "https://example.invalid/pr/1"}, c.err
 }
 
 func sandboxPathsSpec(workdir string) SandboxKickSpec {
