@@ -117,6 +117,12 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 // fetched) is known, the head's bundle is started here from pr so the merge
 // and its CI are never lost.
 func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle), pr *gh.PullRequest) *evidence.Bundle {
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
@@ -126,7 +132,7 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	)
 	if head != "" {
 		path = ReviewEvidencePath("", repo, number, head)
-		got, err := LoadReviewEvidence(path)
+		got, err := LoadVerifiedReviewEvidence(path, reviewEvidenceVerifierForKey(key))
 		switch {
 		case err == nil:
 			b = got
@@ -137,7 +143,7 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 		}
 	}
 	if b == nil {
-		found, err := FindReviewEvidence("", repo, number, "")
+		found, err := FindVerifiedReviewEvidence("", repo, number, "", reviewEvidenceVerifierForKey(key))
 		switch {
 		case err == nil && found.Entry != nil:
 			b, path = found.Entry.Bundle, found.Entry.Path
@@ -164,12 +170,6 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 		c.logger.Warn("review evidence: merged bundle invalid, not written",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return nil
-	}
-	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
-	if err != nil {
-		c.logger.Warn("review evidence: signing key unusable, writing unsigned",
-			slog.String("error", err.Error()))
-		key = nil
 	}
 	if err := evidence.Seal(b, key); err != nil {
 		c.logger.Warn("review evidence: could not seal merged bundle",

@@ -21,7 +21,7 @@ re-read-then-write `Enforce` that heals duplicate stage pills
 records transitions, regressions and history hops
 (`src/pkg/stagelabels/store.go:397`, `IsRegression` at
 `src/pkg/stagelabels/store.go:540`). The dashboard activity tracker and the
-hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:584-588`).
+hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:957-962`).
 
 **What is not central — three gaps.**
 

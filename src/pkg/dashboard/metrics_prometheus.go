@@ -173,7 +173,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeIssueReopenMetrics(&b, hiveID)
+	if verifier, err := s.reviewEvidenceVerifier(); err == nil {
+		writeIssueReopenMetrics(&b, hiveID, verifier)
+	}
 	writePRFollowUpMetrics(&b, hiveID, writeHeader)
 	writeTrajectoryMetrics(&b, hiveID, writeHeader)
 	writeStageEngineMetrics(&b, hiveID, writeHeader, stageengine.DefaultCounters())

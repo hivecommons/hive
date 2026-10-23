@@ -231,7 +231,7 @@ func (c *Client) recordReviewEvidence(ctx context.Context, req ReviewRequest, re
 	for _, head := range heads {
 		u := updates[head]
 		if len(u.verdicts) > 0 {
-			existing, _ := LoadReviewEvidence(ReviewEvidencePath("", repo, req.Number, head))
+			existing, _ := LoadVerifiedReviewEvidence(ReviewEvidencePath("", repo, req.Number, head), reviewEvidenceVerifierForKey(key))
 			needsSignals := existing == nil
 			for _, v := range u.verdicts {
 				if existing != nil && !containsEvidenceVerdict(existing.Verdicts, v) {
@@ -273,6 +273,11 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 	b, err := LoadReviewEvidence(path)
 	switch {
 	case err == nil:
+		if err := reviewEvidenceVerifierForKey(key).Verify(b); err != nil {
+			c.logger.Warn("review evidence: existing bundle failed integrity verification, left untouched",
+				slog.String("path", path), slog.String("error", err.Error()))
+			return
+		}
 	case errors.Is(err, os.ErrNotExist):
 		pr := fetchPR()
 		if pr == nil {

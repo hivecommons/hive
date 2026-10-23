@@ -697,7 +697,12 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundles, unreadable, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
+	verifier, err := s.reviewEvidenceVerifier()
+	if err != nil {
+		jsonError(w, "review evidence verification unavailable: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	bundles, unreadable, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot, verifier)
 	if err != nil {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -742,8 +747,9 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadEvidenceBundles reads every bundle under root
-// (<owner>/<repo>/<pr>/<sha>.json). Unparseable files are counted, not fatal.
-func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
+// (<owner>/<repo>/<pr>/<sha>.json). Unparseable files and bundles that fail
+// integrity verification are counted, not included in dashboard aggregates.
+func loadEvidenceBundles(root string, verifier ghpkg.ReviewEvidenceVerifier) ([]*evidence.Bundle, int, error) {
 	if root == "" {
 		root = ghpkg.ReviewEvidenceRoot
 	}
@@ -768,7 +774,7 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 		if filepath.Ext(path) != ".json" {
 			return nil
 		}
-		b, lerr := ghpkg.LoadReviewEvidence(path)
+		b, lerr := ghpkg.LoadVerifiedReviewEvidence(path, verifier)
 		if lerr != nil || b.SchemaVersion != evidence.SchemaVersion {
 			unreadable++
 			return nil

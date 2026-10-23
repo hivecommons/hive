@@ -576,14 +576,14 @@ const stageTrackerSentinelMoreFormat = " (+%d more)"
 // stageTrackerSentinel reports whether the sentinel flagged repo#number at
 // head: the PR wears the configured alert label (the sweep's blocking
 // signal, read from the live labels so a webhook label patch flips it at
-// once) or the review evidence bundle for head records sentinel findings
-// (how a trusted author's notice-only finding is seen, since those carry a
-// comment rather than the label). The findings count and the first
+// once) or the verified review evidence bundle for head records sentinel
+// findings (how a trusted author's notice-only finding is seen, since those
+// carry a comment rather than the label). The findings count and the first
 // finding's summary come from the bundle; both are empty when only the
 // label says so. One file read per PR with a known head, ENOENT when the
 // sentinel never wrote one; the tracker payload is memoised so this runs
 // once per snapshot, not per request.
-func (s *Server) stageTrackerSentinel(repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
+func (s *Server) stageTrackerSentinel(verifier *github.ReviewEvidenceVerifier, repo string, number int, head string, labels []string) (alert bool, findings int, reason string) {
 	label := s.sentinelLabel()
 	for _, l := range labels {
 		if strings.EqualFold(strings.TrimSpace(l), label) {
@@ -591,10 +591,10 @@ func (s *Server) stageTrackerSentinel(repo string, number int, head string, labe
 			break
 		}
 	}
-	if head == "" {
+	if head == "" || verifier == nil {
 		return alert, 0, ""
 	}
-	b, err := github.LoadReviewEvidence(github.ReviewEvidencePath("", repo, number, head))
+	b, err := github.LoadVerifiedReviewEvidence(github.ReviewEvidencePath("", repo, number, head), *verifier)
 	if err != nil || b == nil || len(b.Sentinel) == 0 {
 		return alert, 0, ""
 	}
@@ -1004,6 +1004,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		cfg = s.deps.Config
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
+	verifier, verifierErr := s.reviewEvidenceVerifier()
+	var evidenceVerifier *github.ReviewEvidenceVerifier
+	if verifierErr == nil {
+		evidenceVerifier = &verifier
+	}
 	lookup := func(repo string, number int) (stagelabels.Record, bool) {
 		if store == nil {
 			return stagelabels.Record{}, false
@@ -1156,7 +1161,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Lane = laneHive
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
-		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(repoName, pr.Number, pr.HeadSHA, pr.Labels)
+		it.SentinelAlert, it.SentinelFindings, it.SentinelReason = s.stageTrackerSentinel(evidenceVerifier, repoName, pr.Number, pr.HeadSHA, pr.Labels)
 		it.LinkedIssues = stageTrackerPRLinkedIssues(pr, status.GitHubBaseURL)
 		add(it)
 	}

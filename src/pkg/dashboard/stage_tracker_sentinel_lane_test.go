@@ -38,6 +38,9 @@ func writeSentinelBundle(t *testing.T, root, repo string, number int, head strin
 		t.Fatal(err)
 	}
 	b := evidence.Bundle{SchemaVersion: evidence.SchemaVersion, Repo: repo, Number: number, HeadSHA: head, Sentinel: findings}
+	if err := evidence.Seal(&b, nil); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := json.Marshal(b)
 	if err != nil {
 		t.Fatal(err)
@@ -163,13 +166,13 @@ func TestStageTrackerSentinelFlag(t *testing.T) {
 func TestStageTrackerSentinelConfiguredLabel(t *testing.T) {
 	s := newTestServer()
 	s.deps = &Dependencies{Config: &config.Config{Sentinel: config.SentinelConfig{Label: "security-hold"}}}
-	if alert, _, _ := s.stageTrackerSentinel("acme/console", 1, "", []string{"Security-Hold"}); !alert {
+	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{"Security-Hold"}); !alert {
 		t.Fatal("configured label (case-insensitive) must flag")
 	}
-	if alert, _, _ := s.stageTrackerSentinel("acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
+	if alert, _, _ := s.stageTrackerSentinel(nil, "acme/console", 1, "", []string{config.DefaultSentinelLabel}); alert {
 		t.Fatal("the default label is not the configured one")
 	}
-	if alert, n, reason := s.stageTrackerSentinel("acme/console", 1, "", nil); alert || n != 0 || reason != "" {
+	if alert, n, reason := s.stageTrackerSentinel(nil, "acme/console", 1, "", nil); alert || n != 0 || reason != "" {
 		t.Fatal("no label, no head → clean")
 	}
 }

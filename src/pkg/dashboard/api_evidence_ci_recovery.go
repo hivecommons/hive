@@ -801,7 +801,15 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 	if !rollup.FetchedAt.IsZero() && now.Sub(rollup.FetchedAt) < ciRecoveryRefresh {
 		return
 	}
-	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
+	var verifier ghpkg.ReviewEvidenceVerifier
+	if mc.reviewEvidenceVerifier != nil {
+		var err error
+		verifier, err = mc.reviewEvidenceVerifier()
+		if err != nil {
+			return
+		}
+	}
+	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot, verifier)
 	if err != nil {
 		return
 	}

@@ -3014,6 +3014,9 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.metricsCollector.SetProjectScope(b.cfg.Project.Org, primaryRepo, b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
 	b.metricsCollector.SetGitHubClientProvider(b.currentGitHubClient)
 	b.metricsCollector.SetCoverageTargetProvider(func() int { return b.cfg.Governor.EffectiveCoverageTarget() })
+	b.metricsCollector.SetReviewEvidenceVerifierProvider(func() (github.ReviewEvidenceVerifier, error) {
+		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
+	})
 	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
