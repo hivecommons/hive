@@ -14703,8 +14703,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNeedsHumanLabels(d) {
       return (d && Array.isArray(d.needs_human_labels) ? d.needs_human_labels : []).map(l => String(l || '').trim().toLowerCase()).filter(Boolean);
     }
+    // Patterns catch new stages/labels the explicit set does not list yet:
+    // needs-human*, *needs-decision, *needs-author.
     function stageTrackerLabelNeedsHuman(label, set) {
       const l = String(label || '').toLowerCase();
+      if (l.startsWith('needs-human') || l.endsWith('needs-decision') || l.endsWith('needs-author')) return true;
       return (set || []).some(s => l === s || l.startsWith(s + '/'));
     }
     function stageTrackerItemNeedsHuman(item, set) {
@@ -14845,7 +14848,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       shown.sort(stageTrackerLabelCompare);
       const chip = l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 });
       const set = Array.isArray(opts.needsHumanLabels) ? opts.needsHumanLabels : [];
-      const needsHuman = set.length ? { count: (items || []).filter(it => stageTrackerItemNeedsHuman(it, set)).length, on: f.needsHuman, labels: set.slice() } : null;
+      const needsHuman = set.length ? { count: (items || []).filter(it => stageTrackerItemNeedsHuman(it, set)).length, on: f.needsHuman, labels: set.slice(), covered: all.filter(l => stageTrackerLabelNeedsHuman(l, set)).map(chip) } : null;
       return { chips: shown.map(chip), all: all.map(chip), hidden: Math.max(0, all.length - shown.length), needsHuman };
     }
 
@@ -15035,8 +15038,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // In-app modal (config-overlay recipe), never a native prompt.
     function stageTrackerLabelDialogHtml(data) {
       return `<div class="ham-label-dialog-tools"><input type="search" class="ham-input" id="activity-monitor-labels-q" placeholder="Type to filter labels…" autocomplete="off" spellcheck="false" aria-label="Filter the label list" value="${esc(data.query)}" data-input-action="stageTrackerLabelDialogQuery" data-arg-types="w"><span class="ham-count">${esc(stageTrackerLabelDialogCountText(data))}</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="hamFilter" data-arg0="labelsClear"${data.selected ? '' : ' disabled'} title="Clear every label filter">Clear</button></div>`
-        + (data.needsHuman ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}</div>` : '')
+        + (data.needsHuman ? `<div class="ham-labels ham-label-dialog-needs-human">${stageTrackerNeedsHumanChipHtml(data.needsHuman)}</div>` + stageTrackerNeedsHumanGroupHtml(data.needsHuman) : '')
         + `<div class="ham-labels ham-label-dialog-list" role="group" aria-label="All labels">${stageTrackerLabelDialogListHtml(data)}</div>`;
+    }
+    // Group header listing the labels the Needs human facet covers.
+    function stageTrackerNeedsHumanGroupHtml(nh) {
+      const covered = nh && Array.isArray(nh.covered) ? nh.covered : [];
+      if (!covered.length) return '';
+      return `<div class="ham-label-group" role="group" aria-label="Needs human labels"><div class="ham-label-group-title">Needs human covers ${covered.length} ${covered.length === 1 ? 'label' : 'labels'}</div><div class="ham-labels">${covered.map(stageTrackerLabelChipHtml).join('')}</div></div>`;
     }
     function stageTrackerLabelDialogListHtml(data) {
       return data.rows.length ? data.rows.map(stageTrackerLabelChipHtml).join('') : `<div class="ham-empty">No label matches “${esc(data.query)}”</div>`;

@@ -51,7 +51,9 @@ const (
 //
 // The Hive activity monitor's synthetic "Needs human" facet reads the same
 // list (StageTrackerResponse.NeedsHumanLabels); a label matches when it
-// equals an entry or sits under it as `entry/...` (needs-human/agent-ready).
+// equals an entry or sits under it as `entry/...` (needs-human/agent-ready),
+// or matches the needs-human*, *needs-decision or *needs-author patterns
+// (stageTrackerLabelNeedsHuman).
 //
 // "blocked" is deliberately absent: the codebase treats it as a contributor
 // skip marker and a PR mergeability state, not as a parked-on-a-person label.
