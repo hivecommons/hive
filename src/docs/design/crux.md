@@ -104,6 +104,8 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    `GovernorConfig` so every `hive.yaml` key keeps its position.
 5. CI path filters so agent-only PRs skip hub/rest/dashboard shards and vice
    versa, with the aggregate required check kept fail-closed.
+6. A `crux` CLI (shipped): `src/cmd/crux` with `run`, `ps`, `logs`, `kick`,
+   `stop`, each mapped onto `crux.Runtime` methods. See [CLI](#cli) below.
 
 **Stage 2: nested module.** `src/crux/` as its own Go module via `go.work`,
 own tags (`crux/vX.Y.Z`), own coverage floor and CI lane; same repo, same PRs,
@@ -116,6 +118,39 @@ quotas; Hive and hub become clients; the hub-to-runtime contract becomes
 explicit and versioned; move to `hivecommons/crux`. Only when a second
 consumer is real (candidates: Nous / Experiment Lab, Spektacular, Dibs,
 external optimizer and formal-verification lanes, enterprise agent services).
+
+## CLI
+
+The Stage 2 plan called for a `crux` binary; it shipped in Stage 1 instead
+(`src/cmd/crux`, logic in `src/pkg/crux/cli`, operator page
+[crux-cli.md](../crux-cli.md)) because it is the cheapest proof that
+`crux.Runtime` is a sufficient surface: every subcommand is written against
+the interface, and the only `*agent.Manager` reference is the constructor in
+`pkg/crux/cli/runtime.go`. Putting the logic under `pkg/crux/` keeps it inside
+the ratchet boundary, so it adds no baseline row.
+
+| Subcommand | `crux.Runtime` methods |
+|---|---|
+| `run` | `Definitions.AddAgent`, `Lifecycle.Start`, `Observer.GetBufferOutput` (stream), `Lifecycle.Stop` (on interrupt) |
+| `ps` | `Observer.AllStatuses` |
+| `logs` | `Observer.ResolveAgent`, `Observer.GetOutput` / `GetBufferOutput` / `FullLogHeader`+`CaptureFullLog` |
+| `kick` | `Observer.ResolveAgent`, `Kicker.SendKick` |
+| `stop` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
+
+Definitions are the two formats hive already reads (`kind: AgentDefinition`
+via `defsrc`, or an `agents_dir` overlay via `config.LoadAgentOverrides`),
+and `--config hive.yaml` builds the runtime from `cfg.EnabledAgents()` the
+way `cmd/hive` does. No new format.
+
+What writing it surfaced: the runtime is in-process. `Lifecycle.Stop` and
+`Kicker.SendKick` consult the Manager's in-memory state, and `Runtime` has no
+adoption method, so a second process cannot stop or kick an agent that a
+first process started. The CLI therefore makes `crux run` the long-lived
+command and has it serve a unix control socket (`<workdir>/crux.sock`) that
+`ps`/`logs`/`kick`/`stop` forward to when present. That socket is a
+single-work-dir convenience and is not the Stage 3 API; what Stage 3 has to
+add to `Runtime` (or beside it) is exactly the piece the socket papers over:
+a way for a process other than the launcher to own or adopt an agent.
 
 ## Not doing
 

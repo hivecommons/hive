@@ -78,7 +78,8 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -538,6 +539,10 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
 COPY --from=builder /hive-backup /usr/local/bin/hive-backup
+# crux (#13536, src/docs/crux-cli.md): the agent runtime's own CLI. Ships in
+# the image so an operator can `crux ps` / `crux logs` against a definition
+# set inside the container without the dashboard.
+COPY --from=builder /crux /usr/local/bin/crux
 
 # #5646 — hivectl travels in the image as CARGO, not as part of the runtime.
 # It is the host-side client of the dashboard API, and the whole premise of
@@ -573,7 +578,7 @@ COPY --from=builder /hivectl /usr/local/share/hive/hivectl
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/share/hive/hivectl; do \
+             /usr/local/bin/crux /usr/local/share/hive/hivectl; do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
       chmod 0755 "$b"; \

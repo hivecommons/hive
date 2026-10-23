@@ -1,0 +1,112 @@
+# `crux` CLI
+
+`crux` is the command line for the agent runtime
+([design record](design/crux.md), RFC
+[#13536](https://github.com/hivecommons/hive/issues/13536)). It runs an agent
+from a definition and observes and controls it through `crux.Runtime`
+(`src/pkg/crux/runtime.go`), with none of the governor, GitHub integration or
+dashboard around it. It is the Stage 1 proof that the runtime surface is
+enough to drive an agent; the Stage 2 binary ships the same commands from the
+nested module.
+
+## Build
+
+```sh
+cd src && go build -o crux ./cmd/crux
+```
+
+The image also ships it at `/usr/local/bin/crux`.
+
+## Commands
+
+Every subcommand maps onto one or two `crux.Runtime` methods and nothing else:
+
+| Command | Runtime methods |
+|---|---|
+| `crux run <definition.yaml \| agent>` | `Definitions.AddAgent` (definition file) then `Lifecycle.Start`; streams `Observer.GetBufferOutput`; `Lifecycle.Stop` on interrupt |
+| `crux ps [--json]` | `Observer.AllStatuses` |
+| `crux logs <agent> [-n N] [--json]` | `Observer.ResolveAgent`, `Observer.GetOutput` |
+| `crux logs <agent> --buffer` | `Observer.GetBufferOutput` |
+| `crux logs <agent> --full` | `Observer.FullLogHeader`, `Observer.CaptureFullLog` |
+| `crux kick <agent> <message...\|->` | `Observer.ResolveAgent`, `Kicker.SendKick` (`-` reads the message from stdin) |
+| `crux stop <agent>` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
+
+Global flags go before the subcommand:
+
+| Flag | Meaning |
+|---|---|
+| `--workdir DIR` | agent work dir; default `$HIVE_WORK_DIR`, then `$HOME/.crux`. Exported to the runtime as `HIVE_WORK_DIR`. |
+| `--config hive.yaml` | a hive config whose enabled `agents:` define the runtime, loaded with the same `config.Load` as `hive` itself |
+| `--socket PATH` | control socket; default `<workdir>/crux.sock` |
+| `--local` | never use a running `crux run`'s socket; build a fresh runtime in this process |
+
+`run` flags: `--detach` (return after `Start`, leave the agent running),
+`--interval D` (output poll interval, default 1s), `--no-socket`.
+
+Exit codes: 0 ok, 1 runtime error, 2 usage.
+
+## Definitions
+
+`crux run` reads the two definition formats hive already has, so a file that
+works in hive works here unchanged:
+
+- a **portable `AgentDefinition`** (`kind: AgentDefinition`, the dashboard's
+  import/export schema; see `src/examples/agents/customized-agent.yaml`). It
+  is parsed with `defsrc.ParseDefinition` and merged over the import defaults
+  with `defsrc.MergeAllowedFields`, so it can set exactly the fields a
+  dashboard import can. The agent is named by `metadata.name`.
+- a **per-agent overlay** (a bare `AgentConfig` document, the `agents_dir`
+  file format read by `config.LoadAgentOverrides`). The agent is named by the
+  file's base name, so `fixer.yaml` defines `fixer`.
+
+Either way `Config.ApplyAgentDefaults` fills the per-agent defaults a
+`hive.yaml` load would, and the result goes to `Definitions.AddAgent`.
+
+With `--config`, `crux run <agent>` starts an agent already defined in that
+`hive.yaml`; the runtime is built from `cfg.EnabledAgents()` and a
+`ProjectContext` derived the way `cmd/hive` derives it (org, repos, policy
+dir, ACMM level), minus the fields that need a GitHub client.
+
+```sh
+crux run examples/agents/customized-agent.yaml   # foreground; Ctrl-C stops it
+crux --config /etc/hive/hive.yaml run scout      # from a hive config
+crux run --detach fixer.yaml                     # start and return
+```
+
+## The runtime is in-process
+
+`*agent.Manager` holds lifecycle state in memory: which agents are running,
+their ring buffers, kick history. That is why `crux run` is the long-lived
+command. While it is in the foreground it serves a unix control socket at
+`<workdir>/crux.sock`; `ps`, `logs`, `kick` and `stop` connect to it when it
+is present, so they act on the runtime that actually started the agent:
+
+```sh
+crux run fixer.yaml &          # terminal 1 (or a second terminal, in the foreground)
+crux ps                        # terminal 2: fixer  running
+crux logs fixer -n 50
+crux kick fixer "look at the failing build on main"
+crux stop fixer
+```
+
+The socket carries one JSON request per connection (the subcommand's argv)
+and one JSON response (what the command wrote, and its exit code). The
+serving side runs the same command code the local path runs. It is a local
+convenience for one work dir, not the Stage 3 `crux serve` API.
+
+Without a live socket, the observer commands build a fresh runtime from
+`--config`. That runtime knows the definitions and can read the pane of a
+tmux session that outlived its `crux run` (`logs --full`, which captures the
+pane directly), but it holds no lifecycle state, so `ps` reports the
+definitions as stopped and `kick`/`stop` are refused as not running. A socket
+file nobody answers on (a `run` that died without cleanup) is reported and
+treated as absent. `--detach` leaves an agent running in tmux with no
+supervisor; use it when something else will own the session.
+
+## What this is not
+
+The CLI reaches `*agent.Manager` only to construct it
+(`pkg/crux/cli/runtime.go`). It does not touch the governor's kick schedule,
+GitHub relays, ACMM packs, the dashboard or the hub. An agent run this way has
+exactly the runtime's own behaviour: tmux launch, engine adapter, kick
+delivery, crash and stall handling, sandbox when configured.
