@@ -54,10 +54,11 @@ const (
 // Log-fed classes: faults that have no dedicated hook site and are recognised
 // from their WARN+ log line by the slog feed (see LogFedClass).
 const (
-	ClassTmuxSessionCheckFailed  = "tmux_session_check_failed"
-	ClassProxyTLSHandshakeFailed = "proxy_tls_handshake_failed"
-	ClassAgentDirSetupFailed     = "agent_dir_setup_failed"
-	ClassReviewEvidenceWriteFail = "review_evidence_write_failed"
+	ClassTmuxSessionCheckFailed     = "tmux_session_check_failed"
+	ClassProxyTLSHandshakeFailed    = "proxy_tls_handshake_failed"
+	ClassAgentDirSetupFailed        = "agent_dir_setup_failed"
+	ClassReviewEvidenceWriteFail    = "review_evidence_write_failed"
+	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
 )
 
 const (
@@ -129,26 +130,27 @@ type ClassSpec struct {
 
 // Classes is the runtime error allow-list.
 var Classes = map[string]ClassSpec{
-	ClassRestartStorm:             {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"restart storm", "restart-storm"}},
-	ClassKickFailedRepeatedly:     {Component: "agent-runtime", Severity: "medium", MinCount: kickFailureStreak, Keywords: []string{"kick failed", "undeliverable kick", "kicks undeliverable", "re-kick backed off"}},
-	ClassPanicRecovered:           {Component: "dashboard", Severity: "high", MinCount: 1, Keywords: []string{"panic recovered", "recovered panic"}},
-	ClassModelDiscoveryDegraded:   {Component: "inference-gateway", Severity: "medium", MinCount: 1, MinDuration: degradedMinDuration, Keywords: []string{"model discovery degraded", "model discovery failed"}},
-	ClassInferenceAuthFailed:      {Component: "backend-auth", Severity: "high", MinCount: 1, Keywords: []string{"litellm 401", "inference 401", "inference 403", "authentication failure"}},
-	ClassAdvisoryPostFailed:       {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"advisory post failed", "advisory digest"}},
-	ClassUpgradeStalled:           {Component: "agent-lifecycle", Severity: "high", MinCount: 1, Keywords: []string{"upgrade stalled", "upgrade stall"}},
-	ClassDataDiskPressure:         {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
-	ClassGitHubAppTokenMintFailed: {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
-	ClassUnexpectedHub5xx:         {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
-	ClassUnclassifiedRepeated:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
-	ClassAgentStall:               {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
-	ClassAgentCrashLoop:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
-	ClassCIPollNudge:              {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
-	ClassIssueRequestStuck:        {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
-	ClassEffectLedgerOpStuck:      {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
-	ClassTmuxSessionCheckFailed:   {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
-	ClassProxyTLSHandshakeFailed:  {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
-	ClassAgentDirSetupFailed:      {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
-	ClassReviewEvidenceWriteFail:  {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
+	ClassRestartStorm:               {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"restart storm", "restart-storm"}},
+	ClassKickFailedRepeatedly:       {Component: "agent-runtime", Severity: "medium", MinCount: kickFailureStreak, Keywords: []string{"kick failed", "undeliverable kick", "kicks undeliverable", "re-kick backed off"}},
+	ClassPanicRecovered:             {Component: "dashboard", Severity: "high", MinCount: 1, Keywords: []string{"panic recovered", "recovered panic"}},
+	ClassModelDiscoveryDegraded:     {Component: "inference-gateway", Severity: "medium", MinCount: 1, MinDuration: degradedMinDuration, Keywords: []string{"model discovery degraded", "model discovery failed"}},
+	ClassInferenceAuthFailed:        {Component: "backend-auth", Severity: "high", MinCount: 1, Keywords: []string{"litellm 401", "inference 401", "inference 403", "authentication failure"}},
+	ClassAdvisoryPostFailed:         {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"advisory post failed", "advisory digest"}},
+	ClassUpgradeStalled:             {Component: "agent-lifecycle", Severity: "high", MinCount: 1, Keywords: []string{"upgrade stalled", "upgrade stall"}},
+	ClassDataDiskPressure:           {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
+	ClassGitHubAppTokenMintFailed:   {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
+	ClassUnexpectedHub5xx:           {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
+	ClassUnclassifiedRepeated:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear},
+	ClassAgentStall:                 {Component: "agent-runtime", Severity: "medium", MinCount: AgentStallNudgeStreak, Keywords: []string{"agent stall", "stalled after kick", "continue nudge"}},
+	ClassAgentCrashLoop:             {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"crash loop", "crash-loop", "crash looping"}},
+	ClassCIPollNudge:                {Component: "agent-runtime", Severity: "low", MinCount: 1, Window: ciPollNudgeWindow, Keywords: []string{"ci-poll nudge", "polling ci", "stop-polling nudge"}},
+	ClassIssueRequestStuck:          {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
+	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
+	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
+	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
+	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
+	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
+	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

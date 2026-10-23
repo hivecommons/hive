@@ -161,3 +161,84 @@ func TestReviewPendingExpiryLogsWithoutFleetReport(t *testing.T) {
 		t.Fatalf("exhausted reviews should still produce fleet evidence: %+v", ev)
 	}
 }
+
+func TestFeedLogFedPath(t *testing.T) {
+	tests := []struct {
+		name      string
+		level     slog.Level
+		message   string
+		wantClass string
+		wantKey   string
+	}{
+		{
+			name:    "benign message is dropped",
+			level:   slog.LevelWarn,
+			message: "github REST 404 cached; suppressing repeated fetches",
+		},
+		{
+			name:    "message matching no class is dropped by the log-fed path",
+			level:   slog.LevelWarn,
+			message: "advisory post failed: 502",
+		},
+		{
+			name:      "log-fed keyword observes under its class",
+			level:     slog.LevelWarn,
+			message:   "tmux has-session failed for session 42",
+			wantClass: fleetreport.ClassTmuxSessionCheckFailed,
+			wantKey:   fleetreport.NormalizeMessage("tmux has-session failed for session 42"),
+		},
+		{
+			name:      "feedback issue refresh failure observes under its class",
+			level:     slog.LevelWarn,
+			message:   "feedback: issue refresh failed",
+			wantClass: fleetreport.ClassFeedbackIssueRefreshFailed,
+			wantKey:   fleetreport.NormalizeMessage("feedback: issue refresh failed"),
+		},
+		{
+			name:      "surrounding whitespace is trimmed before matching",
+			level:     slog.LevelError,
+			message:   "  tmux has-session failed  ",
+			wantClass: fleetreport.ClassTmuxSessionCheckFailed,
+			wantKey:   fleetreport.NormalizeMessage("tmux has-session failed"),
+		},
+		{
+			name:      "very long log-fed message key is truncated",
+			level:     slog.LevelWarn,
+			message:   "tmux has-session failed " + strings.Repeat("because the socket is gone ", 10*maxKeyBytes),
+			wantClass: fleetreport.ClassTmuxSessionCheckFailed,
+			wantKey:   fleetreport.NormalizeMessage("tmux has-session failed " + strings.Repeat("because the socket is gone ", 10*maxKeyBytes))[:maxKeyBytes],
+		},
+		{
+			name:      "unmatched message still observes as unclassified",
+			level:     slog.LevelWarn,
+			message:   "relay response write failed, will retry with backoff",
+			wantClass: fleetreport.ClassUnclassifiedRepeated,
+			wantKey:   fleetreport.NormalizeMessage("relay response write failed, will retry with backoff"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, _ := newFeed(t)
+			logger.Log(context.Background(), tc.level, tc.message)
+			if tc.wantClass == "" {
+				if len(*seen) != 0 {
+					t.Fatalf("observed = %+v, want none", *seen)
+				}
+				return
+			}
+			if len(*seen) != 1 {
+				t.Fatalf("observed = %+v, want exactly one", *seen)
+			}
+			got := (*seen)[0]
+			if got.class != tc.wantClass {
+				t.Fatalf("class = %q, want %q", got.class, tc.wantClass)
+			}
+			if got.key != tc.wantKey {
+				t.Fatalf("key = %q, want %q", got.key, tc.wantKey)
+			}
+			if len(got.key) > maxKeyBytes {
+				t.Fatalf("key not bounded: %d", len(got.key))
+			}
+		})
+	}
+}
