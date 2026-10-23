@@ -604,7 +604,7 @@ the label, and with it the tracker word and whether the hive has anyone to
 
 | Kind | Stage | Tracker word | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
 |---|---|---|---|---|
-| `author/human` | `stage/071-needs-author` | Needs author | no — plain wait on the person; they push or comment | no |
+| `author/human` | `stage/071-needs-author` | Needs author | no — plain wait on the person; they push or comment (a `role/trusted` human still gets one `<!-- hive:human-071-note head=… -->` comment per head naming the reason, always on and not gated on `ContributorNudge`, [#13636](https://github.com/hivecommons/hive/issues/13636)) | no |
 | `author/clanker` | `stage/072-returned-to-contributor` | Returned to contributor | yes — the contributor's hive is poked to fix its own PR | yes — after the grace, the hive adopts |
 | `author/hive` (and any self-authored PR) | `stage/070-fixing` | Fixing | n/a — the hive's own lanes rework the head | n/a |
 

@@ -324,3 +324,57 @@ func (c *Engine) nudgeSignoffAttribution(ctx context.Context, store *stagelabels
 	c.info("stage labels: author told to re-sign the head", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "squash_unsafe_hive", obs.Detail.DCOSquashUnsafeHive)
 	return 1, nil
 }
+
+// TrustedHuman071MarkerPrefix opens the one comment a trusted human author
+// gets when their PR enters stage 071 (hivecommons/hive#13636); the head keeps
+// it idempotent per push.
+const TrustedHuman071MarkerPrefix = "<!-- hive:human-071-note"
+
+// TrustedHuman071Comment renders the entry note: why the PR is held at 071
+// (conflict / sign-off / failing checks / requested changes) and what the
+// hive does next.
+func TrustedHuman071Comment(n ContributorNudge, stage stagelabels.Stage) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s head=%s -->\n", TrustedHuman071MarkerPrefix, n.HeadSHA)
+	fmt.Fprintf(&b, "@%s this PR is held at `%s` and the hive will not merge it yet.\n\n", n.Author, stage.Label())
+	if len(n.FailingChecks) > 0 {
+		b.WriteString("**Failing checks:**\n")
+		for _, c := range n.FailingChecks {
+			fmt.Fprintf(&b, "- `%s`\n", c)
+		}
+	}
+	if len(n.ReviewAsks) > 0 {
+		b.WriteString("**Why:**\n")
+		for _, a := range n.ReviewAsks {
+			fmt.Fprintf(&b, "- %s\n", a)
+		}
+	}
+	b.WriteString("\nNext: the hive does not push to your branch. Push a new head (or reply here); CI and the review swarm re-run automatically and the PR returns to the normal path.\n")
+	return b.String()
+}
+
+// noteTrustedHuman071 posts TrustedHuman071Comment once per head for a
+// trusted human PR in 071. It returns the number of comments posted.
+func (c *Engine) noteTrustedHuman071(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (int, error) {
+	rec, ok := store.Get(key)
+	if !ok || obs.Author == "" || obs.HeadSHA == "" || rec.NudgeHead == obs.HeadSHA {
+		return 0, nil
+	}
+	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
+	if len(checks) == 0 && len(asks) == 0 && obs.Reason != "" {
+		asks = append(asks, obs.Reason)
+	}
+	n := ContributorNudge{
+		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
+		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
+		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human, Nudge: 1,
+	}
+	body := TrustedHuman071Comment(n, stagelabels.NeedsAuthor)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		c.warn("stage labels: trusted human 071 note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 0, err
+	}
+	store.MarkNudged(key, obs.HeadSHA, 1, false, now)
+	c.info("stage labels: trusted human told why the PR is at 071", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", obs.Reason)
+	return 1, nil
+}

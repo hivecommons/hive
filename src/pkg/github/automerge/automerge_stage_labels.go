@@ -1531,6 +1531,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				c.info("stage labels: 07x without interrupt (author kind)", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
 			}
 		}
+		if want.Stage == stagelabels.NeedsAuthor && role == stagelabels.RoleTrusted && obs.AuthorKind != authorkind.Clanker && obs.Reason != stagelabels.LaneReasonHiveSignoffAttribution {
+			// Silence is the worst outcome for a trusted person
+			// (hivecommons/hive#13636): always on, not gated on policy.
+			n, err := c.noteTrustedHuman071(ctx, store, key, obs, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 		if want.Stage == stagelabels.AdoptedByHive {
 			n, err := c.settleAdoption(ctx, store, key, obs, policy, now)
 			result.Comments += n

@@ -302,3 +302,104 @@ func apiURLOf(t *testing.T, api *stageAPI) string {
 	}
 	return api.url
 }
+
+func trustedHuman071PR(number int, head string, labels ...string) *gh.PullRequest {
+	pr := stagePR(number, append([]string{"role/trusted"}, labels...)...)
+	pr.Head.SHA = gh.Ptr(head)
+	pr.User = &gh.User{Login: gh.Ptr("clubanderson")}
+	return pr
+}
+
+func humanNoteComments(api *stageAPI) []string {
+	var out []string
+	for _, c := range api.comments {
+		if strings.HasPrefix(c, TrustedHuman071MarkerPrefix) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// A trusted human PR entering 071 gets one note per head with the reason, with
+// ContributorNudge off; a new head re-arms it.
+func TestTrustedHuman071NoteOncePerHeadAndReArms(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	sweep := func(head string) {
+		t.Helper()
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", trustedHuman071PR(41, head), "conflicting", false, nil)
+		e.noteStageRole("acme", "widget", 41, stagelabels.RoleTrusted)
+		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep("aaa")
+	notes := humanNoteComments(api)
+	if len(notes) != 1 {
+		t.Fatalf("want one note, got %q", api.comments)
+	}
+	for _, want := range []string{TrustedHuman071MarkerPrefix + " head=aaa -->", "@clubanderson", "`stage/071-needs-author`", "conflicts with the base"} {
+		if !strings.Contains(notes[0], want) {
+			t.Fatalf("note lacks %q:\n%s", want, notes[0])
+		}
+	}
+	clock.at = clock.at.Add(10 * time.Minute)
+	sweep("aaa")
+	if len(humanNoteComments(api)) != 1 {
+		t.Fatalf("same head re-commented: %q", api.comments)
+	}
+	sweep("bbb")
+	notes = humanNoteComments(api)
+	if len(notes) != 2 || !strings.Contains(notes[1], "head=bbb -->") {
+		t.Fatalf("new head did not re-arm: %q", api.comments)
+	}
+}
+
+func TestTrustedHuman071NoteNotForClankerOrUntrusted(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+
+	clanker := nudgePR(42, "ccc", "role/trusted")
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", clanker, "conflicting", false, nil)
+	e.noteStageRole("acme", "widget", 42, stagelabels.RoleTrusted)
+
+	outsider := stagePR(43)
+	outsider.User = &gh.User{Login: gh.Ptr("mallory")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", outsider, "conflicting", false, nil)
+	e.noteStageRole("acme", "widget", 43, stagelabels.RoleUntrusted)
+
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := humanNoteComments(api); len(got) != 0 {
+		t.Fatalf("note posted for clanker/untrusted: %q", got)
+	}
+}
+
+func TestTrustedHuman071CommentReasons(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		detail stageDetail
+		want   string
+	}{
+		{"conflict", "conflicting", stageDetail{}, "conflicts with the base"},
+		{"failing check", "check-failing:unit", stageDetail{}, "- `unit`"},
+		{"sign-off", stagelabels.LaneReasonDCOMissing, stageDetail{DCOTotal: 2, DCOUnsigned: 1}, "`Signed-off-by`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			checks, asks, _ := nudgeDiagnosisRouted(tc.reason, tc.detail, nil)
+			body := TrustedHuman071Comment(ContributorNudge{Author: "clubanderson", HeadSHA: "abc", FailingChecks: checks, ReviewAsks: asks}, stagelabels.NeedsAuthor)
+			if !strings.HasPrefix(body, TrustedHuman071MarkerPrefix+" head=abc -->") || !strings.Contains(body, tc.want) {
+				t.Fatalf("body lacks %q:\n%s", tc.want, body)
+			}
+		})
+	}
+}
