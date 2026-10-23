@@ -20,8 +20,15 @@ dashboard can hand it straight to Scriptable.
 |---|---|---|
 | **ISSUES** — open issues across the hive's repos | sum of `repos[*].issues` from `/api/history` | blue |
 | **PRS** — open PRs across the hive's repos | sum of `repos[*].prs` | green |
-| **YOUR TURN · ISSUES** — actionable issues | `govIssues` | amber |
-| **YOUR TURN · PRS** — actionable PRs | `govPrs` | amber |
+| **YOUR TURN · ISSUES** — your-turn issues that are root causes | `yourTurn.root_issues` (live) and `yourTurnRootIssues` (history); `govIssues` for older samples | amber |
+| **YOUR TURN · PRS** — your-turn PRs that are root causes | `yourTurn.root_prs` (live) and `yourTurnRootPrs` (history); `govPrs` for older samples | amber |
+
+The YOUR TURN cells count root causes: your-turn items that wait on no other
+your-turn item, so eight PRs held up by one fix count once (see "The critical
+path" in [dashboard.md](dashboard.md)). The live number comes from
+`/api/status/summary` (or `/api/widget/summary` with a widget token), the
+history from `/api/trend/history` (`yourTurnHistory` on the token path); samples from before the hive recorded root
+causes keep the governor's actionable figure.
 
 Each cell has the current number, a ▲/▼ change over the sparkline window
 (down is green: fewer open items is good), and a sparkline. The footer shows

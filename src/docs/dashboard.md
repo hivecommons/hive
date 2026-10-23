@@ -758,13 +758,15 @@ or bands (hivecommons/hive#11566).
   `/hive approve` (and the same refusal: on a `label_driven` repository neither
   the command nor the button executes a release); a reporter-confirmation
   `CLOSE` offers `/fixed`.
-- **Sort.** Within each band, your-turn rows precede all others.
+- **Sort.** Within each band, your-turn rows precede all others; among them the
+  rows that unblock the most come first (see "The critical path" below).
 - **The Your turn strip.** Above the cards, the strip lists every your-turn item
   of the repositories shown, grouped by verb (`INSPECT`, `DECIDE`, `STEER`,
-  `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, `CLOSE`) in the server's `inbox_rank`
-  order. Each row shows repository, number, title, verb and reason, an
-  "Options" button that opens the same menu, and, for a held agent PR, the
-  reviewer agent's most recent verdict. The strip follows the same repository
+  `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, `CLOSE`), within a verb by `unblocks`
+  (most first) and then the server's `inbox_rank`. Each row shows repository,
+  number, title, verb and reason, the critical-path chips and named action
+  described below, an "Options" button that opens the same menu, and, for a
+  held agent PR, the reviewer agent's most recent verdict. The strip follows the same repository
   selection and pill filters as the cards (the ☐ legend entry filters to your-turn
   rows). The header reads `Your turn · N`, with `· M to close` added when there
   are `CLOSE` items; N excludes them. With nothing to show, the strip says why:
@@ -789,6 +791,46 @@ or bands (hivecommons/hive#11566).
   `[waiting on someone else: Waiting for the adjudicator (escalated 14:32Z);
   your turn at 18:32Z if it doesn't act]`, because no marker renders that reason
   (#13183).
+
+### The critical path
+
+Every your-turn row also says what it waits on, how much it unblocks and the one
+action that moves it (hivecommons/hive#13646). The server computes this after
+the your-turn decision and never changes that decision: which items are your
+turn, trust levels, the trusted-merger definition and the L6 self-merge floor
+are untouched.
+
+- **Hard edges (`waits_on`).**
+  - A `Depends-on: #N` line in a PR body is authoritative: the PR waits on #N
+    (`owner/repo#N` names another repository). Agents write it when they know
+    the order. A prerequisite in a tracked repository that is no longer open is
+    done and drops out; one in an untracked repository stays as `external`.
+  - An issue waits on the open PR whose closing link (`Fixes`, `Closes`,
+    `Resolves #N`, or GitHub's own closing reference) names it, and on its open
+    GitHub "blocked by" issues.
+  - A PR whose failing check is also red on its base branch waits on that
+    check (`base-check`) and on the open PR fixing the red default branch.
+  - A PR GitHub still wants an approving review for waits on `approval`.
+  - A PR that waits on nothing else waits only on `merge`.
+- **Soft hint (`may_conflict_with`).** Open PRs of the same repository that
+  close the same issue, or touch the same file when both file lists are known,
+  are shown as a dashed, muted "may conflict with #N" chip. It is never an edge.
+- **Unblocks.** `unblocks` counts the your-turn items that wait on the row,
+  directly or through other items; cycles are counted once.
+- **Root causes and collapse.** A row that waits on no other your-turn item is
+  a root cause (in a cycle with no way out, its lowest-numbered item stands in).
+  Every other row names its `blocker`, the root cause it collapses under: on the
+  strip and on the cards, dependents whose blocker is shown fold into one
+  expandable row under it ("8 PRs waiting on #255 (dakota-iso)").
+- **The named action.** Each row names one of `merge`, `release-hold`,
+  `rebase` (conflicting or behind, or after the PR it depends on), `rerun`
+  (after the red-main fix) or `approve`, shown next to the queue-auto-merge
+  button on the cards and before "Options" on the strip.
+- **Red main.** The repository card's red-main banner says "main red since …
+  on `<check>`; fix #N is waiting on you" when the fix PR is your turn.
+- **Root-cause counts.** `repos[].yourTurn` and the top-level `yourTurn` carry
+  the counts with and without collapse (`CLOSE` items excluded, as in the
+  strip's N); the phone widget's YOUR TURN cells show the root causes.
 
 ### Other consumers of the decision
 
