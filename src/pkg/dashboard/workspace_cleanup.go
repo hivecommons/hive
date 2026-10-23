@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -126,6 +127,11 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 			continue
 		}
 		agentName := agentEntry.Name()
+		// Dot-prefixed top-level dirs (e.g. .gomodcache-<agent>) are per-agent
+		// tool caches, not workspaces; Go module caches are read-only by design.
+		if strings.HasPrefix(agentName, ".") {
+			continue
+		}
 		agentPath := filepath.Join(root, agentName)
 
 		// GIT-CLONE GUARD: a workspace root that IS a git clone must never be
@@ -175,7 +181,7 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 
 			if entry.IsDir() {
 				if err := removeTree(entryPath); err != nil {
-					logger.Warn("workspace cleanup: failed to remove stale dir",
+					logRemoveFailure(logger, entryPath, err, "workspace cleanup: failed to remove stale dir",
 						"agent", agentName, "dir", name, "age", age.Round(time.Minute), "error", err)
 					failed++
 					continue
@@ -213,6 +219,32 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 		audit.Log("system", "workspace_cleanup",
 			fmt.Sprintf("removed_dirs=%d removed_files=%d failed=%d", removedDirs, removedFiles, failed), "")
 	}
+}
+
+// permFailed remembers paths whose removal failed with a permission error so
+// the sweep warns once per process instead of every cycle.
+var (
+	permFailedMu sync.Mutex
+	permFailed   = map[string]struct{}{}
+)
+
+// logRemoveFailure logs at Warn the first time a path fails with a permission
+// error (and for all non-permission errors), then at Debug on later cycles.
+func logRemoveFailure(logger *slog.Logger, path string, err error, msg string, args ...any) {
+	// removeTree wraps its error with %w, which os.IsPermission does not unwrap.
+	if !isPermError(err) && !errors.Is(err, os.ErrPermission) {
+		logger.Warn(msg, args...)
+		return
+	}
+	permFailedMu.Lock()
+	_, seen := permFailed[path]
+	permFailed[path] = struct{}{}
+	permFailedMu.Unlock()
+	if seen {
+		logger.Debug(msg, args...)
+		return
+	}
+	logger.Warn(msg, args...)
 }
 
 // removeTree removes a file or directory tree. The hive binary runs as an
