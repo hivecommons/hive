@@ -10,7 +10,7 @@ func TestReasonIsPending(t *testing.T) {
 		{"", false},
 		{"check-pending", true},
 		{"status-pending", true},
-		{"required-check-pending: build", true},
+		{"required-check-pending: build", false},
 		{"pending: 2 checks queued", true},
 		{"required-check-missing: e2e", true},
 		{"required-check-missing:e2e", true},
