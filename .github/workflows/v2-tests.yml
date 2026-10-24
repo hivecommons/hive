@@ -396,22 +396,72 @@ jobs:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: |
           set -o pipefail
-          go test ./pkg/hub -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          ROOT="$PWD"
+          export LC_ALL=C # Regex length guards below must count bytes.
+          export TEST_PACKAGE=github.com/hivecommons/hive/pkg/hub
+          export TEST_DIR="$ROOT/pkg/hub"
+          export TEST_BINARY="$ROOT/hub.test"
+          go test -c -race -cover -o "$TEST_BINARY" ./pkg/hub
+          (cd "$TEST_DIR" && "$TEST_BINARY" -test.short -test.list '.*') | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
           if [ ! -s all-tests.txt ]; then
             echo "::error::go test -list produced no test functions for pkg/hub — refusing to run an empty slice (fail closed)"
             exit 1
           fi
           awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
           echo "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"
-          RUN="^($(paste -sd'|' slice.txt))$"
-          SHUFFLE=""
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
-          bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
-            gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+          if [ ! -s slice.txt ]; then
+            echo "::error::empty hub slice — failing closed"
+            exit 1
+          fi
+          export CHUNK_DIR TEST_SHUFFLE=off
+          CHUNK_DIR=$(mktemp -d "$ROOT/test-chunks.XXXXXX")
+          split -l 1000 slice.txt "$CHUNK_DIR/chunk-"
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then TEST_SHUFFLE=on; fi
+          # raw-command preserves one JUnit/flake report across all chunks.
+          # gotestsum appends -test.run and package arguments on reruns.
+          cat > "$CHUNK_DIR/run.sh" <<'RUNNER'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cd "$TEST_DIR" || exit 1
+          run_chunk() {
+            local RUN="$1" PROFILE="$2"
+            # MAX_ARG_STRLEN is 131072 bytes; never approach it, even if a
+            # future test has an exceptionally long name. Guard before exec.
+            if [ "${#RUN}" -gt 120000 ]; then
+              echo "::error::chunk regex exceeds 120000 bytes; reduce chunk size" >&2
+              return 1
+            fi
+            go tool test2json -t -p "$TEST_PACKAGE" "$TEST_BINARY" \
+              -test.short -test.count=1 -test.v=test2json -test.timeout=10m \
+              -test.shuffle="$TEST_SHUFFLE" "$RUN" -test.coverprofile="$PROFILE"
+          }
+          if [ "$#" -gt 0 ]; then
+            # Reruns must not overwrite the first-pass coverage.
+            run_chunk "$1" "$CHUNK_DIR/rerun.out"
+            exit $?
+          fi
+          status=0
+          for chunk in "$CHUNK_DIR"/chunk-*; do
+            RUN="-test.run=^($(paste -sd'|' "$chunk"))$"
+            run_chunk "$RUN" "$chunk.out" || status=1
+          done
+          exit "$status"
+          RUNNER
+          status=0
+          if gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
             --rerun-fails-report=flaky-tests-hub-"$IDX".txt \
-            --packages="./pkg/hub" --junitfile junit-hub-"$IDX".xml \
-            -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-hub-"$IDX".out \
-            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-hub-"$IDX".log
+            --junitfile junit-hub-"$IDX".xml --raw-command -- bash "$CHUNK_DIR/run.sh" \
+            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-hub-"$IDX".log; then
+            :
+          else
+            status=1
+          fi
+          # Sum first-pass counters for identical blocks; never count reruns.
+          # Do this even after test failure so the coverage gate has evidence.
+          awk 'FNR == 1 { next } { key=$1 " " $2; hits[key]+=$3 }
+            END { print "mode: atomic"; for (key in hits) print key, hits[key] }' \
+            "$CHUNK_DIR"/chunk-*.out > coverage-hub-"$IDX".out
+          exit "$status"
 
       - name: Surface flaky reruns
         id: flaky-reruns
@@ -596,26 +646,73 @@ jobs:
           HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
         run: |
           set -o pipefail
-          # -list compiles the test binary (cached for the run below) and
-          # prints top-level Test/Example/Fuzz function names. All three kinds
-          # are included so none can fall out of every slice; Benchmarks are
-          # not run by `go test` without -bench, matching the unsharded run.
-          go test ./crux/agent -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          ROOT="$PWD"
+          export LC_ALL=C # Regex length guards below must count bytes.
+          export TEST_PACKAGE=github.com/hivecommons/hive/crux/agent
+          export TEST_DIR="$ROOT/crux/agent"
+          export TEST_BINARY="$ROOT/agent.test"
+          go test -c -race -cover -o "$TEST_BINARY" ./crux/agent
+          # Include Test/Example/Fuzz, but not opt-in benchmarks.
+          (cd "$TEST_DIR" && "$TEST_BINARY" -test.short -test.list '.*') | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
           if [ ! -s all-tests.txt ]; then
             echo "::error::go test -list produced no test functions for crux/agent — refusing to run an empty slice (fail closed)"
             exit 1
           fi
           awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
           echo "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"
-          RUN="^($(paste -sd'|' slice.txt))$"
-          SHUFFLE=""
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
-          bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
-            gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
+          if [ ! -s slice.txt ]; then
+            echo "::error::empty agent slice — failing closed"
+            exit 1
+          fi
+          export CHUNK_DIR TEST_SHUFFLE=off
+          CHUNK_DIR=$(mktemp -d "$ROOT/test-chunks.XXXXXX")
+          split -l 1000 slice.txt "$CHUNK_DIR/chunk-"
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then TEST_SHUFFLE=on; fi
+          # raw-command preserves one JUnit/flake report across all chunks.
+          # gotestsum appends -test.run and package arguments on reruns.
+          cat > "$CHUNK_DIR/run.sh" <<'RUNNER'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cd "$TEST_DIR" || exit 1
+          run_chunk() {
+            local RUN="$1" PROFILE="$2"
+            # MAX_ARG_STRLEN is 131072 bytes; never approach it, even if a
+            # future test has an exceptionally long name. Guard before exec.
+            if [ "${#RUN}" -gt 120000 ]; then
+              echo "::error::chunk regex exceeds 120000 bytes; reduce chunk size" >&2
+              return 1
+            fi
+            go tool test2json -t -p "$TEST_PACKAGE" "$TEST_BINARY" \
+              -test.short -test.count=1 -test.v=test2json -test.timeout=10m \
+              -test.shuffle="$TEST_SHUFFLE" "$RUN" -test.coverprofile="$PROFILE"
+          }
+          if [ "$#" -gt 0 ]; then
+            # Reruns must not overwrite the first-pass coverage.
+            run_chunk "$1" "$CHUNK_DIR/rerun.out"
+            exit $?
+          fi
+          status=0
+          for chunk in "$CHUNK_DIR"/chunk-*; do
+            RUN="-test.run=^($(paste -sd'|' "$chunk"))$"
+            run_chunk "$RUN" "$chunk.out" || status=1
+          done
+          exit "$status"
+          RUNNER
+          status=0
+          if gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
             --rerun-fails-report=flaky-tests-agent-"$IDX".txt \
-            --packages="./crux/agent" --junitfile junit-agent-"$IDX".xml \
-            -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-agent-"$IDX".out \
-            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-agent-"$IDX".log
+            --junitfile junit-agent-"$IDX".xml --raw-command -- bash "$CHUNK_DIR/run.sh" \
+            2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-agent-"$IDX".log; then
+            :
+          else
+            status=1
+          fi
+          # Sum first-pass counters for identical blocks; never count reruns.
+          # Do this even after test failure so the coverage gate has evidence.
+          awk 'FNR == 1 { next } { key=$1 " " $2; hits[key]+=$3 }
+            END { print "mode: atomic"; for (key in hits) print key, hits[key] }' \
+            "$CHUNK_DIR"/chunk-*.out > coverage-agent-"$IDX".out
+          exit "$status"
 
       - name: Surface flaky reruns
         id: flaky-reruns
@@ -1288,29 +1385,64 @@ jobs:
           # Sliced like test-hub (NR mod N — pairwise disjoint, jointly
           # exhaustive) so no single job carries the whole ~6-minute lane;
           # -shuffle still varies order within each slice every run.
-          go test ./pkg/dashboard -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          ROOT="$PWD"
+          export TEST_PACKAGE=github.com/hivecommons/hive/pkg/dashboard
+          export TEST_DIR="$ROOT/pkg/dashboard"
+          export TEST_BINARY="$ROOT/dashboard.test"
+          go test -c -race -o "$TEST_BINARY" ./pkg/dashboard
+          (cd "$TEST_DIR" && "$TEST_BINARY" -test.short -test.list '.*') | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
           if [ ! -s all-tests.txt ]; then
             echo "::error::go test -list produced no test functions for pkg/dashboard — refusing to run an empty slice (fail closed)"
             exit 1
           fi
           awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
           echo "slice $IDX/$TOTAL: $(wc -l < slice.txt) of $(wc -l < all-tests.txt) test functions"
-          RUN="^($(paste -sd'|' slice.txt))$"
-          # Bound on concurrent t.Parallel tests inside the package: high
-          # enough to keep the lane fast, low enough that the package's many
-          # httptest servers cannot exhaust ephemeral ports (see job comment).
-          PARALLEL_TESTS=4
+          if [ ! -s slice.txt ]; then
+            echo "::error::empty dashboard slice — failing closed"
+            exit 1
+          fi
+          export CHUNK_DIR
+          CHUNK_DIR=$(mktemp -d "$ROOT/test-chunks.XXXXXX")
+          split -l 1000 slice.txt "$CHUNK_DIR/chunk-"
+          # raw-command preserves one JUnit/flake report across all chunks.
+          # gotestsum appends -test.run and package arguments on reruns.
+          cat > "$CHUNK_DIR/run.sh" <<'RUNNER'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          export LC_ALL=C # ${#RUN} must count bytes, not Unicode characters.
+          cd "$TEST_DIR" || exit 1
+          run_chunk() {
+            local RUN="$1"
+            # MAX_ARG_STRLEN is 131072 bytes; fail clearly before execve.
+            if [ "${#RUN}" -gt 120000 ]; then
+              echo "::error::chunk regex exceeds 120000 bytes; reduce chunk size" >&2
+              return 1
+            fi
+            # Bound t.Parallel to avoid exhausting httptest ephemeral ports.
+            go tool test2json -t -p "$TEST_PACKAGE" "$TEST_BINARY" \
+              -test.short -test.count=1 -test.v=test2json -test.timeout=10m \
+              -test.shuffle=on -test.parallel=4 "$RUN"
+          }
+          if [ "$#" -gt 0 ]; then
+            run_chunk "$1"
+            exit $?
+          fi
+          status=0
+          for chunk in "$CHUNK_DIR"/chunk-*; do
+            RUN="-test.run=^($(paste -sd'|' "$chunk"))$"
+            run_chunk "$RUN" || status=1
+          done
+          exit "$status"
+          RUNNER
           if gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
             --rerun-fails-report=flaky-tests-dashboard-shuffle-"$IDX".txt \
-            --packages="./pkg/dashboard" --junitfile junit-dashboard-shuffle-"$IDX".xml \
-            -- -short -race -count=1 -v -shuffle=on -p 1 -parallel "$PARALLEL_TESTS" -run "$RUN" \
+            --junitfile junit-dashboard-shuffle-"$IDX".xml --raw-command -- bash "$CHUNK_DIR/run.sh" \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-dashboard-shuffle-"$IDX".log; then
             exit 0
           fi
-          # The test binary prints "-test.shuffle <seed>" as its first line;
-          # put the seed in the annotation so the failure is reproducible.
-          SEED=$(grep -m1 -E '^-test\.shuffle [0-9]+' test-dashboard-shuffle-"$IDX".log | awk '{print $2}')
-          echo "::error::pkg/dashboard failed under shuffled order (slice $IDX/$TOTAL). Reproduce from src/ with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel $PARALLEL_TESTS -run '$RUN' -shuffle=${SEED:-<seed line missing from log>}"
+          # Each chunk prints its own -test.shuffle seed immediately before
+          # its tests; do not report the first chunk's seed for a later failure.
+          echo "::error::pkg/dashboard failed (slice $IDX/$TOTAL); see the failing chunk's -test.shuffle seed in test-dashboard-shuffle-$IDX.log. Reproduce the failing test with: go test ./pkg/dashboard -short -race -count=1 -p 1 -parallel 4 -run '^TestName$' -shuffle=<seed>"
           exit 1
 
       - name: Surface flaky reruns
