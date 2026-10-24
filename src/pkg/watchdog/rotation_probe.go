@@ -3,8 +3,6 @@ package watchdog
 import (
 	"context"
 	"strings"
-
-	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 // RotationAuthProbe adapts a rotation-package provider prober (#4608) into a
@@ -14,7 +12,8 @@ import (
 // answer proves the credential is alive, and a failure whose output shows
 // auth chrome proves it is dead. When PR #4645 rewrites these probers over
 // OAuth/JSON-RPC, this adapter picks the rewrite up unchanged: it depends
-// only on the rotation.Prober contract.
+// only on the UsageProber slice of the rotation.Prober contract, which
+// cmd/hive adapts (the watchdog does not import pkg/rotation).
 //
 // Verdict mapping (deny silent failures — unknown ≠ healthy AND ≠ dead):
 //   - probe answered           → AuthOK (the credential produced an answer)
@@ -22,7 +21,16 @@ import (
 //     login/auth chrome        → AuthFailed
 //   - any other probe error    → AuthUnknown (couldn't probe is not a verdict)
 type RotationAuthProbe struct {
-	Prober rotation.Prober
+	Prober UsageProber
+}
+
+// UsageProber is what the auth probe reads from a provider usage prober:
+// its provider key and the sanitised text of the probe's error, "" when the
+// probe answered. It is the two-method slice of rotation.HeadroomSource the
+// adapter needs; hive wraps each rotation prober in cmd/hive.
+type UsageProber interface {
+	Provider() string
+	ProbeError(ctx context.Context) string
 }
 
 // authErrorMarkers are substrings in a probe error that prove the failure is
@@ -42,8 +50,7 @@ var authErrorMarkers = []string{
 func (p RotationAuthProbe) Provider() string { return p.Prober.Provider() }
 
 func (p RotationAuthProbe) ProbeAuth(ctx context.Context) (AuthStatus, string) {
-	h := p.Prober.Probe(ctx)
-	errText := h.ProbeError()
+	errText := p.Prober.ProbeError(ctx)
 	if errText == "" {
 		return AuthOK, "provider usage probe answered"
 	}

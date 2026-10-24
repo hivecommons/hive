@@ -8089,9 +8089,18 @@ func watchdogAuthProbes(cfg *config.Config) map[string]watchdog.AuthProbe {
 	}
 	out := make(map[string]watchdog.AuthProbe, len(probers))
 	for _, p := range probers {
-		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: p}
+		out[p.Provider()] = watchdog.RotationAuthProbe{Prober: usageProber{p}}
 	}
 	return out
+}
+
+// usageProber adapts a rotation prober to the watchdog's UsageProber slice
+// (provider key + sanitised probe error); the watchdog does not import
+// pkg/rotation.
+type usageProber struct{ rotation.Prober }
+
+func (u usageProber) ProbeError(ctx context.Context) string {
+	return u.Prober.Probe(ctx).ProbeError()
 }
 
 // turnLossToSnapshot converts the manager's in-memory turn-loss accumulation

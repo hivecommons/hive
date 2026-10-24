@@ -7,8 +7,13 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 )
+
+// The tool-approval desk scans payload text through pkg/ioscan, wired here
+// because pkg/toolapprove sits inside the Crux ring and cannot import it.
+func init() { toolapprove.SetDefaultTextScanner(ioscan.ToolApproveScanner{}) }
 
 // buildApprovalDesk constructs the desk and its durable operator inbox from
 // config.

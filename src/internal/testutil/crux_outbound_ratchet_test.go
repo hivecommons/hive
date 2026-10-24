@@ -84,9 +84,14 @@ import (
 // cmd/hive; pkg/pushbroker's only Hive dependency, *github.AppAuth, became
 // the pushbroker.TokenScoper interface (cmd/hive's appMinter adapts), and
 // pushbroker joined the ring together with the stdlib-only pkg/watsonx,
-// since both are runtime-side packages the ring already imported. What
-// remains is toolapprove's ioscan call, the proxy's GitHub-side helpers and
-// watchdog's rotation probe.
+// since both are runtime-side packages the ring already imported. The
+// sibling edges followed: the watchdog's RotationAuthProbe reads a
+// two-method watchdog.UsageProber (cmd/hive adapts each rotation prober)
+// and toolapprove's payload scanning goes through toolapprove.TextScanner,
+// which pkg/ioscan implements (ToolApproveScanner) and cmd/hive and
+// pkg/turn install at init; a desk with no text scanner fails closed. What
+// remains — the proxy's GitHub-side helpers and cmd/crux's definition
+// loading — is Stage 2 prerequisite 3.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -104,12 +109,6 @@ var cruxOutboundBaseline = map[string][]string{
 		"pkg/ioscan",
 		"pkg/issueshape",
 		"pkg/tokens",
-	},
-	"pkg/toolapprove": {
-		"pkg/ioscan",
-	},
-	"pkg/watchdog": {
-		"pkg/rotation",
 	},
 }
 

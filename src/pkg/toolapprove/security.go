@@ -2,13 +2,73 @@ package toolapprove
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/hivecommons/hive/pkg/ioscan"
+	"sync/atomic"
 )
+
+// TextScanner is the payload scanner DefaultSecurityScanner runs over tool
+// content, commands and string arguments: prompt-injection, secret and
+// dangerous-directive rules. Hive's implementation is pkg/ioscan's
+// ToolApproveScanner, installed by the host through SetDefaultTextScanner
+// (cmd/hive and pkg/turn do so at init); this package does not import
+// pkg/ioscan so it stays inside the Crux ring.
+type TextScanner interface {
+	ScanInput(text string) TextVerdict
+	ScanOutput(text string) TextVerdict
+}
+
+// TextVerdict is a TextScanner's answer for one payload.
+type TextVerdict struct {
+	// Blocked is the scanner's policy decision for the text.
+	Blocked bool
+	// CriticalInjection reports a critical-severity injection finding, which
+	// blocks input even when the scanner's own policy would not.
+	CriticalInjection bool
+	// Findings lists every rule hit; only High ones become violations.
+	Findings []TextFinding
+}
+
+// TextFinding is one rule hit, with the masked snippet and rule id the
+// violation text names.
+type TextFinding struct {
+	Kind    string
+	Snippet string
+	Rule    string
+	// High is true at high severity or above.
+	High bool
+}
+
+// defaultTextScanner is the TextScanner NewDefaultSecurityScanner installs.
+var defaultTextScanner atomic.Pointer[TextScanner]
+
+// SetDefaultTextScanner installs the TextScanner that NewDefaultSecurityScanner
+// (and every nil-scanner fallback in Resolve and the Desk) uses. Without one
+// a scan fails closed: DefaultSecurityScanner.Scan returns ErrNoTextScanner
+// and the scan lane denies, so a host that forgets the wiring sees denials,
+// not silently unscanned payloads.
+func SetDefaultTextScanner(s TextScanner) {
+	if s == nil {
+		defaultTextScanner.Store(nil)
+		return
+	}
+	defaultTextScanner.Store(&s)
+}
+
+// DefaultTextScanner returns the installed TextScanner, or nil.
+func DefaultTextScanner() TextScanner {
+	if p := defaultTextScanner.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// ErrNoTextScanner is returned by DefaultSecurityScanner.Scan when no
+// TextScanner is installed; the scan lane treats it as a failed scan.
+var ErrNoTextScanner = errors.New("toolapprove: no text scanner installed (SetDefaultTextScanner)")
 
 // SecurityScanner provides pre-execution security analysis of tool requests.
 type SecurityScanner interface {
@@ -18,10 +78,14 @@ type SecurityScanner interface {
 // DefaultSecurityScanner evaluates tool requests against prompt injections,
 // destructive directives, secret leaks, and guardrail path modifications.
 type DefaultSecurityScanner struct {
+	// Text scans payload text; nil falls back to DefaultTextScanner at scan
+	// time, and a scan with neither fails closed.
+	Text                  TextScanner
 	guardrailPathPatterns []string
 }
 
-// NewDefaultSecurityScanner returns a configured DefaultSecurityScanner.
+// NewDefaultSecurityScanner returns a configured DefaultSecurityScanner that
+// scans payload text through the installed DefaultTextScanner.
 func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 	return &DefaultSecurityScanner{
 		guardrailPathPatterns: []string{
@@ -59,22 +123,29 @@ func (s *DefaultSecurityScanner) Scan(ctx context.Context, req ToolRequest) (Sca
 		}
 	}
 
-	for _, text := range textsToScan {
-		if text == "" {
+	text := s.Text
+	if text == nil {
+		text = DefaultTextScanner()
+	}
+	if text == nil {
+		return ScanResult{}, ErrNoTextScanner
+	}
+	for _, t := range textsToScan {
+		if t == "" {
 			continue
 		}
-		inVerdict := ioscan.ScanInput(text)
-		if inVerdict.Blocked || inVerdict.HasCriticalInjection() {
+		inVerdict := text.ScanInput(t)
+		if inVerdict.Blocked || inVerdict.CriticalInjection {
 			for _, f := range inVerdict.Findings {
-				if f.Severity >= ioscan.SeverityHigh {
+				if f.High {
 					violations = append(violations, fmt.Sprintf("input scan [%s]: %s (rule: %s)", f.Kind, f.Snippet, f.Rule))
 				}
 			}
 		}
-		outVerdict := ioscan.ScanOutput(text)
+		outVerdict := text.ScanOutput(t)
 		if outVerdict.Blocked {
 			for _, f := range outVerdict.Findings {
-				if f.Severity >= ioscan.SeverityHigh {
+				if f.High {
 					violations = append(violations, fmt.Sprintf("output scan [%s]: %s (rule: %s)", f.Kind, f.Snippet, f.Rule))
 				}
 			}
