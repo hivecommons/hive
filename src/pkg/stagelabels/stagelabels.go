@@ -758,29 +758,29 @@ type Desired struct {
 // are matched case-insensitively, so a mis-cased existing label is correctly
 // identified and removed.
 func Plan(current []string, want Desired) (add, remove []string) {
-	wanted := map[string]bool{}
-	if l := want.Stage.Label(); l != "" {
-		wanted[l] = true
+	// wanted maps each desired label's lowercased form to its configured
+	// spelling, so a mixed-case configured author/<kind> name is matched
+	// case-insensitively but added verbatim.
+	wanted := map[string]string{}
+	wantLabel := func(l string) {
+		if l != "" {
+			wanted[strings.ToLower(l)] = l
+		}
 	}
-	if l := want.Role.Label(); l != "" {
-		wanted[l] = true
-	}
-	if l := want.KindLabels.Label(want.Kind); l != "" {
-		wanted[l] = true
-	}
+	wantLabel(want.Stage.Label())
+	wantLabel(want.Role.Label())
+	wantLabel(want.KindLabels.Label(want.Kind))
 	if want.Stalled {
-		wanted[StalledLabel] = true
+		wantLabel(StalledLabel)
 	}
-	if l := want.DCO.Label(); l != "" {
-		wanted[l] = true
-	}
+	wantLabel(want.DCO.Label())
 	if want.MergeCommit == MergeCommitWanted {
-		wanted[MergeCommitLabel] = true
+		wantLabel(MergeCommitLabel)
 	}
-	// Matching is case-insensitive: wanted keys are canonical (lowercase)
-	// and each current label is compared through its lowercased form, so a
-	// mis-cased existing label counts as present rather than being removed
-	// and re-added. Removals keep the label's original spelling.
+	// Matching is case-insensitive: wanted keys and each current label are
+	// compared through their lowercased forms, so a mis-cased existing label
+	// counts as present rather than being removed and re-added. Removals
+	// keep the label's original spelling.
 	have := map[string]bool{}
 	for _, origL := range current {
 		l := strings.TrimSpace(origL)
@@ -789,7 +789,7 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		}
 		lower := strings.ToLower(l)
 		have[lower] = true
-		if wanted[lower] {
+		if _, ok := wanted[lower]; ok {
 			continue
 		}
 		// The hive's own DCO pair is reconciled only once the commit check
@@ -806,7 +806,7 @@ func Plan(current []string, want Desired) (add, remove []string) {
 			}
 			continue
 		}
-		if IsLegacyDCO(lower) || !Owned(l) {
+		if IsLegacyDCO(lower) || !Owned(lower) {
 			continue
 		}
 		if want.Kind == authorkind.Unknown && strings.HasPrefix(lower, AuthorPrefix) && !IsLegacyRole(lower) {
@@ -814,8 +814,8 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		}
 		remove = append(remove, l)
 	}
-	for l := range wanted {
-		if !have[l] {
+	for lower, l := range wanted {
+		if !have[lower] {
 			add = append(add, l)
 		}
 	}
@@ -866,7 +866,7 @@ func CarriesStageAtLeast(labels []string, min Stage) bool {
 // (lowercased and trimmed) before matching, so owned-ness is case-insensitive.
 func Owned(label string) bool {
 	l := strings.ToLower(strings.TrimSpace(label))
-	return strings.HasPrefix(l, strings.ToLower(Prefix)) || strings.HasPrefix(l, strings.ToLower(RolePrefix)) || strings.HasPrefix(l, strings.ToLower(AuthorPrefix)) || IsLegacy(label)
+	return strings.HasPrefix(l, Prefix) || strings.HasPrefix(l, RolePrefix) || strings.HasPrefix(l, AuthorPrefix) || IsLegacy(l)
 }
 
 // Renames maps retired stage label spellings to their current name. The
@@ -895,7 +895,7 @@ func Current(labels []string) Stage {
 			cur = s
 		}
 		for _, d := range Table {
-			if l == strings.ToLower(d.Stage.Label()) && cur.Before(d.Stage) {
+			if l == d.Stage.Label() && cur.Before(d.Stage) {
 				cur = d.Stage
 			}
 		}

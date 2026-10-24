@@ -295,7 +295,7 @@ func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
 }
 
 func TestPlanCaseInsensitiveMatching(t *testing.T) {
-	// Test that Current recognizes mis-cased stage labels.
+	// Test that Plan recognizes mis-cased stage labels.
 	want := Desired{Stage: ReviewPending, Role: RoleContributor}
 	add, remove := Plan([]string{"bug", "STAGE/050-REVIEW-PENDING", "role/contributor"}, want)
 	if len(add)+len(remove) != 0 {
@@ -309,6 +309,21 @@ func TestPlanCaseInsensitiveMatching(t *testing.T) {
 	}
 	if !reflect.DeepEqual(add, []string{"stage/050-review-pending"}) {
 		t.Fatalf("canonical stage should be added: add=%v", add)
+	}
+
+	// A mixed-case configured author/<kind> name already on the item must be
+	// matched (no churn), and when missing must be added with its configured
+	// spelling.
+	names := authorkind.Names{Human: "author/Human"}
+	add, remove = Plan([]string{"bug", "author/Human", "stage/050-review-pending"},
+		Desired{Stage: ReviewPending, Kind: authorkind.Human, KindLabels: names})
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("configured mixed-case author label should be idempotent: add=%v remove=%v", add, remove)
+	}
+	add, remove = Plan([]string{"bug", "stage/050-review-pending"},
+		Desired{Stage: ReviewPending, Kind: authorkind.Human, KindLabels: names})
+	if !reflect.DeepEqual(add, []string{"author/Human"}) || len(remove) != 0 {
+		t.Fatalf("configured author label should be added verbatim: add=%v remove=%v", add, remove)
 	}
 
 	// Test that Owned recognizes mis-cased labels.
