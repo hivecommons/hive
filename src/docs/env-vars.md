@@ -265,7 +265,8 @@ Always set:
 | `HIVE_ACMM_LEVEL` | The project's ACMM level as a decimal integer. |
 | `HIVE_AGENT_MODE` | The agent's effective operating mode (from `tools.mode` when set, otherwise the resolved mode). |
 | `HIVE_EXPLAIN_MODE` | The **resolved** explain mode (`off`, `brief`, `full`) after hive-wide default inheritance - always exported, `off` included, so scripts can branch on it without re-deriving precedence. |
-| `HTTP_PROXY`, `HTTPS_PROXY` | The local hive proxy (`http://127.0.0.1:<port>`) all agent HTTP(S) traffic must traverse. |
+| `HTTP_PROXY`, `HTTPS_PROXY` | The local hive proxy (`http://127.0.0.1:<port>`) all non-loopback agent HTTP(S) traffic must traverse. |
+| `NO_PROXY` | `127.0.0.1,localhost,::1` — loopback never traverses the hive proxy, on every backend. |
 | `HIVE_PROXY_AGENT` | The agent's own name, so tooling (e.g. `hive-panes`) can identify and skip the calling agent. |
 | `GIT_TERMINAL_PROMPT` | `0` - git never prompts for credentials. |
 | `NODE_EXTRA_CA_CERTS`, `GIT_SSL_CAINFO` | Path of the proxy CA certificate. `SSL_CERT_FILE` is deliberately **not** set (it breaks Copilot API TLS). |
@@ -277,7 +278,7 @@ Set conditionally:
 | `HIVE_ID`, `HIVE_SHA`, `HIVE_ADVISORY_ISSUE` | When set in the hive's own environment | Passed through unchanged. |
 | `HIVE_REPO`, `HIVE_REPOS` | When the project has an org and at least one repo | `org/primary-repo`, and the full comma-separated `org/repo` list. Policy templates target `gh issue create --repo "$HIVE_REPO"`. |
 | `GH_HOST` | GHE spokes with a configured forge host | Forge hostname for the `gh` CLI; the gh wrapper pairs it with `GH_ENTERPRISE_TOKEN`. |
-| `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `NO_PROXY`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `CLAUDE_CODE_AUTO_MODE_SERVER=0` | Inference-routed backends only | Local inference-translate endpoint, a **synthetic** per-agent key (`sk-hive-<agent>` - not a real credential), loopback proxy bypass, an output-token cap every fronted model accepts, telemetry switched off at the source, and auto mode's server-side classifier check turned off (the OpenAI-format gateway behind the translator cannot return the `safeguard_results` verdict, and without the variable Claude Code stops on an interactive "this session isn't eligible" notice no unattended pane can answer). |
+| `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `CLAUDE_CODE_AUTO_MODE_SERVER=0` | Inference-routed backends only | Local inference-translate endpoint, a **synthetic** per-agent key (`sk-hive-<agent>` - not a real credential), an output-token cap every fronted model accepts, telemetry switched off at the source, and auto mode's server-side classifier check turned off (the OpenAI-format gateway behind the translator cannot return the `safeguard_results` verdict, and without the variable Claude Code stops on an interactive "this session isn't eligible" notice no unattended pane can answer). |
 | `COPILOT_GITHUB_TOKEN` | When the hive holds a Copilot auth token | Copilot OAuth token (authenticates the AI model, not GitHub writes). **Secret.** |
 | `GITHUB_TOKEN` | Only when App-authored PRs are enabled (`AppAuthoredPRs`), an App is configured, and the agent's mode can push | The per-agent tier-scoped App installation token, so the built-in GitHub MCP server writes as the App bot. Advisory agents have `GITHUB_TOKEN` deliberately stripped. **Secret.** |
 | `LINEAR_ACCESS_TOKEN` / `LINEAR_API_KEY` | ISSUES_ONLY+ agents on Linear-connected hives | See the [Linear agent integration](#linear-agent-integration) note above. |
