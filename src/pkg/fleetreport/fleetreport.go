@@ -18,7 +18,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/hivestate"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 const (

@@ -1,7 +1,7 @@
 package hub
 
 import (
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 

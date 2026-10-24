@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -37,7 +37,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 //go:embed static

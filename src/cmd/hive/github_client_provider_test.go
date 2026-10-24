@@ -32,10 +32,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
-	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 const (

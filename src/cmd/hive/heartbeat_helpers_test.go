@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 

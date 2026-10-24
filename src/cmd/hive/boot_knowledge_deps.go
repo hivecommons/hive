@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"

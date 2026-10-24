@@ -21,8 +21,9 @@
 #
 # Anything this script cannot reason about falls back to `all`: a change
 # outside src/ (workflows, CI scripts, bin/, config/, Justfile, Makefile,
-# dashboard/openapi.json — all read or executed by tests or shards), go.mod or
-# go.sum, src/scripts/, the shared test harness under src/internal/, any
+# dashboard/openapi.json — all read or executed by tests or shards), go.mod,
+# go.sum, go.work or the nested Crux module's crux/go.mod and crux/go.sum,
+# src/scripts/, the shared test harness under src/internal/, any
 # non-Go file under src/ (embedded static assets, docs, policies, fixtures —
 # several are read across packages), any testdata/ file, a .go file whose
 # directory is not a package in the module, an empty diff, or any git/go
@@ -65,11 +66,14 @@ git rev-parse -q --verify "${head}^{commit}" >/dev/null || full "head revision $
 changed=$(git diff --no-renames --name-only "$base" "$head") || full "git diff $base $head failed"
 [ -n "$changed" ] || full "empty changed-file list"
 
-mod_path=$(go list -m 2>/dev/null) || full "go list -m failed"
+# src/go.work puts the go tool in workspace mode: `go list -m` prints every
+# workspace module and `./...` covers the root module only, so the nested
+# Crux module (src/crux, #13536) is addressed explicitly as ./crux/... .
+mod_path=$(GOWORK=off go list -m 2>/dev/null) || full "go list -m failed"
 
 # Directory -> import path for every package in the module.
-dir_map=$(go list -f '{{.Dir}}|{{.ImportPath}}' ./... 2>/dev/null) || full "go list ./... failed"
-[ -n "$dir_map" ] || full "go list ./... returned no packages"
+dir_map=$(go list -f '{{.Dir}}|{{.ImportPath}}' ./... ./crux/... 2>/dev/null) || full "go list ./... ./crux/... failed"
+[ -n "$dir_map" ] || full "go list ./... ./crux/... returned no packages"
 
 seeds=""
 rdep_seeds=""
@@ -83,7 +87,7 @@ while IFS= read -r f; do
   esac
   rel=${f#src/}
   case "$rel" in
-    go.mod|go.sum) full "$f changes the module graph" ;;
+    go.mod|go.sum|go.work|go.work.sum|crux/go.mod|crux/go.sum) full "$f changes the module graph" ;;
     scripts/*) full "$f is a repository script" ;;
     internal/*) full "$f is part of the shared test harness" ;;
     testdata/*|*/testdata/*) full "$f is a test fixture (fixtures are read across packages)" ;;
@@ -112,7 +116,7 @@ if [ -n "$seeds" ]; then
   # Every package, test variant ("p [p.test]", "p_test [p.test]") and test
   # binary ("p.test") with its transitive deps; a line's owning package is its
   # import path with the variant/binary decoration stripped.
-  graph=$(go list -test -f '{{.ImportPath}}|{{join .Deps "|"}}' ./... 2>/dev/null) || full "go list -test ./... failed"
+  graph=$(go list -test -f '{{.ImportPath}}|{{join .Deps "|"}}' ./... ./crux/... 2>/dev/null) || full "go list -test ./... ./crux/... failed"
   printf '%s' "$seeds" >> "$selected"
   awk -F'|' '
     NR == FNR { if ($0 != "") seed[$0] = 1; next }
@@ -144,7 +148,7 @@ if [ -n "$seeds" ]; then
 fi
 
 # Bound the answer by the package set the shards actually test.
-universe=$(go list ./pkg/... ./cmd/... ./internal/... 2>/dev/null) || full "go list of the tested package set failed"
+universe=$(go list ./pkg/... ./cmd/... ./internal/... ./crux/... 2>/dev/null) || full "go list of the tested package set failed"
 LC_ALL=C sort -u "$selected" | grep -Fx -f <(printf '%s\n' "$universe") > "$out" || true
 
 echo "affected-go-packages: $(grep -c . "$out" || true) of $(printf '%s\n' "$universe" | grep -c .) tested packages selected" >&2

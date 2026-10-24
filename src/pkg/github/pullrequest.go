@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/crux/types"
+	"github.com/hivecommons/hive/crux/types"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows

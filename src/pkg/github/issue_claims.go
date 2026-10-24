@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agentmode"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 

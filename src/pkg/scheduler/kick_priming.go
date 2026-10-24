@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agentsmd"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/knowledge"
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/crux/skillreg"
 )
 
 const maxIssuesToPrime = 5

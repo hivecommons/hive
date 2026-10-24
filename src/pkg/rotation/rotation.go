@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/pkg/config"
 )
 

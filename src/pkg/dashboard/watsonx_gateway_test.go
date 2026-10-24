@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/crux/watsonx"
 )
 
 // A watsonx gateway upsert missing the project_id is rejected (400) and leaves

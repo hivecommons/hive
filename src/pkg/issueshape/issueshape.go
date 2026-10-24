@@ -7,7 +7,7 @@
 // (hivecommons/hive#13536).
 package issueshape
 
-import cruxissueshape "github.com/hivecommons/hive/pkg/crux/issueshape"
+import cruxissueshape "github.com/hivecommons/hive/crux/issueshape"
 
 var (
 	UnsubstitutedTemplatePlaceholder = cruxissueshape.UnsubstitutedTemplatePlaceholder

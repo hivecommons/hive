@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 func TestUpgradeDrain_ProceedsImmediatelyWithNoKicksInFlight(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/linearagent"
-	"github.com/hivecommons/hive/pkg/openrouter"
-	"github.com/hivecommons/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/crux/openrouter"
+	"github.com/hivecommons/hive/crux/watsonx"
 )
 
 // --- watsonx ---

@@ -1,6 +1,6 @@
 package ioscan
 
-import "github.com/hivecommons/hive/pkg/toolapprove"
+import "github.com/hivecommons/hive/crux/toolapprove"
 
 // ToolApproveScanner adapts this package's input/output scanning to
 // toolapprove.TextScanner, the payload-scanner seam the tool-approval desk

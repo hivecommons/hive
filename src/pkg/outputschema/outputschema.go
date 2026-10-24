@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	cruxoutputschema "github.com/hivecommons/hive/pkg/crux/outputschema"
+	cruxoutputschema "github.com/hivecommons/hive/crux/outputschema"
 )
 
 const (

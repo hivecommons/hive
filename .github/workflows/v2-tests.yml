@@ -84,7 +84,7 @@ concurrency:
 # ── Sharding layout (#4118) ──────────────────────────────────────────────────
 # The suite is split so PR wall-clock ≈ the slowest single piece, not the sum.
 # Measured on CI (v4, ubuntu-latest, -short -race): pkg/hub ≈ 117s and
-# pkg/agent ≈ 429s of TEST time each — every other package is ≤ 51s and they
+# crux/agent ≈ 429s of TEST time each — every other package is ≤ 51s and they
 # all run concurrently inside one `go test` invocation. Round-robin over the
 # 840 sorted agent test names measures a worst slice of ~127s at N=5. So:
 #
@@ -96,7 +96,7 @@ concurrency:
 #                                             critical path until sliced the
 #                                             same way as agent) — starts
 #                                             immediately, self-partitions
-#   test (agent i/N)   ./pkg/agent            N jobs, each running a
+#   test (agent i/N)   ./crux/agent           N jobs, each running a
 #                                             deterministic 1/N slice of the
 #                                             package's test FUNCTIONS via -run
 #                                             (the package is a serial 429s
@@ -133,7 +133,7 @@ concurrency:
 #    test-dashboard-shuffle below for why both bounds are load-bearing.
 #
 # Completeness invariants (nothing can be silently untested):
-#  - rest buckets are computed by EXCLUDING exactly pkg/hub and pkg/agent from
+#  - rest buckets are computed by EXCLUDING exactly pkg/hub and crux/agent from
 #    the full `go list` and PARTITIONING the remainder — a new package always
 #    lands in a bucket (a future subpackage of either sliced package included,
 #    since the slices run the bare package path), a removed one just
@@ -156,28 +156,28 @@ concurrency:
 # Crux boundary filter (#13536), pull requests only, layered on the selection
 # above and consulted ONLY when it is `partial` (an `all` verdict from the
 # dependency analysis is never narrowed). .github/scripts/crux-scope.sh
-# classifies the diff against the Crux package set — pkg/agent/... and
-# pkg/{agentmode,agentparse,agentsmd,claude,sandbox,kubejob,toolapprove,
-# skillreg,inference,openrouter,watchdog,trajectory,logscrub,proxy,
-# pushbroker,watsonx} — as:
+# classifies the diff against the Crux package set — the nested Go module at
+# src/crux/ (module github.com/hivecommons/hive/crux: crux/agent/... and its
+# ring, addressed from src/ as ./crux/... through src/go.work) — as:
 #   crux-only  every change is inside the set: the agent slices run, the rest
 #              buckets keep only the selected Crux packages plus the
 #              always-on tree-scanning packages (internal/..., pkg/config,
 #              pkg/rotation), and the hub slices and the dashboard shuffle
 #              lane report success without testing. The inbound consumers of
-#              pkg/agent (dashboard, hub, cmd/hive, ...) are deliberately NOT
+#              crux/agent (dashboard, hub, cmd/hive, ...) are deliberately NOT
 #              run on such a PR; v2-ci.yml still builds and vets the whole
 #              tree, and the push/scheduled full runs are the behavioural net.
 #   none       no change touches the set: the agent slices report success
-#              without testing and pkg/agent is dropped from the selection
+#              without testing and crux/agent is dropped from the selection
 #              EVEN IF the dependency analysis selected it (a PR that only
-#              edits a non-Crux package pkg/agent imports, e.g. pkg/github,
-#              does not run pkg/agent tests on the PR). This is the mirror of
+#              edits a root-module package, e.g. pkg/github, does not run
+#              crux/agent tests on the PR). This is the mirror of
 #              the crux-only trade: the boundary is tested from inside the
 #              set, and the push/scheduled full runs are the net. Everything
 #              else follows the selection.
 #   mixed      both sides changed: the selection is used unchanged.
 #   full       a fail-safe path changed — src/go.mod, src/go.sum,
+#              src/go.work, src/crux/go.mod, src/crux/go.sum,
 #              src/internal/**, src/pkg/config/**, .github/workflows/**,
 #              .github/scripts/**, src/scripts/** — or the diff could not be
 #              read: everything runs.
@@ -244,7 +244,7 @@ jobs:
           fi
 
   # pkg/hub is one package of ~2,700 test functions that takes ~125s serially
-  # under -race — after #4118 sliced pkg/agent, this single job was the PR
+  # under -race — after #4118 sliced crux/agent, this single job was the PR
   # gate's critical path (~3.3 min wall clock against ~2.4 min for the widest
   # rest bucket). It is sliced exactly like test-agent below: each job derives
   # the same sorted `go test -list` output and runs rows where NR mod H ==
@@ -446,7 +446,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  # pkg/agent is a single package whose tests take ~429s serially on CI — it
+  # crux/agent (the Crux module's manager package, pkg/agent before the
+  # module cut) is a single package whose tests take ~429s serially on CI — it
   # was the entire "rest" shard's wall clock. Package-granular sharding cannot
   # split a package, so each of these jobs runs a deterministic 1/N slice of
   # the package's test functions. The slice is computed INSIDE the job (no
@@ -456,7 +457,7 @@ jobs:
   # test function always lands in exactly one slice. N is ${{ strategy.job-total }},
   # so adding an index to the matrix rebalances automatically.
   #
-  # Each slice produces a PARTIAL coverage profile for pkg/agent; the coverage
+  # Each slice produces a PARTIAL coverage profile for crux/agent; the coverage
   # job below merges them by summing per-block counts before scoring, so the
   # agent floor is applied to the union, never to a partial run.
   test-agent:
@@ -485,7 +486,7 @@ jobs:
           RUN_LANE: ${{ needs.list-packages.outputs.run-agent }}
         run: |
           if [ "$SELECTION" = partial ] && [ "$RUN_LANE" = false ]; then
-            echo "Affected-package selection: pkg/agent is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "Affected-package selection: crux/agent is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -568,7 +569,7 @@ jobs:
 
       # tmux is what makes HIVE_TEST_REQUIRE_BEHAVIOURAL legitimate below.
       # ubuntu-latest happens to ship it, but "happens to" is not a guarantee —
-      # a runner image change would silently turn ~50 pkg/agent tests back into
+      # a runner image change would silently turn ~50 crux/agent tests back into
       # skips, which is the exact failure #5388 exists to prevent. Install it
       # explicitly and fail the job if it is absent, so the flag below is
       # asserting something this lane actually enforces.
@@ -580,12 +581,12 @@ jobs:
             --require tmux --for 'the behavioural gate' \
             --apt tmux --apk tmux --verify 'tmux -V'
 
-      - name: Test slice of pkg/agent
+      - name: Test slice of crux/agent
         if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
-          # This lane GUARANTEES the preconditions the pkg/agent skips gate on:
+          # This lane GUARANTEES the preconditions the crux/agent skips gate on:
           # tmux is installed and verified above, and the rest are t.TempDir()
           # writes and TestMain-built fixtures. So a skip at a converted site
           # here means the test broke, not that the environment is unsuitable —
@@ -599,9 +600,9 @@ jobs:
           # prints top-level Test/Example/Fuzz function names. All three kinds
           # are included so none can fall out of every slice; Benchmarks are
           # not run by `go test` without -bench, matching the unsharded run.
-          go test ./pkg/agent -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
+          go test ./crux/agent -short -list '.*' | grep -E '^(Test|Example|Fuzz)' | LC_ALL=C sort > all-tests.txt
           if [ ! -s all-tests.txt ]; then
-            echo "::error::go test -list produced no test functions for pkg/agent — refusing to run an empty slice (fail closed)"
+            echo "::error::go test -list produced no test functions for crux/agent — refusing to run an empty slice (fail closed)"
             exit 1
           fi
           awk -v n="$TOTAL" -v i="$IDX" 'NR % n == i - 1' all-tests.txt > slice.txt
@@ -612,7 +613,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-preserve-coverprofile.sh" \
             gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
             --rerun-fails-report=flaky-tests-agent-"$IDX".txt \
-            --packages="./pkg/agent" --junitfile junit-agent-"$IDX".xml \
+            --packages="./crux/agent" --junitfile junit-agent-"$IDX".xml \
             -- -short -race -count=1 -v $SHUFFLE -run "$RUN" -coverprofile=coverage-agent-"$IDX".out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-agent-"$IDX".log
 
@@ -645,7 +646,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
 
-  # Partition everything EXCEPT pkg/hub and pkg/agent (which have dedicated
+  # Partition everything EXCEPT pkg/hub and crux/agent (which have dedicated
   # jobs above) into R balanced buckets, published as a matrix for test-rest.
   # Greedy longest-processing-time assignment over static weight hints
   # (measured seconds on CI under -short -race; unlisted packages default to
@@ -766,7 +767,10 @@ jobs:
             bash "$GITHUB_WORKSPACE/.github/scripts/affected-go-packages.sh" 'HEAD^1' HEAD "$sel" || echo all > "$sel"
           fi
           [ -f "$sel" ] || echo all > "$sel"
-          mod=$(go list -m)
+          # src/go.work puts `go list -m` in workspace mode, where it prints
+          # every workspace module; the selection file is keyed by the root
+          # module's import paths, so ask for that module alone.
+          mod=$(GOWORK=off go list -m)
           crux_scope=full
           if [ "$(head -n1 "$sel")" = all ]; then
             selection=full
@@ -774,7 +778,7 @@ jobs:
           else
             selection=partial
             has() { grep -Fxq "$mod/$1" "$sel" && echo true || echo false; }
-            run_hub=$(has pkg/hub) run_agent=$(has pkg/agent) run_dashboard=$(has pkg/dashboard)
+            run_hub=$(has pkg/hub) run_agent=$(has crux/agent) run_dashboard=$(has pkg/dashboard)
             # Crux boundary filter (#13536) — see the header comment. Only a
             # partial selection is ever narrowed; the script answers `full`
             # for every fail-safe path and for anything it cannot read, and
@@ -788,10 +792,7 @@ jobs:
                 # tree-scanning packages (mirrors ALWAYS_PATTERNS in
                 # affected-go-packages.sh); a failure here falls back to the
                 # unnarrowed selection.
-                if go list ./pkg/agent/... ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
-                     ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg ./pkg/inference \
-                     ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory ./pkg/logscrub ./pkg/proxy \
-                     ./pkg/pushbroker ./pkg/watsonx \
+                if go list ./crux/... \
                      ./internal/... ./pkg/config ./pkg/rotation > ../crux-pkgs.txt 2>/dev/null \
                    && [ -s ../crux-pkgs.txt ]; then
                   grep -Fx -f ../crux-pkgs.txt "$sel" > "$sel.crux" || true
@@ -803,11 +804,11 @@ jobs:
                 fi
                 ;;
               none)
-                # Drop pkg/agent from the selection too: the coverage job
+                # Drop crux/agent from the selection too: the coverage job
                 # requires every selected package to have produced a result,
                 # and the agent slices are the only lane that tests it.
                 run_agent=false
-                grep -Fxv "$mod/pkg/agent" "$sel" > "$sel.nocrux" || true
+                grep -Fxv "$mod/crux/agent" "$sel" > "$sel.nocrux" || true
                 mv "$sel.nocrux" "$sel"
                 echo "no Crux package changed: agent slices will not run"
                 ;;
@@ -849,10 +850,12 @@ jobs:
           # pkg/hubbackup et al. stay here.
           # ./internal/... carries the shared test helpers (internal/testutil)
           # and their contract tests, such as the time.Sleep ratchet in
-          # sleep_ratchet_test.go.
-          go list ./pkg/... ./cmd/... ./internal/... \
+          # sleep_ratchet_test.go. ./crux/... is the nested Crux module
+          # (#13536), reachable from src/ through src/go.work; its manager
+          # package crux/agent has the dedicated agent slices.
+          go list ./pkg/... ./cmd/... ./internal/... ./crux/... \
             | awk '$0 == "github.com/hivecommons/hive/pkg/hub" { next } { print }' \
-            | grep -Ev '^github\.com/hivecommons/hive/pkg/agent$' \
+            | grep -Ev '^github\.com/hivecommons/hive/crux/agent$' \
             | LC_ALL=C sort > rest-pkgs.txt
           if [ ! -s rest-pkgs.txt ]; then
             echo "::error::go list produced no rest packages — failing closed"
@@ -884,7 +887,7 @@ jobs:
               */pkg/scheduler)  echo 74 ;;
               */pkg/github)     echo 62 ;;
               */pkg/config)     echo 57 ;;
-              */pkg/proxy)      echo 55 ;;
+              */crux/proxy)     echo 55 ;;
               */cmd/hive)       echo 30 ;;
               */pkg/hubbackup)  echo 29 ;;
               */pkg/ioscan)     echo 22 ;;
@@ -897,7 +900,7 @@ jobs:
               */internal/testutil) echo 9 ;;
               */pkg/rotation)   echo 8 ;;
               */pkg/hivectl/commands) echo 7 ;;
-              */pkg/inference)  echo 6 ;;
+              */crux/inference) echo 6 ;;
               */pkg/auth)       echo 6 ;;
               */pkg/appkey)     echo 5 ;;
               */cmd/hive-backup) echo 5 ;;
@@ -1482,7 +1485,7 @@ jobs:
   #
   # Scoring is computed from the coverage PROFILES, not from the `ok ...
   # coverage: X%` log lines: the agent slices each emit a PARTIAL percentage
-  # for pkg/agent, so per-block counts from ALL shard profiles are merged
+  # for crux/agent, so per-block counts from ALL shard profiles are merged
   # (summed) first and every package is scored on the union. For unsplit
   # packages this yields the identical number `go test` prints. The logs are
   # still parsed for the two states a profile cannot express: FAIL and
@@ -1544,7 +1547,9 @@ jobs:
         if: ${{ steps.cov-scope.outputs.score == 'true' }}
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          cache-dependency-path: |
+            src/go.sum
+            src/crux/go.sum
 
       - name: List packages present in checkout
         if: ${{ steps.cov-scope.outputs.score == 'true' }}
@@ -1556,7 +1561,7 @@ jobs:
           # scores must still be bounded by the checked-out tree for this run.
           # This mirrors coverage-hourly.yml, whose `go test` command can only
           # emit packages that exist in the checkout.
-          go list ./pkg/... ./cmd/... ./internal/... | LC_ALL=C sort -u > ../existing-pkgs.txt
+          go list ./pkg/... ./cmd/... ./internal/... ./crux/... | LC_ALL=C sort -u > ../existing-pkgs.txt
           if [ ! -s ../existing-pkgs.txt ]; then
             echo "::error::go list produced no packages for coverage scoring"
             exit 1
@@ -1567,7 +1572,7 @@ jobs:
           # `coverage: 0.0%` lines a full run classifies below.
           : > ../no-test-pkgs.txt
           if [ "$SELECTION" = partial ]; then
-            go list -f '{{if not (or .TestGoFiles .XTestGoFiles)}}{{.ImportPath}}{{end}}' ./pkg/... ./cmd/... \
+            go list -f '{{if not (or .TestGoFiles .XTestGoFiles)}}{{.ImportPath}}{{end}}' ./pkg/... ./cmd/... ./crux/... \
               | { grep . || true; } | LC_ALL=C sort -u > ../no-test-pkgs.txt
           fi
 
@@ -1605,7 +1610,7 @@ jobs:
           declare -A PKG_THRESHOLD=(
             [dashboard]=84   # 86.2% on 2026-09-01; the residue is the inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4 measures 87.6%.
-            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+            [crux/agent]=89  # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355. Keyed crux/<pkg> since the module cut (#13536)
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
             # A RATCHET, NOT A TARGET — see coverage-hourly.yml for the full
@@ -1628,11 +1633,11 @@ jobs:
             [github]=88      # 88.9% on 2026-10-05
             [hivectl]=88
             [knowledge]=89
-            [proxy]=89
+            [crux/proxy]=89
             [ioscan]=96
-            [sandbox]=98
-            [pushbroker]=99
-            [kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
+            [crux/sandbox]=98
+            [crux/pushbroker]=99
+            [crux/kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
 
             # ── Stale module-path parser repaired on v5 (#6066) ─────────────
             # These packages were pre-existing below-default floors that became
@@ -1681,6 +1686,14 @@ jobs:
             [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
             [cmd/crux]=75     # 80.0% on 2026-10-23 (#13536): same shape as flue-fixture; main() is the one uncovered statement, run() and signalContext() are tested in-process
             [crux/cli]=92     # 97.8% on 2026-10-23 (#13536): the crux CLI against a fake crux.Runtime plus a real unix control socket; the residue is Main() and write-error branches
+
+            # ── Crux module (#13536, Stage 2 step 4) ─────────────────────────
+            # Packages of the nested module at src/crux are keyed "crux/<path>"
+            # (floor_key below): crux/agent, crux/proxy, crux/sandbox,
+            # crux/pushbroker, crux/kubejob and crux/cli above carried their
+            # pkg/<name> floors across the move unchanged. The module root
+            # package is keyed "crux". Every other crux/<pkg> takes the
+            # default.
           )
 
           # Thin flag-parsing mains with no test files, wrapping packages the
@@ -1693,7 +1706,7 @@ jobs:
           UNTESTED_CMD_MAINS=''
 
           # Merge every shard profile: per-block counts are summed, so the N
-          # partial pkg/agent profiles combine into the package's true
+          # partial crux/agent profiles combine into the package's true
           # coverage. Blocks are keyed by (location, statement count); package
           # = the directory of the block's file. Emits "pkg pct" lines plus a
           # TOTAL over ./pkg/... — the same statements-covered/statements
@@ -1703,8 +1716,10 @@ jobs:
           # a hard-coded module prefix. The previous version matched the literal
           # module path, so the kubestellar -> hivecommons org rename silently
           # emptied every filter and disabled the whole gate. A segment match
-          # survives any future rename, and only this module's own packages
-          # appear in these profiles, so it cannot over-match.
+          # survives any future rename, and only this repository's own packages
+          # appear in these profiles, so it cannot over-match. The nested Crux
+          # module's packages carry a "/crux" segment (github.com/<org>/hive/crux
+          # and .../crux/<pkg>) and get a second, informational total.
           awk '
             FNR == 1 { next }              # skip each file'\''s "mode:" line
             {
@@ -1720,19 +1735,24 @@ jobs:
                 tot[p] += stmts[k]
                 if (count[k] > 0) cov[p] += stmts[k]
               }
-              gt = 0; gc = 0
+              gt = 0; gc = 0; xt = 0; xc = 0
               for (p in tot) {
                 printf "%s %.1f\n", p, cov[p] * 100 / tot[p]
                 if (p ~ /\/pkg\//) {
                   gt += tot[p]; gc += cov[p]
+                } else if (p ~ /\/crux(\/|$)/ && p !~ /\/cmd\//) {
+                  xt += tot[p]; xc += cov[p]
                 }
               }
               if (gt > 0) printf "TOTAL %.1f\n", gc * 100 / gt
+              if (xt > 0) printf "CRUX_TOTAL %.1f\n", xc * 100 / xt
             }
           ' coverage-*.out > pkg-pcts.txt
 
           TOTAL=$(awk '$1 == "TOTAL" {print $2 "%"}' pkg-pcts.txt)
+          CRUX_TOTAL=$(awk '$1 == "CRUX_TOTAL" {print $2 "%"}' pkg-pcts.txt)
           echo "Total coverage (./pkg/...): ${TOTAL:-unavailable}"
+          echo "Total coverage (./crux/...): ${CRUX_TOTAL:-unavailable}"
 
           # Partial selection (#12454): every number here covers the selected
           # packages only. Per-package floors still apply unchanged to each of
@@ -1743,10 +1763,10 @@ jobs:
           if [ "$SELECTION" = partial ]; then
             PARTIAL=true
             for p in $SELECTED; do
-              case "$p" in */pkg/*|*/cmd/*) ;; *) continue ;; esac
+              case "$p" in */pkg/*|*/cmd/*|*/crux|*/crux/*) ;; *) continue ;; esac
               grep -Fxq "$p" ../existing-pkgs.txt && SELECTED_SCORED="$SELECTED_SCORED $p"
             done
-            echo "Partial selection: scoring only the $(wc -w <<<"$SELECTED_SCORED") selected ./pkg/... and ./cmd/... packages; the total above is over the selected packages and is not comparable to the repo-wide total."
+            echo "Partial selection: scoring only the $(wc -w <<<"$SELECTED_SCORED") selected ./pkg/..., ./cmd/... and ./crux/... packages; the totals above are over the selected packages and are not comparable to the repo-wide totals."
             if [ -z "$TOTAL" ] && ! grep -q '/pkg/' <<<"$SELECTED_SCORED"; then
               TOTAL="n/a (no ./pkg/... package selected)"
             fi
@@ -1763,6 +1783,13 @@ jobs:
           if [ -z "$TOTAL" ]; then
             echo "COVERAGE GATE FAILED: no coverage data parsed from the shard artifacts."
             echo "coverage-*.out was present but produced no ./pkg/... totals."
+            exit 1
+          fi
+          # Same guard for the Crux module on a full run: its shards (the
+          # agent slices and the rest buckets holding ./crux/...) must have
+          # produced profiles, or the module's floors are vacuously met.
+          if [ "$SELECTION" != partial ] && [ -z "$CRUX_TOTAL" ]; then
+            echo "COVERAGE GATE FAILED: no coverage data parsed for the Crux module (./crux/...)."
             exit 1
           fi
 
@@ -1784,7 +1811,7 @@ jobs:
                 }
                 $1 == "ok" || $1 == "FAIL" || $1 == "?" {
                   if (!exists[$2]) next
-                  if ($2 ~ /\/(pkg|cmd)\//) {
+                  if ($2 ~ /\/(pkg|cmd)\// || $2 ~ /\/crux(\/|$)/) {
                     seen[$2] = 1
                     if ($1 == "ok") ok[$2] = 1
                     else if ($1 == "FAIL") fail[$2] = 1
@@ -1793,7 +1820,7 @@ jobs:
                   next
                 }
                 /^\t.*\t\tcoverage: 0\.0% of statements$/ {
-                  if (exists[$1] && $1 ~ /\/(pkg|cmd)\//) {
+                  if (exists[$1] && ($1 ~ /\/(pkg|cmd)\// || $1 ~ /\/crux(\/|$)/)) {
                     seen[$1] = 1
                     no_tests[$1] = 1
                   }
@@ -1841,12 +1868,17 @@ jobs:
           # never resolve to pkg/hivectl's floor; pkg packages are keyed by
           # their full path below pkg/ so a nested package can never alias the
           # top-level one sharing its name (v5 has both pkg/spoke and
-          # pkg/hub/spoke). See coverage-hourly.yml for the full rationale.
+          # pkg/hub/spoke); the nested Crux module's packages are keyed
+          # "crux/<path>" (the module root package is "crux") so crux/config
+          # can never alias pkg/config. See coverage-hourly.yml for the full
+          # rationale.
           floor_key() {
             case "$1" in
-              */cmd/*) echo "cmd/${1##*/}" ;;
-              */pkg/*) echo "${1##*/pkg/}" ;;
-              *)       echo "${1##*/}" ;;
+              */cmd/*)  echo "cmd/${1##*/}" ;;
+              */pkg/*)  echo "${1##*/pkg/}" ;;
+              */crux/*) echo "crux/${1##*/crux/}" ;;
+              */crux)   echo "crux" ;;
+              *)        echo "${1##*/}" ;;
             esac
           }
 
@@ -1888,6 +1920,7 @@ jobs:
             echo "## Per-package coverage"
             echo ""
             echo "Total (./pkg/...): ${TOTAL:-unavailable}"
+            echo "Total (./crux/...): ${CRUX_TOTAL:-unavailable}"
             echo ""
             echo -e "${REPORT}"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -2177,8 +2210,8 @@ jobs:
       - name: Compile tree into the build cache
         if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
         run: |
-          go build ./... 
-          go test -race -count=1 -run '^$' ./pkg/... ./cmd/... ./internal/... > /dev/null
+          go build ./... ./crux/...
+          go test -race -count=1 -run '^$' ./pkg/... ./cmd/... ./internal/... ./crux/... > /dev/null
 
       - name: Save warm Go build cache
         continue-on-error: true

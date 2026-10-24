@@ -36,7 +36,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux/types"
+	"github.com/hivecommons/hive/crux/types"
 )
 
 // PredicateExactHeadGreen is the ONE predicate this vertical implements, as

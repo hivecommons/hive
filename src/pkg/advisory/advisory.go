@@ -14,7 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 const advisoryDir = "/data/advisory"

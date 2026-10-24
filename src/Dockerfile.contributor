@@ -39,7 +39,8 @@ FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
-COPY src/go.mod src/go.sum ./
+COPY src/go.mod src/go.sum src/go.work src/go.work.sum ./
+COPY src/crux/go.mod src/crux/go.sum ./crux/
 RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     go mod download
 COPY src/ .

@@ -5,7 +5,7 @@
 // import path: Crux owns, Hive aliases (hivecommons/hive#13536).
 package jsonextract
 
-import cruxjsonextract "github.com/hivecommons/hive/pkg/crux/jsonextract"
+import cruxjsonextract "github.com/hivecommons/hive/crux/jsonextract"
 
 // Object is pkg/crux/jsonextract.Object.
 var Object = cruxjsonextract.Object

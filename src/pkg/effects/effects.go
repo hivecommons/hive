@@ -5,7 +5,7 @@
 // their import path: Crux owns, Hive aliases (hivecommons/hive#13536).
 package effects
 
-import cruxeffects "github.com/hivecommons/hive/pkg/crux/effects"
+import cruxeffects "github.com/hivecommons/hive/crux/effects"
 
 const (
 	KindPullRequestCreate = cruxeffects.KindPullRequestCreate

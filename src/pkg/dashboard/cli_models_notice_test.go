@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 )
 
 // Copilot model discovery is best-effort: every failure degrades to a static

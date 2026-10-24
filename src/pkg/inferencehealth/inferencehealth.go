@@ -6,7 +6,7 @@
 // owns, Hive aliases (hivecommons/hive#13536).
 package inferencehealth
 
-import cruxinferencehealth "github.com/hivecommons/hive/pkg/crux/inferencehealth"
+import cruxinferencehealth "github.com/hivecommons/hive/crux/inferencehealth"
 
 const (
 	ClassDNS     = cruxinferencehealth.ClassDNS

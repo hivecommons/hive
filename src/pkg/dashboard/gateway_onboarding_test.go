@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/crux/watsonx"
 )
 
 // writeTempKeyFile stores a gateway key VALUE in a temp file and returns its

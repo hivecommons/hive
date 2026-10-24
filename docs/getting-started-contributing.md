@@ -22,15 +22,16 @@ build/test commands, see [`docs/development.md`](development.md).
 For most changes you do **not** need a cluster.
 
 - **Go code:** you need Go (see [`docs/development.md`](development.md) for the
-  version and `make`/`just` targets). `cd src && go build ./...` compiles the
-  binary; that's enough to iterate on most code.
+  version and `make`/`just` targets). `cd src && go build ./... ./crux/...`
+  compiles both Go modules (the root module and the Crux agent runtime at
+  `src/crux/`); that's enough to iterate on most code.
 - **Docs:** no toolchain needed — edit Markdown and preview locally.
 - **Running the whole thing:** the fastest full run is Docker Compose from the
   repo's [Quick Start](../src/docs/quickstart-docker-compose.md) (`docker compose -f src/docker-compose.yaml up -d`). You only need Kubernetes for deployment-specific work.
 
 ## 3. Test a change without a cluster
 
-- **Go:** `cd src && go test ./...` runs the unit suite. Most tests are
+- **Go:** `cd src && go test ./... ./crux/...` runs the unit suite. Most tests are
   hermetic; a few need env like `kubectl` and are skipped otherwise. See the
   Test section of [`docs/development.md`](development.md).
 - **Shell scripts:** `*.test.sh` / `*.test.js` files under

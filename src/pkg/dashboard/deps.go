@@ -15,7 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -28,7 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 type Dependencies struct {

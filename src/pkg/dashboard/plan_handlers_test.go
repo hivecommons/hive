@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/crux/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/planning"

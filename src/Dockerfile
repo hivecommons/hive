@@ -33,7 +33,11 @@ WORKDIR /src
 # populated. Mount contents never become image layers, so nothing here can
 # ship a stale artifact — the mount is an input cache for `go`, which
 # verifies modules against go.sum regardless of where they come from.
-COPY src/go.mod src/go.sum ./
+# src/go.work makes this a two-module workspace (root + the nested Crux
+# module at src/crux, #13536): the root go.mod replaces the Crux module with
+# ./crux, so its go.mod/go.sum must be present before `go mod download`.
+COPY src/go.mod src/go.sum src/go.work src/go.work.sum ./
+COPY src/crux/go.mod src/crux/go.sum ./crux/
 RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
     go mod download
 

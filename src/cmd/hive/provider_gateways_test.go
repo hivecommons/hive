@@ -16,8 +16,8 @@ import (
 
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/linearagent"
-	"github.com/hivecommons/hive/pkg/openrouter"
-	"github.com/hivecommons/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/crux/openrouter"
+	"github.com/hivecommons/hive/crux/watsonx"
 )
 
 // The adapters in provider_gateways.go are the only bridge between the

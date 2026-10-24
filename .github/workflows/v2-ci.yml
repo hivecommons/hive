@@ -184,7 +184,7 @@ jobs:
         run: python3 .github/scripts/test-ci-infra.py
 
       - name: Vet
-        run: go vet ./...
+        run: go vet ./... ./crux/...
 
       # The model list-price table behind /api/cost is refreshed weekly by
       # price-table-refresh.yml (which also re-dates it after 30 quiet days).

@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // fakeTicker is a loopTicker the test fires by hand.

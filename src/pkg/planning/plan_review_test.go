@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/crux/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
 )
 

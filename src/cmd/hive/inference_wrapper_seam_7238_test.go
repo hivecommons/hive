@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/watsonx"
+	"github.com/hivecommons/hive/crux/watsonx"
 )
 
 // The inference route and gateway resolvers moved to pkg/inference (#7238

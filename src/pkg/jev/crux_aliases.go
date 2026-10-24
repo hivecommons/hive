@@ -1,6 +1,6 @@
 package jev
 
-import cruxjev "github.com/hivecommons/hive/pkg/crux/jev"
+import cruxjev "github.com/hivecommons/hive/crux/jev"
 
 // The environment contract and the jev-decide skill live in the Crux ring
 // (pkg/crux/jev) because the agent runtime exports and installs them; this

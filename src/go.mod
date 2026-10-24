@@ -38,7 +38,6 @@ require (
 	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
 	github.com/charmbracelet/x/exp/golden v0.0.0-20240806155701-69247e0abc2a // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -76,3 +75,11 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+// The Crux agent runtime is the nested module at ./crux (hivecommons/hive#13536,
+// Stage 2). The pseudo-version is a placeholder the replace below resolves, so
+// the root builds with or without src/go.work; the nested module never
+// requires or replaces the root.
+require github.com/hivecommons/hive/crux v0.0.0-00010101000000-000000000000
+
+replace github.com/hivecommons/hive/crux => ./crux

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
 )
 
 const (

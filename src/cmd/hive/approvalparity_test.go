@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 func parityDesk(t *testing.T, cfg *config.Config) *toolapprove.Desk {

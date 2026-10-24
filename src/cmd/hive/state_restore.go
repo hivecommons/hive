@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	cruxinferencehealth "github.com/hivecommons/hive/pkg/crux/inferencehealth"
+	cruxinferencehealth "github.com/hivecommons/hive/crux/inferencehealth"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 

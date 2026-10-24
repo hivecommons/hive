@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"

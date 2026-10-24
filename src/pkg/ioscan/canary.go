@@ -16,7 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/pkg/crux/types"
+	"github.com/hivecommons/hive/crux/types"
 )
 
 const (

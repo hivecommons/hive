@@ -9,7 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agentaudit"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // The runner's default security scanner needs pkg/ioscan's payload scanner,

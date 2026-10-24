@@ -13,7 +13,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // BeadSynthPublishBranch is the fixed head branch of the single bead-synth

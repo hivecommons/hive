@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/discord"

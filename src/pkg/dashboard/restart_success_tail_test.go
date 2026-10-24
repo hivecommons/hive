@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
 )
 
 // installRestartFakeTmux puts a fake tmux first on PATH that exits 0 for every

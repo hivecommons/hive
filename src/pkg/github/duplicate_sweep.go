@@ -11,7 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/dupsweep"
 	"github.com/hivecommons/hive/pkg/findingidentity"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // The duplicate sweep is capability (B) of hivecommons/hive#7469: a periodic,

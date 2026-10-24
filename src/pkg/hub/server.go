@@ -26,11 +26,11 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/auth"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/delegation"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
-	"github.com/hivecommons/hive/pkg/openrouter"
+	"github.com/hivecommons/hive/crux/openrouter"
 	"github.com/hivecommons/hive/pkg/reach"
 	"github.com/hivecommons/hive/pkg/tracing"
 )

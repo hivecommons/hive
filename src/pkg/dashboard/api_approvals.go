@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // maxBulkApprovalsPerRequest caps how many approvals one bulk call may resolve.

@@ -8,7 +8,7 @@ import (
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 )
 
 // TestBuildEvidenceWriteActivity pins the boundary panel's denominator

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 func hookApprovalRequest() hooks.ApprovalRequest {

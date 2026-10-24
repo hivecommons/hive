@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 func fakeClock(start time.Time) (func() time.Time, func(time.Duration)) {

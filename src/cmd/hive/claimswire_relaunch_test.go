@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 )
 
 // The adapter is pkg/github's package-level REST accounting behind the

@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/pushbroker"
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 const (

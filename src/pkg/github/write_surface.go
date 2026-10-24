@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // The audited write surface (hivecommons/hive#9587, phase 1).

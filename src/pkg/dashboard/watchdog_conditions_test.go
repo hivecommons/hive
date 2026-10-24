@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // TestAgentPayloadCarriesWatchdogConditions verifies the RFC #4665 condition

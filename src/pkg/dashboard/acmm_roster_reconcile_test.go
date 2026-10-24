@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 )
 

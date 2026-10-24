@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/crux/skillreg"
 )
 
 // ApplyAgentSpecRepoScopes refreshes config-visible repo scopes from BYO agent

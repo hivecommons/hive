@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"

@@ -8,7 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/toolapprove"
+	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
 // The tool-approval desk scans payload text through pkg/ioscan, wired here

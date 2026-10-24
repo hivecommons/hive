@@ -13,7 +13,7 @@ import (
 // they have no tests. Only the two function-sharded packages may be omitted.
 func TestCoveragePartitionIncludesSubpackages(t *testing.T) {
 	workflow := readRepoFile(t, ".github", "workflows", "v2-tests.yml")
-	start := strings.Index(workflow, "go list ./pkg/... ./cmd/... ./internal/... \\\n")
+	start := strings.Index(workflow, "go list ./pkg/... ./cmd/... ./internal/... ./crux/... \\\n")
 	if start < 0 {
 		t.Fatal("package-list pipeline not found")
 	}
@@ -26,7 +26,7 @@ func TestCoveragePartitionIncludesSubpackages(t *testing.T) {
 	const module = "github.com/hivecommons/hive/"
 	packages := []string{
 		"pkg/hub", "pkg/hub/spoke", "pkg/hub/future", "pkg/hub/future/nested",
-		"pkg/hubbackup", "pkg/agent", "pkg/agent/future", "cmd/hive", "internal/testutil",
+		"pkg/hubbackup", "crux", "crux/agent", "crux/agent/future", "cmd/hive", "internal/testutil",
 	}
 	var input strings.Builder
 	for _, pkg := range packages {
@@ -45,12 +45,12 @@ func TestCoveragePartitionIncludesSubpackages(t *testing.T) {
 	}
 	want := ""
 	for _, pkg := range []string{
-		"cmd/hive", "internal/testutil", "pkg/agent/future", "pkg/hub/future",
+		"cmd/hive", "crux", "crux/agent/future", "internal/testutil", "pkg/hub/future",
 		"pkg/hub/future/nested", "pkg/hub/spoke", "pkg/hubbackup",
 	} {
 		want += module + pkg + "\n"
 	}
 	if string(selected) != want {
-		t.Fatalf("rest packages must include every package except pkg/hub and pkg/agent\ngot:\n%s\nwant:\n%s", selected, want)
+		t.Fatalf("rest packages must include every package except pkg/hub and crux/agent\ngot:\n%s\nwant:\n%s", selected, want)
 	}
 }

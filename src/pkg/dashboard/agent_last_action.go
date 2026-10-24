@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/github"
 )
 

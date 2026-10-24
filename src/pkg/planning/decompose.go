@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/agentparse"
+	"github.com/hivecommons/hive/crux/agentparse"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/github"

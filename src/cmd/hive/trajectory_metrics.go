@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
-	"github.com/hivecommons/hive/pkg/trajectory"
+	"github.com/hivecommons/hive/crux/trajectory"
 )
 
 // trajectoryMetricsCounters adapts the trajectory lane's Stats to the

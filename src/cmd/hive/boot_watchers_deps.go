@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 )
 
 // bootWatchersDeps are the long-lived effects bootWatchers performs (#7571,

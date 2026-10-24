@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // selfUpgradeDrainStaleAfter bounds how long a drain stays latched without a

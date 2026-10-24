@@ -4,9 +4,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/jev"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 )
 
 // bootProxyDeps are the effects bootProxy performs that a test cannot let run

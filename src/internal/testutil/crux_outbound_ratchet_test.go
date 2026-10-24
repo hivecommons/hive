@@ -20,26 +20,26 @@ import (
 // A nested module can only be a module once this list is empty, so the list
 // may shrink and never grow.
 //
-// cruxModulePrefixes is the package set the module will hold — pkg/agent and
-// its ring, exactly the set .github/scripts/crux-scope.sh uses to skip the
-// hub and dashboard shards on a crux-only PR, plus pkg/crux (the exported
-// surface, including the CLI's logic in pkg/crux/cli). KEEP THE THREE IN
-// SYNC. An import between two packages in the set is not an edge; an import
-// of anything else under github.com/hivecommons/hive/ is. Third-party and
-// stdlib imports are not measured.
+// cruxModuleDir is the nested Crux module, src/crux, relative to this
+// package's directory. Since the module cut (Stage 2 step 4) the module
+// boundary is the ring: every package under src/crux is in the set and
+// nothing else is. Before the cut this file carried cruxModulePrefixes, the
+// src/-relative list that .github/scripts/crux-scope.sh and the v2-tests
+// boundary comment mirrored; all three now name the one directory. An import
+// between two packages in the module is not an edge; an import of anything
+// else under github.com/hivecommons/hive/ is. Third-party and stdlib imports
+// are not measured.
 //
-// cmd/crux is NOT in the set. It is the crux binary's process boundary and,
-// like cmd/hive, a host: its only job besides signals and the exit code is
-// the Hive-backed cli.DefinitionLoader (hive.yaml via pkg/config, the
+// cmd/crux is NOT in the module. It is the crux binary's process boundary
+// and, like cmd/hive, a host: its only job besides signals and the exit code
+// is the Hive-backed cli.DefinitionLoader (hive.yaml via pkg/config, the
 // portable AgentDefinition via pkg/defsrc, Hive's per-agent defaults), which
 // is host knowledge by definition and has no layer above main to be injected
 // from. A nested module that held it would import pkg/config and so need the
 // root module, the cycle Stage 2 exists to avoid; the binary therefore stays
 // in the root module and builds against the nested one the way cmd/hive
-// does. crux-scope.sh and the v2-tests boundary comment never listed it;
-// this list now agrees. The inbound ratchet still measures it (baseline
-// zero `agent.<Symbol>` references), so it can reach the runtime only
-// through pkg/crux.
+// does. The inbound ratchet still measures it (baseline zero `agent.<Symbol>`
+// references), so it can reach the runtime only through the crux package.
 //
 // cruxOutboundBaseline is exact and fails closed in both directions, like the
 // inbound tables: an edge not in the baseline fails the PR gate and names the
@@ -129,41 +129,22 @@ import (
 // keeps measuring it from the root module's side.
 var cruxOutboundBaseline = map[string][]string{}
 
-// cruxModulePrefixes are the src/-relative package directories (and their
-// subpackages) that Stage 2 moves into the nested module. See the file
-// comment for the sync rule with .github/scripts/crux-scope.sh.
-var cruxModulePrefixes = []string{
-	"pkg/agent",
-	"pkg/crux",
-	"pkg/agentmode",
-	"pkg/agentparse",
-	"pkg/agentsmd",
-	"pkg/claude",
-	"pkg/sandbox",
-	"pkg/kubejob",
-	"pkg/toolapprove",
-	"pkg/skillreg",
-	"pkg/inference",
-	"pkg/openrouter",
-	"pkg/watchdog",
-	"pkg/trajectory",
-	"pkg/logscrub",
-	"pkg/proxy",
-	"pkg/pushbroker",
-	"pkg/watsonx",
-}
+// cruxModuleDir is the src/-relative directory of the nested Crux module;
+// cruxModuleRoots is the same as a path from this package's directory. See
+// the file comment for the sync rule with .github/scripts/crux-scope.sh.
+const cruxModuleDir = "crux"
 
-const cruxHiveModulePath = "github.com/hivecommons/hive/"
+var cruxModuleRoots = []string{filepath.Join("..", "..", cruxModuleDir)}
 
-// cruxInModule reports whether rel (a src/-relative directory) is one of
-// cruxModulePrefixes or nested under one.
+const (
+	cruxHiveModulePath = "github.com/hivecommons/hive/"
+	cruxModulePath     = cruxHiveModulePath + cruxModuleDir
+)
+
+// cruxInModule reports whether rel (a src/-relative directory, or an import
+// path with cruxHiveModulePath trimmed) is inside the nested module.
 func cruxInModule(rel string) bool {
-	for _, p := range cruxModulePrefixes {
-		if rel == p || strings.HasPrefix(rel, p+"/") {
-			return true
-		}
-	}
-	return false
+	return rel == cruxModuleDir || strings.HasPrefix(rel, cruxModuleDir+"/")
 }
 
 // cruxOutboundEdge is one measured import of an outside Hive package.
@@ -180,7 +161,7 @@ type cruxOutboundEdge struct {
 func TestCruxOutboundRatchet(t *testing.T) {
 	edges, files := measureCruxOutbound(t)
 	if files == 0 {
-		t.Fatalf("no .go files found under %v — is the test running from src/internal/testutil?", cruxModulePrefixes)
+		t.Fatalf("no .go files found under %v — is the test running from src/internal/testutil?", cruxModuleRoots)
 	}
 
 	measured := map[string][]string{}
@@ -224,25 +205,27 @@ func TestCruxOutboundRatchet(t *testing.T) {
 
 	if len(failures) > 0 {
 		t.Fatalf("Crux outbound ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
-			"A package that Stage 2 moves into the crux module may not grow a dependency on the rest of Hive. "+
-			"Move the value type into pkg/crux/types, invert it behind a Manager setter the host wires, or move the "+
+			"A package in the crux module may not grow a dependency on the rest of Hive. "+
+			"Move the value type into crux/types, invert it behind a Manager setter the host wires, or move the "+
 			"test to the consumer side; a baseline entry whose edge is gone must be deleted in the same change.",
 			strings.Join(failures, "\n\n"))
 	}
 }
 
 // measureCruxOutbound parses the import declarations of every Go file under
-// cruxModulePrefixes (skipping testdata) and records, per package, every
-// import of a Hive package outside the set, with the importing files and
-// whether any of them is a non-test file.
+// the nested module (skipping testdata) and records, per package, every
+// import of a Hive package outside the module, with the importing files and
+// whether any of them is a non-test file. The Go toolchain enforces the same
+// thing at build time (the nested module has no replace back to the root,
+// so such an import does not resolve); the parse here reports it by file
+// and keeps the record in one place with the inbound ratchet.
 func measureCruxOutbound(t *testing.T) (map[string]map[string]*cruxOutboundEdge, int) {
 	t.Helper()
 	edges := map[string]map[string]*cruxOutboundEdge{}
 	files := 0
 	fset := token.NewFileSet()
 	srcRoot := filepath.Join("..", "..")
-	for _, prefix := range cruxModulePrefixes {
-		root := filepath.Join(srcRoot, filepath.FromSlash(prefix))
+	for _, root := range cruxModuleRoots {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err

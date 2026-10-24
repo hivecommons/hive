@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/crux/cli"
+	"github.com/hivecommons/hive/crux/cli"
 )
 
 func TestRunPrintsUsageWithoutACommand(t *testing.T) {

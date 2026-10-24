@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux/types"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // TriggerRuntimeError is the fleet-report trigger for the "unusual runtime

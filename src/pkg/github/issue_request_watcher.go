@@ -20,7 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 

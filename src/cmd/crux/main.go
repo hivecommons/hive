@@ -12,7 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/hivecommons/hive/pkg/crux/cli"
+	"github.com/hivecommons/hive/crux/cli"
 )
 
 func main() {

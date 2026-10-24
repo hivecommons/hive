@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -29,7 +29,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -37,9 +37,9 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/pkg/toolapprove"
-	"github.com/hivecommons/hive/pkg/trajectory"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // boot is the state main() used to keep in ~40 local variables, made explicit

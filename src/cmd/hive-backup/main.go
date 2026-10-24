@@ -34,7 +34,7 @@ import (
 	"os"
 
 	"github.com/hivecommons/hive/pkg/hubbackup"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/spokebackup"
 )
 

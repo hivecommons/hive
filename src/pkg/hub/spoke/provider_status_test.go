@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // The live heartbeat must carry each agent's backend-auth canary: the hub's

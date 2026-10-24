@@ -32,9 +32,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/proxy"
+	"github.com/hivecommons/hive/crux/proxy"
 )
 
 // outcome is what the scanner actually did with a payload, which is a

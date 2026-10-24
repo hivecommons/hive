@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/crux/types"
+	"github.com/hivecommons/hive/crux/types"
 )
 
 // Audit action names recorded for agent lifecycle events. Snake_case to match

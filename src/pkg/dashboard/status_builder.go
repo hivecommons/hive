@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -26,10 +26,10 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/review"
-	"github.com/hivecommons/hive/pkg/skillreg"
+	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard

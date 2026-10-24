@@ -190,7 +190,7 @@ jobs:
         id: cover
         continue-on-error: true
         run: |
-          go test ./pkg/... ./cmd/... ./internal/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
+          go test ./pkg/... ./cmd/... ./internal/... ./crux/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
             2>&1 | tee race-run.log
           exit "${PIPESTATUS[0]}"
 
@@ -216,7 +216,7 @@ jobs:
           declare -A PKG_THRESHOLD=(
             [dashboard]=84   # 86.2% on 2026-09-01; the residue is the inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
             [hub]=87         # kubectl-shelling + live-GitHub paths; see #2355. Was 89 against v2's 89.9%; v4/v5 measure 87.6%.
-            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
+            [crux/agent]=89  # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355. Keyed crux/<pkg> since the module cut (#13536)
 
             # ── Floors recorded when the gate moved from v2 to v4 (#3903) ─────
             #
@@ -254,11 +254,11 @@ jobs:
             [github]=88      # 88.9% on 2026-10-05
             [hivectl]=88
             [knowledge]=89
-            [proxy]=89
+            [crux/proxy]=89
             [ioscan]=96
-            [sandbox]=98
-            [pushbroker]=99
-            [kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
+            [crux/sandbox]=98
+            [crux/pushbroker]=99
+            [crux/kubejob]=90    # new in #6311; sandbox.Launcher over the in-cluster API, tested against httptest
 
             # ── Stale module-path parser repaired on v5 (#6066) ─────────────
             # These packages were pre-existing below-default floors that became
@@ -342,7 +342,7 @@ jobs:
           # Both were therefore incapable of failing the gate, so adding a
           # package with zero tests was the one guaranteed way to stay green.
           # They are now hard failures in their own right.
-          go test -cover ./pkg/... ./cmd/... ./internal/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+          go test -cover ./pkg/... ./cmd/... ./internal/... ./crux/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
 
           # Floor-map key for a package import path: cmd packages are keyed
           # with a "cmd/" prefix so cmd/hivectl can never resolve to
@@ -355,11 +355,18 @@ jobs:
           # pkg/hub/spoke (90.7%), which both keyed to "spoke", so the [spoke]=95
           # floor #7146 set for pkg/spoke would have been enforced against
           # pkg/hub/spoke too and failed it. Keys are now "spoke" vs "hub/spoke".
+          #
+          # The nested Crux module (src/crux, #13536) is keyed "crux/<path>"
+          # with the module root package as "crux", so crux/config can never
+          # alias pkg/config and crux/agent keeps the floor pkg/agent carried
+          # before the module cut.
           floor_key() {
             case "$1" in
-              */cmd/*) echo "cmd/${1##*/}" ;;
-              */pkg/*) echo "${1##*/pkg/}" ;;
-              *)       echo "${1##*/}" ;;
+              */cmd/*)  echo "cmd/${1##*/}" ;;
+              */pkg/*)  echo "${1##*/pkg/}" ;;
+              */crux/*) echo "crux/${1##*/crux/}" ;;
+              */crux)   echo "crux" ;;
+              *)        echo "${1##*/}" ;;
             esac
           }
 

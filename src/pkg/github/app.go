@@ -16,7 +16,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/crux/types"
+	"github.com/hivecommons/hive/crux/types"
 )
 
 const (

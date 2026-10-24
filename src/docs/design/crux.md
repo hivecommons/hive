@@ -1,17 +1,19 @@
 # Crux: the agent runtime boundary (#13536)
 
-Status: **Stage 1 shipped (v5); Stage 2 prerequisites done, module cut
-(item 4) not started.** The boundary is named, the inbound and outbound
+Status: **Stage 1 shipped (v5); Stage 2 module cut done: the ring is the
+nested Go module `github.com/hivecommons/hive/crux` at `src/crux/`, joined
+to the root module by `src/go.work`.** The boundary is named, the inbound and outbound
 architecture ratchets and the tmux funnel are live, `crux.Runtime` exists,
 the dashboard is on it, Crux owns its value types and the hub, spoke,
 dashboard and `cmd/hive` reference them as `crux.<Name>`, CI path filters
 select Crux-only shards for Crux-only PRs, and the `crux` CLI ships. The
 ring's outbound closure, about 55 Hive packages when this record began, is
 now zero, in test code too: the outbound baseline is empty (the ring's tests
-use their own `pkg/crux/testutil` copy of `Eventually*` and
-`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). What is left of Stage 2 is the move, and
-its scope and open questions are under
-[Step 4: the module cut](#step-4-the-module-cut). Stage 3 is design only.
+use their own `crux/internal/testutil` copy of `Eventually*` and
+`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). The move
+itself is described under [Step 4: the module cut](#step-4-the-module-cut)
+(the two-module workflow write-up follows in a docs PR). Stage 3 is design
+only.
 
 ## What Crux is
 

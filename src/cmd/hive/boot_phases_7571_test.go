@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/agent"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/scheduler"
-	"github.com/hivecommons/hive/pkg/watchdog"
+	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // These tests drive individual boot phases in isolation (#7571, step 1). They

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/crux"
+	"github.com/hivecommons/hive/crux"
 )
 
 // copilotDeviceMock serves fake /login/device/code and /login/oauth/access_token

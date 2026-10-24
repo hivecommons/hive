@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	cruxeffects "github.com/hivecommons/hive/pkg/crux/effects"
+	cruxeffects "github.com/hivecommons/hive/crux/effects"
 )
 
 // TestAliasesAreTheCruxTypes pins the alias direction: a Boundary written

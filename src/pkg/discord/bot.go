@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	agentpkg "github.com/hivecommons/hive/pkg/agent"
+	agentpkg "github.com/hivecommons/hive/crux/agent"
 )
 
 const (

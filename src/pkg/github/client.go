@@ -22,7 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueclaim"
-	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"

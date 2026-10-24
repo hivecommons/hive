@@ -20,7 +20,8 @@ Thank you for helping improve Hive. This guide is for contributing code and docu
 - `src/` — the current Go module (`github.com/hivecommons/hive`) and the main development target for this repository.
   - `src/cmd/hive` — main Hive binary.
   - `src/cmd/hivectl`, `src/cmd/apiproxy`, `src/cmd/hive-backup` — supporting command-line tools.
-  - `src/pkg/` — Go packages for agents, GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
+  - `src/pkg/` — Go packages for GitHub integration, scheduling, policies, dashboards, hubs, backups, and related runtime behavior.
+  - `src/crux/` — the Crux agent runtime (agent manager, inference, sandbox, egress proxy, tool approval) as a nested Go module; see [`src/docs/design/crux.md`](src/docs/design/crux.md).
   - `src/policies/` — policy prompts and rule files used by the deterministic/agent pipeline. Treat policy changes like code: review the behavior they enable, test where possible, and explain risk in the PR.
   - `src/deploy/` and `src/examples/` — deployment manifests and example configuration.
   - `src/docs/` — architecture and operator/developer reference material.
@@ -60,11 +61,11 @@ See [docs/development.md](docs/development.md) for the full local setup guide. T
 
 ```bash
 cd src
-go build ./...
-go test ./...
+go build ./... ./crux/...
+go test ./... ./crux/...
 ```
 
-The Go version is declared in [`src/go.mod`](src/go.mod). Install that version or newer compatible tooling before building.
+`src/` is a two-module Go workspace (`src/go.work`): the root module plus the Crux agent runtime at [`src/crux/`](src/crux/) (`github.com/hivecommons/hive/crux`). `./...` covers the root module only, so the Crux module is named explicitly as `./crux/...`. The Go version is declared in [`src/go.mod`](src/go.mod) (and mirrored in `src/crux/go.mod`). Install that version or newer compatible tooling before building.
 
 ## Contributor `just` recipes
 
