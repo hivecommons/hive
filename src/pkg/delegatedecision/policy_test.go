@@ -192,9 +192,9 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictRecommendOnly, rule: "sentinel-untrusted", keepsPark: true,
 		},
 		{
-			name:    "hive PR yields to mergeable contributor PR",
+			name:    "hive PR stays parked pending contributor adequacy review",
 			in:      Input{Kind: KindPR, Number: 52, Title: "Add filter", HiveAuthored: true, CIGreen: true, Competing: []CompetingPR{{Number: 49, Mergeable: true, Current: true}}},
-			verdict: VerdictCloseSuperseded, rule: "prefer-contributor", kinds: []ActionKind{ActionCloseDuplicate}, textHas: "superseded by #49",
+			verdict: VerdictRecommendOnly, rule: "prefer-contributor", kinds: []ActionKind{ActionRecommendOnly}, keepsPark: true, textHas: "compare #49 with #52",
 		},
 		{
 			name:    "green contributor PR beats hive duplicate",
@@ -265,6 +265,29 @@ func TestDecidePRRules(t *testing.T) {
 				t.Fatalf("text %q lacks %q", d.Text, tc.textHas)
 			}
 		})
+	}
+}
+
+// A clean third-party PR referencing the issue must not close the hive PR,
+// even when the operator is allowed to run the delegated decision.
+func TestCompetingPRCannotAutomaticallyCloseHivePR(t *testing.T) {
+	t.Parallel()
+	for _, trusted := range []bool{false, true} {
+		d := Run(Input{
+			Kind: KindPR, Number: 52, Title: "Add filter", HiveAuthored: true,
+			CIGreen: true, TrustedAuthor: trusted,
+			Competing: []CompetingPR{{Number: 49, Mergeable: true, Current: true}},
+		})
+		if d.Verdict != VerdictRecommendOnly || !d.KeepsPark {
+			t.Fatalf("clean competitor must preserve the park: %+v", d)
+		}
+		if !sameKinds(kinds(d), []ActionKind{ActionRecommendOnly}) {
+			t.Fatalf("clean competitor must not mutate either PR: %+v", d.Actions)
+		}
+		body := CommentBody(d, "test-hive", "operator")
+		if strings.Contains(body, "/hive decision") || !strings.Contains(body, "keep #52 open") {
+			t.Fatalf("recommendation must not release the parked PR: %s", body)
+		}
 	}
 }
 
@@ -381,7 +404,7 @@ func TestMarkerAndComment(t *testing.T) {
 
 func TestPolicyTextCoversRules(t *testing.T) {
 	t.Parallel()
-	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm"} {
+	for _, want := range []string{"Be decisive", "Duplicate of #N", "needs-owner", "ratchets", "supersede mode", "never merge a PR", "owner to confirm", "keep the hive PR open and parked until adequacy is confirmed", "except for the safety rails"} {
 		if !strings.Contains(PolicyText, want) {
 			t.Errorf("PolicyText lacks %q", want)
 		}

@@ -34,14 +34,15 @@ const PolicyName = "owner-delegate"
 // MarkerPrefix opens the HTML comment stamped on every delegated decision.
 const MarkerPrefix = "<!-- hive:delegated-decision"
 
-// PolicyText is the owner's standing operating rules, verbatim: the single
+// PolicyText is the delegate's operating policy, including the proposed
+// contributor-adequacy safety rail (subject to policy review): the single
 // place the delegate's policy lives. The docs
 // (src/docs/dashboard-sections.md, "Let hive decide") quote it from here and
 // the rules in Decide implement it one clause at a time.
 const PolicyText = `Owner-delegate policy (how the owner decides; the hive applies these as his delegate):
 
-- Be decisive; never ask the owner a question back. Pick the option that keeps work moving and is reversible.
-- PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist, keep the contributor's if it is mergeable and current, else supersede it with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
+- Be decisive; except for the safety rails below, never ask the owner a question back. Pick the option that keeps work moving and is reversible.
+- PRs: prefer an adequate human/contributor PR over a hive duplicate — if both exist and the contributor's is mergeable and current, recommend a human comparison of issue coverage, checks and review approval; keep the hive PR open and parked until adequacy is confirmed, and never close it solely on an issue reference. Otherwise supersede the contributor's with the hive's and close theirs with credit. Approve small, necessary, low-risk changes (CI pins, RBAC read-only adds, warning text, workflow hygiene) once the sentinel finding is checked and explained as intended. Sensitive-path sentinel alerts on trusted-author PRs: approve with a one-line "reviewed, intended" rationale. Clear reporter-trust holds when the fixing PR is sound.
 - Contributors offline: adopt now in supersede mode — do not wait for a deadline (hivecommons/hive#13975).
 - Issues: dedupe aggressively (close the newer duplicate with "Duplicate of #N", cross-link overlaps); secrets / PAT / org-permission items are owner-only → label needs-owner + hold with one comment stating the exact owner action, and stop opening more failure issues for that root cause; flaky tests → quarantine with retry + a deflake task rather than block; CI hygiene gate proposals (actionlint, duplication ratchets, link-checker allowlists) → approve as ratchets (baseline, fail only on increases; warning-only briefly, then enforce); design proposals with concrete acceptance criteria → accept as proposed with explicit defaults; "review backlog items blocked on their PR" → never auto-close when the PR closes unmerged (drop the relation, comment, re-triage).
 - Record the decision as a "/hive decision <text>" comment on the item (and the auto-merge queue approval on the PR head when the decision is to release a PR), remove stage/085-needs-decision, add triage/accepted where applicable, and stamp the delegated-decision marker so it is auditable.
@@ -465,17 +466,15 @@ func decidePR(in Input) Decision {
 }
 
 // decideCompeting applies "prefer an adequate contributor PR over a hive
-// duplicate" when the item has a competing PR.
+// duplicate" when the item has a competing PR. Mergeability alone cannot
+// establish adequacy, so closing a hive PR requires a human comparison.
 func decideCompeting(in Input, ref string) (Decision, bool) {
 	for _, other := range in.Competing {
 		switch {
 		case in.HiveAuthored && !other.HiveAuthored && other.Mergeable && other.Current:
-			return Decision{
-				Verdict: VerdictCloseSuperseded, Rule: "prefer-contributor",
-				Text:      fmt.Sprintf("superseded by #%d: the contributor's PR is mergeable and current, so it lands and this hive duplicate closes", other.Number),
-				Rationale: "an adequate contributor PR beats a hive duplicate",
-				Actions:   []Action{{Kind: ActionCloseDuplicate, Target: other.Number, Text: fmt.Sprintf("superseded by #%d", other.Number)}},
-			}, true
+			return recommendOnly("prefer-contributor",
+				"mergeability and an issue reference do not establish that a competing PR adequately replaces the hive's work",
+				fmt.Sprintf("compare #%d with %s for issue coverage, passing checks and review approval; keep %s open until that comparison confirms the contributor's PR is an adequate replacement", other.Number, ref, ref)), true
 		case !in.HiveAuthored && other.HiveAuthored && in.CIGreen && !in.Conflicting:
 			return releasePR("prefer-contributor", "approve "+ref+": the contributor's PR is mergeable and current, so it lands ahead of the hive's duplicate", "an adequate contributor PR beats a hive duplicate"), true
 		case !in.HiveAuthored && other.HiveAuthored:
