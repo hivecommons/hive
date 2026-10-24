@@ -2688,12 +2688,17 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	}
 	body = logscrub.ScrubString(body)
 	owner, repoName := c.splitRepo(repo)
-	_, err := effects.Execute(ctx, c.mutationBoundary(), effects.Claim{
+	// ExecuteReconciling, not Execute: an ambiguous POST failure journals the
+	// op Unknown, and without an observation every later post of the same
+	// comment was refused forever (hivecommons/hive#14011).
+	_, err := effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindIssueComment,
 		Target: strconv.Itoa(number),
 		Inputs: map[string]string{"body": effects.StableDigest(body)},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, func(ctx context.Context) (effects.ExternalState, error) {
+		return c.observeIssueComment(ctx, owner, repoName, number, body)
+	}, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
 		if apiErr != nil && isDefiniteIssueRefusal(apiErr) {
 			// A 403/404/410/422 means the comment was not posted; recording
@@ -2703,6 +2708,36 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
 	})
 	return err
+}
+
+// observeIssueComment is the authoritative observation of an issue comment
+// the mutation journal holds as unresolved: the earlier attempt applied when
+// the issue already carries a comment with the same body. Bodies are compared
+// like review bodies (line endings and surrounding whitespace normalised).
+func (c *Client) observeIssueComment(ctx context.Context, owner, repoName string, number int, body string) (effects.ExternalState, error) {
+	if c == nil || c.client == nil {
+		return effects.ExternalState{}, ErrNoGitHubClient
+	}
+	want := normalizeReviewBody(body)
+	if want == "" {
+		return effects.ExternalState{}, errors.New("comment has no body to match against")
+	}
+	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for {
+		comments, resp, err := c.client.Issues.ListComments(WithRESTCaller(ctx, "hive:reconcile_issue_comment"), owner, repoName, number, opts)
+		if err != nil {
+			return effects.ExternalState{}, err
+		}
+		for _, comment := range comments {
+			if normalizeReviewBody(comment.GetBody()) == want {
+				return effects.ExternalState{Applied: true, Provenance: comment.GetHTMLURL()}, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return effects.ExternalState{}, nil
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 // GetPRAuthor returns the current author login for an open PR.
