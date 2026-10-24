@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 const (
@@ -64,9 +64,9 @@ func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPl
 				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
 		if plan.pauseTrigger == DiskFullTrigger {
-			m.observeCondition(types.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
+			m.observeCondition(crux.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
 		} else {
-			m.observeCondition(types.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
+			m.observeCondition(crux.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
 		}
 		return true, false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:

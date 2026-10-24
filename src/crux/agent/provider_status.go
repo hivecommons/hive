@@ -1,33 +1,33 @@
 package agent
 
-import "github.com/hivecommons/hive/crux/types"
+import "github.com/hivecommons/hive/crux"
 
 // Provider status vocabulary and roll-up (ADR-0024, RFC #12611 §4). The
-// definitions live in pkg/crux/types as part of the Crux runtime surface
+// definitions live in pkg/crux as part of the Crux runtime surface
 // (hivecommons/hive#13536); these aliases keep pkg/agent's names valid.
 const (
-	ProviderAuthUsable            = types.ProviderAuthUsable
-	ProviderAuthRefreshable       = types.ProviderAuthRefreshable
-	ProviderAuthNeedsLogin        = types.ProviderAuthNeedsLogin
-	ProviderAuthStoreInaccessible = types.ProviderAuthStoreInaccessible
-	ProviderAuthUnknown           = types.ProviderAuthUnknown
+	ProviderAuthUsable            = crux.ProviderAuthUsable
+	ProviderAuthRefreshable       = crux.ProviderAuthRefreshable
+	ProviderAuthNeedsLogin        = crux.ProviderAuthNeedsLogin
+	ProviderAuthStoreInaccessible = crux.ProviderAuthStoreInaccessible
+	ProviderAuthUnknown           = crux.ProviderAuthUnknown
 
-	ProviderAvailable      = types.ProviderAvailable
-	ProviderRateLimited    = types.ProviderRateLimited
-	ProviderQuotaExhausted = types.ProviderQuotaExhausted
-	ProviderUnavailable    = types.ProviderUnavailable
-	ProviderAvailUnknown   = types.ProviderAvailUnknown
+	ProviderAvailable      = crux.ProviderAvailable
+	ProviderRateLimited    = crux.ProviderRateLimited
+	ProviderQuotaExhausted = crux.ProviderQuotaExhausted
+	ProviderUnavailable    = crux.ProviderUnavailable
+	ProviderAvailUnknown   = crux.ProviderAvailUnknown
 )
 
 // ProviderStatus is one provider's redacted auth/availability roll-up; see
-// types.ProviderStatus.
-type ProviderStatus = types.ProviderStatus
+// crux.ProviderStatus.
+type ProviderStatus = crux.ProviderStatus
 
 // ProviderAgentEvidence is the per-agent input to RollUpProviderStatus; see
-// types.ProviderAgentEvidence.
-type ProviderAgentEvidence = types.ProviderAgentEvidence
+// crux.ProviderAgentEvidence.
+type ProviderAgentEvidence = crux.ProviderAgentEvidence
 
-// RollUpProviderStatus is types.RollUpProviderStatus.
+// RollUpProviderStatus is crux.RollUpProviderStatus.
 func RollUpProviderStatus(agents []ProviderAgentEvidence) []ProviderStatus {
-	return types.RollUpProviderStatus(agents)
+	return crux.RollUpProviderStatus(agents)
 }

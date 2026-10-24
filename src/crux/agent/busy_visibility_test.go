@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 func busyVisibilityTestManager() *Manager {
@@ -133,7 +133,7 @@ func writeEventsFile(t *testing.T, home, id string, mod time.Time) {
 // kickFailedEvidence is what the runtime has told its ConditionReporter
 // about kick_failed_repeatedly and not cleared since.
 func kickFailedEvidence(rec *conditionRecorder) []conditionObservation {
-	return rec.active(types.ClassKickFailedRepeatedly)
+	return rec.active(crux.ClassKickFailedRepeatedly)
 }
 
 // Decision B on #12787: kicks that fail before busyNoActivityStall has had
@@ -216,7 +216,7 @@ func TestStallRestartThatRecoversClearsWithoutSelfReport(t *testing.T) {
 	// host applies its streak before anything is filed), then the kick lands
 	// and the recovery clears it.
 	m.markKickUndeliverableLocked(agent, clock.Add(time.Minute), "pane not at a ready input prompt")
-	if obs := tr.observations(types.ClassKickFailedRepeatedly); len(obs) != 1 {
+	if obs := tr.observations(crux.ClassKickFailedRepeatedly); len(obs) != 1 {
 		t.Fatalf("post-restart kick failure observations = %d, want 1", len(obs))
 	}
 	m.recordDeliveredKickLocked(agent, "go", "governor")
@@ -226,7 +226,7 @@ func TestStallRestartThatRecoversClearsWithoutSelfReport(t *testing.T) {
 	if evs := kickFailedEvidence(tr); len(evs) != 0 {
 		t.Fatalf("recovered stall left kick_failed_repeatedly open: %q", evs[0].Message)
 	}
-	if cleared := tr.clears(types.ClassKickFailedRepeatedly); len(cleared) != 1 {
+	if cleared := tr.clears(crux.ClassKickFailedRepeatedly); len(cleared) != 1 {
 		t.Fatalf("recovered stall produced %d cleared conditions, want 1", len(cleared))
 	}
 }
@@ -275,7 +275,7 @@ func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 	if evs := kickFailedEvidence(tr); len(evs) != 0 {
 		t.Fatalf("evidence still present after recovery: %q", evs[0].Message)
 	}
-	if cleared := tr.clears(types.ClassKickFailedRepeatedly); len(cleared) != 1 || cleared[0].Key != "scanner" {
+	if cleared := tr.clears(crux.ClassKickFailedRepeatedly); len(cleared) != 1 || cleared[0].Key != "scanner" {
 		t.Fatalf("cleared conditions = %+v, want one kick_failed_repeatedly clear for scanner", cleared)
 	}
 }

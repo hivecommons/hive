@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/effects"
-	"github.com/hivecommons/hive/crux/outputschema"
-	"github.com/hivecommons/hive/crux/types"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/outputschema"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -41,7 +41,7 @@ func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name
 }
 
 type PRCreator interface {
-	CreatePR(ctx context.Context, repo, head, base, title, body string) (types.PRResult, error)
+	CreatePR(ctx context.Context, repo, head, base, title, body string) (crux.PRResult, error)
 }
 
 type SandboxKickSpec struct {
@@ -80,7 +80,7 @@ type SandboxKickResult struct {
 	TranscriptPath string
 	Sandbox        sandbox.Result
 	Broker         *pushbroker.Result
-	PR             *types.PRResult
+	PR             *crux.PRResult
 	TimedOut       bool
 	Error          string
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // fakeCanaryScanner stands in for the host's canary registry (pkg/ioscan):
@@ -29,22 +29,22 @@ func (f *fakeCanaryScanner) plant(agent string) string {
 	return tok
 }
 
-func (f *fakeCanaryScanner) Scan(agentName, text, source string) (types.CanaryLeak, bool) {
+func (f *fakeCanaryScanner) Scan(agentName, text, source string) (crux.CanaryLeak, bool) {
 	f.seen = append(f.seen, text)
 	for agent, tok := range f.tokens {
 		if strings.Contains(text, tok) {
-			return types.CanaryLeak{Agent: agent, Token: tok, Source: source}, true
+			return crux.CanaryLeak{Agent: agent, Token: tok, Source: source}, true
 		}
 	}
-	return types.CanaryLeak{}, false
+	return crux.CanaryLeak{}, false
 }
 
 func TestInspectCanaryEgressDetectsGitHubWrites(t *testing.T) {
 	r := newFakeCanaryScanner()
 	tok := r.plant("scanner")
-	var got types.CanaryLeak
+	var got crux.CanaryLeak
 	p := &GitHubProxy{logger: slog.Default()}
-	p.SetCanaryScanner(true, true, r, func(leak types.CanaryLeak) { got = leak })
+	p.SetCanaryScanner(true, true, r, func(leak crux.CanaryLeak) { got = leak })
 	req, _ := http.NewRequest(http.MethodPost, "https://api.github.com/repos/org/repo/issues/1/comments", strings.NewReader(`{"body":"`+tok+`"}`))
 	reason, deny, detected := p.inspectCanaryEgress("scanner", req)
 	if !detected || !deny || reason == "" {
@@ -88,7 +88,7 @@ func TestInspectCanaryEgressAuditOnlyWhenFailOpen(t *testing.T) {
 	tok := r.plant("scanner")
 	called := false
 	p := &GitHubProxy{logger: slog.Default()}
-	p.SetCanaryScanner(true, false, r, func(types.CanaryLeak) { called = true })
+	p.SetCanaryScanner(true, false, r, func(crux.CanaryLeak) { called = true })
 	req, _ := http.NewRequest(http.MethodPatch, "https://api.github.com/repos/org/repo/pulls/2", strings.NewReader(`{"body":"`+tok+`"}`))
 	_, deny, detected := p.inspectCanaryEgress("scanner", req)
 	if !detected || deny || !called {

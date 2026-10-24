@@ -4,20 +4,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
-// BackendAuth status values live in pkg/crux/types as part of the Crux
+// BackendAuth status values live in pkg/crux as part of the Crux
 // runtime surface (hivecommons/hive#13536); these aliases keep pkg/agent's
-// names valid. See types.BackendAuthForbidden for why a bare 403 is its own
+// names valid. See crux.BackendAuthForbidden for why a bare 403 is its own
 // state (#6500).
 const (
-	BackendAuthOK           = types.BackendAuthOK
-	BackendAuthUnlicensed   = types.BackendAuthUnlicensed
-	BackendAuthTokenExpired = types.BackendAuthTokenExpired
-	BackendAuthUnreachable  = types.BackendAuthUnreachable
-	BackendAuthQuota        = types.BackendAuthQuota
-	BackendAuthForbidden    = types.BackendAuthForbidden
+	BackendAuthOK           = crux.BackendAuthOK
+	BackendAuthUnlicensed   = crux.BackendAuthUnlicensed
+	BackendAuthTokenExpired = crux.BackendAuthTokenExpired
+	BackendAuthUnreachable  = crux.BackendAuthUnreachable
+	BackendAuthQuota        = crux.BackendAuthQuota
+	BackendAuthForbidden    = crux.BackendAuthForbidden
 )
 
 // credentialRejectionSignals are the substrings in an auth-class pane line that
@@ -57,8 +57,8 @@ func lineIndicatesCredentialRejection(lower string) bool {
 const backendAuthErrorLimit = 200
 
 // BackendAuthState is the per-agent backend-auth canary (#6558); see
-// types.BackendAuthState.
-type BackendAuthState = types.BackendAuthState
+// crux.BackendAuthState.
+type BackendAuthState = crux.BackendAuthState
 
 // classifyBackendAuthStatus maps a classifyProviderError verdict onto the
 // coarser BackendAuth states. ok=false means the class is transient (or

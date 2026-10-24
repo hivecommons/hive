@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // Process is the observable snapshot of one agent: state, pins, overrides,
@@ -57,7 +56,7 @@ type Process struct {
 	LoginURL                  string
 	Starting                  bool
 	QuotaExhausted            bool
-	WatchdogConditions        []watchdog.Condition
+	WatchdogConditions        []Condition
 	LastPaneChange            time.Time
 	StallNudges               int
 	StallRecoveries           int

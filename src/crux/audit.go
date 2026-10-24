@@ -1,4 +1,4 @@
-package types
+package crux
 
 // Audit action names the runtime itself records: agent lifecycle events, the
 // tool-approval verdict, and the credential watchdog's missing-token signals.
@@ -7,7 +7,7 @@ package types
 // treats them uniformly.
 //
 // The governor-side vocabulary (lease stages, relay events, jev decisions,
-// commit trailers) is pkg/agentaudit's alone; this leaf holds only what the
+// commit trailers) is pkg/agentaudit's alone; this package holds only what the
 // runtime emits, so the runtime does not depend on the governor's package
 // (hivecommons/hive#13536). pkg/agentaudit aliases these so the recorder
 // and every other emitter keep their existing spelling.

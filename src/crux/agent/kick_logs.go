@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 const (
@@ -71,8 +71,8 @@ const (
 	kickLogFileMode = os.FileMode(0o600)
 )
 
-// KickLogInfo describes one archived kick log; see types.KickLogInfo.
-type KickLogInfo = types.KickLogInfo
+// KickLogInfo describes one archived kick log; see crux.KickLogInfo.
+type KickLogInfo = crux.KickLogInfo
 
 // kickLogSettingsFromEnv resolves the archive root, per-agent retention
 // count, and per-agent byte cap, applying env overrides over the defaults.

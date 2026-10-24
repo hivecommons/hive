@@ -1,4 +1,4 @@
-package types
+package crux
 
 // CanaryLeak is one detection of a planted canary token in text an agent is
 // about to send off-host: which agent the token was planted for, the token

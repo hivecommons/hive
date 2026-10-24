@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // SetConditionReporter installs the host's sink for the runtime's
@@ -11,7 +11,7 @@ import (
 // it unset, in which case observations are dropped. Safe to call
 // concurrently with the runtime; the reporter is read on paths that hold
 // m.mu, so it is stored atomically rather than under the lock.
-func (m *Manager) SetConditionReporter(r types.ConditionReporter) {
+func (m *Manager) SetConditionReporter(r crux.ConditionReporter) {
 	if r == nil {
 		m.conditionReporter.Store(nil)
 		return

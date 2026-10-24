@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
-	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
@@ -168,11 +168,11 @@ func ResolveForwardMergeMethod(ctx context.Context, client *gh.Client, logger *s
 }
 
 // CreatePRResult is what CreatePR returns: the opened (or pre-existing) PR.
-// It is the runtime's PRResult (pkg/crux/types) under this package's name,
+// It is the runtime's PRResult (crux.PRResult) under this package's name,
 // so a *Client satisfies the agent runtime's PRCreator seam without the
 // runtime importing this package (hivecommons/hive#13536). DuplicateReason,
 // when set, is one of the DuplicateReason* constants below.
-type CreatePRResult = types.PRResult
+type CreatePRResult = crux.PRResult
 
 // CreatePR opens a pull request on behalf of THIS hive's GitHub App — so the PR
 // is authored by the App bot ("<slug>[bot]"), deterministically, regardless of

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 // Decide evaluates a tool request against ACMM gates, agent identity, and tool policy,
@@ -232,13 +232,13 @@ func Resolve(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentI
 }
 
 // EvaluateAndAudit runs Resolve and emits the verdict to the provided AuditSink if configured.
-func EvaluateAndAudit(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentIdentity, scanner SecurityScanner, sink types.AuditSink, actor string) Verdict {
+func EvaluateAndAudit(ctx context.Context, req ToolRequest, acmmLevel int, agentId AgentIdentity, scanner SecurityScanner, sink crux.AuditSink, actor string) Verdict {
 	v := Resolve(ctx, req, acmmLevel, agentId, scanner)
 	if sink != nil {
 		if actor == "" {
 			actor = "system"
 		}
-		sink.Record(actor, types.AuditToolApproval, agentId.Name, v.AuditFields())
+		sink.Record(actor, crux.AuditToolApproval, agentId.Name, v.AuditFields())
 	}
 	return v
 }

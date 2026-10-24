@@ -1,4 +1,4 @@
-package types
+package crux
 
 // This file holds the two contracts between the runtime and the host's forge
 // integration that used to make pkg/agent import pkg/github
@@ -48,7 +48,7 @@ func (r PRResult) IsDuplicate() bool {
 // DefaultAgentTokenCacheDir is the directory holding per-agent GitHub token
 // caches: the host's token deliverer writes there and the runtime reads from
 // it (and exports the path to the agent as HIVE_AGENT_TOKEN_CACHE). The
-// constant lives in this leaf so both sides agree on it without the runtime
+// constant lives in this package so both sides agree on it without the runtime
 // importing the forge client.
 const DefaultAgentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
 

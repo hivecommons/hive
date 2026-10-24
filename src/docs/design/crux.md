@@ -39,7 +39,7 @@ The name is "the point everything turns on". Hive turns on Crux.
 | Policy at the tool boundary | `pkg/proxy` (MITM), `pkg/toolapprove`, `pkg/pushbroker` |
 | Isolation | `pkg/sandbox`, `pkg/kubejob` |
 | Observation | `pkg/watchdog`, `pkg/trajectory`, `pkg/logscrub` |
-| Stdlib-only leaves | `pkg/crux/types`, `pkg/crux/config`, `pkg/crux/effects`, `pkg/crux/gitidentity`, `pkg/crux/jev`, `pkg/crux/jsonextract`, `pkg/crux/outputschema` |
+| Stdlib-only leaves | `pkg/crux/config`, `pkg/crux/effects`, `pkg/crux/gitidentity`, `pkg/crux/jev`, `pkg/crux/jsonextract`, `pkg/crux/outputschema` |
 | Surface and CLI | `pkg/crux`, `pkg/crux/cli` |
 
 The same list, as directories, is `CRUX_DIRS` in
@@ -125,7 +125,8 @@ two-repo changes per day, which is why Stage 1 happens in this repo.
    Consumers never see the leaf. It is a separate package only because
    `pkg/crux` still aliases `agent.AgentProcess` as `crux.Process` and so
    imports `pkg/agent`, which cannot import it back; it folds into
-   `pkg/crux` once `Process` is its own type (Stage 2). The governor-side
+   `pkg/crux` once `Process` is its own type (Stage 2); it did in #13963,
+   and the definitions now live in the `crux` root package. The governor-side
    audit vocabulary (lease stages, commit trailers, artifact links) that
    `pkg/agent` used to re-export from `pkg/agentaudit` is no longer
    re-exported; consumers reference `agentaudit` directly.
@@ -379,16 +380,18 @@ Still Stage 2, in this order:
   tables with the pane poller (`SanitizePaneText`, `ClassifyAuthPane`,
   `AuthPaneState`, `PaneShowsBlockingPrompt`) moved to the leaf
   `crux/paneclass`, which imports `crux/agent` so the root does not have to.
-- **Fold `crux/types` into the module root.** It is a sub-package so that
-  the alias packages in the root could be written against a stdlib-only
-  leaf before the cut; with the ring in its own module the leaf no longer
-  needs to be separate from `crux`. The root no longer imports
-  `crux/agent`, so the `crux → crux/agent → crux/types` cycle is gone. One
-  edge remains: the root imports `crux/watchdog` for
-  `Process.WatchdogConditions`, and `crux/watchdog` imports `crux/types`
-  (`ConditionReporter`, `ClassAgentCrashLoop`), so `watchdog.Condition`
-  has to move into the root (watchdog aliasing it) in the same change that
-  folds `types` in.
+- **Fold `crux/types` into the module root.** Done (#13963). It was a
+  sub-package so that the alias packages in the root could be written
+  against a stdlib-only leaf before the cut; with the ring in its own module
+  the leaf no longer needed to be separate from `crux`. Once the root
+  stopped importing `crux/agent`, the `crux → crux/agent → crux/types`
+  cycle was gone, and the last edge (the root imported `crux/watchdog` for
+  `Process.WatchdogConditions`, while `crux/watchdog` imported `crux/types`
+  for `ConditionReporter` and `ClassAgentCrashLoop`) was cut in the same
+  change: `Condition`, `ConditionType`, `ConditionStatus` and their
+  constants are defined in the root and aliased by `crux/watchdog`. The
+  former leaf's files are now root files, every importer names `crux.<Name>`,
+  and the root imports neither `crux/agent` nor `crux/watchdog`.
 - **`crux serve`** is Stage 3, below; nothing in the module layout
   blocks it.
 
@@ -524,7 +527,7 @@ shapes applied to the rows that followed:
 
 The rule the inbound ratchet imposes on these cuts: an inversion must not
 add an `agent.<Symbol>` reference in a consumer, so seams are `Manager`
-setters or `crux.<Name>` / `pkg/crux/types` re-exports, never new exported
+setters or `crux.<Name>` definitions, never new exported
 `agent` symbols the host has to name.
 
 ## Running the Crux set alone

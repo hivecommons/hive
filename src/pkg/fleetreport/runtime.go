@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // TriggerRuntimeError is the fleet-report trigger for the "unusual runtime
@@ -24,19 +24,19 @@ const TriggerRuntimeError = "runtime-error"
 // never becomes an upstream issue by accident.
 //
 // The classes the agent runtime and its watchdog emit are declared in
-// pkg/crux/types (the runtime reports through types.ConditionReporter and
+// the crux root (the runtime reports through crux.ConditionReporter and
 // must not import this package); they are aliased here so the allow-list
 // below and every host-side caller keep one name.
 const (
-	ClassRestartStorm             = types.ClassRestartStorm
-	ClassKickFailedRepeatedly     = types.ClassKickFailedRepeatedly
+	ClassRestartStorm             = crux.ClassRestartStorm
+	ClassKickFailedRepeatedly     = crux.ClassKickFailedRepeatedly
 	ClassPanicRecovered           = "panic_recovered"
 	ClassModelDiscoveryDegraded   = "model_discovery_degraded"
 	ClassInferenceAuthFailed      = "inference_auth_failed"
 	ClassAdvisoryPostFailed       = "advisory_post_failed"
 	ClassUpgradeStalled           = "upgrade_stalled"
-	ClassDataDiskPressure         = types.ClassDataDiskPressure
-	ClassGitHubAppTokenMintFailed = types.ClassGitHubAppTokenMintFailed
+	ClassDataDiskPressure         = crux.ClassDataDiskPressure
+	ClassGitHubAppTokenMintFailed = crux.ClassGitHubAppTokenMintFailed
 	ClassUnexpectedHub5xx         = "unexpected_http_5xx_from_hub"
 	ClassUnclassifiedRepeated     = "unclassified_error_repeated"
 	// ClassAgentStall, ClassAgentCrashLoop and ClassCIPollNudge replace the
@@ -44,9 +44,9 @@ const (
 	// counters that used to be synthesised into a bare "Fleet report: …
 	// hive-code defect" issue are now observed at the hook site that owns
 	// them, so the report carries kick/pane context like every other class.
-	ClassAgentStall     = types.ClassAgentStall
-	ClassAgentCrashLoop = types.ClassAgentCrashLoop
-	ClassCIPollNudge    = types.ClassCIPollNudge
+	ClassAgentStall     = crux.ClassAgentStall
+	ClassAgentCrashLoop = crux.ClassAgentCrashLoop
+	ClassCIPollNudge    = crux.ClassCIPollNudge
 	// ClassIssueRequestStuck and ClassEffectLedgerOpStuck are queue-health
 	// classes: a relay request that keeps failing or a journaled external
 	// effect that stays Unknown is work the hive is silently not doing. Both
@@ -293,14 +293,14 @@ func ObserveItem(class, key, message, diagnostics, repo, ref string) {
 // Clear marks a condition as no longer present on the default tracker.
 func Clear(class, key string) { DefaultTracker().Clear(class, key) }
 
-// DefaultReporter is the types.ConditionReporter the host hands the agent
+// DefaultReporter is the crux.ConditionReporter the host hands the agent
 // runtime (Manager.SetConditionReporter) and the watchdog. It forwards to
 // the package-level Observe and Clear rather than capturing DefaultTracker
 // at wiring time, so a test that swaps the default tracker with
 // SetDefaultTrackerForTest sees the runtime's observations too.
 type DefaultReporter struct{}
 
-var _ types.ConditionReporter = DefaultReporter{}
+var _ crux.ConditionReporter = DefaultReporter{}
 
 func (DefaultReporter) Observe(class, key, message, diagnostics string) {
 	Observe(class, key, message, diagnostics)

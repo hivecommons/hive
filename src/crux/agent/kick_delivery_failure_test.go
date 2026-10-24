@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/internal/testutil"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 // A ready pane is not proof that tmux accepted the kick. Failed writes must
@@ -161,7 +161,7 @@ func TestKickWriteFailuresReportAndClearOnRecovery(t *testing.T) {
 		}
 	}
 	found := false
-	for _, ev := range tr.active(types.ClassKickFailedRepeatedly) {
+	for _, ev := range tr.active(crux.ClassKickFailedRepeatedly) {
 		if strings.Contains(ev.Message, "send text") {
 			found = true
 		}
@@ -173,7 +173,7 @@ func TestKickWriteFailuresReportAndClearOnRecovery(t *testing.T) {
 	if err := m.deliverKickLocked(a, "task", "send-kick"); err != nil {
 		t.Fatal(err)
 	}
-	if ev := tr.active(types.ClassKickFailedRepeatedly); len(ev) != 0 {
+	if ev := tr.active(crux.ClassKickFailedRepeatedly); len(ev) != 0 {
 		t.Fatalf("successful retry left repeated-failure evidence active: %+v", ev)
 	}
 	if a.KicksUndeliverable != 0 || !a.busyNoActivityRestartAt.IsZero() || a.LastKick == nil || len(a.KickHistory) != 1 {

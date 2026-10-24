@@ -9,7 +9,7 @@ import (
 )
 
 // TestValueAliasesTrackAgent pins that the façade's constants are the ones
-// the manager writes (both sides alias pkg/crux/types), so a consumer
+// the manager writes (crux defines them, agent aliases them), so a consumer
 // comparing crux.StateRunning against a Process.State can never drift.
 func TestValueAliasesTrackAgent(t *testing.T) {
 	if crux.StateRunning != agent.StateRunning || crux.StatePaused != agent.StatePaused || crux.StateStopped != agent.StateStopped {

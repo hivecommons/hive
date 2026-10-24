@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 // A swallowed "continue" nudge feeds the agent_stall self-report with the
@@ -24,7 +24,7 @@ func TestObserveStallNudgeFeedsSelfReportAndRecoveryClears(t *testing.T) {
 		agent.StallNudges++
 		m.observeStallNudgeLocked(agent, pane, kickAt.Add(5*time.Minute))
 	}
-	ev := rec.active(types.ClassAgentStall)
+	ev := rec.active(crux.ClassAgentStall)
 	if len(ev) != nudges || ev[0].Key != "scanner" {
 		t.Fatalf("evidence = %#v", ev)
 	}
@@ -44,7 +44,7 @@ func TestObserveStallNudgeFeedsSelfReportAndRecoveryClears(t *testing.T) {
 	}
 	// The pane moving before the next kick is the recovery that clears it.
 	m.creditStallRecoveryLocked(agent, paneContentHash("moved on"))
-	if ev := rec.active(types.ClassAgentStall); len(ev) != 0 {
+	if ev := rec.active(crux.ClassAgentStall); len(ev) != 0 {
 		t.Fatalf("recovery did not clear the stall: %#v", ev)
 	}
 	if agent.StallRecoveries != 1 {

@@ -16,7 +16,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 const (
@@ -87,10 +87,10 @@ type Canary struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CanaryLeak is pkg/crux/types.CanaryLeak: the proxy, a Crux ring package,
+// CanaryLeak is crux.CanaryLeak: the proxy, a Crux ring package,
 // hands detections to the host's leak handler as that type, and this alias
 // keeps every host-side signature unchanged (hivecommons/hive#13536).
-type CanaryLeak = types.CanaryLeak
+type CanaryLeak = crux.CanaryLeak
 
 type CanaryRegistry struct {
 	mu       sync.RWMutex

@@ -7,22 +7,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 
 	"github.com/hivecommons/hive/crux/config"
 )
 
-// StartFailureClass and its values are defined in pkg/crux/types as part of
+// StartFailureClass and its values are defined in pkg/crux as part of
 // the Crux runtime surface (hivecommons/hive#13536); aliased here.
-type StartFailureClass = types.StartFailureClass
+type StartFailureClass = crux.StartFailureClass
 
 const (
-	StartFailureLoginRequired      = types.StartFailureLoginRequired
-	StartFailureCredentialRejected = types.StartFailureCredentialRejected
-	StartFailureCredentialMissing  = types.StartFailureCredentialMissing
-	StartFailureBackendMismatch    = types.StartFailureBackendMismatch
-	StartFailureBinaryMissing      = types.StartFailureBinaryMissing
-	StartFailureNoOutput           = types.StartFailureNoOutput
+	StartFailureLoginRequired      = crux.StartFailureLoginRequired
+	StartFailureCredentialRejected = crux.StartFailureCredentialRejected
+	StartFailureCredentialMissing  = crux.StartFailureCredentialMissing
+	StartFailureBackendMismatch    = crux.StartFailureBackendMismatch
+	StartFailureBinaryMissing      = crux.StartFailureBinaryMissing
+	StartFailureNoOutput           = crux.StartFailureNoOutput
 )
 
 // startFailureBlockThresholdDefault is how many CONSECUTIVE failures of the

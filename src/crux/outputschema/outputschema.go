@@ -2,7 +2,7 @@
 // object an agent writes at the end of a sandboxed kick and the validator
 // the runtime runs over it before the governor consumes it. It lives in the
 // Crux ring and imports only the ring's own leaves (pkg/crux/effects for the
-// artifact digest, pkg/crux/types for the receipt provenance handle); the
+// artifact digest, the crux root for the receipt provenance handle); the
 // host-side report directory and path helpers stay in pkg/outputschema,
 // which aliases everything here (hivecommons/hive#13536).
 package outputschema
@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/effects"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 const (
@@ -124,7 +124,7 @@ type StageReceipt struct {
 	ResultClass       StageReceiptResultClass `json:"result_class"`
 	StartedAt         string                  `json:"started_at"`
 	EndedAt           string                  `json:"ended_at"`
-	Provenance        *types.ProofProvenance  `json:"provenance"`
+	Provenance        *crux.ProofProvenance   `json:"provenance"`
 	Artifacts         []Artifact              `json:"artifacts"`
 }
 

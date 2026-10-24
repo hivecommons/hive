@@ -3,7 +3,7 @@
 // the recorder (pkg/dashboard) and the emitters (pkg/agent, pkg/toolapprove,
 // pkg/turn).
 //
-// It is a leaf in the import graph apart from pkg/crux/types. AuditSink
+// It is a leaf in the import graph apart from the crux root. AuditSink
 // originally lived in pkg/agent to break an agent→dashboard import cycle;
 // moving it here also frees policy-layer packages (pkg/toolapprove, pkg/turn)
 // from importing the pkg/agent runtime and its transitive dependency closure
@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // Audit action names recorded for agent lifecycle events. Snake_case to match
@@ -24,21 +24,21 @@ import (
 // …) so the Audit Log UI's free-text/regex filter treats them uniformly.
 //
 // The runtime-emitted names (agent lifecycle, tool approval, missing-token
-// signals) are DEFINED in pkg/crux/types, the stdlib-only leaf the runtime
+// signals) are DEFINED in the crux root package, which the runtime
 // owns, and aliased here so the runtime does not import this governor-side
 // package (hivecommons/hive#13536). Spellings are unchanged.
 const (
-	AuditAgentStarted     = types.AuditAgentStarted
-	AuditAgentStartFailed = types.AuditAgentStartFailed
-	AuditAgentStopped     = types.AuditAgentStopped
-	AuditAgentKicked      = types.AuditAgentKicked
-	AuditAgentPaused      = types.AuditAgentPaused
-	AuditAgentResumed     = types.AuditAgentResumed
-	AuditAgentAdded       = types.AuditAgentAdded
-	AuditAgentRemoved     = types.AuditAgentRemoved
-	AuditAgentBackendSet  = types.AuditAgentBackendSet
-	AuditAgentModelSet    = types.AuditAgentModelSet
-	AuditToolApproval     = types.AuditToolApproval
+	AuditAgentStarted     = crux.AuditAgentStarted
+	AuditAgentStartFailed = crux.AuditAgentStartFailed
+	AuditAgentStopped     = crux.AuditAgentStopped
+	AuditAgentKicked      = crux.AuditAgentKicked
+	AuditAgentPaused      = crux.AuditAgentPaused
+	AuditAgentResumed     = crux.AuditAgentResumed
+	AuditAgentAdded       = crux.AuditAgentAdded
+	AuditAgentRemoved     = crux.AuditAgentRemoved
+	AuditAgentBackendSet  = crux.AuditAgentBackendSet
+	AuditAgentModelSet    = crux.AuditAgentModelSet
+	AuditToolApproval     = crux.AuditToolApproval
 	// AuditJevDecision records one agent call to the Jev typed-decision
 	// endpoint (hivecommons/hive#8939): question type, confidence and the
 	// input tokens billed to the agent's budget. Never the question text or
@@ -53,14 +53,14 @@ const (
 	// no token to auto-refresh from — as an immediate, queryable Audit Log
 	// signal instead of a silent multi-hour outage. Recovery is an operator
 	// dashboard device-flow login; the watchdog never touches token material.
-	AuditCopilotTokenMissing = types.AuditCopilotTokenMissing
+	AuditCopilotTokenMissing = crux.AuditCopilotTokenMissing
 
 	// AuditClaudeTokenMissing is the Claude-backend analogue: recorded when the
 	// durable Claude OAuth credentials file (/data/home/.claude/.credentials.json)
 	// is absent, unparseable, or expired on a Claude-backend hive. Same silent
 	// failure shape and same operator-login recovery as the Copilot case; the
 	// detail's outcome= distinguishes "missing" from "invalid or expired".
-	AuditClaudeTokenMissing = types.AuditClaudeTokenMissing
+	AuditClaudeTokenMissing = crux.AuditClaudeTokenMissing
 
 	// AuditLeaseStageAdvanced, AuditLeaseStageRetried and AuditLeaseStageReset
 	// record Hive-owned run stage transitions on the existing task lease
@@ -109,14 +109,14 @@ const (
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.
-// See types.AuditSink for the contract; the alias keeps every recorder and
+// See crux.AuditSink for the contract; the alias keeps every recorder and
 // emitter on this package's spelling.
-type AuditSink = types.AuditSink
+type AuditSink = crux.AuditSink
 
 // Fields builds the fields map from alternating key/value pairs; see
-// types.Fields.
+// crux.Fields.
 func Fields(kv ...any) map[string]any {
-	return types.Fields(kv...)
+	return crux.Fields(kv...)
 }
 
 // FormatAuditDetail renders a fields map as the stable "k=v, k=v" detail

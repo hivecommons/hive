@@ -6,20 +6,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
-// Kick dispatch phases and KickDispatch are defined in pkg/crux/types as part
+// Kick dispatch phases and KickDispatch are defined in pkg/crux as part
 // of the Crux runtime surface (hivecommons/hive#13536); aliased here.
 const (
-	KickPhasePending   = types.KickPhasePending
-	KickPhaseDelivered = types.KickPhaseDelivered
-	KickPhaseFailed    = types.KickPhaseFailed
+	KickPhasePending   = crux.KickPhasePending
+	KickPhaseDelivered = crux.KickPhaseDelivered
+	KickPhaseFailed    = crux.KickPhaseFailed
 )
 
 // KickDispatch is the observable outcome of one asynchronous kick; see
-// types.KickDispatch.
-type KickDispatch = types.KickDispatch
+// crux.KickDispatch.
+type KickDispatch = crux.KickDispatch
 
 // kickDispatchRegistry holds the latest dispatch per agent plus the in-flight
 // guard. It is deliberately independent of m.mu: the background delivery

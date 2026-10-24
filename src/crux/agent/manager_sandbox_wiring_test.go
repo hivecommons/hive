@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
@@ -17,8 +17,8 @@ type wiringMinter struct{ id int }
 
 func (*wiringMinter) MintPushToken(context.Context, string) (string, error) { return "", nil }
 
-func (*wiringPRCreator) CreatePR(context.Context, string, string, string, string, string) (types.PRResult, error) {
-	return types.PRResult{}, nil
+func (*wiringPRCreator) CreatePR(context.Context, string, string, string, string, string) (crux.PRResult, error) {
+	return crux.PRResult{}, nil
 }
 
 // #9621: SandboxGitHubWiring reports what the sandbox executor will use, so

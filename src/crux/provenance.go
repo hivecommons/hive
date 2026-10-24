@@ -1,4 +1,4 @@
-package types
+package crux
 
 // ProofProvenance is the bounded replay handle a convergence proof record
 // and a stage receipt carry: enough to re-issue the exact observation and

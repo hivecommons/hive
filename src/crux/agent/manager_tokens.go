@@ -9,7 +9,6 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 // AppTokenMinter is implemented by the host's GitHub App auth (pkg/github.AppAuth)
@@ -903,7 +902,7 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		// match the launch injection — advisory agents stay GITHUB_TOKEN-less, and
 		// hives that have not opted in get nothing injected.
 		if m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
-			if data, err := os.ReadFile(types.AgentTokenCachePath(types.DefaultAgentTokenCacheDir, a.Name)); err == nil {
+			if data, err := os.ReadFile(crux.AgentTokenCachePath(crux.DefaultAgentTokenCacheDir, a.Name)); err == nil {
 				if tok := strings.TrimSpace(string(data)); tok != "" {
 					_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "GITHUB_TOKEN", tok).Run()
 				}
@@ -953,9 +952,9 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 		// token delivery is repaired — not a silent privilege escalation.
 		m.logger.Warn("per-agent scoped token NOT delivered — this agent's GitHub writes (gh + git push) will FAIL (no shared-cache fallback by design; see audit H3)",
 			"agent", agent.Name, "tier", tier, "error", err)
-		m.observeCondition(types.ClassGitHubAppTokenMintFailed, agent.Name, "github app token mint failed: "+err.Error(), "")
+		m.observeCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name, "github app token mint failed: "+err.Error(), "")
 	} else {
-		m.clearCondition(types.ClassGitHubAppTokenMintFailed, agent.Name)
+		m.clearCondition(crux.ClassGitHubAppTokenMintFailed, agent.Name)
 	}
 	// Additionally issue an opt-in short-lived mint token (no-op when the mint
 	// is disabled). This is additive and fail-safe — it never blocks launch.

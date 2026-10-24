@@ -48,8 +48,8 @@ import (
 // into stale headroom. Entries are "<dep>" when a non-test file imports it
 // and "<dep> (test)" when only _test.go files do. Edges are removed in the
 // same change that cuts them; they are never added. The way to give the
-// runtime something from Hive is to move the value type into pkg/crux/types
-// (stdlib-only; see PRResult, the audit vocabulary), invert it behind a
+// runtime something from Hive is to move the value type into the crux root
+// package (stdlib-only; see PRResult, the audit vocabulary), invert it behind a
 // Manager setter the host wires (SetSpanStarter, SetSandboxPRClient), or
 // move the test to the consumer side (pkg/review's prompt trigger test).
 //
@@ -203,7 +203,7 @@ func TestCruxOutboundRatchet(t *testing.T) {
 	if len(failures) > 0 {
 		t.Fatalf("Crux outbound ratchet (hivecommons/hive#13536, src/docs/design/crux.md):\n\n%s\n"+
 			"A package in the crux module may not grow a dependency on the rest of Hive. "+
-			"Move the value type into crux/types, invert it behind a Manager setter the host wires, or move the "+
+			"Move the value type into the crux root package, invert it behind a Manager setter the host wires, or move the "+
 			"test to the consumer side; a baseline entry whose edge is gone must be deleted in the same change.",
 			strings.Join(failures, "\n\n"))
 	}

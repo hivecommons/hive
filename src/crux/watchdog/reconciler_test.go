@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 	"io"
 	"log/slog"
 	"strings"
@@ -484,7 +484,7 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	}
 }
 
-// fakeConditions is the test types.ConditionReporter: it records every
+// fakeConditions is the test crux.ConditionReporter: it records every
 // Observe and Clear so a test can assert exactly what the watchdog emitted.
 // Streak and persistence semantics are the host's (pkg/fleetreport).
 type fakeConditions struct {
@@ -514,18 +514,18 @@ func crashLoopEvidence(f *fakeConditions) []fakeCondition {
 	defer f.mu.Unlock()
 	open := map[string]bool{}
 	for _, o := range f.observed {
-		if o.Class == types.ClassAgentCrashLoop {
+		if o.Class == crux.ClassAgentCrashLoop {
 			open[o.Key] = true
 		}
 	}
 	for _, c := range f.cleared {
-		if c.Class == types.ClassAgentCrashLoop {
+		if c.Class == crux.ClassAgentCrashLoop {
 			open[c.Key] = false
 		}
 	}
 	var out []fakeCondition
 	for _, o := range f.observed {
-		if o.Class == types.ClassAgentCrashLoop && open[o.Key] {
+		if o.Class == crux.ClassAgentCrashLoop && open[o.Key] {
 			out = append(out, o)
 		}
 	}

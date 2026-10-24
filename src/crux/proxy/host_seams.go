@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // This file holds the three host services the GitHub proxy consumes without
@@ -19,7 +19,7 @@ import (
 // source a label for the surface. *ioscan.CanaryRegistry implements it; a nil
 // *CanaryRegistry is a registry with no canaries and scans nothing.
 type CanaryScanner interface {
-	Scan(agentName, text, source string) (types.CanaryLeak, bool)
+	Scan(agentName, text, source string) (crux.CanaryLeak, bool)
 }
 
 // UsageSink receives per-agent inference token usage the proxy observes on

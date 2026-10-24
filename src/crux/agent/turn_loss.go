@@ -3,7 +3,7 @@ package agent
 import (
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // turnLossNow is the clock this file reads, seamed for tests in the same
@@ -17,16 +17,16 @@ var turnLossNow = time.Now
 // loss (a few long turns vs. many short ones), which a handful conveys.
 const turnLossRecentCapacity = 20
 
-// TurnInterruption and TurnLoss are defined in pkg/crux/types as part of the
+// TurnInterruption and TurnLoss are defined in pkg/crux as part of the
 // Crux runtime surface (hivecommons/hive#13536); aliased here. TurnLoss is
 // persisted through snapshot.AgentState into /data/hive-state.json — the
 // store that already carries RestartCount — rather than a new sidecar file,
 // per the RFC's explicit caution against adding durable store number five.
-type TurnInterruption = types.TurnInterruption
+type TurnInterruption = crux.TurnInterruption
 
 // TurnLoss is the per-agent accumulation that survives the restart it
-// measures; see types.TurnLoss.
-type TurnLoss = types.TurnLoss
+// measures; see crux.TurnLoss.
+type TurnLoss = crux.TurnLoss
 
 // noteTurnInterruptedLocked records one interrupted turn against the agent.
 // Callers must hold m.mu; it reads pane observations under paneMu, which is

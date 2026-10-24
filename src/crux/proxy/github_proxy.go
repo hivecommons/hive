@@ -30,11 +30,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/inferencehealth"
 	"github.com/hivecommons/hive/crux/issueshape"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 const (
@@ -291,7 +291,7 @@ type GitHubProxy struct {
 	canariesEnabled  bool
 	canaryFailClosed bool
 	canaryRegistry   CanaryScanner
-	canaryLeakFunc   func(types.CanaryLeak)
+	canaryLeakFunc   func(crux.CanaryLeak)
 
 	// linearCredential resolves the hive's CURRENT Linear write credential
 	// for injection into agent requests to api.linear.app — see
@@ -425,7 +425,7 @@ func (p *GitHubProxy) hostNeedsMITM(host string) bool {
 // SetCanaryScanner installs the host's canary registry and leak handler.
 // enabled gates the scan; failClosed turns a detection (or an unscannable
 // body) into a refusal rather than an audit-only event.
-func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg CanaryScanner, onLeak func(types.CanaryLeak)) {
+func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg CanaryScanner, onLeak func(crux.CanaryLeak)) {
 	p.canariesEnabled = enabled
 	p.canaryFailClosed = failClosed
 	p.canaryRegistry = reg

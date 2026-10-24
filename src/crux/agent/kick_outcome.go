@@ -5,22 +5,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
-// Kick outcome kinds and KickOutcome are defined in pkg/crux/types as part of
+// Kick outcome kinds and KickOutcome are defined in pkg/crux as part of
 // the Crux runtime surface (hivecommons/hive#13536); aliased here. pkg/governor
 // mirrors the strings (governor.KickOutcome*) so it needs no import edge.
 const (
-	KickOutcomeQuestion  = types.KickOutcomeQuestion
-	KickOutcomeStandDown = types.KickOutcomeStandDown
-	KickOutcomeNoOp      = types.KickOutcomeNoOp
-	KickOutcomeEnded     = types.KickOutcomeEnded
+	KickOutcomeQuestion  = crux.KickOutcomeQuestion
+	KickOutcomeStandDown = crux.KickOutcomeStandDown
+	KickOutcomeNoOp      = crux.KickOutcomeNoOp
+	KickOutcomeEnded     = crux.KickOutcomeEnded
 )
 
 // KickOutcome is how an agent's most recent kicked turn ended; see
-// types.KickOutcome.
-type KickOutcome = types.KickOutcome
+// crux.KickOutcome.
+type KickOutcome = crux.KickOutcome
 
 // kickOutcomeGrace is how long after delivery a pane at the input prompt is
 // still assumed to be the CLI accepting the kick rather than a finished turn.

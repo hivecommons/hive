@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/types"
 
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
@@ -21,20 +20,20 @@ import (
 	"github.com/hivecommons/hive/crux/watchdog"
 )
 
-// ProcessState and the State* values are defined in pkg/crux/types as part
+// ProcessState and the State* values are defined in pkg/crux as part
 // of the Crux runtime surface (hivecommons/hive#13536); aliased here.
-type ProcessState = types.ProcessState
+type ProcessState = crux.ProcessState
 
 const (
-	StateIdle    = types.StateIdle
-	StateRunning = types.StateRunning
-	StateStopped = types.StateStopped
-	StateFailed  = types.StateFailed
-	StatePaused  = types.StatePaused
+	StateIdle    = crux.StateIdle
+	StateRunning = crux.StateRunning
+	StateStopped = crux.StateStopped
+	StateFailed  = crux.StateFailed
+	StatePaused  = crux.StatePaused
 )
 
-// KickRecord is one entry of KickHistory; see types.KickRecord.
-type KickRecord = types.KickRecord
+// KickRecord is one entry of KickHistory; see crux.KickRecord.
+type KickRecord = crux.KickRecord
 
 const (
 	outputBufferCapacity = 500
@@ -703,7 +702,7 @@ type Manager struct {
 	// conditionReporter is the host sink for self-reported error conditions;
 	// same atomic.Pointer discipline. Nil drops observations. See
 	// SetConditionReporter.
-	conditionReporter atomic.Pointer[types.ConditionReporter]
+	conditionReporter atomic.Pointer[crux.ConditionReporter]
 	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
 	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
 	// manager's crash loop observes those two conditions without restarting
@@ -1103,13 +1102,13 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if backend == "copilot" {
 		m.runCopilotCacheJanitor()
 		if reason, full := copilotDiskFullCondition(); full {
-			m.observeCondition(types.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+reason, "")
+			m.observeCondition(crux.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+reason, "")
 			if err := m.Pause(name, DiskFullTrigger, reason); err != nil {
 				return err
 			}
 			return fmt.Errorf("%s", reason)
 		}
-		m.clearCondition(types.ClassDataDiskPressure, DataDiskPressureKey)
+		m.clearCondition(crux.ClassDataDiskPressure, DataDiskPressureKey)
 	}
 
 	// Runs with m.mu RELEASED — see mintAgentTokenUnlocked for why holding

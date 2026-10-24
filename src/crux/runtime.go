@@ -17,88 +17,17 @@
 // adapts a possibly-nil manager). Every other value type on this surface
 // (process states, kick dispatch and outcome, kick logs, restart events,
 // sub-agent models, start-failure classes, turn loss, the provider-status
-// vocabulary) is DEFINED in the leaf package crux/types and aliased both here
-// and in crux/agent. Each interface method is annotated with the consumer
-// that needs it today; a method with no consumer does not belong here.
+// vocabulary, watchdog conditions) is defined here too and aliased by
+// crux/agent and crux/watchdog. Each interface method is annotated with the
+// consumer that needs it today; a method with no consumer does not belong
+// here.
 package crux
 
 import (
 	"context"
 
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
-
-// ProcessState is the runtime's intent for an agent (running, stopped,
-// paused, …), as distinct from what its pane is observed to be doing.
-type ProcessState = types.ProcessState
-
-// Process states.
-const (
-	StateIdle    = types.StateIdle
-	StateRunning = types.StateRunning
-	StateStopped = types.StateStopped
-	StateFailed  = types.StateFailed
-	StatePaused  = types.StatePaused
-)
-
-// KickRecord is one entry of Process.KickHistory.
-type KickRecord = types.KickRecord
-
-// KickDispatch is the observable outcome of one asynchronous kick; see
-// Kicker.SendKickAsync and Kicker.KickDispatchState.
-type KickDispatch = types.KickDispatch
-
-// Kick dispatch phases. A dispatch is indeterminate while pending; only
-// KickPhaseFailed is a definitive failure.
-const (
-	KickPhasePending   = types.KickPhasePending
-	KickPhaseDelivered = types.KickPhaseDelivered
-	KickPhaseFailed    = types.KickPhaseFailed
-)
-
-// KickOutcome is how an agent's most recent kicked turn ended.
-type KickOutcome = types.KickOutcome
-
-// Kick outcome kinds.
-const (
-	KickOutcomeQuestion  = types.KickOutcomeQuestion
-	KickOutcomeStandDown = types.KickOutcomeStandDown
-	KickOutcomeNoOp      = types.KickOutcomeNoOp
-	KickOutcomeEnded     = types.KickOutcomeEnded
-)
-
-// KickLogInfo describes one archived kick log; see Kicker.ListKickLogs.
-type KickLogInfo = types.KickLogInfo
-
-// RestartEvent is one entry of Process.RestartEvents.
-type RestartEvent = types.RestartEvent
-
-// SubAgentModel is one observed Copilot sub-agent row; see
-// Process.SubAgentModels.
-type SubAgentModel = types.SubAgentModel
-
-// StartFailureClass classifies why an agent failed to start; see
-// Process.StartFailureClass.
-type StartFailureClass = types.StartFailureClass
-
-// Start failure classes.
-const (
-	StartFailureLoginRequired      = types.StartFailureLoginRequired
-	StartFailureCredentialRejected = types.StartFailureCredentialRejected
-	StartFailureCredentialMissing  = types.StartFailureCredentialMissing
-	StartFailureBackendMismatch    = types.StartFailureBackendMismatch
-	StartFailureBinaryMissing      = types.StartFailureBinaryMissing
-	StartFailureNoOutput           = types.StartFailureNoOutput
-)
-
-// TurnInterruption is one teardown that killed a turn in flight; see
-// Process.TurnLoss.Recent.
-type TurnInterruption = types.TurnInterruption
-
-// TurnLoss is what teardowns have discarded from an agent's in-flight turns;
-// see Process.TurnLoss. cmd/hive: state persistence.
-type TurnLoss = types.TurnLoss
 
 // FatalNetworkErrorPatterns returns the pane substrings the runtime treats
 // as a fatal startup network failure and restarts the agent on. Hosts that

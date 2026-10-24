@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -908,7 +908,7 @@ func (m *Manager) creditStallRecoveryLocked(agent *AgentProcess, paneHash string
 	}
 	if agent.lastInferKickPane != "" && paneHash != agent.lastInferKickPane {
 		agent.StallRecoveries++
-		m.clearCondition(types.ClassAgentStall, agent.Name)
+		m.clearCondition(crux.ClassAgentStall, agent.Name)
 	}
 	agent.stallNudgeSent = false
 }
@@ -930,7 +930,7 @@ func (m *Manager) observeStallNudgeLocked(agent *AgentProcess, pane string, now 
 		agent.StallNudges, agent.lastInferKickAt.UTC().Format(time.RFC3339), roundDurationForHumans(sinceKick), agent.lastInferKickPane)
 	diag := fmt.Sprintf("agent=%s lane=%s backend=%s stall_nudges=%d stall_recoveries=%d kick_stall_timeout=%s\n--- pane tail (%d lines) ---\n%s",
 		agent.Name, agent.Config.Role, effectiveBackend(agent), agent.StallNudges, agent.StallRecoveries, inferenceKickStallTimeout, stallNudgeTailLines, paneTail(pane, stallNudgeTailLines))
-	m.observeCondition(types.ClassAgentStall, agent.Name, msg, diag)
+	m.observeCondition(crux.ClassAgentStall, agent.Name, msg, diag)
 }
 
 // nudgeIfKickStalled watches an inference agent after a kick and corrects
@@ -1003,7 +1003,7 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		// The pane moved after a stall nudge: the nudge recovered the stall.
 		agent.StallRecoveries++
 		agent.stallNudgeSent = false
-		m.clearCondition(types.ClassAgentStall, agent.Name)
+		m.clearCondition(crux.ClassAgentStall, agent.Name)
 	}
 
 	// The pane moved since the kick — the CLI consumed it and the response
@@ -1465,7 +1465,7 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	// A lone poll past the wall clock is a normal post-push check, so only
 	// repeated polling reaches the fleet; the in-session nudge is unchanged.
 	if ciPollReportWorthy(newPolls) {
-		m.observeCondition(types.ClassCIPollNudge, agent.Name,
+		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
 			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
 				agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))

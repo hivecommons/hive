@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -57,9 +57,9 @@ type fakePRClient struct {
 	called bool
 }
 
-func (c *fakePRClient) CreatePR(ctx context.Context, repo, head, base, title, body string) (types.PRResult, error) {
+func (c *fakePRClient) CreatePR(ctx context.Context, repo, head, base, title, body string) (crux.PRResult, error) {
 	c.called = true
-	return types.PRResult{URL: "https://example.invalid/pr/1"}, c.err
+	return crux.PRResult{URL: "https://example.invalid/pr/1"}, c.err
 }
 
 func sandboxPathsSpec(workdir string) SandboxKickSpec {

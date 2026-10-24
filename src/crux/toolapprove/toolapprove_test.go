@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 type fakeAuditSink struct {
@@ -330,8 +330,8 @@ func TestEvaluateAndAuditEmitsToAuditSink(t *testing.T) {
 	if rec.actor != "operator-alice" {
 		t.Errorf("actor = %q, want 'operator-alice'", rec.actor)
 	}
-	if rec.action != types.AuditToolApproval {
-		t.Errorf("action = %q, want %q", rec.action, types.AuditToolApproval)
+	if rec.action != crux.AuditToolApproval {
+		t.Errorf("action = %q, want %q", rec.action, crux.AuditToolApproval)
 	}
 	if rec.agentName != "quality" {
 		t.Errorf("agentName = %q, want 'quality'", rec.agentName)

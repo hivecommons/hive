@@ -5,11 +5,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
-// SubAgentModel is an observed Copilot sub-agent row; see types.SubAgentModel.
-type SubAgentModel = types.SubAgentModel
+// SubAgentModel is an observed Copilot sub-agent row; see crux.SubAgentModel.
+type SubAgentModel = crux.SubAgentModel
 
 // Anchor the whole row: policy prose mentioning a model must not become a
 // model observation. Accept the TUI's status/tree decoration, not arbitrary text.

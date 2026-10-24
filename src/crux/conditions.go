@@ -1,4 +1,4 @@
-package types
+package crux
 
 // ConditionReporter receives the runtime's self-reported error conditions:
 // a (class, key) pair observed with a message and a scrubbed diagnostics

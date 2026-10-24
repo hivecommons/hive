@@ -1,32 +1,32 @@
 package agent
 
 import (
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // The audit vocabulary this runtime emits — the lifecycle action names, the
-// AuditSink interface and the Fields helper — is DEFINED in the stdlib-only
-// leaf pkg/crux/types, so policy-layer packages can emit audit events without
+// AuditSink interface and the Fields helper — is DEFINED in the crux root
+// package, so policy-layer packages can emit audit events without
 // importing this runtime package and the runtime does not import the
 // governor-side pkg/agentaudit (which aliases the same names for the
 // recorder). The governor-side vocabulary (lease stages, commit trailers,
 // artifact links, FormatAuditDetail) is agentaudit's alone and is referenced
 // there directly (hivecommons/hive#13536).
 const (
-	AuditAgentStarted     = types.AuditAgentStarted
-	AuditAgentStartFailed = types.AuditAgentStartFailed
-	AuditAgentStopped     = types.AuditAgentStopped
-	AuditAgentKicked      = types.AuditAgentKicked
-	AuditAgentPaused      = types.AuditAgentPaused
-	AuditAgentResumed     = types.AuditAgentResumed
-	AuditAgentAdded       = types.AuditAgentAdded
-	AuditAgentRemoved     = types.AuditAgentRemoved
-	AuditAgentBackendSet  = types.AuditAgentBackendSet
-	AuditAgentModelSet    = types.AuditAgentModelSet
-	AuditToolApproval     = types.AuditToolApproval
+	AuditAgentStarted     = crux.AuditAgentStarted
+	AuditAgentStartFailed = crux.AuditAgentStartFailed
+	AuditAgentStopped     = crux.AuditAgentStopped
+	AuditAgentKicked      = crux.AuditAgentKicked
+	AuditAgentPaused      = crux.AuditAgentPaused
+	AuditAgentResumed     = crux.AuditAgentResumed
+	AuditAgentAdded       = crux.AuditAgentAdded
+	AuditAgentRemoved     = crux.AuditAgentRemoved
+	AuditAgentBackendSet  = crux.AuditAgentBackendSet
+	AuditAgentModelSet    = crux.AuditAgentModelSet
+	AuditToolApproval     = crux.AuditToolApproval
 
-	AuditCopilotTokenMissing = types.AuditCopilotTokenMissing
-	AuditClaudeTokenMissing  = types.AuditClaudeTokenMissing
+	AuditCopilotTokenMissing = crux.AuditCopilotTokenMissing
+	AuditClaudeTokenMissing  = crux.AuditClaudeTokenMissing
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
@@ -40,7 +40,7 @@ const auditActorSystem = "system"
 // AuditSink receives agent lifecycle events for durable, queryable recording.
 // See agentaudit.AuditSink for the contract; the alias exists because it is
 // the parameter type of SetAuditSink.
-type AuditSink = types.AuditSink
+type AuditSink = crux.AuditSink
 
 // SetAuditSink installs the durable audit sink. Safe to leave unset: a nil
 // sink makes every audit call a no-op, which is what unit tests and any
@@ -73,7 +73,7 @@ func (m *Manager) auditWithActor(actor, action, agentName string, fields map[str
 }
 
 // auditFields builds a fields map from alternating key/value pairs; see
-// types.Fields.
+// crux.Fields.
 func auditFields(kv ...any) map[string]any {
-	return types.Fields(kv...)
+	return crux.Fields(kv...)
 }

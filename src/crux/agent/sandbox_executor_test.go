@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
@@ -132,9 +132,9 @@ func (sandboxFakeMinter) MintPushToken(context.Context, string) (string, error) 
 
 type sandboxFakePR struct{ called bool }
 
-func (p *sandboxFakePR) CreatePR(context.Context, string, string, string, string, string) (types.PRResult, error) {
+func (p *sandboxFakePR) CreatePR(context.Context, string, string, string, string, string) (crux.PRResult, error) {
 	p.called = true
-	return types.PRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
+	return crux.PRResult{Number: 1, URL: "https://example.test/pr/1"}, nil
 }
 
 func TestSandboxExecutorWorkspacePrepSanitizesCredentials(t *testing.T) {

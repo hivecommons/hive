@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 // ci_poll_wall_clock_test.go covers the second half of #9673's harness-guard
@@ -217,5 +217,5 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 }
 
 func ciPollEvidence(rec *conditionRecorder) []conditionObservation {
-	return rec.observations(types.ClassCIPollNudge)
+	return rec.observations(crux.ClassCIPollNudge)
 }

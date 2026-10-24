@@ -4,11 +4,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
-// RestartEvent is one restart and its reason; see types.RestartEvent.
-type RestartEvent = types.RestartEvent
+// RestartEvent is one restart and its reason; see crux.RestartEvent.
+type RestartEvent = crux.RestartEvent
 
 func cloneRestartEvents(in []RestartEvent) []RestartEvent {
 	if len(in) == 0 {

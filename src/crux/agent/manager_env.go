@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/jev"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {
@@ -348,7 +348,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// per-agent tier-SCOPED App token, and refreshAgentTokens re-pushes it hourly
 	// so it never goes stale.
 	if m.project.AppAuthoredPRs && m.appAuth != nil && agent.UID > 0 && m.agentMode(agent).CanPush() {
-		if data, err := os.ReadFile(types.AgentTokenCachePath(types.DefaultAgentTokenCacheDir, agent.Name)); err == nil {
+		if data, err := os.ReadFile(crux.AgentTokenCachePath(crux.DefaultAgentTokenCacheDir, agent.Name)); err == nil {
 			if tok := strings.TrimSpace(string(data)); tok != "" {
 				vars = append(vars, agentEnvPair{"GITHUB_TOKEN", tok, true})
 			}
@@ -441,7 +441,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
-		vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", types.AgentTokenCachePath(types.DefaultAgentTokenCacheDir, agent.Name), false})
+		vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", crux.AgentTokenCachePath(crux.DefaultAgentTokenCacheDir, agent.Name), false})
 	}
 	if agent.UID > 0 {
 		// Per-UID agents get a per-agent HOME (#4596) — AgentHome is the single

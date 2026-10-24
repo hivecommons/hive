@@ -15,8 +15,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux/types"
 )
 
 const (
@@ -53,7 +53,7 @@ const (
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
 	// place and ONLY the owning agent's private group can read it — no chown
 	// at runtime, which an unprivileged process cannot perform.
-	defaultAgentTokenCacheDir = types.DefaultAgentTokenCacheDir
+	defaultAgentTokenCacheDir = crux.DefaultAgentTokenCacheDir
 	// Applied only when the file was NOT pre-created (degraded path): keep it
 	// owner-only rather than leaking a token to the shared "node" group.
 	agentTokenCachePerms = 0o600
@@ -440,7 +440,7 @@ func IsRepoScopeMintError(err error) bool {
 
 // AgentTokenCachePath returns the per-agent token cache file path.
 func AgentTokenCachePath(agentName string) string {
-	return types.AgentTokenCachePath(agentTokenCacheDir, agentName)
+	return crux.AgentTokenCachePath(agentTokenCacheDir, agentName)
 }
 
 // BotLoginFilePath returns the trusted bot-identity file path read by

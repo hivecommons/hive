@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/crux/types"
+	"github.com/hivecommons/hive/crux"
 )
 
 // Fleet is the reconciler's window onto the agent manager. Implemented by
@@ -254,7 +254,7 @@ type Reconciler struct {
 	// backendProvider maps a backend name to its provider key.
 	backendProvider func(backend string) string
 	// conditions receives the agent_crash_loop self-report; nil drops it.
-	conditions types.ConditionReporter
+	conditions crux.ConditionReporter
 
 	mu       sync.Mutex
 	agents   map[string]*agentRecord
@@ -303,7 +303,7 @@ func WithBackendProvider(f func(string) string) Option {
 // WithConditionReporter injects the host sink for the watchdog's
 // agent_crash_loop self-report (hive wires pkg/fleetreport). Without one the
 // crash loop still pauses and alerts; it just is not reported upstream.
-func WithConditionReporter(rep types.ConditionReporter) Option {
+func WithConditionReporter(rep crux.ConditionReporter) Option {
 	return func(r *Reconciler) { r.conditions = rep }
 }
 
@@ -585,7 +585,7 @@ func (r *Reconciler) updateHealthyWindowLocked(name string, rec *agentRecord, cl
 			fmt.Sprintf("continuously ready for %v; failure counter cleared (was %d, crash_looping=%v)",
 				r.settings.HealthyReset, rec.Failures, rec.CrashLooping), name)
 		if rec.CrashLooping {
-			r.clearCondition(types.ClassAgentCrashLoop, name)
+			r.clearCondition(crux.ClassAgentCrashLoop, name)
 		}
 		rec.Failures = 0
 		rec.CrashLooping = false
@@ -646,7 +646,7 @@ func (r *Reconciler) planRestartLocked(name string, rec *agentRecord, cls Classi
 		// Self-report (#13470, was the hive-code-defect "agent crash loop"
 		// counter): the latch fires once per episode and the healthy-window
 		// reset below clears it, so the fleet issue tracks real episodes.
-		r.observeCondition(types.ClassAgentCrashLoop, name, reason,
+		r.observeCondition(crux.ClassAgentCrashLoop, name, reason,
 			fmt.Sprintf("agent=%s %s backoff_ladder=%v healthy_reset=%s", name, detail, r.settings.Backoff, r.settings.HealthyReset))
 		if r.alerter != nil {
 			r.alerter.AddSystemAlert(crashLoopAlertID(name), severityError,
