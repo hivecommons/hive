@@ -340,6 +340,25 @@ func TestAdoptionBodyCauseAndBlockerText(t *testing.T) {
 	if got := adoptionBlockerText(signoff, inPlace); !strings.Contains(got, "`gh pr merge 13595 --merge`, not squash") || !strings.Contains(got, "2 commit(s)") || !strings.Contains(got, "@hanthor") {
 		t.Fatalf("signoff: %q", got)
 	}
+	for _, mode := range []string{"hold", "human-verdict", "moved-head"} {
+		blocked := signoff
+		want := ""
+		switch mode {
+		case "hold":
+			blocked.Labels = []string{"hold"}
+			want = "`hold` label prevents superseding"
+		case "human-verdict":
+			blocked.Detail.VerdictKnown = true
+			blocked.Detail.Verdict = ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+			want = "requires a human decision before superseding"
+		case "moved-head":
+			blocked.HeadSHA = "new-head"
+			want = "settle ownership of the new head"
+		}
+		if got := adoptionBlockerText(blocked, inPlace); !strings.Contains(got, want) || strings.Contains(got, "restore branch/PR-create access") {
+			t.Fatalf("%s stall must name actual blocker, not a failed write: %q", mode, got)
+		}
+	}
 	obs.Detail = stageDetail{}
 	obs.LaneReason = ""
 	obs.Reason = "something-else"

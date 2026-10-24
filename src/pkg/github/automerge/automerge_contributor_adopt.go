@@ -428,8 +428,18 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	case adoptedHeadSignoffUnfixable(obs, rec):
 		author := nonEmpty(obs.Author, "the contributor")
 		msg := fmt.Sprintf("%d commit(s) on `%s` carry the App's `Signed-off-by` while a squash merge would land them as @%s, so the `Sign-off survives the squash` gate stays red. "+
-			"The normal recovery is an App-authored superseding PR, preserving the original commits and sign-offs while changing squash attribution. If that write failed, restore branch/PR-create access and retry adoption; do not forge the contributor's sign-off. ",
+			"The normal recovery is an App-authored superseding PR, preserving the original commits and sign-offs while changing squash attribution. ",
 			obs.Detail.DCOSquashUnsafeHive, shortSHA(obs.HeadSHA), author)
+		switch {
+		case adoptionBlocked(obs.Labels) != "":
+			msg += fmt.Sprintf("The `%s` label prevents superseding; clear it to let the hive retry on its next sweep. ", adoptionBlocked(obs.Labels))
+		case verdictNeedsHuman(obs.Detail):
+			msg += "The review swarm requires a human decision before superseding; resolve that verdict to let the hive retry on its next sweep. "
+		case obs.HeadSHA != rec.AdoptedHead:
+			msg += "The observed head differs from the adopted head; the hive must settle ownership of the new head before superseding. "
+		default:
+			msg += "If the write failed, restore branch/PR-create access and retry adoption; do not forge the contributor's sign-off. "
+		}
 		msg += mergeCommitRefusalText(obs, author)
 		return msg
 	case verdictBlocks(obs.Detail):
@@ -736,6 +746,21 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 	return pr.GetMaintainerCanModify()
 }
 
+// pushAccessLost reports only a confirmed denial on a fork. Unlike the
+// conservative adopt-time mode choice, a recurring sweep must not supersede
+// a live adoption on an API error or unrelated base-side workflow drift.
+func (c *Engine) pushAccessLost(ctx context.Context, obs stageObservation) bool {
+	if obs.HeadRepo == "" || strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo) {
+		return false
+	}
+	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: could not read maintainer_can_modify; keeping in-place adoption this sweep", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return false
+	}
+	return pr.MaintainerCanModify != nil && !pr.GetMaintainerCanModify()
+}
+
 // baseSyncTouchesWorkflows reports whether the base has moved past a change
 // under .github/workflows/ since the PR's merge-base. The App token cannot
 // push such a base-sync to the PR branch (no `workflows` permission, #6985),
@@ -1016,7 +1041,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		rec, _ = store.Get(key)
 	}
 	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now)
-	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && !c.canPushToPRBranch(ctx, obs) {
+	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && c.pushAccessLost(ctx, obs) {
 		rehomeReason = AdoptReasonPushRehome
 	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {

@@ -38,8 +38,9 @@ type adoptAPI struct {
 	// heads is the head GET pulls/n reports for an observed PR (the
 	// harness keeps it in step with what the lane saw); liveHead, when set,
 	// overrides it: the author pushed after the lane recorded its head.
-	heads    map[int]string
-	liveHead string
+	heads     map[int]string
+	liveHead  string
+	failPRGet bool // GET pulls/n answers 500
 	// changedFiles is the changed_files count GET pulls/n reports for an
 	// observed PR; 0 omits it.
 	changedFiles int
@@ -113,6 +114,11 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "html_url": "https://github.com/acme/widget/pull/90"})
 		return true
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && !strings.HasSuffix(path, "/commits"):
+		if a.failPRGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "scripted failure"})
+			return true
+		}
 		var n int
 		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), &n)
 		payload, ok := a.superseders[n]

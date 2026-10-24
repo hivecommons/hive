@@ -89,6 +89,33 @@ func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
 	}
 }
 
+func TestAdoptedPushAccessUnknownOrWorkflowDriftStaysInPlace(t *testing.T) {
+	for _, mode := range []string{"get-error", "compare-error", "workflow-drift", "missing-access-field"} {
+		t.Run(mode, func(t *testing.T) {
+			p := adoptPolicy()
+			p.AdoptInPlace = true
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+			defer done()
+			key := adoptInPlaceAt(h, "aaa", "label:needs-rebase")
+			switch mode {
+			case "get-error":
+				h.adopt.failPRGet = true
+			case "compare-error":
+				h.adopt.failCompare = true
+			case "workflow-drift":
+				h.adopt.compareFiles = []string{".github/workflows/ci.yml"}
+			case "missing-access-field":
+				delete(h.adopt.superseders[7], "maintainer_can_modify")
+			}
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "aaa", adoptedLabels...), "check-pending")
+			if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptedBy != 0 || h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 {
+				t.Fatalf("unknown access or base drift must not supersede: rec=%+v pulls=%v", rec, h.adopt.pulls)
+			}
+		})
+	}
+}
+
 func TestAdoptedLostPushAccessSupersedesImmediately(t *testing.T) {
 	p := adoptPolicy()
 	p.AdoptInPlace = true
