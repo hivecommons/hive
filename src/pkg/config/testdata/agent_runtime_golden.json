@@ -684,6 +684,9 @@
     "contributor_lane": {},
     "contributor_tier": {}
   },
+  "decisions": {
+    "delegate": {}
+  },
   "duplicate_sweep": {},
   "good_first_issue": {},
   "supersession_sweep": {},
