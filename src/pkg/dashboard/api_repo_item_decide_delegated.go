@@ -463,14 +463,17 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 				return notes, fmt.Errorf("supersede adoption requires a contributor PR")
 			}
 			if !s.stageAdoptionEnabled() {
-				// The engine only consumes the request label with adoption
-				// on; queuing it would be a silent no-op with a stale label.
+				// The engine only consumes the request with adoption on;
+				// queuing it would be a silent no-op.
 				return notes, fmt.Errorf("supersede adoption requires governor.labels.stage.adoption to be enabled on this hive")
 			}
-			if err := client.EnsureIssueLabel(ctx, repoFull, delegatedecision.LabelAdoptSupersede, "5319e7", "Owner-delegate request: adopt now in supersede mode"); err != nil {
-				return notes, fmt.Errorf("ensuring adoption request label: %w", err)
-			}
-			if err := client.AddLabels(ctx, repoFull, number, []string{delegatedecision.LabelAdoptSupersede}); err != nil {
+			// The request rides in the stage store the adoption engine
+			// reads, never on a public label: the authorization is this
+			// handler's (canToggleRepoHold), and a label anyone with triage
+			// permission can apply must not be able to force a re-home.
+			store := s.stageStoreOrShared()
+			store.RequestAdoption(stagelabels.Key(repoFull, number), user, time.Now())
+			if err := store.Save(); err != nil {
 				return notes, fmt.Errorf("queuing supersede adoption: %w", err)
 			}
 			notes = append(notes, "supersede adoption queued for the adoption engine's next pass")

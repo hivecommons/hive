@@ -29,7 +29,6 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
-	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -992,27 +991,27 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		// Explicit delegated adoption also applies to a PR parked at 085,
-		// regardless of author kind or whether a nudge was ever sent.
-		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
-			before, _ := store.Get(key)
+		// An owner-delegate request in the stage store (written by the
+		// dashboard after its own authorization, never read from a label)
+		// adopts a PR parked at 085 too, regardless of author kind or
+		// whether a nudge was ever sent.
+		if before, ok := store.Get(key); ok && policy.Adoption && !obs.Merged && before.AdoptionRequested() {
 			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
-			// The request is one attempt, not a standing order: clear the
-			// label once an attempt was recorded for this head (success or
+			// The request is one attempt, not a standing order: consume it
+			// once an attempt was recorded for this head (success or
 			// failure) so a persistent write failure re-parks the PR at 085
 			// instead of retrying every sweep. A deferral (hold label, fence
-			// unreadable) records nothing and keeps the label for a retry.
+			// unreadable, App login unknown) records nothing and keeps the
+			// request for a retry.
 			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after)) {
-				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
-					firstErr = err
-				}
+				store.ClearAdoptionRequest(key)
 			}
 		}
-		if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
+		if (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. A human-authored PR simply waits

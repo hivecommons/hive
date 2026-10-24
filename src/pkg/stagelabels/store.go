@@ -77,6 +77,14 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
+	// AdoptRequestedAt / AdoptRequestedBy carry an owner-delegate decision
+	// to adopt the PR now in supersede mode (hivecommons/hive#13987). The
+	// dashboard writes it after its own authorization; the adoption engine
+	// honors it on its next pass and clears it once an attempt is recorded
+	// (ClearAdoptionRequest). It lives in the store, not on a public label,
+	// so nobody with triage permission can forge the request.
+	AdoptRequestedAt time.Time `json:"adopt_requested_at,omitempty"`
+	AdoptRequestedBy string    `json:"adopt_requested_by,omitempty"`
 	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
 	// (hivecommons/hive#12542): how many non-merge commits the PR carried
 	// and how many lacked a Signed-off-by trailer. DCOUnsignedHive /
@@ -876,6 +884,41 @@ func (r Record) AdoptedHeadClockUnset() bool {
 // the PR on paper and nothing is working it.
 func (r Record) AdoptionAttemptedNothingOpened(head string) bool {
 	return r.Adopted(head) && r.AdoptMode == AdoptModeSupersede && r.AdoptedBy == 0
+}
+
+// AdoptionRequested reports whether an owner-delegate request to adopt the
+// PR now (supersede mode) is pending.
+func (r Record) AdoptionRequested() bool {
+	return !r.AdoptRequestedAt.IsZero()
+}
+
+// RequestAdoption records an owner-delegate request to adopt the PR now in
+// supersede mode, made by `by` at now. The record is created when the
+// reconciler has not seen the item yet so the request is never dropped;
+// the next observation fills in the stage.
+func (s *Store) RequestAdoption(key, by string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		r.LastSeen = now
+	}
+	r.AdoptRequestedAt, r.AdoptRequestedBy = now, strings.TrimSpace(by)
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoptionRequest consumes a pending adoption request on key.
+func (s *Store) ClearAdoptionRequest(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.AdoptionRequested() {
+		return
+	}
+	r.AdoptRequestedAt, r.AdoptRequestedBy = time.Time{}, ""
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkAdoptedInPlace records an in-place adoption of head for reason.

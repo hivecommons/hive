@@ -11,7 +11,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -529,11 +528,13 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if !ok || obs.Lane == stageLaneSelf || obs.Author == "" || obs.BaseRef == "" {
 		return 0, nil
 	}
-	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
+	requested := rec.AdoptionRequested()
 	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
 	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0) {
-		// An explicit owner-delegate decision bypasses the nudge/grace and
-		// re-homes a stalled in-place adoption through the same supersede path.
+		// An explicit owner-delegate decision (stage store, written by the
+		// dashboard after its own authorization) bypasses the nudge/grace
+		// and re-homes a stalled in-place adoption through the same
+		// supersede path.
 		due, reason = true, AdoptReasonOffline
 	}
 	if !due {
@@ -559,6 +560,13 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
+	if appLogin == "" && requested {
+		// Nothing can be tried without the App login. Not recorded as an
+		// attempt, so the owner's explicit decision is kept for a sweep
+		// that can act on it; the error makes the misconfiguration visible.
+		c.warn("stage labels: cannot adopt contributor PR, App login unknown", "repo", obs.Display, "pr", obs.Number)
+		return 0, fmt.Errorf("delegated adoption of %s#%d deferred: App login unknown", obs.Display, obs.Number)
+	}
 	// Record the attempt first: whatever happens below, this head is tried once.
 	store.MarkAdopted(key, obs.HeadSHA, 0, now)
 	store.NoteAdoptDiffFence(key, fence)

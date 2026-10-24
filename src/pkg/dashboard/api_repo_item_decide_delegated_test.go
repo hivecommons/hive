@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func newDelegatedServer(t *testing.T, mock *repoItemDecisionMock) *Server {
@@ -240,6 +241,8 @@ func TestDelegatedLowRiskPath(t *testing.T) {
 func TestDelegatedSupersedeQueuesAdoptionForForeignPR(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true}
 	srv := newDelegatedServer(t, mock)
+	store := stagelabels.NewStore("", nil)
+	srv.stageStore = store
 	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true}
 	d := delegatedecision.Run(in)
 	if d.Verdict != delegatedecision.VerdictAdoptSupersede {
@@ -248,8 +251,14 @@ func TestDelegatedSupersedeQueuesAdoptionForForeignPR(t *testing.T) {
 	if _, err := srv.executeDelegatedDecision(context.Background(), in, d, "writer", false); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
-		t.Fatalf("request not queued: %v", mock.added)
+	rec, ok := store.Get(stagelabels.Key("testorg/testrepo", 8))
+	if !ok || !rec.AdoptionRequested() || rec.AdoptRequestedBy != "writer" {
+		t.Fatalf("request not queued in the stage store: ok=%v rec=%+v", ok, rec)
+	}
+	// Provenance is the store, never a public label anyone with triage
+	// permission could apply by hand.
+	if strings.Contains(strings.Join(mock.added, ","), "adoption/") {
+		t.Fatalf("request written as a label: %v", mock.added)
 	}
 	if len(mock.edits) != 0 {
 		t.Fatalf("original PR edited: %v", mock.edits)
@@ -259,6 +268,8 @@ func TestDelegatedSupersedeQueuesAdoptionForForeignPR(t *testing.T) {
 func TestDelegatedSupersedeRefusedWhenAdoptionDisabled(t *testing.T) {
 	mock := &repoItemDecisionMock{prForeign: true}
 	srv := newDelegatedServer(t, mock)
+	store := stagelabels.NewStore("", nil)
+	srv.stageStore = store
 	off := false
 	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &off
 	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true}
@@ -270,7 +281,7 @@ func TestDelegatedSupersedeRefusedWhenAdoptionDisabled(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "adoption") {
 		t.Fatalf("expected refusal with adoption disabled, got %v", err)
 	}
-	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
-		t.Fatalf("request label queued despite disabled adoption: %v", mock.added)
+	if rec, ok := store.Get(stagelabels.Key("testorg/testrepo", 8)); ok && rec.AdoptionRequested() {
+		t.Fatalf("request queued despite disabled adoption: %+v", rec)
 	}
 }

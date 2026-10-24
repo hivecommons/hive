@@ -1,1 +1,1 @@
-- Delegated decisions to supersede an offline contributor PR now queue the existing adoption engine immediately, preserving contributor commits, sign-off, credit, and issue closing references.
+- Delegated decisions to supersede an offline contributor PR now queue the existing adoption engine immediately, preserving contributor commits, sign-off, credit, and issue closing references. The request is carried in the hive's stage store (written only after the dashboard's own authorization), never as a public label, so it cannot be forged by hand.

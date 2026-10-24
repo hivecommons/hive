@@ -123,8 +123,6 @@ const (
 
 // Labels the delegate writes or reads.
 const (
-	// LabelAdoptSupersede is the durable request consumed by the adoption engine.
-	LabelAdoptSupersede = "adoption/supersede"
 	LabelNeedsOwner     = "needs-owner"
 	LabelHold           = "hold"
 	LabelTriageAccepted = "triage/accepted"

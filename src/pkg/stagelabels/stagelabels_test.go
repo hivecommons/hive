@@ -1415,3 +1415,34 @@ func TestTriageNeededStage(t *testing.T) {
 		t.Fatal("un-parking 045 → 015 is not a step back")
 	}
 }
+
+func TestStoreAdoptionRequest(t *testing.T) {
+	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	key := Key("acme/widget", 7)
+
+	// Unknown key: the request creates the record rather than being dropped.
+	s.RequestAdoption(key, " owner ", now)
+	rec, ok := s.Get(key)
+	if !ok || !rec.AdoptionRequested() || rec.AdoptRequestedBy != "owner" || !rec.AdoptRequestedAt.Equal(now) || !rec.LastSeen.Equal(now) {
+		t.Fatalf("request on unknown key: ok=%v rec=%+v", ok, rec)
+	}
+	if n := s.Prune(time.Hour); n != 0 {
+		t.Fatalf("fresh request pruned: %d", n)
+	}
+	// The next observation keeps the request and fills in the stage.
+	s.Observe(key, NeedsDecision, "no-reviewer")
+	if rec, _ = s.Get(key); rec.Stage != NeedsDecision || !rec.AdoptionRequested() {
+		t.Fatalf("observe lost the request: %+v", rec)
+	}
+	s.ClearAdoptionRequest(key)
+	if rec, _ = s.Get(key); rec.AdoptionRequested() || rec.AdoptRequestedBy != "" {
+		t.Fatalf("request not cleared: %+v", rec)
+	}
+	s.dirty = false
+	s.ClearAdoptionRequest(key)
+	s.ClearAdoptionRequest("missing")
+	if s.dirty {
+		t.Fatal("clearing an absent request dirtied the store")
+	}
+}
