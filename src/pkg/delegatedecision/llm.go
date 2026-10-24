@@ -53,9 +53,16 @@ var LLMVerdicts = []Verdict{
 	VerdictAdoptSupersede, VerdictRecommendOnly,
 }
 
-// LLMLabels is the label set the model may add or remove. A hold it asks to
-// remove is still refused by ApplyRails.
+// LLMLabels is the label set the model may add.
 var LLMLabels = []string{LabelNeedsOwner, LabelHold, LabelTriageAccepted, LabelFlakyTest, LabelNeedsDecision}
+
+// LLMRemovableLabels is the label set the model may remove (a hold it asks
+// to remove is still refused by ApplyRails). The park label is not in it:
+// stage/085-needs-decision comes off only through the recording action
+// (comment-decision lifts the park, close-as-duplicate closes the item),
+// never through a bare labels-remove, so no accepted reply can un-park an
+// item without the `/hive decision` comment and the audit marker.
+var LLMRemovableLabels = []string{LabelNeedsOwner, LabelHold, LabelTriageAccepted, LabelFlakyTest}
 
 // LLMContext is what the decider reads beyond Input: the conversation and
 // the surrounding signals the rules do not use.
@@ -111,8 +118,9 @@ func DeciderSystemPrompt() string {
 	b.WriteString(`{"verdict": "<verdict>", "text": "<the decision, one or two sentences>", "rationale": "<why, one sentence>", "actions": [{"kind": "<action>", "labels": ["<label>"], "target": <issue or PR number>, "text": "<note>"}]}`)
 	b.WriteString("\n\nverdict is one of: " + strings.Join(verdicts, ", ") + ".\n")
 	b.WriteString("Each action kind is one of: " + strings.Join(actions, ", ") + ". Only these exist; you cannot merge, grant access or clear the sentinel label.\n")
-	b.WriteString("labels-add / labels-remove may only name: " + strings.Join(LLMLabels, ", ") + ".\n")
-	b.WriteString("close-as-duplicate and link need target (another item's number). approve-review and adopt-supersede apply to pull requests only.\n")
+	b.WriteString("labels-add may only name: " + strings.Join(LLMLabels, ", ") + ". labels-remove may only name: " + strings.Join(LLMRemovableLabels, ", ") + " (the park label is lifted by comment-decision, never by labels-remove).\n")
+	b.WriteString("close-as-duplicate and link need target (another item's number). close-duplicate closes the newer item: target must be an older (lower-numbered) item. approve-review and adopt-supersede apply to pull requests only.\n")
+	b.WriteString("Every verdict names its recording action and must carry it: close-duplicate and close-superseded carry close-as-duplicate; adopt-supersede carries adopt-supersede; approve on a pull request carries comment-decision and approve-review; every other acting verdict carries comment-decision. close-as-duplicate, approve-review and adopt-supersede appear only with those verdicts.\n")
 	b.WriteString("recommend-only and owner-only keep the park: use only recommend-only and labels-add with them.\n")
 	b.WriteString("When unsure, pick the reversible option that keeps work moving.")
 	return b.String()
@@ -198,7 +206,9 @@ func invalid(format string, args ...any) error {
 
 // ParseLLMDecision decodes and validates the decider's reply for in. It
 // rejects unknown fields, verdicts, action kinds and labels, actions that do
-// not fit the item, and park-keeping verdicts that carry acting actions.
+// not fit the item, park-keeping verdicts that carry acting actions, and
+// verdicts whose actions would not record or execute them (see
+// checkVerdictActions).
 func ParseLLMDecision(in Input, raw string) (Decision, error) {
 	obj := jsonextract.Object(raw)
 	if obj == "" {
@@ -229,7 +239,7 @@ func ParseLLMDecision(in Input, raw string) (Decision, error) {
 	for i, a := range r.Actions {
 		a.Kind = ActionKind(strings.TrimSpace(string(a.Kind)))
 		a.Text = strings.TrimSpace(a.Text)
-		if err := validateLLMAction(in, a, keepsPark); err != nil {
+		if err := validateLLMAction(in, verdict, a, keepsPark); err != nil {
 			return Decision{}, invalid("action %d: %v", i, err)
 		}
 		switch a.Kind {
@@ -242,10 +252,67 @@ func ParseLLMDecision(in Input, raw string) (Decision, error) {
 		}
 		actions = append(actions, a)
 	}
+	if err := checkVerdictActions(in, verdict, actions); err != nil {
+		return Decision{}, invalid("%v", err)
+	}
 	if keepsPark {
 		text = recommendationText(text)
 	}
 	return Decision{Verdict: verdict, Rule: RuleLLM, Text: text, Rationale: rationale, Actions: actions, KeepsPark: keepsPark}, nil
+}
+
+// requiredActions is what each verdict must carry so that executing the
+// actions is the verdict: the recording action that posts the `/hive
+// decision` comment and lifts the park (or closes the item), plus the acting
+// step the verdict names. It mirrors the pairs the rules in Decide emit. A
+// reply missing any of these would be audited as a verdict that never ran.
+func requiredActions(in Input, v Verdict) []ActionKind {
+	switch v {
+	case VerdictRecommendOnly, VerdictOwnerOnly:
+		return []ActionKind{ActionRecommendOnly}
+	case VerdictCloseDuplicate, VerdictCloseSuperseded:
+		return []ActionKind{ActionCloseDuplicate}
+	case VerdictAdoptSupersede:
+		return []ActionKind{ActionCommentDecision, ActionAdoptSupersede}
+	case VerdictApprove:
+		if in.Kind == KindPR {
+			return []ActionKind{ActionCommentDecision, ActionApproveReview}
+		}
+	}
+	return []ActionKind{ActionCommentDecision}
+}
+
+// checkVerdictActions ties verdict and actions together: every action the
+// verdict requires is present, and the acting kinds that imply a verdict
+// (close-as-duplicate, approve-review, adopt-supersede) appear only with it.
+func checkVerdictActions(in Input, v Verdict, actions []Action) error {
+	have := map[ActionKind]bool{}
+	for _, a := range actions {
+		have[a.Kind] = true
+	}
+	for _, k := range requiredActions(in, v) {
+		if !have[k] {
+			return fmt.Errorf("verdict %s requires a %s action", v, k)
+		}
+	}
+	implied := map[ActionKind][]Verdict{
+		ActionCloseDuplicate: {VerdictCloseDuplicate, VerdictCloseSuperseded},
+		ActionApproveReview:  {VerdictApprove},
+		ActionAdoptSupersede: {VerdictAdoptSupersede},
+	}
+	for k, verdicts := range implied {
+		if !have[k] {
+			continue
+		}
+		ok := false
+		for _, iv := range verdicts {
+			ok = ok || iv == v
+		}
+		if !ok {
+			return fmt.Errorf("%s does not belong to verdict %s", k, v)
+		}
+	}
+	return nil
 }
 
 func recommendationText(text string) string {
@@ -264,7 +331,7 @@ func knownVerdict(v Verdict) bool {
 	return false
 }
 
-func validateLLMAction(in Input, a Action, keepsPark bool) error {
+func validateLLMAction(in Input, verdict Verdict, a Action, keepsPark bool) error {
 	known := false
 	for _, k := range AllowedActions {
 		if a.Kind == k {
@@ -285,14 +352,23 @@ func validateLLMAction(in Input, a Action, keepsPark bool) error {
 		if len(a.Labels) == 0 || len(a.Labels) > llmMaxLabelsInAction {
 			return fmt.Errorf("%s wants 1..%d labels", a.Kind, llmMaxLabelsInAction)
 		}
+		allowed := LLMLabels
+		if a.Kind == ActionLabelsRemove {
+			allowed = LLMRemovableLabels
+		}
 		for _, l := range a.Labels {
-			if !llmLabelAllowed(l) {
-				return fmt.Errorf("label %q is not in the delegate's label set", l)
+			if !llmLabelIn(l, allowed) {
+				return fmt.Errorf("label %q is not in the delegate's %s set", l, a.Kind)
 			}
 		}
 	case ActionCloseDuplicate, ActionLink:
 		if a.Target <= 0 || a.Target == in.Number {
 			return fmt.Errorf("%s needs another item's number as target", a.Kind)
+		}
+		// The policy closes the newer duplicate; only a PR superseded by the
+		// hive's (close-superseded) may yield to a newer item.
+		if a.Kind == ActionCloseDuplicate && a.Target > in.Number && !(in.Kind == KindPR && verdict == VerdictCloseSuperseded) {
+			return fmt.Errorf("%s closes the newer item: target #%d is newer than #%d", a.Kind, a.Target, in.Number)
 		}
 	case ActionApproveReview:
 		if in.Kind != KindPR {
@@ -309,8 +385,8 @@ func validateLLMAction(in Input, a Action, keepsPark bool) error {
 	return nil
 }
 
-func llmLabelAllowed(l string) bool {
-	for _, k := range LLMLabels {
+func llmLabelIn(l string, set []string) bool {
+	for _, k := range set {
 		if strings.EqualFold(strings.TrimSpace(l), k) {
 			return true
 		}
