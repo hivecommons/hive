@@ -837,6 +837,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 	fed := map[string]string{
 		"tmux has-session failed":                 ClassTmuxSessionCheckFailed,
 		"pane content at timeout":                 ClassAgentPaneTimeout,
+		"prompt timeout — dumping pane":           ClassAgentPaneTimeout,
 		"proxy client TLS handshake failed":       ClassProxyTLSHandshakeFailed,
 		"transparent proxy TLS handshake failed":  ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":    ClassAgentDirSetupFailed,
