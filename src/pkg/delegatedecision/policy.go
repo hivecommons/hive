@@ -16,8 +16,9 @@
 // (pkg/dashboard/api_repo_item_decide_delegated.go). The non-mechanical
 // cases — a reviewer question with no rule to answer it — fall to the
 // decisive default the owner gives his assistant ("go with the
-// recommendation; pick the reversible option"); an LLM-backed decider for
-// those is a follow-up.
+// recommendation; pick the reversible option"). When the LLM step is enabled,
+// RunWithLLM (llm.go) asks the owner-delegate decider turn about exactly
+// those default cases and runs its validated answer through the same rails.
 package delegatedecision
 
 import (

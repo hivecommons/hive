@@ -30,8 +30,11 @@ import (
 //
 // POST …/items/{number}/decide-delegated starts a job and answers 202 with
 // its id; GET the same path reads the job. The job gathers the item from
-// GitHub, runs delegatedecision.Run (policy + rails) and executes the allowed
-// actions through the existing GitHub helpers. Nothing here merges, lifts a
+// GitHub, runs delegatedecision.Run (policy + rails) — or, when
+// decisions.delegate.llm.enabled is on and the rules fall through to the
+// reversible default, the owner-delegate decider turn
+// (api_repo_item_decide_delegated_llm.go) — and executes the allowed actions
+// through the existing GitHub helpers. Nothing here merges, lifts a
 // hold or clears the sentinel label; the auto-merge engine, a person and the
 // sentinel sweep respectively own those.
 //
@@ -237,8 +240,9 @@ func (s *Server) runDelegatedDecision(ctx context.Context, key, repoFull string,
 		s.audit.LogRecord(user, auditRepoItemDecisionDelegated+"_failed", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "error", err.Error()), "", repoFull, number)
 		return
 	}
-	d := delegatedecision.Run(in)
+	d, deciderNotes := s.decideDelegated(ctx, in)
 	notes, execErr := s.executeDelegatedDecision(ctx, in, d, user, mergerRole)
+	notes = append(deciderNotes, notes...)
 	s.delegatedJobs.finish(key, func(j *delegatedDecisionJob) {
 		j.Decision = &d
 		j.Notes = notes

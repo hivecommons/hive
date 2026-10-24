@@ -23,6 +23,36 @@ type DelegateDecisionConfig struct {
 	// Repos holds per-repository overrides keyed by `owner/repo` or bare
 	// repo name (matched case-insensitively, exact slug first).
 	Repos map[string]DelegateDecisionRepoConfig `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// LLM is the model step for the non-mechanical cases. A pointer so an
+	// unset block leaves the serialised config unchanged.
+	LLM *DelegateDecisionLLMConfig `yaml:"llm,omitempty" json:"llm,omitempty"`
+}
+
+// DelegateDecisionLLMConfig (`decisions.delegate.llm:`) gates the LLM-backed
+// owner-delegate decider. It runs only when the rules-first decider falls
+// through to the reversible default, and its result goes through the same
+// safety rails. Default OFF: the conservative choice until an operator opts
+// in. The model call uses the governor reviewer endpoint
+// (governor.trajectory / governor.litellm); Model overrides the model.
+type DelegateDecisionLLMConfig struct {
+	// Enabled turns the LLM step on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Model overrides the reviewer model for the decider turn.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+}
+
+// LLMEnabled reports whether the LLM step is on (default off). The
+// hive-wide / per-repo delegate switch still gates the whole action.
+func (c DelegateDecisionConfig) LLMEnabled() bool {
+	return c.LLM != nil && c.LLM.Enabled != nil && *c.LLM.Enabled
+}
+
+// LLMModel is the configured model override, "" when none.
+func (c DelegateDecisionConfig) LLMModel() string {
+	if c.LLM == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.LLM.Model)
 }
 
 // DelegateDecisionRepoConfig is one repository's override.

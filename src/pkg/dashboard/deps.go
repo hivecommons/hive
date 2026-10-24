@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -98,6 +99,11 @@ type Dependencies struct {
 	// configured, so /api/chat must return a visible unavailable message rather
 	// than leaving the browser waiting.
 	ChatResponder func(ctx context.Context, query string, history []any) (string, error)
+	// DelegateDecider runs the owner-delegate decider turn behind "Let hive
+	// decide" for items the rules leave at the reversible default
+	// (decisions.delegate.llm.enabled). Nil keeps the rules-first decider
+	// alone.
+	DelegateDecider delegatedecision.TurnRunner
 	// BeadStoreLoadFailures counts configured bead stores that failed to open at
 	// startup and were therefore LEFT OUT of BeadStores entirely. The dependency
 	// admission gate (contribute_admission_deps.go) needs this because it cannot
