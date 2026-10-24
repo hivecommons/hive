@@ -212,6 +212,11 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictApprove, rule: "default-release",
 		},
 		{
+			name:    "online contributor ignores stale adoption caption",
+			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, ContributorOnline: true, CIGreen: true},
+			verdict: VerdictApprove, rule: "default-release", kinds: []ActionKind{ActionCommentDecision, ActionApproveReview},
+		},
+		{
 			name:    "adoption stalled adopts in supersede mode",
 			in:      Input{Kind: KindPR, Number: 54, Title: "Contributor fix", AdoptionStalled: true, CIGreen: true},
 			verdict: VerdictAdoptSupersede, rule: "contributor-offline", kinds: []ActionKind{ActionCommentDecision, ActionAdoptSupersede},
