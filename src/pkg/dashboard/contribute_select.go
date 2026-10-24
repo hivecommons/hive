@@ -375,17 +375,23 @@ func (h *ContributeWSHub) markRepoUnmintable(repo string, now time.Time) {
 // repoUnmintable reports whether repo is inside its post-mint-failure cooldown,
 // dropping the record once it has lapsed so a fixed repo is re-offered.
 func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
+	return !h.repoUnmintableUntil(repo, now).IsZero()
+}
+
+// repoUnmintableUntil shares the recorded exclusion and its expiry with the
+// read-only queue projection. It never attempts a token mint.
+func (h *ContributeWSHub) repoUnmintableUntil(repo string, now time.Time) time.Time {
 	h.unmintableMu.Lock()
 	defer h.unmintableMu.Unlock()
 	until, ok := h.unmintableRepos[repo]
 	if !ok {
-		return false
+		return time.Time{}
 	}
 	if !now.Before(until) {
 		delete(h.unmintableRepos, repo)
-		return false
+		return time.Time{}
 	}
-	return true
+	return until
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
@@ -734,6 +740,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	}
 	var candidates []candidate
 	capabilityMismatchSeen := false
+	unmintableRepoSeen := false
 	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
 	// leaves selection exactly as before; "selected" skips every repo outside
 	// it here, before any lease or mint, so out-of-scope work stays available
@@ -761,6 +768,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
+			unmintableRepoSeen = true
 			// #7869: the App could not mint a token scoped to this repo moments ago
 			// (renamed / deleted / dropped from the installation). Offering its items
 			// would fail the same way; skip the whole repo until the cooldown lapses.
@@ -1037,6 +1045,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// "hub not ready". Send an explicit no_matching_work negative-ack.
 		if capabilityMismatchSeen {
 			return h.taskUnavailable(taskUnavailableCapabilityMismatch)
+		}
+		if unmintableRepoSeen {
+			// #14003: retain the recorded failure on later ready requests,
+			// not only in the selection call that discovered it.
+			return h.taskUnavailable(taskUnavailableRepoUnmintable)
 		}
 		if repoScope.restricts() {
 			return h.taskUnavailable(taskUnavailableNoSelectedWork)
