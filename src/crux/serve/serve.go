@@ -6,10 +6,12 @@
 // runtime in-process.
 //
 // Fail-closed rules, enforced here and not left to the caller: a TCP
-// listener is refused without a bearer token; a request that arrives over
-// TCP on a server with no token is refused even if some caller managed to
-// bind one; the unix socket is created 0600 in a 0700 directory; a token,
-// when set, is required on every route including the socket.
+// listener is refused without a bearer token; on a server with no token,
+// Handler refuses every request except those Serve tagged as having arrived
+// on the unix socket, so mounting Handler on some other http.Server over TCP
+// gets 401s, not an open runtime; the unix socket is created 0600 in a 0700
+// directory the server owns; a token, when set, is required on every route
+// including the socket.
 package serve
 
 import (
@@ -23,10 +25,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -47,6 +51,11 @@ const (
 	subscriberBuffer = 64
 	// shutdownGrace is how long Serve waits for in-flight requests.
 	shutdownGrace = 5 * time.Second
+	// maxAgentNameLen matches the CLI's definition-name gate.
+	maxAgentNameLen = 64
+	// networkUnix is the networkKey value Serve tags unix-socket requests
+	// with; anything else, including no tag, is treated as TCP.
+	networkUnix = "unix"
 	// bearerPrefix is the Authorization scheme.
 	bearerPrefix = "Bearer "
 )
@@ -126,15 +135,21 @@ func (s *Server) Handler() http.Handler {
 	return s.authenticate(mux)
 }
 
-// authenticate is the fail-closed gate: a request over TCP is refused when
-// the server has no token, and any request is refused when the server has a
-// token the request does not present.
+// agentNamePattern is the CLI's definition-name gate (cmd/crux
+// validateDefinitionName): the name becomes a tmux socket and per-agent
+// paths, so it must be a plain identifier.
+var agentNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// authenticate is the fail-closed gate: when the server has no token, only
+// a request Serve tagged as arriving on the unix socket is allowed, so a
+// Handler mounted elsewhere (any TCP listener, tagged or not) is refused;
+// when the server has a token, every request must present it.
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		network, _ := r.Context().Value(networkKey).(string)
 		if s.Token == "" {
-			if network == "tcp" {
-				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; TCP requests are refused")
+			if network != networkUnix {
+				s.writeError(w, http.StatusUnauthorized, api.CodeUnauthorized, "this server has no bearer token; only unix-socket requests are accepted")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -148,6 +163,31 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ownedPrivateDir refuses a socket directory this user does not own
+// outright: MkdirAll is silent about a directory that already existed, and
+// on a shared temp dir another user could have created it first and could
+// then swap the socket. The directory must be a real directory (not a
+// symlink), owned by this uid, with no group or other permission bits.
+func ownedPrivateDir(dir string) error {
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return errors.New("is a symlink")
+	}
+	if !fi.IsDir() {
+		return errors.New("is not a directory")
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Errorf("mode %04o is readable by others; want %04o", perm, config.ServeSocketDirMode)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("owned by uid %d, not this user (uid %d)", st.Uid, os.Getuid())
+	}
+	return nil
 }
 
 // Listeners is what Listen opened: the unix socket and, when configured, the
@@ -189,8 +229,12 @@ func Listen(cfg config.ServeConfig) (*Listeners, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.Socket), config.ServeSocketDirMode); err != nil {
+	dir := filepath.Dir(cfg.Socket)
+	if err := os.MkdirAll(dir, config.ServeSocketDirMode); err != nil {
 		return nil, fmt.Errorf("socket directory: %w", err)
+	}
+	if err := ownedPrivateDir(dir); err != nil {
+		return nil, fmt.Errorf("socket directory %s: %w", dir, err)
 	}
 	if conn, err := net.DialTimeout("unix", cfg.Socket, time.Second); err == nil {
 		_ = conn.Close()
@@ -311,23 +355,73 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "name is required")
 		return
 	}
+	name := req.Name
 	if len(req.Definition) > 0 {
-		var cfg config.AgentConfig
-		if err := json.Unmarshal(req.Definition, &cfg); err != nil {
+		if len(name) > maxAgentNameLen || !agentNamePattern.MatchString(name) {
+			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest,
+				fmt.Sprintf("name must match %s and be at most %d characters", agentNamePattern, maxAgentNameLen))
+			return
+		}
+		cfg, err := decodeDefinition(name, req.Definition)
+		if err != nil {
 			s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "definition: "+err.Error())
 			return
 		}
-		s.Runtime.AddAgent(req.Name, cfg)
-	} else if _, err := s.Runtime.GetStatus(req.Name); err != nil {
-		s.writeError(w, http.StatusNotFound, api.CodeNotFound, fmt.Sprintf("agent %q is not defined on this server; send a definition to run one", req.Name))
+		// The runtime's AddAgent is a no-op for a name it already holds, so a
+		// re-post with a changed definition would silently start the old one.
+		if _, err := s.Runtime.GetStatus(name); err == nil {
+			s.writeError(w, http.StatusConflict, api.CodeConflict,
+				fmt.Sprintf("agent %q is already defined on this server; post without a definition to start it", name))
+			return
+		}
+		s.Runtime.AddAgent(name, cfg)
+		if _, err := s.Runtime.GetStatus(name); err != nil {
+			s.writeError(w, http.StatusUnprocessableEntity, api.CodeBadRequest,
+				fmt.Sprintf("agent %q was not accepted by the runtime: %v", name, err))
+			return
+		}
+	} else {
+		name = s.Runtime.ResolveAgent(name)
+		if _, err := s.Runtime.GetStatus(name); err != nil {
+			s.writeError(w, http.StatusNotFound, api.CodeNotFound, fmt.Sprintf("agent %q is not defined on this server; send a definition to run one", req.Name))
+			return
+		}
+	}
+	if err := s.Runtime.Start(s.LaunchContext, name); err != nil {
+		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, fmt.Sprintf("start %s: %v", name, err))
 		return
 	}
-	if err := s.Runtime.Start(s.LaunchContext, req.Name); err != nil {
-		s.writeError(w, http.StatusInternalServerError, api.CodeRuntime, fmt.Sprintf("start %s: %v", req.Name, err))
-		return
+	s.publish(api.Event{Type: api.EventStarted, Agent: name})
+	s.writeJSON(w, http.StatusCreated, s.agentResponse(name))
+}
+
+// decodeDefinition parses a RunRequest definition and fills the per-agent
+// defaults a start depends on, the way the CLI's loader does with
+// Config.ApplyAgentDefaults (which crux/config does not have): ID and Role
+// default to the name, Replicas to 1, and Enabled to true unless the
+// document set it. Everything else is the caller's.
+func decodeDefinition(name string, raw json.RawMessage) (config.AgentConfig, error) {
+	var cfg config.AgentConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return cfg, err
 	}
-	s.publish(api.Event{Type: api.EventStarted, Agent: req.Name})
-	s.writeJSON(w, http.StatusCreated, s.agentResponse(req.Name))
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return cfg, err
+	}
+	if cfg.ID == "" {
+		cfg.ID = name
+	}
+	if cfg.Role == "" {
+		cfg.Role = name
+	}
+	if cfg.Replicas == 0 {
+		cfg.Replicas = 1
+	}
+	if _, set := keys["enabled"]; !set {
+		cfg.Enabled = true
+	}
+	return cfg, nil
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {

@@ -129,9 +129,15 @@ type ProcessList struct {
 // when present, is an agent definition document in the runtime's own
 // configuration shape (the JSON form of crux/config.AgentConfig, which is
 // the per-agent overlay hive reads from agents_dir) and is registered with
-// Definitions.AddAgent before Lifecycle.Start. Without it Name must already
-// be defined on the server. Parsing the portable AgentDefinition format is
-// the caller's job, as it is the host's job for the CLI.
+// Definitions.AddAgent before Lifecycle.Start; Name must then match
+// ^[a-z0-9][a-z0-9_-]*$ (at most 64 characters) and not already be defined
+// on the server (409 CodeConflict otherwise: the runtime does not replace a
+// definition). The server fills the defaults a start depends on (id and
+// role from Name, replicas 1, enabled unless the document says otherwise);
+// everything else is the caller's. Without a definition, Name (or an agent
+// ID) must already be defined on the server. Parsing the portable
+// AgentDefinition format is the caller's job, as it is the host's job for
+// the CLI.
 type RunRequest struct {
 	Name       string          `json:"name"`
 	Definition json.RawMessage `json:"definition,omitempty"`
@@ -205,5 +211,8 @@ const (
 	CodeUnauthorized = "unauthorized"
 	CodeBadRequest   = "bad_request"
 	CodeNotFound     = "not_found"
-	CodeRuntime      = "runtime_error"
+	// CodeConflict is a run with a definition for a name the server already
+	// holds; the runtime does not replace definitions.
+	CodeConflict = "conflict"
+	CodeRuntime  = "runtime_error"
 )

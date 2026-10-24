@@ -61,9 +61,14 @@ func (f *fakeRuntime) add(name, id string, state crux.ProcessState) *crux.Proces
 	return p
 }
 
+// AddAgent matches the manager: a no-op for a name it already holds (and,
+// standing in for the ACMM gate, for the name "refused").
 func (f *fakeRuntime) AddAgent(name string, cfg config.AgentConfig) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if _, exists := f.procs[name]; exists || name == "refused" {
+		return
+	}
 	f.procs[name] = &crux.Process{Name: name, ID: cfg.ID, Config: cfg, State: crux.StateStopped}
 }
 
@@ -406,6 +411,37 @@ func TestListenFailsClosed(t *testing.T) {
 	if _, err := Listen(config.ServeConfig{Socket: filepath.Join(dir, strings.Repeat("x", 120)+".sock")}); err == nil {
 		t.Fatal("over-long socket path should fail")
 	}
+	// A socket directory this user does not own outright is refused: one
+	// readable by others (a squatter could have created it)...
+	loose := filepath.Join(dir, "loose")
+	if err := os.Mkdir(loose, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Listen(config.ServeConfig{Socket: filepath.Join(loose, "d.sock")}); err == nil || !strings.Contains(err.Error(), "readable by others") {
+		t.Fatalf("world-readable dir: %v", err)
+	}
+	// ...or reached through a symlink.
+	private := filepath.Join(dir, "private")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Listen(config.ServeConfig{Socket: filepath.Join(link, "e.sock")}); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked dir: %v", err)
+	}
+	if err := ownedPrivateDir(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("regular file: %v", err)
+	}
+	if err := ownedPrivateDir(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing dir should fail")
+	}
+	// The dir Listen creates itself passes.
+	if err := ownedPrivateDir(private); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAuthRefusalOnTCPAndWithToken(t *testing.T) {
@@ -462,6 +498,36 @@ func TestHandlerRefusesTCPWithoutTokenEvenIfBound(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("TCP without token: %d %s", rec.Code, rec.Body)
 	}
+	// An untagged request (Handler mounted on someone else's http.Server)
+	// is refused the same way: only Serve's unix tag opens the door.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, api.PathHealth, nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("untagged without token: %d %s", rec.Code, rec.Body)
+	}
+	foreign := httptest.NewServer(h)
+	defer foreign.Close()
+	resp, err := http.Get(foreign.URL + api.PathHealth)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("foreign TCP server without token: %d", resp.StatusCode)
+	}
+	// With a token the foreign mount works like any other listener.
+	srv.Token = "t"
+	freq, _ := http.NewRequest(http.MethodGet, foreign.URL+api.PathHealth, nil)
+	freq.Header.Set("Authorization", "Bearer t")
+	resp, err = http.DefaultClient.Do(freq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("foreign TCP server with token: %d", resp.StatusCode)
+	}
+	srv.Token = ""
 	// The same request on the unix network is served.
 	req = httptest.NewRequest(http.MethodGet, api.PathHealth, nil)
 	req = req.WithContext(context.WithValue(req.Context(), networkKey, "unix"))
@@ -486,9 +552,35 @@ func TestRunListGetOverTheSocket(t *testing.T) {
 	// The agent was launched under the server's context, not the request's.
 	s.rt.mu.Lock()
 	launchCtx := s.rt.startCtx
+	gotCfg := s.rt.procs["fixer"].Config
 	s.rt.mu.Unlock()
 	if launchCtx == nil || launchCtx.Err() != nil {
 		t.Fatalf("launch context should be the live server context, got %v", launchCtx)
+	}
+	// The defaults a start depends on were filled; the given ID was kept.
+	if gotCfg.ID != "f1" || gotCfg.Role != "fixer" || gotCfg.Replicas != 1 || !gotCfg.Enabled {
+		t.Fatalf("defaults not applied: %+v", gotCfg)
+	}
+	// A definition that sets enabled or role keeps them.
+	def2 := json.RawMessage(`{"backend":"copilot","role":"scout-role","enabled":false,"replicas":3}`)
+	s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: "quiet", Definition: def2}, http.StatusCreated, &ar)
+	s.rt.mu.Lock()
+	gotCfg = s.rt.procs["quiet"].Config
+	s.rt.mu.Unlock()
+	if gotCfg.ID != "quiet" || gotCfg.Role != "scout-role" || gotCfg.Replicas != 3 || gotCfg.Enabled {
+		t.Fatalf("explicit fields overridden: %+v", gotCfg)
+	}
+	// Re-posting a definition for a known name is a conflict, not a silent
+	// start of the old definition.
+	var e api.Error
+	s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: "fixer", Definition: def}, http.StatusConflict, &e)
+	if e.Code != api.CodeConflict || !strings.Contains(e.Error, "already defined") {
+		t.Fatalf("conflict: %+v", e)
+	}
+	// A bare name may be an agent ID, as for every other verb.
+	s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: "s1"}, http.StatusCreated, &ar)
+	if ar.Agent != "scout" {
+		t.Fatalf("run by id = %+v", ar)
 	}
 
 	// run without a definition starts an agent the server already knows.
@@ -505,7 +597,7 @@ func TestRunListGetOverTheSocket(t *testing.T) {
 	for _, p := range list.Processes {
 		names = append(names, p.Name)
 	}
-	if strings.Join(names, ",") != "fixer,idle,scout" {
+	if strings.Join(names, ",") != "fixer,idle,quiet,scout" {
 		t.Fatalf("list = %v", names)
 	}
 
@@ -526,7 +618,7 @@ func TestRunListGetOverTheSocket(t *testing.T) {
 	// health counts the definitions.
 	var h api.Health
 	s.expect(http.MethodGet, api.PathHealth, nil, http.StatusOK, &h)
-	if h.Agents != 4 { // three agents plus the fake's nil entry
+	if h.Agents != 5 { // four agents plus the fake's nil entry
 		t.Fatalf("health agents = %d", h.Agents)
 	}
 }
@@ -549,6 +641,18 @@ func TestRunErrors(t *testing.T) {
 	s.expect(http.MethodPost, api.PathAgents, map[string]any{"name": "x", "bogus": 1}, http.StatusBadRequest, &e)
 	if !strings.Contains(e.Error, "request body") {
 		t.Fatalf("unknown field: %+v", e)
+	}
+	for _, bad := range []string{"Fixer", "a b", "../x", "-lead", strings.Repeat("a", 65)} {
+		s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: bad, Definition: json.RawMessage(`{}`)}, http.StatusBadRequest, &e)
+		if e.Code != api.CodeBadRequest || !strings.Contains(e.Error, "name must match") {
+			t.Fatalf("name %q: %+v", bad, e)
+		}
+	}
+	// The runtime declining the definition (the fake's stand-in for the
+	// ACMM gate) is reported, not followed by a start that cannot work.
+	s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: "refused", Definition: json.RawMessage(`{}`)}, http.StatusUnprocessableEntity, &e)
+	if e.Code != api.CodeBadRequest || !strings.Contains(e.Error, "not accepted") {
+		t.Fatalf("refused: %+v", e)
 	}
 	s.rt.add("broken", "b1", crux.StateStopped)
 	s.rt.startErr = errors.New("tmux: no server")
@@ -914,6 +1018,7 @@ func TestStreamsNeedAFlusher(t *testing.T) {
 	for _, path := range []string{api.PathEvents, api.LogsPath("a") + "?follow=1"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = req.WithContext(context.WithValue(req.Context(), networkKey, networkUnix))
 		srv.Handler().ServeHTTP(noFlush{rec}, req)
 		if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "streaming") {
 			t.Fatalf("%s without flusher: %d %s", path, rec.Code, rec.Body)
