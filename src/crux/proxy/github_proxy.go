@@ -2344,12 +2344,30 @@ var plainHTTPClient = &http.Client{
 func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	resp, err := plainHTTPClient.Transport.RoundTrip(r)
 	if err != nil {
-		p.logger.Warn("proxy: plain HTTP forward failed", "url", r.URL.String(), "error", err)
+		if isLoopbackHost(r.URL.Host) {
+			p.logger.Debug("proxy: plain HTTP forward to loopback failed (client should bypass the proxy for loopback; NO_PROXY)", "url", r.URL.String(), "error", err)
+		} else {
+			p.logger.Warn("proxy: plain HTTP forward failed", "url", r.URL.String(), "error", err)
+		}
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nupstream request failed\n")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_ = resp.Write(conn)
+}
+
+// isLoopbackHost reports whether a host or host:port refers to the loopback interface.
+func isLoopbackHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // extractAgentName reads the agent name from the Proxy-Authorization header.

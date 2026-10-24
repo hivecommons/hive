@@ -252,9 +252,33 @@ func TestAgentEnvPairs_NonInference_NoAnthropicVars(t *testing.T) {
 
 	pairs := m.agentEnvPairs(ap)
 	for _, p := range pairs {
-		if p.Key == "ANTHROPIC_API_KEY" || p.Key == "ANTHROPIC_BASE_URL" || p.Key == "NO_PROXY" {
+		if p.Key == "ANTHROPIC_API_KEY" || p.Key == "ANTHROPIC_BASE_URL" {
 			t.Errorf("non-inference backend should not have %s", p.Key)
 		}
+	}
+}
+
+func TestAgentEnvPairs_NonInference_NoProxyLoopback(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"scanner": {Backend: "claude", Model: "sonnet"},
+	}, discardLogger(), ProjectContext{})
+
+	ap := &AgentProcess{
+		Name:   "scanner",
+		Config: config.AgentConfig{Backend: "claude", Model: "sonnet"},
+	}
+
+	count := 0
+	for _, p := range m.agentEnvPairs(ap) {
+		if p.Key == "NO_PROXY" {
+			count++
+			if p.Value != "127.0.0.1,localhost,::1" {
+				t.Errorf("NO_PROXY = %q, want loopback list", p.Value)
+			}
+		}
+	}
+	if count != 1 {
+		t.Errorf("NO_PROXY emitted %d times, want 1", count)
 	}
 }
 

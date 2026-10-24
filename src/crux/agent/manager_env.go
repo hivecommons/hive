@@ -251,6 +251,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyListenPort)
 	vars = append(vars, agentEnvPair{"HTTPS_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
+	// Loopback must never traverse the hive proxy for any backend: an agent
+	// polling a local dev server would otherwise get proxy-side dial errors (#14076).
+	vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost,::1", false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
 	vars = append(vars, agentEnvPair{"GIT_TERMINAL_PROMPT", "0", false})
 	vars = append(vars, agentEnvPair{"NODE_EXTRA_CA_CERTS", proxyCACertPath, false})
@@ -304,7 +307,6 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
-		vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost", false})
 		// Cap the CLI output-token budget at a value every commercial model
 		// litellm may front will accept. A prior 128000 (chosen so verbose
 		// OSS models would not truncate) exceeds Azure GPT-4o's 16384
