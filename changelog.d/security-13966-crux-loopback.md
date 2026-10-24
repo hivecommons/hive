@@ -1,0 +1,1 @@
+- Refuse non-loopback plain HTTP for `crux serve --listen` and Crux client addresses so bearer tokens cannot cross the network in cleartext; remote access requires a TLS-terminating reverse proxy forwarding to the loopback listener ([#13966](https://github.com/hivecommons/hive/issues/13966)).

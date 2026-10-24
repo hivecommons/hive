@@ -6,7 +6,7 @@
 // runtime in-process.
 //
 // Fail-closed rules, enforced here and not left to the caller: a TCP
-// listener is refused without a bearer token; on a server with no token,
+// listener requires a loopback host and a bearer token; on a server with no token,
 // Handler refuses every request except those Serve tagged as having arrived
 // on the unix socket, so mounting Handler on some other http.Server over TCP
 // gets 401s, not an open runtime; the unix socket is created 0600 in a 0700

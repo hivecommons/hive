@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,10 @@ const unixBaseURL = "http://crux"
 //	https://crux.example:7777              a TLS listener by URL
 //	127.0.0.1:7777, [::1]:7777             a TCP listener, http implied
 //
-// An empty string is an error so a caller cannot fall through to a default
-// by accident.
+// Plain HTTP (including an implied scheme) is allowed only on loopback hosts;
+// remote servers require HTTPS so bearer tokens do not cross the network in
+// cleartext. An empty string is an error so a caller cannot fall through to a
+// default by accident.
 func ParseAddress(s string) (Address, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -64,33 +67,35 @@ func ParseAddress(s string) (Address, error) {
 		if u.Host == "" {
 			return Address{}, fmt.Errorf("server address %q has no host", s)
 		}
+		if u.Scheme == "http" && !IsLoopbackHost(u.Hostname()) {
+			return Address{}, fmt.Errorf("server address %q must use https://; plain HTTP is allowed only for loopback hosts", s)
+		}
 		return Address{Network: "tcp", Host: u.Host, BaseURL: u.Scheme + "://" + u.Host}, nil
 	}
 	if strings.Contains(s, "://") {
 		return Address{}, fmt.Errorf("server address %q: unsupported scheme (use unix://, http:// or https://)", s)
 	}
 	// host:port with no scheme.
-	if _, _, ok := splitHostPort(s); !ok {
+	host, _, ok := splitHostPort(s)
+	if !ok {
 		return Address{}, fmt.Errorf("server address %q is neither a socket path nor host:port", s)
+	}
+	if !IsLoopbackHost(host) {
+		return Address{}, fmt.Errorf("server address %q must use https://; plain HTTP is allowed only for loopback hosts", s)
 	}
 	return Address{Network: "tcp", Host: s, BaseURL: "http://" + s}, nil
 }
 
-// splitHostPort is net.SplitHostPort's shape without importing net, so this
-// package stays free of anything a client might not want.
+// splitHostPort requires host:port with a numeric, non-empty port.
 func splitHostPort(s string) (host, port string, ok bool) {
-	i := strings.LastIndex(s, ":")
-	if i < 0 || i == len(s)-1 {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || port == "" {
 		return "", "", false
 	}
-	host, port = s[:i], s[i+1:]
 	for _, r := range port {
 		if r < '0' || r > '9' {
 			return "", "", false
 		}
-	}
-	if strings.HasPrefix(host, "[") != strings.HasSuffix(host, "]") {
-		return "", "", false
 	}
 	return host, port, true
 }

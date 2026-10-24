@@ -6,7 +6,7 @@
 // nothing of the runtime itself.
 //
 // The API is HTTP+JSON under /v1. The server listens on a unix socket by
-// default and optionally on TCP; TCP always requires a bearer token
+// default and optionally on loopback TCP; TCP always requires a bearer token
 // (Authorization: Bearer <token>), the socket requires one only when the
 // server was given one. Streams (log follow, runtime events) are
 // text/event-stream, one JSON object per `data:` line, `event:` naming the

@@ -45,6 +45,20 @@ Global flags go before the subcommand:
 
 Exit codes: 0 ok, 1 runtime error, 2 usage.
 
+## Serving the HTTP API
+
+`crux --config /etc/hive/hive.yaml serve` exposes the runtime API on a private
+unix socket. To add local TCP access, set `CRUX_TOKEN` and pass
+`--listen 127.0.0.1:7777` after `serve`. TCP requires a bearer token and a
+loopback host (`127.0.0.0/8`, `::1`, or `localhost`). Wildcard binds such as
+`:7777`, `0.0.0.0:7777`, and `[::]:7777`, and non-loopback hosts are refused.
+
+The TCP listener serves plain HTTP. For remote access, put a TLS-terminating
+reverse proxy in front of the loopback listener and have clients use HTTPS;
+the bearer token is still required. The `crux/api.ParseAddress` client address
+parser permits `http://` and bare `host:port` only for loopback hosts and
+requires `https://` for remote hosts. Unix socket addresses are unaffected.
+
 ## Definitions
 
 `crux run` reads the two definition formats hive already has, so a file that

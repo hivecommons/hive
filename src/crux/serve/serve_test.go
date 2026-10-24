@@ -385,6 +385,26 @@ func TestListenCreatesAnOwnerOnlySocketAndRefusesADouble(t *testing.T) {
 	}
 }
 
+func TestListenRejectsNonLoopbackBeforeCreatingSocket(t *testing.T) {
+	for _, addr := range []string{":0", "0.0.0.0:0", "[::]:0", "10.0.0.5:0", "crux.example:0"} {
+		t.Run(addr, func(t *testing.T) {
+			dir := filepath.Join(shortSocketDir(t), "private")
+			cfg := config.ServeConfig{Socket: filepath.Join(dir, "crux.sock"), Listen: addr, Token: "test-token"}
+			ls, err := Listen(cfg)
+			if ls != nil {
+				ls.Close()
+				t.Fatal("non-loopback address opened listeners")
+			}
+			if err == nil || !strings.Contains(err.Error(), "loopback") {
+				t.Fatalf("expected loopback refusal, got %v", err)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid config must be refused before socket setup: %v", err)
+			}
+		})
+	}
+}
+
 func TestListenFailsClosed(t *testing.T) {
 	// TCP without a token is refused before anything binds.
 	if _, err := Listen(config.ServeConfig{Socket: filepath.Join(shortSocketDir(t), "a.sock"), Listen: "127.0.0.1:0"}); err == nil || !strings.Contains(err.Error(), "bearer token") {
@@ -393,7 +413,7 @@ func TestListenFailsClosed(t *testing.T) {
 	// An unbindable TCP address releases the socket it already took.
 	dir := shortSocketDir(t)
 	sock := filepath.Join(dir, "b.sock")
-	if _, err := Listen(config.ServeConfig{Socket: sock, Listen: "256.256.256.256:1", Token: "t"}); err == nil || !strings.Contains(err.Error(), "listen") {
+	if _, err := Listen(config.ServeConfig{Socket: sock, Listen: "127.0.0.1:65536", Token: "t"}); err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Fatalf("bad TCP address: %v", err)
 	}
 	if _, err := os.Stat(sock); !errors.Is(err, os.ErrNotExist) {

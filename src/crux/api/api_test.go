@@ -47,6 +47,56 @@ func TestParseAddress(t *testing.T) {
 	}
 }
 
+// Both explicit HTTP and bare host:port must enforce the same transport rule.
+func TestParseAddressRequiresTLSOffLoopback(t *testing.T) {
+	for _, host := range []string{
+		"localhost", "LOCALHOST", "127.0.0.1", "127.0.0.2", "127.255.255.255",
+		"[::1]", "[0:0:0:0:0:0:0:1]", "[::ffff:127.0.0.1]",
+	} {
+		for _, prefix := range []string{"", "http://", "https://"} {
+			in := prefix + host + ":7777"
+			t.Run(in, func(t *testing.T) {
+				got, err := ParseAddress(in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				scheme := prefix
+				if scheme == "" {
+					scheme = "http://"
+				}
+				want := Address{Network: "tcp", Host: host + ":7777", BaseURL: scheme + host + ":7777"}
+				if got != want {
+					t.Fatalf("got %+v, want %+v", got, want)
+				}
+			})
+		}
+	}
+	for _, host := range []string{
+		"", "0.0.0.0", "[::]", "10.0.0.5", "192.0.2.1", "[2001:db8::1]",
+		"[::ffff:10.0.0.5]", "crux.example", "localhost.example", "localhost.",
+		"127.0.0.1.example", "127.1", "2130706433",
+	} {
+		for _, prefix := range []string{"", "http://"} {
+			in := prefix + host + ":7777"
+			t.Run(in, func(t *testing.T) {
+				got, err := ParseAddress(in)
+				if err == nil || !strings.Contains(err.Error(), "https://") || got != (Address{}) {
+					t.Fatalf("cleartext remote address must be refused with HTTPS guidance, got %+v, %v", got, err)
+				}
+			})
+		}
+		if host != "" {
+			in := "https://" + host + ":7777"
+			t.Run(in, func(t *testing.T) {
+				got, err := ParseAddress(in)
+				if err != nil || got.BaseURL != in || got.Network != "tcp" {
+					t.Fatalf("TLS address must remain usable, got %+v, %v", got, err)
+				}
+			})
+		}
+	}
+}
+
 func TestWriteAndReadEvents(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteEvent(&buf, EventStarted, Event{Type: EventStarted, Agent: "fixer"}); err != nil {
