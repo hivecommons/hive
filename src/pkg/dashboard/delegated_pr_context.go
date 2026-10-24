@@ -94,7 +94,7 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 		state := strings.ToLower(other.GetMergeableState())
 		in.Competing = append(in.Competing, delegatedecision.CompetingPR{
 			Number: number, HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(other.GetUser().GetLogin()),
-			Mergeable: other.GetMergeable() && (state == "clean" || state == "has_hooks") && !other.GetDraft(),
+			Mergeable: other.GetMergeable() && (state == "clean" || state == "has_hooks" || state == "blocked") && !other.GetDraft(),
 			Current:   state != "behind" && state != "unknown" && state != "" && !other.GetDraft(),
 		})
 	}
@@ -109,10 +109,11 @@ func (s *Server) delegatedContributorOnline(ctx context.Context, owner, repo str
 	if author == "" {
 		return true, nil
 	} // Unknown identity is not evidence of absence.
+	latest := time.Now().UTC().Add(5 * time.Minute)
 	recent := func(login string, at time.Time) bool {
-		return strings.EqualFold(login, author) && !at.IsZero() && !at.Before(cutoff)
+		return strings.EqualFold(login, author) && !at.IsZero() && !at.Before(cutoff) && !at.After(latest)
 	}
-	if !pr.GetCreatedAt().Time.IsZero() && !pr.GetCreatedAt().Time.Before(cutoff) {
+	if recent(author, pr.GetCreatedAt().Time) {
 		return true, nil
 	}
 	api := s.deps.GHClient.GoGitHub()

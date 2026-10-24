@@ -43,6 +43,7 @@ func TestDelegatedContributorActivity(t *testing.T) {
 		online, fail            bool
 	}{
 		{name: "quiet", online: false},
+		{name: "future commit", endpoint: "commits", payload: `[{"author":{"login":"alice"},"commit":{"author":{"date":"` + now.Add(24*time.Hour).Format(time.RFC3339) + `"}}}]`},
 		{name: "commit", endpoint: "commits", payload: `[{"author":{"login":"alice"},"commit":{"author":{"date":"` + fresh + `"}}}]`, online: true},
 		{name: "comment", endpoint: "issues/8/comments", payload: `[{"user":{"login":"alice"},"updated_at":"` + fresh + `"}]`, online: true},
 		{name: "review", endpoint: "reviews", payload: `[{"user":{"login":"alice"},"submitted_at":"` + fresh + `"}]`, online: true},
@@ -84,6 +85,8 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 		want                    int
 	}{
 		{"adequate contributor", "open", "clean", true, false, 1},
+		{"approval blocked contributor", "open", "blocked", true, false, 1},
+		{"blocked but conflicting", "open", "blocked", false, false, 1},
 		{"behind", "open", "behind", true, false, 1},
 		{"unknown", "open", "unknown", false, false, 1},
 		{"draft", "open", "clean", true, true, 1},
@@ -116,7 +119,7 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 				t.Fatalf("input = %+v", in)
 			}
 			if tc.want > 0 {
-				adequate := tc.mergeState == "clean" && !tc.draft
+				adequate := (tc.mergeState == "clean" || tc.mergeState == "blocked") && tc.mergeable && !tc.draft
 				if in.Competing[0].Mergeable != adequate {
 					t.Fatalf("competing = %+v", in.Competing)
 				}
