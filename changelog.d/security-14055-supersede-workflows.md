@@ -1,0 +1,1 @@
+- Refuse to publish contributor workflow/action edits into upstream adoption branches, and revalidate head evidence before every supersession.

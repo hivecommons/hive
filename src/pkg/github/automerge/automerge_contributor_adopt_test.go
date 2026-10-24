@@ -1345,7 +1345,8 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 }
 
 // Adoption is not a merge (hivecommons/hive#13212): a body-marker clanker PR
-// that touches CI workflows or deletes tests is adopted all the same, and
+// that deletes tests is adopted with a carried fence. Workflow edits refuse
+// supersession before publishing an upstream branch. For test deletions,
 // the fence travels with it — the record carries it, the superseding App
 // PR's body carries the marker the App merge lanes refuse on, and the
 // comment on the original says the merge stays manual. Only a verdict the
@@ -1389,7 +1390,7 @@ func TestAdoptionCarriesDiffFence(t *testing.T) {
 			h.clock.advance(time.Hour)
 			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 			key := stageKey("acme", "widget", 7)
-			if tc.wantDefer {
+			if tc.wantDefer || tc.wantFence == contributorLaneReasonWorkflowPath {
 				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
 					t.Fatalf("deferred adoption went ahead: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
 				}
@@ -1498,7 +1499,7 @@ func TestAdoptionInPlaceCarriesDiffFence(t *testing.T) {
 	}
 }
 
-// The dco-rehome takeover of an in-place adoption carries the fence too:
+// The dco-rehome takeover refuses workflow publication and carries test fences:
 // the App PR is opened with the marker and the original closed, exactly as
 // a clean re-home, instead of releasing the adoption back to 072 where the
 // fence used to hold it (hivecommons/hive#12850). A head that moved since
@@ -1514,7 +1515,7 @@ func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 		wantFence    string
 		wantDefer    bool
 	}{
-		{name: "workflow path carries", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
+		{name: "workflow path refuses publication", files: []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}, wantFence: contributorLaneReasonWorkflowPath},
 		{name: "test file removed carries", files: []map[string]any{{"filename": "src/widget_test.go", "status": "removed", "deletions": 4}}, wantFence: contributorLaneReasonTestsRemoved},
 		{name: "incomplete file list defers", changedFiles: 3001, wantDefer: true},
 		{name: "head moved defers", liveHead: "bbb", wantDefer: true},
@@ -1540,11 +1541,11 @@ func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 			h.clock.advance(time.Minute)
 			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
 			rec, _ := h.e.stageStoreOrShared().Get(key)
-			if tc.wantDefer {
+			if tc.wantDefer || tc.wantFence == contributorLaneReasonWorkflowPath {
 				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
 					t.Fatalf("deferred re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
 				}
-				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != "" {
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || (tc.wantFence != contributorLaneReasonWorkflowPath && rec.AdoptDiffFence != "") {
 					t.Fatalf("deferred re-home changed the adoption: %+v", rec)
 				}
 				return
@@ -1699,5 +1700,37 @@ func TestDelegatedSupersedeFailureIsOneAttemptAndClearsLabel(t *testing.T) {
 	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
 	if h.adopt.refAttempts != 1 || len(h.api.removed) != 0 {
 		t.Fatalf("failed delegated supersede retried: attempts=%d removed=%v", h.adopt.refAttempts, h.api.removed)
+	}
+}
+
+// Every caller, including second takeovers, must pass fresh evidence before
+// creating OR updating a ref. A record's old fence is not evidence for a head.
+func TestSupersedeRevalidatesBeforeRefMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(*adoptAPI)
+	}{
+		{"workflow", func(a *adoptAPI) {
+			a.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+		}},
+		{"action", func(a *adoptAPI) {
+			a.prFiles = []map[string]any{{"filename": ".github/actions/setup/action.yml", "status": "modified"}}
+		}},
+		{"head moved", func(a *adoptAPI) { a.liveHead = "bbb" }},
+		{"incomplete files", func(a *adoptAPI) { a.changedFiles = 3001 }},
+		{"unreadable files", func(a *adoptAPI) { a.failPRFiles = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+			defer done()
+			h.adopt.heads[7] = "aaa"
+			h.adopt.refs["refs/heads/hive/adopt-7"] = "old"
+			tc.prepare(h.adopt)
+			obs := stageObservation{Owner: "acme", Repo: "widget", Display: "acme/widget", Number: 7, HeadSHA: "aaa", BaseRef: "v5"}
+			n, _ := h.e.supersedeAdoptedPR(context.Background(), h.e.stageStoreOrShared(), stageKey("acme", "widget", 7), obs, stagelabels.Record{}, adoptPolicy(), AdoptReasonDCORehome, 0, false, true, h.clock.at)
+			if n != 0 || h.adopt.refAttempts != 0 || len(h.adopt.refUpdates) != 0 || h.adopt.refs["refs/heads/hive/adopt-7"] != "old" || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
+				t.Fatalf("unsafe supersession mutated repository: n=%d refs=%v updates=%v pulls=%v edits=%v", n, h.adopt.refs, h.adopt.refUpdates, h.adopt.pulls, h.adopt.prEdits)
+			}
+		})
 	}
 }
