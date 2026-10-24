@@ -84,6 +84,22 @@ func NewCLIChatClient(backend, model string, timeout time.Duration) (*CLIChatCli
 	return &CLIChatClient{backend: backend, model: strings.TrimSpace(model), timeout: timeout, binary: spec.binary}, nil
 }
 
+// NewCLIClassifier builds the classifier boot installs for
+// ioscan.classifier.backend: the tool-less CLI client behind the standard
+// prompt and verdict parsing, capped at dailyQuota calls per UTC day. Wrap
+// the result in NewCachedClassifier so cache hits do not spend the quota.
+func NewCLIClassifier(backend, model string, dailyQuota int, now func() time.Time) (*DailyQuotaClassifier, error) {
+	client, err := NewCLIChatClient(backend, model, 0)
+	if err != nil {
+		return nil, err
+	}
+	llm, err := NewLLMClassifier(LLMClassifierConfig{Client: client})
+	if err != nil {
+		return nil, err
+	}
+	return NewDailyQuotaClassifier(llm, dailyQuota, now), nil
+}
+
 func (c *CLIChatClient) argv() []string {
 	spec := cliToollessArgs[c.backend]
 	argv := append([]string{c.binary}, spec.args...)
