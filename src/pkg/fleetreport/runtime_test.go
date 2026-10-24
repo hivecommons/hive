@@ -839,6 +839,8 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"transparent proxy TLS handshake failed":  ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":    ClassAgentDirSetupFailed,
 		"failed to restore interactive home mode": ClassAgentDirSetupFailed,
+		"failed to tighten per-agent dir mode":    ClassAgentDirSetupFailed,
+		"failed to tighten interactive home mode": ClassAgentDirSetupFailed,
 		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
 		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
 		"feedback: issue refresh failed":          ClassFeedbackIssueRefreshFailed,
