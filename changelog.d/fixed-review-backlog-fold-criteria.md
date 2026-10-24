@@ -1,0 +1,1 @@
+- The review backlog no longer folds a finding into an open issue just because both cite the same file: it folds only when the category (review perspective) matches and the finding cites the same symbol or a nearby line; otherwise it files a new issue cross-linked with "Same file as #N" ([#13906](https://github.com/hivecommons/hive/issues/13906)).

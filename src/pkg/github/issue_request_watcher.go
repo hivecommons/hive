@@ -1116,6 +1116,10 @@ type CreateIssueResult struct {
 	// App-bot-filed issue has the same file-reference set (#9376); the
 	// finding was appended to it as a comment. AlreadyExisted is also true.
 	Consolidated bool
+	// SameFileAs is the open issue CreateIssueRequest.FoldMatch refused to
+	// fold into: it cites the same files but not the same finding, so a new
+	// issue was created instead (#13906). 0 otherwise.
+	SameFileAs int
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
@@ -1135,6 +1139,12 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
+	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
+	// same-component twin is folded into only when FoldMatch accepts its
+	// title and body. Sharing a file is not sharing a problem; a refused twin
+	// is reported in CreateIssueResult.SameFileAs and the issue is created
+	// (#13906). Exact and canonical subject matches are unaffected.
+	FoldMatch func(title, body string) bool
 }
 
 // OriginLabel returns the provenance label this request resolves to: an
@@ -1276,6 +1286,10 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// by a second agent and become a second PR editing the same files, and
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
+	var sameFileAs int
+	if fileSetTwin != nil && req.FoldMatch != nil && !req.FoldMatch(fileSetTwin.GetTitle(), fileSetTwin.GetBody()) {
+		sameFileAs, fileSetTwin = fileSetTwin.GetNumber(), nil
+	}
 	if fileSetTwin != nil {
 		comment := consolidatedFindingComment(title, body, wantFiles)
 		if !isHiveBotLogin(c.hiveBotLogins(), fileSetTwin.GetUser().GetLogin()) {
@@ -1315,6 +1329,12 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		} else {
 			componentTwin, componentPath, componentCount, componentClosed = pickFoldComponent(openComponent, closed, openComponentOldest)
 		}
+	}
+	if componentTwin != nil && req.FoldMatch != nil && !req.FoldMatch(componentTwin.GetTitle(), componentTwin.GetBody()) {
+		if sameFileAs == 0 {
+			sameFileAs = componentTwin.GetNumber()
+		}
+		componentTwin = nil
 	}
 	if componentTwin != nil {
 		if err := c.appendFoldedFinding(ctx, owner, repoName, componentTwin.GetNumber(),
@@ -1403,11 +1423,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repoName), slog.Int("number", number))
-		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true}, nil
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs}, nil
 }
 
 // issueCreateUnknownTTL bounds how long an issue-create operation may sit
