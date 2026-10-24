@@ -713,6 +713,9 @@ var benignSubstrings = []string{
 	// manager retries itself after a cooldown.
 	"cached; suppressing repeated fetches",
 	"token validation rate-limited by github; relaunching after cooldown",
+	// Request watchers log a policy denial (e.g. repo not allowlisted) as an
+	// expected outcome, not a runtime error.
+	"request watcher: denied (policy)",
 }
 
 // IsBenignMessage reports whether a raw log message is noise the generic

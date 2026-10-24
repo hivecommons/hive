@@ -866,6 +866,11 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"github REST 404 cached; suppressing repeated fetches",
 		"copilot token validation rate-limited by GitHub; relaunching after cooldown",
 		"permissions watcher: fixed file permissions",
+		"review-request watcher: DENIED (policy)",
+		"issue-request watcher: DENIED (policy)",
+		"merge-request watcher: DENIED (policy)",
+		"pr-request watcher: DENIED (policy)",
+		"push-branch-request watcher: DENIED (policy)",
 	} {
 		if !IsBenignMessage(m) {
 			t.Errorf("%q not benign", m)
