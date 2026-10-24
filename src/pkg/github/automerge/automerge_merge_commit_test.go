@@ -138,8 +138,8 @@ func TestAdoptedInPlaceMixedAuthorshipElectsMergeCommit(t *testing.T) {
 }
 
 // The same head in a squash-only repo: the hive cannot pick a merge
-// commit, so the PR is a person's — and the note says why.
-func TestAdoptedInPlaceMixedAuthorshipSquashOnlyStallsNamingPolicy(t *testing.T) {
+// commit, so re-home under App attribution without lifting that policy.
+func TestAdoptedInPlaceMixedAuthorshipSquashOnlySupersedes(t *testing.T) {
 	p := adoptPolicy()
 	p.AdoptInPlace = true
 	p.DCORequired = func(string) (bool, bool) { return true, true }
@@ -160,27 +160,16 @@ func TestAdoptedInPlaceMixedAuthorshipSquashOnlyStallsNamingPolicy(t *testing.T)
 			t.Fatalf("label written in a squash-only repo: %v", h.api.added)
 		}
 	}
-	wantReason := stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution
-	notes := stalledComments(h.api)
-	if len(notes) != 1 {
-		t.Fatalf("stalled note: %v", h.api.comments)
+	if len(stalledComments(h.api)) != 0 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("expected supersede, not a policy waiver: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
 	}
-	for _, want := range []string{"reason=" + wantReason, "squash-only", "auto_merge.squash_only", "lift the squash-only policy"} {
-		if !strings.Contains(notes[0], want) {
-			t.Fatalf("stalled note missing %q:\n%s", want, notes[0])
-		}
-	}
-	if strings.Contains(notes[0], "gh pr merge 7 --merge") {
-		t.Fatalf("squash-only note asks for a merge commit:\n%s", notes[0])
-	}
-	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision || rec.Reason != wantReason {
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.AdoptedByHive || rec.AdoptReason != AdoptReasonSignoffRehome {
 		t.Fatalf("record: %+v", rec)
 	}
 }
 
-// A role/contributor PR keeps the pre-existing behaviour: no label, the
-// stall note with the maintainer ask.
-func TestAdoptedInPlaceMixedAuthorshipContributorRoleKeepsStall(t *testing.T) {
+// A role/contributor PR cannot elect a merge commit, but can supersede.
+func TestAdoptedInPlaceMixedAuthorshipContributorRoleSupersedes(t *testing.T) {
 	p := adoptPolicy()
 	p.AdoptInPlace = true
 	p.DCORequired = func(string) (bool, bool) { return true, true }
@@ -192,9 +181,8 @@ func TestAdoptedInPlaceMixedAuthorshipContributorRoleKeepsStall(t *testing.T) {
 
 	h.clock.advance(time.Minute)
 	h.observe(adoptPR(7, "a1899cc", adoptedLabels...), contributorLaneReasonNoVerdict)
-	notes := stalledComments(h.api)
-	if len(notes) != 1 || !strings.Contains(notes[0], "`gh pr merge 7 --merge`, not squash") || !strings.Contains(notes[0], stagelabels.RoleTrusted.Label()) {
-		t.Fatalf("stalled note: %v", h.api.comments)
+	if len(stalledComments(h.api)) != 0 || len(h.adopt.pulls) != 1 {
+		t.Fatalf("expected supersede: pulls=%v comments=%v", h.adopt.pulls, h.api.comments)
 	}
 	for _, a := range h.addedLabels() {
 		if a == stagelabels.MergeCommitLabel {

@@ -553,12 +553,15 @@ on the contributor branch because a blocking review-swarm finding was left
 on a head that sat idle for the 074 dwell, it converts to a supersession
 (`reason=in-place-stalled`) and the superseding PR takes the same red-PR /
 review-fix route. A hive commit the squash sign-off gate strips
-(`hive-signoff-attribution`) is never re-homed: a supersede would carry the
-same head and fail the same gate, so the PR goes straight to
-`stage/085-needs-decision` as `adoption-stalled:hive-signoff-attribution`
-with one ask — merge it with a merge commit (`--merge`, not squash; every
-commit's sign-off matches its own author) or have the contributor re-author
-the hive's commits (hivecommons/hive#13623). An adoption with nothing the hive can
+(`hive-signoff-attribution`) now re-homes immediately if the lane cannot
+elect a merge commit: an App-authored superseder changes the squash
+attribution while preserving the contributor's commits and sign-offs.
+All DCO and merge gates still run on that PR. Loss of push access also
+re-homes immediately (`reason=push-rehome`). A pushable `needs-rebase` or
+conflicting branch first gets the normal fixer window; if its head remains
+unchanged past the 074 dwell, the same sweep supersedes it
+(`reason=rebase-rehome`) rather than parking at 085. Previously escalated
+adoptions are re-evaluated for these recoveries too (#13975). An adoption with nothing the hive can
 push past the dwell goes to `stage/085-needs-decision` as
 `adoption-stalled:<lane reason>` with one comment naming the blocker, so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer

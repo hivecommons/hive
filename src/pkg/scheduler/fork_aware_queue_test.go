@@ -199,6 +199,11 @@ func TestBuildCIFailingList_NonAdoptedForkWithMaintainerEditsStaysCommentOnly(t 
 	if !strings.Contains(push, "#12527 projectbluefin/testsuite by @karibhou (sha:f5) [adopted fork: karibhou/testsuite:fix — push to the contributor's branch, never to a same-named base branch]") {
 		t.Errorf("adopted fork PR must be pushable and name the fork head:\n%s", push)
 	}
+	for _, want := range []string{"rebase onto the base", "preserve original authors and Signed-off-by", "--force-with-lease against the observed head", "never overwrite their new work"} {
+		if !strings.Contains(push, want) {
+			t.Errorf("adopted fork rebase instruction missing %q:\n%s", want, push)
+		}
+	}
 }
 
 // An adopted (stage 074) contributor PR is the hive's to repair: its row is

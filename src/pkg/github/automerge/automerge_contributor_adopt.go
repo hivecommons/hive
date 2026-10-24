@@ -109,6 +109,10 @@ const (
 	// adoption whose head sat past the 074 dwell with a blocking review
 	// finding the in-place lane (which repairs CI) never acted on.
 	AdoptReasonInPlaceStalled = "in-place-stalled"
+	// AdoptReasonRebaseRehome gives idle rebase work a hive-owned fix branch.
+	AdoptReasonRebaseRehome = "rebase-rehome"
+	// AdoptReasonPushRehome recovers an adoption that lost fork push access.
+	AdoptReasonPushRehome = "push-rehome"
 )
 
 // AdoptionStalledMarker opens the one note posted when an adopted PR is
@@ -179,6 +183,10 @@ func adoptReasonText(reason string, grace time.Duration, online bool) string {
 		return "no hive of yours is registered here and nothing moved after the nudge"
 	case AdoptReasonSignoffRehome:
 		return "the hive's fix on this branch cannot carry a sign-off the squash merge accepts (the hive signs as the App, the squash lands as you)"
+	case AdoptReasonRebaseRehome:
+		return "the adopted branch still needs a rebase after the fix window"
+	case AdoptReasonPushRehome:
+		return "the hive can no longer push to the contributor branch"
 	case AdoptReasonInPlaceStalled:
 		return "the review swarm's finding on this head went unaddressed past the stage dwell and the in-place fix lane only repairs CI"
 	}
@@ -340,12 +348,15 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 	if rec.AdoptDiffFence != "" {
 		fmt.Fprintf(&b, "\n**Merge stays manual** (`%s`, carried from #%d): %s. The hive repairs CI here but will not merge this PR; a maintainer reviews and merges it once green. Do not remove the `%s` marker.\n", rec.AdoptDiffFence, obs.Number, nonEmpty(decisionCause(rec.AdoptDiffFence), "the contributor lane's diff fence tripped"), CarriedFenceMarkerPrefix)
 	}
-	if rec.AdoptReason == AdoptReasonSignoffRehome || rec.AdoptReason == AdoptReasonInPlaceStalled {
+	if verdictBlocks(obs.Detail) {
 		fmt.Fprintf(&b, "\n**Open review finding carried over from #%d:** the review swarm's latest verdict on `%s` requested changes", obs.Number, shortSHA(obs.HeadSHA))
 		if obs.Detail.VerdictKnown && strings.TrimSpace(obs.Detail.Verdict.Verdict) != "" {
 			fmt.Fprintf(&b, " (`%s`)", strings.ToLower(strings.TrimSpace(obs.Detail.Verdict.Verdict)))
 		}
 		fmt.Fprintf(&b, "; read the swarm's review on #%d, address it here, and let the swarm re-review this PR. Green CI alone is not done.\n", obs.Number)
+	}
+	if rec.AdoptReason == AdoptReasonSignoffRehome {
+		b.WriteString("\n**Sign-off attribution:** the original PR would squash the App's signed fixes as the contributor. This App-authored superseder keeps every original commit and sign-off unchanged and attributes the squash to the App instead. DCO and all merge gates still apply here.\n")
 	}
 	if dcoRehome {
 		b.WriteString("\n**DCO repair required:** this adoption has unsigned non-merge commits and the hive cannot repair them by amending the contributor branch. Re-home the work onto a hive-owned branch from `")
@@ -364,6 +375,10 @@ func adoptionBodyCause(reason string) string {
 	switch reason {
 	case AdoptReasonSignoffRehome:
 		return "adopted in place, re-homed because a hive commit on the contributor branch cannot carry a squash-safe sign-off"
+	case AdoptReasonRebaseRehome:
+		return "adopted in place, re-homed to finish the rebase on a hive-owned branch"
+	case AdoptReasonPushRehome:
+		return "adopted in place, re-homed because the contributor branch is no longer pushable"
 	case AdoptReasonInPlaceStalled:
 		return "adopted in place, re-homed because a review finding on the adopted head sat unaddressed past the stage dwell"
 	case AdoptReasonDCORehome:
@@ -413,7 +428,7 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 	case adoptedHeadSignoffUnfixable(obs, rec):
 		author := nonEmpty(obs.Author, "the contributor")
 		msg := fmt.Sprintf("%d commit(s) on `%s` carry the App's `Signed-off-by` while a squash merge would land them as @%s, so the `Sign-off survives the squash` gate stays red. "+
-			"The hive cannot rewrite that authorship without the contributor, and a superseding PR would carry the same head, so it opened none. ",
+			"The normal recovery is an App-authored superseding PR, preserving the original commits and sign-offs while changing squash attribution. If that write failed, restore branch/PR-create access and retry adoption; do not forge the contributor's sign-off. ",
 			obs.Detail.DCOSquashUnsafeHive, shortSHA(obs.HeadSHA), author)
 		msg += mergeCommitRefusalText(obs, author)
 		return msg
@@ -924,13 +939,11 @@ func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLab
 	return now.Sub(since) >= stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell)
 }
 
-// adoptedHeadSignoffUnfixable reports an in-place-adopted head carrying a
-// hive commit the squash merge cannot attribute (its Signed-off-by names the
-// App, the squash lands as the contributor). A supersede would re-home the
-// very same head with the same authorship and fail the same gate, and the
-// hive may not rewrite the contributor's history, so nothing the hive can
-// push fixes it: the PR is a person's (hivecommons/hive#13623). A DCO-red
-// head is left to settleAdoption's DCO re-home.
+// adoptedHeadSignoffUnfixable reports a head whose App sign-off cannot
+// survive a squash attributed to the contributor. Re-home it without
+// rewriting commits: the superseding PR is App-authored, so the App's own
+// sign-off can survive that squash. All merge gates still run there.
+// A DCO-red head is left to settleAdoption's DCO re-home.
 //
 // Not unfixable when the stage pass elected a merge commit for the head
 // (obs.Detail.MergeCommit, automerge_merge_commit.go): the hive merges it
@@ -944,11 +957,19 @@ func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) b
 // inPlaceRehomeReason is the reason an in-place adoption converts to a
 // supersession this sweep, or "" to stay in place. A DCO-red head is left to
 // settleAdoption's DCO re-home, which carries the repair instructions. A
-// squash-unsafe hive sign-off is never re-homed: the superseding PR would
-// carry the same head (adoptedHeadSignoffUnfixable).
+// squash-unsafe hive sign-off re-homes immediately; rebase work first gets
+// the normal fixer window on the contributor branch.
 func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
-	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || adoptedHeadDCORed(obs, rec) || adoptedHeadSignoffUnfixable(obs, rec) {
+	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || adoptedHeadDCORed(obs, rec) || adoptionBlocked(obs.Labels) != "" || verdictNeedsHuman(obs.Detail) {
 		return ""
+	}
+	if adoptedHeadSignoffUnfixable(obs, rec) {
+		return AdoptReasonSignoffRehome
+	}
+	if humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase") {
+		if adoptionStale(obs, rec, policy, now) {
+			return AdoptReasonRebaseRehome
+		}
 	}
 	if verdictBlocks(obs.Detail) && adoptionStale(obs, rec, policy, now) {
 		return AdoptReasonInPlaceStalled
@@ -994,8 +1015,12 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		c.info("stage labels: adopted head had no clock; starting the 074 dwell from this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "adopted_at", rec.AdoptedAt)
 		rec, _ = store.Get(key)
 	}
+	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now)
+	if rehomeReason == "" && rec.AdoptedInPlace() && obs.HeadSHA == rec.AdoptedHead && !adoptedHeadDCORed(obs, rec) && adoptionBlocked(obs.Labels) == "" && !verdictNeedsHuman(obs.Detail) && !c.canPushToPRBranch(ctx, obs) {
+		rehomeReason = AdoptReasonPushRehome
+	}
 	if rec.AdoptionEscalated(obs.HeadSHA) {
-		if adoptionStalledReason(obs, rec, policy, now) != "" {
+		if rehomeReason == "" && adoptionStalledReason(obs, rec, policy, now) != "" {
 			return adoptionEscape{Escalated: true, Reason: rec.AdoptEscalatedReason}, 0, nil
 		}
 		store.ClearAdoptionEscalation(key)
@@ -1004,7 +1029,17 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	}
 	comments := 0
 	var firstErr error
-	if reason := inPlaceRehomeReason(obs, rec, policy, now); reason != "" {
+	reason := rehomeReason
+	if reason != "" {
+		// Re-read the current diff before copying a head. A concurrent push
+		// or incomplete evidence defers the write; merge fences travel with it.
+		fence, err := c.adoptionDiffRefusal(ctx, obs)
+		if err != nil || adoptionFenceDefers(fence) {
+			return adoptionEscape{}, 0, err
+		}
+		if fence != "" {
+			store.NoteAdoptDiffFence(key, fence)
+		}
 		c.info("stage labels: in-place adoption cannot be finished on the contributor branch; superseding", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "lane_reason", obs.Reason, "squash_unsafe_hive", obs.Detail.DCOSquashUnsafeHive)
 		// Record the attempt first, as every adoption path does: one
 		// re-home per head whatever the API says.
@@ -1018,7 +1053,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		firstErr = err
 		rec, _ = store.Get(key)
 	}
-	reason := adoptionStalledReason(obs, rec, policy, now)
+	reason = adoptionStalledReason(obs, rec, policy, now)
 	if reason == "" {
 		return adoptionEscape{}, comments, firstErr
 	}
