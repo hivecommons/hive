@@ -227,6 +227,16 @@ func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
 	return pr
 }
 
+func workflowRefusedComments(api *stageAPI) []string {
+	var out []string
+	for _, c := range api.comments {
+		if strings.HasPrefix(c, AdoptionWorkflowRefusedMarker) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func adoptionComments(api *stageAPI) []string {
 	var out []string
 	for _, c := range api.comments {
@@ -1390,7 +1400,29 @@ func TestAdoptionCarriesDiffFence(t *testing.T) {
 			h.clock.advance(time.Hour)
 			h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 			key := stageKey("acme", "widget", 7)
-			if tc.wantDefer || tc.wantFence == contributorLaneReasonWorkflowPath {
+			if tc.wantFence == contributorLaneReasonWorkflowPath {
+				// Refused, not deferred: one attempt recorded, one note,
+				// nothing published, and the PR goes to a person (085).
+				rec, _ := h.e.stageStoreOrShared().Get(key)
+				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
+					t.Fatalf("workflow-path head published: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
+				}
+				if c := workflowRefusedComments(h.api); len(c) != 1 || !strings.Contains(c[0], "cherry-pick") {
+					t.Fatalf("refusal note = %v, want one", h.api.comments)
+				}
+				if !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptDiffFence != tc.wantFence || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+					t.Fatalf("refusal not recorded as an attempt: %+v", rec)
+				}
+				h.api.reset()
+				h.clock.advance(time.Minute)
+				h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+				rec, _ = h.e.stageStoreOrShared().Get(key)
+				if len(h.adopt.pulls) != 0 || h.adopt.refAttempts != 0 || len(workflowRefusedComments(h.api)) != 0 || len(stalledComments(h.api)) != 0 || rec.Stage != stagelabels.NeedsDecision {
+					t.Fatalf("refused head looped or missed 085: rec=%+v comments=%v", rec, h.api.comments)
+				}
+				return
+			}
+			if tc.wantDefer {
 				if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 {
 					t.Fatalf("deferred adoption went ahead: pulls=%d refs=%v comments=%v", len(h.adopt.pulls), h.adopt.refs, h.api.comments)
 				}
@@ -1541,7 +1573,16 @@ func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 			h.clock.advance(time.Minute)
 			h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker", stagelabels.NoDCOLabel), "check-failing:DCO")
 			rec, _ := h.e.stageStoreOrShared().Get(key)
-			if tc.wantDefer || tc.wantFence == contributorLaneReasonWorkflowPath {
+			if tc.wantFence == contributorLaneReasonWorkflowPath {
+				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 || len(workflowRefusedComments(h.api)) != 1 {
+					t.Fatalf("workflow-path re-home not refused once: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
+				}
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != tc.wantFence || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+					t.Fatalf("refused re-home not recorded as terminal: %+v", rec)
+				}
+				return
+			}
+			if tc.wantDefer {
 				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
 					t.Fatalf("deferred re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
 				}
@@ -1700,6 +1741,47 @@ func TestDelegatedSupersedeFailureIsOneAttemptAndClearsLabel(t *testing.T) {
 	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
 	if h.adopt.refAttempts != 1 || len(h.api.removed) != 0 {
 		t.Fatalf("failed delegated supersede retried: attempts=%d removed=%v", h.adopt.refAttempts, h.api.removed)
+	}
+}
+
+// A delegated supersede of a workflow-path head is refused as one recorded
+// attempt: the request label clears, one note says why, nothing is published
+// and the next sweep does not retry (hivecommons/hive#14055).
+func TestDelegatedSupersedeWorkflowPathIsTerminal(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+	pr := adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.adopt.refAttempts != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("workflow-path head published: attempts=%d refs=%v pulls=%v", h.adopt.refAttempts, h.adopt.refs, h.adopt.pulls)
+	}
+	if c := workflowRefusedComments(h.api); len(c) != 1 {
+		t.Fatalf("refusal notes = %v, want one", h.api.comments)
+	}
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.Adopted("aaa") || rec.AdoptedBy != 0 || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a refused attempt: removed=%v", h.api.removed)
+	}
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
+	if h.adopt.refAttempts != 0 || len(h.api.removed) != 0 || len(workflowRefusedComments(h.api)) != 0 {
+		t.Fatalf("refused delegated supersede retried: attempts=%d removed=%v comments=%v", h.adopt.refAttempts, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.Stage != stagelabels.NeedsDecision {
+		t.Fatalf("refused head left 085: stage %s", rec.Stage)
 	}
 }
 

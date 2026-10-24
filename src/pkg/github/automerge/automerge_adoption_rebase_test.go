@@ -79,8 +79,27 @@ func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
 			if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
 				t.Fatalf("unsafe re-home: refs=%v pulls=%v edits=%v comments=%v", h.adopt.refs, h.adopt.pulls, h.adopt.prEdits, h.api.comments)
 			}
-			if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonGrace || rec.AdoptDiffFence != "" {
+			rec, _ := h.e.stageStoreOrShared().Get(key)
+			if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonGrace {
 				t.Fatalf("refused re-home changed the adoption: %+v", rec)
+			}
+			if mode != "fence" && mode != "push-fence" {
+				if rec.AdoptDiffFence != "" || len(workflowRefusedComments(h.api)) != 0 {
+					t.Fatalf("deferred re-home recorded a verdict: rec=%+v comments=%v", rec, h.api.comments)
+				}
+				return
+			}
+			// A workflow-path refusal is terminal for the head: one note,
+			// routed to 085, and the next sweep neither re-reads nor re-posts.
+			if rec.AdoptDiffFence != contributorLaneReasonWorkflowPath || !rec.AdoptionEscalated("aaa") || rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason || rec.Stage != stagelabels.NeedsDecision || len(workflowRefusedComments(h.api)) != 1 {
+				t.Fatalf("workflow refusal not terminal: rec=%+v comments=%v", rec, h.api.comments)
+			}
+			h.api.reset()
+			h.clock.advance(time.Minute)
+			h.observe(adoptPR(7, "aaa", append([]string{stagelabels.NeedsDecision.Label()}, labels[1:]...)...), reason)
+			rec, _ = h.e.stageStoreOrShared().Get(key)
+			if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(workflowRefusedComments(h.api)) != 0 || len(stalledComments(h.api)) != 0 || rec.Stage != stagelabels.NeedsDecision {
+				t.Fatalf("refused re-home looped: rec=%+v refs=%d comments=%v", rec, h.adopt.refAttempts, h.api.comments)
 			}
 		})
 	}
