@@ -17,7 +17,11 @@ import (
 // hiveLoader is the cli.DefinitionLoader backed by Hive's own config loader
 // and pkg/defsrc. It lives in the process boundary rather than pkg/crux/cli
 // because both of those packages sit outside the Crux boundary
-// (src/docs/design/crux.md, "Configuration leaf").
+// (src/docs/design/crux.md, "Configuration leaf"), which is also why
+// cmd/crux itself is a host package outside the Crux module set: it is to
+// the crux binary what cmd/hive is to the hive binary, and the outbound
+// ratchet (internal/testutil/crux_outbound_ratchet_test.go) measures the
+// ring without it.
 type hiveLoader struct{}
 
 // definitionNamePattern is the dashboard import handler's agent-name rule

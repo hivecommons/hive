@@ -23,10 +23,23 @@ import (
 // cruxModulePrefixes is the package set the module will hold — pkg/agent and
 // its ring, exactly the set .github/scripts/crux-scope.sh uses to skip the
 // hub and dashboard shards on a crux-only PR, plus pkg/crux (the exported
-// surface) and cmd/crux (the CLI). KEEP THE THREE IN SYNC. An import between
-// two packages in the set is not an edge; an import of anything else under
-// github.com/hivecommons/hive/ is. Third-party and stdlib imports are not
-// measured.
+// surface, including the CLI's logic in pkg/crux/cli). KEEP THE THREE IN
+// SYNC. An import between two packages in the set is not an edge; an import
+// of anything else under github.com/hivecommons/hive/ is. Third-party and
+// stdlib imports are not measured.
+//
+// cmd/crux is NOT in the set. It is the crux binary's process boundary and,
+// like cmd/hive, a host: its only job besides signals and the exit code is
+// the Hive-backed cli.DefinitionLoader (hive.yaml via pkg/config, the
+// portable AgentDefinition via pkg/defsrc, Hive's per-agent defaults), which
+// is host knowledge by definition and has no layer above main to be injected
+// from. A nested module that held it would import pkg/config and so need the
+// root module, the cycle Stage 2 exists to avoid; the binary therefore stays
+// in the root module and builds against the nested one the way cmd/hive
+// does. crux-scope.sh and the v2-tests boundary comment never listed it;
+// this list now agrees. The inbound ratchet still measures it (baseline
+// zero `agent.<Symbol>` references), so it can reach the runtime only
+// through pkg/crux.
 //
 // cruxOutboundBaseline is exact and fails closed in both directions, like the
 // inbound tables: an edge not in the baseline fails the PR gate and names the
@@ -103,13 +116,11 @@ import (
 // pkg/github's package-level recorders and core-bucket snapshot; a proxy
 // without one records nothing and the agent GitHub budget applies the
 // per-agent cap alone). The proxy's tests drive the seams with in-package
-// fakes. What remains — cmd/crux's definition loading — is the rest of
-// prerequisite 3.
+// fakes. The two cmd/crux rows (pkg/config, pkg/defsrc: the DefinitionLoader
+// implementation) left when cmd/crux left the set — see the file comment —
+// which completed prerequisite 3: no ring package imports anything from
+// Hive in non-test code.
 var cruxOutboundBaseline = map[string][]string{
-	"cmd/crux": {
-		"pkg/config",
-		"pkg/defsrc",
-	},
 	"pkg/agent": {
 		"internal/testutil (test)",
 	},
@@ -124,7 +135,6 @@ var cruxOutboundBaseline = map[string][]string{
 var cruxModulePrefixes = []string{
 	"pkg/agent",
 	"pkg/crux",
-	"cmd/crux",
 	"pkg/agentmode",
 	"pkg/agentparse",
 	"pkg/agentsmd",
