@@ -1044,6 +1044,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		if requiredChecksExpectedMergeError(err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(eval.pr))
 		}
+		if mergeQueueRequiredMergeError(err) {
+			return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}
 	if mergeResult == nil {

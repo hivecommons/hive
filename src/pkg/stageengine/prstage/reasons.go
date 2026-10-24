@@ -12,6 +12,7 @@ const (
 	AutoMergeReasonHumanMergePathEvidence  = "human-merge-path-evidence"
 	AutoMergeReasonIntentEvidence          = "intent-evidence"
 	AutoMergeReasonIntentUnauthorized      = "intent-unauthorized"
+	AutoMergeReasonMergeQueueRequired      = "merge-queue-required"
 	AutoMergeReasonNoAppBotLogin           = "no-app-bot-login"
 	AutoMergeReasonReviewGatePrefix        = "review-gate:"
 	ContributorLaneReasonAppAuthored       = "contributor-lane:app-authored"

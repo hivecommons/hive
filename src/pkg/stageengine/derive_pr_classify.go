@@ -31,6 +31,7 @@ const (
 	autoMergeReasonHumanMergePathEvidence  = prstage.AutoMergeReasonHumanMergePathEvidence
 	autoMergeReasonIntentEvidence          = prstage.AutoMergeReasonIntentEvidence
 	autoMergeReasonIntentUnauthorized      = prstage.AutoMergeReasonIntentUnauthorized
+	autoMergeReasonMergeQueueRequired      = prstage.AutoMergeReasonMergeQueueRequired
 	autoMergeReasonNoAppBotLogin           = prstage.AutoMergeReasonNoAppBotLogin
 	autoMergeReasonReviewGatePrefix        = prstage.AutoMergeReasonReviewGatePrefix
 	contributorLaneReasonAppAuthored       = prstage.ContributorLaneReasonAppAuthored
@@ -229,7 +230,7 @@ var stageNeedsHumanReasons = map[string]bool{
 var stageMergeQueueReasons = map[string]bool{
 	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
 	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
-	autoMergeReasonBehindBudgetExhausted: true,
+	autoMergeReasonBehindBudgetExhausted: true, autoMergeReasonMergeQueueRequired: true,
 }
 
 // stageFixingReasons are reasons an agent (or the author) must fix the head.

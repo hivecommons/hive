@@ -59,6 +59,7 @@ type contributorLaneFixture struct {
 	issueCommentsSt int
 	reviews         []map[string]any
 	mergeStatus     int
+	mergeMessage    string
 	mergeNotApplied bool
 	commentStatus   int
 	merges          int
@@ -199,7 +200,11 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			fx.merges++
 			if fx.mergeStatus != 0 {
 				w.WriteHeader(fx.mergeStatus)
-				json.NewEncoder(w).Encode(map[string]string{"message": "merge error"})
+				msg := fx.mergeMessage
+				if msg == "" {
+					msg = "merge error"
+				}
+				json.NewEncoder(w).Encode(map[string]string{"message": msg})
 				return
 			}
 			json.NewEncoder(w).Encode(map[string]any{"merged": !fx.mergeNotApplied, "sha": "merge7"})
@@ -483,6 +488,14 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 		},
 		{name: "head changed since eval", mutate: func(fx *contributorLaneFixture) { fx.recheckHeadSHA = "sha8" }, wantReason: "head-changed-since-eval"},
 		{name: "merge api error", mutate: func(fx *contributorLaneFixture) { fx.mergeStatus = http.StatusConflict }, wantReason: "merge-failed", wantErr: true, wantMerges: 1},
+		{
+			name: "merge queue required is a skip not an error",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.mergeStatus = http.StatusMethodNotAllowed
+				fx.mergeMessage = mergeQueueRequiredTestMessage
+			},
+			wantReason: autoMergeReasonMergeQueueRequired, wantMerges: 1,
+		},
 		{name: "merge not applied", mutate: func(fx *contributorLaneFixture) { fx.mergeNotApplied = true }, wantReason: "merge-not-applied", wantMerges: 1},
 		{name: "comment failure does not undo merge", mutate: func(fx *contributorLaneFixture) { fx.commentStatus = http.StatusInternalServerError }, wantMerges: 1},
 	} {

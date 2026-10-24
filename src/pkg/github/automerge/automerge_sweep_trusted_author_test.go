@@ -207,6 +207,12 @@ func TestTrySweepTrustedAuthorPRFailClosedBranches(t *testing.T) {
 			wantUpdates: 1,
 		},
 		{name: "merge api error", fx: trustedSweepFixture{mergeStatus: http.StatusConflict}, wantReason: "merge-failed", wantErr: true, wantMerges: 1},
+		{
+			name:       "merge queue required is a skip not an error",
+			fx:         trustedSweepFixture{mergeStatus: http.StatusMethodNotAllowed, mergeMessage: mergeQueueRequiredTestMessage},
+			wantReason: autoMergeReasonMergeQueueRequired,
+			wantMerges: 1,
+		},
 		{name: "merge not applied", fx: trustedSweepFixture{mergeNotApplied: true}, wantReason: "merge-not-applied", wantMerges: 1},
 		{name: "comment failure does not undo merge", fx: trustedSweepFixture{commentStatus: http.StatusInternalServerError}, wantMerges: 1, wantComment: 1},
 	} {
