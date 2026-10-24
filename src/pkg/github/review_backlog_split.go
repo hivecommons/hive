@@ -166,6 +166,7 @@ type ReviewBacklogSplitEvent struct {
 }
 
 // ReviewBacklogSplitSweepOptions configures SweepReviewBacklogSplits.
+// BackfillReviewBacklogSplits takes the same options but ignores Since.
 type ReviewBacklogSplitSweepOptions struct {
 	// Since bounds the listing to issues updated after it. Zero means
 	// now minus DefaultClosedIssueStageSweepWindow.
@@ -189,7 +190,8 @@ type ReviewBacklogSplitResult struct {
 	// Deferred counts closed backlog hosts in the window that were not
 	// read because the pass had already filed MaxActions findings. They
 	// are picked up by a later pass only while they stay inside its
-	// window, so the caller should log a non-zero count.
+	// window, so the caller should log a non-zero count. The backfill
+	// reuses it for ledger hosts, open or closed, it did not read.
 	Deferred int
 }
 
@@ -266,7 +268,8 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklo
 // sweepReviewBacklogSplitHost reads one closed host's bot-authored fold
 // comments and splits its eligible findings into result. A comment read or
 // per-host split failure is logged, counted in result.Skipped and reported
-// as complete=false; the returned error is a ledger load/save error that
+// as complete=false, as is a host left with eligible findings unsplit
+// because the pass budget ran out; the returned error is a ledger load/save error that
 // aborts the pass.
 func (c *Client) sweepReviewBacklogSplitHost(ctx context.Context, sink ReviewBacklogSink, labels []string, repo, owner, repoName string, issue *gh.Issue, maxActions int, audit func(ReviewBacklogSplitEvent), result *ReviewBacklogSplitResult) (complete bool, err error) {
 	result.Hosts++
@@ -304,7 +307,7 @@ func (c *Client) sweepReviewBacklogSplitHost(ctx context.Context, sink ReviewBac
 		}
 		result.Skipped++
 	}
-	return split.Err == nil, err
+	return split.Err == nil && !split.Truncated, err
 }
 
 // reviewBacklogHostSplit is what splitting one host produced.
@@ -312,6 +315,9 @@ type reviewBacklogHostSplit struct {
 	Events []ReviewBacklogSplitEvent
 	// Skipped counts eligible findings the sink filed nothing for.
 	Skipped int
+	// Truncated is true when the pass budget ran out with eligible
+	// findings on the host still unsplit.
+	Truncated bool
 	// Err is the per-host split error; the sweep records a skip and moves
 	// on. Events already filed before it are still reported.
 	Err error
@@ -402,8 +408,8 @@ func (c *Client) reviewBacklogSplitTarget() (ReviewBacklogSink, []string) {
 
 // splitReviewBacklogHost files every eligible folded item in comments on
 // the closed host and updates ledger in place. It stops after remaining
-// splits (the pass budget left for this host); the caller saves the
-// ledger. An eligible item the sink files nothing for — a maintainer
+// splits (the pass budget left for this host) and sets Truncated when an
+// eligible item was left unsplit; the caller saves the ledger. An eligible item the sink files nothing for — a maintainer
 // rejected the same finding elsewhere — is logged and counted in Skipped,
 // not marked split, so it is retried while the host stays in the window.
 func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, comments []string, ledger *reviewBacklogLedger, now time.Time, remaining int) reviewBacklogHostSplit {
@@ -412,15 +418,16 @@ func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogS
 	stateReason := host.GetStateReason()
 	var out reviewBacklogHostSplit
 	for _, body := range comments {
-		if len(out.Events) >= remaining {
-			break
-		}
 		item, ok := parseReviewBacklogFoldedComment(body)
 		if !ok || ledger.splitFrom(item.Key, hostNumber) {
 			continue
 		}
 		if !reviewBacklogSplitEligible(item, stateReason, host.GetTitle(), host.GetBody()) {
 			continue
+		}
+		if len(out.Events) >= remaining {
+			out.Truncated = true
+			break
 		}
 		ref, err := sink.CreateItem(ctx, ReviewBacklogItem{
 			Repo:        repo,

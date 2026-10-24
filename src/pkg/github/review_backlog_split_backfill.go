@@ -18,8 +18,8 @@ import (
 //
 // Once a pass has visited every host without deferring one or failing to
 // read or split one, the ledger's SplitBackfilled flag is set and every
-// later call is a no-op. A pass cut short by opts.MaxActions or a transient
-// error leaves the flag unset and the next pass retries; hosts already
+// later call is a no-op. A pass cut short by opts.MaxActions (including a
+// host left part-split when the budget ran out) or a transient error leaves the flag unset and the next pass retries; hosts already
 // split are not split again. opts.Since is ignored.
 func (c *Client) BackfillReviewBacklogSplits(ctx context.Context, opts ReviewBacklogSplitSweepOptions) (*ReviewBacklogSplitResult, error) {
 	if c == nil || c.client == nil {

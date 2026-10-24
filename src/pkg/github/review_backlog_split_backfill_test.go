@@ -17,11 +17,11 @@ import (
 )
 
 // backfillTestServer serves host #42 closed long before any sweep window
-// with one bot-authored folded finding, host #43 still open, and #44
+// with the given bot-authored folded findings, host #43 still open, and #44
 // deleted. The windowed closed-issue listing (the only listing that carries
 // `since`) is never consulted by the backfill; the dedup and tombstone
 // lookups CreateIssue makes before filing the split are answered empty.
-func backfillTestServer(t *testing.T, comment string, created, hostComments, requests *int32) *httptest.Server {
+func backfillTestServer(t *testing.T, comments []string, created, hostComments, requests *int32) *httptest.Server {
 	t.Helper()
 	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,9 +38,11 @@ func backfillTestServer(t *testing.T, comment string, created, hostComments, req
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/43":
 			_, _ = io.WriteString(w, `{"number":43,"title":"open host","state":"open","comments":1,"user":{"login":"`+testBot+`"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
-			_ = json.NewEncoder(w).Encode([]map[string]any{
-				{"id": 1, "body": comment, "user": map[string]any{"login": testBot, "type": "Bot"}},
-			})
+			out := make([]map[string]any, 0, len(comments))
+			for i, body := range comments {
+				out = append(out, map[string]any{"id": i + 1, "body": body, "user": map[string]any{"login": testBot, "type": "Bot"}})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
@@ -79,7 +81,7 @@ func TestBackfillReviewBacklogSplitsSplitsHostsClosedBeforeWindow(t *testing.T) 
 	saveBackfillTestLedger(t, key, fp)
 
 	var created, hostComments, requests int32
-	srv := backfillTestServer(t, comment, &created, &hostComments, &requests)
+	srv := backfillTestServer(t, []string{comment}, &created, &hostComments, &requests)
 	defer srv.Close()
 	c := reviewTestClient(t, srv.URL)
 	c.appBotLogin = testBot
@@ -126,7 +128,7 @@ func TestBackfillReviewBacklogSplitsRetriesUntilComplete(t *testing.T) {
 	saveBackfillTestLedger(t, key, fp)
 
 	var created, hostComments, requests int32
-	srv := backfillTestServer(t, comment, &created, &hostComments, &requests)
+	srv := backfillTestServer(t, []string{comment}, &created, &hostComments, &requests)
 	defer srv.Close()
 	c := reviewTestClient(t, srv.URL)
 	c.appBotLogin = testBot
@@ -160,5 +162,61 @@ func TestBackfillReviewBacklogSplitsRetriesUntilComplete(t *testing.T) {
 	}
 	if !saved.SplitBackfilled {
 		t.Fatal("backfill not marked done after a complete pass")
+	}
+}
+
+// The host that exhausts the per-pass budget may be the last one walked:
+// with two folded findings on #42, the only ledger host, and MaxActions 1,
+// the first pass splits one and must not mark the backfill done; the
+// second pass splits the other and then sets the flag.
+func TestBackfillReviewBacklogSplitsLastHostPartlySplit(t *testing.T) {
+	withReviewBacklogState(t)
+	first, firstKey, firstFP := splitTestFolded(t, outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"})
+	second, secondKey, secondFP := splitTestFolded(t, outputschema.Finding{Title: "shadowed err", File: "pkg/b.go", Line: 3, Summary: "err is shadowed"})
+	ledger := newReviewBacklogLedger()
+	ledger.Items[firstKey] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, Fingerprint: firstFP, FindingKey: firstKey, Destination: config.ReviewBacklogGitHubIssue}
+	ledger.Items[secondKey] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, Fingerprint: secondFP, FindingKey: secondKey, Destination: config.ReviewBacklogGitHubIssue}
+	if err := ledger.save("", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	var created, hostComments, requests int32
+	srv := backfillTestServer(t, []string{first, second}, &created, &hostComments, &requests)
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	c.SetRepos([]string{"o/r"})
+
+	res, err := c.BackfillReviewBacklogSplits(context.Background(), ReviewBacklogSplitSweepOptions{MaxActions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Split) != 1 || res.Split[0].Key != firstKey || res.Deferred != 0 {
+		t.Fatalf("first pass result = %+v, want only the first finding split", res)
+	}
+	saved, err := loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SplitBackfilled {
+		t.Fatal("backfill marked done with a finding on the last host still unsplit")
+	}
+	if saved.splitFrom(secondKey, 42) {
+		t.Fatal("second finding recorded as split despite the cap")
+	}
+
+	res, err = c.BackfillReviewBacklogSplits(context.Background(), ReviewBacklogSplitSweepOptions{MaxActions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Split) != 1 || res.Split[0].Key != secondKey || created != 2 {
+		t.Fatalf("second pass result=%+v created=%d, want the second finding split", res, created)
+	}
+	saved, err = loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.SplitBackfilled || !saved.splitFrom(secondKey, 42) {
+		t.Fatalf("after second pass: backfilled=%v split_keys=%v, want the flag set", saved.SplitBackfilled, saved.SplitKeys)
 	}
 }
