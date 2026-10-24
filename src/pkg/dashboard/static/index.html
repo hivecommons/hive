@@ -14234,6 +14234,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // "[author icon] #N title" for the PR in progress column of the title line.
     // tip, when given, replaces the default "title / Author" hover text.
+    function stageTrackerBaseRefBadge(lp) {
+      return lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '';
+    }
     function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
       const ak = authorKind || 'hive';
       const who = ak + (author ? ' · @' + author : '');
@@ -14423,7 +14426,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '',
         sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' };
       let ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title, (pr.title ? pr.title + ' · ' : '') + stageTrackerTooltip(pr, nowMs));
-      if (lp.base_ref) ref += ` <span class="ham-badge">${esc(lp.base_ref)}</span>`;
+      ref += stageTrackerBaseRefBadge(lp);
       const chip = ctx && ctx.repoChips ? stageTrackerRepoChipHtml(pr.repo, ctx) : '';
       if (chip) ref = `<span class="ham-pr-line">${chip}${ref}</span>`;
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
@@ -14596,7 +14599,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (linked.length === 1) {
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
-          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title) + (lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '')];
+          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title) + stageTrackerBaseRefBadge(lp)];
           shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason,
             sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', head: lp.head || '' });
         } else if (linked.length) {
