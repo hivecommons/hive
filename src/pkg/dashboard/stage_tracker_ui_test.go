@@ -132,6 +132,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerCountsText"),
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
+		jsFunc(t, html, "stageTrackerBaseRefBadge"),
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_ACTIVE"),

@@ -127,6 +127,7 @@ func stageTrackerRepoGroupingHarness(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerPage"),
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
+		jsFunc(t, html, "stageTrackerBaseRefBadge"),
 		jsFunc(t, html, "stageTrackerActorKind"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_STATIC"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOTION_ACTIVE"),
