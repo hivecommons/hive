@@ -29,9 +29,9 @@ func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr
 	claimedOnline := false
 	for _, ref := range refs {
 		o, r, _ := strings.Cut(ref.Repo, "/")
-		issue, _, err := api.Issues.Get(ctx, o, r, ref.Number)
+		issue, _, err := api.Issues.Get(ctx, o, r, ref.Issue)
 		if err != nil {
-			return fmt.Errorf("reading linked issue %s#%d: %w", ref.Repo, ref.Number, err)
+			return fmt.Errorf("reading linked issue %s#%d: %w", ref.Repo, ref.Issue, err)
 		}
 		issues = append(issues, issue)
 		claim, live, err := client.LookupLiveIssueClaim(ctx, ref.Repo, issue, now)
@@ -95,7 +95,7 @@ func delegatedSharesIssue(body, repo string, refs []ghpkg.ClaimedRef) bool {
 	}
 	for _, a := range refs {
 		for _, b := range other {
-			if a.Number == b.Number && strings.EqualFold(a.Repo, b.Repo) {
+			if a.Issue == b.Issue && strings.EqualFold(a.Repo, b.Repo) {
 				return true
 			}
 		}
