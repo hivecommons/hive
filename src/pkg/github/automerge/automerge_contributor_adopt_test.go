@@ -1545,7 +1545,7 @@ func TestAlreadyAdoptedInPlaceDCORehomeCarriesDiffFence(t *testing.T) {
 				if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 || h.adopt.refAttempts != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
 					t.Fatalf("deferred re-home went ahead: pulls=%v refs=%v edits=%v comments=%v", h.adopt.pulls, h.adopt.refs, h.adopt.prEdits, h.api.comments)
 				}
-				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || (tc.wantFence != contributorLaneReasonWorkflowPath && rec.AdoptDiffFence != "") {
+				if !rec.AdoptedInPlace() || rec.AdoptReason == AdoptReasonDCORehome || rec.AdoptDiffFence != "" {
 					t.Fatalf("deferred re-home changed the adoption: %+v", rec)
 				}
 				return

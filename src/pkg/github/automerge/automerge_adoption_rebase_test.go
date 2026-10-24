@@ -50,13 +50,13 @@ func TestAdoptedNeedsRebaseSupersedesInsteadOfStalling(t *testing.T) {
 }
 
 func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
-	for _, mode := range []string{"head-moved", "hold", "pending", "fence"} {
+	for _, mode := range []string{"head-moved", "hold", "pending", "fence", "push-fence"} {
 		t.Run(mode, func(t *testing.T) {
 			p := adoptPolicy()
 			p.AdoptInPlace = true
 			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
 			defer done()
-			adoptInPlaceAt(h, "aaa", "label:needs-rebase")
+			key := adoptInPlaceAt(h, "aaa", "label:needs-rebase")
 			labels := append([]string{}, adoptedLabels...)
 			reason := "label:needs-rebase"
 			switch mode {
@@ -67,23 +67,20 @@ func TestAdoptionRebaseRehomeRespectsEvidenceAndHold(t *testing.T) {
 			case "pending":
 				labels = append(labels, "needs-rebase")
 				reason = "check-pending"
+			case "push-fence":
+				reason = "check-pending"
+				h.adopt.allowMaintainerEdits(7, false)
+				fallthrough
 			case "fence":
 				h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1}}
 			}
 			h.clock.advance(adoptedDwell + time.Minute)
 			h.observe(adoptPR(7, "aaa", labels...), reason)
-			if mode != "fence" {
-				if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 {
-					t.Fatalf("unsafe re-home: refs=%v pulls=%v", h.adopt.refs, h.adopt.pulls)
-				}
-				return
+			if h.adopt.refAttempts != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 || len(adoptionComments(h.api)) != 0 {
+				t.Fatalf("unsafe re-home: refs=%v pulls=%v edits=%v comments=%v", h.adopt.refs, h.adopt.pulls, h.adopt.prEdits, h.api.comments)
 			}
-			if len(h.adopt.pulls) != 1 {
-				t.Fatalf("fenced work must re-home with manual merge: %v", h.adopt.pulls)
-			}
-			body, _ := h.adopt.pulls[0]["body"].(string)
-			if !strings.Contains(body, "**Merge stays manual**") || !strings.Contains(body, CarriedFenceMarkerPrefix) {
-				t.Fatalf("lost merge fence: %s", body)
+			if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonGrace || rec.AdoptDiffFence != "" {
+				t.Fatalf("refused re-home changed the adoption: %+v", rec)
 			}
 		})
 	}
