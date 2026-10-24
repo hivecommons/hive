@@ -27,19 +27,25 @@ type Scheduler struct {
 	classifier           ioscan.Classifier
 	classifierThresholds ioscan.Thresholds
 	classifierBudget     int
-	inflight             InflightLookup
-	runAdmitter          RunAdmitter
-	triageCommenter      TriageCommenter
-	clarity              clarityGateState
-	priorArt             priorArtGateState
-	priorArtSearcher     PriorArtSearcher
-	questionAutocloser   QuestionAutocloser
-	lifecycle            timeline.Recorder
-	scanned              bool
-	deferredKicks        map[string]func(string)
-	firstScanDeferred    map[string]bool
-	ioscanWarned         sync.Map
-	mu                   sync.RWMutex
+	// classifierBudgetPerEval is what resetClassifierBudget refills to each
+	// pass: DefaultClassifierBudgetPerEval, or the lower CLI budget.
+	classifierBudgetPerEval int
+	// classifierQuotaWarnedDay is the UTC day the daily-quota WARN was last
+	// logged, so it is logged once per day.
+	classifierQuotaWarnedDay string
+	inflight                 InflightLookup
+	runAdmitter              RunAdmitter
+	triageCommenter          TriageCommenter
+	clarity                  clarityGateState
+	priorArt                 priorArtGateState
+	priorArtSearcher         PriorArtSearcher
+	questionAutocloser       QuestionAutocloser
+	lifecycle                timeline.Recorder
+	scanned                  bool
+	deferredKicks            map[string]func(string)
+	firstScanDeferred        map[string]bool
+	ioscanWarned             sync.Map
+	mu                       sync.RWMutex
 }
 
 // SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the

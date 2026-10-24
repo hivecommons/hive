@@ -194,6 +194,9 @@ ioscan:
   classifier:
     enabled: false                        # default: false; optional LLM judge for semantic plain-English injections
     model: ""                             # empty uses governor.litellm default_model, then gpt-4o-mini
+    backend: ""                           # empty = HTTP endpoint; "claude" runs the classifier through the tool-less CLI (copilot/codex/gemini refused at boot)
+    cli_budget_per_eval: 8                # CLI backend only: classifier calls per scheduler pass
+    cli_daily_quota: 500                  # CLI backend only: classifier calls per UTC day
     warn_threshold: 0.55                  # advisory bead/audit threshold
     block_threshold: 0.85                 # open=redact, closed=block kick
 

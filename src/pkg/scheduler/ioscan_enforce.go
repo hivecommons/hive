@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -40,7 +41,21 @@ func (s *Scheduler) SetClassifier(c ioscan.Classifier, thresholds ioscan.Thresho
 	defer s.mu.Unlock()
 	s.classifier = c
 	s.classifierThresholds = thresholds.Normalize()
-	s.classifierBudget = ioscan.DefaultClassifierBudgetPerEval
+	s.classifierBudgetPerEval = ioscan.DefaultClassifierBudgetPerEval
+	s.classifierBudget = s.classifierBudgetPerEval
+}
+
+// SetClassifierBudgetPerEval replaces the per-pass classifier budget set by
+// SetClassifier. Boot lowers it for a CLI classifier backend, where each call
+// starts a process. Zero or less keeps DefaultClassifierBudgetPerEval.
+func (s *Scheduler) SetClassifierBudgetPerEval(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if n <= 0 {
+		n = ioscan.DefaultClassifierBudgetPerEval
+	}
+	s.classifierBudgetPerEval = n
+	s.classifierBudget = n
 }
 
 func (s *Scheduler) SetAdvisoryFunc(f AdvisoryFunc) {
@@ -59,8 +74,20 @@ func (s *Scheduler) resetClassifierBudget() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.classifier != nil {
-		s.classifierBudget = ioscan.DefaultClassifierBudgetPerEval
+		s.classifierBudget = s.classifierBudgetPerEval
 	}
+}
+
+// markClassifierQuotaWarned reports whether day's daily-quota WARN has not
+// been logged yet, and records it as logged.
+func (s *Scheduler) markClassifierQuotaWarned(day string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.classifierQuotaWarnedDay == day {
+		return false
+	}
+	s.classifierQuotaWarnedDay = day
+	return true
 }
 
 func (s *Scheduler) consumeClassifierBudget() bool {
@@ -210,6 +237,18 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		return sanitized, v
 	}
 	score, err := classifier.Score(context.Background(), sanitized)
+	var quotaErr *ioscan.DailyQuotaExhaustedError
+	if errors.As(err, &quotaErr) {
+		// Same path as an exhausted per-pass budget: the text passes on in
+		// either fail mode.
+		s.recordClassifierSkip("daily_quota_exhausted")
+		if s.markClassifierQuotaWarned(quotaErr.Day) && s.logger != nil {
+			s.logger.Warn("ioscan classifier daily quota reached; untrusted text passes on unclassified until the next UTC day",
+				"quota", quotaErr.Quota, "day", quotaErr.Day,
+				"fix", "raise ioscan.classifier.cli_daily_quota (Settings → Security → Input Defense)")
+		}
+		return sanitized, v
+	}
 	if err != nil {
 		if s.classifierFailClosed() {
 			s.recordClassifierSkip("error_fail_closed")

@@ -2735,38 +2735,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
-	if acmmLevel := b.cfg.ACMMLevelOrZero(); b.cfg.Ioscan.ClassifierEnabledAtLevel(acmmLevel) {
-		classifierFailClosed := b.cfg.Ioscan.ClassifierFailClosedAtLevel(acmmLevel)
-		endpoint, apiKey, model := b.cfg.Governor.ResolveReviewer()
-		if b.cfg.Ioscan.Classifier.Model != "" {
-			model = b.cfg.Ioscan.Classifier.Model
-		}
-		if model == "" {
-			model = ioscan.DefaultClassifierModel
-		}
-		classifier, cerr := ioscan.NewLLMClassifier(ioscan.LLMClassifierConfig{
-			Endpoint: endpoint,
-			APIKey:   apiKey,
-			Model:    model,
-		})
-		switch {
-		case cerr != nil && classifierFailClosed:
-			// The level requires the classifier and it cannot run: withhold
-			// untrusted text rather than silently scanning without it.
-			b.sched.SetClassifier(ioscan.UnavailableClassifier{Err: cerr}, ioscan.Thresholds{})
-			b.logger.Error("ioscan classifier required at this ACMM level but not running; untrusted text is withheld",
-				"reason", cerr.Error(), "acmm_level", acmmLevel,
-				"fix", "configure governor.trajectory/litellm, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
-		case cerr != nil:
-			b.logger.Warn("ioscan classifier enabled but not running", "reason", cerr.Error())
-		default:
-			b.sched.SetClassifier(ioscan.NewCachedClassifier(classifier, ioscan.DefaultClassifierCacheEntries), ioscan.Thresholds{
-				Warn:  b.cfg.Ioscan.Classifier.WarnThreshold,
-				Block: b.cfg.Ioscan.Classifier.BlockThreshold,
-			})
-			b.logger.Info("ioscan semantic classifier enabled", "model", model, "fail_closed", classifierFailClosed)
-		}
-	}
+	installIoscanClassifier(b.sched, b.cfg, b.logger, time.Now)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {

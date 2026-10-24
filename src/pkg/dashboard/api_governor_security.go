@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/ioscan"
 )
 
 // handleGovernorSecurity serves PUT /api/config/governor/security. It is
@@ -19,12 +20,17 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		IoscanEnabled        *bool   `json:"ioscanEnabled"`
-		IoscanFailMode       *string `json:"ioscanFailMode"`
-		IoscanCanaries       *bool   `json:"ioscanCanaries"`
-		IntentEnforce        *bool   `json:"intentEnforce"`
-		IntentShadow         *bool   `json:"intentShadow"`
-		IntentAlignmentModel *string `json:"intentAlignmentModel"`
+		IoscanEnabled  *bool   `json:"ioscanEnabled"`
+		IoscanFailMode *string `json:"ioscanFailMode"`
+		IoscanCanaries *bool   `json:"ioscanCanaries"`
+		// The classifier CLI backend ("" = model endpoint) and, for a CLI
+		// backend, its per-pass budget and per-UTC-day quota (0 = default).
+		IoscanClassifierBackend          *string `json:"ioscanClassifierBackend"`
+		IoscanClassifierCLIBudgetPerEval *int    `json:"ioscanClassifierCliBudgetPerEval"`
+		IoscanClassifierCLIDailyQuota    *int    `json:"ioscanClassifierCliDailyQuota"`
+		IntentEnforce                    *bool   `json:"intentEnforce"`
+		IntentShadow                     *bool   `json:"intentShadow"`
+		IntentAlignmentModel             *string `json:"intentAlignmentModel"`
 		// Intent classifier lists. An empty list restores the built-in
 		// defaults (nil), matching how the intent package treats them.
 		IntentTestPathPatterns      *[]string `json:"intentTestPathPatterns"`
@@ -117,6 +123,24 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if body.IoscanClassifierBackend != nil {
+		if b := strings.TrimSpace(*body.IoscanClassifierBackend); b != "" && !ioscan.SupportsToolless(b) {
+			jsonError(w, "ioscan classifier backend must be empty or claude; "+b+" cannot run without tools", http.StatusBadRequest)
+			return
+		}
+	}
+	nextClassifier := s.deps.Config.Ioscan.Classifier
+	if body.IoscanClassifierCLIBudgetPerEval != nil {
+		nextClassifier.CLIBudgetPerEval = *body.IoscanClassifierCLIBudgetPerEval
+	}
+	if body.IoscanClassifierCLIDailyQuota != nil {
+		nextClassifier.CLIDailyQuota = *body.IoscanClassifierCLIDailyQuota
+	}
+	if err := nextClassifier.ValidateCLI(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	if body.ReviewMaxParallel != nil && (*body.ReviewMaxParallel < 0 || *body.ReviewMaxParallel > 64) {
 		jsonError(w, "review max_parallel_reviews must be between 0 and 64", http.StatusBadRequest)
 		return
@@ -134,6 +158,11 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		cfg.Ioscan.FailMode = mode
 	}
+	if body.IoscanClassifierBackend != nil {
+		cfg.Ioscan.Classifier.Backend = strings.TrimSpace(*body.IoscanClassifierBackend)
+	}
+	cfg.Ioscan.Classifier.CLIBudgetPerEval = nextClassifier.CLIBudgetPerEval
+	cfg.Ioscan.Classifier.CLIDailyQuota = nextClassifier.CLIDailyQuota
 	if body.IoscanCanaries != nil {
 		cfg.Ioscan.Canaries = body.IoscanCanaries
 	}
@@ -293,6 +322,9 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"credentialInjection":                credentialInjection,
 		"ioscanEnabled":                      cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                     failMode,
+		"ioscanClassifierBackend":            cfg.Ioscan.Classifier.Backend,
+		"ioscanClassifierCliBudgetPerEval":   cfg.Ioscan.Classifier.CLIBudgetPerEval,
+		"ioscanClassifierCliDailyQuota":      cfg.Ioscan.Classifier.CLIDailyQuota,
 		"ioscanCanaries":                     cfg.Ioscan.CanariesEnabled(),
 		"intentEnforce":                      cfg.Intent.Enforce,
 		"intentShadow":                       cfg.Intent.Shadow,
