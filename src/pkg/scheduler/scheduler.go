@@ -47,6 +47,7 @@ type Scheduler struct {
 	scanned                  bool
 	deferredKicks            map[string]func(string)
 	firstScanDeferred        map[string]bool
+	ioscanWarned             sync.Map
 	mu                       sync.RWMutex
 }
 
