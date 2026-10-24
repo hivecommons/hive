@@ -1,6 +1,7 @@
 // Package cli is the `crux` command (hivecommons/hive#13536, step 5 of the
 // Stage 1 roadmap in src/docs/design/crux.md): run, ps, logs, kick and stop,
-// each a thin mapping onto one or two crux.Runtime methods.
+// each a thin mapping onto one or two crux.Runtime methods, and serve, which
+// exposes the Runtime over the Crux API (crux/api, crux/serve; Stage 3).
 //
 // The runtime is in-process. `crux run` is therefore the long-lived command:
 // it builds a Runtime, starts the agent, streams its output and stops it when
@@ -135,6 +136,12 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 			return ExitUsage
 		}
 		return e.cmdRun(ctx, opts, args)
+	case "serve":
+		if remote {
+			fmt.Fprintln(e.Stderr, "crux: serve is not available over the control socket")
+			return ExitUsage
+		}
+		return e.cmdServe(ctx, opts, args)
 	case "ps", "logs", "kick", "stop":
 		if !remote && !opts.local {
 			if code, ok := e.forward(ctx, opts, append([]string{name}, args...)); ok {
@@ -245,9 +252,12 @@ Commands (each maps onto crux.Runtime):
                                   --full: CaptureFullLog)
   kick <agent> <message | ->      Kicker.SendKick
   stop <agent>                    Lifecycle.Stop
+  serve                           expose the runtime over the Crux API (HTTP+JSON
+                                  on a unix socket; --listen adds TCP with --token)
 
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
+'crux serve' is the API server other harnesses drive (crux/api, crux/serve).
 
 Global flags:
 `)

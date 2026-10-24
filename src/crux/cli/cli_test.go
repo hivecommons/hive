@@ -194,6 +194,12 @@ func (f *fakeRuntime) SendKick(name, message string) error {
 	return nil
 }
 
+// SetKickObserver is what `crux serve` installs so the API can relay kick
+// events; the fake only records that it was asked.
+func (f *fakeRuntime) SetKickObserver(fn func(agentName, event, detail string)) {
+	f.record("SetKickObserver(%t)", fn != nil)
+}
+
 // harness wires an Env to a fake runtime, captured streams and a hand-driven
 // ticker.
 type harness struct {
