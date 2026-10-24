@@ -68,6 +68,12 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		// Panel 1 (#12364): outcome by author kind.
 		"dto.outcomes_by_author_kind || {}",
 		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),",
+		// Issue reopen rate shares the panel chrome and compact table styling.
+		"return evPanel('issue-reopen', 'Issue reopen rate · rolling 30 days', closedN, body,",
+		`<div class="ev-table-wrap"><table class="ev-table">`,
+		".ev-table-wrap { margin-top:var(--sp-2); max-width:100%; overflow-x:auto;",
+		".ev-table th, .ev-table td { padding:var(--sp-1) var(--sp-2); text-align:right; border-top:1px solid var(--border); white-space:nowrap; }",
+		"'issue-reopen': (dto) => {",
 		"const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];",
 		"const reverted = Number(o.reverted_14d) || 0, reopened = Number(o.issue_reopened_14d) || 0;",
 		"reverted, reopened, failed: reverted + reopened };",
@@ -315,13 +321,21 @@ assert.doesNotMatch(card.innerHTML, /Report-only; Go-only cyclomatic complexity.
 renderEvidenceSummary(null);
 assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=0/);
 assert.match(card.innerHTML, /no monthly complexity snapshots/);
-assert.match(card.innerHTML, /No captured issue closures in the last 30 days/);
+// Issue reopen rate is an evPanel like its siblings: collapse toggle, n= chip
+// (distinct issues closed) and grade pill in the summary; compact ev-table body.
+assert.match(card.innerHTML, /<details class="ev-panel" data-ev-panel="issue-reopen" open><summary>Issue reopen rate · rolling 30 days<span class="ev-n"[^>]*>n=0<\/span><span class="ev-letter ev-band-none"/);
+assert.match(card.innerHTML, /<div class="ev-empty">— no captured issue closures in the last 30 days<\/div>/);
+assert.doesNotMatch(card.innerHTML, /<section class="ev-panel">|<h4>Issue reopen rate/);
 renderEvidenceSummary({issue_reopen_rates_30d: [
   {repo: 'o/<repo>', clarity_gate: true, reopened: 1, closed: 4, rate: 0.25},
+  {repo: 'o/<repo>', clarity_gate: false, reopened: 0, closed: 3, rate: 0},
   {repo: 'o/empty', clarity_gate: false, reopened: 0, closed: 0, rate: null}
 ]});
+assert.match(card.innerHTML, /data-ev-panel="issue-reopen" open><summary>Issue reopen rate · rolling 30 days<span class="ev-n"[^>]*>n=7<\/span>/);
+assert.match(card.innerHTML, /<div class="ev-table-wrap"><table class="ev-table"><thead><tr><th>Repository<\/th><th>Clarity gate<\/th><th>Reopened \/ closed<\/th><th>Rate<\/th><\/tr><\/thead>/);
 assert.match(card.innerHTML, /o\/&lt;repo&gt;<\/td><td>Passed through<\/td><td>1 \/ 4<\/td><td>25%<\/td>/);
 assert.match(card.innerHTML, /o\/empty<\/td><td>No marker<\/td><td>0 \/ 0<\/td><td>—<\/td>/);
+assert.match(card.innerHTML, /<\/table><\/div><p class="ev-note">Distinct issues closed by hive PRs in the last 30 days/);
 assert.doesNotMatch(card.innerHTML, /<repo>|NaN|undefined/);
 // No server card: a dashed — pill and no plain line; nothing inline says "What this does not show".
 assert.match(card.innerHTML, /<span class="ev-letter ev-band-none" title="Grade not reported by this hive"[^>]*>—<\/span><\/summary>/);

@@ -2055,6 +2055,15 @@
     .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
+    /* Compact tables inside a panel (issue reopen rate, control arm): the
+       panel's own font scale, nowrap headers, overflow contained in the wrap
+       so a wide table scrolls instead of bleeding into the next panel. */
+    .ev-table-wrap { margin-top:var(--sp-2); max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+    .ev-table { width:100%; border-collapse:collapse; font-size:var(--fs-2xs); font-variant-numeric:tabular-nums; }
+    .ev-table th, .ev-table td { padding:var(--sp-1) var(--sp-2); text-align:right; border-top:1px solid var(--border); white-space:nowrap; }
+    .ev-table th { color:var(--muted); font-size:var(--fs-2xs); font-weight:600; border-top:none; }
+    .ev-table th:first-child, .ev-table td:first-child { text-align:left; padding-left:0; }
+    .ev-table th:last-child, .ev-table td:last-child { padding-right:0; }
     /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
        from/to row that opens under the head when "custom" is active. */
     .ev-window-controls { margin-left:auto; }
@@ -27145,6 +27154,21 @@ function burnAreaChart() {
           grade: 'ungraded', reason: 'report-only; no threshold to grade against',
         };
       },
+      'issue-reopen': (dto) => {
+        const rows = Array.isArray(dto.issue_reopen_rates_30d) ? dto.issue_reopen_rates_30d : [];
+        const sum = (gate, key) => rows.filter((r) => r && Boolean(r.clarity_gate) === gate).reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+        const gatedClosed = sum(true, 'closed'), gatedReopened = sum(true, 'reopened');
+        const ungatedClosed = sum(false, 'closed'), ungatedReopened = sum(false, 'reopened');
+        const repos = new Set(rows.filter((r) => r && Number(r.closed) > 0).map((r) => r.repo)).size;
+        return {
+          matters: 'An issue that is re-opened after a hive PR closed it is work that was not actually done. Splitting by the clarity-gate marker shows whether issues that were specified clearly enough to pass the gate stay closed more often than ones with no marker.',
+          measured: 'Distinct issues closed by hive PRs in the last 30 days, per repository, split by whether the issue carried the clarity-gate marker at closure, with how many of them were later re-opened.',
+          how: 'Closures come from evidence bundles and are placed by closure time, not by the selected PR window or author filter. Each issue is counted once (its latest closure). A re-open counts when it happened after that closure, as seen by the issues webhook or the issue listing. Rate = re-opened ÷ closed per row; issues whose historical clarity status is missing are excluded rather than counted as ungated.',
+          good: 'Low reopen rates in both rows, and no large gap that favours the ungated row. Recent closures have had less time to re-open, so a short window understates the rate.',
+          ours: `${repos} repo(s) with closures. Passed through the gate: ${gatedReopened} re-opened of ${gatedClosed} closed (${evPct(evRate(gatedReopened, gatedClosed))}). No marker: ${ungatedReopened} re-opened of ${ungatedClosed} closed (${evPct(evRate(ungatedReopened, ungatedClosed))}). This is a descriptive comparison, not proof of causality.`,
+          grade: 'ungraded', reason: 'report-only; no threshold to grade against',
+        };
+      },
       'shadow-gates': (dto) => {
         const sg = dto.shadow_gate || {};
         let heldN = 0, heldReverted = 0, heldMerged = 0, passedN = 0, passedReverted = 0, shadowUnknown = 0;
@@ -27351,7 +27375,7 @@ function burnAreaChart() {
           const delta = d == null || Number(a.n) < minN || Number(b.n) < minN ? 'withheld' : (Number(d) > 0 ? '+' : '') + (hours ? Number(d).toFixed(1) + ' h' : (Number(d) * 100).toFixed(1) + ' pp');
           return `<tr><td>${label}</td><td>${format(a.value)} (n=${Number(a.n) || 0})</td><td>${format(b.value)} (n=${Number(b.n) || 0})</td><td>${delta}</td></tr>`;
         }).join('');
-        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><table><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table>`;
+        return `<div class="ev-note"><b>${escapeHtml(r.repo || '')}</b> · on: ${Number((on.outcomes || {}).n) || 0} opened · off: ${Number((off.outcomes || {}).n) || 0} opened (unequal exposure; not a throughput comparison)</div><div class="ev-table-wrap"><table class="ev-table"><thead><tr><th>Control-arm metric</th><th>On</th><th>Off</th><th>Δ on − off</th></tr></thead><tbody>${rows}</tbody></table></div>`;
       }).join('');
     }
 
@@ -27835,10 +27859,19 @@ function burnAreaChart() {
       return `${headline}<div class="ev-flow"><div><h5>Issues</h5>${issues}</div><div><h5>Pull requests</h5>${prs}</div></div>`;
     }
 
+    // Issue reopen rate (rolling 30 d by closure time): one row per repo ×
+    // clarity-gate marker. Rendered through evPanel so it carries the same
+    // collapse toggle, ⓘ explainer, n= chip and grade pill as its siblings;
+    // n = distinct issues closed (each issue lands in exactly one row).
     function evIssueReopenRatesHtml(dto) {
       const rows = Array.isArray(dto.issue_reopen_rates_30d) ? dto.issue_reopen_rates_30d : [];
-      const body = rows.length ? `<table><thead><tr><th>Repository</th><th>Clarity gate</th><th>Reopened / closed</th><th>Rate</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(String(r.repo || ''))}</td><td>${r.clarity_gate ? 'Passed through' : 'No marker'}</td><td>${Number(r.reopened) || 0} / ${Number(r.closed) || 0}</td><td>${evPct(r.rate)}</td></tr>`).join('')}</tbody></table>` : '<div class="ev-note">No captured issue closures in the last 30 days.</div>';
-      return `<section class="ev-panel"><h4>Issue reopen rate · rolling 30 days</h4>${body}<p class="ev-note">Distinct issues closed by hive PRs in the last 30 days, split by the clarity-gate marker at closure. Uses closure time, not the selected PR window or author filter. Missing historical clarity status is excluded, not counted as ungated. Recent closures have less time to reopen; this comparison does not prove causality.</p></section>`;
+      const closedN = rows.reduce((sum, r) => sum + (Number(r && r.closed) || 0), 0);
+      const table = rows.length
+        ? `<div class="ev-table-wrap"><table class="ev-table"><thead><tr><th>Repository</th><th>Clarity gate</th><th>Reopened / closed</th><th>Rate</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${escapeHtml(String(r.repo || ''))}</td><td>${r.clarity_gate ? 'Passed through' : 'No marker'}</td><td>${Number(r.reopened) || 0} / ${Number(r.closed) || 0}</td><td>${evPct(r.rate)}</td></tr>`).join('')}</tbody></table></div>`
+        : '<div class="ev-empty">— no captured issue closures in the last 30 days</div>';
+      const body = `${table}<p class="ev-note">Distinct issues closed by hive PRs in the last 30 days, split by the clarity-gate marker at closure. Uses closure time, not the selected PR window or author filter. Missing historical clarity status is excluded, not counted as ungated. Recent closures have less time to reopen; this comparison does not prove causality.</p>`;
+      return evPanel('issue-reopen', 'Issue reopen rate · rolling 30 days', closedN, body,
+        'A fixed 30-day window by closure time, so the window pills and repo/author filters above do not apply. Only issues closed by hive PRs are counted; an issue closed by hand is not tracked, and a reopen is only seen through the issues webhook or the issue listing. Rows are descriptive and the clarity-gate split is not a controlled comparison.');
     }
 
     function renderEvidenceSummary(dto) {
