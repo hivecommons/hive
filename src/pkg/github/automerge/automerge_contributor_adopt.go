@@ -709,6 +709,11 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 				c.warn("stage labels: DCO re-home deferred, diff fence unreadable", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", fence, "error", err)
 				return 0, nil
 			}
+			if fence == contributorLaneReasonWorkflowPath {
+				// Refuse publication before changing the in-place adoption record.
+				c.info("stage labels: refusing workflow-path DCO re-home", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+				return 0, nil
+			}
 			if fence != "" {
 				// The fence travels into the superseding PR's body; the
 				// self-authored lane hands that PR's merge to a person.
@@ -1091,6 +1096,11 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		fence, err := c.adoptionDiffRefusal(ctx, obs)
 		if err != nil || adoptionFenceDefers(fence) {
 			return adoptionEscape{}, 0, err
+		}
+		if fence == contributorLaneReasonWorkflowPath {
+			// Keep the in-place adoption available for repair on its own branch.
+			c.info("stage labels: refusing workflow-path re-home", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason)
+			return adoptionEscape{}, 0, nil
 		}
 		if fence != "" {
 			store.NoteAdoptDiffFence(key, fence)
