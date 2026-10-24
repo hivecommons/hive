@@ -28,6 +28,22 @@ func TestServeConfigValidateDefaultsAndFailsClosed(t *testing.T) {
 	if err := c.Validate(); err != nil || c.Socket != "/x/y.sock" {
 		t.Fatalf("explicit socket + token: err %v socket %q", err, c.Socket)
 	}
+
+	// The listener is plain http; a token alone does not make a non-loopback
+	// bind safe, so it is refused even with one.
+	for _, listen := range []string{"0.0.0.0:9000", ":9000", "[::]:9000", "10.0.0.5:9000", "crux.example:9000"} {
+		c = ServeConfig{Listen: listen, Token: "s3cret"}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "loopback") || !strings.Contains(err.Error(), "listen "+listen) {
+			t.Fatalf("Listen %q with token must be refused as non-loopback, got %v", listen, err)
+		}
+	}
+	for _, listen := range []string{"[::1]:9000", "localhost:9000", "127.0.0.2:9000"} {
+		c = ServeConfig{Listen: listen, Token: "s3cret"}
+		if err := c.Validate(); err != nil {
+			t.Fatalf("Listen %q with token: %v", listen, err)
+		}
+	}
 }
 
 func TestDefaultServeSocketPrecedence(t *testing.T) {

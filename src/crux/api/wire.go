@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,11 @@ const unixBaseURL = "http://crux"
 //	https://crux.example:7777              a TLS listener by URL
 //	127.0.0.1:7777, [::1]:7777             a TCP listener, http implied
 //
-// An empty string is an error so a caller cannot fall through to a default
-// by accident.
+// Plain http (explicit or implied) is accepted only for a loopback host:
+// the bearer token travels in the clear, so a remote server must be reached
+// over https (a TLS-terminating proxy in front of `crux serve`). An empty
+// string is an error so a caller cannot fall through to a default by
+// accident.
 func ParseAddress(s string) (Address, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -64,6 +68,9 @@ func ParseAddress(s string) (Address, error) {
 		if u.Host == "" {
 			return Address{}, fmt.Errorf("server address %q has no host", s)
 		}
+		if u.Scheme == "http" && !LoopbackHost(u.Host) {
+			return Address{}, fmt.Errorf("server address %q: http is allowed only for loopback hosts (the bearer token would cross the network in cleartext); use https:// for a remote server", s)
+		}
 		return Address{Network: "tcp", Host: u.Host, BaseURL: u.Scheme + "://" + u.Host}, nil
 	}
 	if strings.Contains(s, "://") {
@@ -73,7 +80,39 @@ func ParseAddress(s string) (Address, error) {
 	if _, _, ok := splitHostPort(s); !ok {
 		return Address{}, fmt.Errorf("server address %q is neither a socket path nor host:port", s)
 	}
+	if !LoopbackHost(s) {
+		return Address{}, fmt.Errorf("server address %q: plain host:port implies http, which is allowed only for loopback hosts (the bearer token would cross the network in cleartext); use https:// for a remote server", s)
+	}
 	return Address{Network: "tcp", Host: s, BaseURL: "http://" + s}, nil
+}
+
+// LoopbackHost reports whether hostport (host:port, or a bare host) names
+// the local machine only: "localhost" or a loopback IP (127.0.0.0/8, ::1,
+// and their zoned or IPv4-mapped spellings). An empty host, a wildcard
+// (0.0.0.0, ::) and anything that needs a resolver is not loopback, so a
+// caller using this as a gate fails closed. It is the one rule the client
+// (ParseAddress) and the server (config.ServeConfig.Validate) share about
+// where a bearer token may travel over plain http.
+func LoopbackHost(hostport string) bool {
+	if ip, err := netip.ParseAddr(hostport); err == nil {
+		return ip.Unmap().IsLoopback()
+	}
+	host := hostport
+	if h, _, ok := splitHostPort(hostport); ok {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return ip.Unmap().IsLoopback()
 }
 
 // splitHostPort is net.SplitHostPort's shape without importing net, so this

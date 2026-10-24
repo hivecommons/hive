@@ -19,12 +19,13 @@ import (
 //
 // The socket defaults to config.DefaultServeSocket (not the per-work-dir
 // control socket `crux run` serves); --listen adds TCP and is refused
-// without --token / CRUX_TOKEN.
+// without --token / CRUX_TOKEN, and refused off loopback (plain http would
+// carry the token in the clear; remote access goes through a TLS proxy).
 func (e *Env) cmdServe(ctx context.Context, opts globalOptions, args []string) int {
 	fs := e.subFlags("serve")
 	var cfg config.ServeConfig
 	fs.StringVar(&cfg.Socket, "socket", "", "unix socket to serve on (default $"+config.ServeSocketEnvVar+", then "+config.DefaultServeSocket()+")")
-	fs.StringVar(&cfg.Listen, "listen", "", "also serve on this TCP host:port; requires a token")
+	fs.StringVar(&cfg.Listen, "listen", "", "also serve on this loopback TCP host:port (plain http); requires a token")
 	fs.StringVar(&cfg.Token, "token", "", "bearer token every request must carry (default $"+config.ServeTokenEnvVar+")")
 	if code, ok := parseSub(fs, args); !ok {
 		return code

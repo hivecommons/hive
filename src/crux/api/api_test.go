@@ -45,6 +45,35 @@ func TestParseAddress(t *testing.T) {
 			t.Errorf("%q should not parse", in)
 		}
 	}
+
+	// Plain http carries the bearer token in the clear, so it is loopback-only;
+	// the same hosts are fine over https.
+	cleartext := []string{"http://crux.example:7777", "http://10.0.0.5:7777", "http://0.0.0.0:7777", "http://[::]:7777", "crux.example:7777", "10.0.0.5:7777", "0.0.0.0:7777", ":7777"}
+	for _, in := range cleartext {
+		if _, err := ParseAddress(in); err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Errorf("%q must be refused as cleartext to a non-loopback host, got %v", in, err)
+		}
+	}
+	for _, in := range []string{"https://10.0.0.5:7777", "https://0.0.0.0:7777", "http://localhost:7777", "http://[::ffff:127.0.0.1]:7777", "localhost:7777", "127.1.2.3:7777"} {
+		if _, err := ParseAddress(in); err != nil {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+}
+
+func TestLoopbackHost(t *testing.T) {
+	yes := []string{"127.0.0.1:1", "127.255.0.9:80", "[::1]:1", "::1", "localhost", "LOCALHOST:7777", "[::ffff:127.0.0.1]:1", "[::1%lo]:1", "127.0.0.1"}
+	for _, h := range yes {
+		if !LoopbackHost(h) {
+			t.Errorf("LoopbackHost(%q) = false, want true", h)
+		}
+	}
+	no := []string{"", ":7777", "0.0.0.0:7777", "[::]:7777", "10.0.0.5:7777", "192.168.1.1", "crux.example:7777", "localhost.example:1", "[::ffff:10.0.0.5]:1", "127.0.0.1.nip.io:1"}
+	for _, h := range no {
+		if LoopbackHost(h) {
+			t.Errorf("LoopbackHost(%q) = true, want false", h)
+		}
+	}
 }
 
 func TestWriteAndReadEvents(t *testing.T) {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hivecommons/hive/crux/api"
 )
 
 // Where `crux serve` listens and how a client finds it (Crux Stage 3,
@@ -42,21 +44,29 @@ const (
 type ServeConfig struct {
 	// Socket is the unix socket path. Empty selects DefaultServeSocket().
 	Socket string
-	// Listen is an optional TCP host:port. It is refused without a Token.
+	// Listen is an optional TCP host:port. It is refused without a Token,
+	// and refused on a non-loopback host: the listener is plain http, so
+	// the token would cross the network in cleartext. Remote access goes
+	// through a TLS-terminating proxy that dials the loopback listener.
 	Listen string
 	// Token is the bearer token every request must carry. Optional on the
 	// socket (the file mode is the credential), required for Listen.
 	Token string
 }
 
-// Validate applies the defaults and the fail-closed rule: no TCP without a
-// token.
+// Validate applies the defaults and the fail-closed rules: no TCP without a
+// token, and no TCP off loopback (the same rule the client applies in
+// api.ParseAddress: a bearer token travels over plain http only to the
+// local machine).
 func (c *ServeConfig) Validate() error {
 	if c.Socket == "" {
 		c.Socket = DefaultServeSocket()
 	}
 	if c.Listen != "" && c.Token == "" {
 		return fmt.Errorf("a TCP listener on %s needs a bearer token (--token or %s); refusing to serve the runtime unauthenticated", c.Listen, ServeTokenEnvVar)
+	}
+	if c.Listen != "" && !api.LoopbackHost(c.Listen) {
+		return fmt.Errorf("listen %s: a TCP listener must bind a loopback address (127.0.0.1, [::1] or localhost); the listener is plain http and the bearer token would cross the network in cleartext — put a TLS-terminating proxy in front for remote access", c.Listen)
 	}
 	return nil
 }
