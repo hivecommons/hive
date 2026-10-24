@@ -66,13 +66,24 @@ func evidenceOpensMergesEvents(entries []AuditEntry, prs map[string]*evidence.PR
 	return out
 }
 
-// evidenceGovernorMode is the governor's current cadence mode, or "" when
-// no governor is wired (the card then uses the parity band).
-func (s *Server) evidenceGovernorMode() string {
+// evidenceGovernorMode is the governor's cadence mode for repo, or the
+// fleet mode when repo is empty or the governor has no per-repo mode for it
+// (per_repo cadence scope populates State.RepoModes; aggregate scope leaves
+// it empty and every repo falls back to the fleet mode). "" means no
+// governor is wired (the card then uses the parity band).
+func (s *Server) evidenceGovernorMode(repo string) string {
 	if s == nil || s.deps == nil || s.deps.Governor == nil {
 		return ""
 	}
-	return string(s.deps.Governor.GetState().Mode)
+	st := s.deps.Governor.GetState()
+	if repo != "" {
+		for r, m := range st.RepoModes {
+			if strings.EqualFold(r, repo) {
+				return string(m)
+			}
+		}
+	}
+	return string(st.Mode)
 }
 
 // buildEvidenceOpensMerges runs the card's aggregation for the window.

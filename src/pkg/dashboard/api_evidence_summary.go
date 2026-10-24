@@ -731,7 +731,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		PRs:     repoPRs,
 		Buckets: s.evidenceWorkBalanceBuckets(win),
 	}, win, repo)
-	resp.IssueOpensPRMerges = buildEvidenceOpensMerges(evidenceOpensMergesEvents(balanceEntries, repoPRs, repo), s.evidenceGovernorMode(), win, now)
+	resp.IssueOpensPRMerges = buildEvidenceOpensMerges(evidenceOpensMergesEvents(balanceEntries, repoPRs, repo), s.evidenceGovernorMode(repo), win, now)
 	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == "" && (resp.WorkBalanceSources.IssueSeriesWeeks == 0 || resp.WorkBalanceSources.AuditOnlyWeeks > 0)
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
 	allPRs := evidenceFoldWithHints(bundles, hints, "", "")

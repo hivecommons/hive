@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/governor"
 )
 
 // TestEvidenceHiveMergedPR pins the "hive-merged PR" definition: a merge this
@@ -141,11 +143,63 @@ func TestBuildEvidenceOpensMerges(t *testing.T) {
 	if custom.Total.Opens != 0 || custom.Total.Merges != 0 || custom.Status != evidence.OpensMergesNoData {
 		t.Errorf("custom end must be exclusive: %+v", custom.Total)
 	}
-	if s := (*Server)(nil); s.evidenceGovernorMode() != "" {
+	if s := (*Server)(nil); s.evidenceGovernorMode("") != "" {
 		t.Error("nil server must report no mode")
 	}
-	if s := (&Server{}); s.evidenceGovernorMode() != "" {
+	if s := (&Server{}); s.evidenceGovernorMode("") != "" {
 		t.Error("server without a governor must report no mode")
+	}
+}
+
+// TestEvidenceGovernorModePerRepo pins the fix for #13992: a repo-filtered
+// Evidence view must read the governor's per-repo mode (State.RepoModes),
+// not the fleet-wide State.Mode, when the governor has one for that repo. A
+// repo with no per-repo mode (aggregate cadence scope, or a repo the
+// governor has no snapshot for) falls back to the fleet mode rather than
+// reporting nothing.
+func TestEvidenceGovernorModePerRepo(t *testing.T) {
+	cfg := config.GovernorConfig{CadenceScope: config.CadenceScopePerRepo}
+	g := governor.New(cfg, map[string]config.AgentConfig{}, testLogger())
+	// Fleet queue depth 25 clears the default SURGE threshold (20 at the
+	// default repo count of 1), while "o/r" alone (1 issue, under the
+	// default QUIET threshold of 2) is IDLE — the exact mismatch the issue
+	// reports: a per-repo QUIET/IDLE repo read against a fleet SURGE band.
+	g.EvaluateWithRepoDepths(25, 0, 0, 0, map[string]governor.RepoSnapshot{
+		"o/r": {Issues: 1},
+	})
+	if got := g.GetState().Mode; got != governor.ModeSurge {
+		t.Fatalf("fixture: fleet mode = %s, want SURGE", got)
+	}
+	if got := g.GetState().RepoModes["o/r"]; got != governor.ModeIdle {
+		t.Fatalf("fixture: o/r mode = %s, want IDLE", got)
+	}
+
+	s := &Server{deps: &Dependencies{Governor: g}}
+	if got := s.evidenceGovernorMode(""); got != string(governor.ModeSurge) {
+		t.Errorf("no repo filter = %q, want the fleet mode %q", got, governor.ModeSurge)
+	}
+	if got := s.evidenceGovernorMode("o/r"); got != string(governor.ModeIdle) {
+		t.Errorf("repo=o/r = %q, want its own mode %q, not the fleet mode %q", got, governor.ModeIdle, governor.ModeSurge)
+	}
+	if got := s.evidenceGovernorMode("O/R"); got != string(governor.ModeIdle) {
+		t.Errorf("repo match must be case-insensitive: got %q", got)
+	}
+	if got := s.evidenceGovernorMode("other/repo"); got != string(governor.ModeSurge) {
+		t.Errorf("repo with no per-repo mode must fall back to the fleet mode: got %q", got)
+	}
+
+	// Aggregate cadence scope never populates RepoModes; a repo filter must
+	// still resolve to the fleet mode rather than an empty string.
+	aggCfg := config.GovernorConfig{CadenceScope: config.CadenceScopeAggregate}
+	ag := governor.New(aggCfg, map[string]config.AgentConfig{}, testLogger())
+	ag.EvaluateWithRepoDepths(25, 0, 0, 0, map[string]governor.RepoSnapshot{"o/r": {Issues: 1}})
+	if len(ag.GetState().RepoModes) != 0 {
+		t.Fatalf("fixture: aggregate scope must not populate RepoModes, got %+v", ag.GetState().RepoModes)
+	}
+
+	as := &Server{deps: &Dependencies{Governor: ag}}
+	if got := as.evidenceGovernorMode("o/r"); got != string(governor.ModeSurge) {
+		t.Errorf("aggregate scope repo filter = %q, want the fleet mode %q", got, governor.ModeSurge)
 	}
 }
 
