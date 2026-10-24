@@ -1012,3 +1012,33 @@ func TestForgeIssueLabelsDoesNotAlias(t *testing.T) {
 		t.Errorf("forgeIssueLabels result: got %v, want %v", result, got)
 	}
 }
+
+func TestEnsureStageLabelFamilyArchivedRepoMemoised(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			mu.Lock()
+			posts++
+			mu.Unlock()
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+	if err := c.ensureStageLabelFamily(context.Background(), "acme/widgets"); err == nil {
+		t.Fatal("want the archived refusal surfaced")
+	}
+	if !c.stageArchived.has("acme/widgets") {
+		t.Fatal("archived repo not memoised")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 1 {
+		t.Fatalf("label creates = %d, want 1", posts)
+	}
+}
