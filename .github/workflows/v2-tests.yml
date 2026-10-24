@@ -1145,11 +1145,11 @@ jobs:
   test-dashboard-shuffle:
     needs: [required-context-scope, list-packages]
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
-    name: test (dashboard shuffle ${{ matrix.idx }}/2)
+    name: test (dashboard shuffle ${{ matrix.idx }}/3)
     strategy:
       fail-fast: false
       matrix:
-        idx: [1, 2]
+        idx: [1, 2, 3]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
@@ -1311,7 +1311,7 @@ jobs:
       - name: Surface flaky reruns
         id: flaky-reruns
         if: ${{ steps.select.outputs.run == 'true' && (always()) }}
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-dashboard-shuffle-${{ matrix.idx }}.txt" "dashboard shuffle ${{ matrix.idx }}/2"
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-dashboard-shuffle-${{ matrix.idx }}.txt" "dashboard shuffle ${{ matrix.idx }}/3"
 
       - name: Upload flaky rerun report
         if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
@@ -1324,7 +1324,7 @@ jobs:
 
       - name: Slowest tests in this lane
         if: ${{ steps.select.outputs.run == 'true' && (always()) }}
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "dashboard shuffle ${{ matrix.idx }}/2" test-dashboard-shuffle-${{ matrix.idx }}.log
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "dashboard shuffle ${{ matrix.idx }}/3" test-dashboard-shuffle-${{ matrix.idx }}.log
 
       - name: Upload shuffle log
         if: ${{ steps.select.outputs.run == 'true' && (failure()) }}
