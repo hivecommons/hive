@@ -138,8 +138,19 @@ title is `[selfreport] <class>: <short message>`.
 | `ci_poll_nudge` | the harness sent a non-monitoring agent the stop-polling-CI nudge (at most one per kick); reviewer and CI-maintainer lanes are exempt because reading CI status across PRs and repositories is their assigned work. A self-report fires only after an eligible agent polled CI ≥2 times since the kick — a single nudged poll does not trigger a report. One per 24h window; message carries polls since kick / time since kick / nudges since boot, diagnostics the scrubbed pane tail (#13470, was "CI-poll nudge") | low |
 | `issue_request_stuck` | an issue/comment/label request file in the relay queue (`issue-requests/`) has failed ≥3 attempts **or** has been retrying for ≥30 min. Key is the request file name; message carries kind, attempts and age, diagnostics the last error (scrubbed). Clears when the request completes or is quarantined (`.failed`/`.bad`) | medium |
 | `effect_ledger_op_stuck` | the mutation boundary refused a retry because the journaled external effect (issue create, PR open, …) has been `Unknown`/`Planned` for ≥30 min — the caller keeps replaying the same logical op and it never resolves. Key is the op's logical ID; message carries kind, status and age, diagnostics the attempt count, repo and claim target. Clears when the op is applied, replayed as already-applied, or reconciled | medium |
-| `agent_pane_timeout` | the agent-readiness wait timed out and the harness dumped the tmux pane (`prompt timeout — dumping pane` / `pane content at timeout`, `pkg/agent/manager.go`). Log-fed: same ≥5-in-10-min repeat threshold and 20-min idle clear as the catch-all below; pane excerpts are scrubbed and bounded before storage | low |
+| `tmux_session_check_failed` | repeated `tmux has-session` probe failures | medium |
+| `agent_pane_timeout` | the agent-readiness wait timed out and the harness dumped the tmux pane (`prompt timeout — dumping pane` / `pane content at timeout`, `pkg/agent/manager.go`); pane excerpts are scrubbed and bounded before storage | low |
+| `proxy_tls_handshake_failed` | repeated TLS handshake failures from the proxy client or transparent proxy | medium |
+| `agent_dir_setup_failed` | repeated failures to create, tighten or restore per-agent XDG, interactive-home or inference-home directories | medium |
+| `review_evidence_write_failed` | repeated failures to write a review evidence bundle | medium |
+| `feedback_issue_refresh_failed` | repeated failures to refresh the feedback issue | medium |
+| `bead_fact_ingest_failed` | repeated failures to ingest a bead fact into the knowledge store | medium |
+| `selfreport_cleared_comment_failed` | repeated failures to post a cleared comment for a self-report | medium |
 | `unclassified_error_repeated` | **generic catch-all**: the same WARN/ERROR log line (numbers, hashes, paths and quoted strings collapsed) repeated ≥5 times in 10 min. Fed by a `slog.Handler` tee (`pkg/fleetreport/slogfeed`) on the hive's root logger, so a repeating defect is noticed even with no hook site. Skips benign lines (read/keepalive i/o timeouts, context cancellation, the permissions watcher's `fixed …` self-healing lines) and any message that already matches another class's keywords. Clears automatically after 20 quiet minutes (2× the window), so a "cleared" comment follows once the symptom stops | low |
+
+The eight named log-fed classes above use the same ≥5-in-10-min repeat
+threshold and 20-min idle clear as `unclassified_error_repeated`. Their
+messages and diagnostics follow the same scrubbing and bounding path.
 
 The generic feed also skips the exact `review pending expired` message: it
 records the review planner's bounded retry, and a burst across unrelated PRs
