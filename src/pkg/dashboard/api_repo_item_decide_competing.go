@@ -13,10 +13,13 @@ import (
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
-// Use the claim freshness window for reachability too. updated_at is not
-// evidence of presence: a bot or another reviewer can update an abandoned PR.
-const delegatedContributorActivityWindow = 4 * time.Hour
+// Use the default claim freshness window for reachability too. Operator TTL
+// overrides still apply to claims, not this GitHub activity window. updated_at
+// is not evidence of presence: others can update an abandoned PR.
+const delegatedContributorActivityWindow = issueclaim.DefaultTTL
 
+// gatherDelegatedCompetition requires the caller to initialize in.HiveAuthored
+// from the live PR author before gathering presence or competing PRs.
 func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr *gh.PullRequest, in *delegatedecision.Input, now time.Time) error {
 	client := s.deps.GHClient
 	api := client.GoGitHub()
@@ -120,14 +123,14 @@ func delegatedContributorOnline(ctx context.Context, api *gh.Client, owner, repo
 	}
 	last := pr.GetCreatedAt().Time
 	note := func(login string, at time.Time) {
-		if author != "" && strings.EqualFold(login, author) && at.After(last) {
+		if strings.EqualFold(login, author) && at.After(last) {
 			last = at
 		}
 	}
-	comments := func(owner, repo string, number int) error {
+	comments := func(o, r string, number int) error {
 		opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: delegatedDecisionGatherLimit}}
 		for {
-			items, resp, err := api.Issues.ListComments(ctx, owner, repo, number, opts)
+			items, resp, err := api.Issues.ListComments(ctx, o, r, number, opts)
 			if err != nil {
 				return err
 			}
