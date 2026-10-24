@@ -39,6 +39,10 @@ type reviewBacklogLedger struct {
 	Fingerprints map[string]map[string]reviewBacklogFingerprintRecord `json:"fingerprints,omitempty"`
 	// PRDailyCount counts items filed or updated per "<pr key>@<UTC day>".
 	PRDailyCount map[string]int `json:"pr_daily_count,omitempty"`
+	// SplitKeys maps a folded finding's link-marker key to the closed host
+	// issue it was split out of (hivecommons/hive#13914), so a re-run of
+	// the split sweep never files the same finding twice from one host.
+	SplitKeys map[string]int `json:"split_keys,omitempty"`
 }
 
 type reviewBacklogRecord struct {
@@ -72,6 +76,7 @@ func newReviewBacklogLedger() *reviewBacklogLedger {
 		PRFiledIssueCount: map[string]int{},
 		Fingerprints:      map[string]map[string]reviewBacklogFingerprintRecord{},
 		PRDailyCount:      map[string]int{},
+		SplitKeys:         map[string]int{},
 	}
 }
 
@@ -104,6 +109,9 @@ func loadReviewBacklog(path string) (*reviewBacklogLedger, error) {
 	}
 	if l.PRDailyCount == nil {
 		l.PRDailyCount = map[string]int{}
+	}
+	if l.SplitKeys == nil {
+		l.SplitKeys = map[string]int{}
 	}
 	return l, nil
 }
