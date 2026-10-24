@@ -199,6 +199,7 @@ func TestReviewBacklogCommentIsOursRejectsHumanAuthoredMarkers(t *testing.T) {
 	cases := []struct {
 		name        string
 		appBotLogin string
+		additional  []string
 		comment     *gh.IssueComment
 		want        bool
 	}{
@@ -206,12 +207,14 @@ func TestReviewBacklogCommentIsOursRejectsHumanAuthoredMarkers(t *testing.T) {
 		{name: "human carrying the marker", appBotLogin: "hive[bot]", comment: comment("mallory", "User"), want: false},
 		{name: "other bot when slug is known", appBotLogin: "hive[bot]", comment: comment("other[bot]", "Bot"), want: false},
 		{name: "exact app bot login", appBotLogin: "hive[bot]", comment: comment("hive[bot]", "Bot"), want: true},
-		{name: "unknown slug falls back to bot type", appBotLogin: "", comment: comment("something[bot]", "Bot"), want: true},
-		{name: "unknown slug still rejects humans", appBotLogin: "", comment: comment("mallory", "User"), want: false},
+		{name: "additional configured bot login", appBotLogin: "hive[bot]", additional: []string{"hive-extra[bot]"}, comment: comment("hive-extra[bot]", "Bot"), want: true},
+		{name: "no configured logins fails closed for bots", appBotLogin: "", comment: comment("something[bot]", "Bot"), want: false},
+		{name: "no configured logins fails closed for github-actions", appBotLogin: "", comment: comment("github-actions[bot]", "Bot"), want: false},
+		{name: "no configured logins still rejects humans", appBotLogin: "", comment: comment("mallory", "User"), want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &Client{appBotLogin: tc.appBotLogin}
+			c := &Client{appBotLogin: tc.appBotLogin, additionalBotLogins: tc.additional}
 			if got := c.reviewBacklogCommentIsOurs(tc.comment); got != tc.want {
 				t.Fatalf("reviewBacklogCommentIsOurs() = %v, want %v", got, tc.want)
 			}

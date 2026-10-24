@@ -263,19 +263,18 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 // this hive's App bot. Only such comments may be parsed for folded findings:
 // the fold marker and `- [ ]` lines are plain text anyone can post on a
 // public issue, and a split re-files them as hive-authored issues and
-// repoints ledger items, so the author is the trust boundary. Same rule as
-// the advisory digest match: exact appBotLogin when known, otherwise fall
-// back to any bot-typed author rather than refusing our own comment on a
-// misconfigured slug.
+// repoints ledger items, so the author is the trust boundary. Only the
+// configured hive bot logins match; with none configured (PAT auth) this
+// fails closed rather than admitting arbitrary third-party bots.
 func (c *Client) reviewBacklogCommentIsOurs(cm *gh.IssueComment) bool {
 	if cm == nil || cm.GetUser() == nil {
 		return false
 	}
-	login := cm.GetUser().GetLogin()
-	if c.appBotLogin != "" {
-		return login == c.appBotLogin
+	logins := c.hiveBotLogins()
+	if len(logins) == 0 {
+		return false
 	}
-	return strings.HasSuffix(login, "[bot]") || cm.GetUser().GetType() == "Bot"
+	return isHiveBotLogin(logins, cm.GetUser().GetLogin())
 }
 
 // reviewBacklogHostIndex is repo → GitHub issue numbers the ledger has
