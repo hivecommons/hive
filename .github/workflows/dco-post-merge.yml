@@ -263,6 +263,18 @@ env:
   # maintainer disposition from clubanderson in #13607: the maintainer merging
   # the PR that adds this entry IS that disposition.
 
+  # 00070300002c88fda6850278edaea2498e8ca941 — the squash of #13794 (review:
+  # one review kick in flight per agent; count load in kicks), on v5, reported
+  # by the monitor in #13903. Missing-signoff caused by the trailer being
+  # dropped when the squash message was edited: both branch commits
+  # (a99e07712, 8ff464a98) carried `Signed-off-by: Gregory Hunt
+  # <greg@on-board.ai>` matching the author, and the PR was reviewed and
+  # squash-merged by maintainer clubanderson. Protected v5 history cannot be
+  # rewritten to restore the trailer, so the correct instrument is this
+  # per-commit waiver. Accepted by maintainer disposition from clubanderson in
+  # #13904, which added the SHA to DCO_WAIVED_COMMITS; this entry completes the
+  # rationale block the waiver integrity self-test requires.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
