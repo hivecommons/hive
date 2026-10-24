@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/crux/testutil"
 )
 
 // A tmux server inherits the environment of the process that starts it, and

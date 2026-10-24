@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/pkg/crux/testutil"
 )
 
 // syncBuffer is a goroutine-safe log sink: the supervisor goroutine writes

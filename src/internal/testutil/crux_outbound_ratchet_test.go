@@ -119,15 +119,15 @@ import (
 // fakes. The two cmd/crux rows (pkg/config, pkg/defsrc: the DefinitionLoader
 // implementation) left when cmd/crux left the set — see the file comment —
 // which completed prerequisite 3: no ring package imports anything from
-// Hive in non-test code.
-var cruxOutboundBaseline = map[string][]string{
-	"pkg/agent": {
-		"internal/testutil (test)",
-	},
-	"pkg/inference": {
-		"internal/testutil (test)",
-	},
-}
+// Hive in non-test code. The last two rows were test-only: pkg/agent and
+// pkg/inference tests used this package's Eventually* and
+// Skip[f]UnlessRequired helpers. Those copied into the ring as
+// pkg/crux/testutil (crux/internal/testutil after the module cut), so the
+// baseline is empty: no ring package imports anything from Hive, in test
+// code or otherwise. After step 4 the module boundary enforces the same
+// thing (the nested module has no replace back to the root), and this test
+// keeps measuring it from the root module's side.
+var cruxOutboundBaseline = map[string][]string{}
 
 // cruxModulePrefixes are the src/-relative package directories (and their
 // subpackages) that Stage 2 moves into the nested module. See the file

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/crux/testutil"
 )
 
 // These tests cover the relaunch LOOP body of RelaunchBobAgentsAwaitingKey —

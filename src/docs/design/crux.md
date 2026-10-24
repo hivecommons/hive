@@ -7,10 +7,9 @@ the dashboard is on it, Crux owns its value types and the hub, spoke,
 dashboard and `cmd/hive` reference them as `crux.<Name>`, CI path filters
 select Crux-only shards for Crux-only PRs, and the `crux` CLI ships. The
 ring's outbound closure, about 55 Hive packages when this record began, is
-now zero in non-test code: the outbound baseline holds only two test-only
-`internal/testutil` rows (`pkg/agent` and `pkg/inference` tests use its
-`Eventually*` and `SkipUnlessRequired` helpers); see
-[Outbound edges](#outbound-edges). What is left of Stage 2 is the move, and
+now zero, in test code too: the outbound baseline is empty (the ring's tests
+use their own `pkg/crux/testutil` copy of `Eventually*` and
+`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). What is left of Stage 2 is the move, and
 its scope and open questions are under
 [Step 4: the module cut](#step-4-the-module-cut). Stage 3 is design only.
 
@@ -285,9 +284,10 @@ The shape, in one PR series on v5, each PR mergeable alone:
    `go list -deps` over the nested module asserting no
    `github.com/hivecommons/hive/pkg/...` or `.../internal/...` import, which
    is the same test with the module boundary doing the walk. The two
-   test-only `internal/testutil` rows have to go first: `Eventually*`
+   test-only `internal/testutil` rows went first (pre-cut): `Eventually*`
    (3 helpers, 9 uses) and `SkipUnlessRequired`/`SkipfUnlessRequired` (21
-   uses) copy into a `crux/internal/testutil` of their own.
+   uses) copied into `pkg/crux/testutil`, which the move renames to
+   `crux/internal/testutil`.
 5. **CI.** `crux-scope.sh`'s `CRUX_DIRS` becomes the single prefix
    `src/crux/`; the v2-tests agent slices and the crux-only `go list` run
    from `src/crux` (`working-directory`) against `./...`; the per-package
@@ -418,16 +418,17 @@ the same change that swaps its imports):
 ## Outbound edges
 
 Imports from ring packages to Hive packages outside the ring, as the
-outbound ratchet records them after Stage 2 prerequisites 1, 2 and 3: no
-ring package imports anything from Hive in non-test code. Entries marked
-*(test)* appear only in `_test.go` files.
+outbound ratchet records them after Stage 2 prerequisites 1, 2 and 3 and
+the step 4 pre-cut: none. The baseline is empty in both directions (test
+and non-test). The last two rows were `pkg/agent → internal/testutil`
+*(test)* and `pkg/inference → internal/testutil` *(test)*: the `Eventually*`
+and `Skip[f]UnlessRequired` helpers those tests used copied into
+`pkg/crux/testutil`, a ring package that becomes `crux/internal/testutil`
+at the module cut; `internal/testutil` keeps the canonical copy and the
+tests of the contract.
 
-| Ring package | Outside Hive imports |
-|---|---|
-| `pkg/agent` | `internal/testutil` *(test)* |
-| `pkg/inference` | `internal/testutil` *(test)* |
-
-Before prerequisite 3 the table also had `pkg/proxy → github,
+Before the pre-cut the table had those two test-only rows; before
+prerequisite 3 the table also had `pkg/proxy → github,
 inferencehealth, ioscan, issueshape, tokens` and `cmd/crux → config,
 defsrc`; before prerequisite 2, `pkg/agent → effects, fleetreport,
 gitidentity, jev, outputschema, pushbroker`, `pkg/inference → watsonx`,

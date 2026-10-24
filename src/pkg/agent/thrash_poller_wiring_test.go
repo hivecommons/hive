@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/crux/testutil"
 )
 
 // TestPollTmuxOutputForAgent_WiresThrashBreaker pins the poller-to-breaker
