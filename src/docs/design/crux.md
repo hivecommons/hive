@@ -30,11 +30,12 @@ The name is "the point everything turns on". Hive turns on Crux.
 |---|---|
 | Runtime core | `pkg/agent` (manager, kick files, engine adapters: aider, bob, claude, codex, copilot, gemini, goose) |
 | Agent definition | `pkg/agentmode`, `pkg/agentparse`, `pkg/agentsmd`, `pkg/skillreg` |
-| Engines and gateway | `pkg/claude`, `pkg/inference`, `pkg/openrouter` |
-| Policy at the tool boundary | `pkg/proxy` (MITM), `pkg/toolapprove` |
+| Engines and gateway | `pkg/claude`, `pkg/inference`, `pkg/openrouter`, `pkg/watsonx` |
+| Policy at the tool boundary | `pkg/proxy` (MITM), `pkg/toolapprove`, `pkg/pushbroker` |
 | Isolation | `pkg/sandbox`, `pkg/kubejob` |
 | Observation | `pkg/watchdog`, `pkg/trajectory`, `pkg/logscrub` |
-| Surface and CLI | `pkg/crux`, `pkg/crux/types`, `pkg/crux/cli`, `cmd/crux` |
+| Stdlib-only leaves | `pkg/crux/types`, `pkg/crux/config`, `pkg/crux/effects`, `pkg/crux/gitidentity`, `pkg/crux/jev`, `pkg/crux/jsonextract`, `pkg/crux/outputschema` |
+| Surface and CLI | `pkg/crux`, `pkg/crux/cli`, `cmd/crux` |
 
 The same list, as directories, is `CRUX_DIRS` in
 `.github/scripts/crux-scope.sh` (CI path filter) and `cruxModulePrefixes` in
@@ -157,8 +158,9 @@ same v5/v6 branches. The `crux` binary that this stage was going to ship
 already exists (item 6), so the stage is the module cut alone.
 
 Not started. It was blocked until the outbound ratchet's `pkg/config` rows
-were gone, which prerequisite 1 delivered; the remaining prerequisites are
-the other outbound rows. A nested module whose packages import `pkg/config` needs the root
+were gone, which prerequisite 1 delivered, and until `pkg/agent` and the
+sibling ring packages imported nothing from Hive, which prerequisite 2
+delivered; what remains is the proxy and `cmd/crux` (prerequisite 3). A nested module whose packages import `pkg/config` needs the root
 module to `replace` the nested one *and* the nested one to `replace` the
 root: a module cycle. It builds, but nothing can consume
 `github.com/hivecommons/hive/crux` without also pulling in all of Hive, so
@@ -179,24 +181,49 @@ cut buys the churn without the benefit. Prerequisites, in order:
    boundary that loads `hive.yaml` for the CLI's `DefinitionLoader`. What
    moved, what was aliased and what was inverted is in
    [Configuration leaf](#configuration-leaf).
-2. The remaining `pkg/agent` edges, measured on v5 after prerequisite 1
-   (distinct `<pkg>.<Symbol>` selectors; *test* counts only `_test.go`):
+2. **Done** (#13916, #13933, #13937). The remaining `pkg/agent` edges, plus
+   the sibling ring edges that fell cheaply: 27 non-test symbols across the
+   six `pkg/agent` edges measured after prerequisite 1, and 7 more across
+   `watchdog`, `toolapprove`, `trajectory` and `inference`. Each symbol was
+   moved, aliased or inverted by one rule: a value type or pure function
+   with no Hive dependency moves into a stdlib-only `pkg/crux/<name>` leaf
+   and the Hive package aliases it; a service with Hive dependencies becomes
+   a narrow interface the host injects; a whole package that is really
+   runtime-side and imported only by the ring joins the ring.
 
-   | Edge | Non-test | Test-only | Files | Shape of the cut |
-   |---|---|---|---|---|
-   | `effects` | 1 (`Boundary`) | 0 | 3 | stdlib-only already; moves into the ring (`pkg/crux/effects` or `pkg/crux/types`), `pkg/effects` aliases |
-   | `gitidentity` | 2 (`AgentIdentity`, `AppLinkedAgentIdentity`) | 0 | 1 | stdlib-only already; moves in, `pkg/gitidentity` aliases |
-   | `outputschema` | 4 (`AgentReport`, `AgentReportFilePrefix`, `AgentReportFileSuffix`, `Validate`) | 0 | 1 | the report schema moves in; it imports `effects` (moves with it) and `convergence/proof`, which has to be inverted or left behind with the host-side validator |
-   | `jev` | 6 (`DefaultEndpoint`, `EndpointEnvVar`, `ModeEnvVar`, `SkillFile`, `SkillMarkdown`, `SkillRelDir`) | 5 | 2 + 1 test | constants and the skill text: a host-provided skill installer / environment seam, or the six symbols move to a stdlib leaf (`jev` itself imports `agentaudit` and `config`, so it does not move whole) |
-   | `fleetreport` | 8 (`Observe`, `Clear`, six `Class*` constants) | 7 | 5 + 3 test | a reporter interface on `Manager` the host injects, the same shape as `SpanStarter`; the classes become `pkg/crux/types` constants. `pkg/watchdog` has the same edge (7 symbols, incl. `RuntimeTracker`) and takes the same seam |
-   | `pushbroker` | 6 (`Broker`, `DefaultRemote`, `GitHubAppMinter`, `PushEnv`, `Result`, `TokenMinter`) | 2 | 3 + 3 test | moves in once its own `pkg/github` (`GitHubAppMinter`) and `logscrub` edges are inverted the way `AgentTokenCachePath` was; `effects` and `gitidentity` move first |
+   | Edge | Symbols | Decision | Where |
+   |---|---|---|---|
+   | `agent → effects` | `Boundary` (1) | moved whole | `pkg/crux/effects`; `pkg/effects` aliases every symbol (#13916) |
+   | `agent → gitidentity` | `AgentIdentity`, `AppLinkedAgentIdentity` (2) | moved whole | `pkg/crux/gitidentity`; the two host callers repointed, `pkg/gitidentity` removed (#13916) |
+   | `agent → jev` | `DefaultEndpoint`, `EndpointEnvVar`, `ModeEnvVar`, `SkillFile`, `SkillMarkdown`, `SkillRelDir` (6) | moved: environment contract + `jev-decide` skill | `pkg/crux/jev`; `pkg/jev` keeps the server and CLI and aliases the six (#13916) |
+   | `agent → outputschema` | `AgentReport`, `AgentReportFilePrefix`, `AgentReportFileSuffix`, `Validate` (4) | moved: schema + validator; `proof.Provenance` inverted to a type | `pkg/crux/outputschema`; the receipt handle is `pkg/crux/types.ProofProvenance`, `pkg/convergence/proof` and `pkg/outputschema` alias; report directory / path helpers stay host side (#13916) |
+   | `trajectory → jsonextract` | `Object` (1) | moved whole | `pkg/crux/jsonextract`; `pkg/jsonextract` aliases (#13916) |
+   | `agent → fleetreport`, `watchdog → fleetreport` | `Observe`, `Clear`, seven `Class*` (9 non-test across the two packages) | inverted | `pkg/crux/types.ConditionReporter` (`Observe`, `Clear`); the classes are `types.Class*` constants and `fleetreport` aliases them. `Manager.SetConditionReporter` (pane text redacted before it leaves the ring) and `watchdog.WithConditionReporter`; `cmd/hive` injects `fleetreport.DefaultReporter{}`, which delegates to the package tracker so `SetDefaultTrackerForTest` still swaps it (#13933) |
+   | `agent → pushbroker` | `Broker`, `DefaultRemote`, `GitHubAppMinter`, `PushEnv`, `Result`, `TokenMinter` (6) | joined the ring; its one Hive edge inverted | `pkg/pushbroker` is a ring package. Its `*github.AppAuth` field became `pushbroker.TokenScoper`; `cmd/hive`'s `appMinter` adapts and leaves a nil interface for a nil credential (#13933) |
+   | `inference → watsonx` | `DefaultMinter`, `ProjectIDHeader` (2) | joined the ring | `pkg/watsonx` is stdlib-only and imported only by `pkg/inference` (#13933) |
+   | `watchdog → rotation` | `Prober` (1) | inverted | `watchdog.UsageProber` (`Provider`, `ProbeError`); `cmd/hive` adapts each `rotation.Prober`, and the two Claude-credential probe tests moved with the adapter (#13937) |
+   | `toolapprove → ioscan` | `ScanInput`, `ScanOutput`, `SeverityHigh` (3) | inverted | `toolapprove.TextScanner`; `pkg/ioscan.ToolApproveScanner` implements it and `cmd/hive` and `pkg/turn` install it at init (`SetDefaultTextScanner`). A desk with no text scanner fails closed (`ErrNoTextScanner`). `ioscan` could not join the ring: `scheduler`, `github`, `config` and `dashboard` import it (#13937) |
 
-   27 non-test symbols across six edges; `effects`, `gitidentity` and
-   `outputschema` are 7 of them and are pure moves. Order: effects +
-   gitidentity (one PR, aliases), outputschema, fleetreport seam (agent and
-   watchdog together), jev, pushbroker.
-3. `pkg/proxy`'s edges to `github`, `ioscan`, `issueshape`, `tokens` and
-   `inferencehealth`, and `pkg/watchdog`'s to `rotation`. The proxy is both a
+   `pkg/agent`, `pkg/inference`, `pkg/toolapprove`, `pkg/trajectory` and
+   `pkg/watchdog` import nothing outside the ring in non-test code; the two
+   `internal/testutil` *(test)* rows are the ratchets themselves. The ring
+   prefix list grew by `pkg/pushbroker` and `pkg/watsonx` in
+   `crux_outbound_ratchet_test.go`, `crux-scope.sh` and the v2-tests
+   boundary comment together.
+3. `pkg/proxy`'s edges and `cmd/crux`'s, measured on v5 after prerequisite 2
+   (distinct non-test `<pkg>.<Symbol>` selectors):
+
+   | Edge | Non-test | Symbols | Likely shape |
+   |---|---|---|---|
+   | `proxy → github` | 1 | `AgentProxyToken` | move the token type to `pkg/crux/types`, `pkg/github` aliases |
+   | `proxy → inferencehealth` | 3 | `GatewayStatus`, `NewStore`, `Store` | a status-sink interface the host injects, or the store joins the ring if nothing else imports it |
+   | `proxy → ioscan` | 3 | `CanaryLeak`, `CanaryRegistry`, `NewCanaryRegistry` | a canary-registry interface the host injects (`ioscan` stays outside, as above) |
+   | `proxy → issueshape` | 2 | `BodyHasMisEscapedNewlines`, `UnsubstitutedTemplatePlaceholder` | pure functions: move to a `pkg/crux` leaf, `issueshape` aliases |
+   | `proxy → tokens` | 4 | `BackendCopilot`, `InferenceSink`, `NewInferenceSink`, `SessionEntry` | a usage-sink interface the host injects |
+   | `cmd/crux → config` | 5 | `AgentConfig`, `Config`, `Load`, `LoadAgentOverrides`, `PoliciesConfig` | stays: this is the process boundary that loads `hive.yaml` for `cli.DefinitionLoader`; the nested module's `cmd/crux` is a host-side binary or gets a `crux/config`-only loader |
+   | `cmd/crux → defsrc` | 3 | `DefinitionKind`, `MergeAllowedFields`, `ParseDefinition` | the portable-YAML parser could move to a leaf; `ApplyToConfig(*config.Config)` and the governor `Cadence` stay |
+
+   13 non-test symbols on the proxy, 8 on `cmd/crux`. The proxy is both a
    ring member and an inbound consumer (14 `agent.<Symbol>` references);
    whether it stays in the ring is decided when those edges are cut, not
    before.
@@ -303,22 +330,26 @@ the same change that swaps its imports):
 ## Outbound edges
 
 Imports from ring packages to Hive packages outside the ring, as the
-outbound ratchet records them after the configuration-leaf migration: no
-ring package imports `pkg/config`. Entries marked *(test)* appear only in
-`_test.go` files.
+outbound ratchet records them after Stage 2 prerequisites 1 and 2: no ring
+package imports `pkg/config`, and `pkg/agent` and the sibling ring packages
+import nothing from Hive. Entries marked *(test)* appear only in `_test.go`
+files.
 
 | Ring package | Outside Hive imports |
 |---|---|
 | `cmd/crux` | `config`, `defsrc` (the `DefinitionLoader` implementation; moved here from `pkg/crux/cli`, see [Configuration leaf](#configuration-leaf)) |
-| `pkg/agent` | `effects`, `fleetreport`, `gitidentity`, `jev`, `outputschema`, `pushbroker`, `internal/testutil` *(test)* |
-| `pkg/inference` | `watsonx`, `internal/testutil` *(test)* |
+| `pkg/agent` | `internal/testutil` *(test)* |
+| `pkg/inference` | `internal/testutil` *(test)* |
 | `pkg/proxy` | `github`, `inferencehealth`, `ioscan`, `issueshape`, `tokens` |
-| `pkg/toolapprove` | `ioscan` |
-| `pkg/trajectory` | `jsonextract` |
-| `pkg/watchdog` | `fleetreport`, `rotation` |
+
+Before prerequisite 2 the table also had `pkg/agent → effects, fleetreport,
+gitidentity, jev, outputschema, pushbroker`, `pkg/inference → watsonx`,
+`pkg/toolapprove → ioscan`, `pkg/trajectory → jsonextract` and
+`pkg/watchdog → fleetreport, rotation`; the per-edge decisions are under
+[Staged plan](#staged-plan).
 
 Edges removed in #13785, and the shape each cut took, because the same
-shapes apply to the rows above:
+shapes applied to the rows that followed:
 
 | Edge | Cut |
 |---|---|
@@ -343,7 +374,7 @@ cd src && go test ./pkg/agent/... ./pkg/crux/... ./cmd/crux \
   ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
   ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg \
   ./pkg/inference ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory \
-  ./pkg/logscrub ./pkg/proxy
+  ./pkg/logscrub ./pkg/proxy ./pkg/pushbroker ./pkg/watsonx
 ```
 
 Both ratchets live in `./internal/testutil` and run with that package. In
