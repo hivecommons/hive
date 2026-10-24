@@ -464,9 +464,16 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			continue
 		}
+		if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
+			continue
+		}
 		if err := client.ensureStageLabelFamily(ctx, in.Repo); err != nil {
 			if logger != nil {
-				logger.Warn("issue stage labels: provisioning failed", "repo", in.Repo, "error", err)
+				if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
+					logger.Warn("issue stage labels: repository is archived and read-only, skipping it until restart; remove it from the configured repos", "repo", in.Repo, "error", err)
+				} else {
+					logger.Warn("issue stage labels: provisioning failed", "repo", in.Repo, "error", err)
+				}
 			}
 			continue
 		}
@@ -717,10 +724,12 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 		case !ok:
 			_, _, err := c.client.Issues.CreateLabel(ctx, owner, name, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)})
 			if err != nil && !githubStatusError(err, http.StatusUnprocessableEntity) {
+				c.noteArchivedLabelRefusal(key, err)
 				return err
 			}
 		case !strings.EqualFold(cur.GetColor(), def.Color):
 			if _, _, err := c.client.Issues.EditLabel(ctx, owner, name, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)}); err != nil {
+				c.noteArchivedLabelRefusal(key, err)
 				return err
 			}
 		}
@@ -728,4 +737,13 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 	c.stageFamily.mark(key)
 	c.coveredByPRLabel.mark(key)
 	return nil
+}
+
+// noteArchivedLabelRefusal memoises the repo when GitHub refused a label
+// create or edit because the repository is archived and read-only
+// (hivecommons/hive#14026), so later sweeps skip it instead of retrying.
+func (c *Client) noteArchivedLabelRefusal(key string, err error) {
+	if githubStatusError(err, http.StatusForbidden) && strings.Contains(strings.ToLower(err.Error()), "archived") {
+		c.stageArchived.mark(key)
+	}
 }

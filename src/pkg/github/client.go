@@ -380,6 +380,9 @@ type Client struct {
 	// stageFamily memoises repos whose stage/author label family has been
 	// provisioned this process (hivecommons/hive#12436). Zero value is ready.
 	stageFamily coveredByPRLabelState
+	// stageArchived memoises repos GitHub refused label writes on because
+	// they are archived (hivecommons/hive#14026); the sweep skips them.
+	stageArchived coveredByPRLabelState
 	// legacyDecisionLabels memoises repos whose retired needs-decision /
 	// needs-direction definitions were deleted (hivecommons/hive#12683).
 	legacyDecisionLabels coveredByPRLabelState

@@ -1,0 +1,1 @@
+- Stage-label provisioning stops retrying a repository GitHub reports as archived (403 "Repository was archived so is read-only"); the refusal is logged once with the remedy instead of on every sweep ([#14026](https://github.com/hivecommons/hive/issues/14026)).

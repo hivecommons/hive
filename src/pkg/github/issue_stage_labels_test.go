@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1011,4 +1012,141 @@ func TestForgeIssueLabelsDoesNotAlias(t *testing.T) {
 	if got := []string{"bug", "help wanted"}; !slices.Equal(result, got) {
 		t.Errorf("forgeIssueLabels result: got %v, want %v", result, got)
 	}
+}
+
+// archivedLabelServer answers label reads from existing and refuses every
+// label create/edit with GitHub's archived-repository 403.
+func archivedLabelServer(t *testing.T, existing string, posts, patches *int, mu *sync.Mutex) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodPost, http.MethodPatch:
+			mu.Lock()
+			if r.Method == http.MethodPost {
+				*posts++
+			} else {
+				*patches++
+			}
+			mu.Unlock()
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+		default:
+			_, _ = w.Write([]byte(existing))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestEnsureStageLabelFamilyArchivedRepoMemoised(t *testing.T) {
+	var mu sync.Mutex
+	posts, patches := 0, 0
+	srv := archivedLabelServer(t, `[]`, &posts, &patches, &mu)
+	c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+	if err := c.ensureStageLabelFamily(context.Background(), "acme/widgets"); err == nil {
+		t.Fatal("want the archived refusal surfaced")
+	}
+	if !c.stageArchived.has("acme/widgets") {
+		t.Fatal("archived repo not memoised")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 1 || patches != 0 {
+		t.Fatalf("label creates = %d, edits = %d, want 1 create and no edits", posts, patches)
+	}
+}
+
+// An archived repo whose stage labels exist with a drifted colour is refused
+// on EditLabel rather than CreateLabel; it must be memoised the same way.
+func TestEnsureStageLabelFamilyArchivedRepoMemoisedOnEdit(t *testing.T) {
+	var mu sync.Mutex
+	posts, patches := 0, 0
+	def := stagelabels.AllLabelDefs()[0]
+	existing, _ := json.Marshal([]map[string]string{{"name": def.Name, "color": "000000"}})
+	srv := archivedLabelServer(t, string(existing), &posts, &patches, &mu)
+	c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+	if err := c.ensureStageLabelFamily(context.Background(), "acme/widgets"); err == nil {
+		t.Fatal("want the archived refusal surfaced")
+	}
+	if !c.stageArchived.has("acme/widgets") {
+		t.Fatal("archived repo not memoised on the edit path")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 0 || patches != 1 {
+		t.Fatalf("label creates = %d, edits = %d, want no creates and 1 edit", posts, patches)
+	}
+}
+
+// hivecommons/hive#14026: the first sweep against an archived repo pays one
+// refused create and logs the archived warning; later sweeps skip the repo
+// without touching the label API or logging again.
+func TestSyncIssueStageLabels_ArchivedRepoSkippedOnLaterSweeps(t *testing.T) {
+	fake := newIssueStageServer(t)
+	var mu sync.Mutex
+	posts := 0
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/repos/acme/widgets/labels") {
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPost {
+				mu.Lock()
+				posts++
+				mu.Unlock()
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"Repository was archived so is read-only."}`))
+				return
+			}
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		fake.srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+
+	var logMu sync.Mutex
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(lockedWriter{mu: &logMu, w: &logs}, nil))
+	c := NewClientForTest(front.URL, "acme", []string{"widgets"}, logger)
+	c.SetIssueStageLabels(func() IssueStagePolicy { return IssueStagePolicy{Enabled: true} })
+	store := stagelabels.NewStore("", stageNow)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 1, Labels: []string{"bug"}}})
+	fake.seed(result)
+	ResetRateLimitPacingForTest()
+	resetRESTAccountingForTest(t, stageNow())
+
+	for sweep := 1; sweep <= 2; sweep++ {
+		SyncIssueStageLabelsWith(context.Background(), c, result, store, stageNow(), logger, nil)
+	}
+	mu.Lock()
+	gotPosts := posts
+	mu.Unlock()
+	if gotPosts != 1 {
+		t.Fatalf("label creates across two sweeps = %d, want 1 (archived repo skipped after the first refusal)", gotPosts)
+	}
+	if fake.writes() != 0 {
+		t.Fatalf("archived repo must receive no issue label writes, got %v / %v", fake.added, fake.removed)
+	}
+	logMu.Lock()
+	out := logs.String()
+	logMu.Unlock()
+	if n := strings.Count(out, "repository is archived and read-only"); n != 1 {
+		t.Fatalf("archived warning logged %d times, want 1:\n%s", n, out)
+	}
+	if strings.Contains(out, "provisioning failed") {
+		t.Fatalf("archived repo must not log the generic provisioning failure:\n%s", out)
+	}
+}
+
+// lockedWriter serialises slog output written from the sweep.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *strings.Builder
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
