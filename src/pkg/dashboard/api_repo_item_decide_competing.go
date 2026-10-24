@@ -10,13 +10,12 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // Use the default claim freshness window for reachability too. Operator TTL
 // overrides still apply to claims, not this GitHub activity window. updated_at
 // is not evidence of presence: others can update an abandoned PR.
-const delegatedContributorActivityWindow = issueclaim.DefaultTTL
+const delegatedContributorActivityWindow = ghpkg.IssueClaimDefaultTTL
 
 // gatherDelegatedCompetition requires the caller to initialize in.HiveAuthored
 // from the live PR author before gathering presence or competing PRs.
@@ -53,7 +52,7 @@ func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr
 		if err != nil {
 			return fmt.Errorf("reading linked issue claim: %w", err)
 		}
-		if live && claim.Source != issueclaim.SourceAssignee && strings.EqualFold(claim.Identity, pr.GetUser().GetLogin()) {
+		if live && claim.Source != ghpkg.IssueClaimSourceAssignee && strings.EqualFold(claim.Identity, pr.GetUser().GetLogin()) {
 			claimedOnline = true
 		}
 	}
