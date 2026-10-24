@@ -326,6 +326,15 @@ func TestPaneShowsFatalNetworkErrorUnit(t *testing.T) {
 	}
 }
 
+// TestPaneShowsCopilotModelFallbackAutoIsNotSubstitution covers #14041: "auto"
+// is the CLI's unresolved selector, not a substituted model.
+func TestPaneShowsCopilotModelFallbackAutoIsNotSubstitution(t *testing.T) {
+	banner := []string{`Model "claude-fable-5" from --model flag is not available. Using "auto" instead.`}
+	if _, _, ok := paneShowsCopilotModelFallback(banner); ok {
+		t.Error(`running model "auto" must not be reported as a substitution`)
+	}
+}
+
 // TestPaneShowsCopilotModelFallbackUnit covers #9927: the Copilot CLI's
 // startup banner when --model names an id the pinned CLI rejects, and the
 // substituted model it silently ran instead.

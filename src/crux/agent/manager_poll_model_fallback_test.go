@@ -30,4 +30,10 @@ func TestLogCopilotModelFallbackWarnsOnce(t *testing.T) {
 	if warns() != 2 {
 		t.Fatalf("changed tuple should warn, got %d warns", warns())
 	}
+	// A recreated AgentProcess with the same name must not re-warn (#14041).
+	b := &AgentProcess{Name: "telemetry"}
+	m.logCopilotModelFallback(b, "claude-sonnet-4.6", "claude-sonnet-4.5")
+	if warns() != 2 {
+		t.Fatalf("recreated agent with same tuple must not warn, got %d warns", warns())
+	}
 }

@@ -1,0 +1,1 @@
+- Copilot CLI model-substitution warning is logged once per agent and no longer fires when the CLI reports the unresolved `auto` model (#14041)

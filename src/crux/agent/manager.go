@@ -309,9 +309,6 @@ type AgentProcess struct {
 	// alongside LastError on every (re)launch so a corrected model re-arms
 	// detection.
 	copilotModelFallbackRequested string
-	// copilotModelFallbackWarned is the "requested\x00running" tuple already
-	// logged at Warn; unlike the field above it survives relaunches.
-	copilotModelFallbackWarned string
 	// tokenRestartAttempts counts CONSECUTIVE token-triggered restarts that did
 	// not clear the login prompt. The restart is a falsifiable theory — "a valid
 	// token exists, the agent just has not picked it up yet" — and this is what
@@ -520,6 +517,11 @@ type Manager struct {
 	// that spaces rate-limit relaunches (rateLimitRelaunchFleetSpacing). Its
 	// own mutex: the pane pollers that consult it must not take m.mu.
 	rateLimitRelaunchMu   sync.Mutex
+	// copilotModelFallbackWarnedMu guards copilotModelFallbackWarnedByAgent,
+	// the last-warned substitution tuple per agent name. Keyed on the manager
+	// so it survives the AgentProcess being recreated (remove/add, reconcile).
+	copilotModelFallbackWarnedMu      sync.Mutex
+	copilotModelFallbackWarnedByAgent map[string]string
 	lastRateLimitRelaunch time.Time
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on

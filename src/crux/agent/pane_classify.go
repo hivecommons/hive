@@ -97,6 +97,10 @@ var copilotModelFallbackRe = regexp.MustCompile(`Model "([^"]+)" from --model fl
 func paneShowsCopilotModelFallback(lines []string) (requested, running string, ok bool) {
 	for _, line := range lines {
 		if m := copilotModelFallbackRe.FindStringSubmatch(line); m != nil {
+			// "auto" is the CLI's unresolved model selector, not a substitution.
+			if strings.EqualFold(strings.TrimSpace(m[2]), "auto") {
+				continue
+			}
 			return m[1], m[2], true
 		}
 	}

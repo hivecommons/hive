@@ -673,10 +673,15 @@ func (m *Manager) claimRateLimitRelaunch(agent *AgentProcess, now time.Time) boo
 func (m *Manager) logCopilotModelFallback(agent *AgentProcess, requested, running string) {
 	tuple := requested + "\x00" + running
 	level := slog.LevelDebug
-	if agent.copilotModelFallbackWarned != tuple {
-		agent.copilotModelFallbackWarned = tuple
+	m.copilotModelFallbackWarnedMu.Lock()
+	if m.copilotModelFallbackWarnedByAgent == nil {
+		m.copilotModelFallbackWarnedByAgent = make(map[string]string)
+	}
+	if m.copilotModelFallbackWarnedByAgent[agent.Name] != tuple {
+		m.copilotModelFallbackWarnedByAgent[agent.Name] = tuple
 		level = slog.LevelWarn
 	}
+	m.copilotModelFallbackWarnedMu.Unlock()
 	m.logger.Log(context.Background(), level, "copilot CLI substituted the configured model",
 		"agent", agent.Name,
 		"requested_model", requested,
