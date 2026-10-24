@@ -477,6 +477,7 @@ agents.<key>.standby.daily_cap_per_contributor # TODO #11854
 agents.<key>.standby.enabled # TODO #11854
 agents.<key>.standby.min_model_capability # TODO #11854
 agents.<key>.task_mcp.drop_stuffed_context # TODO #11854
+classifier.backend # TODO #11854
 classifier.jev.api_key_env # TODO #11854
 classifier.jev.decisions[] # TODO #11854
 classifier.jev.endpoint # TODO #11854
@@ -484,6 +485,8 @@ classifier.jev.min_confidence # TODO #11854
 classifier.jev.model # TODO #11854
 classifier.jev.provider # TODO #11854
 classifier.jev.timeout # TODO #11854
+classifier.mode # TODO #11854
+deployment.runtime # TODO #11854
 fleet.run_wait_amber_seconds # TODO #11854
 governor.work_source.external.auth_token # TODO #11854
 governor.work_source.external.base_url # TODO #11854

@@ -70,7 +70,7 @@ func installIoscanClassifier(sched ioscanClassifierSink, cfg *config.Config, log
 		sched.SetClassifier(ioscan.UnavailableClassifier{Err: cerr}, ioscan.Thresholds{})
 		logger.Error("ioscan classifier required at this ACMM level but not running; untrusted text is withheld",
 			"reason", cerr.Error(), "acmm_level", acmmLevel,
-			"fix", "configure governor.trajectory/litellm, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open (Settings → Security → Input Defense)")
+			"fix", "configure governor.trajectory/litellm, set ioscan.classifier.backend: claude, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open (Settings → Security → Input Defense)")
 	case cerr != nil:
 		logger.Warn("ioscan classifier enabled but not running", "reason", cerr.Error())
 	default:

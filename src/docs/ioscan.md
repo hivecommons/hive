@@ -143,12 +143,14 @@ marker and records a fail-closed entry. `classifier.fail_mode` left unset
 follows `ioscan.fail_mode`, so it is `closed` at L5–L6 and `open` below. At
 L5–L6 a hive with no model endpoint configured therefore withholds all
 untrusted text until one is set, or until the owner sets
+`classifier.backend: claude` (see **CLI backend** below),
 `classifier.enabled: false` or `classifier.fail_mode: open`. The boot log
 says so in one line. A hive whose agents all run on a subscription CLI such
-as Copilot has no such endpoint, so this is the usual case there. Both
-settings take effect on the next scheduler pass, without a restart. The
-classifier itself is built at boot, so switching it on where it was not
-running at boot needs a restart.
+as Copilot has no such endpoint, so this is the usual case there and the
+CLI backend is the remedy that keeps the classifier running. The `enabled`
+and `fail_mode` settings take effect on the next scheduler pass, without a
+restart. The classifier itself is built at boot, so switching it on or
+changing its backend where it was not running at boot needs a restart.
 
 **What still passes.** The classifier has a budget of 64 calls per scheduler
 pass (8 with a CLI backend, see below). Text beyond that budget is passed on with a `budget_exhausted` skip in

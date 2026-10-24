@@ -51555,7 +51555,7 @@ function burnAreaChart() {
       const classifierBackend = String(sec.ioscanClassifierBackend || '').trim();
       const classifierControls = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifierSetting')
         ? `<div class="config-field" data-setting-key="ioscan.classifier.enabled">
-          <label>Semantic classifier ${settingHelpMark('ioscan', '', 'Semantic classifier', `A model scores the untrusted text the rules let through. The default is on at ACMM L4–L6 and off below. It needs a model gateway. Switching it off takes effect on the next pass; switching it on takes effect after a restart.`)}</label>
+          <label>Semantic classifier ${settingHelpMark('ioscan', '', 'Semantic classifier', `A model scores the untrusted text the rules let through. The default is on at ACMM L4–L6 and off below. It needs a model gateway or the claude CLI backend. Switching it off takes effect on the next pass; switching it on takes effect after a restart.`)}</label>
           <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierSetting" data-arg-types="s,s,v">
             <option value="" ${classifierSetting === '' ? 'selected' : ''}>level default (now ${sec.ioscanClassifierEnabled ? 'on' : 'off'})</option>
             <option value="on" ${classifierSetting === 'on' ? 'selected' : ''}>on</option>

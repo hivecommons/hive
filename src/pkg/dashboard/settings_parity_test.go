@@ -80,7 +80,30 @@ var controlOnlyLeaves = map[string]bool{
 
 func settingsParityReferenced(corpus, controlCorpus, path string) bool {
 	if controlOnlyLeaves[path] {
-		return strings.Contains(controlCorpus, path)
+		return containsLeaf(controlCorpus, path)
 	}
-	return strings.Contains(corpus, path)
+	return containsLeaf(corpus, path)
+}
+
+// containsLeaf reports whether path occurs in corpus as a whole dotted leaf:
+// a match preceded by '.' or an identifier character is a longer key that
+// merely ends in path (ioscan.classifier.backend vs classifier.backend) and
+// does not count as a reference.
+func containsLeaf(corpus, path string) bool {
+	for start := 0; ; {
+		i := strings.Index(corpus[start:], path)
+		if i < 0 {
+			return false
+		}
+		i += start
+		if i == 0 || !isLeafChar(corpus[i-1]) {
+			return true
+		}
+		start = i + 1
+	}
+}
+
+func isLeafChar(c byte) bool {
+	return c == '.' || c == '_' || c == '-' ||
+		(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }

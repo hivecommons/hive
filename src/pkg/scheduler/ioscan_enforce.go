@@ -75,9 +75,6 @@ func (s *Scheduler) resetClassifierBudget() {
 	defer s.mu.Unlock()
 	if s.classifier != nil {
 		s.classifierBudget = s.classifierBudgetPerEval
-		if s.classifierBudget <= 0 {
-			s.classifierBudget = ioscan.DefaultClassifierBudgetPerEval
-		}
 	}
 }
 
