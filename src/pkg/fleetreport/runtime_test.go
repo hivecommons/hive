@@ -350,6 +350,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
 		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
 		{class: ClassFeedbackIssueRefreshFailed, message: "feedback: issue refresh failed"},
+		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
+		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -844,6 +846,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
 		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
 		"feedback: issue refresh failed":          ClassFeedbackIssueRefreshFailed,
+		"failed to tighten inference home mode":   ClassAgentDirSetupFailed,
+		"failed to ingest bead fact":              ClassBeadFactIngestFailed,
+		"fleet report: cleared comment failed":    ClassSelfReportClearedFailed,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
