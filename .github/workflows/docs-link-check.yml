@@ -49,6 +49,7 @@ on:
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/test-check-security-docs-readability.sh'
       - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
@@ -72,6 +73,7 @@ on:
       - 'src/scripts/check-docs-citations.py'
       - 'src/scripts/test-check-docs-citations.sh'
       - 'src/scripts/check-security-docs-readability.sh'
+      - 'src/scripts/test-check-security-docs-readability.sh'
       - 'src/scripts/check-security-docs-rot.sh'
       - 'src/scripts/check-api-reference-citations.sh'
       - 'src/scripts/test-check-api-reference-citations.sh'
@@ -121,6 +123,9 @@ jobs:
 
       # Security docs must stay readable by a non-expert: Flesch-Kincaid grade
       # 11 or lower for SECURITY.md and the src/docs/security*/ioscan* set.
+      - name: Self-test the security docs readability checker
+        run: bash src/scripts/test-check-security-docs-readability.sh
+
       - name: Check security docs readability
         run: bash src/scripts/check-security-docs-readability.sh --verbose
 
