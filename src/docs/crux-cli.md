@@ -30,6 +30,7 @@ Every subcommand maps onto one or two `crux.Runtime` methods and nothing else:
 | `crux logs <agent> --full` | `Observer.FullLogHeader`, `Observer.CaptureFullLog` |
 | `crux kick <agent> <message...\|->` | `Observer.ResolveAgent`, `Kicker.SendKick` (`-` reads the message from stdin) |
 | `crux stop <agent>` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
+| `crux serve [--socket P] [--listen H:P] [--token T]` | the whole surface, over HTTP+JSON ([crux-serve.md](crux-serve.md)) |
 
 Global flags go before the subcommand:
 
@@ -39,9 +40,14 @@ Global flags go before the subcommand:
 | `--config hive.yaml` | a hive config whose enabled `agents:` define the runtime, loaded with the same `config.Load` as `hive` itself |
 | `--socket PATH` | control socket; default `<workdir>/crux.sock` |
 | `--local` | never use a running `crux run`'s socket; build a fresh runtime in this process |
+| `--server ADDR` | drive a `crux serve` at `ADDR` (socket path, `unix:///path`, `host:port`, `http://…`) instead of an in-process runtime; default `$CRUX_SERVER` |
+| `--token T` | bearer token for `--server`; default `$CRUX_TOKEN` |
 
 `run` flags: `--detach` (return after `Start`, leave the agent running),
 `--interval D` (output poll interval, default 1s), `--no-socket`.
+
+`logs -f` follows the agent's ring buffer; it is available in remote mode
+only, where the server streams it.
 
 Exit codes: 0 ok, 1 runtime error, 2 usage.
 
@@ -92,7 +98,29 @@ crux stop fixer
 The socket carries one JSON request per connection (the subcommand's argv)
 and one JSON response (what the command wrote, and its exit code). The
 serving side runs the same command code the local path runs. It is a local
-convenience for one work dir, not the Stage 3 `crux serve` API.
+convenience for one work dir, not the `crux serve` API.
+
+## Remote mode
+
+`crux serve` is the long-lived process when something other than a
+foreground `crux run` should own the agents: it builds the runtime from
+`--config` and exposes it over HTTP+JSON on a unix socket (optionally TCP
+with a bearer token). With `--server` or `CRUX_SERVER` set, `run`, `ps`,
+`logs`, `kick` and `stop` talk to it and build nothing locally:
+
+```sh
+crux --config hive.yaml serve &                       # serving on unix:///run/user/1000/crux/crux.sock
+export CRUX_SERVER=/run/user/$(id -u)/crux/crux.sock
+crux run fixer.yaml                                   # parsed here, sent as JSON, output followed
+crux ps
+crux logs fixer -f
+crux stop fixer
+```
+
+`serve` itself ignores `--server`/`CRUX_SERVER` and always runs locally, so a
+server address left in a shell profile does not stop a new server from
+starting. Routes, auth, defaults and curl examples are in
+[crux-serve.md](crux-serve.md).
 
 Without a live socket, the observer commands build a fresh runtime from
 `--config`. That runtime knows the definitions and can read the pane of a

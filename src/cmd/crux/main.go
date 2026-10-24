@@ -1,8 +1,10 @@
 // Command crux runs, observes and controls agents through crux.Runtime
-// (hivecommons/hive#13536; src/docs/crux-cli.md). All behaviour lives in
-// pkg/crux/cli; this package is the process boundary: signals, exit code and
-// the Hive-backed definition loader (definitions.go) the CLI programs
-// against through cli.DefinitionLoader.
+// (hivecommons/hive#13536; src/docs/crux-cli.md), serves that runtime over
+// the Crux API (`crux serve`; src/docs/crux-serve.md) and, with --server or
+// CRUX_SERVER, drives such a server instead of an in-process runtime. All
+// behaviour lives in crux/cli; this package is the process boundary:
+// signals, exit code and the Hive-backed definition loader (definitions.go)
+// the CLI programs against through cli.DefinitionLoader.
 package main
 
 import (

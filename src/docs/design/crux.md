@@ -429,21 +429,65 @@ Still Stage 2, in this order:
   one mutex) that this record proposed is moot for the same reason: no
   consumer outside `crux/agent` names `AgentProcess` any more; they hold
   `*crux.Process` snapshots or build fixtures through `crux/cruxtest`.
-- **`crux serve`** has its first cut (#13959); the Go client, CLI remote
-  mode and the serve docs are tracked in #14138. What remains of this
-  record's list, in #14138's order: the Go client and `crux --server` /
-  `CRUX_SERVER`; the serve docs; the in-process-vs-sidecar decision for
-  `cmd/hive` (the last twelve inbound rows hang on it); `crux/vX.Y.Z`
-  tags and the `go get` path caveat above; moving `cmd/crux` into the
-  nested module once config and `defsrc` loading are injected; a generic
-  tool policy for the MITM proxy (the rules are GitHub-shaped today); and
-  keeping this status section current.
+- **`crux serve`** has shipped its first cut (#13959), the Go client and
+  CLI remote mode (`crux --server` / `CRUX_SERVER`, #14090) and the serve
+  docs ([crux-serve.md](../crux-serve.md)); the Stage 3 status block below
+  has the detail. What remains of this record's list, in #14138's order:
+  the in-process-vs-sidecar decision for `cmd/hive` (the last twelve
+  inbound rows hang on it); `crux/vX.Y.Z` tags and the `go get` path
+  caveat above; moving `cmd/crux` into the nested module once config and
+  `defsrc` loading are injected; a generic tool policy for the MITM proxy
+  (the rules are GitHub-shaped today); and keeping this status section
+  current.
 
-**Stage 3: platform.** `crux serve` with an API (gRPC or HTTP), tenancy, auth,
-quotas; Hive and hub become clients; the hub-to-runtime contract becomes
-explicit and versioned; move to `hivecommons/crux`. Only when a second
-consumer is real (candidates: Nous / Experiment Lab, Spektacular, Dibs,
-external optimizer and formal-verification lanes, enterprise agent services).
+**Stage 3: platform.** `crux serve` with an API, tenancy, auth, quotas; Hive
+and hub become clients; the hub-to-runtime contract becomes explicit and
+versioned; move to `hivecommons/crux`. The platform pieces wait until a
+second consumer is real (candidates: Nous / Experiment Lab, Spektacular,
+Dibs, external optimizer and formal-verification lanes, enterprise agent
+services).
+
+*Status: the process boundary has shipped; nothing consumes it yet.*
+
+- **Shipped: `crux serve` and the API** (operator page
+  [crux-serve.md](../crux-serve.md)). The transport question the plan left
+  open ("gRPC or HTTP") is settled as HTTP+JSON over a unix domain socket,
+  with optional TCP behind a bearer token, and server-sent events for the
+  two streams. The wire contract is `crux/api`, stdlib-only so a client
+  does not link the runtime; the server is `crux/serve`; the socket path,
+  env names and `ServeConfig` are in `crux/config`. The routes under `/v1`
+  are the CLI verbs — list, get, run from a definition, logs (pane, buffer,
+  full, or followed), kick, stop — plus `/v1/events`, which carries the
+  lifecycle actions the API performed, state transitions the server's
+  watcher observed (crash, restart, pause; there is no runtime hook for
+  these, so it polls `AllStatuses`), and the kick observer relayed through
+  `Kicker.SetKickObserver`. It fails closed: no TCP without a token, a
+  token-less server answers only requests it saw arrive on its own unix
+  socket, the socket is `0600` from the instant it is reachable in a
+  directory that must be owned by the serving uid with no group/other bits,
+  a token when set gates the socket too. Posting a definition applies the
+  YAML loader's name gate and per-agent defaults, and a name the runtime
+  already knows is a `409`. Agents start under the server's context, not the
+  request's, because the runtime ties an agent's lifetime to the context
+  `Start` received.
+- **Shipped: a Go client and CLI remote mode** (#14090). `api.NewClient`
+  speaks the contract; `crux --server ADDR` (or `CRUX_SERVER`) with `--token`
+  (`CRUX_TOKEN`) makes `run`, `ps`, `logs`, `kick` and `stop` drive a
+  server instead of an in-process runtime, which answers the question the
+  CLI section below raised: a process other than the launcher now owns the
+  agent by being the one process that holds the runtime, and everyone else
+  is a client. The per-work-dir control socket of `crux run` stays as the
+  single-work-dir convenience it was. `serve` itself ignores `CRUX_SERVER`
+  so a stale address in a shell profile cannot stop a server from starting.
+- **Not done, in this order** (tracked in #14138). *Hive as a client*: `cmd/hive` and
+  `pkg/dashboard` still construct `*agent.Manager` in-process; switching
+  them to `api.Client` is a separate decision because it changes the
+  failure modes of the governor (a runtime that can be unreachable) and
+  needs the `Process` type below so the wire projection and the in-process
+  snapshot stop diverging. *`Process` as its own type* and *folding
+  `crux/types`* (Stage 2 leftovers above). *Tags* (`crux/vX.Y.Z`, above).
+  *Tenancy, quotas, the hub contract, the move to `hivecommons/crux`*:
+  when the second consumer exists.
 
 ## CLI
 
@@ -462,6 +506,10 @@ the ratchet boundary, so it adds no baseline row.
 | `logs` | `Observer.ResolveAgent`, `Observer.GetOutput` / `GetBufferOutput` / `FullLogHeader`+`CaptureFullLog` |
 | `kick` | `Observer.ResolveAgent`, `Kicker.SendKick` |
 | `stop` | `Observer.ResolveAgent`, `Lifecycle.Stop` |
+| `serve` | all of the above, over the API (Stage 3; [crux-serve.md](../crux-serve.md)) |
+
+With `--server ADDR` / `CRUX_SERVER` the first five go through `api.Client`
+to a `crux serve` instead; `serve` itself is only ever local.
 
 Definitions are the two formats hive already reads (`kind: AgentDefinition`
 via `defsrc`, or an `agents_dir` overlay via `config.LoadAgentOverrides`),
@@ -474,9 +522,12 @@ adoption method, so a second process cannot stop or kick an agent that a
 first process started. The CLI therefore makes `crux run` the long-lived
 command and has it serve a unix control socket (`<workdir>/crux.sock`) that
 `ps`/`logs`/`kick`/`stop` forward to when present. That socket is a
-single-work-dir convenience and is not the Stage 3 API; what Stage 3 has to
+single-work-dir convenience and is not the Stage 3 API; what Stage 3 had to
 add to `Runtime` (or beside it) is exactly the piece the socket papers over:
 a way for a process other than the launcher to own or adopt an agent.
+`crux serve` is that piece, by making the server the one launcher and
+everything else a client; adoption of an agent started by some other
+process is still not a `Runtime` capability.
 
 ## Configuration leaf
 
@@ -618,6 +669,8 @@ Comb, Hum, Osmia, Apis.
 ## References
 
 - RFC: [hivecommons/hive#13536](https://github.com/hivecommons/hive/issues/13536)
+  (stage 1, closed); stage 2/3 tracker
+  [hivecommons/hive#14138](https://github.com/hivecommons/hive/issues/14138)
 - Ratchets: `src/internal/testutil/crux_boundary_ratchet_test.go` (inbound),
   `src/internal/testutil/crux_outbound_ratchet_test.go` (outbound)
 - CI scope: `.github/scripts/crux-scope.sh` (#13541)
