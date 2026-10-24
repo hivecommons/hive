@@ -346,6 +346,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassCIPollNudge, message: "ci-poll nudge: agent polling ci 4 times since last kick"},
 		{class: ClassIssueRequestStuck, message: "issue-request stuck: issue request failed 3 attempts over 7m"},
 		{class: ClassTmuxSessionCheckFailed, message: "tmux has-session failed"},
+		{class: ClassAgentPaneTimeout, message: "pane content at timeout"},
 		{class: ClassProxyTLSHandshakeFailed, message: "proxy client TLS handshake failed"},
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
 		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
@@ -835,6 +836,7 @@ func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
 func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 	fed := map[string]string{
 		"tmux has-session failed":                 ClassTmuxSessionCheckFailed,
+		"pane content at timeout":                 ClassAgentPaneTimeout,
 		"proxy client TLS handshake failed":       ClassProxyTLSHandshakeFailed,
 		"transparent proxy TLS handshake failed":  ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":    ClassAgentDirSetupFailed,
