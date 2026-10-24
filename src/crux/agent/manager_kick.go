@@ -442,6 +442,7 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	agent.transientNudgesThisKick = 0
 	agent.lastTransientNudge = time.Time{}
 	agent.ciPollBaseline = -1
+	agent.ciPollCommandBaseline = nil
 	agent.ciPollNudgeSent = false
 	agent.AwaitingCI = false
 
@@ -1377,17 +1378,24 @@ func countCIPollCommands(pane string) int {
 	return len(ciPollCommands(pane))
 }
 
-// countRepeatedCIPollCommands counts CI-status commands whose command line
-// appears more than once in pane. Waiting on one PR re-reads the same
-// target; a merge sweep or CI-repair pass reads each of many PRs once, and
-// that is the lane's work, not polling (#14016).
-func countRepeatedCIPollCommands(pane string) int {
+func ciPollCommandCounts(pane string) map[string]int {
 	seen := map[string]int{}
 	for _, cmd := range ciPollCommands(pane) {
 		seen[cmd]++
 	}
+	return seen
+}
+
+// countRepeatedCIPollCommands counts CI-status commands whose command line
+// appears more than once since baseline. Waiting on one PR re-reads the same
+// target; a merge sweep or CI-repair pass reads each of many PRs once, and
+// that is the lane's work, not polling (#14016). Subtract each command's
+// baseline BEFORE deciding whether it repeats: one read in each of two kicks
+// is not repeated polling in either kick (#14061).
+func countRepeatedCIPollCommands(pane string, baseline map[string]int) int {
 	n := 0
-	for _, c := range seen {
+	for cmd, c := range ciPollCommandCounts(pane) {
+		c -= baseline[cmd]
 		if c > 1 {
 			n += c
 		}
@@ -1446,16 +1454,15 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		return
 	}
 	count := countCIPollCommands(scrollback)
-	repeated := countRepeatedCIPollCommands(scrollback)
 	m.mu.Lock()
 	if agent.ciPollBaseline < 0 {
 		agent.ciPollBaseline = count
-		agent.ciPollRepeatBaseline = repeated
+		agent.ciPollCommandBaseline = ciPollCommandCounts(scrollback)
 		m.mu.Unlock()
 		return
 	}
 	newPolls := count - agent.ciPollBaseline
-	newRepeats := repeated - agent.ciPollRepeatBaseline
+	newRepeats := countRepeatedCIPollCommands(scrollback, agent.ciPollCommandBaseline)
 	overThreshold := newRepeats > ciPollNudgeThreshold ||
 		(newPolls > 0 && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
 	alreadyNudged := agent.ciPollNudgeSent

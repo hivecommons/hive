@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,8 +41,71 @@ func TestCountRepeatedCIPollCommands(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := countRepeatedCIPollCommands(tt.pane); got != tt.want {
+			if got := countRepeatedCIPollCommands(tt.pane, nil); got != tt.want {
 				t.Errorf("countRepeatedCIPollCommands(%q) = %d, want %d", tt.pane, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCountRepeatedCIPollCommandsSinceBaseline(t *testing.T) {
+	const poll = "gh pr checks 7\n"
+	for _, tt := range []struct {
+		name     string
+		baseline string
+		pane     string
+		want     int
+	}{
+		{name: "one old and one new read", baseline: poll, pane: poll + poll, want: 0},
+		{name: "old repeated reads and one new read", baseline: poll + poll, pane: poll + poll + poll, want: 0},
+		{name: "two new reads after old singleton", baseline: poll, pane: strings.Repeat(poll, 3), want: 2},
+		{name: "two new reads after old repeats", baseline: poll + poll, pane: strings.Repeat(poll, 4), want: 2},
+		{name: "unchanged scrollback", baseline: poll + poll, pane: poll + poll, want: 0},
+		{name: "old target scrolled out, new target repeats", baseline: poll + poll, pane: "gh pr checks 8\ngh pr checks 8\n", want: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRepeatedCIPollCommands(tt.pane, ciPollCommandCounts(tt.baseline)); got != tt.want {
+				t.Errorf("repeated reads since baseline = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// A scanner revisits the same PRs on successive kicks. Each sweep reads each
+// PR only once; historical reads must not cause a count nudge or fleet report.
+func TestNudgeIfPollingCISuccessiveSweeps(t *testing.T) {
+	var sweep string
+	for pr := range ciPollNudgeThreshold + 3 {
+		sweep += fmt.Sprintf("gh pr checks %d --repo acme/widgets\n", 100+pr)
+	}
+	for _, tt := range []struct {
+		name       string
+		kickAge    time.Duration
+		wantNudged bool
+	}{
+		{name: "young kick", kickAge: 2 * time.Minute},
+		{name: "wall-clock nudge without report", kickAge: 11 * time.Minute, wantNudged: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
+			tr := recordConditions(t, m)
+			scrollback := sweep
+			for kick := range 3 {
+				m.mu.Lock()
+				m.recordDeliveredKickLocked(a, "inspect PRs", "test")
+				*a.LastKick = time.Now().Add(-tt.kickAge)
+				m.mu.Unlock()
+
+				m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+				scrollback += sweep
+				m.nudgeIfPollingCI(a, scrollback, ciPollIdlePane)
+
+				if a.ciPollNudgeSent != tt.wantNudged || a.AwaitingCI != tt.wantNudged {
+					t.Fatalf("kick %d: nudged=%v awaiting=%v, want %v", kick, a.ciPollNudgeSent, a.AwaitingCI, tt.wantNudged)
+				}
+				if ev := ciPollEvidence(tr); len(ev) != 0 {
+					t.Fatalf("kick %d: sweep produced CI-poll evidence: %#v", kick, ev)
+				}
 			}
 		})
 	}
