@@ -72,9 +72,9 @@ The last row is the only inbound trigger in the system, and it is not GitHub.
 **The reply half.** `AgentCapabilities.Converse` is documented in exactly the
 words this feature needs — "An ADVISORY agent with Converse can reply on a
 thread it was mentioned in; it still cannot file, edit or relabel anything"
-(`src/pkg/agent/capabilities.go:32`). It is enforced at the MITM proxy as an
+(`src/crux/agent/capabilities.go:32`). It is enforced at the MITM proxy as an
 additional grant beside the mode ladder (`proxy.AllowedByModeCaps`,
-`src/pkg/proxy/rules.go:152,170`), and the issue-request watcher already carries a
+`src/crux/proxy/rules.go:152,170`), and the issue-request watcher already carries a
 `Kind: "comment"` request that posts a comment as the App bot
 (`src/pkg/github/issue_request_watcher.go:70`). Outbound comment text is
 canary-scanned and secret-scrubbed on the way out
@@ -169,7 +169,7 @@ The header carries repo, item number, item kind (issue / PR), comment id and
 URL as structured context — the same shape the review swarm already hands its
 reviewers (`pkg/review`). The body is the human's text with the leading
 mention and any `ask <agent>` selector stripped, after the ioscan pass below.
-Delivery is `agent.Manager.SendKick` (`src/pkg/agent/manager_kick.go:110`),
+Delivery is `agent.Manager.SendKick` (`src/crux/agent/manager_kick.go:110`),
 recorded in the kick history with `source=mention` so the dashboard's kick
 outcome classifier (#7421) and the agent card can say where the turn came
 from.
@@ -344,8 +344,8 @@ the decision follows each one, with the code on `v6` that now carries it.
 - `src/pkg/linearagent/webhook.go` — the inbound mention model to mirror.
 - `src/pkg/linearagent/responder.go` — ack-first, resolve, kick, track.
 - `src/pkg/linearagent/oauth.go:56` — `app:mentionable`.
-- `src/pkg/agent/capabilities.go:32` — `Converse`, documented for mentions.
-- `src/pkg/proxy/rules.go:152,170` — where `Converse` is enforced.
+- `src/crux/agent/capabilities.go:32` — `Converse`, documented for mentions.
+- `src/crux/proxy/rules.go:152,170` — where `Converse` is enforced.
 - `src/pkg/config/config.go:1716` — `linear.session_agent` resolution rule.
 - `src/pkg/config/config.go:5538` — the removed declarative channel types (#5591).
 - `src/pkg/config/review_bots.go:33` — `classification.review_bots`, the loop

@@ -88,7 +88,7 @@ Two mitigations, in order of how much they are worth relying on:
   quarantined with an error naming the quotation to re-read, and no review is
   posted. Prose *about* redaction is untouched — only text quoted as code
   counts. The marker vocabulary is `FindRedactionMarker`,
-  `pkg/logscrub/redaction.go:55`, which recognizes hive's own `[REDACTED]` and
+  `crux/logscrub/redaction.go:55`, which recognizes hive's own `[REDACTED]` and
   `[REDACTED-JWT]` alongside the `<redacted>`, `***REDACTED***` and bare
   `******` forms other layers emit — the layer that masks the text is not
   always one of ours.
