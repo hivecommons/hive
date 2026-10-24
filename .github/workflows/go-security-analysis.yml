@@ -228,7 +228,7 @@ jobs:
       - name: Scan
         working-directory: src
         continue-on-error: true
-        run: gosec -exclude-generated ./...
+        run: gosec -exclude-generated ./... ./crux/...
 
   golangci-lint:
     needs: required-context-scope

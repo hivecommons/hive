@@ -2945,7 +2945,7 @@ function headlessChildEnv() {
 // without it agy warns "--model <m> requires --effort (available: low, medium,
 // high)" and silently IGNORES the model, so the contributor's configured model
 // never takes effect. AGY_DEFAULT_EFFORT mirrors agyDefaultEffort in the
-// hub-side launcher (src/pkg/agent/manager.go) so a relay agent and a pod agent
+// hub-side launcher (src/crux/agent/manager.go) so a relay agent and a pod agent
 // resolve the same effort. AGENT_REASONING_EFFORT can override it, but only
 // with a value agy actually accepts — codex's vocabulary is wider (it takes
 // "minimal"), and forwarding an unknown token here would make agy reject the
@@ -5185,7 +5185,7 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-// Keep category names in exact parity with src/pkg/logscrub/handler.go. The Go
+// Keep category names in exact parity with src/crux/logscrub/handler.go. The Go
 // test reads this declaration and fails if one implementation gains or loses a
 // category without the other (kubestellar/hive#5478).
 const RELAY_SECRET_PATTERNS = [

@@ -704,7 +704,7 @@ seed_backend_auth() {
       if [ "$seeded" = "ok" ]; then
         # Pre-answer every first-run gate a fresh HOME raises, the way the
         # hub does (inferenceUserConfigSeed / inferenceSettingsSeed in
-        # src/pkg/agent/manager.go): onboarding + custom-API-key approval in
+        # src/crux/agent/manager.go): onboarding + custom-API-key approval in
         # .claude.json, and — crucially — skipDangerousModePermissionPrompt
         # in .claude/settings.json, the only key that suppresses the "Bypass
         # Permissions mode" consent menu, whose default selection is

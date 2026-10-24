@@ -172,7 +172,7 @@ HEADER
     for ((attempt = 1; attempt <= 3; attempt++)); do
       # Trailing "x" sentinel preserves trailing newlines through $(...).
       report="$("${GO_LICENSES_BIN}" report --template="${REPORT_TEMPLATE}" \
-        --ignore github.com/hivecommons/hive ./... && echo x)"
+        --ignore github.com/hivecommons/hive ./... ./crux/... && echo x)"
       report="${report%x}"
       if ! grep -q '^Source:[[:space:]]*Unknown$' <<< "${report}"; then
         break

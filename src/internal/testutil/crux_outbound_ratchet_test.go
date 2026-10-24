@@ -136,10 +136,7 @@ const cruxModuleDir = "crux"
 
 var cruxModuleRoots = []string{filepath.Join("..", "..", cruxModuleDir)}
 
-const (
-	cruxHiveModulePath = "github.com/hivecommons/hive/"
-	cruxModulePath     = cruxHiveModulePath + cruxModuleDir
-)
+const cruxHiveModulePath = "github.com/hivecommons/hive/"
 
 // cruxInModule reports whether rel (a src/-relative directory, or an import
 // path with cruxHiveModulePath trimmed) is inside the nested module.

@@ -2547,7 +2547,7 @@ for path in (os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json'
       # So do NOT promise it here. Report what is actually in the chain, which is
       # verifiable, instead of asserting a backstop that may not be loaded.
       # The Go proxy logs the unmarked dial once
-      # (src/pkg/proxy/github_proxy.go warnSockMarkOnce).
+      # (src/crux/proxy/github_proxy.go warnSockMarkOnce).
       if iptables -t nat -C HIVE_PROXY -m owner --uid-owner "$PROXY_UID" -j RETURN 2>/dev/null; then
         _owner_backstop="present (xt_owner loaded) — proxy dials still exempt via owner-UID"
       else

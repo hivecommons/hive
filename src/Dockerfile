@@ -166,7 +166,7 @@ COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)
-# for the manager's dev→agent UID switches (pkg/agent/manager.go,
+# for the manager's dev→agent UID switches (crux/agent/manager.go,
 # pkg/dashboard/workspace_cleanup.go, deploy/ttyd-tmux.sh — all invoked by the
 # non-root `dev` process AFTER the entrypoint's `exec gosu dev`, so a SUID
 # helper or CAP_SETUID is genuinely required to switch to agent UIDs at runtime).
@@ -488,7 +488,7 @@ ARG BOBSHELL_SHA256_ARM64=eff232eb1b69f34f984ddd295e6960470058ca922b1c751879c5a8
 # backend "bob" passed config validation (validBackends in pkg/config) and
 # then failed at launch with no honest signal — a silent trap that cost real
 # debugging time. That trap is now closed at the launch site instead of at
-# image-build time: pkg/agent/manager.go's launchInTmux resolves the backend
+# image-build time: crux/agent/manager.go's launchInTmux resolves the backend
 # binary via exec.LookPath BEFORE any bob-specific logic runs, and on a miss
 # marks the agent StateFailed, records LastError, logs a warning, writes a
 # banner into the agent's own tmux pane, and emits an AuditAgentStartFailed
@@ -670,7 +670,7 @@ RUN printf '\n# hive #4045: scrub backend-exported GitHub credentials from agent
 # while silently leaving CapAmb=0x0. When the bounding set LACKS it (self-hosted/rootless), the entrypoint
 # does NOT attempt the raise (setpriv would error) and falls back to plain
 # `gosu dev`: the binary execs fine (no file cap to block it) and the proxy's
-# SO_MARK path degrades gracefully (src/pkg/proxy/github_proxy.go logs once and
+# SO_MARK path degrades gracefully (src/crux/proxy/github_proxy.go logs once and
 # dials unmarked). setpriv comes from util-linux, installed in Layer 1.
 
 # --- Nous framework (strategist experiment engine) ---

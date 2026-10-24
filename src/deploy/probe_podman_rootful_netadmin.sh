@@ -238,7 +238,7 @@ if [[ "$SOMARK" == "true" ]]; then
   pod exec "${PROBE_PREFIX}-live" iptables-nft -t nat -S HIVE_PROXY 2>&1 | sed 's/^/    /'
 
   # CONTROL. curl exec'd as the proxy UID carries NO packet mark: SO_MARK is set
-  # by the proxy's own dialer (pkg/proxy/somark_linux.go), and an exec'd process
+  # by the proxy's own dialer (crux/proxy/somark_linux.go), and an exec'd process
   # gets neither that code path nor the ambient CAP_NET_ADMIN that setting a mark
   # requires. So this line measures the OWNER rule only, never the mark.
   printf '  control, unmarked uid-1001 dial, owner rules present: %s\n' \

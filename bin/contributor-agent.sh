@@ -740,7 +740,7 @@ fi
 # seed_claude_config pre-answers the first-run gates Claude Code raises in
 # ${HOME}/.claude.json, so none of them can park the tmux pane on a menu that
 # nothing inside a container is there to answer. Mirrors the hub's
-# inferenceUserConfigSeed (src/pkg/agent/manager.go) and the same seed
+# inferenceUserConfigSeed (src/crux/agent/manager.go) and the same seed
 # bin/test_backend_smoke.sh writes for its throwaway HOME.
 #
 # hasCompletedOnboarding matters for EVERY claude contributor, not just the
@@ -752,7 +752,7 @@ fi
 # oauthAccount but NOT hasCompletedOnboarding. The CLI then re-runs onboarding
 # and draws "Select login method" on top of working credentials. That two-file
 # split is documented for hub-side agents in
-# src/pkg/agent/claude_session_state.go (#4596); the contributor relay walks
+# src/crux/agent/claude_session_state.go (#4596); the contributor relay walks
 # into the same wall from the other direction.
 #
 # This seeding used to run only for litellm, or for claude when an
