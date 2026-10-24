@@ -2695,6 +2695,11 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 		Inputs: map[string]string{"body": effects.StableDigest(body)},
 	}, func(ctx context.Context) (effects.Result, error) {
 		comment, _, apiErr := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+		if apiErr != nil && isDefiniteIssueRefusal(apiErr) {
+			// A 403/404/410/422 means the comment was not posted; recording
+			// Unknown would fence the operation behind reconciliation.
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
 		return effects.Result{Provenance: comment.GetHTMLURL()}, apiErr
 	})
 	return err
