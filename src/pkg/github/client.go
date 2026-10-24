@@ -4589,7 +4589,7 @@ func (c *Client) repoWorkIssue(repo string, issue *gh.Issue, labels []string, bu
 		CreatedAt:       issue.GetCreatedAt().Time,
 		UpdatedAt:       issue.GetUpdatedAt().Time,
 		URL:             issue.GetHTMLURL(),
-		IsTracker:       RendersAsTracker(isTracker(issue.GetTitle(), labels, issue.GetBody()), labels, progress),
+		IsTracker:       RendersAsTracker(isTracker(issue.GetTitle(), labels, issue.GetBody()), labels, nil), // progress != nil implies isTracker (same task-list threshold)
 		TrackerProgress: progress,
 		Bucket:          bucket,
 		Reason:          reason,
