@@ -2307,6 +2307,44 @@ func TestSweepSelfAuthoredAutoMergesUpdatesWhenRequiredChecksExpected(t *testing
 	}
 }
 
+func TestSweepSelfAuthoredAutoMergesRepoRulesBlockWarnsOnce(t *testing.T) {
+	var logs bytes.Buffer
+	var merged []int
+	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
+		number:          90,
+		author:          testHiveAppBotLogin,
+		mergeableState:  "clean",
+		statusState:     "success",
+		checkStatus:     "completed",
+		checkConclusion: "success",
+		mergeStatus:     http.StatusMethodNotAllowed,
+		mergeMessage:    "Repository rule violations found\n\nChanges must be made through the merge queue\n\nAt least 1 approving review is required by reviewers with write access.",
+	}}, &merged)
+	defer api.Close()
+
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, slog.New(slog.NewTextHandler(&logs, nil)), api.URL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	c := New(client, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+
+	first, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("first sweep returned error: %v", err)
+	}
+	second, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+	if err != nil {
+		t.Fatalf("second sweep returned error: %v", err)
+	}
+	if first.Candidates != 1 || second.Candidates != 0 || second.Skipped != 1 {
+		t.Fatalf("first=%+v second=%+v, want second sweep to skip without retrying", first, second)
+	}
+	if got := strings.Count(logs.String(), "self-authored automerge sweep skipped PR"); got != 1 {
+		t.Fatalf("skipped-PR warnings = %d, want 1; logs=%q", got, logs.String())
+	}
+	if !strings.Contains(logs.String(), "reason=repo-rules-block") {
+		t.Fatalf("logs = %q, want repo-rules-block reason", logs.String())
+	}
+}
+
 func TestSweepSelfAuthoredAutoMergesUpdateBranch422Conflicting(t *testing.T) {
 	var merged []int
 	var updates int

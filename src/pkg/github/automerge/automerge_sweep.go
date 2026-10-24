@@ -231,6 +231,9 @@ type Engine struct {
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
+	// repoRulesBlocked remembers PR heads that GitHub refused to merge
+	// directly because of repository rules (merge queue, required review).
+	repoRulesBlocked map[string]bool
 
 	stageLabelPolicy  func() StageLabelPolicy
 	stageTracker      *StageTracker
@@ -1047,11 +1050,32 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				stage(reason, false, nil)
 				continue
 			}
+			if c.repoRulesBlockedHead(owner, repoName, number, pr.GetHead().GetSHA()) {
+				c.debug("automerge skip", "repo", repo, "pr", number, "reason", autoMergeReasonRepoRulesBlock)
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[autoMergeReasonRepoRulesBlock]++
+				stage(autoMergeReasonRepoRulesBlock, false, nil)
+				continue
+			}
 			result.Candidates++
 			repoCandidates++
 			event, reason, err := c.trySweepSelfAuthoredPR(ctx, repo, owner, repoName, number, branchUpdateAttempts < selfAuthoredSweepMaxBranchUpdates)
 			if event.BranchUpdated || reason == "updated-branch" || reason == "update-branch" {
 				branchUpdateAttempts++
+			}
+			if err != nil && reason == "merge-failed" && repoRulesMergeError(err) {
+				reason = autoMergeReasonRepoRulesBlock
+				if c.markRepoRulesBlocked(owner, repoName, number, pr.GetHead().GetSHA()) {
+					c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+				} else {
+					c.debug("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason)
+				}
+				result.Skipped++
+				repoSkipped++
+				repoSkipReasons[reason]++
+				stage(reason, false, err)
+				continue
 			}
 			if err != nil {
 				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
@@ -2783,6 +2807,45 @@ func hasLabel(labels []string, want string) bool {
 func isGitHubStatus(err error, status int) bool {
 	var ghErr *gh.ErrorResponse
 	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == status
+}
+
+const autoMergeReasonRepoRulesBlock = "repo-rules-block"
+
+var repoRulesMergeRE = regexp.MustCompile(`(?i)repository rule violations|merge queue|approving review is required`)
+
+// repoRulesMergeError reports a definite 405 refusal caused by repository
+// rules that a direct merge can never satisfy.
+func repoRulesMergeError(err error) bool {
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusMethodNotAllowed {
+		return false
+	}
+	return repoRulesMergeRE.MatchString(ghErr.Message) || repoRulesMergeRE.MatchString(ghErr.Error())
+}
+
+func (c *Engine) repoRulesBlockedKey(owner, repo string, number int, headSHA string) string {
+	return c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA)
+}
+
+func (c *Engine) repoRulesBlockedHead(owner, repo string, number int, headSHA string) bool {
+	c.heldRunApprovalsMu.Lock()
+	defer c.heldRunApprovalsMu.Unlock()
+	return c.repoRulesBlocked[c.repoRulesBlockedKey(owner, repo, number, headSHA)]
+}
+
+// markRepoRulesBlocked reports whether this is the first refusal for the head.
+func (c *Engine) markRepoRulesBlocked(owner, repo string, number int, headSHA string) bool {
+	key := c.repoRulesBlockedKey(owner, repo, number, headSHA)
+	c.heldRunApprovalsMu.Lock()
+	defer c.heldRunApprovalsMu.Unlock()
+	if c.repoRulesBlocked == nil {
+		c.repoRulesBlocked = make(map[string]bool)
+	}
+	if c.repoRulesBlocked[key] {
+		return false
+	}
+	c.repoRulesBlocked[key] = true
+	return true
 }
 
 func requiredChecksExpectedMergeError(err error) bool {

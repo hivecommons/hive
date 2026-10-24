@@ -1,0 +1,1 @@
+- Self-authored automerge sweep no longer retries (and re-warns on) PRs that repository rules require to go through the merge queue or an approving review (#14038)
