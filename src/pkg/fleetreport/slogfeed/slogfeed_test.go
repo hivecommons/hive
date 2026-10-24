@@ -162,6 +162,31 @@ func TestReviewPendingExpiryLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestPolicySeedDivergenceLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 10, 24, 17, 9, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
+	// A hive whose /data/policies predates the seed-manifest tracking
+	// (#9428) has every embedded template diverge on its first reconcile:
+	// up to one WARN per template within a single boot, all carrying this
+	// same constant message text (#14005).
+	names := []string{"supervisor-nogithub.md", "scanner.md", "guide.md", "quality.md", "reviewer-queue.md"}
+	for _, name := range names {
+		logger.Warn(msg, "name", name, "path", "/data/policies/"+name)
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("burst across unrelated policy templates produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != len(names) {
+		t.Fatalf("wrapped handler saw %d records, want %d: %s", n, len(names), out.String())
+	}
+	if !strings.Contains(out.String(), `"name":"supervisor-nogithub.md"`) || !strings.Contains(out.String(), `"path":"/data/policies/quality.md"`) {
+		t.Fatalf("seed-divergence log lost its diagnostics: %s", out.String())
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string

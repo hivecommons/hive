@@ -147,6 +147,16 @@ must not become a repeated-error report. The original expiry log and its
 diagnostics remain available. `review dispatch exhausted; holding PR for a
 human` still qualifies for reporting when repeated.
 
+It also skips the constant `policies: seeded policy differs from the
+embedded default with no seed record…` warning (`ReconcileSeededDefaults`,
+`pkg/policies/seed_reconcile.go`, hivecommons/hive#13825): a hive whose
+policy directory predates the seed-manifest tracking added in
+hivecommons/hive#9428 has every embedded template diverge on its first
+post-upgrade reconcile — up to one WARN per template in the same boot — and
+a burst across unrelated templates is not a repeated runtime defect
+(hivecommons/hive#14005). The per-template warning stays in the container
+log, already deduped per path per process.
+
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
 `unexpected_http_5xx_from_hub`.

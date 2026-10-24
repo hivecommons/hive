@@ -767,6 +767,24 @@ func TestIsBenignMessageReviewPendingExpiry(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
+	const msg = "policies: seeded policy differs from the embedded default with no seed record; leaving it in place — resave it from the dashboard to take a new edit, or delete it to pick up the embedded default"
+	if !IsBenignMessage(msg) {
+		t.Errorf("seed-divergence notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"policies: failed to read embedded default",
+		"policies: failed to seed default policy",
+		"policies: failed to read seeded policy",
+		"policies: failed to save seed manifest",
+		"policies: failed to refresh stale seeded policy",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
