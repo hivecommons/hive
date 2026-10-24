@@ -158,6 +158,15 @@ a burst across unrelated templates is not a repeated runtime defect
 (hivecommons/hive#14005). The per-template warning stays in the container
 log, already deduped per path per process.
 
+It also skips `copilot CLI substituted the configured model`
+(`logCopilotModelFallback`, `src/crux/agent/manager_poll.go`): each copilot
+agent warns once per (requested, running) model tuple (hivecommons/hive#13659)
+and shows the substitution on its dashboard `LastError`, so a hive whose
+copilot agents share one model id the account's Copilot CLI rejects emits one
+WARN per agent in the same boot. That is an operator configuration condition —
+change the agents' model — not a repeated runtime defect
+(hivecommons/hive#14020).
+
 Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
 `data_disk_pressure`, `github_app_token_mint_failed`,
 `unexpected_http_5xx_from_hub`.

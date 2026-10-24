@@ -187,6 +187,30 @@ func TestPolicySeedDivergenceLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestCopilotModelFallbackLogsWithoutFleetReport(t *testing.T) {
+	now := time.Date(2026, 10, 24, 17, 37, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "copilot CLI substituted the configured model"
+	// Each copilot agent warns once per substitution tuple (#13659), so a
+	// hive whose agents all share a model the account cannot use emits one
+	// WARN per agent in the same boot, all with this constant text (#14020).
+	agents := []string{"guide", "scanner", "quality", "reviewer", "supervisor", "outreach"}
+	for _, name := range agents {
+		logger.Warn(msg, "agent", name, "requested_model", "claude-sonnet-4.6", "running_model", "auto")
+	}
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("burst across copilot agents produced fleet evidence: %+v", ev)
+	}
+	if n := strings.Count(out.String(), "\n"); n != len(agents) {
+		t.Fatalf("wrapped handler saw %d records, want %d: %s", n, len(agents), out.String())
+	}
+	if !strings.Contains(out.String(), `"agent":"guide"`) || !strings.Contains(out.String(), `"running_model":"auto"`) {
+		t.Fatalf("model-substitution log lost its diagnostics: %s", out.String())
+	}
+}
+
 func TestFeedLogFedPath(t *testing.T) {
 	tests := []struct {
 		name      string

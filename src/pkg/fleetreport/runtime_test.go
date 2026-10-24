@@ -786,6 +786,21 @@ func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	}
 }
 
+func TestIsBenignMessageCopilotModelFallback(t *testing.T) {
+	const msg = "copilot CLI substituted the configured model"
+	if !IsBenignMessage(msg) {
+		t.Errorf("copilot model-substitution notice %q not benign", msg)
+	}
+	for _, m := range []string{
+		"copilot token validation failed",
+		"copilot CLI failed to start",
+	} {
+		if IsBenignMessage(m) {
+			t.Errorf("failure %q wrongly benign", m)
+		}
+	}
+}
+
 func TestQueueHealthClassesQualifyOnFirstObservationAndClear(t *testing.T) {
 	now, _ := fakeClock(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	tr := NewRuntimeTracker(now)
