@@ -2630,8 +2630,12 @@ const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
 //     every podman operator a command that fails. It defaults to docker, so a
 //     bare-docker launch prints exactly what it printed before.
 const CONTAINER_RUNTIME = process.env.HIVE_CONTAINER_RUNTIME || 'docker';
+// Apptainer/Singularity use instance URIs instead of Docker's -it/name syntax.
+const CONTAINER_EXEC_TARGET = ['apptainer', 'singularity'].includes(CONTAINER_RUNTIME)
+  ? `instance://${CONTAINER_NAME}`
+  : `-it ${CONTAINER_NAME}`;
 const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
-  ? `${CONTAINER_RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t ${TMUX_SESSION}`
+  ? `${CONTAINER_RUNTIME} exec ${CONTAINER_EXEC_TARGET} tmux attach -t ${TMUX_SESSION}`
   : `tmux attach -t ${TMUX_SESSION}`;
 
 // detectCapabilities builds the OPTIONAL, client-declared capability object the

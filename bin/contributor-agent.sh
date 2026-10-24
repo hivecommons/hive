@@ -1185,6 +1185,15 @@ CONTAINER_NAME="${HIVE_CONTAINER_NAME:-hive-contributor}"
 # by something older than the recipe that passes this, printing exactly what it
 # printed before.
 CONTAINER_RUNTIME="${HIVE_CONTAINER_RUNTIME:-docker}"
+# Apptainer/Singularity attach to a named instance and do not accept -it.
+case "$CONTAINER_RUNTIME" in
+  apptainer|singularity)
+    ATTACH_COMMAND="$CONTAINER_RUNTIME exec instance://$CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+    ;;
+  *)
+    ATTACH_COMMAND="$CONTAINER_RUNTIME exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+    ;;
+esac
 echo "Contributor agent is running."
 echo "  Mode:    $CONTRIBUTOR_MODE"
 echo "  CLI:     $CMD"
@@ -1193,7 +1202,7 @@ if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
   echo "  Quota:   publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
 fi
 if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
-  echo "  Tmux:    $CONTAINER_RUNTIME exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+  echo "  Tmux:    $ATTACH_COMMAND"
 else
   # Headless: no pane to attach to. The relay drives a one-shot CLI per task and
   # writes its lifecycle state (waiting/working/done/failed) here for a probe.

@@ -1,0 +1,1 @@
+- Contributor status and authentication hints now use named-instance syntax for Apptainer and Singularity, so the printed tmux attach command works with those runtimes ([#13976](https://github.com/hivecommons/hive/issues/13976)).
