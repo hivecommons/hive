@@ -1785,6 +1785,38 @@ func TestDelegatedSupersedeWorkflowPathIsTerminal(t *testing.T) {
 	}
 }
 
+// A head already escalated and noted as stalled still gets the refusal note
+// when a maintainer's delegated supersede is refused: the label must not vanish
+// unexplained.
+func TestDelegatedSupersedeWorkflowPathNotesOverStalledNote(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.prFiles = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified"}}
+	pr := adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptionEscalated(key, "aaa", stagelabels.LaneReasonAdoptionStalledPrefix+"stalled")
+	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if c := workflowRefusedComments(h.api); len(c) != 1 {
+		t.Fatalf("refusal notes = %v, want one", h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(key); rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason {
+		t.Fatalf("refusal not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a refused attempt: removed=%v", h.api.removed)
+	}
+	if h.adopt.refAttempts != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("workflow-path head published: attempts=%d", h.adopt.refAttempts)
+	}
+}
+
 // Every caller, including second takeovers, must pass fresh evidence before
 // creating OR updating a ref. A record's old fence is not evidence for a head.
 func TestSupersedeRevalidatesBeforeRefMutation(t *testing.T) {

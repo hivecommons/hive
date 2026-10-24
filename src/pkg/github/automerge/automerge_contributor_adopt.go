@@ -594,7 +594,9 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		// the workflow edits upstream. The recorded attempt clears a
 		// delegated request; the head goes to a person (085) with one note.
 		store.NoteAdoptReason(key, reason)
-		noted := rec.AdoptionEscalationNoted(obs.HeadSHA)
+		// A note for another reason (a stalled adoption) does not explain
+		// the refusal of a maintainer's explicit request, so it still posts.
+		noted := rec.AdoptionEscalationNoted(obs.HeadSHA) && !(requested && rec.AdoptEscalatedReason != adoptionWorkflowRefusedReason)
 		store.MarkAdoptionEscalated(key, obs.HeadSHA, adoptionWorkflowRefusedReason)
 		c.warn("stage labels: refusing workflow-path supersession; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "noted", noted)
 		if noted {
