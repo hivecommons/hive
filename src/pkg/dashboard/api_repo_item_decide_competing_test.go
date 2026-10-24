@@ -30,7 +30,7 @@ func delegatedCompetitionServer(t *testing.T, routes map[string]string) *Server 
 			key += "?page=2"
 		}
 		body, ok := routes[key]
-		if !ok {
+		if !ok || body == "" {
 			http.NotFound(w, r)
 			return
 		}
@@ -182,7 +182,9 @@ func TestDelegatedGatherFailsClosedOnMissingEvidence(t *testing.T) {
 	for _, path := range []string{"/repos/o/r/pulls?page=2", "/repos/o/r/pulls/9", "/repos/o/r/pulls/8/reviews", "/repos/o/r/issues/7/comments"} {
 		t.Run(path, func(t *testing.T) {
 			routes := competitionRoutes()
-			delete(routes, path)
+			// Keep the route key so the preceding page still advertises its
+			// next link, but return 404 when the missing evidence is fetched.
+			routes[path] = ""
 			s := delegatedCompetitionServer(t, routes)
 			in := delegatedecision.Input{}
 			if err := s.gatherDelegatedCompetition(context.Background(), "o/r", competitionPR(t, "alice", time.Now()), &in, time.Now()); err == nil {
