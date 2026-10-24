@@ -54,10 +54,10 @@ type reviewBacklogLedger struct {
 	SplitBackfilled bool `json:"split_backfilled,omitempty"`
 }
 
-// reviewBacklogLedgerMu serialises the load→mutate→save cycles of the two
-// ledger writers, fileOutOfScopeReviewBacklog and SweepReviewBacklogSplits,
-// so a concurrent save cannot drop the other side's update. Both hold it
-// across their CreateItem/AppendToItem calls on purpose: the ledger records
+// reviewBacklogLedgerMu serialises the load→mutate→save cycles of the
+// ledger writers (fileOutOfScopeReviewBacklog, SweepReviewBacklogSplits and
+// ReconcileReviewBacklogBlocks), so a concurrent save cannot drop another
+// writer's update. They hold it across their CreateItem/AppendToItem calls on purpose: the ledger records
 // the issue each call creates, so releasing it between the call and the
 // save would reopen the lost-update window. The cost is that the run
 // loop's split sweep waits while a review's backlog filing is in flight,
@@ -201,11 +201,6 @@ func (l *reviewBacklogLedger) save(path string, now time.Time) error {
 func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequest, now time.Time) error {
 	return c.fileReviewBacklog(ctx, req, now, nil)
 }
-
-// reviewBacklogLedgerMu serialises read-modify-write passes over the backlog
-// ledger: the relay files from the watcher goroutine while the governor's
-// block sweep resolves items from the eval loop.
-var reviewBacklogLedgerMu sync.Mutex
 
 // fileReviewBacklog is fileOutOfScopeReviewBacklog with the review the relay
 // just posted for this request. In heads mode that review is the decision
