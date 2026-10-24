@@ -32,10 +32,10 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/crux/inferencehealth"
+	"github.com/hivecommons/hive/pkg/crux/issueshape"
 	hgithub "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 

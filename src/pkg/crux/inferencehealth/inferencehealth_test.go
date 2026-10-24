@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 func TestClassifyHTTPStatus(t *testing.T) {
@@ -274,22 +272,5 @@ func TestStoreRecordEndpointErrorIncludesHost(t *testing.T) {
 	}
 	if got := Reason(snap[0]); got != "vllm endpoint hive-vllm-svc.hive-inference.svc.cluster.local not resolvable on this cluster — set inference.vllm.endpoint or disable" {
 		t.Fatalf("Reason = %q", got)
-	}
-}
-
-// A 401/403 is an operator/upstream condition: recording it must not file
-// runtime-class hive-code evidence (#12284).
-func TestStoreAuthFaultIsNotSelfReported(t *testing.T) {
-	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
-	at := time.Date(2026, 9, 2, 8, 30, 0, 0, time.UTC)
-	for _, status := range []int{401, 403} {
-		s := NewStore()
-		s.RecordHTTPError("gw", status, "unauthorized", at)
-		if snap := s.Snapshot(); len(snap) != 1 || snap[0].ErrorClass != ClassAuth {
-			t.Fatalf("status %d: snapshot = %#v, want one auth fault", status, snap)
-		}
-		if ev := fleetreport.DefaultTracker().Evidence(); len(ev) != 0 {
-			t.Fatalf("status %d: evidence = %#v, want none", status, ev)
-		}
 	}
 }

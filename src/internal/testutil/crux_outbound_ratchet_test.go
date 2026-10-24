@@ -89,9 +89,14 @@ import (
 // two-method watchdog.UsageProber (cmd/hive adapts each rotation prober)
 // and toolapprove's payload scanning goes through toolapprove.TextScanner,
 // which pkg/ioscan implements (ToolApproveScanner) and cmd/hive and
-// pkg/turn install at init; a desk with no text scanner fails closed. What
-// remains — the proxy's GitHub-side helpers and cmd/crux's definition
-// loading — is Stage 2 prerequisite 3.
+// pkg/turn install at init; a desk with no text scanner fails closed.
+// Prerequisite 3 started with the proxy's value-type edges: the
+// inference-gateway health store moved whole into pkg/crux/inferencehealth
+// and the issue/comment shape validators into pkg/crux/issueshape (both
+// stdlib-only; pkg/inferencehealth and pkg/issueshape alias every symbol so
+// hub, spoke, dashboard, github and classify keep their import path). What
+// remains — the proxy's canary registry, usage sink and REST accounting, and
+// cmd/crux's definition loading — is the rest of prerequisite 3.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -105,9 +110,7 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/proxy": {
 		"pkg/github",
-		"pkg/inferencehealth",
 		"pkg/ioscan",
-		"pkg/issueshape",
 		"pkg/tokens",
 	},
 }
