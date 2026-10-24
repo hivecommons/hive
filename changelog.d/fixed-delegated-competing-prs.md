@@ -1,0 +1,1 @@
+- Delegated decisions now compare real open PRs for the same issue and detect contributor presence from recent author activity and live claims instead of stale parking captions.
