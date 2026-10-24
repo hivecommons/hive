@@ -68,6 +68,7 @@ const (
 	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
 	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
+	ClassInferenceUpstreamError     = "inference_upstream_error"
 )
 
 const (
@@ -163,6 +164,7 @@ var Classes = map[string]ClassSpec{
 	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
 	ClassBeadFactIngestFailed:       {Component: "knowledge", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to ingest bead fact"}},
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
+	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

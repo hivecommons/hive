@@ -1,0 +1,1 @@
+- Fleet report: repeated 'inference upstream error' ERRORs (a non-2xx response from the configured inference backend other than the dedicated 401/403 auth signal — e.g. an invalid model name or a 5xx from the gateway) are now classified as `inference_upstream_error` (medium severity, component `inference-gateway`) instead of `unclassified_error_repeated` (#14024).
