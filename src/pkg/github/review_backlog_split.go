@@ -24,7 +24,11 @@ const reviewBacklogSplitMarker = "<!-- hive:review-backlog-split "
 const DefaultReviewBacklogSplitMaxActions = 20
 
 var (
-	reviewBacklogFoldedCheckRE = regexp.MustCompile("(?m)^\\s*- \\[([ xX])\\] (.*) \\(`([^`]+):(\\d+)`\\)\\s*$")
+	// reviewBacklogFoldedCheckRE matches the `- [ ] <title> (`file:line`)`
+	// task-list line reviewBacklogFoldedComment writes. The file may be
+	// empty: a fold by shared symbol or exact-title twin can carry a
+	// finding with no File, written as (`:0`).
+	reviewBacklogFoldedCheckRE = regexp.MustCompile("(?m)^\\s*- \\[([ xX])\\] (.*) \\(`([^`]*):(\\d+)`\\)\\s*$")
 	reviewBacklogFoldedPRRE    = regexp.MustCompile(`PR #(\d+)`)
 	reviewBacklogFoldedFPRE    = regexp.MustCompile("(?m)^Fingerprint: `([0-9a-fA-F]+)`")
 )
@@ -47,7 +51,9 @@ type reviewBacklogFoldedItem struct {
 	Comment string
 }
 
-// parseReviewBacklogFoldedComment reads a hive:review-backlog-link comment.
+// parseReviewBacklogFoldedComment reads a hive:review-backlog-link comment
+// in the layout reviewBacklogFoldedComment (review_backlog_routing.go)
+// writes; keep the two in sync.
 // It returns false for any other comment and for link comments without a
 // `- [ ]`/`- [x]` checklist line (the pre-#13604 bare link carried no
 // finding, so there is nothing to split out).
@@ -175,7 +181,7 @@ type ReviewBacklogSplitResult struct {
 // that passes reviewBacklogSplitEligible is filed through the github_issue
 // backlog sink, the host gets a cross-link comment, and the ledger's item
 // and fingerprint records move to the new issue. Ledger SplitKeys
-// (link-marker key → host) make re-runs idempotent.
+// (link-marker key → hosts already split from) make re-runs idempotent.
 func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, audit func(ReviewBacklogSplitEvent)) (*ReviewBacklogSplitResult, error) {
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
@@ -183,11 +189,10 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 	if since.IsZero() {
 		since = time.Now().Add(-DefaultClosedIssueStageSweepWindow)
 	}
-	ledger, err := loadReviewBacklog("")
+	hosts, err := loadReviewBacklogHostIndex()
 	if err != nil {
 		return nil, err
 	}
-	hosts := reviewBacklogHostIndex(ledger)
 	result := &ReviewBacklogSplitResult{}
 	if len(hosts) == 0 {
 		return result, nil
@@ -229,18 +234,12 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 				}
 				bodies = append(bodies, cm.GetBody())
 			}
-			// Reload per host so a concurrent filing pass loses as little
-			// as possible between load and save.
-			ledger, err := loadReviewBacklog("")
+			// Load, split and save under the ledger lock, per host, so the
+			// review filing path (fileOutOfScopeReviewBacklog) and this
+			// sweep never overwrite each other's ledger update.
+			events, splitErr, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, DefaultReviewBacklogSplitMaxActions-len(result.Split))
 			if err != nil {
 				return result, err
-			}
-			now := time.Now()
-			events, splitErr := c.splitReviewBacklogHost(ctx, sink, labels, repo, issue, bodies, ledger, now, DefaultReviewBacklogSplitMaxActions-len(result.Split))
-			if len(events) > 0 {
-				if err := ledger.save("", now); err != nil {
-					return result, err
-				}
 			}
 			for _, ev := range events {
 				result.Split = append(result.Split, ev)
@@ -259,6 +258,27 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 	return result, nil
 }
 
+// splitReviewBacklogHostLocked runs splitReviewBacklogHost for one host
+// inside the ledger lock: load, split, save. splitErr is the per-host
+// split error (the sweep records a skip and moves on); err is a ledger
+// load or save error (the sweep aborts).
+func (c *Client) splitReviewBacklogHostLocked(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, bodies []string, maxActions int) (events []ReviewBacklogSplitEvent, splitErr, err error) {
+	reviewBacklogLedgerMu.Lock()
+	defer reviewBacklogLedgerMu.Unlock()
+	ledger, err := loadReviewBacklog("")
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now()
+	events, splitErr = c.splitReviewBacklogHost(ctx, sink, labels, repo, host, bodies, ledger, now, maxActions)
+	if len(events) > 0 {
+		if err := ledger.save("", now); err != nil {
+			return nil, splitErr, err
+		}
+	}
+	return events, splitErr, nil
+}
+
 // reviewBacklogCommentIsOurs reports whether a host comment was written by
 // this hive's App bot. Only such comments may be parsed for folded findings:
 // the fold marker and `- [ ]` lines are plain text anyone can post on a
@@ -275,6 +295,19 @@ func (c *Client) reviewBacklogCommentIsOurs(cm *gh.IssueComment) bool {
 		return false
 	}
 	return isHiveBotLogin(logins, cm.GetUser().GetLogin())
+}
+
+// loadReviewBacklogHostIndex reads the ledger once to build
+// reviewBacklogHostIndex; the sweep reloads the ledger per host under the
+// lock before mutating it.
+func loadReviewBacklogHostIndex() (map[string]map[int]bool, error) {
+	reviewBacklogLedgerMu.Lock()
+	defer reviewBacklogLedgerMu.Unlock()
+	l, err := loadReviewBacklog("")
+	if err != nil {
+		return nil, err
+	}
+	return reviewBacklogHostIndex(l), nil
 }
 
 // reviewBacklogHostIndex is repo → GitHub issue numbers the ledger has
@@ -321,7 +354,7 @@ func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogS
 			break
 		}
 		item, ok := parseReviewBacklogFoldedComment(body)
-		if !ok || ledger.SplitKeys[item.Key] == hostNumber {
+		if !ok || ledger.splitFrom(item.Key, hostNumber) {
 			continue
 		}
 		if !reviewBacklogSplitEligible(item, stateReason, host.GetTitle(), host.GetBody()) {
@@ -377,9 +410,12 @@ func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogS
 }
 
 // recordReviewBacklogSplit points the folded finding's ledger records at
-// the item it was split out into and marks key done for host.
+// the item it was split out into and marks key done for host. Hosts
+// accumulate: when the split lands in an open twin that later closes, the
+// key is split again from the twin and both hosts stay recorded, so a
+// re-listed original host is still a no-op.
 func (l *reviewBacklogLedger) recordReviewBacklogSplit(repo string, host int, item reviewBacklogFoldedItem, ref ReviewBacklogRef, destination string, now time.Time) {
-	l.SplitKeys[item.Key] = host
+	l.markSplitFrom(item.Key, host)
 	fp := item.Fingerprint
 	if rec, ok := l.Items[item.Key]; ok {
 		rec.IssueNumber, rec.IssueURL, rec.ItemKey, rec.Destination = ref.Number, ref.URL, ref.Key, destination

@@ -527,6 +527,8 @@ func (c *Client) reviewBacklogReRaiseComment(req ReviewRequest, p review.Perspec
 // whole finding is still carried so nothing is lost if the match was wrong
 // and the twin closes. The hive:review-backlog-link marker keyed on the
 // finding key is kept so the ledger and comment dedup are unchanged.
+// parseReviewBacklogFoldedComment (review_backlog_split.go) reads this
+// layout back when the host closes; keep the two in sync.
 func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspective, f outputschema.Finding, headSHA, fp, key string) string {
 	owner, repoName := c.splitRepo(req.Repo)
 	file := strings.TrimSpace(f.File)

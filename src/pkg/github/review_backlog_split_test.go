@@ -66,6 +66,21 @@ func TestParseReviewBacklogFoldedComment(t *testing.T) {
 	}
 }
 
+// A fold by shared symbol or exact-title twin can carry a finding with no
+// File; reviewBacklogFoldedComment writes it as (`:0`) and the parser must
+// still read it so it does not silently close with the host.
+func TestParseReviewBacklogFoldedCommentWithoutFile(t *testing.T) {
+	f := outputschema.Finding{Title: "dedupe commitCIReasonIsPending", Summary: "two copies of the helper", Severity: outputschema.SeverityLow}
+	comment, key, _ := splitTestFolded(t, f)
+	item, ok := parseReviewBacklogFoldedComment(comment)
+	if !ok {
+		t.Fatalf("folded comment without a file not parsed:\n%s", comment)
+	}
+	if item.Key != key || item.Checked || item.Finding.Title != f.Title || item.Finding.File != "" || item.Finding.Line != 0 {
+		t.Errorf("item = %+v", item)
+	}
+}
+
 func TestReviewBacklogSplitEligible(t *testing.T) {
 	f := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
 	comment, _, _ := splitTestFolded(t, f)
@@ -156,7 +171,7 @@ func TestSplitReviewBacklogHostIsIdempotentByLinkKey(t *testing.T) {
 			if tc.reuse && sink.appends[0].comment != openComment {
 				t.Errorf("reused twin did not get the folded comment carried over:\n%s", sink.appends[0].comment)
 			}
-			if ledger.SplitKeys[openKey] != 42 {
+			if !ledger.splitFrom(openKey, 42) {
 				t.Errorf("split key not recorded: %v", ledger.SplitKeys)
 			}
 			if _, ok := ledger.SplitKeys[doneKey]; ok {
@@ -174,6 +189,46 @@ func TestSplitReviewBacklogHostIsIdempotentByLinkKey(t *testing.T) {
 				t.Fatalf("second pass err=%v events=%d created=%d appends=%d, want a no-op", err, len(again), len(sink.created), len(sink.appends))
 			}
 		})
+	}
+}
+
+// A finding split out of host A into open twin B, then split again when B
+// closes, must stay a no-op for both hosts: the first post-restart pass
+// re-lists A, whose fold comment still carries the key.
+func TestSplitReviewBacklogHostTracksEveryHostPerKey(t *testing.T) {
+	f := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
+	comment, key, fp := splitTestFolded(t, f)
+	hostA := &gh.Issue{Number: gh.Ptr(42), State: gh.Ptr("closed"), StateReason: gh.Ptr("completed"), Title: gh.Ptr("host a")}
+	hostB := &gh.Issue{Number: gh.Ptr(43), State: gh.Ptr("closed"), StateReason: gh.Ptr("completed"), Title: gh.Ptr("host b")}
+	day := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	ledger := newReviewBacklogLedger()
+	ledger.Items[key] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, Fingerprint: fp, FindingKey: key}
+	c := &Client{}
+	ctx := context.Background()
+
+	// A closes: the split lands in open twin B, which carries the comment.
+	sink := &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue, reuse: true}
+	if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostA, []string{comment}, ledger, day, 10); err != nil || len(ev) != 1 {
+		t.Fatalf("split from A: events=%d err=%v", len(ev), err)
+	}
+	// B closes: the same key splits again from B.
+	sink = &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue}
+	if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostB, []string{comment}, ledger, day, 10); err != nil || len(ev) != 1 || ev[0].Host != 43 {
+		t.Fatalf("split from B: events=%+v err=%v", ev, err)
+	}
+	if !ledger.splitFrom(key, 42) || !ledger.splitFrom(key, 43) || len(ledger.SplitKeys[key]) != 2 {
+		t.Fatalf("split_keys = %v, want both hosts 42 and 43", ledger.SplitKeys)
+	}
+	// A is re-listed on the next pass: nothing fires from either host.
+	for _, host := range []*gh.Issue{hostA, hostB} {
+		sink = &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue}
+		if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", host, []string{comment}, ledger, day, 10); err != nil || len(ev) != 0 || len(sink.created) != 0 || len(sink.appends) != 0 {
+			t.Fatalf("re-run on #%d: events=%d created=%d appends=%d err=%v, want a no-op", host.GetNumber(), len(ev), len(sink.created), len(sink.appends), err)
+		}
+	}
+	ledger.markSplitFrom(key, 42)
+	if len(ledger.SplitKeys[key]) != 2 {
+		t.Fatalf("markSplitFrom duplicated a host: %v", ledger.SplitKeys[key])
 	}
 }
 
