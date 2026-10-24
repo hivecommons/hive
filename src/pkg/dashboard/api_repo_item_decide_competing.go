@@ -19,6 +19,11 @@ const delegatedContributorActivityWindow = ghpkg.IssueClaimDefaultTTL
 
 // gatherDelegatedCompetition requires the caller to initialize in.HiveAuthored
 // from the live PR author before gathering presence or competing PRs.
+//
+// Only closing claims (ParseClaimedIssues) link a PR to an issue here, never
+// ParseReferencedIssues: "Part of #epic" / "Refs #N" are shared by sibling
+// PRs of one tracking issue, and treating them as the same work would let
+// decideCompeting close an unrelated PR as a duplicate.
 func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr *gh.PullRequest, in *delegatedecision.Input, now time.Time) error {
 	client := s.deps.GHClient
 	api := client.GoGitHub()
@@ -103,6 +108,8 @@ func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr
 	return nil
 }
 
+// delegatedSharesIssue reports whether body closes one of refs. Reference-only
+// links deliberately do not match; see gatherDelegatedCompetition.
 func delegatedSharesIssue(body, repo string, refs []ghpkg.ClaimedRef) bool {
 	other := ghpkg.ParseClaimedIssues(body, repo)
 	for _, a := range refs {
