@@ -29,6 +29,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
@@ -991,7 +992,21 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
+		// Explicit delegated adoption also applies to a PR parked at 085,
+		// regardless of author kind or whether a nudge was ever sent.
+		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
+			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 {
+				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		if !hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) && (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. A human-authored PR simply waits

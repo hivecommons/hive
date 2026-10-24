@@ -81,7 +81,7 @@ const (
 	ActionCloseDuplicate ActionKind = "close-as-duplicate"
 	// ActionLink cross-links the item to Target with a comment.
 	ActionLink ActionKind = "link"
-	// ActionAdoptSupersede records "adopt now in supersede mode" for a
+	// ActionAdoptSupersede queues "adopt now in supersede mode" for a
 	// contributor PR whose author is offline.
 	ActionAdoptSupersede ActionKind = "adopt-supersede"
 	// ActionRecommendOnly posts "hive recommends: …; owner to confirm" and
@@ -123,6 +123,8 @@ const (
 
 // Labels the delegate writes or reads.
 const (
+	// LabelAdoptSupersede is the durable request consumed by the adoption engine.
+	LabelAdoptSupersede = "adoption/supersede"
 	LabelNeedsOwner     = "needs-owner"
 	LabelHold           = "hold"
 	LabelTriageAccepted = "triage/accepted"
