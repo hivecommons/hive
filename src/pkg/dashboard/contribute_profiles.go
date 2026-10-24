@@ -479,11 +479,6 @@ func registrationTokenFromAuthorization(r *http.Request) string {
 	return ""
 }
 
-func contributorProfileFromRegistrationToken(token string) *ContributorProfile {
-	p, _ := authenticateContributorToken(token, defaultContributorTokenPolicy())
-	return p
-}
-
 func (s *Server) contributorProfileFromAuthorization(r *http.Request) *ContributorProfile {
 	p, _ := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
 	return p

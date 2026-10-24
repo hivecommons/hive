@@ -96,10 +96,10 @@ func TestContributorTokenExpiredHTTPAndRecovery(t *testing.T) {
 	if fresh == "" {
 		t.Fatal("reissue failed")
 	}
-	if got := contributorProfileFromRegistrationToken(fresh); got == nil {
+	if got := profileForToken(s, fresh); got == nil {
 		t.Fatal("fresh token rejected")
 	}
-	if got := contributorProfileFromRegistrationToken(token); got != nil {
+	if got := profileForToken(s, token); got != nil {
 		t.Fatal("old token survived reissue")
 	}
 }
@@ -135,7 +135,7 @@ func TestContributorTokenRevokeAllAndWriteGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, token := range []string{ta, tb} {
-		if contributorProfileFromRegistrationToken(token) != nil {
+		if profileForToken(s, token) != nil {
 			t.Fatal("revoked token accepted")
 		}
 	}
@@ -146,7 +146,7 @@ func TestContributorTokenRevokeAllAndWriteGate(t *testing.T) {
 	if current.TrustTier != "newcomer" {
 		t.Fatal("token revocation changed trust")
 	}
-	if fresh := reissueContributorToken(current); fresh == "" || contributorProfileFromRegistrationToken(fresh) == nil {
+	if fresh := reissueContributorToken(current); fresh == "" || profileForToken(s, fresh) == nil {
 		t.Fatal("GitHub reissue cannot recover from bulk revocation")
 	}
 }
@@ -164,10 +164,10 @@ func TestContributorTokenSingleRevokePreservesOtherTokens(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("revoke one: %d %s", w.Code, w.Body.String())
 	}
-	if contributorProfileFromRegistrationToken(ta) != nil {
+	if profileForToken(s, ta) != nil {
 		t.Fatal("revoked token accepted")
 	}
-	if contributorProfileFromRegistrationToken(tb) == nil {
+	if profileForToken(s, tb) == nil {
 		t.Fatal("unrelated credential revoked")
 	}
 }
@@ -326,4 +326,9 @@ func TestContributorTokenConcurrentAuthenticationNeverFails(t *testing.T) {
 	if time.Since(cur.TokenLastUsedAt) > time.Minute {
 		t.Fatalf("last-used not recorded: %v", cur.TokenLastUsedAt)
 	}
+}
+
+func profileForToken(s *Server, token string) *ContributorProfile {
+	p, _ := authenticateContributorToken(token, s.contributorTokenPolicy())
+	return p
 }
