@@ -1354,18 +1354,43 @@ var ciPollCommandRe = regexp.MustCompile(`\bgh (?:run (?:watch|view|list)\b|pr c
 // polling commands exactly this way.
 var ciPollProhibitionRe = regexp.MustCompile("(?i)\\b(?:no|not|never|don't|avoid|without)\\s+(?:\\w+\\s+)?[`'\"]*$")
 
-// countCIPollCommands counts CI-status commands in pane, skipping mentions
+// ciPollCommands returns each CI-status command in pane as its normalized
+// command line (from the command name to end of line), skipping mentions
 // that are prohibitions quoted from the kick prompt or policy: those landed
 // in the pane right after the kick and read as poll commands issued 0s in.
-func countCIPollCommands(pane string) int {
+func ciPollCommands(pane string) []string {
 	pane = stripExplainLines(pane)
-	n := 0
+	var cmds []string
 	for _, loc := range ciPollCommandRe.FindAllStringIndex(pane, -1) {
 		lineStart := strings.LastIndex(pane[:loc[0]], "\n") + 1
 		if ciPollProhibitionRe.MatchString(pane[lineStart:loc[0]]) {
 			continue
 		}
-		n++
+		line, _, _ := strings.Cut(pane[loc[0]:], "\n")
+		cmds = append(cmds, strings.Join(strings.Fields(strings.TrimRight(line, " \t┃│")), " "))
+	}
+	return cmds
+}
+
+// countCIPollCommands counts CI-status commands in pane.
+func countCIPollCommands(pane string) int {
+	return len(ciPollCommands(pane))
+}
+
+// countRepeatedCIPollCommands counts CI-status commands whose command line
+// appears more than once in pane. Waiting on one PR re-reads the same
+// target; a merge sweep or CI-repair pass reads each of many PRs once, and
+// that is the lane's work, not polling (#14016).
+func countRepeatedCIPollCommands(pane string) int {
+	seen := map[string]int{}
+	for _, cmd := range ciPollCommands(pane) {
+		seen[cmd]++
+	}
+	n := 0
+	for _, c := range seen {
+		if c > 1 {
+			n += c
+		}
 	}
 	return n
 }
@@ -1404,7 +1429,8 @@ func ciPollNudgeExemptAgent(agent *AgentProcess) bool {
 // splices into a running response.
 //
 // Two independent triggers count as "polling CI" (#9673's ask, item 2): more
-// than ciPollNudgeThreshold poll commands this kick, OR at least one poll
+// than ciPollNudgeThreshold repeated poll commands this kick (the same
+// command line run more than once, #14016), OR at least one poll
 // command with the kick already running longer than ciPollNudgeWallClock — a
 // single `gh run watch` blocks for the whole wait and would otherwise never
 // cross the count threshold.
@@ -1420,14 +1446,17 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 		return
 	}
 	count := countCIPollCommands(scrollback)
+	repeated := countRepeatedCIPollCommands(scrollback)
 	m.mu.Lock()
 	if agent.ciPollBaseline < 0 {
 		agent.ciPollBaseline = count
+		agent.ciPollRepeatBaseline = repeated
 		m.mu.Unlock()
 		return
 	}
 	newPolls := count - agent.ciPollBaseline
-	overThreshold := newPolls > ciPollNudgeThreshold ||
+	newRepeats := repeated - agent.ciPollRepeatBaseline
+	overThreshold := newRepeats > ciPollNudgeThreshold ||
 		(newPolls > 0 && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
 	alreadyNudged := agent.ciPollNudgeSent
 	m.mu.Unlock()
@@ -1462,13 +1491,14 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	// Self-report (#13470, was the hive-code-defect "CI-poll nudge" counter):
 	// the harness caps the nudge at one per kick, so every observation is a
 	// distinct kick the agent spent polling its own CI.
-	// A lone poll past the wall clock is a normal post-push check, so only
-	// repeated polling reaches the fleet; the in-session nudge is unchanged.
-	if ciPollReportWorthy(newPolls) {
+	// A lone poll past the wall clock is a normal post-push check, and one
+	// read each of several PRs is a sweep, so only repeated polling of the
+	// same target reaches the fleet; the in-session nudge is unchanged.
+	if ciPollReportWorthy(newRepeats) {
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
-			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
-				agent.Name, lane, count, newPolls, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
+				agent.Name, lane, count, newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
 	}
 
 	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", count)
@@ -1478,8 +1508,8 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 }
 
 // ciPollReportWorthy reports whether a CI-poll nudge is repeated polling
-// (at least ciPollReportMinPolls commands since the kick) rather than a
-// single check.
-func ciPollReportWorthy(newPolls int) bool {
-	return newPolls >= ciPollReportMinPolls
+// (at least ciPollReportMinPolls repeated commands since the kick) rather
+// than a single check or a sweep.
+func ciPollReportWorthy(newRepeats int) bool {
+	return newRepeats >= ciPollReportMinPolls
 }

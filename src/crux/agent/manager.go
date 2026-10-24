@@ -400,10 +400,12 @@ type AgentProcess struct {
 	lastTransientNudge      time.Time
 	transientNudgesThisKick int
 	// CI-poll guard (#9673): baseline is the CI-poll command count already in
-	// scrollback when the kick's first poll tick ran (-1 = not yet captured).
-	ciPollBaseline  int
-	ciPollNudgeSent bool
-	CIPollNudges    int // total CI-polling nudges sent
+	// scrollback when the kick's first poll tick ran (-1 = not yet captured);
+	// ciPollRepeatBaseline is the repeated-command count captured with it.
+	ciPollBaseline       int
+	ciPollRepeatBaseline int
+	ciPollNudgeSent      bool
+	CIPollNudges         int // total CI-polling nudges sent
 	// AwaitingCI (#9673 item 3): true while the agent has crossed the
 	// CI-poll nudge threshold this kick AND is currently idle at the prompt
 	// (the same signal nudgeIfPollingCI uses to decide whether to nudge).
