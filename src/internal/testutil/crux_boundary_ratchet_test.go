@@ -67,12 +67,13 @@ import (
 // Test construction moved behind crux/cruxtest (#13962 slice 1): dashboard
 // 19 → 12, loginscan 4 → 2. Spoke now takes crux.ActivityObserver and its
 // tests use cruxtest too, removing all three remaining agent symbols.
+// Agent-mode and capability parsing moved to crux (#13962 slice 2):
+// dashboard 12 → 9, hub 1 → 0, ioscan 5 → 0 (its test names the
+// crux/agentmode leaf directly).
 var cruxSymbolBaseline = map[string]int{
 	"cmd/hive":      22,
-	"pkg/dashboard": 12,
+	"pkg/dashboard": 9,
 	"pkg/discord":   1,
-	"pkg/hub":       1,
-	"pkg/ioscan":    5,
 	"pkg/loginscan": 2,
 }
 

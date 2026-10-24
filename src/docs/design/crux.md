@@ -360,8 +360,10 @@ Still Stage 2, in this order:
   `agent.<Symbol>` can go to zero outside `cmd/hive`. The first slice of
   #13962 moves consumer test construction and setup controls behind
   `crux/cruxtest`, and spoke activity reads behind `crux.ActivityObserver`.
-  Agent-mode parsing, token/pane helpers and the final `Process` type
-  conversion remain in the following slices.
+  The second slice routes agent-mode and capability parsing (`AgentMode`,
+  `Mode*`, `ParseAgentMode`, `DefaultAgentMode`,
+  `AgentAvailableAtACMMLevel`) through `crux`. Token/pane helpers and the
+  final `Process` type conversion remain in the following slices.
 - **Fold `crux/types` into the module root.** It is a sub-package so that
   the alias packages in the root could be written against a stdlib-only
   leaf before the cut; with the ring in its own module the leaf no longer
