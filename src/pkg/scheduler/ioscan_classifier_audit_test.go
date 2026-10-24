@@ -453,6 +453,16 @@ func TestCLIClassifier_DailyQuotaExhaustion(t *testing.T) {
 			if skipped != 3 {
 				t.Fatalf("daily_quota_exhausted skips = %d, want 3", skipped)
 			}
+			var quotaEvents []classifierAuditEntry
+			for _, e := range *audit {
+				if e.action == auditActionIoscanClassifierDailyQuota {
+					quotaEvents = append(quotaEvents, e)
+				}
+			}
+			wantDetail := fmt.Sprintf("rule=%s, fail_mode=%s, quota=2, day=2026-10-24", ioscan.SemanticClassifierRule, failMode)
+			if len(quotaEvents) != 1 || quotaEvents[0].detail != wantDetail || quotaEvents[0].agent != ioscanAuditUser {
+				t.Fatalf("daily quota audit events = %+v, want one with detail %q", quotaEvents, wantDetail)
+			}
 			if n := strings.Count(logs.String(), "daily quota reached"); n != 1 {
 				t.Fatalf("quota WARN lines = %d, want 1:\n%s", n, logs.String())
 			}
@@ -470,6 +480,15 @@ func TestCLIClassifier_DailyQuotaExhaustion(t *testing.T) {
 			}
 			if n := strings.Count(logs.String(), "daily quota reached"); n != 2 {
 				t.Fatalf("quota WARN lines after second day = %d, want 2:\n%s", n, logs.String())
+			}
+			var total int
+			for _, e := range *audit {
+				if e.action == auditActionIoscanClassifierDailyQuota {
+					total++
+				}
+			}
+			if total != 2 {
+				t.Fatalf("daily quota audit events after second day = %d, want 2", total)
 			}
 		})
 	}

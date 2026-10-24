@@ -188,6 +188,12 @@ exactly as before. The only accepted backend today is `claude`.
   `daily_quota_exhausted` skip in the audit log, in either fail mode, just as
   for an exhausted per-pass budget, and the scheduler logs one WARN per UTC
   day. The count starts again at 00:00 UTC. Cache hits do not count.
+
+  Quota exhaustion is audited. The first unclassified pass-through of each UTC
+  day also writes an `ioscan_classifier_daily_quota_exhausted` audit event
+  carrying the fail mode, the quota and the UTC day, so a fail-closed hive can
+  see when semantic classification was off for the rest of that day. The text
+  itself still passes on in both fail modes.
 * The backend is chosen at boot; changing it takes effect after a restart.
 
 **Cost.** One call per untrusted text per pass, cached by content, with an

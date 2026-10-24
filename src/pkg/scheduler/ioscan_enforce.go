@@ -30,6 +30,9 @@ const (
 	// suppresses a whole kick after a Critical injection finding.
 	auditActionIoscanFailClosed = "ioscan_fail_closed"
 	auditActionIoscanClassifier = "ioscan_classifier"
+	// auditActionIoscanClassifierDailyQuota is recorded once per UTC day when
+	// daily-quota exhaustion first lets untrusted text pass on unclassified.
+	auditActionIoscanClassifierDailyQuota = "ioscan_classifier_daily_quota_exhausted"
 	// ioscanAuditUser is the audit-log user/agent attribution for kick-path
 	// enforcement events. Untrusted issue text has no single owning agent at
 	// list-assembly time, so events are attributed to the scheduler itself.
@@ -239,10 +242,13 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		// Same path as an exhausted per-pass budget: the text passes on in
 		// either fail mode.
 		s.recordClassifierSkip("daily_quota_exhausted")
-		if s.markClassifierQuotaWarned(quotaErr.Day) && s.logger != nil {
-			s.logger.Warn("ioscan classifier daily quota reached; untrusted text passes on unclassified until the next UTC day",
-				"quota", quotaErr.Quota, "day", quotaErr.Day,
-				"fix", "raise ioscan.classifier.cli_daily_quota (Settings → Security → Input Defense)")
+		if s.markClassifierQuotaWarned(quotaErr.Day) {
+			s.recordClassifierDailyQuota(quotaErr)
+			if s.logger != nil {
+				s.logger.Warn("ioscan classifier daily quota reached; untrusted text passes on unclassified until the next UTC day",
+					"quota", quotaErr.Quota, "day", quotaErr.Day,
+					"fix", "raise ioscan.classifier.cli_daily_quota (Settings → Security → Input Defense)")
+			}
 		}
 		return sanitized, v
 	}
@@ -380,6 +386,23 @@ func (s *Scheduler) recordClassifierSkip(reason string) {
 	detail := fmt.Sprintf("rule=%s, action=skip, reason=%s",
 		ioscan.SemanticClassifierRule, reason)
 	log(auditActionIoscanClassifier, detail, ioscanAuditUser)
+}
+
+// recordClassifierDailyQuota audits the first unclassified pass-through caused
+// by daily-quota exhaustion for a UTC day, so an operator can see that semantic
+// classification was off even though the text passed in either fail mode.
+func (s *Scheduler) recordClassifierDailyQuota(e *ioscan.DailyQuotaExhaustedError) {
+	log := s.auditLogger()
+	if log == nil {
+		return
+	}
+	failMode := "open"
+	if s.classifierFailClosed() {
+		failMode = "closed"
+	}
+	detail := fmt.Sprintf("rule=%s, fail_mode=%s, quota=%d, day=%s",
+		ioscan.SemanticClassifierRule, failMode, e.Quota, e.Day)
+	log(auditActionIoscanClassifierDailyQuota, detail, ioscanAuditUser)
 }
 
 func (s *Scheduler) recordClassifierAdvisory(score ioscan.InjectionScore, action ioscan.ClassifierAction) {
