@@ -1,0 +1,1 @@
+- refactor: share the commit-CI pending predicate between pkg/github and stageengine (#13913)
