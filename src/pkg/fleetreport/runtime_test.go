@@ -353,6 +353,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassFeedbackIssueRefreshFailed, message: "feedback: issue refresh failed"},
 		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
 		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
+		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -855,22 +856,24 @@ func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
 
 func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 	fed := map[string]string{
-		"tmux has-session failed":                 ClassTmuxSessionCheckFailed,
-		"pane content at timeout":                 ClassAgentPaneTimeout,
-		"prompt timeout — dumping pane":           ClassAgentPaneTimeout,
-		"proxy client TLS handshake failed":       ClassProxyTLSHandshakeFailed,
-		"transparent proxy TLS handshake failed":  ClassProxyTLSHandshakeFailed,
-		"failed to restore per-agent dir mode":    ClassAgentDirSetupFailed,
-		"failed to restore interactive home mode": ClassAgentDirSetupFailed,
-		"failed to tighten per-agent dir mode":    ClassAgentDirSetupFailed,
-		"failed to tighten interactive home mode": ClassAgentDirSetupFailed,
-		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
-		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
-		"feedback: issue refresh failed":          ClassFeedbackIssueRefreshFailed,
-		"failed to restore inference home mode":   ClassAgentDirSetupFailed,
-		"failed to tighten inference home mode":   ClassAgentDirSetupFailed,
-		"failed to ingest bead fact":              ClassBeadFactIngestFailed,
-		"fleet report: cleared comment failed":    ClassSelfReportClearedFailed,
+		"tmux has-session failed":                                               ClassTmuxSessionCheckFailed,
+		"pane content at timeout":                                               ClassAgentPaneTimeout,
+		"prompt timeout — dumping pane":                                         ClassAgentPaneTimeout,
+		"proxy client TLS handshake failed":                                     ClassProxyTLSHandshakeFailed,
+		"transparent proxy TLS handshake failed":                                ClassProxyTLSHandshakeFailed,
+		"failed to restore per-agent dir mode":                                  ClassAgentDirSetupFailed,
+		"failed to restore interactive home mode":                               ClassAgentDirSetupFailed,
+		"failed to tighten per-agent dir mode":                                  ClassAgentDirSetupFailed,
+		"failed to tighten interactive home mode":                               ClassAgentDirSetupFailed,
+		"failed to create per-agent XDG dir":                                    ClassAgentDirSetupFailed,
+		"review evidence: could not write bundle":                               ClassReviewEvidenceWriteFail,
+		"feedback: issue refresh failed":                                        ClassFeedbackIssueRefreshFailed,
+		"failed to restore inference home mode":                                 ClassAgentDirSetupFailed,
+		"failed to tighten inference home mode":                                 ClassAgentDirSetupFailed,
+		"failed to ingest bead fact":                                            ClassBeadFactIngestFailed,
+		"fleet report: cleared comment failed":                                  ClassSelfReportClearedFailed,
+		"copilot sniff: client TLS handshake failed":                            ClassProxyTLSHandshakeFailed,
+		"github app recheck: installation does not cover every configured repo": ClassGitHubAppRepoNotCovered,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {

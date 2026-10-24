@@ -68,6 +68,7 @@ const (
 	ClassFeedbackIssueRefreshFailed = "feedback_issue_refresh_failed"
 	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
+	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
 )
 
 const (
@@ -157,12 +158,13 @@ var Classes = map[string]ClassSpec{
 	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
 	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
 	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout"}},
-	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
+	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed", "copilot sniff: client tls handshake failed"}},
 	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode", "failed to tighten per-agent dir mode", "failed to tighten interactive home mode", "failed to restore inference home mode", "failed to tighten inference home mode"}},
 	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
 	ClassFeedbackIssueRefreshFailed: {Component: "dashboard", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"feedback: issue refresh failed"}},
 	ClassBeadFactIngestFailed:       {Component: "knowledge", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to ingest bead fact"}},
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
+	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".
