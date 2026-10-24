@@ -148,6 +148,17 @@ func (s *Server) delegateHiveID() string {
 	return "hive"
 }
 
+// stageAdoptionEnabled mirrors the adoption engine's policy gate
+// (governor.labels.stage + .adoption); unreadable config counts as on so
+// the request is not refused on a dashboard that cannot see the policy.
+func (s *Server) stageAdoptionEnabled() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	stage := s.deps.Config.Governor.Labels.Stage
+	return stage.IsEnabled() && stage.Adoption.IsEnabled()
+}
+
 func (s *Server) handleRepoItemDecideDelegatedStatus(w http.ResponseWriter, r *http.Request) {
 	owner, repoName, number, ok := s.parseRepoItemPath(w, r)
 	if !ok {
@@ -450,6 +461,11 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 		case delegatedecision.ActionAdoptSupersede:
 			if in.Kind != delegatedecision.KindPR || in.HiveAuthored {
 				return notes, fmt.Errorf("supersede adoption requires a contributor PR")
+			}
+			if !s.stageAdoptionEnabled() {
+				// The engine only consumes the request label with adoption
+				// on; queuing it would be a silent no-op with a stale label.
+				return notes, fmt.Errorf("supersede adoption requires governor.labels.stage.adoption to be enabled on this hive")
 			}
 			if err := client.EnsureIssueLabel(ctx, repoFull, delegatedecision.LabelAdoptSupersede, "5319e7", "Owner-delegate request: adopt now in supersede mode"); err != nil {
 				return notes, fmt.Errorf("ensuring adoption request label: %w", err)

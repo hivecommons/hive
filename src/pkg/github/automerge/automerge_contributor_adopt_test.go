@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -1662,5 +1663,41 @@ func TestDelegatedSupersedeRehomesInPlaceAdoption(t *testing.T) {
 	rec, _ := h.e.stageStoreOrShared().Get(key)
 	if len(h.adopt.pulls) != 1 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptedBy != 90 {
 		t.Fatalf("in-place adoption not superseded: record=%+v pulls=%v", rec, h.adopt.pulls)
+	}
+}
+
+func TestDelegatedSupersedeFailureIsOneAttemptAndClearsLabel(t *testing.T) {
+	policy := adoptPolicy()
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.failRefs = true
+	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}
+	pr := adoptPR(7, "aaa", labels...)
+	h.adopt.mu.Lock()
+	h.adopt.heads[7] = "aaa"
+	h.adopt.mu.Unlock()
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoReviewer, false, nil)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("ApplyStageLabels should surface the failed supersede push")
+	}
+	if h.adopt.refAttempts != 1 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("attempts=%d pulls=%v", h.adopt.refAttempts, h.adopt.pulls)
+	}
+	key := stageKey("acme", "widget", 7)
+	if rec, _ := h.e.stageStoreOrShared().Get(key); !rec.Adopted("aaa") || rec.AdoptedBy != 0 {
+		t.Fatalf("attempt not recorded: %+v", rec)
+	}
+	if !slices.Contains(h.api.removed, delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label kept after a recorded attempt: removed=%v", h.api.removed)
+	}
+
+	// With the request consumed the PR re-parks at 085 for the owner: the
+	// next sweep neither retries the push nor touches the label again.
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision"), contributorLaneReasonNoReviewer)
+	if h.adopt.refAttempts != 1 || len(h.api.removed) != 0 {
+		t.Fatalf("failed delegated supersede retried: attempts=%d removed=%v", h.adopt.refAttempts, h.api.removed)
 	}
 }

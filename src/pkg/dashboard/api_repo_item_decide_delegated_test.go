@@ -255,3 +255,22 @@ func TestDelegatedSupersedeQueuesAdoptionForForeignPR(t *testing.T) {
 		t.Fatalf("original PR edited: %v", mock.edits)
 	}
 }
+
+func TestDelegatedSupersedeRefusedWhenAdoptionDisabled(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true}
+	srv := newDelegatedServer(t, mock)
+	off := false
+	srv.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &off
+	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true}
+	d := delegatedecision.Run(in)
+	if d.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision: %+v", d)
+	}
+	_, err := srv.executeDelegatedDecision(context.Background(), in, d, "writer", false)
+	if err == nil || !strings.Contains(err.Error(), "adoption") {
+		t.Fatalf("expected refusal with adoption disabled, got %v", err)
+	}
+	if strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request label queued despite disabled adoption: %v", mock.added)
+	}
+}

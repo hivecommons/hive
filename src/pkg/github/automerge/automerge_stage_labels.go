@@ -995,12 +995,18 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// Explicit delegated adoption also applies to a PR parked at 085,
 		// regardless of author kind or whether a nudge was ever sent.
 		if policy.Adoption && !obs.Merged && hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede) {
+			before, _ := store.Get(key)
 			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, ContributorPresence{}, false, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
-			if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 {
+			// The request is one attempt, not a standing order: clear the
+			// label once an attempt was recorded for this head (success or
+			// failure) so a persistent write failure re-parks the PR at 085
+			// instead of retrying every sweep. A deferral (hold label, fence
+			// unreadable) records nothing and keeps the label for a retry.
+			if after, ok := store.Get(key); ok && (after.AdoptedBy > 0 || delegatedAdoptionAttempted(before, after)) {
 				if err := c.removeNonStageLabel(ctx, obs.Owner, obs.Repo, obs.Number, delegatedecision.LabelAdoptSupersede); err != nil && firstErr == nil {
 					firstErr = err
 				}

@@ -588,6 +588,16 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	return c.supersedeAdoptedPR(ctx, store, key, obs, rec, policy, reason, grace, rec.NudgeOnline, dcoRehome, now)
 }
 
+// delegatedAdoptionAttempted reports whether adoptContributorPR recorded an
+// attempt between the two snapshots: MarkAdopted stamps head/by/at before
+// any write, so a changed adoption record means this head was tried.
+func delegatedAdoptionAttempted(before, after stagelabels.Record) bool {
+	return after.AdoptedHead != before.AdoptedHead ||
+		after.AdoptedBy != before.AdoptedBy ||
+		!after.AdoptedAt.Equal(before.AdoptedAt) ||
+		after.AdoptMode != before.AdoptMode
+}
+
 func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, grace time.Duration, online bool, dcoRehome bool, now time.Time) (int, error) {
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	rec.AdoptReason = reason
