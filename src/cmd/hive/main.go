@@ -2932,7 +2932,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.sched.SetClassifier(ioscan.UnavailableClassifier{Err: cerr}, ioscan.Thresholds{})
 			b.logger.Error("ioscan classifier required at this ACMM level but not running; untrusted text is withheld",
 				"reason", cerr.Error(), "acmm_level", acmmLevel,
-				"fix", "configure governor.trajectory/litellm, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
+				"fix", "configure governor.trajectory/litellm, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open (Settings → Security → Input Defense)")
 		case cerr != nil:
 			b.logger.Warn("ioscan classifier enabled but not running", "reason", cerr.Error())
 		default:

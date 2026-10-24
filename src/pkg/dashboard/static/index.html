@@ -42370,7 +42370,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
-      { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
+      { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier semantic model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.fail_mode ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
       { tab: 'Features', section: 'Quality loops & release health', label: 'Retro loop', key: 'retro.enabled', text: 'retro loop quality post-completion analysis model scan interval fix attempts kicks long stall recent closed window retro.enabled retro.analysis_model retro.scan_interval_s retro.max_fix_attempts retro.max_kicks retro.long_stall_days retro.recent_closed_window_s' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Close issues on merge', key: 'issues.close_on_merge', text: 'issues close on merge reporter confirmation sweep backfill recheck interval issues.close_on_merge issues.close_on_merge_interval issues.close_on_merge_backfill_interval issues.close_on_merge_recheck issues.reporter_confirmation' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Duplicate PR sweep', key: 'duplicate_sweep.enabled', text: 'duplicate pr sweep superseded comments budget duplicate_sweep.enabled duplicate_sweep.post_comments duplicate_sweep.max_comments duplicate_sweep.max_prs_per_repo' },
@@ -51546,9 +51546,33 @@ function burnAreaChart() {
             <div class="config-field" data-setting-key="ioscan.classifier.block_threshold"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" data-change-action="gh54"></div>
           </div>`
         : '<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-4) var(--sp-0) var(--sp-0)">ioscan classifier fields are not present in this v4 backend yet; this disclosure will render them automatically when the API reports support.</p>';
+      // The classifier switch and its fail mode. Without them an L5-L6 hive
+      // with no model endpoint withholds all untrusted text and the owner
+      // has no dashboard way out. Empty follows the default, so each select
+      // says what the default currently resolves to.
+      const classifierSetting = sec.ioscanClassifierSetting || '';
+      const classifierFailSetting = sec.ioscanClassifierFailModeSetting || '';
+      const classifierControls = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifierSetting')
+        ? `<div class="config-field" data-setting-key="ioscan.classifier.enabled">
+          <label>Semantic classifier ${settingHelpMark('ioscan', '', 'Semantic classifier', `A model scores the untrusted text the rules let through. The default is on at ACMM L4–L6 and off below. It needs a model gateway. Switching it off takes effect on the next pass; switching it on takes effect after a restart.`)}</label>
+          <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierSetting" data-arg-types="s,s,v">
+            <option value="" ${classifierSetting === '' ? 'selected' : ''}>level default (now ${sec.ioscanClassifierEnabled ? 'on' : 'off'})</option>
+            <option value="on" ${classifierSetting === 'on' ? 'selected' : ''}>on</option>
+            <option value="off" ${classifierSetting === 'off' ? 'selected' : ''}>off</option>
+          </select>
+        </div>
+        <div class="config-field" data-setting-key="ioscan.classifier.fail_mode">
+          <label>Classifier fail mode ${settingHelpMark('ioscan', '', 'Classifier fail mode', `What happens when the classifier cannot answer (no model endpoint, timeout, unreadable reply): open passes the rule-cleaned text on; closed withholds it. The default follows ioscan fail mode.`)}</label>
+          <select data-change-action="markDirty" data-arg0="security" data-arg1="ioscanClassifierFailMode" data-arg-types="s,s,v">
+            <option value="" ${classifierFailSetting === '' ? 'selected' : ''}>follow ioscan fail mode (now ${esc(sec.ioscanClassifierFailMode || 'open')})</option>
+            <option value="open" ${classifierFailSetting === 'open' ? 'selected' : ''}>open — pass rule-cleaned text on</option>
+            <option value="closed" ${classifierFailSetting === 'closed' ? 'selected' : ''}>closed — withhold the text</option>
+          </select>
+        </div>`
+        : '';
 
       const inputDefense = `
-        <p class="config-help">YAML keys: <code>ioscan.enabled</code>, <code>ioscan.fail_mode</code>, <code>ioscan.canaries</code>, <code>ioscan.classifier.enabled</code>, <code>ioscan.classifier.model</code>, <code>ioscan.classifier.warn_threshold</code>, <code>ioscan.classifier.block_threshold</code>.</p>
+        <p class="config-help">YAML keys: <code>ioscan.enabled</code>, <code>ioscan.fail_mode</code>, <code>ioscan.canaries</code>, <code>ioscan.classifier.enabled</code>, <code>ioscan.classifier.fail_mode</code>, <code>ioscan.classifier.model</code>, <code>ioscan.classifier.warn_threshold</code>, <code>ioscan.classifier.block_threshold</code>.</p>
         <div class="config-toggle" data-setting-key="ioscan.enabled">
           <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
           <span class="config-toggle-label">Input/Output scanning (ioscan) ${settingHelpMark('ioscan', '', 'Input/Output scanning (ioscan)', `Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.`)}</span>
@@ -51564,6 +51588,7 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${sec.ioscanCanaries ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanCanaries"></div>
           <span class="config-toggle-label">ioscan canaries ${settingHelpMark('ioscan', '', 'ioscan canaries', `Plant per-kick exfiltration markers and scan egress for leaks.`)}</span>
         </div>
+        ${classifierControls}
         <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced ioscan classifier</summary>${classifierAdvanced}</details>`;
 
       const mergeGates = `

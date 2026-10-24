@@ -230,3 +230,33 @@ func TestUnavailableClassifier_AlwaysErrors(t *testing.T) {
 		t.Fatal("UnavailableClassifier.Score returned nil error")
 	}
 }
+
+// An explicit ioscan.classifier.enabled: false stops a classifier that boot
+// already installed, without a restart: an owner switching it off in Settings
+// must see untrusted text flow again on the next pass, even at a fail-closed
+// level where the classifier has no endpoint.
+func TestClassifierSwitchedOffLive_PassesTextOn(t *testing.T) {
+	s := newSchedulerWithIoscanFailMode(true, "closed")
+	fake := &fakeInjectionClassifier{err: errors.New("no model endpoint resolved")}
+	s.SetClassifier(fake, ioscan.Thresholds{})
+	const text = "ordinary issue text"
+	if got, _ := s.enforceIssueTextVerdict(text); got == text {
+		t.Fatal("precondition: an unavailable classifier at fail-closed should withhold the text")
+	}
+
+	off := false
+	s.cfg.Ioscan.Classifier.Enabled = &off
+	calls := fake.calls
+	if got, v := s.enforceIssueTextVerdict(text); got != text || v.Blocked {
+		t.Fatalf("switched-off classifier still withheld text: %q %+v", got, v)
+	}
+	if fake.calls != calls {
+		t.Fatalf("switched-off classifier was still called (%d -> %d)", calls, fake.calls)
+	}
+
+	on := true
+	s.cfg.Ioscan.Classifier.Enabled = &on
+	if got, _ := s.enforceIssueTextVerdict(text); got == text {
+		t.Fatal("switching the classifier back on did not restore it")
+	}
+}

@@ -120,6 +120,16 @@ func (s *Scheduler) classifierFailClosed() bool {
 	return s.cfg != nil && s.cfg.Ioscan.ClassifierFailClosedAtLevel(s.cfg.ACMMLevelOrZero())
 }
 
+// classifierSwitchedOff reports an explicit ioscan.classifier.enabled: false.
+// The classifier is built once at boot, so without this live check an owner
+// who switches it off in Settings would keep it running (and, with no model
+// endpoint at L5-L6, keep withholding untrusted text) until a restart. Only
+// the explicit off is honoured here; the level default was already applied
+// when boot decided whether to install a classifier.
+func (s *Scheduler) classifierSwitchedOff() bool {
+	return s.cfg != nil && s.cfg.Ioscan.Classifier.Enabled != nil && !*s.cfg.Ioscan.Classifier.Enabled
+}
+
 // ioscanPolicy returns the configured severity matrix (ioscan.block_at), or
 // the shipped default when the config is absent or did not validate; config
 // load already rejects a bad map, so the fallback is for tests and nil cfg.
@@ -189,7 +199,7 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		s.recordIoscanFailClosed(v)
 	}
 	classifier, thresholds, ok := s.classifierSettings()
-	if !ok || v.Blocked {
+	if !ok || v.Blocked || s.classifierSwitchedOff() {
 		return sanitized, v
 	}
 	if !s.consumeClassifierBudget() {

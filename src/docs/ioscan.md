@@ -82,7 +82,11 @@ ioscan:
   `closed` mode a Critical false positive stalls that queue item until an
   operator clears it.
 * `fail_mode` and the classifier are owner-only settings, shown in the
-  dashboard under Governor Config → Security.
+  dashboard under Settings → Security → Input Defense: **ioscan fail mode**,
+  **Semantic classifier** (`classifier.enabled`: level default, on or off) and
+  **Classifier fail mode** (`classifier.fail_mode`: follow ioscan fail mode,
+  open or closed). Choosing `open` there stores `open`; it is not the same as
+  leaving the key unset, which follows the level and is `closed` at L5–L6.
 * `block_at` is set in the hive config file. A typo in a surface name or a
   severity is a config error at load time, never a silent default.
 
@@ -135,7 +139,11 @@ follows `ioscan.fail_mode`, so it is `closed` at L5–L6 and `open` below. At
 L5–L6 a hive with no model endpoint configured therefore withholds all
 untrusted text until one is set, or until the owner sets
 `classifier.enabled: false` or `classifier.fail_mode: open`. The boot log
-says so in one line.
+says so in one line. A hive whose agents all run on a subscription CLI such
+as Copilot has no such endpoint, so this is the usual case there. Both
+settings take effect on the next scheduler pass, without a restart. The
+classifier itself is built at boot, so switching it on where it was not
+running at boot needs a restart.
 
 **What still passes.** The classifier has a budget of 64 calls per scheduler
 pass. Text beyond that budget is passed on with a `budget_exhausted` skip in

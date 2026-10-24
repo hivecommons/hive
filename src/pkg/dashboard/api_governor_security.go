@@ -19,12 +19,18 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		IoscanEnabled        *bool   `json:"ioscanEnabled"`
-		IoscanFailMode       *string `json:"ioscanFailMode"`
-		IoscanCanaries       *bool   `json:"ioscanCanaries"`
-		IntentEnforce        *bool   `json:"intentEnforce"`
-		IntentShadow         *bool   `json:"intentShadow"`
-		IntentAlignmentModel *string `json:"intentAlignmentModel"`
+		IoscanEnabled  *bool   `json:"ioscanEnabled"`
+		IoscanFailMode *string `json:"ioscanFailMode"`
+		IoscanCanaries *bool   `json:"ioscanCanaries"`
+		// The semantic classifier's switch is "on", "off", or "" to follow
+		// the ACMM level; its fail mode is "open", "closed", or "" to follow
+		// ioscan.fail_mode. Empty is a real choice in both, so they are
+		// strings rather than bools.
+		IoscanClassifierSetting  *string `json:"ioscanClassifierSetting"`
+		IoscanClassifierFailMode *string `json:"ioscanClassifierFailMode"`
+		IntentEnforce            *bool   `json:"intentEnforce"`
+		IntentShadow             *bool   `json:"intentShadow"`
+		IntentAlignmentModel     *string `json:"intentAlignmentModel"`
 		// Intent classifier lists. An empty list restores the built-in
 		// defaults (nil), matching how the intent package treats them.
 		IntentTestPathPatterns      *[]string `json:"intentTestPathPatterns"`
@@ -109,10 +115,19 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		}
 		nextSentinel = &sc
 	}
-	if body.IoscanFailMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
-		if mode != "" && mode != "open" && mode != "closed" {
-			jsonError(w, "ioscan fail_mode must be open or closed", http.StatusBadRequest)
+	if body.IoscanFailMode != nil && !validIoscanFailMode(*body.IoscanFailMode) {
+		jsonError(w, "ioscan fail_mode must be open or closed", http.StatusBadRequest)
+		return
+	}
+	if body.IoscanClassifierFailMode != nil && !validIoscanFailMode(*body.IoscanClassifierFailMode) {
+		jsonError(w, "ioscan classifier fail_mode must be open or closed", http.StatusBadRequest)
+		return
+	}
+	if body.IoscanClassifierSetting != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.IoscanClassifierSetting)) {
+		case "", "on", "off":
+		default:
+			jsonError(w, "ioscan classifier must be on, off or empty", http.StatusBadRequest)
 			return
 		}
 	}
@@ -127,12 +142,26 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
 	}
+	// "open" is stored as written, not as empty: empty means "follow the
+	// ACMM level", which is closed at L5-L6, so storing open as empty made
+	// the dashboard unable to choose open on those levels.
 	if body.IoscanFailMode != nil {
-		mode := strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
-		if mode == "open" {
-			mode = ""
+		cfg.Ioscan.FailMode = strings.ToLower(strings.TrimSpace(*body.IoscanFailMode))
+	}
+	if body.IoscanClassifierFailMode != nil {
+		cfg.Ioscan.Classifier.FailMode = strings.ToLower(strings.TrimSpace(*body.IoscanClassifierFailMode))
+	}
+	if body.IoscanClassifierSetting != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.IoscanClassifierSetting)) {
+		case "on":
+			v := true
+			cfg.Ioscan.Classifier.Enabled = &v
+		case "off":
+			v := false
+			cfg.Ioscan.Classifier.Enabled = &v
+		default:
+			cfg.Ioscan.Classifier.Enabled = nil
 		}
-		cfg.Ioscan.FailMode = mode
 	}
 	if body.IoscanCanaries != nil {
 		cfg.Ioscan.Canaries = body.IoscanCanaries
@@ -243,10 +272,31 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// validIoscanFailMode accepts open, closed, or empty (follow the default).
+func validIoscanFailMode(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "open", "closed":
+		return true
+	}
+	return false
+}
+
 func securitySectionResponse(cfg *config.Config) map[string]interface{} {
+	level := cfg.ACMMLevelOrZero()
 	failMode := "open"
-	if cfg.Ioscan.FailClosedAtLevel(cfg.ACMMLevelOrZero()) {
+	if cfg.Ioscan.FailClosedAtLevel(level) {
 		failMode = "closed"
+	}
+	classifierFailMode := "open"
+	if cfg.Ioscan.ClassifierFailClosedAtLevel(level) {
+		classifierFailMode = "closed"
+	}
+	classifierSetting := ""
+	if e := cfg.Ioscan.Classifier.Enabled; e != nil {
+		classifierSetting = "off"
+		if *e {
+			classifierSetting = "on"
+		}
 	}
 	sandboxed := 0
 	reviewCapable := 0
@@ -293,6 +343,11 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"credentialInjection":                credentialInjection,
 		"ioscanEnabled":                      cfg.Ioscan.IsEnabled(),
 		"ioscanFailMode":                     failMode,
+		"ioscanFailModeSetting":              strings.ToLower(cfg.Ioscan.FailMode),
+		"ioscanClassifierEnabled":            cfg.Ioscan.ClassifierEnabledAtLevel(level),
+		"ioscanClassifierSetting":            classifierSetting,
+		"ioscanClassifierFailMode":           classifierFailMode,
+		"ioscanClassifierFailModeSetting":    strings.ToLower(cfg.Ioscan.Classifier.FailMode),
 		"ioscanCanaries":                     cfg.Ioscan.CanariesEnabled(),
 		"intentEnforce":                      cfg.Intent.Enforce,
 		"intentShadow":                       cfg.Intent.Shadow,
