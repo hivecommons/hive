@@ -14232,11 +14232,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${label ? ` role="img" aria-label="${esc(label)}"` : ' aria-hidden="true"'}>${body}</svg>`;
     }
 
-    // "[author icon] #N title" for the PR in progress column of the title line.
-    // tip, when given, replaces the default "title / Author" hover text.
+    // The covering PR's base_ref badge, shared by the sub-row and single-PR refs.
     function stageTrackerBaseRefBadge(lp) {
       return lp.base_ref ? ` <span class="ham-badge">${esc(lp.base_ref)}</span>` : '';
     }
+
+    // "[author icon] #N title" for the PR in progress column of the title line.
+    // tip, when given, replaces the default "title / Author" hover text.
     function stageTrackerPRRef(number, url, authorKind, author, title, tip) {
       const ak = authorKind || 'hive';
       const who = ak + (author ? ' · @' + author : '');
