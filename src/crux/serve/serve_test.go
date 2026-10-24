@@ -721,12 +721,39 @@ func TestKickAndStop(t *testing.T) {
 	}
 }
 
+// watched is the state the server's watcher last recorded for name.
+func (s *served) watched(name string) string {
+	s.srv.mu.Lock()
+	defer s.srv.mu.Unlock()
+	return s.srv.lastStates[name]
+}
+
+// waitUntil polls cond on a short ticker until it holds or the deadline
+// passes; it is the package's stand-in for testutil.Eventually, which the
+// nested module cannot import.
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	tick := time.NewTicker(2 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(5 * time.Second)
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
 func TestEventStream(t *testing.T) {
 	s := startServer(t, "", false)
 	s.rt.add("fixer", "f1", crux.StateStopped)
 	// Let the watcher seed its table before subscribing so the stream
 	// carries transitions only.
-	time.Sleep(50 * time.Millisecond)
+	waitUntil(t, "watcher seeded", func() bool { return s.watched("fixer") == string(crux.StateStopped) })
 
 	req, _ := http.NewRequest(http.MethodGet, "http://crux"+api.PathEvents, nil)
 	resp, err := s.client.Do(req)
@@ -737,23 +764,20 @@ func TestEventStream(t *testing.T) {
 		t.Fatalf("events: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
 	// Make sure the subscription is registered before acting.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
+	waitUntil(t, "subscriber registered", func() bool {
 		s.srv.mu.Lock()
-		n := len(s.srv.subscribers)
-		s.srv.mu.Unlock()
-		if n == 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+		defer s.srv.mu.Unlock()
+		return len(s.srv.subscribers) == 1
+	})
 
 	// An API-driven start, a kick, a stop; then a relayed kick-observer
-	// event; then a state change the API did not cause. Each state change
-	// is given a few poll intervals so the watcher sees every transition.
-	settle := func() { time.Sleep(5 * s.srv.PollInterval) }
+	// event; then a state change the API did not cause. After each state
+	// change wait for the watcher to record it so it sees every transition.
+	settle := func(state crux.ProcessState) {
+		waitUntil(t, "watcher saw "+string(state), func() bool { return s.watched("fixer") == string(state) })
+	}
 	s.expect(http.MethodPost, api.PathAgents, api.RunRequest{Name: "fixer"}, http.StatusCreated, nil)
-	settle()
+	settle(crux.StateRunning)
 	s.expect(http.MethodPost, api.KickPath("fixer"), api.KickRequest{Message: "go"}, http.StatusOK, nil)
 	s.rt.mu.Lock()
 	observer := s.rt.observer
@@ -763,7 +787,7 @@ func TestEventStream(t *testing.T) {
 	}
 	observer("fixer", "delivered", "typed 2 lines")
 	s.expect(http.MethodPost, api.StopPath("fixer"), nil, http.StatusOK, nil)
-	settle()
+	settle(crux.StateStopped)
 	s.rt.mu.Lock()
 	s.rt.procs["fixer"].State = crux.StateFailed
 	s.rt.procs["fixer"].LastRestartReason = "crash loop"

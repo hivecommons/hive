@@ -109,11 +109,8 @@ func TestServeTokenFromEnvironmentGatesTCP(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("with token: %d", resp.StatusCode)
 	}
-	// The TCP address was bound and announced.
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(h.stdout.String(), "http://127.0.0.1:") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	// The TCP address was bound and announced; the banner is printed before
+	// Serve starts, so it is complete once the socket answers.
 	if !strings.Contains(h.stdout.String(), "http://127.0.0.1:") {
 		t.Fatalf("stdout = %q", h.stdout.String())
 	}
