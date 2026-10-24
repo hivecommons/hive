@@ -1441,7 +1441,9 @@ func ciPollNudgeExemptAgent(agent *AgentProcess) bool {
 // command line run more than once, #14016), OR at least one poll
 // command with the kick already running longer than ciPollNudgeWallClock — a
 // single `gh run watch` blocks for the whole wait and would otherwise never
-// cross the count threshold.
+// cross the count threshold. The wall-clock trigger skips a sweep: a scanner
+// reading each of several PRs once late in a long kick is doing its work, not
+// waiting on one PR (#14066).
 
 func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible string) {
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
@@ -1464,7 +1466,7 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	newPolls := count - agent.ciPollBaseline
 	newRepeats := countRepeatedCIPollCommands(scrollback, agent.ciPollCommandBaseline)
 	overThreshold := newRepeats > ciPollNudgeThreshold ||
-		(newPolls > 0 && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
+		(newPolls > 0 && !ciPollSweep(newPolls, newRepeats) && time.Since(*agent.LastKick) > ciPollNudgeWallClock)
 	alreadyNudged := agent.ciPollNudgeSent
 	m.mu.Unlock()
 
@@ -1512,6 +1514,14 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	m.tmuxSendLiteralForAgent(agent, ciPollNudgeMessage)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
+}
+
+// ciPollSweep reports whether the poll commands since the kick read several
+// targets once each: more than one command and none of them repeated. A lone
+// poll is not a sweep; it may be the blocking `gh run watch` the wall-clock
+// trigger exists for.
+func ciPollSweep(newPolls, newRepeats int) bool {
+	return newPolls > 1 && newRepeats == 0
 }
 
 // ciPollReportWorthy reports whether a CI-poll nudge is repeated polling

@@ -10,7 +10,8 @@ import (
 // ci_poll_sweep_test.go pins #14016: the scanner's merge sweep and CI-repair
 // pass read `gh pr checks` once for each of many PRs. That is a sweep, not a
 // wait on one PR, so only command lines run more than once count toward the
-// nudge threshold and the fleet self-report.
+// nudge threshold and the fleet self-report, and the wall-clock trigger
+// leaves a sweep alone (#14066).
 
 func TestCountRepeatedCIPollCommands(t *testing.T) {
 	tests := []struct {
@@ -84,7 +85,7 @@ func TestNudgeIfPollingCISuccessiveSweeps(t *testing.T) {
 		wantNudged bool
 	}{
 		{name: "young kick", kickAge: 2 * time.Minute},
-		{name: "wall-clock nudge without report", kickAge: 11 * time.Minute, wantNudged: true},
+		{name: "past wall clock", kickAge: 11 * time.Minute},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
@@ -122,7 +123,7 @@ func TestNudgeIfPollingCISweepIsNotPolling(t *testing.T) {
 		wantNudged bool
 	}{
 		{name: "sweep, kick young: no nudge", kickAge: 2 * time.Minute, wantNudged: false},
-		{name: "sweep past wall clock: nudged, not reported", kickAge: 11 * time.Minute, wantNudged: true},
+		{name: "sweep past wall clock: no nudge (#14066)", kickAge: 11 * time.Minute, wantNudged: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
@@ -131,6 +132,10 @@ func TestNudgeIfPollingCISweepIsNotPolling(t *testing.T) {
 			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
 			m.nudgeIfPollingCI(a, sweep, ciPollIdlePane)
 
+			if a.AwaitingCI != tt.wantNudged {
+				t.Errorf("AwaitingCI = %v, want %v", a.AwaitingCI, tt.wantNudged)
+			}
+
 			if a.ciPollNudgeSent != tt.wantNudged {
 				t.Errorf("ciPollNudgeSent = %v, want %v", a.ciPollNudgeSent, tt.wantNudged)
 			}
@@ -138,5 +143,47 @@ func TestNudgeIfPollingCISweepIsNotPolling(t *testing.T) {
 				t.Errorf("ci_poll_nudge evidence = %d for a sweep, want 0: %#v", len(ev), ev)
 			}
 		})
+	}
+}
+
+// TestNudgeIfPollingCIWallClockSweepWithRepeat pins #14066's boundary: past
+// the wall clock a sweep is left alone, but one PR read twice inside it is a
+// wait on that PR, so the wall-clock nudge still fires.
+func TestNudgeIfPollingCIWallClockSweepWithRepeat(t *testing.T) {
+	sweep := "gh pr checks 100\ngh pr checks 101\ngh pr checks 102\n"
+	for _, tt := range []struct {
+		name       string
+		pane       string
+		wantNudged bool
+	}{
+		{name: "distinct reads", pane: sweep, wantNudged: false},
+		{name: "one target re-read", pane: sweep + "gh pr checks 101\n", wantNudged: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m, a := ciPollManager(t, ciPollIdlePane, 11*time.Minute)
+
+			m.nudgeIfPollingCI(a, "", ciPollIdlePane)
+			m.nudgeIfPollingCI(a, tt.pane, ciPollIdlePane)
+
+			if a.ciPollNudgeSent != tt.wantNudged || a.AwaitingCI != tt.wantNudged {
+				t.Errorf("nudged=%v awaiting=%v, want %v", a.ciPollNudgeSent, a.AwaitingCI, tt.wantNudged)
+			}
+		})
+	}
+}
+
+func TestCIPollSweep(t *testing.T) {
+	for _, tt := range []struct {
+		polls, repeats int
+		want           bool
+	}{
+		{polls: 0, repeats: 0, want: false},
+		{polls: 1, repeats: 0, want: false},
+		{polls: 2, repeats: 0, want: true},
+		{polls: 3, repeats: 2, want: false},
+	} {
+		if got := ciPollSweep(tt.polls, tt.repeats); got != tt.want {
+			t.Errorf("ciPollSweep(%d, %d) = %v, want %v", tt.polls, tt.repeats, got, tt.want)
+		}
 	}
 }
