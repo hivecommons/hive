@@ -777,40 +777,45 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if want.MergeCommit == MergeCommitWanted {
 		wanted[MergeCommitLabel] = true
 	}
+	// Matching is case-insensitive: wanted keys are canonical (lowercase)
+	// and each current label is compared through its lowercased form, so a
+	// mis-cased existing label counts as present rather than being removed
+	// and re-added. Removals keep the label's original spelling.
 	have := map[string]bool{}
 	for _, origL := range current {
 		l := strings.TrimSpace(origL)
 		if l == "" {
 			continue
 		}
-		have[strings.ToLower(l)] = true
-		if wanted[l] {
+		lower := strings.ToLower(l)
+		have[lower] = true
+		if wanted[lower] {
 			continue
 		}
 		// The hive's own DCO pair is reconciled only once the commit check
 		// has spoken; an unread head keeps its pill.
-		if dcoOwned(l) {
+		if dcoOwned(lower) {
 			if want.DCO != DCOUnknown {
 				remove = append(remove, l)
 			}
 			continue
 		}
-		if l == MergeCommitLabel {
+		if lower == MergeCommitLabel {
 			if want.MergeCommit == MergeCommitNotWanted {
 				remove = append(remove, l)
 			}
 			continue
 		}
-		if IsLegacyDCO(l) || !Owned(l) {
+		if IsLegacyDCO(lower) || !Owned(l) {
 			continue
 		}
-		if want.Kind == authorkind.Unknown && strings.HasPrefix(l, AuthorPrefix) && !IsLegacyRole(l) {
+		if want.Kind == authorkind.Unknown && strings.HasPrefix(lower, AuthorPrefix) && !IsLegacyRole(lower) {
 			continue
 		}
 		remove = append(remove, l)
 	}
 	for l := range wanted {
-		if !have[strings.ToLower(l)] {
+		if !have[l] {
 			add = append(add, l)
 		}
 	}
