@@ -269,6 +269,7 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
+	defer lockReviewEvidenceDir(path)()
 
 	b, err := LoadReviewEvidence(path)
 	switch {
