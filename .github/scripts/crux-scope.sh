@@ -45,6 +45,8 @@ CRUX_DIRS=(
   src/pkg/trajectory
   src/pkg/logscrub
   src/pkg/proxy
+  src/pkg/pushbroker
+  src/pkg/watsonx
 )
 
 changed=$(git diff --no-renames --name-only "$base" "$head" 2>/dev/null) || { echo full; exit 0; }

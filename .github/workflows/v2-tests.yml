@@ -158,7 +158,8 @@ concurrency:
 # dependency analysis is never narrowed). .github/scripts/crux-scope.sh
 # classifies the diff against the Crux package set — pkg/agent/... and
 # pkg/{agentmode,agentparse,agentsmd,claude,sandbox,kubejob,toolapprove,
-# skillreg,inference,openrouter,watchdog,trajectory,logscrub,proxy} — as:
+# skillreg,inference,openrouter,watchdog,trajectory,logscrub,proxy,
+# pushbroker,watsonx} — as:
 #   crux-only  every change is inside the set: the agent slices run, the rest
 #              buckets keep only the selected Crux packages plus the
 #              always-on tree-scanning packages (internal/..., pkg/config,
@@ -790,6 +791,7 @@ jobs:
                 if go list ./pkg/agent/... ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
                      ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg ./pkg/inference \
                      ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory ./pkg/logscrub ./pkg/proxy \
+                     ./pkg/pushbroker ./pkg/watsonx \
                      ./internal/... ./pkg/config ./pkg/rotation > ../crux-pkgs.txt 2>/dev/null \
                    && [ -s ../crux-pkgs.txt ]; then
                   grep -Fx -f ../crux-pkgs.txt "$sel" > "$sel.crux" || true

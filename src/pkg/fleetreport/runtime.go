@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -21,16 +22,21 @@ const TriggerRuntimeError = "runtime-error"
 // Runtime error classes. Each is an explicit allow-list entry: an error site
 // opts in by calling Observe with one of these, so an arbitrary logged error
 // never becomes an upstream issue by accident.
+//
+// The classes the agent runtime and its watchdog emit are declared in
+// pkg/crux/types (the runtime reports through types.ConditionReporter and
+// must not import this package); they are aliased here so the allow-list
+// below and every host-side caller keep one name.
 const (
-	ClassRestartStorm             = "restart_storm"
-	ClassKickFailedRepeatedly     = "kick_failed_repeatedly"
+	ClassRestartStorm             = types.ClassRestartStorm
+	ClassKickFailedRepeatedly     = types.ClassKickFailedRepeatedly
 	ClassPanicRecovered           = "panic_recovered"
 	ClassModelDiscoveryDegraded   = "model_discovery_degraded"
 	ClassInferenceAuthFailed      = "inference_auth_failed"
 	ClassAdvisoryPostFailed       = "advisory_post_failed"
 	ClassUpgradeStalled           = "upgrade_stalled"
-	ClassDataDiskPressure         = "data_disk_pressure"
-	ClassGitHubAppTokenMintFailed = "github_app_token_mint_failed"
+	ClassDataDiskPressure         = types.ClassDataDiskPressure
+	ClassGitHubAppTokenMintFailed = types.ClassGitHubAppTokenMintFailed
 	ClassUnexpectedHub5xx         = "unexpected_http_5xx_from_hub"
 	ClassUnclassifiedRepeated     = "unclassified_error_repeated"
 	// ClassAgentStall, ClassAgentCrashLoop and ClassCIPollNudge replace the
@@ -38,9 +44,9 @@ const (
 	// counters that used to be synthesised into a bare "Fleet report: …
 	// hive-code defect" issue are now observed at the hook site that owns
 	// them, so the report carries kick/pane context like every other class.
-	ClassAgentStall     = "agent_stall"
-	ClassAgentCrashLoop = "agent_crash_loop"
-	ClassCIPollNudge    = "ci_poll_nudge"
+	ClassAgentStall     = types.ClassAgentStall
+	ClassAgentCrashLoop = types.ClassAgentCrashLoop
+	ClassCIPollNudge    = types.ClassCIPollNudge
 	// ClassIssueRequestStuck and ClassEffectLedgerOpStuck are queue-health
 	// classes: a relay request that keeps failing or a journaled external
 	// effect that stays Unknown is work the hive is silently not doing. Both
@@ -280,6 +286,21 @@ func ObserveItem(class, key, message, diagnostics, repo, ref string) {
 
 // Clear marks a condition as no longer present on the default tracker.
 func Clear(class, key string) { DefaultTracker().Clear(class, key) }
+
+// DefaultReporter is the types.ConditionReporter the host hands the agent
+// runtime (Manager.SetConditionReporter) and the watchdog. It forwards to
+// the package-level Observe and Clear rather than capturing DefaultTracker
+// at wiring time, so a test that swaps the default tracker with
+// SetDefaultTrackerForTest sees the runtime's observations too.
+type DefaultReporter struct{}
+
+var _ types.ConditionReporter = DefaultReporter{}
+
+func (DefaultReporter) Observe(class, key, message, diagnostics string) {
+	Observe(class, key, message, diagnostics)
+}
+
+func (DefaultReporter) Clear(class, key string) { Clear(class, key) }
 
 func condKey(class, key string) string {
 	return strings.TrimSpace(class) + "\x00" + strings.TrimSpace(key)

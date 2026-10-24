@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 	"io"
 	"log/slog"
 	"strings"
@@ -429,8 +429,7 @@ func TestDeadAgentRestartWithExponentialBackoff(t *testing.T) {
 }
 
 func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
-	tr := fleetreport.NewRuntimeTracker(nil)
-	fleetreport.SetDefaultTrackerForTest(t, tr)
+	tr := &fakeConditions{}
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -438,7 +437,7 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	s := fastSettings()
 	s.CrashLoopAfter = 2
 	s.Backoff = []time.Duration{time.Millisecond}
-	r := newTestReconciler(t, s, fleet, alerter, clock)
+	r := newTestReconciler(t, s, fleet, alerter, clock, WithConditionReporter(tr))
 
 	for i := 0; i < 2; i++ {
 		r.Tick(context.Background())
@@ -469,7 +468,7 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	// The latch is the agent_crash_loop self-report (#13470): one evidence
 	// entry naming the agent with the classifier detail as diagnostics.
 	ev := crashLoopEvidence(tr)
-	if len(ev) != 1 || ev[0].Agent != "a1" || ev[0].Count != 1 || !strings.Contains(ev[0].Diagnostics, "agent=a1") || !strings.Contains(ev[0].Diagnostics, "failures=") {
+	if len(ev) != 1 || ev[0].Key != "a1" || !strings.Contains(ev[0].Diagnostics, "agent=a1") || !strings.Contains(ev[0].Diagnostics, "failures=") {
 		t.Fatalf("crash-loop self-report evidence = %#v", ev)
 	}
 
@@ -480,24 +479,61 @@ func TestCrashLoopEscalatesToPauseAndAlertOnce(t *testing.T) {
 	if fleet.pauseCount() != 1 || fleet.restartCount() != 2 {
 		t.Fatal("latched crash loop must not pause or restart again")
 	}
-	if ev := crashLoopEvidence(tr); len(ev) != 1 || ev[0].Count != 1 {
+	if ev := crashLoopEvidence(tr); len(ev) != 1 {
 		t.Fatalf("latched crash loop re-observed on later sweeps: %#v", ev)
 	}
 }
 
-func crashLoopEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
-	var out []fleetreport.Evidence
-	for _, e := range tr.Evidence() {
-		if e.Class == fleetreport.ClassAgentCrashLoop {
-			out = append(out, e)
+// fakeConditions is the test types.ConditionReporter: it records every
+// Observe and Clear so a test can assert exactly what the watchdog emitted.
+// Streak and persistence semantics are the host's (pkg/fleetreport).
+type fakeConditions struct {
+	mu       sync.Mutex
+	observed []fakeCondition
+	cleared  []fakeCondition
+}
+
+type fakeCondition struct{ Class, Key, Message, Diagnostics string }
+
+func (f *fakeConditions) Observe(class, key, message, diagnostics string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.observed = append(f.observed, fakeCondition{class, key, message, diagnostics})
+}
+
+func (f *fakeConditions) Clear(class, key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleared = append(f.cleared, fakeCondition{Class: class, Key: key})
+}
+
+// crashLoopEvidence returns the agent_crash_loop observations not cleared
+// since.
+func crashLoopEvidence(f *fakeConditions) []fakeCondition {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	open := map[string]bool{}
+	for _, o := range f.observed {
+		if o.Class == types.ClassAgentCrashLoop {
+			open[o.Key] = true
+		}
+	}
+	for _, c := range f.cleared {
+		if c.Class == types.ClassAgentCrashLoop {
+			open[c.Key] = false
+		}
+	}
+	var out []fakeCondition
+	for _, o := range f.observed {
+		if o.Class == types.ClassAgentCrashLoop && open[o.Key] {
+			out = append(out, o)
 		}
 	}
 	return out
 }
 
 func TestHealthyWindowResetsFailuresAndClearsAlert(t *testing.T) {
-	tr := fleetreport.NewRuntimeTracker(nil)
-	fleetreport.SetDefaultTrackerForTest(t, tr)
+	tr := &fakeConditions{}
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -506,7 +542,7 @@ func TestHealthyWindowResetsFailuresAndClearsAlert(t *testing.T) {
 	s.CrashLoopAfter = 2
 	s.Backoff = []time.Duration{time.Millisecond}
 	s.HealthyReset = 10 * time.Minute
-	r := newTestReconciler(t, s, fleet, alerter, clock)
+	r := newTestReconciler(t, s, fleet, alerter, clock, WithConditionReporter(tr))
 
 	// Drive into crash loop.
 	for i := 0; i < 2; i++ {
@@ -1069,8 +1105,7 @@ func TestObserveModeTakesNoAction(t *testing.T) {
 // TestObserveModeRecordsCrashLoopWithoutPausing covers the terminal decision:
 // the entry an operator reads to decide whether to enable heal.
 func TestObserveModeRecordsCrashLoopWithoutPausing(t *testing.T) {
-	tr := fleetreport.NewRuntimeTracker(nil)
-	fleetreport.SetDefaultTrackerForTest(t, tr)
+	tr := &fakeConditions{}
 	fleet := newFakeFleet("a1")
 	fleet.setObs("a1", deadObs())
 	clock := newFakeClock()
@@ -1078,7 +1113,7 @@ func TestObserveModeRecordsCrashLoopWithoutPausing(t *testing.T) {
 	s := fastSettings()
 	s.Mode = ModeObserve
 	s.CrashLoopAfter = 2
-	r := newTestReconciler(t, s, fleet, alerter, clock)
+	r := newTestReconciler(t, s, fleet, alerter, clock, WithConditionReporter(tr))
 
 	// Seed a record already at the cap, as a heal-mode run would have left it.
 	r.mu.Lock()

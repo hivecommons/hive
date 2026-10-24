@@ -63,7 +63,6 @@ import (
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/proxy"
-	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
@@ -2169,6 +2168,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// component attribute and count toward reach (#3973); the runtime itself
 	// only knows the OpenTelemetry API (#13536).
 	b.agentMgr.SetSpanStarter(tracing.StartSpan)
+	// The runtime's self-reported error conditions (stalls, restart storms,
+	// token-mint failures…) feed the fleet-report tracker through the
+	// types.ConditionReporter seam; the runtime does not import pkg/fleetreport.
+	b.agentMgr.SetConditionReporter(fleetreport.DefaultReporter{})
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
@@ -2257,7 +2260,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	}
 	if b.appAuth != nil {
 		b.agentMgr.SetAppAuth(b.appAuth)
-		b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: b.appAuth})
+		b.agentMgr.SetSandboxPushMinter(appMinter(b.appAuth, ""))
 	}
 	// Start the per-agent token refresh loop UNCONDITIONALLY. It no-ops until
 	// App auth is wired, and on hosted spokes that wiring happens AFTER boot
@@ -3546,7 +3549,8 @@ func (b *boot) bootSupervision() {
 			},
 		}
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
-			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))
+			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)),
+			watchdog.WithConditionReporter(fleetreport.DefaultReporter{}))
 		if b.saved != nil && len(b.saved.Watchdog) > 0 {
 			b.wd.Restore(b.saved.Watchdog)
 		}

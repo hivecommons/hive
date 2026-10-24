@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/crux/config"
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // ci_poll_wall_clock_test.go covers the second half of #9673's harness-guard
@@ -136,9 +136,8 @@ func TestNudgeIfPollingCISkipsMonitoringLanes(t *testing.T) {
 		{name: "developer", agentName: "scanner", role: "developer", wantNudged: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := fleetreport.NewRuntimeTracker(nil)
-			fleetreport.SetDefaultTrackerForTest(t, tr)
 			m, a := ciPollManager(t, ciPollIdlePane, 2*time.Minute)
+			tr := recordConditions(t, m)
 			a.Name = tt.agentName
 			a.Config.Role = tt.role
 			sent := 0
@@ -187,9 +186,8 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 		{name: "count threshold crossed: nudged and reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := fleetreport.NewRuntimeTracker(nil)
-			fleetreport.SetDefaultTrackerForTest(t, tr)
 			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
+			tr := recordConditions(t, m)
 			sent := 0
 			termSeams(m).sendLiteral = func(*AgentProcess, string) { sent++ }
 
@@ -218,12 +216,6 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 	}
 }
 
-func ciPollEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
-	var out []fleetreport.Evidence
-	for _, e := range tr.Evidence() {
-		if e.Class == fleetreport.ClassCIPollNudge {
-			out = append(out, e)
-		}
-	}
-	return out
+func ciPollEvidence(rec *conditionRecorder) []conditionObservation {
+	return rec.observations(types.ClassCIPollNudge)
 }

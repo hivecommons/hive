@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/crux/config"
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 func busyVisibilityTestManager() *Manager {
@@ -130,14 +130,10 @@ func writeEventsFile(t *testing.T, home, id string, mod time.Time) {
 	}
 }
 
-func kickFailedEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
-	var out []fleetreport.Evidence
-	for _, ev := range tr.Evidence() {
-		if ev.Class == fleetreport.ClassKickFailedRepeatedly {
-			out = append(out, ev)
-		}
-	}
-	return out
+// kickFailedEvidence is what the runtime has told its ConditionReporter
+// about kick_failed_repeatedly and not cleared since.
+func kickFailedEvidence(rec *conditionRecorder) []conditionObservation {
+	return rec.active(types.ClassKickFailedRepeatedly)
 }
 
 // Decision B on #12787: kicks that fail before busyNoActivityStall has had
@@ -146,10 +142,8 @@ func kickFailedEvidence(tr *fleetreport.RuntimeTracker) []fleetreport.Evidence {
 // not self-report.
 func TestKickUndeliverableBeforeStallRestartIsNotSelfReported(t *testing.T) {
 	clock := time.Date(2026, 10, 17, 16, 25, 0, 0, time.UTC)
-	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
-	fleetreport.SetDefaultTrackerForTest(t, tr)
-
 	m := busyVisibilityTestManager()
+	tr := recordConditions(t, m)
 	agent := m.agents["scanner"]
 	agent.LastTranscriptActivity = clock.Add(-config.DefaultBusyNoActivityThreshold - time.Minute)
 	for i := 0; i < 8; i++ {
@@ -178,10 +172,8 @@ func TestKickUndeliverableBeforeStallRestartIsNotSelfReported(t *testing.T) {
 
 func TestKickUndeliverableDuringLiveTurnIsNotSelfReported(t *testing.T) {
 	clock := time.Date(2026, 10, 16, 3, 26, 26, 0, time.UTC)
-	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
-	fleetreport.SetDefaultTrackerForTest(t, tr)
-
 	m := busyVisibilityTestManager()
+	tr := recordConditions(t, m)
 	agent := m.agents["scanner"]
 	// Even after a stall restart, a transcript written to seconds ago means
 	// the pane is busy, not stuck (#12268).
@@ -202,10 +194,8 @@ func TestKickUndeliverableDuringLiveTurnIsNotSelfReported(t *testing.T) {
 // delivered kick clears the marker and the tracker, and nothing is filed.
 func TestStallRestartThatRecoversClearsWithoutSelfReport(t *testing.T) {
 	clock := time.Date(2026, 10, 17, 17, 0, 0, 0, time.UTC)
-	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
-	fleetreport.SetDefaultTrackerForTest(t, tr)
-
 	m := busyVisibilityTestManager()
+	tr := recordConditions(t, m)
 	agent := m.agents["scanner"]
 	agent.LastTranscriptActivity = clock.Add(-65 * time.Minute)
 	for i := 0; i < busyNoActivityRecoveryKicks; i++ {
@@ -222,19 +212,22 @@ func TestStallRestartThatRecoversClearsWithoutSelfReport(t *testing.T) {
 		t.Fatalf("restart reset dropped the stall-restart marker: at=%v n=%d", agent.busyNoActivityRestartAt, agent.busyNoActivityRestarts)
 	}
 
-	// One more undeliverable kick while the new CLI boots is still below the
-	// tracker's streak, then the kick lands.
+	// One more undeliverable kick while the new CLI boots is observed (the
+	// host applies its streak before anything is filed), then the kick lands
+	// and the recovery clears it.
 	m.markKickUndeliverableLocked(agent, clock.Add(time.Minute), "pane not at a ready input prompt")
+	if obs := tr.observations(types.ClassKickFailedRepeatedly); len(obs) != 1 {
+		t.Fatalf("post-restart kick failure observations = %d, want 1", len(obs))
+	}
 	m.recordDeliveredKickLocked(agent, "go", "governor")
 	if !agent.busyNoActivityRestartAt.IsZero() || agent.busyNoActivityRestarts != 0 {
 		t.Fatalf("delivered kick did not clear the stall-restart marker: %+v", agent)
 	}
 	if evs := kickFailedEvidence(tr); len(evs) != 0 {
-		t.Fatalf("recovered stall was self-reported: %q", evs[0].Message)
+		t.Fatalf("recovered stall left kick_failed_repeatedly open: %q", evs[0].Message)
 	}
-	if cleared := tr.TakeCleared(); len(cleared) != 0 {
-		// Nothing qualified, so nothing should surface as a clear either.
-		t.Fatalf("recovered stall produced %d cleared conditions, want 0", len(cleared))
+	if cleared := tr.clears(types.ClassKickFailedRepeatedly); len(cleared) != 1 {
+		t.Fatalf("recovered stall produced %d cleared conditions, want 1", len(cleared))
 	}
 }
 
@@ -242,10 +235,8 @@ func TestStallRestartThatRecoversClearsWithoutSelfReport(t *testing.T) {
 // exactly one kick_failed_repeatedly report, saying the restart did not help.
 func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 	clock := time.Date(2026, 10, 17, 17, 0, 0, 0, time.UTC)
-	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
-	fleetreport.SetDefaultTrackerForTest(t, tr)
-
 	m := busyVisibilityTestManager()
+	tr := recordConditions(t, m)
 	agent := m.agents["scanner"]
 	agent.LastTranscriptActivity = clock.Add(-65 * time.Minute)
 	for i := 0; i < busyNoActivityRecoveryKicks; i++ {
@@ -260,11 +251,13 @@ func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		m.markKickUndeliverableLocked(agent, clock, "pane not at a ready input prompt")
 	}
+	// Every failing kick after the restart is observed; the host's streak
+	// turns them into one report.
 	evs := kickFailedEvidence(tr)
-	if len(evs) != 1 {
-		t.Fatalf("kick_failed_repeatedly evidence = %d, want exactly 1", len(evs))
+	if len(evs) != 4 {
+		t.Fatalf("kick_failed_repeatedly observations = %d, want 4", len(evs))
 	}
-	msg := evs[0].Message
+	msg := evs[len(evs)-1].Message
 	for _, want := range []string{
 		"after busy-no-activity restart did not recover the session",
 		"kick undeliverable 4 times in a row",
@@ -282,8 +275,8 @@ func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 	if evs := kickFailedEvidence(tr); len(evs) != 0 {
 		t.Fatalf("evidence still present after recovery: %q", evs[0].Message)
 	}
-	if cleared := tr.TakeCleared(); len(cleared) != 1 || cleared[0].Class != fleetreport.ClassKickFailedRepeatedly {
-		t.Fatalf("cleared conditions = %+v, want one kick_failed_repeatedly clear", cleared)
+	if cleared := tr.clears(types.ClassKickFailedRepeatedly); len(cleared) != 1 || cleared[0].Key != "scanner" {
+		t.Fatalf("cleared conditions = %+v, want one kick_failed_repeatedly clear for scanner", cleared)
 	}
 }
 
@@ -291,33 +284,27 @@ func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 // kicks to pile up on a session that was never restarted.
 func TestStallRestartErrorIsSelfReported(t *testing.T) {
 	clock := time.Date(2026, 10, 17, 17, 0, 0, 0, time.UTC)
-	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
-	fleetreport.SetDefaultTrackerForTest(t, tr)
-
 	m := busyVisibilityTestManager()
+	tr := recordConditions(t, m)
 	agent := m.agents["scanner"]
 	agent.KicksUndeliverable = busyNoActivityRecoveryKicks
 	m.markBusyNoActivityRestartLocked(agent, clock)
 	reason := busyNoActivityCondition + ": pane shows Working with no transcript activity for 1h5m; 6 kicks undeliverable"
 	m.reportBusyNoActivityRestartFailed("scanner", reason, errors.New("tmux kill-session: no server running"))
-	// The tracker still applies its streak: one observation is not yet
-	// evidence, two more failing kicks finish it and the count carries all
-	// three.
-	if evs := kickFailedEvidence(tr); len(evs) != 0 {
-		t.Fatalf("single restart error already qualified: %q", evs[0].Message)
+	// The restart error is observed at once; two more failing kicks follow
+	// it so the host's streak sees all three.
+	if evs := kickFailedEvidence(tr); len(evs) != 1 {
+		t.Fatalf("restart error observations = %d, want 1", len(evs))
 	}
 	for i := 0; i < 2; i++ {
 		m.markKickUndeliverableLocked(agent, clock, "pane not at a ready input prompt")
 	}
 	evs := kickFailedEvidence(tr)
-	if len(evs) != 1 {
-		t.Fatalf("kick_failed_repeatedly evidence = %d, want exactly 1", len(evs))
+	if len(evs) != 3 {
+		t.Fatalf("kick_failed_repeatedly observations = %d, want 3 (restart error + 2 kicks)", len(evs))
 	}
-	if evs[0].Count != 3 {
-		t.Fatalf("count = %d, want 3 (restart error + 2 kicks)", evs[0].Count)
-	}
-	if !strings.Contains(evs[0].Message, "after busy-no-activity restart did not recover the session") {
-		t.Fatalf("message = %q, want the post-restart wording", evs[0].Message)
+	if !strings.Contains(evs[2].Message, "after busy-no-activity restart did not recover the session") {
+		t.Fatalf("message = %q, want the post-restart wording", evs[2].Message)
 	}
 	m.reportBusyNoActivityRestartFailed("no-such-agent", reason, errors.New("x"))
 }
