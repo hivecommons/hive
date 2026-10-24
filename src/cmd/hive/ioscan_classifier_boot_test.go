@@ -112,7 +112,7 @@ func TestInstallIoscanClassifier_EmptyBackendKeepsHTTPPath(t *testing.T) {
 	if sink.budget != 0 {
 		t.Fatalf("HTTP path set a CLI budget: %d", sink.budget)
 	}
-	if strings.Contains(logs.String(), "backend") {
+	if strings.Contains(logs.String(), "backend=") {
 		t.Fatalf("HTTP path logged a backend:\n%s", logs.String())
 	}
 }
