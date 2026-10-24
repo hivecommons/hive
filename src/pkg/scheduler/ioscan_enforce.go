@@ -168,6 +168,19 @@ func trustedPRAuthor(pr github.PullRequest) bool {
 // PR text written by anyone, so they are never trusted.
 var reviewSource = ioscan.Source{Surface: ioscan.SurfaceReview}
 
+// warnOnce logs the first occurrence of key at Warn and every repeat at Debug,
+// so a persistent condition does not flood the log on every call.
+func (s *Scheduler) warnOnce(key, msg string, args ...any) {
+	if s.logger == nil {
+		return
+	}
+	if _, seen := s.ioscanWarned.LoadOrStore(key, struct{}{}); seen {
+		s.logger.Debug(msg, args...)
+		return
+	}
+	s.logger.Warn(msg, args...)
+}
+
 // enforceIssueTextVerdict scans one untrusted string from an issue surface
 // under the policy's untrusted line. Callers that know the author use
 // enforceTextFrom with issueSource/prSource instead.
@@ -201,7 +214,13 @@ func (s *Scheduler) enforceTextFrom(text string, src ioscan.Source) (string, ios
 		if s.classifierFailClosed() {
 			s.recordClassifierSkip("error_fail_closed")
 			if s.logger != nil {
-				s.logger.Warn("ioscan classifier failed closed; text withheld", "error", err)
+				if strings.Contains(err.Error(), "no model endpoint resolved") {
+					s.warnOnce("classifier-no-endpoint", "ioscan classifier failed closed; text withheld",
+						"error", err,
+						"fix", "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false or ioscan.classifier.fail_mode: open")
+				} else {
+					s.warnOnce("classifier-error:"+err.Error(), "ioscan classifier failed closed; text withheld", "error", err)
+				}
 			}
 			cv := ioscan.UnavailableVerdict(err.Error())
 			s.recordIoscanFailClosed(cv)

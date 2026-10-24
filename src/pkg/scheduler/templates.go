@@ -334,7 +334,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
 	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName)
 	if issueFailClosed || prFailClosed {
-		s.logger.Warn("ioscan fail-closed blocked kick", "agent", agentName)
+		s.warnOnce("blocked-kick:"+agentName, "ioscan fail-closed blocked kick", "agent", agentName)
 		return "", true
 	}
 
