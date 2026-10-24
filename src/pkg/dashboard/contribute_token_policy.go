@@ -106,9 +106,8 @@ func authenticateContributorToken(token string, policy contributorTokenPolicy) (
 		if policy.expired(&p, now) {
 			return nil, contributorTokenExpired
 		}
-		if p.TrustTier == "revoked" {
-			return nil, "Access has been revoked"
-		}
+		// A revoked contributor is returned, not rejected: callers audit the
+		// refusal themselves (handshake, knowledge export, token status).
 		policy.touchLastUsed(&p, hash, now)
 		return &p, ""
 	}
@@ -119,6 +118,10 @@ func (s *Server) handleContributeTokenStatus(w http.ResponseWriter, r *http.Requ
 	p, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
 	if p == nil {
 		jsonError(w, reason, http.StatusUnauthorized)
+		return
+	}
+	if p.TrustTier == "revoked" {
+		jsonError(w, "Access has been revoked", http.StatusUnauthorized)
 		return
 	}
 	jsonResponse(w, map[string]any{"issued_at": p.TokenIssuedAt, "expires_at": p.TokenExpiresAt,

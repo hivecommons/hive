@@ -332,3 +332,27 @@ func profileForToken(s *Server, token string) *ContributorProfile {
 	p, _ := authenticateContributorToken(token, s.contributorTokenPolicy())
 	return p
 }
+
+// A revoked contributor still authenticates to a profile so each caller can
+// audit the refusal itself; the token-status endpoint must keep refusing it.
+func TestContributorTokenRevokedProfileReturnedForCallerAudit(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	p, token := createContributorProfile("carol")
+	p.TrustTier = "revoked"
+	if err := saveContributorProfile(p); err != nil {
+		t.Fatal(err)
+	}
+	got, reason := authenticateContributorToken(token, s.contributorTokenPolicy())
+	if got == nil || got.TrustTier != "revoked" || reason != "" {
+		t.Fatalf("revoked profile not returned to caller: %v %q", got, reason)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/token", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), "revoked") {
+		t.Fatalf("token status for revoked contributor: %d %s", w.Code, w.Body.String())
+	}
+}
