@@ -90,6 +90,41 @@ func TestParseLLMDecision(t *testing.T) {
 		{name: "adopt-supersede on a hive PR", in: llmPR, raw: `{"verdict":"adopt-supersede","text":"x","rationale":"y","actions":[{"kind":"adopt-supersede"}]}`, wantErr: true},
 		{name: "duplicate of itself", in: llmIssue, raw: `{"verdict":"close-duplicate","text":"x","rationale":"y","actions":[{"kind":"close-as-duplicate","target":7}]}`, wantErr: true},
 		{name: "recommend-only that acts", in: llmPR, raw: `{"verdict":"recommend-only","text":"x","rationale":"y","actions":[{"kind":"approve-review"}]}`, wantErr: true},
+		// A non-park-keeping verdict must carry its recording action: a bare
+		// labels-remove of the park label would un-park with no decision
+		// comment, no marker and no audit of who decided.
+		{name: "un-park by labels-remove alone", in: llmIssue, raw: `{"verdict":"approve","text":"x","rationale":"y","actions":[{"kind":"labels-remove","labels":["stage/085-needs-decision"]}]}`, wantErr: true},
+		{name: "park label is not removable even beside the comment", in: llmIssue, raw: `{"verdict":"approve","text":"x","rationale":"y","actions":[{"kind":"comment-decision"},{"kind":"labels-remove","labels":["stage/085-needs-decision"]}]}`, wantErr: true},
+		{name: "approve by labels-add alone", in: llmIssue, raw: `{"verdict":"approve","text":"x","rationale":"y","actions":[{"kind":"labels-add","labels":["triage/accepted"]}]}`, wantErr: true},
+		{name: "direction by link alone", in: llmIssue, raw: `{"verdict":"direction","text":"x","rationale":"y","actions":[{"kind":"link","target":3}]}`, wantErr: true},
+		{name: "approve a PR without approve-review", in: llmPR, raw: `{"verdict":"approve","text":"x","rationale":"y","actions":[{"kind":"comment-decision"}]}`, wantErr: true},
+		{
+			name:    "removable labels still come off beside the comment",
+			in:      llmIssue,
+			raw:     `{"verdict":"direction","text":"not flaky after all","rationale":"root cause found","actions":[{"kind":"comment-decision"},{"kind":"labels-remove","labels":["flaky-test"]}]}`,
+			verdict: VerdictDirection, kinds: []ActionKind{ActionCommentDecision, ActionLabelsRemove},
+		},
+		// close-duplicate closes the newer item in favour of the older one.
+		{name: "close-duplicate in favour of a newer issue", in: llmIssue, raw: `{"verdict":"close-duplicate","text":"Duplicate of #9","rationale":"same bug","actions":[{"kind":"close-as-duplicate","target":9}]}`, wantErr: true},
+		{
+			name:    "close-superseded may yield a PR to the hive's newer one",
+			in:      Input{Repo: "acme/console", Kind: KindPR, Number: 8, Title: "Fix exporter", CIGreen: true, ContributorOnline: true},
+			raw:     `{"verdict":"close-superseded","text":"superseded by #12","rationale":"hive PR is current","actions":[{"kind":"close-as-duplicate","target":12}]}`,
+			verdict: VerdictCloseSuperseded, kinds: []ActionKind{ActionCloseDuplicate},
+		},
+		// Verdict and actions are validated together, so the audit log never
+		// records a verdict the executor did not carry out.
+		{name: "close-duplicate verdict without the close", in: llmIssue, raw: `{"verdict":"close-duplicate","text":"Duplicate of #3","rationale":"y","actions":[{"kind":"comment-decision"}]}`, wantErr: true},
+		{name: "close-superseded verdict without the close", in: llmPR, raw: `{"verdict":"close-superseded","text":"x","rationale":"y","actions":[{"kind":"comment-decision"}]}`, wantErr: true},
+		{name: "adopt-supersede verdict without the adopt", in: Input{Repo: "acme/console", Kind: KindPR, Number: 8, ContributorOnline: false}, raw: `{"verdict":"adopt-supersede","text":"x","rationale":"y","actions":[{"kind":"comment-decision"}]}`, wantErr: true},
+		{name: "close under a direction verdict", in: llmIssue, raw: `{"verdict":"direction","text":"x","rationale":"y","actions":[{"kind":"comment-decision"},{"kind":"close-as-duplicate","target":3}]}`, wantErr: true},
+		{name: "approve-review under a direction verdict", in: llmPR, raw: `{"verdict":"direction","text":"x","rationale":"y","actions":[{"kind":"comment-decision"},{"kind":"approve-review"}]}`, wantErr: true},
+		{
+			name:    "adopt-supersede verdict with its action",
+			in:      Input{Repo: "acme/console", Kind: KindPR, Number: 8, ContributorOnline: false},
+			raw:     `{"verdict":"adopt-supersede","text":"adopt now in supersede mode","rationale":"author offline","actions":[{"kind":"comment-decision"},{"kind":"adopt-supersede"}]}`,
+			verdict: VerdictAdoptSupersede, kinds: []ActionKind{ActionCommentDecision, ActionAdoptSupersede},
+		},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -123,14 +158,16 @@ func TestRunWithLLM(t *testing.T) {
 	dup.Body = "Duplicate of #3"
 	good := `{"verdict":"direction","text":"use option B","rationale":"B is reversible","actions":[{"kind":"comment-decision"}]}`
 	cases := []struct {
-		name    string
-		in      Input
-		runner  *fakeRunner
-		calls   int
-		outcome LLMOutcome
-		wantErr bool
-		rule    string
-		verdict Verdict
+		name     string
+		in       Input
+		runner   *fakeRunner
+		calls    int
+		outcome  LLMOutcome
+		wantErr  bool
+		rule     string
+		verdict  Verdict
+		noKinds  []ActionKind
+		refusals int
 	}{
 		{name: "no runner keeps the rules", in: llmIssue, outcome: LLMNotConsulted, rule: "default-approve", verdict: VerdictApprove},
 		{name: "rule decision is authoritative", in: dup, runner: &fakeRunner{reply: good}, outcome: LLMNotConsulted, rule: "dedupe", verdict: VerdictCloseDuplicate},
@@ -139,8 +176,13 @@ func TestRunWithLLM(t *testing.T) {
 		{name: "runner error falls back", in: llmIssue, runner: &fakeRunner{err: errors.New("boom")}, calls: 1, outcome: LLMFallback, wantErr: true, rule: "default-approve", verdict: VerdictApprove},
 		{name: "bad reply falls back", in: llmPR, runner: &fakeRunner{reply: `{"verdict":"merge"}`}, calls: 1, outcome: LLMFallback, wantErr: true, rule: "default-release", verdict: VerdictApprove},
 		{
-			name: "rails still strip hold removal", in: llmIssue, calls: 1, outcome: LLMAccepted, rule: RuleLLM, verdict: VerdictRecommendOnly,
-			runner: &fakeRunner{reply: `{"verdict":"approve","text":"lift it","rationale":"r","actions":[{"kind":"labels-remove","labels":["hold"]}]}`},
+			name: "rails still strip hold removal", in: llmIssue, calls: 1, outcome: LLMAccepted, rule: RuleLLM, verdict: VerdictDirection,
+			runner:  &fakeRunner{reply: `{"verdict":"direction","text":"lift it","rationale":"r","actions":[{"kind":"comment-decision"},{"kind":"labels-remove","labels":["hold"]}]}`},
+			noKinds: []ActionKind{ActionLabelsRemove}, refusals: 1,
+		},
+		{
+			name: "un-park without a decision comment falls back", in: llmIssue, calls: 1, outcome: LLMFallback, wantErr: true, rule: "default-approve", verdict: VerdictApprove,
+			runner: &fakeRunner{reply: `{"verdict":"approve","text":"lift it","rationale":"r","actions":[{"kind":"labels-remove","labels":["stage/085-needs-decision"]}]}`},
 		},
 	}
 	for _, tc := range cases {
@@ -157,6 +199,16 @@ func TestRunWithLLM(t *testing.T) {
 			}
 			if tc.runner != nil && tc.runner.calls != tc.calls {
 				t.Fatalf("runner calls = %d, want %d", tc.runner.calls, tc.calls)
+			}
+			for _, k := range tc.noKinds {
+				for _, a := range d.Actions {
+					if a.Kind == k {
+						t.Fatalf("rails left %s in %+v", k, d.Actions)
+					}
+				}
+			}
+			if len(d.Refusals) != tc.refusals {
+				t.Fatalf("refusals = %v, want %d", d.Refusals, tc.refusals)
 			}
 		})
 	}
