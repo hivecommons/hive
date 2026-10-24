@@ -179,15 +179,20 @@ func TestNudgeIfPollingCISelfReportGate(t *testing.T) {
 		name         string
 		kickAge      time.Duration
 		polls        int
+		priorNudges  int
 		wantEvidence int
 	}{
 		{name: "one poll past wall clock: nudged, not reported", kickAge: 11 * time.Minute, polls: 1, wantEvidence: 0},
-		{name: "repeated polls past wall clock: nudged and reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, wantEvidence: 1},
-		{name: "count threshold crossed: nudged and reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 1},
+		{name: "repeated polls past wall clock: nudged and reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, priorNudges: 1, wantEvidence: 1},
+		{name: "repeated polls, first nudge: nudged, not reported", kickAge: 11 * time.Minute, polls: ciPollReportMinPolls, wantEvidence: 0},
+		{name: "two polls repeat nudge: nudged, not reported", kickAge: 11 * time.Minute, polls: 2, priorNudges: 1, wantEvidence: 0},
+		{name: "count threshold crossed, first nudge: not reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, wantEvidence: 0},
+		{name: "count threshold crossed, repeat nudge: reported", kickAge: 2 * time.Minute, polls: ciPollNudgeThreshold + 1, priorNudges: 2, wantEvidence: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m, a := ciPollManager(t, ciPollIdlePane, tt.kickAge)
 			tr := recordConditions(t, m)
+			a.CIPollNudges = tt.priorNudges
 			sent := 0
 			termSeams(m).sendLiteral = func(*AgentProcess, string) { sent++ }
 

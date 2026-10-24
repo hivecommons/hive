@@ -1,0 +1,1 @@
+Fixed: the `ci_poll_nudge` fleet self-report now fires only for repeated polling (≥3 status commands in the kick) by an agent that was already nudged earlier since boot; a single delivered nudge stays in-session (#14016, #14017).

@@ -1321,7 +1321,10 @@ const (
 	// A lone poll past the wall clock is a normal post-push check: the agent
 	// is still nudged in-session, but the fleet only hears about repeated
 	// polling.
-	ciPollReportMinPolls = 2
+	ciPollReportMinPolls = 3
+	// ciPollReportMinNudges: a nudge that worked is self-recovered, so only a
+	// repeat (the prompt is not being honoured) is reported to the fleet.
+	ciPollReportMinNudges = 2
 	ciPollNudgeMessage   = "Stop polling CI. Do not run gh run watch/view, gh pr checks, or gh pr view --json statusCheckRollup again this turn: leave the PR as is and move to the next work-list item. The automerge sweep handles green PRs."
 )
 
@@ -1464,7 +1467,7 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	// distinct kick the agent spent polling its own CI.
 	// A lone poll past the wall clock is a normal post-push check, so only
 	// repeated polling reaches the fleet; the in-session nudge is unchanged.
-	if ciPollReportWorthy(newPolls) {
+	if ciPollReportWorthy(newPolls, totalCIPollNudges) {
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
 			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
@@ -1478,8 +1481,9 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 }
 
 // ciPollReportWorthy reports whether a CI-poll nudge is repeated polling
-// (at least ciPollReportMinPolls commands since the kick) rather than a
-// single check.
-func ciPollReportWorthy(newPolls int) bool {
-	return newPolls >= ciPollReportMinPolls
+// (at least ciPollReportMinPolls commands since the kick) that has already
+// been nudged before (ciPollReportMinNudges since boot), rather than a triage
+// check or a single nudge that worked.
+func ciPollReportWorthy(newPolls, nudgesSinceBoot int) bool {
+	return newPolls >= ciPollReportMinPolls && nudgesSinceBoot >= ciPollReportMinNudges
 }
