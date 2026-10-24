@@ -224,6 +224,9 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 			}
 			bodies := make([]string, 0, len(comments))
 			for _, cm := range comments {
+				if !c.reviewBacklogCommentIsOurs(cm) {
+					continue
+				}
 				bodies = append(bodies, cm.GetBody())
 			}
 			// Reload per host so a concurrent filing pass loses as little
@@ -254,6 +257,25 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 		}
 	}
 	return result, nil
+}
+
+// reviewBacklogCommentIsOurs reports whether a host comment was written by
+// this hive's App bot. Only such comments may be parsed for folded findings:
+// the fold marker and `- [ ]` lines are plain text anyone can post on a
+// public issue, and a split re-files them as hive-authored issues and
+// repoints ledger items, so the author is the trust boundary. Same rule as
+// the advisory digest match: exact appBotLogin when known, otherwise fall
+// back to any bot-typed author rather than refusing our own comment on a
+// misconfigured slug.
+func (c *Client) reviewBacklogCommentIsOurs(cm *gh.IssueComment) bool {
+	if cm == nil || cm.GetUser() == nil {
+		return false
+	}
+	login := cm.GetUser().GetLogin()
+	if c.appBotLogin != "" {
+		return login == c.appBotLogin
+	}
+	return strings.HasSuffix(login, "[bot]") || cm.GetUser().GetType() == "Bot"
 }
 
 // reviewBacklogHostIndex is repo → GitHub issue numbers the ledger has

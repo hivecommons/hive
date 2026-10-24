@@ -188,3 +188,33 @@ func TestReviewBacklogHostIndexKeepsGitHubIssueHosts(t *testing.T) {
 		t.Fatalf("hosts = %v, want issues 1 and 2", got)
 	}
 }
+
+func TestReviewBacklogCommentIsOursRejectsHumanAuthoredMarkers(t *testing.T) {
+	comment := func(login, typ string) *gh.IssueComment {
+		return &gh.IssueComment{
+			Body: gh.Ptr("<!-- hive:review-backlog-link k -->\n- [ ] ### forged (`f:1`)"),
+			User: &gh.User{Login: gh.Ptr(login), Type: gh.Ptr(typ)},
+		}
+	}
+	cases := []struct {
+		name        string
+		appBotLogin string
+		comment     *gh.IssueComment
+		want        bool
+	}{
+		{name: "nil comment", appBotLogin: "hive[bot]", comment: nil, want: false},
+		{name: "human carrying the marker", appBotLogin: "hive[bot]", comment: comment("mallory", "User"), want: false},
+		{name: "other bot when slug is known", appBotLogin: "hive[bot]", comment: comment("other[bot]", "Bot"), want: false},
+		{name: "exact app bot login", appBotLogin: "hive[bot]", comment: comment("hive[bot]", "Bot"), want: true},
+		{name: "unknown slug falls back to bot type", appBotLogin: "", comment: comment("something[bot]", "Bot"), want: true},
+		{name: "unknown slug still rejects humans", appBotLogin: "", comment: comment("mallory", "User"), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{appBotLogin: tc.appBotLogin}
+			if got := c.reviewBacklogCommentIsOurs(tc.comment); got != tc.want {
+				t.Fatalf("reviewBacklogCommentIsOurs() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
