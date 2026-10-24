@@ -252,42 +252,7 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklo
 				result.Deferred++
 				continue
 			}
-			result.Hosts++
-			comments, err := c.listIssueComments(ctx, owner, repoName, issue.GetNumber())
-			if err != nil {
-				if c.logger != nil {
-					c.logger.Warn("review backlog split skipped host", "repo", repo, "issue", issue.GetNumber(), "error", err)
-				}
-				result.Skipped++
-				continue
-			}
-			bodies := make([]string, 0, len(comments))
-			for _, cm := range comments {
-				if !c.reviewBacklogCommentIsOurs(cm) {
-					continue
-				}
-				bodies = append(bodies, cm.GetBody())
-			}
-			// Load, split and save under the ledger lock, per host, so the
-			// review filing path (fileOutOfScopeReviewBacklog) and this
-			// sweep never overwrite each other's ledger update. Events are
-			// recorded and audited before a ledger error aborts the pass:
-			// the issues they name are already filed and cross-linked.
-			split, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, maxActions-len(result.Split))
-			for _, ev := range split.Events {
-				result.Split = append(result.Split, ev)
-				if opts.Audit != nil {
-					opts.Audit(ev)
-				}
-			}
-			result.Skipped += split.Skipped
-			if split.Err != nil {
-				if c.logger != nil {
-					c.logger.Warn("review backlog split failed", "repo", repo, "issue", issue.GetNumber(), "error", split.Err)
-				}
-				result.Skipped++
-			}
-			if err != nil {
+			if _, err := c.sweepReviewBacklogSplitHost(ctx, sink, labels, repo, owner, repoName, issue, maxActions, opts.Audit, result); err != nil {
 				return result, err
 			}
 		}
@@ -296,6 +261,50 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklo
 		c.logger.Warn("review backlog split: per-pass cap reached, hosts deferred to a later pass", "max_actions", maxActions, "deferred_hosts", result.Deferred)
 	}
 	return result, nil
+}
+
+// sweepReviewBacklogSplitHost reads one closed host's bot-authored fold
+// comments and splits its eligible findings into result. A comment read or
+// per-host split failure is logged, counted in result.Skipped and reported
+// as complete=false; the returned error is a ledger load/save error that
+// aborts the pass.
+func (c *Client) sweepReviewBacklogSplitHost(ctx context.Context, sink ReviewBacklogSink, labels []string, repo, owner, repoName string, issue *gh.Issue, maxActions int, audit func(ReviewBacklogSplitEvent), result *ReviewBacklogSplitResult) (complete bool, err error) {
+	result.Hosts++
+	comments, err := c.listIssueComments(ctx, owner, repoName, issue.GetNumber())
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Warn("review backlog split skipped host", "repo", repo, "issue", issue.GetNumber(), "error", err)
+		}
+		result.Skipped++
+		return false, nil
+	}
+	bodies := make([]string, 0, len(comments))
+	for _, cm := range comments {
+		if !c.reviewBacklogCommentIsOurs(cm) {
+			continue
+		}
+		bodies = append(bodies, cm.GetBody())
+	}
+	// Load, split and save under the ledger lock, per host, so the
+	// review filing path (fileOutOfScopeReviewBacklog) and this
+	// sweep never overwrite each other's ledger update. Events are
+	// recorded and audited before a ledger error aborts the pass:
+	// the issues they name are already filed and cross-linked.
+	split, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, maxActions-len(result.Split))
+	for _, ev := range split.Events {
+		result.Split = append(result.Split, ev)
+		if audit != nil {
+			audit(ev)
+		}
+	}
+	result.Skipped += split.Skipped
+	if split.Err != nil {
+		if c.logger != nil {
+			c.logger.Warn("review backlog split failed", "repo", repo, "issue", issue.GetNumber(), "error", split.Err)
+		}
+		result.Skipped++
+	}
+	return split.Err == nil, err
 }
 
 // reviewBacklogHostSplit is what splitting one host produced.

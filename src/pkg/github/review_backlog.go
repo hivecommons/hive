@@ -46,6 +46,10 @@ type reviewBacklogLedger struct {
 	// twin that later closes, so this is a set per key: a re-run of the
 	// split sweep never files the same finding twice from any one host.
 	SplitKeys map[string][]int `json:"split_keys,omitempty"`
+	// SplitBackfilled records that BackfillReviewBacklogSplits walked every
+	// host in the ledger once (hivecommons/hive#13947), so later passes
+	// skip it and leave closed hosts to the windowed split sweep.
+	SplitBackfilled bool `json:"split_backfilled,omitempty"`
 }
 
 // reviewBacklogLedgerMu serialises the load→mutate→save cycles of the two

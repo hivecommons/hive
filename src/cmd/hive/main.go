@@ -9799,19 +9799,22 @@ func runClosedIssueStageSweepIfDue(ctx context.Context, ghClient *github.Client,
 // runReviewBacklogSplitSweep re-files still-unchecked review findings folded
 // into an issue that has since closed (hivecommons/hive#13914). It shares the
 // closed-issue sweep's cadence and window; every rule lives in
-// SweepReviewBacklogSplits.
+// SweepReviewBacklogSplits. It then runs the one-off
+// BackfillReviewBacklogSplits for hosts closed before that window
+// (hivecommons/hive#13947), a no-op once the ledger records it complete.
 func runReviewBacklogSplitSweep(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, since time.Time, logger *slog.Logger) {
+	audit := func(event github.ReviewBacklogSplitEvent) {
+		if dashSrv == nil {
+			return
+		}
+		detail := fmt.Sprintf("repo=%s, host=%d, issue=%d, reused=%t, key=%s",
+			event.Repo, event.Host, event.Number, event.Reused, event.Key)
+		dashSrv.AuditLogRecord("system", "review-backlog-split", detail, "", event.Repo, event.Host)
+	}
 	result, err := ghClient.SweepReviewBacklogSplits(ctx, github.ReviewBacklogSplitSweepOptions{
 		Since:      since,
 		MaxActions: github.DefaultReviewBacklogSplitMaxActions,
-		Audit: func(event github.ReviewBacklogSplitEvent) {
-			if dashSrv == nil {
-				return
-			}
-			detail := fmt.Sprintf("repo=%s, host=%d, issue=%d, reused=%t, key=%s",
-				event.Repo, event.Host, event.Number, event.Reused, event.Key)
-			dashSrv.AuditLogRecord("system", "review-backlog-split", detail, "", event.Repo, event.Host)
-		},
+		Audit:      audit,
 	})
 	if err != nil {
 		logger.Warn("review backlog split sweep failed", "error", err)
@@ -9819,6 +9822,17 @@ func runReviewBacklogSplitSweep(ctx context.Context, ghClient *github.Client, da
 	}
 	if result != nil && (len(result.Split) > 0 || result.Skipped > 0 || result.Deferred > 0) {
 		logger.Info("review backlog split sweep complete", "hosts", result.Hosts, "split", len(result.Split), "skipped", result.Skipped, "deferred", result.Deferred)
+	}
+	backfill, err := ghClient.BackfillReviewBacklogSplits(ctx, github.ReviewBacklogSplitSweepOptions{
+		MaxActions: github.DefaultReviewBacklogSplitMaxActions,
+		Audit:      audit,
+	})
+	if err != nil {
+		logger.Warn("review backlog split backfill failed", "error", err)
+		return
+	}
+	if backfill != nil && (len(backfill.Split) > 0 || backfill.Skipped > 0 || backfill.Deferred > 0) {
+		logger.Info("review backlog split backfill pass complete", "hosts", backfill.Hosts, "split", len(backfill.Split), "skipped", backfill.Skipped, "deferred", backfill.Deferred)
 	}
 }
 
