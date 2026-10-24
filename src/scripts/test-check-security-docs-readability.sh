@@ -137,18 +137,22 @@ fi
 # --- Case 8: URLs and inline code do not inflate the score ---------------
 # Same easy prose, but every sentence carries a long URL and an inline code
 # span. If either leaked into the word count the grade would jump well past
-# 11; it must stay a pass.
+# 11; it must stay a pass. --verbose pins the exact prose word count: each URL
+# vanishes and each inline-code span collapses to one word (the spans hold several), so a leaked URL
+# or span changes the count even when the grade stays low.
 noisy="$tmp/noisy.md"
 cat > "$noisy" <<'MD'
 # Noisy
 
 The hub runs the agents; see <https://example.com/an/extraordinarily/long/documentation/path/for/orchestration>.
-Each agent has one job, set in `HIVE_AGENT_ORCHESTRATION_RESPONSIBILITY_IDENTIFIER`.
+Each agent has one job, set in `hive agent orchestration responsibility identifier`.
 It reads the task and does the work, logged to https://example.com/incomprehensibly/verbose/observability/endpoint.
-If a step fails, the run stops and `hive-diagnostics-comprehensive-report` says why.
+If a step fails, the run stops and `hive diagnostics comprehensive report` says why.
 MD
-if bash "$checker" "$noisy" >"$out" 2>&1; then
-  note_ok "URLs and inline code are dropped before scoring"
+if bash "$checker" --verbose "$noisy" >"$out" 2>&1; then
+  grep -qE "^ok   $noisy: grade .*, 35 prose words$" "$out" \
+    && note_ok "URLs and inline code are dropped before scoring" \
+    || { note_fail "expected exactly 35 prose words for $noisy:"; cat "$out"; }
 else
   note_fail "URL/inline-code fixture should still pass:"; cat "$out"
 fi
