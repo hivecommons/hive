@@ -1046,3 +1046,62 @@ func TestReusedTwinLabels(t *testing.T) {
 		t.Fatalf("reusedTwinLabels(nil) = %v", got)
 	}
 }
+
+// The split sweep files folds out of a not_planned host through this sink,
+// and that host is itself a recently rejected App-bot issue over the same
+// file set. createIssue's rejected-twin gate then returns the host's number
+// with RejectedTwin set; the sink must report nothing filed rather than hand
+// back the host as the new item, or the sweep would cross-link the host to
+// itself and record the split as done.
+func TestReviewBacklogGitHubSinkRejectedTwinFilesNothing(t *testing.T) {
+	withReviewBacklogState(t)
+	var created, labelled, commented int
+	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			if r.URL.Query().Get("state") != "closed" {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			_, _ = io.WriteString(w, `[{"number":42,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Evidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"closed","state_reason":"not_planned","closed_at":"`+recent+`","updated_at":"`+recent+`","html_url":"https://github.example/o/r/issues/42","user":{"login":"`+testBot+`"}}]`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			labelled++
+			_, _ = io.WriteString(w, `[{"name":"nit"}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			commented++
+			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			created++
+			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	sink := githubIssueBacklogSink{c: c}
+	finding := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
+	ref, err := sink.CreateItem(context.Background(), ReviewBacklogItem{
+		Repo:        "o/r",
+		Title:       "Review backlog (correctness): unused variable",
+		Body:        "Split from #42 (host closed)\n\n`pkg/a.go:7` x is never read",
+		Labels:      []string{"nit"},
+		Perspective: review.PerspectiveCorrectness,
+		Finding:     finding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.ID != "" || ref.Number != 0 || ref.Reused {
+		t.Fatalf("ref = %+v, want empty: the rejected twin #42 is not a backlog item", ref)
+	}
+	if created != 0 || labelled != 0 || commented != 0 {
+		t.Fatalf("created=%d labelled=%d commented=%d, want no writes", created, labelled, commented)
+	}
+}

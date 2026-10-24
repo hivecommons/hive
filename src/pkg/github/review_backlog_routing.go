@@ -123,6 +123,14 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 	if res.Number <= 0 {
 		return ReviewBacklogRef{}, nil
 	}
+	if res.RejectedTwin {
+		// Nothing was filed: a maintainer recently closed an agent issue
+		// over the same file set as not-planned/duplicate. Number names
+		// that closed issue, not a backlog item — when the split sweep
+		// files a fold out of a not_planned host, the host itself is that
+		// twin, and recording it would cross-link the host to itself.
+		return ReviewBacklogRef{}, nil
+	}
 	if res.AlreadyExisted {
 		// hivecommons/hive#13364: the twin's own state governs. A blocked
 		// filing folded into an open twin keeps its labels but loses its
