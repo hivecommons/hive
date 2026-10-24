@@ -1,14 +1,18 @@
 # Crux: the agent runtime boundary (#13536)
 
-Status: **Stage 1 shipped (v5); Stage 2 blocked on `pkg/config`.** The
-boundary is named, the inbound and outbound architecture ratchets and the
-tmux funnel are live, `crux.Runtime` exists, the dashboard is on it, Crux
-owns its value types and the hub, spoke, dashboard and `cmd/hive` reference
-them as `crux.<Name>`, CI path filters select Crux-only shards for Crux-only
-PRs, and the `crux` CLI ships. Stage 2 (nested module) is measured but not
-started: the ring's outbound closure is about 55 Hive packages, almost all
-through `pkg/config`; see [Outbound edges](#outbound-edges). Stage 3 is
-design only.
+Status: **Stage 1 shipped (v5); Stage 2 prerequisites done, module cut
+(item 4) not started.** The boundary is named, the inbound and outbound
+architecture ratchets and the tmux funnel are live, `crux.Runtime` exists,
+the dashboard is on it, Crux owns its value types and the hub, spoke,
+dashboard and `cmd/hive` reference them as `crux.<Name>`, CI path filters
+select Crux-only shards for Crux-only PRs, and the `crux` CLI ships. The
+ring's outbound closure, about 55 Hive packages when this record began, is
+now zero in non-test code: the outbound baseline holds only two test-only
+`internal/testutil` rows (`pkg/agent` and `pkg/inference` tests use its
+`Eventually*` and `SkipUnlessRequired` helpers); see
+[Outbound edges](#outbound-edges). What is left of Stage 2 is the move, and
+its scope and open questions are under
+[Step 4: the module cut](#step-4-the-module-cut). Stage 3 is design only.
 
 ## What Crux is
 
@@ -35,11 +39,14 @@ The name is "the point everything turns on". Hive turns on Crux.
 | Isolation | `pkg/sandbox`, `pkg/kubejob` |
 | Observation | `pkg/watchdog`, `pkg/trajectory`, `pkg/logscrub` |
 | Stdlib-only leaves | `pkg/crux/types`, `pkg/crux/config`, `pkg/crux/effects`, `pkg/crux/gitidentity`, `pkg/crux/jev`, `pkg/crux/jsonextract`, `pkg/crux/outputschema` |
-| Surface and CLI | `pkg/crux`, `pkg/crux/cli`, `cmd/crux` |
+| Surface and CLI | `pkg/crux`, `pkg/crux/cli` |
 
 The same list, as directories, is `CRUX_DIRS` in
 `.github/scripts/crux-scope.sh` (CI path filter) and `cruxModulePrefixes` in
 `src/internal/testutil/crux_outbound_ratchet_test.go`; the two must agree.
+`cmd/crux`, the `crux` binary's `main`, is a host in the root module like
+`cmd/hive` (Stage 2, prerequisite 3): it holds the Hive-backed
+`cli.DefinitionLoader` and reaches the runtime only through `pkg/crux`.
 
 The RFC's claim that Crux's outbound coupling is "one `pkg/github` symbol and
 two `pkg/config` fields" was wrong. Measured on v5 at `437843c` (Oct 23,
@@ -157,12 +164,14 @@ own tags (`crux/vX.Y.Z`), own coverage floor and CI lane; same repo, same PRs,
 same v5/v6 branches. The `crux` binary that this stage was going to ship
 already exists (item 6), so the stage is the module cut alone.
 
-Not started. It was blocked until the outbound ratchet's `pkg/config` rows
-were gone, which prerequisite 1 delivered, and until `pkg/agent` and the
-sibling ring packages imported nothing from Hive, which prerequisite 2
-delivered; what remains is the proxy and `cmd/crux` (prerequisite 3). A nested module whose packages import `pkg/config` needs the root
-module to `replace` the nested one *and* the nested one to `replace` the
-root: a module cycle. It builds, but nothing can consume
+Prerequisites done, move not started. The move was blocked until the
+outbound ratchet's `pkg/config` rows were gone, which prerequisite 1
+delivered, until `pkg/agent` and the sibling ring packages imported nothing
+from Hive, which prerequisite 2 delivered, and until the proxy's edges were
+cut and `cmd/crux` was scoped, which prerequisite 3 delivered. The reason
+the order mattered: a nested module whose packages import `pkg/config`
+needs the root module to `replace` the nested one *and* the nested one to
+`replace` the root: a module cycle. It builds, but nothing can consume
 `github.com/hivecommons/hive/crux` without also pulling in all of Hive, so
 tags on it mean nothing, and every import path under `pkg/agent/...` would
 move for the ring's consumers and for the test shards, coverage floors and
@@ -210,26 +219,105 @@ cut buys the churn without the benefit. Prerequisites, in order:
    prefix list grew by `pkg/pushbroker` and `pkg/watsonx` in
    `crux_outbound_ratchet_test.go`, `crux-scope.sh` and the v2-tests
    boundary comment together.
-3. `pkg/proxy`'s edges and `cmd/crux`'s, measured on v5 after prerequisite 2
-   (distinct non-test `<pkg>.<Symbol>` selectors):
+3. **Done** (#13941, #13942, and the `cmd/crux` re-scope that followed).
+   `pkg/proxy`'s edges and `cmd/crux`'s, measured on v5 after prerequisite 2
+   as distinct non-test `<pkg>.<Symbol>` selectors, cut by the same three
+   rules as prerequisite 2. The inventory in the tracker named
+   `github.AgentProxyToken` as the `proxy → github` edge; on inspection that
+   type was already behind a function field, and the real edge was the REST
+   rate-limit accounting (`CoreRateLimitSnapshot`, `RecordRESTRequest`,
+   `RecordInjectedRESTRequest`).
 
-   | Edge | Non-test | Symbols | Likely shape |
+   | Edge | Symbols | Decision | Where |
    |---|---|---|---|
-   | `proxy → github` | 1 | `AgentProxyToken` | move the token type to `pkg/crux/types`, `pkg/github` aliases |
-   | `proxy → inferencehealth` | 3 | `GatewayStatus`, `NewStore`, `Store` | a status-sink interface the host injects, or the store joins the ring if nothing else imports it |
-   | `proxy → ioscan` | 3 | `CanaryLeak`, `CanaryRegistry`, `NewCanaryRegistry` | a canary-registry interface the host injects (`ioscan` stays outside, as above) |
-   | `proxy → issueshape` | 2 | `BodyHasMisEscapedNewlines`, `UnsubstitutedTemplatePlaceholder` | pure functions: move to a `pkg/crux` leaf, `issueshape` aliases |
-   | `proxy → tokens` | 4 | `BackendCopilot`, `InferenceSink`, `NewInferenceSink`, `SessionEntry` | a usage-sink interface the host injects |
-   | `cmd/crux → config` | 5 | `AgentConfig`, `Config`, `Load`, `LoadAgentOverrides`, `PoliciesConfig` | stays: this is the process boundary that loads `hive.yaml` for `cli.DefinitionLoader`; the nested module's `cmd/crux` is a host-side binary or gets a `crux/config`-only loader |
-   | `cmd/crux → defsrc` | 3 | `DefinitionKind`, `MergeAllowedFields`, `ParseDefinition` | the portable-YAML parser could move to a leaf; `ApplyToConfig(*config.Config)` and the governor `Cadence` stay |
+   | `proxy → inferencehealth` | `GatewayStatus`, `NewStore`, `Store` (3) | moved whole | `pkg/crux/inferencehealth`; `pkg/inferencehealth` aliases every symbol. Its one test that reads `fleetreport` stayed Hive side in the alias package (#13941) |
+   | `proxy → issueshape` | `BodyHasMisEscapedNewlines`, `UnsubstitutedTemplatePlaceholder` (2) | moved whole | `pkg/crux/issueshape`; `pkg/issueshape` aliases (#13941) |
+   | `proxy → ioscan` | `CanaryLeak`, `CanaryRegistry`, `NewCanaryRegistry` (3) | inverted; the leak record moved | `proxy.CanaryScanner` (`ScanEgress`), installed by `Proxy.SetCanaryScanner`, which `cmd/hive` already called with the `ioscan` registry. `CanaryLeak` is `pkg/crux/types.CanaryLeak` and `ioscan` aliases it. No scanner means no egress inspection; the host always installs one (#13942) |
+   | `proxy → tokens` | `BackendCopilot`, `InferenceSink`, `NewInferenceSink`, `SessionEntry` (4) | inverted | `proxy.UsageSink` (`Record`, `RecordWithCache`, `RecordCopilotUsage`), installed by `Proxy.SetTokenSink`; `*tokens.InferenceSink` satisfies it unchanged and `cmd/hive` injects it. A nil sink records nothing, matching the nil-pointer tolerance the concrete type had (#13942) |
+   | `proxy → github` | `CoreRateLimitSnapshot`, `RecordRESTRequest`, `RecordInjectedRESTRequest` (3) | inverted | `proxy.GitHubRESTAccounting` (`RecordRequest`, `RecordInjected`, `CoreSnapshot`), installed by `Proxy.SetGitHubRESTAccounting`; `cmd/hive/proxy_rest_accounting.go` adapts the process-global `pkg/github` store. Without it the proxy still forwards and reports no core-bucket snapshot (#13942) |
+   | `cmd/crux → config`, `cmd/crux → defsrc` | `AgentConfig`, `Config`, `Load`, `LoadAgentOverrides`, `PoliciesConfig`; `DefinitionKind`, `MergeAllowedFields`, `ParseDefinition` (8) | re-scoped: `cmd/crux` left the ring set | Every one of the eight is the `cli.DefinitionLoader` implementation: `hive.yaml`, Hive's per-agent defaults, the portable `AgentDefinition`. That is host knowledge, and `main` has no layer above it to be injected from, so `cmd/crux` is to the `crux` binary what `cmd/hive` is to `hive`: a host composition root in the root module, built against the ring. It left `cruxModulePrefixes` (which `crux-scope.sh` and the v2-tests boundary comment never listed it in) and the inbound ratchet keeps measuring it at zero `agent.<Symbol>` references, so it can reach the runtime only through `pkg/crux` |
 
-   13 non-test symbols on the proxy, 8 on `cmd/crux`. The proxy is both a
-   ring member and an inbound consumer (14 `agent.<Symbol>` references);
-   whether it stays in the ring is decided when those edges are cut, not
-   before.
-4. Then the move: `git mv` of the ring under `src/crux/`, `src/crux/go.mod`,
-   `src/go.work`, one `replace` in the root module, and the shards, floors
-   and `crux-scope.sh` repointed in the same PR.
+   The proxy stayed in the ring. It is still an inbound consumer (14
+   `agent.<Symbol>` references: `Manager`, agent-mode and capability
+   parsing, UID maps, the Linear credential), which is fine inside one
+   module and is the first question step 4 has to answer, below.
+4. Then the move. Scoped under [Step 4: the module cut](#step-4-the-module-cut).
+
+### Step 4: the module cut
+
+The shape, in one PR series on v5, each PR mergeable alone:
+
+1. **Decide `pkg/proxy`'s home.** Its 14 inbound `agent.<Symbol>`
+   references are the ring's only intra-ring dependency on the manager from
+   a package that is not the manager, `pkg/crux` or `pkg/crux/cli`. Either
+   it moves with the ring and those references become `crux.<Name>` on the
+   exported surface (`crux.Runtime` already carries the manager; agent mode,
+   capabilities and the UID map would need re-exports), or it stays in the
+   root module as a host-side component that imports the nested module. The
+   proxy is imported by exactly one non-ring package (`cmd/hive`) and the
+   runtime does not import it, so either is consistent; the deciding
+   question is whether a second Crux consumer wants the gateway. Default:
+   it moves, because a runtime without its credential gateway is not a
+   runtime a second consumer can run.
+2. **`src/crux/go.mod`.** Module path `github.com/hivecommons/hive/crux`,
+   same Go version as the root. Its third-party closure today is `cel-go`
+   (and `antlr4-go`, `cel.dev/expr`, `genproto`, `protobuf` under it),
+   `go-qrcode`, OpenTelemetry (`otel`, `otel/trace`, `otel/metric`,
+   `otel/log`, `auto/sdk`), `go.yaml.in/yaml/v3` and `gopkg.in/yaml.v3`,
+   `golang.org/x/exp` and `golang.org/x/text`. Nothing in that list is
+   Hive-specific, which is the point; the versions are pinned to the root's
+   `go.sum` at the cut.
+3. **The move.** `git mv` of every package in `cruxModulePrefixes` to
+   `src/crux/<pkg>` (`pkg/agent` → `crux/agent`, `pkg/crux/types` →
+   `crux/types`, `pkg/crux/cli` → `crux/cli`, and so on; `pkg/crux` itself
+   becomes the module root package), with the import-path rewrite applied
+   by `gofmt -r` or `sed` in the same commit. The alias packages in the
+   root (`pkg/config`, `pkg/effects`, `pkg/jev`, `pkg/outputschema`,
+   `pkg/jsonextract`, `pkg/inferencehealth`, `pkg/issueshape`, `pkg/ioscan`,
+   `pkg/github`, `pkg/agentaudit`, `pkg/fleetreport`) are what make this a
+   path swap and not a symbol migration for the 35 non-ring packages that
+   import a ring package today.
+4. **`src/go.work`** listing `.` and `./crux`, and in the root `go.mod` a
+   single `replace github.com/hivecommons/hive/crux => ./crux` with a
+   `require` on a pseudo-version so `go build` works without the workspace
+   (CI caches, `go install`, downstream `go get`). No `replace` in the
+   nested module in the other direction, ever; the outbound ratchet becomes
+   `go list -deps` over the nested module asserting no
+   `github.com/hivecommons/hive/pkg/...` or `.../internal/...` import, which
+   is the same test with the module boundary doing the walk. The two
+   test-only `internal/testutil` rows have to go first: `Eventually*`
+   (3 helpers, 9 uses) and `SkipUnlessRequired`/`SkipfUnlessRequired` (21
+   uses) copy into a `crux/internal/testutil` of their own.
+5. **CI.** `crux-scope.sh`'s `CRUX_DIRS` becomes the single prefix
+   `src/crux/`; the v2-tests agent slices and the crux-only `go list` run
+   from `src/crux` (`working-directory`) against `./...`; the per-package
+   coverage floors keyed `agent`, `crux`, `proxy`, `watchdog`, … are
+   re-keyed to the new paths with the same values, and the module gets its
+   own floor line in the aggregate. `scripts/check-go-ratchet-completeness.sh`
+   has to learn to walk both modules. `golangci-lint` runs per module.
+6. **Tags.** `crux/vX.Y.Z` tags on the same commits as Hive's, cut by the
+   release workflow alongside, so `go get
+   github.com/hivecommons/hive/crux@crux/v5.N.0` resolves.
+
+Still open before the series starts:
+
+- The proxy decision (1), which also decides whether `pkg/tokens`,
+  `pkg/ioscan` and `pkg/github` are adapted from `cmd/hive` (as now) or
+  from a thin root-module package the proxy's host wiring moves into.
+- The `crux` binary's home. `cmd/crux` is a root-module host (prerequisite
+  3) and keeps building against the nested module, so the nested module
+  ships no binary at the cut. A `crux/cmd/crux` that reads only
+  `crux/config`-shaped definitions (no `hive.yaml`, no Hive presets) is a
+  Stage 3 question, not a step 4 one.
+- The dashboard, hub and spoke import `pkg/agent` for the test-only
+  constructors (`NewManager`, `ProjectContext`, `NewRingBuffer`); they
+  keep working through the `replace`, but a second consumer's `go get`
+  of the nested module should not need them, so they are a reason to
+  finish `crux.Process` as its own type and fold `pkg/crux/types` into the
+  module root in the same series.
+- `go.work` and the module cache in CI: the `setup-go` cache key is the
+  root `go.sum`; it has to include `crux/go.sum` or the agent slices
+  download the closure cold.
 
 **Stage 3: platform.** `crux serve` with an API (gRPC or HTTP), tenancy, auth,
 quotas; Hive and hub become clients; the hub-to-runtime contract becomes
@@ -330,23 +418,24 @@ the same change that swaps its imports):
 ## Outbound edges
 
 Imports from ring packages to Hive packages outside the ring, as the
-outbound ratchet records them after Stage 2 prerequisites 1 and 2: no ring
-package imports `pkg/config`, and `pkg/agent` and the sibling ring packages
-import nothing from Hive. Entries marked *(test)* appear only in `_test.go`
-files.
+outbound ratchet records them after Stage 2 prerequisites 1, 2 and 3: no
+ring package imports anything from Hive in non-test code. Entries marked
+*(test)* appear only in `_test.go` files.
 
 | Ring package | Outside Hive imports |
 |---|---|
-| `cmd/crux` | `config`, `defsrc` (the `DefinitionLoader` implementation; moved here from `pkg/crux/cli`, see [Configuration leaf](#configuration-leaf)) |
 | `pkg/agent` | `internal/testutil` *(test)* |
 | `pkg/inference` | `internal/testutil` *(test)* |
-| `pkg/proxy` | `github`, `inferencehealth`, `ioscan`, `issueshape`, `tokens` |
 
-Before prerequisite 2 the table also had `pkg/agent → effects, fleetreport,
+Before prerequisite 3 the table also had `pkg/proxy → github,
+inferencehealth, ioscan, issueshape, tokens` and `cmd/crux → config,
+defsrc`; before prerequisite 2, `pkg/agent → effects, fleetreport,
 gitidentity, jev, outputschema, pushbroker`, `pkg/inference → watsonx`,
 `pkg/toolapprove → ioscan`, `pkg/trajectory → jsonextract` and
 `pkg/watchdog → fleetreport, rotation`; the per-edge decisions are under
-[Staged plan](#staged-plan).
+[Staged plan](#staged-plan). `cmd/crux` is no longer a ring package; it is
+a host in the root module (prerequisite 3) and the inbound ratchet measures
+it instead.
 
 Edges removed in #13785, and the shape each cut took, because the same
 shapes applied to the rows that followed:
@@ -367,10 +456,11 @@ setters or `crux.<Name>` / `pkg/crux/types` re-exports, never new exported
 ## Running the Crux set alone
 
 There is no separate module yet, so the ring is tested as a package list
-from `src/`:
+from `src/` (`./cmd/crux` is a host that builds against it, like
+`./cmd/hive`, and is tested with the rest of the root module):
 
 ```sh
-cd src && go test ./pkg/agent/... ./pkg/crux/... ./cmd/crux \
+cd src && go test ./pkg/agent/... ./pkg/crux/... \
   ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
   ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg \
   ./pkg/inference ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory \
