@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // A ready pane is not proof that tmux accepted the kick. Failed writes must
@@ -147,9 +147,8 @@ func TestSendKickPropagatesFinalDeliveryFailure(t *testing.T) {
 }
 
 func TestKickWriteFailuresReportAndClearOnRecovery(t *testing.T) {
-	tr := fleetreport.NewRuntimeTracker(time.Now)
-	fleetreport.SetDefaultTrackerForTest(t, tr)
 	m, a, _ := kickLogTestManager(t, "")
+	tr := recordConditions(t, m)
 	termSeams(m).sendLiteralErr = func(*AgentProcess, string) error { return errors.New("send failed") }
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -162,22 +161,20 @@ func TestKickWriteFailuresReportAndClearOnRecovery(t *testing.T) {
 		}
 	}
 	found := false
-	for _, ev := range tr.Evidence() {
-		if ev.Class == fleetreport.ClassKickFailedRepeatedly && strings.Contains(ev.Message, "send text") {
+	for _, ev := range tr.active(types.ClassKickFailedRepeatedly) {
+		if strings.Contains(ev.Message, "send text") {
 			found = true
 		}
 	}
 	if !found || a.KicksUndeliverable != 3 {
-		t.Fatalf("missing repeated delivery failure: count=%d, evidence=%+v", a.KicksUndeliverable, tr.Evidence())
+		t.Fatalf("missing repeated delivery failure: count=%d, evidence=%+v", a.KicksUndeliverable, tr.observed)
 	}
 	termSeams(m).sendLiteralErr = nil
 	if err := m.deliverKickLocked(a, "task", "send-kick"); err != nil {
 		t.Fatal(err)
 	}
-	for _, ev := range tr.Evidence() {
-		if ev.Class == fleetreport.ClassKickFailedRepeatedly {
-			t.Fatal("successful retry left repeated-failure evidence active")
-		}
+	if ev := tr.active(types.ClassKickFailedRepeatedly); len(ev) != 0 {
+		t.Fatalf("successful retry left repeated-failure evidence active: %+v", ev)
 	}
 	if a.KicksUndeliverable != 0 || !a.busyNoActivityRestartAt.IsZero() || a.LastKick == nil || len(a.KickHistory) != 1 {
 		t.Fatal("successful retry did not clear failures and the stall-restart marker and record exactly one kick")

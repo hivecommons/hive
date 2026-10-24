@@ -16,9 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/crux/effects"
 	"github.com/hivecommons/hive/pkg/crux/gitidentity"
-	"github.com/hivecommons/hive/pkg/effects"
-	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -242,8 +241,20 @@ func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string
 	return cmd.CombinedOutput()
 }
 
+// TokenScoper mints an installation token narrowed to a permission tier and,
+// when non-empty, to the named repositories. It is the one method the broker
+// needs from the host's GitHub App credential (*github.AppAuth in hive), kept
+// as an interface so this package stays inside the Crux ring.
+type TokenScoper interface {
+	ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error)
+}
+
+// GitHubAppMinter mints a per-push token through the host's TokenScoper.
+// Auth must be a non-nil interface holding a non-nil implementation; hosts
+// building it from a possibly-nil pointer should leave Auth nil instead of
+// storing a typed nil (see cmd/hive's appMinter).
 type GitHubAppMinter struct {
-	Auth *ghpkg.AppAuth
+	Auth TokenScoper
 	Tier string
 }
 

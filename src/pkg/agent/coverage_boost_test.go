@@ -1349,19 +1349,20 @@ func TestNudgeIfKickStalled(t *testing.T) {
 func TestCreditStallRecoveryLocked(t *testing.T) {
 	kicked := paneContentHash("pane at kick time")
 	agent := &AgentProcess{lastInferKickPane: kicked, stallNudgeSent: true}
+	m := &Manager{}
 
-	creditStallRecoveryLocked(agent, kicked)
+	m.creditStallRecoveryLocked(agent, kicked)
 	if agent.StallRecoveries != 0 || agent.stallNudgeSent {
 		t.Fatalf("unchanged pane must not credit, got %d sent=%v", agent.StallRecoveries, agent.stallNudgeSent)
 	}
 
 	agent.stallNudgeSent = true
-	creditStallRecoveryLocked(agent, paneContentHash("moved on"))
+	m.creditStallRecoveryLocked(agent, paneContentHash("moved on"))
 	if agent.StallRecoveries != 1 || agent.stallNudgeSent {
 		t.Fatalf("nudge then pane change then new kick must credit, got %d sent=%v", agent.StallRecoveries, agent.stallNudgeSent)
 	}
 
-	creditStallRecoveryLocked(agent, paneContentHash("moved again"))
+	m.creditStallRecoveryLocked(agent, paneContentHash("moved again"))
 	if agent.StallRecoveries != 1 {
 		t.Fatalf("no outstanding nudge must not credit, got %d", agent.StallRecoveries)
 	}

@@ -15,7 +15,6 @@ import (
 	"github.com/hivecommons/hive/pkg/claude"
 	"github.com/hivecommons/hive/pkg/crux/config"
 	"github.com/hivecommons/hive/pkg/crux/effects"
-	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -760,6 +759,10 @@ type Manager struct {
 	// recordPromptCallback: read on paths that hold m.mu. Nil falls back to
 	// the OpenTelemetry global tracer; see SetSpanStarter.
 	spanStarter atomic.Pointer[SpanStarter]
+	// conditionReporter is the host sink for self-reported error conditions;
+	// same atomic.Pointer discipline. Nil drops observations. See
+	// SetConditionReporter.
+	conditionReporter atomic.Pointer[types.ConditionReporter]
 	// deadSessionRecoveryOwnedElsewhere is set when the watchdog reconciler
 	// owns restarting missing-session / bare-pane agents (RFC #4665), so this
 	// manager's crash loop observes those two conditions without restarting
@@ -1159,13 +1162,13 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if backend == "copilot" {
 		m.runCopilotCacheJanitor()
 		if reason, full := copilotDiskFullCondition(); full {
-			fleetreport.Observe(fleetreport.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+reason, "")
+			m.observeCondition(types.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+reason, "")
 			if err := m.Pause(name, DiskFullTrigger, reason); err != nil {
 				return err
 			}
 			return fmt.Errorf("%s", reason)
 		}
-		fleetreport.Clear(fleetreport.ClassDataDiskPressure, DataDiskPressureKey)
+		m.clearCondition(types.ClassDataDiskPressure, DataDiskPressureKey)
 	}
 
 	// Runs with m.mu RELEASED — see mintAgentTokenUnlocked for why holding

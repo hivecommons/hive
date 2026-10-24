@@ -2,23 +2,14 @@ package pushbroker
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-
-	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // scriptedGit answers git invocations from a table keyed on the joined argv,
@@ -377,44 +368,36 @@ func TestGitHubAppMinterRequiresAuth(t *testing.T) {
 	}
 }
 
+// scopeRecorder is the TokenScoper the minter tests drive: it records what
+// the broker asked for so the test can assert the scope, not GitHub's reply.
+type scopeRecorder struct {
+	tier  string
+	repos []string
+	token string
+}
+
+func (r *scopeRecorder) ScopedTokenForRepos(_ context.Context, tier string, repos []string) (string, error) {
+	r.tier, r.repos = tier, repos
+	return r.token, nil
+}
+
 // The point of minting per push is that the credential cannot reach any other
 // repository the installation covers, and that an unspecified tier lands on the
 // least-privileged default rather than on whatever the installation grants.
 func TestGitHubAppMinterScopesTokenToTheSingleRepo(t *testing.T) {
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/access_tokens") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"token":"ghs_scoped","expires_at":"2099-01-01T00:00:00Z"}`))
-	}))
-	defer srv.Close()
-
-	auth, err := ghpkg.NewAppAuthFromPEM(1234, 5678, testRSAKeyPEM(t), slog.New(slog.DiscardHandler), srv.URL)
-	if err != nil {
-		t.Fatalf("NewAppAuthFromPEM: %v", err)
-	}
-	token, err := (GitHubAppMinter{Auth: auth}).MintPushToken(context.Background(), " hivecommons/hive ")
+	rec := &scopeRecorder{token: "ghs_scoped"}
+	token, err := (GitHubAppMinter{Auth: rec}).MintPushToken(context.Background(), " hivecommons/hive ")
 	if err != nil {
 		t.Fatalf("MintPushToken: %v", err)
 	}
 	if token != "ghs_scoped" {
 		t.Fatalf("token = %q, want the minted token", token)
 	}
-	repos, _ := body["repositories"].([]any)
-	if len(repos) != 1 || repos[0] != "hive" {
-		t.Fatalf("repositories = %v, want exactly [hive]", body["repositories"])
+	if len(rec.repos) != 1 || rec.repos[0] != "hive" {
+		t.Fatalf("repositories = %v, want exactly [hive]", rec.repos)
 	}
-	// DefaultTier is "contributor": issues/contents/pull_requests write, no merge rights.
-	perms, _ := body["permissions"].(map[string]any)
-	if perms["contents"] != "write" || perms["pull_requests"] != "write" {
-		t.Fatalf("permissions = %v, want the contributor tier", perms)
-	}
-	if _, hasChecks := perms["checks"]; hasChecks {
-		t.Fatalf("default tier requested merger-shaped permissions: %v", perms)
+	if rec.tier != DefaultTier {
+		t.Fatalf("tier = %q, want the default %q", rec.tier, DefaultTier)
 	}
 }
 
@@ -422,26 +405,15 @@ func TestGitHubAppMinterScopesTokenToTheSingleRepo(t *testing.T) {
 // minter must leave the scope unrestricted rather than send a bogus name that
 // GitHub would reject.
 func TestGitHubAppMinterLeavesScopeOpenForAnUnqualifiedRepo(t *testing.T) {
-	var body map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"token":"ghs_open","expires_at":"2099-01-01T00:00:00Z"}`))
-	}))
-	defer srv.Close()
-
-	auth, err := ghpkg.NewAppAuthFromPEM(1234, 5678, testRSAKeyPEM(t), slog.New(slog.DiscardHandler), srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := (GitHubAppMinter{Auth: auth, Tier: "newcomer"}).MintPushToken(context.Background(), "hive"); err != nil {
+	rec := &scopeRecorder{token: "ghs_open"}
+	if _, err := (GitHubAppMinter{Auth: rec, Tier: "newcomer"}).MintPushToken(context.Background(), "hive"); err != nil {
 		t.Fatalf("MintPushToken: %v", err)
 	}
-	if _, ok := body["repositories"]; ok {
-		t.Fatalf("repositories = %v, want the field omitted", body["repositories"])
+	if rec.repos != nil {
+		t.Fatalf("repositories = %v, want the field omitted", rec.repos)
 	}
-	if perms, _ := body["permissions"].(map[string]any); perms["contents"] != "read" {
-		t.Fatalf("permissions = %v, want the newcomer tier", body["permissions"])
+	if rec.tier != "newcomer" {
+		t.Fatalf("tier = %q, want the explicit newcomer tier", rec.tier)
 	}
 }
 
@@ -470,12 +442,3 @@ func mergeErrs(maps ...map[string]error) map[string]error {
 type errMinter struct{ err error }
 
 func (m errMinter) MintPushToken(context.Context, string) (string, error) { return "", m.err }
-
-func testRSAKeyPEM(t *testing.T) []byte {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-}

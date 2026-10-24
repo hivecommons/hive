@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,12 @@ import (
 const reviewBacklogFooter = "filed by Hive review backlog"
 
 const reviewBacklogReRaiseMarker = "<!-- hive:review-backlog-reraise "
+
+const reviewBacklogSameFileMarker = "<!-- hive:review-backlog-same-file "
+
+// reviewBacklogFoldLineWindow is how far apart two citations of one file may
+// be and still count as the same spot for folding (#13906).
+const reviewBacklogFoldLineWindow = 10
 
 // ReviewBacklogRouting is the live review.severity / review.backlog view the
 // backlog filer reads on every pass (hivecommons/hive#11089).
@@ -38,6 +45,11 @@ type ReviewBacklogItem struct {
 	Title  string
 	Body   string
 	Labels []string
+	// Perspective and Finding are the review finding the item files, so a
+	// sink that consolidates into open twins folds only on a matching
+	// finding, never on a shared file alone (#13906).
+	Perspective review.Perspective
+	Finding     outputschema.Finding
 }
 
 // ReviewBacklogRef identifies a filed backlog item in its destination.
@@ -53,6 +65,10 @@ type ReviewBacklogRef struct {
 	// Reused is true when the destination returned an existing open item
 	// instead of creating one.
 	Reused bool
+	// SameFileAs is the GitHub issue number of an open item that cites the
+	// same file but was not folded into because it describes a different
+	// finding (#13906); 0 when there is none.
+	SameFileAs int
 }
 
 // ReviewBacklogSink is a backlog destination. The GitHub issue sink lives
@@ -85,7 +101,9 @@ func (c *Client) reviewBacklogRoutingConfig() (ReviewBacklogRouting, bool) {
 
 // ReviewBacklogIssueSink returns the github_issue backlog sink: issues in the
 // reviewed PR's repo, created through createIssue with open-twin
-// consolidation so a review finding folds into an agent finding on the same files.
+// consolidation narrowed by reviewBacklogFoldMatches, so a review finding
+// folds into an open issue only when it is the same finding, not merely the
+// same file (#13906).
 func (c *Client) ReviewBacklogIssueSink() ReviewBacklogSink {
 	return githubIssueBacklogSink{c: c}
 }
@@ -95,7 +113,10 @@ type githubIssueBacklogSink struct{ c *Client }
 func (githubIssueBacklogSink) Destination() string { return config.ReviewBacklogGitHubIssue }
 
 func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
-	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true})
+	foldMatch := func(title, body string) bool {
+		return reviewBacklogFoldMatches(item.Perspective, item.Finding, title, body)
+	}
+	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true, FoldMatch: foldMatch})
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}
@@ -112,12 +133,125 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 		}
 	}
 	return ReviewBacklogRef{
-		ID:     strconv.Itoa(res.Number),
-		Key:    fmt.Sprintf("#%d", res.Number),
-		Number: res.Number,
-		URL:    res.URL,
-		Reused: res.AlreadyExisted,
+		ID:         strconv.Itoa(res.Number),
+		Key:        fmt.Sprintf("#%d", res.Number),
+		Number:     res.Number,
+		URL:        res.URL,
+		Reused:     res.AlreadyExisted,
+		SameFileAs: res.SameFileAs,
 	}, nil
+}
+
+var (
+	reviewBacklogTitleCategoryRE = regexp.MustCompile(`^\s*Review backlog \(([^)]+)\):`)
+	reviewBacklogPerspectiveRE   = regexp.MustCompile(`(?m)^\s*Perspective:\s*(\S+)`)
+	reviewBacklogFileLineRE      = regexp.MustCompile(`([A-Za-z0-9_./-]+):(\d+)\b`)
+	reviewBacklogFileNameRE      = regexp.MustCompile(`[A-Za-z0-9_./-]*[A-Za-z0-9_-]\.[a-z]{1,5}\b`)
+	reviewBacklogBacktickRE      = regexp.MustCompile("`([^`]+)`")
+	reviewBacklogIdentRE         = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(\()?`)
+)
+
+// reviewBacklogNonSymbols are words that read like identifiers but name
+// products or common literals, so sharing one says nothing about sharing a
+// symbol.
+var reviewBacklogNonSymbols = map[string]bool{
+	"github": true, "gitlab": true, "javascript": true, "typescript": true,
+	"macos": true, "postgresql": true, "youtube": true,
+	"true": true, "false": true, "null": true, "error": true, "string": true,
+}
+
+// reviewBacklogFoldMatches reports whether a review finding is the same
+// finding as an open issue (title, body) that cites the same file, so it may
+// be folded in rather than filed (#13906). Both must be in the same category
+// (review perspective), and the finding must cite the issue's file within
+// reviewBacklogFoldLineWindow lines or name a symbol the issue's title names.
+// An issue with no recognisable category never matches.
+func reviewBacklogFoldMatches(p review.Perspective, f outputschema.Finding, title, body string) bool {
+	want := strings.ToLower(strings.TrimSpace(string(p)))
+	if want == "" || want != reviewBacklogItemCategory(title, body) {
+		return false
+	}
+	return reviewBacklogNearbyCitation(f, title+"\n"+body) || reviewBacklogSharesSymbol(f.Title, title)
+}
+
+// reviewBacklogItemCategory is the review perspective an item was filed
+// under, from its "Review backlog (<perspective>):" title or its
+// "Perspective:" line, lower-cased; "" when it names none.
+func reviewBacklogItemCategory(title, body string) string {
+	if m := reviewBacklogTitleCategoryRE.FindStringSubmatch(title); m != nil {
+		return strings.ToLower(strings.TrimSpace(m[1]))
+	}
+	if m := reviewBacklogPerspectiveRE.FindStringSubmatch(body); m != nil {
+		return strings.ToLower(strings.TrimSpace(m[1]))
+	}
+	return ""
+}
+
+func reviewBacklogNearbyCitation(f outputschema.Finding, text string) bool {
+	file := normaliseFingerprintPath(f.File)
+	if file == "" || f.Line <= 0 {
+		return false
+	}
+	for _, m := range reviewBacklogFileLineRE.FindAllStringSubmatch(text, -1) {
+		if normaliseFingerprintPath(m[1]) != file {
+			continue
+		}
+		line, err := strconv.Atoi(m[2])
+		if err != nil {
+			continue
+		}
+		if d := line - f.Line; d >= -reviewBacklogFoldLineWindow && d <= reviewBacklogFoldLineWindow {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewBacklogSharesSymbol(a, b string) bool {
+	want := reviewBacklogSymbols(a)
+	if len(want) == 0 {
+		return false
+	}
+	for s := range reviewBacklogSymbols(b) {
+		if want[s] {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewBacklogSymbols is the set of code identifiers a title names:
+// backticked identifiers, calls ("name("), camelCase/PascalCase words with an
+// inner capital, and snake_case words. File names are dropped first so a
+// shared file is never mistaken for a shared symbol.
+func reviewBacklogSymbols(s string) map[string]bool {
+	out := map[string]bool{}
+	add := func(tok string) {
+		if len(tok) >= 4 && !reviewBacklogNonSymbols[strings.ToLower(tok)] {
+			out[tok] = true
+		}
+	}
+	for _, m := range reviewBacklogBacktickRE.FindAllStringSubmatch(s, -1) {
+		for _, tok := range reviewBacklogIdentRE.FindAllStringSubmatch(reviewBacklogFileNameRE.ReplaceAllString(m[1], " "), -1) {
+			add(tok[0][:len(tok[0])-len(tok[1])])
+		}
+	}
+	for _, tok := range reviewBacklogIdentRE.FindAllStringSubmatch(reviewBacklogFileNameRE.ReplaceAllString(s, " "), -1) {
+		name := tok[0][:len(tok[0])-len(tok[1])]
+		if tok[1] != "" || strings.Contains(strings.Trim(name, "_"), "_") || hasInnerCapital(name) {
+			add(name)
+		}
+	}
+	return out
+}
+
+func hasInnerCapital(s string) bool {
+	for i := 1; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' && s[i-1] >= 'a' && s[i-1] <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 func (s githubIssueBacklogSink) AppendToItem(ctx context.Context, repo string, ref ReviewBacklogRef, comment string) error {
@@ -388,17 +522,17 @@ func (c *Client) reviewBacklogReRaiseComment(req ReviewRequest, p review.Perspec
 
 // reviewBacklogFoldedComment carries a whole finding onto an existing open
 // item the sink reused instead of creating one (hivecommons/hive#13604). The
-// twin is matched on the files it cites, not on the finding, so it often
-// describes a different problem; a bare "linked again" line would lose the
-// title, summary and evidence for good once the twin is closed. The
-// hive:review-backlog-link marker keyed on the finding key is kept so the
-// ledger and comment dedup are unchanged.
+// GitHub sink reuses a twin only on the same subject, or on the same file
+// with a matching symbol or nearby line and the same category (#13906); the
+// whole finding is still carried so nothing is lost if the match was wrong
+// and the twin closes. The hive:review-backlog-link marker keyed on the
+// finding key is kept so the ledger and comment dedup are unchanged.
 func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspective, f outputschema.Finding, headSHA, fp, key string) string {
 	owner, repoName := c.splitRepo(req.Repo)
 	file := strings.TrimSpace(f.File)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s%s -->\n", reviewBacklogLinkMarker, key)
-	fmt.Fprintf(&b, "**Additional finding (folded in — same file, possibly a different problem).** Raised in the Hive review of PR #%d (%s) and folded into this issue because it cites `%s`, which this issue already covers. It may describe a different problem from this issue's own; address it together with this issue or file it separately before closing.\n\n", req.Number, reviewPRURL(owner, repoName, req.Number), file)
+	fmt.Fprintf(&b, "**Additional finding (folded in — same finding area and category).** Raised in the Hive review of PR #%d (%s) and folded into this issue because it is a %s finding at the same symbol or lines of `%s` as this issue. Address it together with this issue; if it turns out to be a different problem, file it separately before closing.\n\n", req.Number, reviewPRURL(owner, repoName, req.Number), p, file)
 	fmt.Fprintf(&b, "### %s\n\n", reviewBacklogIssueTitle(p, f))
 	fmt.Fprintf(&b, "- [ ] %s (`%s:%d`)\n\n", strings.TrimSpace(f.Title), file, f.Line)
 	fmt.Fprintf(&b, "Perspective: %s\n", p)
@@ -408,5 +542,15 @@ func (c *Client) reviewBacklogFoldedComment(req ReviewRequest, p review.Perspect
 		fmt.Fprintf(&b, " (%s)", link)
 	}
 	fmt.Fprintf(&b, "\nFinding: %s\n\n%s\n\nFingerprint: `%s`\n\n%s\n", strings.TrimSpace(f.Title), strings.TrimSpace(f.Summary), fp, reviewBacklogFooter)
+	return b.String()
+}
+
+// reviewBacklogSameFileComment cross-links a newly filed item to the open
+// issue that cites the same file but was not folded into because it is a
+// different finding (#13906). GitHub backlinks the reference on that issue.
+func reviewBacklogSameFileComment(f outputschema.Finding, sameFileAs int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%d -->\n", reviewBacklogSameFileMarker, sameFileAs)
+	fmt.Fprintf(&b, "Same file as #%d: both cite `%s`, but this finding does not match that issue's symbol, line range or category, so it was filed separately instead of folded in.\n\n%s\n", sameFileAs, strings.TrimSpace(f.File), reviewBacklogFooter)
 	return b.String()
 }

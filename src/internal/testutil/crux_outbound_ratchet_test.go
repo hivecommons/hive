@@ -76,10 +76,17 @@ import (
 // pkg/crux/types.ProofProvenance (pkg/convergence/proof and
 // pkg/outputschema alias; the report directory and path helpers stay host
 // side), and pkg/jsonextract moved to pkg/crux/jsonextract (pkg/jsonextract
-// aliases it), which also closed pkg/trajectory's only edge. What remains
-// is the fleetreport/pushbroker service cluster, inference's watsonx
-// minter, toolapprove's ioscan call, the proxy's GitHub-side helpers and
-// watchdog's fleetreport/rotation edges.
+// aliases it), which also closed pkg/trajectory's only edge. The service
+// edges followed: the runtime's self-reported error conditions go through
+// pkg/crux/types.ConditionReporter (the seven ring-emitted Class* names live
+// in types; fleetreport aliases them), wired by Manager.SetConditionReporter
+// and watchdog.WithConditionReporter to fleetreport.DefaultReporter in
+// cmd/hive; pkg/pushbroker's only Hive dependency, *github.AppAuth, became
+// the pushbroker.TokenScoper interface (cmd/hive's appMinter adapts), and
+// pushbroker joined the ring together with the stdlib-only pkg/watsonx,
+// since both are runtime-side packages the ring already imported. What
+// remains is toolapprove's ioscan call, the proxy's GitHub-side helpers and
+// watchdog's rotation probe.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -87,12 +94,9 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/agent": {
 		"internal/testutil (test)",
-		"pkg/fleetreport",
-		"pkg/pushbroker",
 	},
 	"pkg/inference": {
 		"internal/testutil (test)",
-		"pkg/watsonx",
 	},
 	"pkg/proxy": {
 		"pkg/github",
@@ -105,7 +109,6 @@ var cruxOutboundBaseline = map[string][]string{
 		"pkg/ioscan",
 	},
 	"pkg/watchdog": {
-		"pkg/fleetreport",
 		"pkg/rotation",
 	},
 }
@@ -131,6 +134,8 @@ var cruxModulePrefixes = []string{
 	"pkg/trajectory",
 	"pkg/logscrub",
 	"pkg/proxy",
+	"pkg/pushbroker",
+	"pkg/watsonx",
 }
 
 const cruxHiveModulePath = "github.com/hivecommons/hive/"

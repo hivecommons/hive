@@ -598,10 +598,12 @@ func TestGitHubIssueBacklogSinkItemOpen(t *testing.T) {
 	}
 }
 
-// The #11578 shape: a review finding that cites the same file as an open
-// App-bot (agent-filed) issue folds into that issue instead of becoming a
-// second issue over the same file. The ledger records the twin's number so
-// later re-raises append there.
+// The #11578 shape, narrowed by #13906: a review finding that cites the same
+// file and nearby line, in the same category, as an open App-bot issue folds
+// into that issue instead of becoming a second issue. The twin is not titled
+// "Review backlog (…)", so it is reached as a file-set twin, not a canonical
+// subject match. The ledger records the twin's number so later re-raises
+// append there.
 func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 	withReviewBacklogState(t)
 	var created, labelled int
@@ -615,7 +617,7 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 				_, _ = io.WriteString(w, `[]`)
 				return
 			}
-			_, _ = io.WriteString(w, `[{"number":41,"title":"[scanner] unchecked error in pkg/a.go","body":"pkg/a.go:3 drops the Close error","state":"open","html_url":"https://github.example/o/r/issues/41","user":{"login":"`+testBot+`"}}]`)
+			_, _ = io.WriteString(w, `[{"number":41,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Perspective: correctness\nEvidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"open","html_url":"https://github.example/o/r/issues/41","user":{"login":"`+testBot+`"}}]`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/41/labels":
@@ -724,7 +726,8 @@ func TestReviewBacklogFoldedTwinKeepsFullFinding(t *testing.T) {
 		t.Fatalf("folded comment does not start with the link marker for the finding key:\n%s", got.comment)
 	}
 	for _, want := range []string{
-		"**Additional finding (folded in — same file, possibly a different problem).**",
+		"**Additional finding (folded in — same finding area and category).**",
+		"it is a correctness finding at the same symbol or lines of `pkg/a.go`",
 		"PR #5 (https://github.com/o/r/pull/5)",
 		"### Review backlog (correctness): unused variable",
 		"- [ ] unused variable (`pkg/a.go:7`)",
@@ -854,6 +857,183 @@ func TestReviewBacklogGitHubSinkReusedTwinDoesNotInheritBlocked(t *testing.T) {
 	}
 	if !sawReusedBlocked {
 		t.Fatal("no review_backlog_issue_filed audit with reused=true blocked=true: the finding was not filed blocked, so the test exercised nothing")
+	}
+}
+
+// hivecommons/hive#13906: an open issue that merely cites the same file is
+// not the same finding. Without a matching category and a nearby line or
+// shared symbol the finding is filed as its own issue, cross-linked to the
+// same-file issue, and nothing is appended to that issue.
+func TestReviewBacklogGitHubSinkFilesSeparatelyForSameFileDifferentFinding(t *testing.T) {
+	cases := []struct {
+		name  string
+		title string
+		body  string
+	}{
+		{"agent issue without a category", "[scanner] unchecked error in pkg/a.go", "pkg/a.go:3 drops the Close error"},
+		{"different category, same line", "Review backlog (security): token logged", "Perspective: security\nEvidence: `pkg/a.go:3`"},
+		{"same category, distant line", "Review backlog (correctness): stale cache", "Perspective: correctness\nEvidence: `pkg/a.go:300`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withReviewBacklogState(t)
+			var created int
+			comments := map[int][]string{}
+			twin, err := json.Marshal([]map[string]any{{
+				"number": 41, "title": tc.title, "body": tc.body, "state": "open",
+				"html_url": "https://github.example/o/r/issues/41", "user": map[string]any{"login": testBot},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+					if r.URL.Query().Get("state") != "open" {
+						_, _ = io.WriteString(w, `[]`)
+						return
+					}
+					_, _ = w.Write(twin)
+				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+					_, _ = io.WriteString(w, `{"name":"x"}`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+					var n int
+					_, _ = fmt.Sscanf(r.URL.Path, "/repos/o/r/issues/%d/comments", &n)
+					var payload struct {
+						Body string `json:"body"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&payload)
+					comments[n] = append(comments[n], payload.Body)
+					_, _ = io.WriteString(w, `{"id":1}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+					created++
+					_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			c := reviewTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+			c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+				return ReviewBacklogRouting{
+					Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
+					Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}},
+				}
+			})
+			finding := nit("nit", "low", "pkg/a.go", 3, "minor")
+			if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: routingReport(t, 5, "abc", finding)}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if created != 1 {
+				t.Fatalf("created %d issues, want 1 (a same-file issue is not the same finding)", created)
+			}
+			if len(comments[41]) != 0 {
+				t.Fatalf("comments on same-file issue #41 = %q, want none", comments[41])
+			}
+			if len(comments[99]) != 1 || !strings.HasPrefix(comments[99][0], reviewBacklogSameFileMarker+"41 -->\n") || !strings.Contains(comments[99][0], "Same file as #41: both cite `pkg/a.go`") {
+				t.Fatalf("comments on new issue #99 = %q, want one same-file cross-link to #41", comments[99])
+			}
+			if len(comments[5]) != 1 || strings.Contains(comments[5][0], "folded into an existing issue") {
+				t.Fatalf("PR 5 summary comments = %q, want one summary with no folded item", comments[5])
+			}
+			ledger, err := loadReviewBacklog("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(outputschema.Finding{Title: "nit", File: "pkg/a.go", Summary: "minor"}))
+			if !ok || rec.ItemNumber != 99 {
+				t.Fatalf("ledger record = %+v ok=%v, want the new issue #99", rec, ok)
+			}
+		})
+	}
+}
+
+// The #13906 evidence shapes: findings folded into #13823 and #13629 only
+// shared a file with the host issue.
+func TestReviewBacklogFoldMatches(t *testing.T) {
+	stagelabelsHost := "Review backlog (correctness): Current is now case-insensitive while Owned/Plan remain case-sensitive"
+	stagelabelsBody := "Perspective: correctness\nSeverity: info (P3)\nEvidence: `src/pkg/stagelabels/stagelabels.go:832` (https://github.com/o/r/blob/abc/src/pkg/stagelabels/stagelabels.go#L832)\nFinding: Current is now case-insensitive"
+	cases := []struct {
+		name        string
+		perspective review.Perspective
+		finding     outputschema.Finding
+		title, body string
+		want        bool
+	}{
+		{
+			name:        "same file, distant line, no shared symbol",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "Backports IssueCoveredByPR/CoversIssue to v5 at v6's insertion point", File: "src/pkg/stagelabels/stagelabels.go", Line: 872},
+			title:       stagelabelsHost, body: stagelabelsBody,
+			want: false,
+		},
+		{
+			name:        "same file, nearby line, same category",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "Current drops the trim on label names", File: "./src/pkg/stagelabels/stagelabels.go", Line: 838},
+			title:       stagelabelsHost, body: stagelabelsBody,
+			want: true,
+		},
+		{
+			name:        "same file, nearby line, different category",
+			perspective: review.PerspectiveSecurity,
+			finding:     outputschema.Finding{Title: "label input is not bounded", File: "src/pkg/stagelabels/stagelabels.go", Line: 832},
+			title:       stagelabelsHost, body: stagelabelsBody,
+			want: false,
+		},
+		{
+			name:        "shared symbol, distant line, same category",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "contributorProfileFromRegistrationToken ignores token_max_age", File: "src/pkg/dashboard/contribute_profiles.go", Line: 482},
+			title:       "Review backlog (correctness): contributorProfileFromRegistrationToken is now unused",
+			body:        "Perspective: correctness\nEvidence: `src/pkg/dashboard/contribute_profiles.go:120`",
+			want:        true,
+		},
+		{
+			name:        "backticked symbol",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "`Current` misses empty labels", File: "src/pkg/stagelabels/stagelabels.go", Line: 900},
+			title:       "Review backlog (correctness): `Current` is case-insensitive", body: stagelabelsBody,
+			want: true,
+		},
+		{
+			name:        "shared file name is not a shared symbol",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "review_evidence.go leaks a temp file", File: "src/pkg/github/review_evidence.go", Line: 400},
+			title:       "Review backlog (correctness): review_evidence.go drops a GitHub error",
+			body:        "Perspective: correctness\nEvidence: `src/pkg/github/review_evidence.go:12`",
+			want:        false,
+		},
+		{
+			name:        "agent-filed issue without a category",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "nit", File: "pkg/a.go", Line: 3},
+			title:       "[scanner] unchecked error in pkg/a.go", body: "pkg/a.go:3 drops the Close error",
+			want: false,
+		},
+		{
+			name:        "category from the Perspective line",
+			perspective: review.PerspectiveCorrectness,
+			finding:     outputschema.Finding{Title: "nit", File: "pkg/a.go", Line: 3},
+			title:       "[scanner] unchecked error", body: "Perspective: Correctness\nEvidence: `pkg/a.go:13`",
+			want: true,
+		},
+		{
+			name:    "no perspective never folds",
+			finding: outputschema.Finding{Title: "nit", File: "pkg/a.go", Line: 3},
+			title:   "Review backlog (): nit", body: "Evidence: `pkg/a.go:3`",
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reviewBacklogFoldMatches(tc.perspective, tc.finding, tc.title, tc.body); got != tc.want {
+				t.Fatalf("reviewBacklogFoldMatches = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

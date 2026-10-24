@@ -55,6 +55,18 @@ func (b *boot) currentGitHubClient() *github.Client {
 //
 // newClient must already be configured (newConfiguredGitHubAppClient did
 // that); this only swaps references.
+// appMinter builds a push-token minter over the GitHub App credential. The
+// broker takes a pushbroker.TokenScoper interface, so a nil *AppAuth must be
+// left as a nil interface here rather than stored as a typed nil the minter's
+// nil check would miss.
+func appMinter(auth *github.AppAuth, tier string) pushbroker.GitHubAppMinter {
+	m := pushbroker.GitHubAppMinter{Tier: tier}
+	if auth != nil {
+		m.Auth = auth
+	}
+	return m
+}
+
 func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.AppAuth) {
 	if b == nil || newClient == nil {
 		return
@@ -69,7 +81,7 @@ func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.Ap
 		// The sandbox kick executor opens PRs and mints push tokens itself;
 		// leaving it on the old client/AppAuth is the stale pointer the
 		// dashboard and heartbeat rebuilds used to miss.
-		b.agentMgr.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: newAppAuth})
+		b.agentMgr.SetSandboxPushMinter(appMinter(newAppAuth, ""))
 		b.agentMgr.SetSandboxPRClient(newClient)
 	}
 	if b.dashSrv != nil {

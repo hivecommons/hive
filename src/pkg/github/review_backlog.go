@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -245,10 +246,12 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				body = blockedBacklogNote(req.Repo, req.Number, finding.File, baseProbe.BaseRef(ctx)) + body
 			}
 			ref, err := sink.CreateItem(ctx, ReviewBacklogItem{
-				Repo:   req.Repo,
-				Title:  title,
-				Body:   body,
-				Labels: itemLabels,
+				Repo:        req.Repo,
+				Title:       title,
+				Body:        body,
+				Labels:      itemLabels,
+				Perspective: report.Perspective,
+				Finding:     finding,
 			})
 			if err != nil && ref.ID == "" {
 				return err
@@ -258,11 +261,19 @@ func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequ
 				continue
 			}
 			if ref.Reused && createErr == nil {
-				// hivecommons/hive#13604: the twin was matched on files, not
-				// on the finding, so the comment must carry the whole
+				// hivecommons/hive#13604: the comment must carry the whole
 				// finding or it is lost when the twin closes.
 				if err := sink.AppendToItem(ctx, req.Repo, ref, c.reviewBacklogFoldedComment(req, report.Perspective, finding, headSHA, fp, key)); err != nil {
 					return err
+				}
+			}
+			if !ref.Reused && ref.SameFileAs > 0 && createErr == nil {
+				// hivecommons/hive#13906: the item exists, so a failed
+				// cross-link must not fail the pass and re-file it.
+				if err := sink.AppendToItem(ctx, req.Repo, ref, reviewBacklogSameFileComment(finding, ref.SameFileAs)); err != nil {
+					c.logger.Warn("review backlog: same-file cross-link comment failed",
+						slog.String("repo", req.Repo), slog.String("item", ref.Key),
+						slog.Int("same_file_as", ref.SameFileAs), slog.String("error", err.Error()))
 				}
 			}
 			if ref.Number > 0 {

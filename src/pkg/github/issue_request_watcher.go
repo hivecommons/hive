@@ -1116,6 +1116,10 @@ type CreateIssueResult struct {
 	// App-bot-filed issue has the same file-reference set (#9376); the
 	// finding was appended to it as a comment. AlreadyExisted is also true.
 	Consolidated bool
+	// SameFileAs is the open issue CreateIssueRequest.FoldMatch refused to
+	// fold into: it cites the same files but not the same finding, so a new
+	// issue was created instead (#13906). 0 otherwise.
+	SameFileAs int
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
@@ -1135,6 +1139,13 @@ type CreateIssueRequest struct {
 	// ConsolidateOpen turns on open-twin consolidation: a finding over the
 	// same files as an open hive-filed issue is folded into it (#9376).
 	ConsolidateOpen bool
+	// FoldMatch, when set, narrows ConsolidateOpen: a file-set or
+	// same-component twin is folded into only when FoldMatch accepts its
+	// title and body. Sharing a file is not sharing a problem; a refused twin
+	// is reported in CreateIssueResult.SameFileAs and the issue is created
+	// (#13906). A canonical-subject match is gated the same way; an exact
+	// title match is unaffected.
+	FoldMatch func(title, body string) bool
 }
 
 // OriginLabel returns the provenance label this request resolves to: an
@@ -1226,13 +1237,24 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	var componentCount, componentClosed int
 	var openComponent map[string]int
 	var openComponentOldest map[string]*gh.Issue
-	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles); err != nil {
+	scan, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles)
+	// A canonical-subject match is only as specific as the stem left after
+	// stripping: every "Review backlog (<perspective>): …" title canonicalises
+	// to the same stem, so FoldMatch gates it like a file-set or component
+	// twin (#13906). An exact-title match is the same finding and stays
+	// unguarded.
+	if err == nil && scan.subject != nil && req.FoldMatch != nil &&
+		strings.TrimSpace(scan.subject.GetTitle()) != title &&
+		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
+		scan.subject = nil
+	}
+	if err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
 		}
 		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
-	} else if existing := found.subject; existing != nil {
+	} else if existing := scan.subject; existing != nil {
 		// A human-filed twin was not created by this hive, so the finding's
 		// detail would otherwise vanish: leave it as a comment (#11576).
 		if consolidateOpen && len(c.hiveBotLogins()) > 0 && !isHiveBotLogin(c.hiveBotLogins(), existing.GetUser().GetLogin()) {
@@ -1247,9 +1269,9 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 			slog.String("existing_title", existing.GetTitle()))
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
 	} else {
-		fileSetTwin = found.fileSet
-		componentTwin, componentPath, componentCount = found.component, found.componentPath, found.componentCount
-		openComponent, openComponentOldest = found.componentCounts, found.componentOldest
+		fileSetTwin = scan.fileSet
+		componentTwin, componentPath, componentCount = scan.component, scan.componentPath, scan.componentCount
+		openComponent, openComponentOldest = scan.componentCounts, scan.componentOldest
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
@@ -1276,6 +1298,10 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// by a second agent and become a second PR editing the same files, and
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
+	var sameFileAs int
+	if fileSetTwin != nil && req.FoldMatch != nil && !req.FoldMatch(fileSetTwin.GetTitle(), fileSetTwin.GetBody()) {
+		sameFileAs, fileSetTwin = fileSetTwin.GetNumber(), nil
+	}
 	if fileSetTwin != nil {
 		comment := consolidatedFindingComment(title, body, wantFiles)
 		if !isHiveBotLogin(c.hiveBotLogins(), fileSetTwin.GetUser().GetLogin()) {
@@ -1315,6 +1341,12 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		} else {
 			componentTwin, componentPath, componentCount, componentClosed = pickFoldComponent(openComponent, closed, openComponentOldest)
 		}
+	}
+	if componentTwin != nil && req.FoldMatch != nil && !req.FoldMatch(componentTwin.GetTitle(), componentTwin.GetBody()) {
+		if sameFileAs == 0 {
+			sameFileAs = componentTwin.GetNumber()
+		}
+		componentTwin = nil
 	}
 	if componentTwin != nil {
 		if err := c.appendFoldedFinding(ctx, owner, repoName, componentTwin.GetNumber(),
@@ -1403,11 +1435,11 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 		c.logger.Info("CreateIssue: create replayed as already applied, reusing the journaled issue",
 			slog.String("repo", repoName), slog.Int("number", number))
-		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true}, nil
+		return CreateIssueResult{Number: number, URL: res.Provenance, AlreadyExisted: true, SameFileAs: sameFileAs}, nil
 	}
 	c.logger.Info("CreateIssue: issue created as the App bot",
 		slog.String("repo", repoName), slog.Int("number", issue.GetNumber()))
-	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID()}, nil
+	return CreateIssueResult{Number: issue.GetNumber(), URL: issue.GetHTMLURL(), ID: issue.GetID(), SameFileAs: sameFileAs}, nil
 }
 
 // issueCreateUnknownTTL bounds how long an issue-create operation may sit

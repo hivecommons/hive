@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 const (
@@ -183,7 +183,7 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 		return
 	}
 	// Self-report (#11868): the tracker applies the ≥3-consecutive threshold.
-	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, agent.Name,
+	m.observeCondition(types.ClassKickFailedRepeatedly, agent.Name,
 		busyNoActivityRestartFailedMessage(agent, now, reason), "")
 }
 
@@ -221,7 +221,7 @@ func (m *Manager) reportBusyNoActivityRestartFailed(name, reason string, err err
 	if !ok {
 		return
 	}
-	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, name,
+	m.observeCondition(types.ClassKickFailedRepeatedly, name,
 		fmt.Sprintf("kick undeliverable %d times in a row and busy-no-activity restart failed: %v (%s; %d restart(s) this episode)",
 			kicks, err, reason, restarts), "")
 }
@@ -262,7 +262,7 @@ func (m *Manager) markCopilotQuestionFormLocked(agent *AgentProcess, now time.Ti
 // dropped. Caller holds m.mu.
 func (m *Manager) resetBusyVisibilityLocked(agent *AgentProcess) {
 	if agent.KicksUndeliverable > 0 || !agent.busyNoActivityRestartAt.IsZero() {
-		fleetreport.Clear(fleetreport.ClassKickFailedRepeatedly, agent.Name)
+		m.clearCondition(types.ClassKickFailedRepeatedly, agent.Name)
 	}
 	agent.busyNoActivityRestartAt = time.Time{}
 	agent.busyNoActivityRestarts = 0

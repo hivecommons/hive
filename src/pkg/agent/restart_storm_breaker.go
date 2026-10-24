@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 const (
@@ -64,9 +64,9 @@ func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPl
 				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
 		if plan.pauseTrigger == DiskFullTrigger {
-			fleetreport.Observe(fleetreport.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
+			m.observeCondition(types.ClassDataDiskPressure, DataDiskPressureKey, "data disk pressure: "+plan.pauseReason, "")
 		} else {
-			fleetreport.Observe(fleetreport.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
+			m.observeCondition(types.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
 		}
 		return true, false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:
