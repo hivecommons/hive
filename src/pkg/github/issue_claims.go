@@ -4,7 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/issueclaim"
@@ -146,6 +149,22 @@ func (c *Client) annotateIssueClaims(ctx context.Context, owner, repo string, is
 		issue.ClaimKind = claim.Kind
 		issue.ClaimPRStarted = claim.PRStarted
 	}
+}
+
+// LookupLiveIssueClaim resolves an on-demand forge issue through the same trusted
+// marker, assignee and hub-ledger lookup used by the work collector. The claims
+// setting controls filtering, not this explicit read; its TTL still applies.
+func (c *Client) LookupLiveIssueClaim(ctx context.Context, repoFull string, issue *gh.Issue, now time.Time) (issueclaim.Claim, bool, error) {
+	owner, repo, _ := strings.Cut(repoFull, "/")
+	_, ttl := c.issueClaimsSetting()
+	if ttl <= 0 {
+		ttl = issueclaim.DefaultTTL
+	}
+	i := Issue{Repo: repoFull, Number: issue.GetNumber(), UpdatedAt: issue.GetUpdatedAt().Time}
+	for _, assignee := range issue.Assignees {
+		i.Assignees = append(i.Assignees, assignee.GetLogin())
+	}
+	return c.issueClaimFor(ctx, owner, repo, &i, ttl, now)
 }
 
 // issueClaimFor resolves the live claim for one issue, through the
