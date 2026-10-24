@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func TestDelegatedCompetingNumbers(t *testing.T) {
@@ -45,6 +47,9 @@ func TestDelegatedContributorActivity(t *testing.T) {
 		{name: "quiet", online: false},
 		{name: "future commit", endpoint: "commits", payload: `[{"author":{"login":"alice"},"commit":{"author":{"date":"` + now.Add(24*time.Hour).Format(time.RFC3339) + `"}}}]`},
 		{name: "commit", endpoint: "commits", payload: `[{"author":{"login":"alice"},"commit":{"author":{"date":"` + fresh + `"}}}]`, online: true},
+		{name: "unlinked email commit", endpoint: "commits", payload: `[{"commit":{"author":{"date":"` + fresh + `"},"committer":{"date":"` + old + `"}}}]`, online: true},
+		{name: "unlinked email old commit", endpoint: "commits", payload: `[{"commit":{"author":{"date":"` + old + `"}}}]`},
+		{name: "other author commit", endpoint: "commits", payload: `[{"author":{"login":"bob"},"committer":{"login":"bob"},"commit":{"author":{"date":"` + fresh + `"},"committer":{"date":"` + fresh + `"}}}]`},
 		{name: "comment", endpoint: "issues/8/comments", payload: `[{"user":{"login":"alice"},"updated_at":"` + fresh + `"}]`, online: true},
 		{name: "review", endpoint: "reviews", payload: `[{"user":{"login":"alice"},"submitted_at":"` + fresh + `"}]`, online: true},
 		{name: "inline", endpoint: "pulls/8/comments", payload: `[{"user":{"login":"alice"},"updated_at":"` + fresh + `"}]`, online: true},
@@ -81,16 +86,17 @@ func TestDelegatedContributorActivity(t *testing.T) {
 func TestGatherDelegatedRealPRContext(t *testing.T) {
 	for _, tc := range []struct {
 		name, state, mergeState string
-		mergeable, draft        bool
+		mergeable, draft, redCI bool
 		want                    int
 	}{
-		{"adequate contributor", "open", "clean", true, false, 1},
-		{"approval blocked contributor", "open", "blocked", true, false, 1},
-		{"blocked but conflicting", "open", "blocked", false, false, 1},
-		{"behind", "open", "behind", true, false, 1},
-		{"unknown", "open", "unknown", false, false, 1},
-		{"draft", "open", "clean", true, true, 1},
-		{"closed since snapshot", "closed", "clean", true, false, 0},
+		{"adequate contributor", "open", "clean", true, false, false, 1},
+		{"approval blocked contributor", "open", "blocked", true, false, false, 1},
+		{"red checks blocked contributor", "open", "blocked", true, false, true, 1},
+		{"blocked but conflicting", "open", "blocked", false, false, false, 1},
+		{"behind", "open", "behind", true, false, false, 1},
+		{"unknown", "open", "unknown", false, false, false, 1},
+		{"draft", "open", "clean", true, true, false, 1},
+		{"closed since snapshot", "closed", "clean", true, false, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +107,15 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/pulls/8"):
 					_, _ = w.Write([]byte(`{"number":8,"state":"open","body":"Fixes #7","user":{"login":"hive[bot]"},"base":{"ref":"v5"},"mergeable":true,"mergeable_state":"clean"}`))
 				case strings.HasSuffix(r.URL.Path, "/pulls/9"):
-					_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "state": tc.state, "user": map[string]string{"login": "alice"}, "base": map[string]string{"ref": "v5"}, "mergeable": tc.mergeable, "mergeable_state": tc.mergeState, "draft": tc.draft})
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "state": tc.state, "user": map[string]string{"login": "alice"}, "base": map[string]string{"ref": "v5"}, "head": map[string]string{"sha": "abc123"}, "mergeable": tc.mergeable, "mergeable_state": tc.mergeState, "draft": tc.draft})
+				case strings.HasSuffix(r.URL.Path, "/commits/abc123/status"):
+					if tc.redCI {
+						_, _ = w.Write([]byte(`{"state":"failure","statuses":[{"context":"ci/test","state":"failure"}]}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"state":"pending","statuses":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/commits/abc123/check-runs"):
+					_, _ = w.Write([]byte(`{"total_count":0,"check_runs":[]}`))
 				default:
 					_, _ = w.Write([]byte(`[]`))
 				}
@@ -119,7 +133,7 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 				t.Fatalf("input = %+v", in)
 			}
 			if tc.want > 0 {
-				adequate := (tc.mergeState == "clean" || tc.mergeState == "blocked") && tc.mergeable && !tc.draft
+				adequate := (tc.mergeState == "clean" || tc.mergeState == "blocked") && tc.mergeable && !tc.draft && !tc.redCI
 				if in.Competing[0].Mergeable != adequate {
 					t.Fatalf("competing = %+v", in.Competing)
 				}
@@ -152,6 +166,7 @@ func TestGatherDelegatedPresenceIgnoresParkCaption(t *testing.T) {
 			s := newFullServer(t)
 			s.deps.GHClient = github.NewClient("token", "org", nil, slog.Default(), server.URL)
 			s.deps.Config.Governor.Labels.Stage.PresenceWindow = window
+			s.status = &StatusPayload{}
 			in, err := s.gatherDelegatedInput(context.Background(), "org/repo", 8, "pr", delegatedDecisionRequest{Reason: "offline"})
 			if err != nil {
 				t.Fatal(err)
@@ -184,5 +199,59 @@ func TestDelegatedContributorActivityPagination(t *testing.T) {
 	online, err := s.delegatedContributorOnline(context.Background(), "org", "repo", &gh.PullRequest{Number: gh.Ptr(8), User: &gh.User{Login: gh.Ptr("alice")}}, now.Add(-time.Minute))
 	if err != nil || !online {
 		t.Fatalf("online=%v err=%v", online, err)
+	}
+}
+
+func TestGatherDelegatedPRContextRequiresSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/issues/8"):
+			_, _ = w.Write([]byte(`{"number":8,"state":"open","pull_request":{},"user":{"login":"hive[bot]"}}`))
+		case strings.HasSuffix(r.URL.Path, "/pulls/8"):
+			_, _ = w.Write([]byte(`{"number":8,"state":"open","body":"Fixes #7","user":{"login":"hive[bot]"},"base":{"ref":"v5"}}`))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+	s := newFullServer(t)
+	s.deps.GHClient = github.NewClient("token", "org", nil, slog.Default(), server.URL)
+	s.deps.GHClient.SetAppBotLogin("hive[bot]")
+	s.status = nil
+	if _, err := s.gatherDelegatedInput(context.Background(), "org/repo", 8, "pr", delegatedDecisionRequest{}); !errors.Is(err, errDelegatedNoSnapshot) {
+		t.Fatalf("err = %v, want %v", err, errDelegatedNoSnapshot)
+	}
+}
+
+// Claim records ("covered by PR #N") live in the stage store, not the
+// snapshot; the competing-PR lookup must read them like the live tracker.
+func TestGatherDelegatedPRContextUsesStageStoreClaims(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/issues/8"):
+			_, _ = w.Write([]byte(`{"number":8,"state":"open","pull_request":{},"user":{"login":"hive[bot]"}}`))
+		case strings.HasSuffix(r.URL.Path, "/pulls/8"):
+			_, _ = w.Write([]byte(`{"number":8,"state":"open","body":"Fixes #7","user":{"login":"hive[bot]"},"base":{"ref":"v5"},"mergeable":true,"mergeable_state":"clean"}`))
+		case strings.HasSuffix(r.URL.Path, "/pulls/9"):
+			_, _ = w.Write([]byte(`{"number":9,"state":"open","user":{"login":"alice"},"base":{"ref":"v5"},"head":{"sha":"abc123"},"mergeable":true,"mergeable_state":"clean"}`))
+		default:
+			_, _ = w.Write([]byte(`[]`))
+		}
+	}))
+	defer server.Close()
+	s := newFullServer(t)
+	s.deps.GHClient = github.NewClient("token", "org", nil, slog.Default(), server.URL)
+	s.deps.GHClient.SetAppBotLogin("hive[bot]")
+	s.stageStore = stagelabels.NewStore("", nil)
+	s.stageStore.Observe(stagelabels.Key("org/repo", 7), stagelabels.CoveredByPR, "covered by PR #9")
+	s.status = &StatusPayload{Repos: []FrontendRepo{{Full: "org/repo", ActionableIssues: []any{github.Issue{Number: 7, LinkedPRs: []github.IssueLinkedPR{{Number: 8, State: "open"}}}}}}}
+	in, err := s.gatherDelegatedInput(context.Background(), "org/repo", 8, "pr", delegatedDecisionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(in.Competing) != 1 || in.Competing[0].Number != 9 || !in.Competing[0].Mergeable {
+		t.Fatalf("competing = %+v", in.Competing)
 	}
 }

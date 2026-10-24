@@ -1,1 +1,0 @@
-- Delegated decisions now compare real linked open PRs and use contributor commits, comments, and reviews within the configured presence window instead of park captions to detect absence.
