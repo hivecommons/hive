@@ -171,7 +171,7 @@ func TestRunWithLLM(t *testing.T) {
 	}{
 		{name: "no runner keeps the rules", in: llmIssue, outcome: LLMNotConsulted, rule: "default-approve", verdict: VerdictApprove},
 		{name: "rule decision is authoritative", in: dup, runner: &fakeRunner{reply: good}, outcome: LLMNotConsulted, rule: "dedupe", verdict: VerdictCloseDuplicate},
-		{name: "held item is refused before the model", in: held, runner: &fakeRunner{reply: good}, outcome: LLMNotConsulted, rule: "rail-hold", verdict: VerdictRefused},
+		{name: "held item is refused before the model", in: held, runner: &fakeRunner{reply: good}, outcome: LLMNotConsulted, rule: "rail-hold", verdict: VerdictRefused, refusals: 1},
 		{name: "default issue asks the model", in: llmIssue, runner: &fakeRunner{reply: good}, calls: 1, outcome: LLMAccepted, rule: RuleLLM, verdict: VerdictDirection},
 		{name: "runner error falls back", in: llmIssue, runner: &fakeRunner{err: errors.New("boom")}, calls: 1, outcome: LLMFallback, wantErr: true, rule: "default-approve", verdict: VerdictApprove},
 		{name: "bad reply falls back", in: llmPR, runner: &fakeRunner{reply: `{"verdict":"merge"}`}, calls: 1, outcome: LLMFallback, wantErr: true, rule: "default-release", verdict: VerdictApprove},
