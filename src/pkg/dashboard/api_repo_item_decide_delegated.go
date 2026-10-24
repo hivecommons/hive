@@ -37,7 +37,8 @@ import (
 //
 // Authorisation is the repo-hold bar (canToggleRepoHold) plus a signed-in
 // user, like the sibling decision endpoint; the setting
-// decisions.delegate.enabled (default on, per-repo override) gates it.
+// decisions.delegate.enabled (default on) and the per-repository override
+// decisions.delegate.repos.<key>.enabled gate it.
 const (
 	auditRepoItemDecisionDelegated = "repo_item_decision_delegated"
 
@@ -167,7 +168,7 @@ func (s *Server) handleRepoItemDecideDelegated(w http.ResponseWriter, r *http.Re
 	}
 	repoFull := owner + "/" + repoName
 	if !s.delegateDecisionEnabled(repoFull) {
-		jsonError(w, "delegated decisions are disabled (decisions.delegate.enabled)", http.StatusForbidden)
+		jsonError(w, "delegated decisions are disabled (decisions.delegate.enabled, or decisions.delegate.repos.<repo>.enabled for this repository)", http.StatusForbidden)
 		return
 	}
 	allowed, status, msg := s.canToggleRepoHold(r, owner, repoName)

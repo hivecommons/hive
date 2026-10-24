@@ -28265,6 +28265,414 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/items/{number}/decide-delegated": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Let the hive decide one parked issue or pull request as the owner's delegate (enqueue a delegated-decision job)",
+        "description": "Backs the activity monitor's *Let hive decide* entry (first under Decide…, rows and selection bar). The hive decides the parked item itself as the owner's delegate under the owner-delegate policy (pkg/delegatedecision.PolicyText — decisive, reversible, keep work moving; prefer contributor PRs over hive duplicates; approve small low-risk changes and trusted-author sentinel alerts with a \"reviewed, intended\" line; supersede offline contributors now; dedupe aggressively; secrets/PAT/org-permission items are owner-only; quarantine flaky tests; accept CI hygiene gates as ratchets and design proposals with explicit defaults; never auto-close review-backlog items) and records it exactly as a human decision is recorded: a `/hive decision <text>` comment carrying the audit marker, the parking labels lifted, triage/accepted where it applies, and the queue approval on a released PR head (a merger/owner requester's as the queue line the auto-merge sweep parses, anyone else's as `/lgtm` + `/approve`). POST enqueues one job per item and answers 202 with it; a second POST while the job runs answers 409 with the running job; GET reads the job (30 min TTL). Rails: never merges; refuses an item wearing `hold` (nothing written); never grants membership, secrets or permissions (needs-owner + hold and one owner-action comment instead); a policy or scope change to the hive itself gets a recommendation only and keeps 085. Gated by decisions.delegate.enabled (default true) and decisions.delegate.repos.<repo>.enabled (403 when off). Same authorisation as the hold toggle plus a signed-in GitHub user; audited as repo_item_decision_delegated or repo_item_decision_delegated_failed.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "pr"
+                    ],
+                    "description": "What the number names; defaults to issue"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "description": "The row's park reason code (why the hive stopped), read by the policy"
+                  },
+                  "caption": {
+                    "type": "string",
+                    "description": "The row's lit-chevron caption"
+                  },
+                  "sentinel_reason": {
+                    "type": "string",
+                    "description": "The sentinel finding summary when the PR is flagged"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job enqueued (or already finished synchronously in tests)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "pr"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "requester": {
+                      "type": "string",
+                      "description": "The signed-in user who delegated the decision; named in the recorded decision"
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "ended_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "decision": {
+                      "type": "object",
+                      "description": "The policy's structured decision once the job has run (pkg/delegatedecision.Decision)",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "approve",
+                            "direction",
+                            "close-duplicate",
+                            "close-superseded",
+                            "owner-only",
+                            "quarantine-flaky",
+                            "accept-ratchet",
+                            "accept-proposal",
+                            "adopt-supersede",
+                            "recommend-only",
+                            "refused"
+                          ]
+                        },
+                        "rule": {
+                          "type": "string",
+                          "description": "The owner rule that fired (dedupe, owner-only, flaky-test, ci-ratchet, design-proposal, review-backlog, default-approve, prefer-contributor, contributor-offline, sentinel-trusted, small-low-risk, reporter-trust, fix-then-merge, default-release, hive-policy, sentinel-untrusted, rail-hold)"
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The `/hive decision` text recorded on the item"
+                        },
+                        "rationale": {
+                          "type": "string"
+                        },
+                        "refusals": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Actions ApplyRails removed, each with the rail that removed it"
+                        },
+                        "keeps_park": {
+                          "type": "boolean",
+                          "description": "True when the delegate only recommended and left stage/085-needs-decision in place"
+                        },
+                        "actions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "labels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "target": {
+                                "type": "integer",
+                                "description": "close-as-duplicate / link: the item it points at"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "comment-decision",
+                                  "approve-review",
+                                  "labels-add",
+                                  "labels-remove",
+                                  "close-as-duplicate",
+                                  "link",
+                                  "adopt-supersede",
+                                  "recommend-only"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the executor deferred or substituted (e.g. a sentinel-flagged approval left to the person who clears the label)"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "marker": {
+                      "type": "string",
+                      "description": "The audit marker written into every delegated comment: `<!-- hive:delegated-decision by=<hive-id> policy=owner-delegate -->`"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (bad number or type)"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required, or delegated decisions disabled by decisions.delegate.enabled / the per-repository override"
+          },
+          "409": {
+            "description": "A delegated-decision job for this item is already running (the running job is returned)"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Read the delegated-decision job for one parked issue or pull request",
+        "description": "The activity monitor polls this after *Let hive decide* until status is done or failed, then refreshes the row. Same authorisation as POST.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "pr"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "done",
+                        "failed"
+                      ]
+                    },
+                    "requester": {
+                      "type": "string",
+                      "description": "The signed-in user who delegated the decision; named in the recorded decision"
+                    },
+                    "started_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "ended_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "decision": {
+                      "type": "object",
+                      "description": "The policy's structured decision once the job has run (pkg/delegatedecision.Decision)",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "approve",
+                            "direction",
+                            "close-duplicate",
+                            "close-superseded",
+                            "owner-only",
+                            "quarantine-flaky",
+                            "accept-ratchet",
+                            "accept-proposal",
+                            "adopt-supersede",
+                            "recommend-only",
+                            "refused"
+                          ]
+                        },
+                        "rule": {
+                          "type": "string",
+                          "description": "The owner rule that fired (dedupe, owner-only, flaky-test, ci-ratchet, design-proposal, review-backlog, default-approve, prefer-contributor, contributor-offline, sentinel-trusted, small-low-risk, reporter-trust, fix-then-merge, default-release, hive-policy, sentinel-untrusted, rail-hold)"
+                        },
+                        "text": {
+                          "type": "string",
+                          "description": "The `/hive decision` text recorded on the item"
+                        },
+                        "rationale": {
+                          "type": "string"
+                        },
+                        "refusals": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Actions ApplyRails removed, each with the rail that removed it"
+                        },
+                        "keeps_park": {
+                          "type": "boolean",
+                          "description": "True when the delegate only recommended and left stage/085-needs-decision in place"
+                        },
+                        "actions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "labels": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "target": {
+                                "type": "integer",
+                                "description": "close-as-duplicate / link: the item it points at"
+                              },
+                              "text": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "comment-decision",
+                                  "approve-review",
+                                  "labels-add",
+                                  "labels-remove",
+                                  "close-as-duplicate",
+                                  "link",
+                                  "adopt-supersede",
+                                  "recommend-only"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "notes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "What the executor deferred or substituted (e.g. a sentinel-flagged approval left to the person who clears the label)"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "marker": {
+                      "type": "string",
+                      "description": "The audit marker written into every delegated comment: `<!-- hive:delegated-decision by=<hive-id> policy=owner-delegate -->`"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "404": {
+            "description": "No job for this item (none started, or expired after 30 minutes)"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/items/{number}/accept-triage": {
       "post": {
         "tags": [
