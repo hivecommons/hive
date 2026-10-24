@@ -846,6 +846,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"failed to create per-agent XDG dir":      ClassAgentDirSetupFailed,
 		"review evidence: could not write bundle": ClassReviewEvidenceWriteFail,
 		"feedback: issue refresh failed":          ClassFeedbackIssueRefreshFailed,
+		"failed to restore inference home mode":   ClassAgentDirSetupFailed,
 		"failed to tighten inference home mode":   ClassAgentDirSetupFailed,
 		"failed to ingest bead fact":              ClassBeadFactIngestFailed,
 		"fleet report: cleared comment failed":    ClassSelfReportClearedFailed,
