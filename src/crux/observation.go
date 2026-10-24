@@ -39,14 +39,13 @@ const CopilotUserTokenPath = "/data/copilot-user-token"
 // notice naming the account behind a rejected Copilot credential; crux/agent:
 // the Copilot CLI config seed path.
 func GitHubTokenLogin(token string) string {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req, err := http.NewRequest("GET", gitHubUserURL, nil)
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := gitHubUserClient.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -62,6 +61,13 @@ func GitHubTokenLogin(token string) string {
 	}
 	return strings.TrimSpace(body.Login)
 }
+
+// gitHubUserURL and gitHubUserClient are the endpoint and client
+// GitHubTokenLogin uses; tests point them at a local server.
+var (
+	gitHubUserURL    = "https://api.github.com/user"
+	gitHubUserClient = &http.Client{Timeout: 5 * time.Second}
+)
 
 // RedactPaneTokens masks GitHub tokens, sk- API keys and device-login lines in
 // pane-derived text. Dashboard: activity summaries.
