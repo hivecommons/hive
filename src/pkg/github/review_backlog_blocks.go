@@ -24,9 +24,12 @@ import (
 //   - the PR merged: the block is lifted with a one-line note telling the
 //     worker to check the finding still applies and to close the item without
 //     a PR if it is already fixed;
-//   - the PR closed without merging: the code the finding was about never
-//     landed, so the item is cancelled (a GitHub issue closes as not planned,
-//     a Linear issue moves to the team's canceled state) with a one-line note.
+//   - the PR closed without merging: the block is dropped and a note asks for
+//     re-triage against the current base. The item is never closed or
+//     cancelled automatically: a closed PR is often superseded by one that
+//     lands the same lines, so the finding may still apply. Normal triage and
+//     dedupe decide; closing it as not planned stays a human (or `/fixed`)
+//     action (maintainer decision on hivecommons/hive#13849).
 //
 // ReconcileBlockedIssues (issue_blocked.go) still lifts GitHub-issue blocks it
 // finds through the enumeration; this sweep is the one that knows which PR an
@@ -34,14 +37,14 @@ import (
 
 // Ledger block states.
 const (
-	reviewBacklogBlockBlocked   = "blocked"
-	reviewBacklogBlockLifted    = "lifted"
-	reviewBacklogBlockCancelled = "cancelled"
+	reviewBacklogBlockBlocked  = "blocked"
+	reviewBacklogBlockLifted   = "lifted"
+	reviewBacklogBlockRetriage = "retriage"
 )
 
-// reviewBacklogCancelledMarker opens the note posted when an item is
-// cancelled because its PR closed unmerged.
-const reviewBacklogCancelledMarker = "<!-- hive:review-backlog-cancelled -->"
+// reviewBacklogRetriageMarker tags the note posted when an item is unblocked
+// for re-triage because its PR closed unmerged.
+const reviewBacklogRetriageMarker = "<!-- hive:review-backlog-retriage -->"
 
 // reviewFollowUpsMarker opens the Follow-ups section the relay appends to a
 // decided review; a revision replaces everything from the marker on.
@@ -51,13 +54,11 @@ const reviewFollowUpsMarker = "<!-- hive:review-followups v1 -->"
 const reviewBacklogBlockLookups = 40
 
 // ReviewBacklogBlockResolver is an optional sink capability: a destination
-// that can lift a block and cancel an item in its own terms. Sinks without it
-// get the note appended and nothing else.
+// that can lift a block in its own terms. Sinks without it get the note
+// appended and nothing else.
 type ReviewBacklogBlockResolver interface {
 	// LiftBlock removes the `blocked` signal from the item and posts note.
 	LiftBlock(ctx context.Context, repo string, ref ReviewBacklogRef, note string) error
-	// CancelItem posts note and closes the item as not planned / canceled.
-	CancelItem(ctx context.Context, repo string, ref ReviewBacklogRef, note string) error
 }
 
 // blockedOnReviewedPRNote is the body section that parks a review-backlog
@@ -66,7 +67,7 @@ type ReviewBacklogBlockResolver interface {
 func blockedOnReviewedPRNote(repo string, pr int) string {
 	var b strings.Builder
 	b.WriteString(BlockedOnMarker(repo, pr))
-	fmt.Fprintf(&b, "\n**Blocked on PR #%d.** This finding came from reviewing PR #%d and is about code that PR is changing. Fix it in the PR, or leave it: the hive lifts the block when the PR merges, and cancels this item if the PR is closed without merging. Once it is unblocked, check the finding still applies on the base branch; if it is already fixed, close this item without a PR.\n\n", pr, pr)
+	fmt.Fprintf(&b, "\n**Blocked on PR #%d.** This finding came from reviewing PR #%d and is about code that PR is changing. Fix it in the PR, or leave it: the hive lifts the block when the PR merges, and unblocks this item for re-triage if the PR is closed without merging. Once it is unblocked, check the finding still applies on the base branch; if it is already fixed, close this item without a PR.\n\n", pr, pr)
 	return b.String()
 }
 
@@ -74,8 +75,8 @@ func reviewBacklogLiftNote(repo string, pr int) string {
 	return fmt.Sprintf("%s\nUnblocked: %s#%d merged. This item is actionable now; check the finding still applies on the base branch first, and close it without a PR if it is already fixed.", blockedUnblockedMarker, repo, pr)
 }
 
-func reviewBacklogCancelNote(repo string, pr int) string {
-	return fmt.Sprintf("%s\nCancelled: %s#%d was closed without merging, so the code this finding was about never landed.", reviewBacklogCancelledMarker, repo, pr)
+func reviewBacklogRetriageNote(repo string, pr int) string {
+	return fmt.Sprintf("%s\n%s\nUnblocked: source PR %s#%d closed unmerged — re-triage against current base. A superseding PR often lands the same lines, so the finding may still apply; close this item only if it no longer does.", blockedUnblockedMarker, reviewBacklogRetriageMarker, repo, pr)
 }
 
 // LiftBlock removes `blocked` from the GitHub issue and posts note.
@@ -89,22 +90,11 @@ func (s githubIssueBacklogSink) LiftBlock(ctx context.Context, repo string, ref 
 	return s.c.CreateIssueCommentBudgeted(ctx, repo, ref.Number, note)
 }
 
-// CancelItem posts note and closes the GitHub issue as not planned.
-func (s githubIssueBacklogSink) CancelItem(ctx context.Context, repo string, ref ReviewBacklogRef, note string) error {
-	if ref.Number <= 0 {
-		return fmt.Errorf("review backlog: GitHub item %q has no issue number", ref.ID)
-	}
-	if err := s.c.CreateIssueCommentBudgeted(ctx, repo, ref.Number, note); err != nil {
-		return err
-	}
-	return s.c.CloseIssue(ctx, repo, ref.Number, IssueCloseOptions{StateReason: "not_planned", SuppressOverrideComment: true})
-}
-
 // ReviewBacklogBlockResult summarises one ReconcileReviewBacklogBlocks pass.
 type ReviewBacklogBlockResult struct {
 	Checked   int
 	Lifted    int
-	Cancelled int
+	Retriaged int
 	Errors    int
 }
 
@@ -224,15 +214,17 @@ func ReconcileReviewBacklogBlocks(ctx context.Context, c *Client, logger *slog.L
 					res.Lifted++
 				}
 			case reviewBacklogPRClosed:
-				note := reviewBacklogCancelNote(repo, rec.BlockedOnPR)
+				// Never auto-close: unblock, comment, and leave the item to
+				// normal triage (maintainer decision on #13849).
+				note := reviewBacklogRetriageNote(repo, rec.BlockedOnPR)
 				if canResolve {
-					actErr = resolver.CancelItem(ctx, repo, ref, note)
+					actErr = resolver.LiftBlock(ctx, repo, ref, note)
 				} else {
 					actErr = sink.AppendToItem(ctx, repo, ref, note)
 				}
 				if actErr == nil {
-					rec.BlockState = reviewBacklogBlockCancelled
-					res.Cancelled++
+					rec.BlockState = reviewBacklogBlockRetriage
+					res.Retriaged++
 				}
 			}
 			if actErr != nil {
@@ -313,7 +305,7 @@ func reviewFollowUpsSection(listed []reviewBacklogFiled, capped int) string {
 	var b strings.Builder
 	b.WriteString(reviewFollowUpsMarker)
 	b.WriteString("\n### Follow-ups filed\n")
-	b.WriteString("Non-blocking findings from this review are tracked as backlog items, so they are not filed again. New items wait on this PR: fix them here, or leave them and they unblock when it merges (they are cancelled if it closes unmerged).\n\n")
+	b.WriteString("Non-blocking findings from this review are tracked as backlog items, so they are not filed again. New items wait on this PR: fix them here, or leave them and they unblock when it merges (if it closes unmerged they are unblocked for re-triage, not closed).\n\n")
 	seen := map[string]bool{}
 	for _, it := range sorted {
 		ref := it.key

@@ -431,7 +431,7 @@ type reviewBacklogFingerprintRecord struct {
 	// (hivecommons/hive#13833); 0 for items filed before blocking applied to
 	// every item, and for filings folded into an existing twin.
 	BlockedOnPR int `json:"blocked_on_pr,omitempty"`
-	// BlockState is blocked, lifted or cancelled; ReconcileReviewBacklogBlocks
+	// BlockState is blocked, lifted or retriage; ReconcileReviewBacklogBlocks
 	// moves it on when BlockedOnPR merges or closes.
 	BlockState string `json:"block_state,omitempty"`
 }

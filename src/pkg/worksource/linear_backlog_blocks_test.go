@@ -12,13 +12,12 @@ import (
 )
 
 const linearBlockIssueJSON = `{"data":{"issue":{"id":"uuid-1",
-	"labels":{"nodes":[{"id":"lb-blocked","name":"Blocked"},{"id":"lb-fu","name":"followup"}]},
-	"team":{"states":{"nodes":[{"id":"st-todo","name":"Todo","type":"unstarted"},{"id":"st-cxl","name":"Canceled","type":"canceled"}]}}}}}`
+	"labels":{"nodes":[{"id":"lb-blocked","name":"Blocked"},{"id":"lb-fu","name":"followup"}]}}}}`
 
-// A merged PR lifts `blocked` and comments; a closed-unmerged PR comments
-// and moves the item to the team's canceled state (#13833).
-func TestLinearBacklogSinkLiftsAndCancels(t *testing.T) {
-	var removed, stateSet []string
+// LiftBlock removes `blocked` and comments; it never changes the workflow
+// state, so a closed-unmerged PR's item stays open for re-triage (#13849).
+func TestLinearBacklogSinkLiftsBlock(t *testing.T) {
+	var removed []string
 	var comments int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := decodeGQL(t, r)
@@ -28,9 +27,7 @@ func TestLinearBacklogSinkLiftsAndCancels(t *testing.T) {
 			removed = append(removed, c.Variables["labelId"].(string))
 			_, _ = io.WriteString(w, `{"data":{"issueRemoveLabel":{"success":true}}}`)
 		case strings.Contains(c.Query, "issueUpdate"):
-			input, _ := c.Variables["input"].(map[string]any)
-			stateSet = append(stateSet, input["stateId"].(string))
-			_, _ = io.WriteString(w, `{"data":{"issueUpdate":{"success":true}}}`)
+			t.Errorf("LiftBlock must not change the issue's state: %q", c.Query)
 		case strings.Contains(c.Query, "commentCreate"):
 			comments++
 			_, _ = io.WriteString(w, `{"data":{"commentCreate":{"success":true,"comment":{"id":"c1"}}}}`)
@@ -51,24 +48,15 @@ func TestLinearBacklogSinkLiftsAndCancels(t *testing.T) {
 	if strings.Join(removed, ",") != "lb-blocked" || comments != 1 {
 		t.Fatalf("lift removed=%v comments=%d", removed, comments)
 	}
-	if err := resolver.CancelItem(context.Background(), "o/r", ref, "cancelled"); err != nil {
-		t.Fatalf("CancelItem: %v", err)
-	}
-	if strings.Join(stateSet, ",") != "st-cxl" || comments != 2 {
-		t.Fatalf("cancel states=%v comments=%d", stateSet, comments)
-	}
 }
 
-func TestLinearCancelIssueNeedsACanceledState(t *testing.T) {
+func TestLinearRemoveIssueLabelWithoutTheLabel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"data":{"issue":{"id":"uuid-1","labels":{"nodes":[]},"team":{"states":{"nodes":[{"id":"st-todo","name":"Todo","type":"unstarted"}]}}}}}`)
+		_, _ = io.WriteString(w, `{"data":{"issue":{"id":"uuid-1","labels":{"nodes":[]}}}}`)
 	}))
 	defer srv.Close()
 	src := NewLinearSource(LinearConfig{APIKey: "lin-key", BaseURL: srv.URL}, srv.Client())
-	if err := src.CancelIssue(context.Background(), "uuid-1"); err == nil || !strings.Contains(err.Error(), "no canceled workflow state") {
-		t.Fatalf("err = %v", err)
-	}
 	// No `blocked` label to remove is not an error.
 	if err := src.RemoveIssueLabel(context.Background(), "uuid-1", "blocked"); err != nil {
 		t.Fatalf("RemoveIssueLabel without the label: %v", err)

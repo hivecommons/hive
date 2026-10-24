@@ -9970,11 +9970,12 @@ func applyDuplicatePRGuard(
 	github.SetRecheckSoakProbe(github.NewHTTPSoakProbe(recheckSoakHubURL(cfg), fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port), nil))
 	blockedCtx, blockedCancel := context.WithTimeout(ctx, issueStageSyncTimeout)
 	// hivecommons/hive#13833: review-backlog items wait on the PR they were
-	// filed from in every destination; lift them when it merges, cancel them
-	// when it closes unmerged. Runs first so an abandoned PR's GitHub items
-	// are closed rather than merely unblocked by the sweep below.
-	if rb := github.ReconcileReviewBacklogBlocks(blockedCtx, ghClient, logger); rb.Lifted+rb.Cancelled+rb.Errors > 0 {
-		logger.Info("review backlog blocks reconciled", "checked", rb.Checked, "lifted", rb.Lifted, "cancelled", rb.Cancelled, "errors", rb.Errors)
+	// filed from in every destination; lift them when it merges, and when it
+	// closes unmerged unblock them with a re-triage note (never auto-close).
+	// Runs first so the items get the sweep's own note rather than the
+	// generic one from the sweep below.
+	if rb := github.ReconcileReviewBacklogBlocks(blockedCtx, ghClient, logger); rb.Lifted+rb.Retriaged+rb.Errors > 0 {
+		logger.Info("review backlog blocks reconciled", "checked", rb.Checked, "lifted", rb.Lifted, "retriaged", rb.Retriaged, "errors", rb.Errors)
 	}
 	if br := github.ReconcileBlockedIssues(blockedCtx, ghClient, actionable, logger); br.Unblocked+br.Stripped+br.SoakTriaged+br.Errors > 0 {
 		logger.Info("blocked issues reconciled", "items", br.Items, "unblocked", br.Unblocked, "help_wanted_stripped", br.Stripped, "soak_triaged", br.SoakTriaged, "errors", br.Errors)

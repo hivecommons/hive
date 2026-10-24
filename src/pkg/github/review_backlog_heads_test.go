@@ -200,27 +200,24 @@ func TestReviewFollowUpsSection(t *testing.T) {
 
 type fakeResolverSink struct {
 	fakeBacklogSink
-	lifted, cancelled []string
+	lifted, retriaged []string
 }
 
 func (f *fakeResolverSink) LiftBlock(_ context.Context, _ string, ref ReviewBacklogRef, note string) error {
 	if !strings.Contains(note, blockedUnblockedMarker) {
 		return fmt.Errorf("lift note lacks marker: %q", note)
 	}
+	if strings.Contains(note, reviewBacklogRetriageMarker) {
+		f.retriaged = append(f.retriaged, ref.Key)
+		return nil
+	}
 	f.lifted = append(f.lifted, ref.Key)
 	return nil
 }
 
-func (f *fakeResolverSink) CancelItem(_ context.Context, _ string, ref ReviewBacklogRef, note string) error {
-	if !strings.Contains(note, reviewBacklogCancelledMarker) {
-		return fmt.Errorf("cancel note lacks marker: %q", note)
-	}
-	f.cancelled = append(f.cancelled, ref.Key)
-	return nil
-}
-
-// Items wait on their PR: merged lifts the block, closed-unmerged cancels
-// the item, open leaves it, and legacy items without a PR are ignored.
+// Items wait on their PR: merged lifts the block, closed-unmerged unblocks
+// the item for re-triage (never closes it), open leaves it, and legacy items
+// without a PR are ignored.
 func TestReconcileReviewBacklogBlocks(t *testing.T) {
 	withReviewBacklogState(t)
 	var lookups []string
@@ -260,11 +257,11 @@ func TestReconcileReviewBacklogBlocks(t *testing.T) {
 	}
 
 	res := ReconcileReviewBacklogBlocks(context.Background(), c, nil)
-	if res.Checked != 4 || res.Lifted != 1 || res.Cancelled != 1 || res.Errors != 1 {
-		t.Fatalf("result = %+v, want checked 4, lifted 1, cancelled 1, errors 1 (foreign destination)", res)
+	if res.Checked != 4 || res.Lifted != 1 || res.Retriaged != 1 || res.Errors != 1 {
+		t.Fatalf("result = %+v, want checked 4, lifted 1, retriaged 1, errors 1 (foreign destination)", res)
 	}
-	if strings.Join(sink.lifted, ",") != "ENG-A" || strings.Join(sink.cancelled, ",") != "ENG-B" {
-		t.Fatalf("lifted=%v cancelled=%v", sink.lifted, sink.cancelled)
+	if strings.Join(sink.lifted, ",") != "ENG-A" || strings.Join(sink.retriaged, ",") != "ENG-B" {
+		t.Fatalf("lifted=%v retriaged=%v", sink.lifted, sink.retriaged)
 	}
 	saved, err := loadReviewBacklog("")
 	if err != nil {
@@ -274,16 +271,27 @@ func TestReconcileReviewBacklogBlocks(t *testing.T) {
 	for fp, rec := range saved.Fingerprints["o/r"] {
 		states[fp] = rec.BlockState
 	}
-	if states["fp-merged"] != reviewBacklogBlockLifted || states["fp-closed"] != reviewBacklogBlockCancelled || states["fp-open"] != reviewBacklogBlockBlocked {
+	if states["fp-merged"] != reviewBacklogBlockLifted || states["fp-closed"] != reviewBacklogBlockRetriage || states["fp-open"] != reviewBacklogBlockBlocked {
 		t.Fatalf("states = %v", states)
 	}
 
 	// Second pass: only the still-open and the foreign item are looked at,
 	// and nothing is resolved twice.
-	sink.lifted, sink.cancelled = nil, nil
+	sink.lifted, sink.retriaged = nil, nil
 	res = ReconcileReviewBacklogBlocks(context.Background(), c, nil)
-	if res.Lifted+res.Cancelled != 0 || res.Checked != 2 {
+	if res.Lifted+res.Retriaged != 0 || res.Checked != 2 {
 		t.Fatalf("second pass = %+v, want only the open and foreign items checked", res)
+	}
+}
+
+// A closed-unmerged source PR never closes the item: the note unblocks it
+// and asks for re-triage (maintainer decision on #13849).
+func TestReviewBacklogRetriageNote(t *testing.T) {
+	note := reviewBacklogRetriageNote("o/r", 6)
+	for _, want := range []string{blockedUnblockedMarker, reviewBacklogRetriageMarker, "source PR o/r#6 closed unmerged — re-triage against current base"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q: %q", want, note)
+		}
 	}
 }
 
@@ -292,7 +300,7 @@ func TestBlockedOnReviewedPRNote(t *testing.T) {
 	if repo, pr, ok := ParseBlockedOnMarker(note); !ok || repo != "o/r" || pr != 12 {
 		t.Fatalf("marker = %q %d %v", repo, pr, ok)
 	}
-	for _, want := range []string{"Blocked on PR #12.", "cancels this item if the PR is closed without merging", "close this item without a PR"} {
+	for _, want := range []string{"Blocked on PR #12.", "unblocks this item for re-triage if the PR is closed without merging", "close this item without a PR"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q: %q", want, note)
 		}

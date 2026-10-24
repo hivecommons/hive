@@ -8,23 +8,18 @@ import (
 )
 
 // Linear writes the review-backlog block sweep needs (hivecommons/hive#13833):
-// lifting the `blocked` label when the reviewed PR merges, and cancelling the
-// item when it closes unmerged.
+// lifting the `blocked` label when the reviewed PR merges or closes unmerged.
+// The sweep never cancels an item (maintainer decision on #13849).
 
 const linearIssueBlockQuery = `query($id: String!) {
   issue(id: $id) {
     id
     labels(first: 50) { nodes { id name } }
-    team { states(first: 100) { nodes { id name type } } }
   }
 }`
 
 const linearIssueRemoveLabelMutation = `mutation($id: String!, $labelId: String!) {
   issueRemoveLabel(id: $id, labelId: $labelId) { success }
-}`
-
-const linearIssueUpdateStateMutation = `mutation($id: String!, $input: IssueUpdateInput!) {
-  issueUpdate(id: $id, input: $input) { success }
 }`
 
 type linearIssueBlockResponse struct {
@@ -34,15 +29,6 @@ type linearIssueBlockResponse struct {
 			Labels struct {
 				Nodes []linearNamedNode `json:"nodes"`
 			} `json:"labels"`
-			Team struct {
-				States struct {
-					Nodes []struct {
-						ID   string `json:"id"`
-						Name string `json:"name"`
-						Type string `json:"type"`
-					} `json:"nodes"`
-				} `json:"states"`
-			} `json:"team"`
 		} `json:"issue"`
 	} `json:"data"`
 }
@@ -94,43 +80,6 @@ func (s *LinearSource) RemoveIssueLabel(ctx context.Context, issueID, name strin
 		if !resp.Data.IssueRemoveLabel.Success {
 			return fmt.Errorf("linear: issueRemoveLabel on %s reported success=false", issueID)
 		}
-	}
-	return nil
-}
-
-// CancelIssue moves the issue to the first workflow state of type
-// "canceled" on its team.
-func (s *LinearSource) CancelIssue(ctx context.Context, issueID string) error {
-	info, err := s.issueBlockInfo(ctx, issueID)
-	if err != nil {
-		return err
-	}
-	stateID := ""
-	for _, st := range info.Data.Issue.Team.States.Nodes {
-		if strings.EqualFold(st.Type, "canceled") {
-			stateID = st.ID
-			break
-		}
-	}
-	if stateID == "" {
-		return fmt.Errorf("linear: issue %s's team has no canceled workflow state", issueID)
-	}
-	raw, err := linearGraphQL(ctx, s.client, s.cfg.BaseURL, s.cfg.APIKey, linearIssueUpdateStateMutation, map[string]interface{}{"id": info.Data.Issue.ID, "input": map[string]interface{}{"stateId": stateID}})
-	if err != nil {
-		return fmt.Errorf("linear: issueUpdate on %s: %w", issueID, err)
-	}
-	var resp struct {
-		Data struct {
-			IssueUpdate struct {
-				Success bool `json:"success"`
-			} `json:"issueUpdate"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return fmt.Errorf("linear: issueUpdate on %s: decode response: %w", issueID, err)
-	}
-	if !resp.Data.IssueUpdate.Success {
-		return fmt.Errorf("linear: issueUpdate on %s reported success=false", issueID)
 	}
 	return nil
 }

@@ -197,7 +197,8 @@ func (l *reviewBacklogLedger) save(path string, now time.Time) error {
 // (hivecommons/hive#13833): a below-line or out-of-scope finding is almost
 // always about lines the PR changes, so fixing it on the base branch before
 // the PR lands is wrong or conflicts. ReconcileReviewBacklogBlocks lifts the
-// block when the PR merges and cancels the item when it closes unmerged.
+// block when the PR merges, and unblocks the item for re-triage (never closes
+// it) when the PR closes unmerged.
 func (c *Client) fileOutOfScopeReviewBacklog(ctx context.Context, req ReviewRequest, now time.Time) error {
 	return c.fileReviewBacklog(ctx, req, now, nil)
 }
