@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -43,5 +44,54 @@ func TestSnapshotCopiesPaneCapture(t *testing.T) {
 	}
 	if got, want := snap.FilteredPaneLines(1), a.FilteredPaneLines(1); len(got) != 1 || len(want) != 1 || got[0] != "world" {
 		t.Fatalf("snapshot FilteredPaneLines(1) = %q, live = %q, want [world]", got, want)
+	}
+}
+
+// Status readers must preserve diagnostic and CI state from the live agent.
+func TestStatusSnapshotsCarryDiagnosticAndCIState(t *testing.T) {
+	a := &AgentProcess{
+		Name:              "scanner",
+		AwaitingCI:        true,
+		BootstrapOverride: "custom bootstrap",
+		CIPollNudges:      3,
+		KickRefused:       true,
+		KickRefusalReason: "waiting for startup",
+		LastError:         "provider unavailable",
+	}
+	m := NewManager(map[string]config.AgentConfig{}, slog.Default(), ProjectContext{})
+	m.agents[a.Name] = a
+	readers := map[string]func() (*crux.Process, error){
+		"GetStatus":     func() (*crux.Process, error) { return m.GetStatus(a.Name) },
+		"GetStatusFast": func() (*crux.Process, error) { return m.GetStatusFast(a.Name) },
+		"AllStatuses":   func() (*crux.Process, error) { return m.AllStatuses()[a.Name], nil },
+	}
+	for name, read := range readers {
+		t.Run(name, func(t *testing.T) {
+			snap, err := read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snap == nil {
+				t.Fatal("missing snapshot")
+			}
+			if snap.AwaitingCI != a.AwaitingCI {
+				t.Errorf("AwaitingCI = %v, want %v", snap.AwaitingCI, a.AwaitingCI)
+			}
+			if snap.BootstrapOverride != a.BootstrapOverride {
+				t.Errorf("BootstrapOverride = %q, want %q", snap.BootstrapOverride, a.BootstrapOverride)
+			}
+			if snap.CIPollNudges != a.CIPollNudges {
+				t.Errorf("CIPollNudges = %d, want %d", snap.CIPollNudges, a.CIPollNudges)
+			}
+			if snap.KickRefused != a.KickRefused {
+				t.Errorf("KickRefused = %v, want %v", snap.KickRefused, a.KickRefused)
+			}
+			if snap.KickRefusalReason != a.KickRefusalReason {
+				t.Errorf("KickRefusalReason = %q, want %q", snap.KickRefusalReason, a.KickRefusalReason)
+			}
+			if snap.LastError != a.LastError {
+				t.Errorf("LastError = %q, want %q", snap.LastError, a.LastError)
+			}
+		})
 	}
 }
