@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
@@ -598,7 +598,7 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 func (s *Server) removeAgentsUnavailableAtLevel(level int, agentsDir string) []string {
 	var removed []string
 	for name := range s.deps.Config.Agents {
-		if agent.AgentAvailableAtACMMLevel(name, level) {
+		if crux.AgentAvailableAtACMMLevel(name, level) {
 			continue
 		}
 		delete(s.deps.Config.Agents, name)

@@ -656,15 +656,15 @@ func buildConfiguredAgents(cfg *config.Config) []FrontendConfiguredAgent {
 
 	agents := make([]FrontendConfiguredAgent, 0, len(names))
 	for _, name := range names {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		agentCfg := cfg.Agents[name]
 		// Same resolution buildAgents uses: explicit per-agent Mode wins,
 		// otherwise the ACMM level default for this agent.
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
@@ -883,7 +883,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// The operability-agent gate is a hard availability boundary, unlike
 		// membership in a pack's default roster. Keep it authoritative even if
 		// a stale manager snapshot still contains one of those processes.
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 			slog.Debug("agent card omitted: below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 			continue
@@ -909,7 +909,7 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 			// (#6652). "No cards and nothing hidden" is indistinguishable from
 			// "the builder never saw your config", which is what made the
 			// original report impossible to act on.
-			if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+			if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 				hidden = append(hidden, HiddenAgentInfo{Name: name, Reason: hiddenReasonBelowACMMGate})
 				slog.Debug("agent card omitted: config-only agent below ACMM operability gate", "agent", name, "acmm_level", acmmLevel)
 				seen[name] = true
@@ -1274,13 +1274,13 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		if cfg.ACMMLevel != nil {
 			acmmLevel = *cfg.ACMMLevel
 		}
-		mode := agent.DefaultAgentMode(name, acmmLevel)
+		mode := crux.DefaultAgentMode(name, acmmLevel)
 		if modeStr := agentCfg.Mode; modeStr != "" {
-			if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+			if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 				mode = parsed
 			}
 		}
-		defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+		defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 		a.Mode = mode.String()
 		a.ModeEmoji = mode.Emoji()
 		a.DefaultMode = defaultMode.String()
@@ -1342,13 +1342,13 @@ func buildMissingRuntimeAgent(name string, agentCfg config.AgentConfig, cfg *con
 	if cfg.ACMMLevel != nil {
 		acmmLevel = *cfg.ACMMLevel
 	}
-	mode := agent.DefaultAgentMode(name, acmmLevel)
+	mode := crux.DefaultAgentMode(name, acmmLevel)
 	if modeStr := agentCfg.Mode; modeStr != "" {
-		if parsed, ok := agent.ParseAgentMode(modeStr); ok {
+		if parsed, ok := crux.ParseAgentMode(modeStr); ok {
 			mode = parsed
 		}
 	}
-	defaultMode := agent.DefaultAgentMode(name, acmmLevel)
+	defaultMode := crux.DefaultAgentMode(name, acmmLevel)
 
 	backendKind := "backend"
 	if config.IsInferenceBackend(cli) {
@@ -2757,7 +2757,7 @@ func buildCadenceMatrix(cfg *config.Config, agentStatuses map[string]*crux.Proce
 	}
 	sortedNames := make([]string, 0, len(cfg.Agents))
 	for name := range cfg.Agents {
-		if !agent.AgentAvailableAtACMMLevel(name, acmmLevel) {
+		if !crux.AgentAvailableAtACMMLevel(name, acmmLevel) {
 			continue
 		}
 		sortedNames = append(sortedNames, name)
