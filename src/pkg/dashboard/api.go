@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -1064,7 +1064,7 @@ func (s *Server) lifecycleACMMLevel() int {
 func filterJourneysByACMMLevel(journeys []timeline.Journey, level int) []timeline.Journey {
 	filtered := make([]timeline.Journey, 0, len(journeys))
 	for _, j := range journeys {
-		if agent.AgentAvailableAtACMMLevel(j.Agent, level) {
+		if crux.AgentAvailableAtACMMLevel(j.Agent, level) {
 			filtered = append(filtered, j)
 		}
 	}
