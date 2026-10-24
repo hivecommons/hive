@@ -4757,6 +4757,7 @@
     .audit-filter-chip[aria-pressed="false"] { border-color: var(--line-subtle); background: color-mix(in srgb, var(--surface-2) 70%, transparent); color: var(--muted); }
     .audit-entry-sensitive { box-shadow: inset 3px 0 0 color-mix(in srgb, var(--yellow) 72%, transparent); background: color-mix(in srgb, var(--yellow) 7%, transparent); }
     .audit-entry-sensitive-tag { display: inline-flex; align-items: center; margin-left: var(--sp-2); padding: 0 var(--sp-2); min-height: 16px; border: 1px solid color-mix(in srgb, var(--yellow) 48%, transparent); border-radius: var(--r-pill); background: color-mix(in srgb, var(--yellow) 13%, transparent); color: var(--yellow); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; vertical-align: middle; }
+    .audit-entry-delegated-tag { border-color: color-mix(in srgb, var(--accent) 48%, transparent); background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); }
     .dash-card .section-label, .dash-card .token-title, .dash-card .cost-title, .dash-card .gov-title { margin: 0; }
     .section-group-header {
       font-size: var(--fs-sm); border-bottom: 1px solid var(--border);
@@ -15358,7 +15359,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MENU_MARGIN = 4;
     const STAGE_TRACKER_MENU_FAIL_LINES = 3;
     const STAGE_TRACKER_ACTION_LABELS = {
-      'decide:approve': 'Approve', 'decide:direction': 'Give direction',
+      'decide:delegate': 'Let hive decide', 'decide:approve': 'Approve', 'decide:direction': 'Give direction',
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       hold: 'Hold', release: 'Release hold', retry: 'Re-evaluate now', 'accept-triage': 'Accept triage', 'needs-human': 'Mark needs-human',
       open: 'Open on GitHub', copy: 'Copy link',
@@ -15370,6 +15371,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTIONABLE_STAGE = 10;
     const STAGE_TRACKER_WHY_WRITE = 'Sign in with write access to this repo';
     const STAGE_TRACKER_WHY_ROLE = 'Needs the merger or owner role';
+    const STAGE_TRACKER_DELEGATE_POLL_MS = 1500;
+    const STAGE_TRACKER_DELEGATE_POLL_MAX = 40;
     var _stageTrackerSel = new Set();
     var _stageTrackerSelAnchor = '';
     var _stageTrackerMenu = null;
@@ -15488,6 +15491,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const enabled = ctx.canHold !== false && !!ctx.user;
       const why = enabled ? '' : STAGE_TRACKER_WHY_WRITE;
       const out = [];
+      // First: the hive decides as the owner's delegate (policy + rails on
+      // the server; recorded as a human decision with an audit marker).
+      out.push({ id: 'decide:delegate', label: 'Let hive decide', hint: 'delegate', enabled, why });
       if (item.kind === 'pr') {
         out.push({ id: 'decide:approve', label: 'Approve (/lgtm + /approve)', enabled, why });
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
@@ -15564,8 +15570,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         }
         return { enabled: items.length > 0, why: items.length ? '' : 'Nothing selected' };
       };
-      const decideIds = ['decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
-      const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
+      const decideIds = ['decide:delegate', 'decide:approve', 'decide:direction', 'decide:close-superseded', 'decide:close-wontfix'];
+      const submenu = decideIds.map(id => Object.assign({ id, label: STAGE_TRACKER_ACTION_LABELS[id] + (id === 'decide:approve' || id === 'decide:delegate' ? '' : '…'), danger: id.indexOf('close') > 0 }, judge(id)));
       const targets = items.map(stageTrackerDecisionTarget).filter(Boolean);
       if (targets.length === items.length && items.length) {
         const kinds = {};
@@ -15800,6 +15806,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
       }
+      if (id === 'decide:delegate') {
+        return { url: '/api/repos/' + seg + '/items/' + n + '/decide-delegated', body: { type, reason: item.reason || '', caption: item.caption || '', sentinel_reason: item.sentinel_reason || '' }, poll: true };
+      }
       if (id.indexOf('decide:') === 0) {
         const body = { decision: id.slice('decide:'.length), comment: payload.comment || '', type };
         if (payload.supersededBy) body.superseded_by = payload.supersededBy;
@@ -15819,7 +15828,34 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         msg += '. Failed: ' + fails.slice(0, STAGE_TRACKER_MENU_FAIL_LINES).map(r => stageTrackerRefOf(r.item) + ' — ' + r.error).join('; ');
         if (fails.length > STAGE_TRACKER_MENU_FAIL_LINES) msg += '; +' + (fails.length - STAGE_TRACKER_MENU_FAIL_LINES) + ' more';
       }
+      const decided = stageTrackerDelegatedSummary(results);
+      if (decided) msg += '. ' + decided;
       return { msg, type: fails.length ? 'error' : 'success' };
+    }
+    // Pure: one clause per delegated decision — "#12 approve (small-low-risk)",
+    // with "kept for owner" when the hive only recommended.
+    function stageTrackerDelegatedSummary(results) {
+      const parts = [];
+      for (const r of results) {
+        const d = r && r.ok && r.data && r.data.decision;
+        if (!d) continue;
+        parts.push(stageTrackerRefOf(r.item) + ' ' + (d.verdict || '?') + (d.rule ? ' (' + d.rule + ')' : '') + (d.keeps_park ? ' — kept for the owner' : ''));
+      }
+      return parts.length ? 'Hive decided: ' + parts.slice(0, STAGE_TRACKER_MENU_FAIL_LINES).join('; ') + (parts.length > STAGE_TRACKER_MENU_FAIL_LINES ? '; +' + (parts.length - STAGE_TRACKER_MENU_FAIL_LINES) + ' more' : '') : '';
+    }
+    // Pure: whether a delegated-decision job has finished.
+    function stageTrackerDelegatedDone(job) { return !!job && job.status !== 'running'; }
+    // Poll a delegated-decision job until it ends (or the budget runs out);
+    // resolves with the last job payload read.
+    async function stageTrackerAwaitDelegated(url, job) {
+      for (let i = 0; i < STAGE_TRACKER_DELEGATE_POLL_MAX && !stageTrackerDelegatedDone(job); i++) {
+        await new Promise(res => setTimeout(res, STAGE_TRACKER_DELEGATE_POLL_MS));
+        try {
+          const r = await fetch(url);
+          if (r.ok) job = await r.json();
+        } catch (e) { /* keep polling */ }
+      }
+      return job;
     }
     function stageTrackerProgressToast(label, n) {
       const el = showToast('', 'info', true);
@@ -15862,9 +15898,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (req.once && once[req.url]) { results.push({ item: it, ok: true, data: once[req.url] }); continue; }
         try {
           const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
-          const data = await r.json().catch(() => ({}));
+          let data = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
           if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+          if (req.poll && !stageTrackerDelegatedDone(data)) {
+            showToast('Hive is deciding ' + stageTrackerRefOf(it) + '…', 'info');
+            data = await stageTrackerAwaitDelegated(req.url, data);
+          }
+          if (req.poll) {
+            if (!stageTrackerDelegatedDone(data)) throw new Error('still deciding — check the row shortly');
+            if (data.status === 'failed') throw new Error(data.error || 'the hive could not decide');
+          }
           if (req.once) once[req.url] = data;
           if (id === 'accept-triage') stageTrackerPatchItem(it, stageTrackerTriageAccepted);
           results.push({ item: it, ok: true, data });
@@ -15923,6 +15967,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sentinel = id.indexOf('decide:') === 0 ? stageTrackerSentinelPreface(items) : '';
       const preface = sentinel ? sentinel + '\n\n' : '';
       switch (id) {
+        case 'decide:delegate':
+          return (await hiveConfirm({ title: 'Let hive decide', message: preface + 'Let the hive decide ' + refs + ' as the owner\'s delegate, under the owner-delegate policy? It records a "/hive decision" (or a recommendation when the question is the hive\'s own policy), lifts the park and stamps an audit marker. Rails: it never merges, never acts on a held item, never grants secrets or permissions, and leaves the sentinel label to a person.', confirmLabel: 'Let hive decide', danger: !!sentinel })) ? {} : null;
         case 'decide:approve':
           if (prs) {
             return (await hiveConfirm({ title: 'Approve pull request' + (items.length > 1 ? 's' : ''), message: preface + 'Post "/lgtm" and "/approve" on ' + refs + ' as ' + who + '? The merge gate takes it from there — the dashboard does not merge.', confirmLabel: 'Post /lgtm + /approve', danger: !!sentinel })) ? {} : null;
@@ -32068,6 +32114,9 @@ function burnAreaChart() {
        the densest table on the dashboard, so its faces are the smallest. */
     const AUDIT_AVATAR_PX = 16;
 
+    // Pure: a decision the hive made as the owner's delegate ("Let hive
+    // decide"), as opposed to a person's repo_item_decision_* entry.
+    function auditDelegatedDecision(e) { return !!e && String(e.action || '').indexOf('repo_item_decision_delegated') === 0; }
     function renderAuditRow(e) {
       var t = e.ts ? new Date(e.ts) : null;
       var timeStr = t ? formatDashboardDateTime(t) : '—';
@@ -32090,10 +32139,11 @@ function burnAreaChart() {
         face = linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px');
       }
       var sensitiveTag = sensitive ? '<span class="audit-entry-sensitive-tag" title="Server-classified sensitive audit action">sensitive</span>' : '';
+      var delegatedTag = auditDelegatedDecision(e) ? '<span class="audit-entry-sensitive-tag audit-entry-delegated-tag" title="Decided by the hive as the owner\'s delegate (owner-delegate policy), not by a person">delegated</span>' : '';
       return '<tr class="audit-entry' + (sensitive ? ' audit-entry-sensitive' : '') + '" data-audit-sensitive="' + (sensitive ? '1' : '0') + '" style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:var(--sp-2) var(--sp-4);white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
         '<td class="py-2-px-4" title="' + esc(actor) + '">' + face + esc(actorLabel || '—') + '</td>' +
-        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + '</td>' +
+        '<td style="padding:var(--sp-2) var(--sp-4);font-weight:600">' + esc(e.action||'—') + sensitiveTag + delegatedTag + '</td>' +
         '<td class="py-2-px-4">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:var(--sp-2) var(--sp-4);color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
         '</tr>';
