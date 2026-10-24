@@ -71,11 +71,10 @@ import (
 // dashboard 12 → 9, hub 1 → 0, ioscan 5 → 0 (its test names the
 // crux/agentmode leaf directly).
 // Copilot-token and pane-classification helpers moved to crux (#13962
-// slice 3): dashboard 9 → 3, loginscan 2 → 0.
+// slice 3): dashboard 9 → 3, loginscan 2 → 0, discord 1 → 0 (#13973).
 var cruxSymbolBaseline = map[string]int{
 	"cmd/hive":      22,
 	"pkg/dashboard": 3,
-	"pkg/discord":   1,
 }
 
 // cruxTmuxBaseline is the per-package count of non-test files that invoke
