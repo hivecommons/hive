@@ -234,6 +234,11 @@ type Engine struct {
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
+	// mergeQueueBases remembers base branches whose ruleset refused a direct
+	// merge as merge-queue-only, so the self-authored sweep stops re-issuing
+	// a REST merge that cannot succeed (hivecommons/hive#14068).
+	mergeQueueBasesMu sync.Mutex
+	mergeQueueBases   map[string]time.Time
 
 	stageLabelPolicy  func() StageLabelPolicy
 	stageTracker      *StageTracker
@@ -520,6 +525,11 @@ const (
 var hiveQueueReviewRE = regexp.MustCompile(`(?i)^Approved by @([A-Za-z0-9-]+) for Hive auto-merge on green CI\.`)
 var requiredChecksExpectedRE = regexp.MustCompile(`(?i)(required status check ["'][^"']+["'] is expected|\d+\s+of\s+\d+\s+required status checks are expected)`)
 var mergeQueueRequiredRE = regexp.MustCompile(`(?i)must be made through the merge queue`)
+
+// mergeQueueBaseRecheck is how long a base branch observed as
+// merge-queue-only skips the direct merge before the sweep probes it again,
+// so a ruleset change is picked up without a restart.
+const mergeQueueBaseRecheck = 30 * time.Minute
 
 // mergeMethodFor returns the GitHub merge method the sweep should use for pr.
 // Forward-merge / top-up PRs between release lines must land as true merge
@@ -1070,7 +1080,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.UpdatedBranches++
 			}
 			if reason != "" {
-				if isTerminalRequiredCheckHold(reason) {
+				if isTerminalRequiredCheckHold(reason) || reason == autoMergeReasonMergeQueueRequired {
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
 						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
 					}
@@ -1733,6 +1743,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 
+	// The App has no merge-queue enqueue path, and the direct merge on a
+	// merge-queue-only base is refused every time (hivecommons/hive#14068).
+	if c.mergeQueueBaseKnown(owner, repo, baseBranch) {
+		return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+	}
+
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
@@ -1753,6 +1769,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
 		if mergeQueueRequiredMergeError(err) {
+			c.noteMergeQueueBase(owner, repo, baseBranch)
 			return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
@@ -2822,6 +2839,44 @@ func mergeQueueRequiredMergeError(err error) bool {
 		return false
 	}
 	return mergeQueueRequiredRE.MatchString(ghErr.Message) || mergeQueueRequiredRE.MatchString(ghErr.Error())
+}
+
+func mergeQueueBaseKey(owner, repo, base string) string {
+	return strings.ToLower(owner+"/"+repo) + "#" + base
+}
+
+// noteMergeQueueBase records that base refused a direct merge as
+// merge-queue-only.
+func (c *Engine) noteMergeQueueBase(owner, repo, base string) {
+	if c == nil || strings.TrimSpace(base) == "" {
+		return
+	}
+	c.mergeQueueBasesMu.Lock()
+	defer c.mergeQueueBasesMu.Unlock()
+	if c.mergeQueueBases == nil {
+		c.mergeQueueBases = make(map[string]time.Time)
+	}
+	c.mergeQueueBases[mergeQueueBaseKey(owner, repo, base)] = c.clock()
+}
+
+// mergeQueueBaseKnown reports whether base refused a direct merge as
+// merge-queue-only within mergeQueueBaseRecheck.
+func (c *Engine) mergeQueueBaseKnown(owner, repo, base string) bool {
+	if c == nil || strings.TrimSpace(base) == "" {
+		return false
+	}
+	key := mergeQueueBaseKey(owner, repo, base)
+	c.mergeQueueBasesMu.Lock()
+	defer c.mergeQueueBasesMu.Unlock()
+	seen, ok := c.mergeQueueBases[key]
+	if !ok {
+		return false
+	}
+	if c.clock().Sub(seen) >= mergeQueueBaseRecheck {
+		delete(c.mergeQueueBases, key)
+		return false
+	}
+	return true
 }
 
 func mergeAPIErrorNotApplied(err error) error {

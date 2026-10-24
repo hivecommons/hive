@@ -1740,6 +1740,8 @@ type selfAuthoredPR struct {
 	updateStatus    int
 	mergeStatus     int
 	mergeMessage    string
+	// mergeAttempts, when set, counts PUT /pulls/{n}/merge calls, failed ones included.
+	mergeAttempts *int
 	// headSHAOverride, when set, is returned by the SECOND PR fetch (the
 	// merge-time re-check) instead of the first-fetch head SHA — simulates a
 	// push landing between evaluation and merge.
@@ -1876,6 +1878,9 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/merge")
+			if pr := byNumber[number]; pr != nil && pr.mergeAttempts != nil {
+				(*pr.mergeAttempts)++
+			}
 			if pr := byNumber[number]; pr != nil && pr.mergeStatus != 0 {
 				w.WriteHeader(pr.mergeStatus)
 				msg := pr.mergeMessage
