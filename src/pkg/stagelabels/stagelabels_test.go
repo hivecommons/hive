@@ -294,6 +294,35 @@ func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
 	}
 }
 
+func TestPlanCaseInsensitiveMatching(t *testing.T) {
+	// Test that Current recognizes mis-cased stage labels.
+	want := Desired{Stage: ReviewPending, Role: RoleContributor}
+	add, remove := Plan([]string{"bug", "STAGE/050-REVIEW-PENDING", "role/contributor"}, want)
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("mis-cased stage label should be recognized: add=%v remove=%v", add, remove)
+	}
+
+	// Test that Plan removes a mis-cased label and adds the canonical form.
+	add, remove = Plan([]string{"bug", "STAGE/070-FIXING"}, Desired{Stage: ReviewPending})
+	if !reflect.DeepEqual(remove, []string{"STAGE/070-FIXING"}) {
+		t.Fatalf("mis-cased stage/070-fixing should be removed: remove=%v", remove)
+	}
+	if !reflect.DeepEqual(add, []string{"stage/050-review-pending"}) {
+		t.Fatalf("canonical stage should be added: add=%v", add)
+	}
+
+	// Test that Owned recognizes mis-cased labels.
+	if !Owned("STAGE/010-ACTIONABLE") || !Owned("ROLE/TRUSTED") || !Owned("AUTHOR/HUMAN") {
+		t.Fatal("Owned should recognize mis-cased labels")
+	}
+
+	// Test that Current recognizes mis-cased labels.
+	cur := Current([]string{"STAGE/030-PR-IN-PROGRESS"})
+	if cur != PRInProgress {
+		t.Fatalf("Current should recognize mis-cased labels: got %v want %v", cur, PRInProgress)
+	}
+}
+
 func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
