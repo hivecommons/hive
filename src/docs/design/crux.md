@@ -367,7 +367,7 @@ Still Stage 2, in this order:
   `GitHubTokenLogin`) and pane classification (`SanitizePaneText`,
   `RedactPaneTokens`, `PaneShowsBlockingPrompt`, `ClassifyAuthPane`) on
   `crux`, so `pkg/loginscan` no longer imports `crux/agent`. The final
-  slice (#13963) made `crux.Process` its own struct: `crux/agent` copies
+  slice (#13962) made `crux.Process` its own struct: `crux/agent` copies
   its `AgentProcess` into one when it snapshots an agent (`GetStatus`,
   `GetStatusFast`, `AllStatuses` return `*crux.Process`), and
   `ProjectContext`, `RingBuffer`, the Copilot-token constants,
