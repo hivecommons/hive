@@ -138,12 +138,18 @@ type fakeBacklogSink struct {
 	failAt  int // 1-based create that fails; 0 = never
 	partial bool
 	reuse   bool // every create reports an existing open twin (Reused)
+	// nothing makes every create report nothing filed: an empty ref and
+	// no error, as the github_issue sink does for a rejected twin.
+	nothing bool
 }
 
 func (f *fakeBacklogSink) Destination() string { return f.dest }
 
 func (f *fakeBacklogSink) CreateItem(_ context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
 	f.created = append(f.created, item)
+	if f.nothing {
+		return ReviewBacklogRef{}, nil
+	}
 	n := len(f.created)
 	ref := ReviewBacklogRef{ID: fmt.Sprintf("id-%d", n), Key: fmt.Sprintf("ENG-%d", n), URL: fmt.Sprintf("https://tracker.test/ENG-%d", n), Reused: f.reuse}
 	if f.failAt == n {
@@ -1049,59 +1055,90 @@ func TestReusedTwinLabels(t *testing.T) {
 
 // The split sweep files folds out of a not_planned host through this sink,
 // and that host is itself a recently rejected App-bot issue over the same
-// file set. createIssue's rejected-twin gate then returns the host's number
-// with RejectedTwin set; the sink must report nothing filed rather than hand
-// back the host as the new item, or the sweep would cross-link the host to
-// itself and record the split as done.
-func TestReviewBacklogGitHubSinkRejectedTwinFilesNothing(t *testing.T) {
-	withReviewBacklogState(t)
-	var created, labelled, commented int
-	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
-			if r.URL.Query().Get("state") != "closed" {
-				_, _ = io.WriteString(w, `[]`)
+// file set (a legacy fold cited exactly the host's files). With SplitFrom
+// naming the host, createIssue's rejected-twin gate ignores it and the
+// split is filed. Without it — or when some other rejected issue matches —
+// the gate returns the closed issue's number with RejectedTwin set, and the
+// sink must report nothing filed rather than hand back a closed issue as
+// the new item, or the sweep would cross-link the host to itself and record
+// the split as done.
+func TestReviewBacklogGitHubSinkRejectedTwin(t *testing.T) {
+	cases := []struct {
+		name      string
+		splitFrom int
+		rejected  []int // closed not_planned App-bot issues over pkg/a.go
+		wantFiled bool
+	}{
+		{name: "host is the only rejected twin, ignored", splitFrom: 42, rejected: []int{42}, wantFiled: true},
+		{name: "fresh filing with a rejected twin", splitFrom: 0, rejected: []int{42}, wantFiled: false},
+		{name: "another rejected twin besides the host", splitFrom: 42, rejected: []int{42, 41}, wantFiled: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withReviewBacklogState(t)
+			var created, labelled, commented int
+			recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+					if r.URL.Query().Get("state") != "closed" {
+						_, _ = io.WriteString(w, `[]`)
+						return
+					}
+					var items []string
+					for _, n := range tc.rejected {
+						items = append(items, fmt.Sprintf(`{"number":%d,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Evidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"closed","state_reason":"not_planned","closed_at":%q,"updated_at":%q,"html_url":"https://github.example/o/r/issues/%d","user":{"login":%q}}`, n, recent, recent, n, testBot))
+					}
+					_, _ = io.WriteString(w, "["+strings.Join(items, ",")+"]")
+				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+					_, _ = io.WriteString(w, `{"name":"x"}`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+					labelled++
+					_, _ = io.WriteString(w, `[{"name":"nit"}]`)
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+					commented++
+					_, _ = io.WriteString(w, `{"id":1}`)
+				case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+					created++
+					_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			c := reviewTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+			sink := githubIssueBacklogSink{c: c}
+			finding := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
+			ref, err := sink.CreateItem(context.Background(), ReviewBacklogItem{
+				Repo:        "o/r",
+				Title:       "Review backlog (correctness): unused variable",
+				Body:        "Split from #42 (host closed)\n\n`pkg/a.go:7` x is never read",
+				Labels:      []string{"nit"},
+				Perspective: review.PerspectiveCorrectness,
+				Finding:     finding,
+				SplitFrom:   tc.splitFrom,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantFiled {
+				if ref.Number != 99 || ref.ID != "99" || ref.Reused {
+					t.Fatalf("ref = %+v, want the new issue #99", ref)
+				}
+				if created != 1 {
+					t.Fatalf("created=%d, want 1", created)
+				}
 				return
 			}
-			_, _ = io.WriteString(w, `[{"number":42,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Evidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"closed","state_reason":"not_planned","closed_at":"`+recent+`","updated_at":"`+recent+`","html_url":"https://github.example/o/r/issues/42","user":{"login":"`+testBot+`"}}]`)
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
-			_, _ = io.WriteString(w, `{"name":"x"}`)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
-			labelled++
-			_, _ = io.WriteString(w, `[{"name":"nit"}]`)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
-			commented++
-			_, _ = io.WriteString(w, `{"id":1}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
-			created++
-			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-	c := reviewTestClient(t, srv.URL)
-	c.appBotLogin = testBot
-	sink := githubIssueBacklogSink{c: c}
-	finding := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
-	ref, err := sink.CreateItem(context.Background(), ReviewBacklogItem{
-		Repo:        "o/r",
-		Title:       "Review backlog (correctness): unused variable",
-		Body:        "Split from #42 (host closed)\n\n`pkg/a.go:7` x is never read",
-		Labels:      []string{"nit"},
-		Perspective: review.PerspectiveCorrectness,
-		Finding:     finding,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.ID != "" || ref.Number != 0 || ref.Reused {
-		t.Fatalf("ref = %+v, want empty: the rejected twin #42 is not a backlog item", ref)
-	}
-	if created != 0 || labelled != 0 || commented != 0 {
-		t.Fatalf("created=%d labelled=%d commented=%d, want no writes", created, labelled, commented)
+			if ref.ID != "" || ref.Number != 0 || ref.Reused {
+				t.Fatalf("ref = %+v, want empty: a rejected twin is not a backlog item", ref)
+			}
+			if created != 0 || labelled != 0 || commented != 0 {
+				t.Fatalf("created=%d labelled=%d commented=%d, want no writes", created, labelled, commented)
+			}
+		})
 	}
 }

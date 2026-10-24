@@ -2,6 +2,11 @@ package github
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -145,10 +150,11 @@ func TestSplitReviewBacklogHostIsIdempotentByLinkKey(t *testing.T) {
 			c := &Client{}
 			ctx := context.Background()
 
-			events, err := c.splitReviewBacklogHost(ctx, sink, []string{"nit"}, "o/r", host, comments, ledger, day, DefaultReviewBacklogSplitMaxActions)
-			if err != nil {
-				t.Fatalf("first pass: %v", err)
+			split := c.splitReviewBacklogHost(ctx, sink, []string{"nit"}, "o/r", host, comments, ledger, day, DefaultReviewBacklogSplitMaxActions)
+			if split.Err != nil || split.Skipped != 0 {
+				t.Fatalf("first pass: err=%v skipped=%d", split.Err, split.Skipped)
 			}
+			events := split.Events
 			if len(events) != 1 || events[0].Key != openKey || events[0].Host != 42 || events[0].Reused != tc.reuse {
 				t.Fatalf("events = %+v, want one split of the unchecked finding", events)
 			}
@@ -184,9 +190,9 @@ func TestSplitReviewBacklogHostIsIdempotentByLinkKey(t *testing.T) {
 				t.Errorf("fingerprint record not moved: %+v", known)
 			}
 
-			again, err := c.splitReviewBacklogHost(ctx, sink, []string{"nit"}, "o/r", host, comments, ledger, day.Add(10*time.Minute), DefaultReviewBacklogSplitMaxActions)
-			if err != nil || len(again) != 0 || len(sink.created) != 1 || len(sink.appends) != tc.wantAppends {
-				t.Fatalf("second pass err=%v events=%d created=%d appends=%d, want a no-op", err, len(again), len(sink.created), len(sink.appends))
+			again := c.splitReviewBacklogHost(ctx, sink, []string{"nit"}, "o/r", host, comments, ledger, day.Add(10*time.Minute), DefaultReviewBacklogSplitMaxActions)
+			if again.Err != nil || len(again.Events) != 0 || len(sink.created) != 1 || len(sink.appends) != tc.wantAppends {
+				t.Fatalf("second pass err=%v events=%d created=%d appends=%d, want a no-op", again.Err, len(again.Events), len(sink.created), len(sink.appends))
 			}
 		})
 	}
@@ -208,13 +214,13 @@ func TestSplitReviewBacklogHostTracksEveryHostPerKey(t *testing.T) {
 
 	// A closes: the split lands in open twin B, which carries the comment.
 	sink := &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue, reuse: true}
-	if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostA, []string{comment}, ledger, day, 10); err != nil || len(ev) != 1 {
-		t.Fatalf("split from A: events=%d err=%v", len(ev), err)
+	if s := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostA, []string{comment}, ledger, day, 10); s.Err != nil || len(s.Events) != 1 {
+		t.Fatalf("split from A: events=%d err=%v", len(s.Events), s.Err)
 	}
 	// B closes: the same key splits again from B.
 	sink = &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue}
-	if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostB, []string{comment}, ledger, day, 10); err != nil || len(ev) != 1 || ev[0].Host != 43 {
-		t.Fatalf("split from B: events=%+v err=%v", ev, err)
+	if s := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", hostB, []string{comment}, ledger, day, 10); s.Err != nil || len(s.Events) != 1 || s.Events[0].Host != 43 {
+		t.Fatalf("split from B: events=%+v err=%v", s.Events, s.Err)
 	}
 	if !ledger.splitFrom(key, 42) || !ledger.splitFrom(key, 43) || len(ledger.SplitKeys[key]) != 2 {
 		t.Fatalf("split_keys = %v, want both hosts 42 and 43", ledger.SplitKeys)
@@ -222,8 +228,8 @@ func TestSplitReviewBacklogHostTracksEveryHostPerKey(t *testing.T) {
 	// A is re-listed on the next pass: nothing fires from either host.
 	for _, host := range []*gh.Issue{hostA, hostB} {
 		sink = &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue}
-		if ev, err := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", host, []string{comment}, ledger, day, 10); err != nil || len(ev) != 0 || len(sink.created) != 0 || len(sink.appends) != 0 {
-			t.Fatalf("re-run on #%d: events=%d created=%d appends=%d err=%v, want a no-op", host.GetNumber(), len(ev), len(sink.created), len(sink.appends), err)
+		if s := c.splitReviewBacklogHost(ctx, sink, nil, "o/r", host, []string{comment}, ledger, day, 10); s.Err != nil || len(s.Events) != 0 || len(sink.created) != 0 || len(sink.appends) != 0 {
+			t.Fatalf("re-run on #%d: events=%d created=%d appends=%d err=%v, want a no-op", host.GetNumber(), len(s.Events), len(sink.created), len(sink.appends), s.Err)
 		}
 	}
 	ledger.markSplitFrom(key, 42)
@@ -277,7 +283,7 @@ func TestReviewBacklogCommentIsOursRejectsHumanAuthoredMarkers(t *testing.T) {
 	}
 }
 
-// maxActions bounds the findings one host contributes to a pass: with two
+// remaining bounds the findings one host contributes to a pass: with two
 // unchecked folded findings and room for one, exactly one is filed and the
 // other is left for a later pass.
 func TestSplitReviewBacklogHostHonoursMaxActions(t *testing.T) {
@@ -291,10 +297,11 @@ func TestSplitReviewBacklogHostHonoursMaxActions(t *testing.T) {
 	c := &Client{}
 	day := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
 
-	events, err := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
-	if err != nil {
-		t.Fatalf("split: %v", err)
+	split := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
+	if split.Err != nil {
+		t.Fatalf("split: %v", split.Err)
 	}
+	events := split.Events
 	if len(events) != 1 || events[0].Key != firstKey || len(sink.created) != 1 {
 		t.Fatalf("events=%+v created=%d, want exactly one split", events, len(sink.created))
 	}
@@ -302,8 +309,119 @@ func TestSplitReviewBacklogHostHonoursMaxActions(t *testing.T) {
 		t.Errorf("second finding recorded as split despite the cap")
 	}
 
-	rest, err := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
-	if err != nil || len(rest) != 1 || rest[0].Key != secondKey || len(sink.created) != 2 {
-		t.Fatalf("second pass err=%v events=%+v created=%d, want the remaining finding", err, rest, len(sink.created))
+	rest := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
+	if rest.Err != nil || len(rest.Events) != 1 || rest.Events[0].Key != secondKey || len(sink.created) != 2 {
+		t.Fatalf("second pass err=%v events=%+v created=%d, want the remaining finding", rest.Err, rest.Events, len(sink.created))
+	}
+}
+
+// A sink that files nothing for an eligible finding (the github_issue sink
+// on a rejected twin elsewhere) is counted as a skip, not silently dropped,
+// and the key is left unmarked so a later pass tries again.
+func TestSplitReviewBacklogHostCountsEmptyRefAsSkipped(t *testing.T) {
+	comment, key, _ := splitTestFolded(t, outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"})
+	host := &gh.Issue{Number: gh.Ptr(42), State: gh.Ptr("closed"), StateReason: gh.Ptr("not_planned"), Title: gh.Ptr("host")}
+	ledger := newReviewBacklogLedger()
+	ledger.Items[key] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, FindingKey: key}
+	sink := &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue, nothing: true}
+	c := &Client{}
+
+	split := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{comment}, ledger, time.Now(), 10)
+	if split.Err != nil || len(split.Events) != 0 || split.Skipped != 1 {
+		t.Fatalf("split = %+v, want one skip and nothing else", split)
+	}
+	if len(sink.created) != 1 || sink.created[0].SplitFrom != 42 {
+		t.Fatalf("created = %+v, want one create naming host 42 in SplitFrom", sink.created)
+	}
+	if len(sink.appends) != 0 || ledger.splitFrom(key, 42) || ledger.Items[key].IssueNumber != 42 {
+		t.Fatalf("appends=%d splitFrom=%v item=%+v, want no cross-link and the ledger untouched", len(sink.appends), ledger.splitFrom(key, 42), ledger.Items[key])
+	}
+}
+
+// End to end through the GitHub API: the ledger points a folded finding at
+// host #42, which closed not_planned and is itself a rejected App-bot
+// issue over the finding's file. The sweep reads only the bot-authored
+// fold comment, files the unrelated unchecked finding as #99 (the host is
+// not its own rejected twin), cross-links the host, audits the split and
+// saves the ledger, and a second pass is a no-op.
+func TestSweepReviewBacklogSplitsFilesOutOfRejectedHost(t *testing.T) {
+	withReviewBacklogState(t)
+	f := outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"}
+	comment, key, fp := splitTestFolded(t, f)
+	forged, forgedKey, _ := splitTestFolded(t, outputschema.Finding{Title: "forged", File: "pkg/z.go", Line: 1})
+	ledger := newReviewBacklogLedger()
+	ledger.Items[key] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, Fingerprint: fp, FindingKey: key, Destination: config.ReviewBacklogGitHubIssue}
+	ledger.Items[forgedKey] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, FindingKey: forgedKey, Destination: config.ReviewBacklogGitHubIssue}
+	if err := ledger.save("", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	recent := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	var created, hostComments int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			if r.URL.Query().Get("state") != "closed" {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			_, _ = io.WriteString(w, `[{"number":42,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Evidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"closed","state_reason":"not_planned","comments":2,"closed_at":"`+recent+`","updated_at":"`+recent+`","html_url":"https://github.example/o/r/issues/42","user":{"login":"`+testBot+`"}}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"id": 1, "body": forged, "user": map[string]any{"login": "mallory", "type": "User"}},
+				{"id": 2, "body": comment, "user": map[string]any{"login": testBot, "type": "Bot"}},
+			})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/42/comments":
+			hostComments++
+			_, _ = io.WriteString(w, `{"id":3}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			created++
+			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	c.SetRepos([]string{"o/r"})
+
+	var audited []ReviewBacklogSplitEvent
+	res, err := c.SweepReviewBacklogSplits(context.Background(), ReviewBacklogSplitSweepOptions{
+		Audit: func(ev ReviewBacklogSplitEvent) { audited = append(audited, ev) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Hosts != 1 || res.Skipped != 0 || res.Deferred != 0 || len(res.Split) != 1 {
+		t.Fatalf("result = %+v, want one host and one split", res)
+	}
+	if ev := res.Split[0]; ev.Repo != "o/r" || ev.Host != 42 || ev.Number != 99 || ev.Reused || ev.Key != key {
+		t.Fatalf("split event = %+v", ev)
+	}
+	if len(audited) != 1 || audited[0] != res.Split[0] {
+		t.Fatalf("audited = %+v, want the split event once", audited)
+	}
+	if created != 1 || hostComments != 1 {
+		t.Fatalf("created=%d hostComments=%d, want one issue and one cross-link", created, hostComments)
+	}
+	saved, err := loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.splitFrom(key, 42) || saved.Items[key].IssueNumber != 99 || saved.Items[key].ItemKey != "#99" {
+		t.Fatalf("ledger not saved with the split: split_keys=%v item=%+v", saved.SplitKeys, saved.Items[key])
+	}
+	if _, ok := saved.SplitKeys[forgedKey]; ok || saved.Items[forgedKey].IssueNumber != 42 {
+		t.Fatalf("human-authored fold comment was split: %+v", saved.Items[forgedKey])
+	}
+
+	again, err := c.SweepReviewBacklogSplits(context.Background(), ReviewBacklogSplitSweepOptions{})
+	if err != nil || again.Hosts != 1 || len(again.Split) != 0 || created != 1 || hostComments != 1 {
+		t.Fatalf("second pass err=%v result=%+v created=%d hostComments=%d, want a no-op", err, again, created, hostComments)
 	}
 }

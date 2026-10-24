@@ -180,8 +180,11 @@ type ReviewBacklogSplitSweepOptions struct {
 // ReviewBacklogSplitResult reports what one split pass did.
 type ReviewBacklogSplitResult struct {
 	// Hosts counts closed backlog hosts whose comments were read.
-	Hosts   int
-	Split   []ReviewBacklogSplitEvent
+	Hosts int
+	Split []ReviewBacklogSplitEvent
+	// Skipped counts hosts whose comments could not be read or whose split
+	// failed part-way, plus eligible findings the sink filed nothing for
+	// (a maintainer rejected a twin elsewhere).
 	Skipped int
 	// Deferred counts closed backlog hosts in the window that were not
 	// read because the pass had already filed MaxActions findings. They
@@ -267,22 +270,25 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklo
 			}
 			// Load, split and save under the ledger lock, per host, so the
 			// review filing path (fileOutOfScopeReviewBacklog) and this
-			// sweep never overwrite each other's ledger update.
-			events, splitErr, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, maxActions-len(result.Split))
-			if err != nil {
-				return result, err
-			}
-			for _, ev := range events {
+			// sweep never overwrite each other's ledger update. Events are
+			// recorded and audited before a ledger error aborts the pass:
+			// the issues they name are already filed and cross-linked.
+			split, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, maxActions-len(result.Split))
+			for _, ev := range split.Events {
 				result.Split = append(result.Split, ev)
 				if opts.Audit != nil {
 					opts.Audit(ev)
 				}
 			}
-			if splitErr != nil {
+			result.Skipped += split.Skipped
+			if split.Err != nil {
 				if c.logger != nil {
-					c.logger.Warn("review backlog split failed", "repo", repo, "issue", issue.GetNumber(), "error", splitErr)
+					c.logger.Warn("review backlog split failed", "repo", repo, "issue", issue.GetNumber(), "error", split.Err)
 				}
 				result.Skipped++
+			}
+			if err != nil {
+				return result, err
 			}
 		}
 	}
@@ -292,25 +298,35 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklo
 	return result, nil
 }
 
+// reviewBacklogHostSplit is what splitting one host produced.
+type reviewBacklogHostSplit struct {
+	Events []ReviewBacklogSplitEvent
+	// Skipped counts eligible findings the sink filed nothing for.
+	Skipped int
+	// Err is the per-host split error; the sweep records a skip and moves
+	// on. Events already filed before it are still reported.
+	Err error
+}
+
 // splitReviewBacklogHostLocked runs splitReviewBacklogHost for one host
-// inside the ledger lock: load, split, save. splitErr is the per-host
-// split error (the sweep records a skip and moves on); err is a ledger
-// load or save error (the sweep aborts).
-func (c *Client) splitReviewBacklogHostLocked(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, bodies []string, maxActions int) (events []ReviewBacklogSplitEvent, splitErr, err error) {
+// inside the ledger lock: load, split, save. The returned error is a
+// ledger load or save error (the sweep aborts); a save error still
+// returns the events filed so the caller can audit them.
+func (c *Client) splitReviewBacklogHostLocked(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, bodies []string, remaining int) (reviewBacklogHostSplit, error) {
 	reviewBacklogLedgerMu.Lock()
 	defer reviewBacklogLedgerMu.Unlock()
 	ledger, err := loadReviewBacklog("")
 	if err != nil {
-		return nil, nil, err
+		return reviewBacklogHostSplit{}, err
 	}
 	now := time.Now()
-	events, splitErr = c.splitReviewBacklogHost(ctx, sink, labels, repo, host, bodies, ledger, now, maxActions)
-	if len(events) > 0 {
+	split := c.splitReviewBacklogHost(ctx, sink, labels, repo, host, bodies, ledger, now, remaining)
+	if len(split.Events) > 0 {
 		if err := ledger.save("", now); err != nil {
-			return nil, splitErr, err
+			return split, err
 		}
 	}
-	return events, splitErr, nil
+	return split, nil
 }
 
 // reviewBacklogCommentIsOurs reports whether a host comment was written by
@@ -376,15 +392,18 @@ func (c *Client) reviewBacklogSplitTarget() (ReviewBacklogSink, []string) {
 }
 
 // splitReviewBacklogHost files every eligible folded item in comments on
-// the closed host and updates ledger in place. It stops after maxActions
-// splits; the caller saves the ledger.
-func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, comments []string, ledger *reviewBacklogLedger, now time.Time, maxActions int) ([]ReviewBacklogSplitEvent, error) {
+// the closed host and updates ledger in place. It stops after remaining
+// splits (the pass budget left for this host); the caller saves the
+// ledger. An eligible item the sink files nothing for — a maintainer
+// rejected the same finding elsewhere — is logged and counted in Skipped,
+// not marked split, so it is retried while the host stays in the window.
+func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogSink, labels []string, repo string, host *gh.Issue, comments []string, ledger *reviewBacklogLedger, now time.Time, remaining int) reviewBacklogHostSplit {
 	owner, repoName := c.splitRepo(repo)
 	hostNumber := host.GetNumber()
 	stateReason := host.GetStateReason()
-	var events []ReviewBacklogSplitEvent
+	var out reviewBacklogHostSplit
 	for _, body := range comments {
-		if len(events) >= maxActions {
+		if len(out.Events) >= remaining {
 			break
 		}
 		item, ok := parseReviewBacklogFoldedComment(body)
@@ -401,19 +420,26 @@ func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogS
 			Labels:      labels,
 			Perspective: item.Perspective,
 			Finding:     item.Finding,
+			SplitFrom:   hostNumber,
 		})
 		if err != nil && ref.ID == "" {
-			return events, err
+			out.Err = err
+			return out
 		}
 		createErr := err
 		if ref.ID == "" {
+			if c.logger != nil {
+				c.logger.Warn("review backlog split: sink filed nothing for folded finding", "repo", repo, "host", hostNumber, "key", item.Key, "finding", item.Finding.Title)
+			}
+			out.Skipped++
 			continue
 		}
 		if ref.Reused && createErr == nil {
 			// The sink folded it into another open twin: carry the whole
 			// folded comment there so that twin's close splits it again.
 			if err := sink.AppendToItem(ctx, repo, ref, item.Comment); err != nil {
-				return events, err
+				out.Err = err
+				return out
 			}
 		}
 		hostRef := ReviewBacklogRef{ID: strconv.Itoa(hostNumber), Key: fmt.Sprintf("#%d", hostNumber), Number: hostNumber}
@@ -433,14 +459,15 @@ func (c *Client) splitReviewBacklogHost(ctx context.Context, sink ReviewBacklogS
 		if c.logger != nil {
 			c.logger.Info("review backlog: folded finding split out of closed host", "repo", repo, "host", hostNumber, "issue", ref.Key, "reused", ref.Reused)
 		}
-		events = append(events, ReviewBacklogSplitEvent{Repo: repo, Host: hostNumber, Number: ref.Number, Reused: ref.Reused, Key: item.Key})
+		out.Events = append(out.Events, ReviewBacklogSplitEvent{Repo: repo, Host: hostNumber, Number: ref.Number, Reused: ref.Reused, Key: item.Key})
 		if createErr != nil {
 			// The item exists; the ledger records it so a retry does not
 			// file it twice.
-			return events, createErr
+			out.Err = createErr
+			return out
 		}
 	}
-	return events, nil
+	return out
 }
 
 // recordReviewBacklogSplit points the folded finding's ledger records at

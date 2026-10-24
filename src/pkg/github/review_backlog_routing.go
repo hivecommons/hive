@@ -50,6 +50,12 @@ type ReviewBacklogItem struct {
 	// finding, never on a shared file alone (#13906).
 	Perspective review.Perspective
 	Finding     outputschema.Finding
+	// SplitFrom is the closed host this item is being split out of by the
+	// review-backlog split sweep (#13914); 0 for a fresh filing. A sink
+	// that suppresses findings a maintainer rejected must not count the
+	// host as the rejection: its decision is already applied by
+	// reviewBacklogSplitEligible.
+	SplitFrom int
 }
 
 // ReviewBacklogRef identifies a filed backlog item in its destination.
@@ -116,7 +122,7 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 	foldMatch := func(title, body string) bool {
 		return reviewBacklogFoldMatches(item.Perspective, item.Finding, title, body)
 	}
-	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true, FoldMatch: foldMatch})
+	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true, FoldMatch: foldMatch, IgnoreClosedTwin: item.SplitFrom})
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}
@@ -126,9 +132,10 @@ func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBackl
 	if res.RejectedTwin {
 		// Nothing was filed: a maintainer recently closed an agent issue
 		// over the same file set as not-planned/duplicate. Number names
-		// that closed issue, not a backlog item — when the split sweep
-		// files a fold out of a not_planned host, the host itself is that
-		// twin, and recording it would cross-link the host to itself.
+		// that closed issue, not a backlog item, so it must not be handed
+		// back as one. For a split out of a closed host the host itself is
+		// excluded above (IgnoreClosedTwin), so this is some other
+		// rejection and the finding stays suppressed.
 		return ReviewBacklogRef{}, nil
 	}
 	if res.AlreadyExisted {

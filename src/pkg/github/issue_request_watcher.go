@@ -1146,6 +1146,14 @@ type CreateIssueRequest struct {
 	// (#13906). A canonical-subject match is gated the same way; an exact
 	// title match is unaffected.
 	FoldMatch func(title, body string) bool
+	// IgnoreClosedTwin is a closed issue number the rejected-twin gate
+	// (#6463) must not count as the twin. The review-backlog split sweep
+	// files a folded finding out of a host that has just closed; a legacy
+	// fold cited exactly the host's files, so a not_planned/duplicate host
+	// would otherwise always be its own rejected twin and the split could
+	// never be filed (#13914). The host's rejection is applied by the
+	// caller's own eligibility rule; any other rejected twin still gates.
+	IgnoreClosedTwin int
 }
 
 // OriginLabel returns the provenance label this request resolves to: an
@@ -1278,7 +1286,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	// agent-filed issue over the same file set as not-planned/duplicate has
 	// already answered this finding, however it is reworded this time. A
 	// failed lookup files anyway — suppression only on positive evidence.
-	if twin, err := c.findRejectedTwin(ctx, owner, repoName, title, body); err != nil {
+	if twin, err := c.findRejectedTwin(ctx, owner, repoName, title, body, req.IgnoreClosedTwin); err != nil {
 		c.logger.Warn("CreateIssue: rejected-twin lookup failed, proceeding to create",
 			slog.String("repo", repoName), slog.String("error", err.Error()))
 	} else if twin != nil {

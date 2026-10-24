@@ -231,13 +231,15 @@ func equalFileRefSets(a, b map[string]bool) bool {
 // findRejectedTwin returns a recently closed, maintainer-rejected, App-bot-
 // filed issue whose file-reference set exactly matches the pending request's,
 // or nil. An error means the lookup could not tell; the caller files anyway.
-func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body string) (*gh.Issue, error) {
+// ignore, when positive, is a closed issue number that never counts as the
+// twin (see CreateIssueRequest.IgnoreClosedTwin).
+func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body string, ignore int) (*gh.Issue, error) {
 	want := issueFileRefSet(title + "\n" + body)
 	if len(want) == 0 {
 		return nil, nil
 	}
 	for _, botLogin := range c.hiveBotLogins() {
-		twin, err := c.findRejectedTwinBy(ctx, owner, repo, botLogin, want)
+		twin, err := c.findRejectedTwinBy(ctx, owner, repo, botLogin, want, ignore)
 		if err != nil || twin != nil {
 			return twin, err
 		}
@@ -245,7 +247,7 @@ func (c *Client) findRejectedTwin(ctx context.Context, owner, repo, title, body 
 	return nil, nil
 }
 
-func (c *Client) findRejectedTwinBy(ctx context.Context, owner, repo, botLogin string, want map[string]bool) (*gh.Issue, error) {
+func (c *Client) findRejectedTwinBy(ctx context.Context, owner, repo, botLogin string, want map[string]bool, ignore int) (*gh.Issue, error) {
 	cutoff := time.Now().Add(-issueRejectionWindow)
 	opts := &gh.IssueListByRepoOptions{
 		State:       "closed",
@@ -266,7 +268,7 @@ func (c *Client) findRejectedTwinBy(ctx context.Context, owner, repo, botLogin s
 				// closed_at ≤ updated_at, so nothing further can qualify.
 				return nil, nil
 			}
-			if is.IsPullRequest() {
+			if is.IsPullRequest() || (ignore > 0 && is.GetNumber() == ignore) {
 				continue
 			}
 			if !rejectedStateReasons[is.GetStateReason()] {
