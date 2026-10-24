@@ -50,7 +50,12 @@ type reviewBacklogLedger struct {
 
 // reviewBacklogLedgerMu serialises the load→mutate→save cycles of the two
 // ledger writers, fileOutOfScopeReviewBacklog and SweepReviewBacklogSplits,
-// so a concurrent save cannot drop the other side's update.
+// so a concurrent save cannot drop the other side's update. Both hold it
+// across their CreateItem/AppendToItem calls on purpose: the ledger records
+// the issue each call creates, so releasing it between the call and the
+// save would reopen the lost-update window. The cost is that the run
+// loop's split sweep waits while a review's backlog filing is in flight,
+// bounded by the review's per-PR daily cap and the sweep's per-pass cap.
 var reviewBacklogLedgerMu sync.Mutex
 
 // splitFrom reports whether key was already split out of host.

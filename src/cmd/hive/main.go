@@ -9788,20 +9788,24 @@ func runClosedIssueStageSweepIfDue(ctx context.Context, ghClient *github.Client,
 // closed-issue sweep's cadence and window; every rule lives in
 // SweepReviewBacklogSplits.
 func runReviewBacklogSplitSweep(ctx context.Context, ghClient *github.Client, dashSrv *dashboard.Server, since time.Time, logger *slog.Logger) {
-	result, err := ghClient.SweepReviewBacklogSplits(ctx, since, func(event github.ReviewBacklogSplitEvent) {
-		if dashSrv == nil {
-			return
-		}
-		detail := fmt.Sprintf("repo=%s, host=%d, issue=%d, reused=%t, key=%s",
-			event.Repo, event.Host, event.Number, event.Reused, event.Key)
-		dashSrv.AuditLogRecord("system", "review-backlog-split", detail, "", event.Repo, event.Host)
+	result, err := ghClient.SweepReviewBacklogSplits(ctx, github.ReviewBacklogSplitSweepOptions{
+		Since:      since,
+		MaxActions: github.DefaultReviewBacklogSplitMaxActions,
+		Audit: func(event github.ReviewBacklogSplitEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, host=%d, issue=%d, reused=%t, key=%s",
+				event.Repo, event.Host, event.Number, event.Reused, event.Key)
+			dashSrv.AuditLogRecord("system", "review-backlog-split", detail, "", event.Repo, event.Host)
+		},
 	})
 	if err != nil {
 		logger.Warn("review backlog split sweep failed", "error", err)
 		return
 	}
-	if result != nil && (len(result.Split) > 0 || result.Skipped > 0) {
-		logger.Info("review backlog split sweep complete", "hosts", result.Hosts, "split", len(result.Split), "skipped", result.Skipped)
+	if result != nil && (len(result.Split) > 0 || result.Skipped > 0 || result.Deferred > 0) {
+		logger.Info("review backlog split sweep complete", "hosts", result.Hosts, "split", len(result.Split), "skipped", result.Skipped, "deferred", result.Deferred)
 	}
 }
 

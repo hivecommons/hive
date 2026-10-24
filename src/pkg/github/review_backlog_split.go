@@ -165,12 +165,29 @@ type ReviewBacklogSplitEvent struct {
 	Key    string
 }
 
+// ReviewBacklogSplitSweepOptions configures SweepReviewBacklogSplits.
+type ReviewBacklogSplitSweepOptions struct {
+	// Since bounds the listing to issues updated after it. Zero means
+	// now minus DefaultClosedIssueStageSweepWindow.
+	Since time.Time
+	// MaxActions caps the findings filed in one pass. Zero means
+	// DefaultReviewBacklogSplitMaxActions.
+	MaxActions int
+	// Audit, when set, is called once per finding split out.
+	Audit func(ReviewBacklogSplitEvent)
+}
+
 // ReviewBacklogSplitResult reports what one split pass did.
 type ReviewBacklogSplitResult struct {
 	// Hosts counts closed backlog hosts whose comments were read.
 	Hosts   int
 	Split   []ReviewBacklogSplitEvent
 	Skipped int
+	// Deferred counts closed backlog hosts in the window that were not
+	// read because the pass had already filed MaxActions findings. They
+	// are picked up by a later pass only while they stay inside its
+	// window, so the caller should log a non-zero count.
+	Deferred int
 }
 
 // SweepReviewBacklogSplits re-files still-unchecked findings folded into an
@@ -182,10 +199,17 @@ type ReviewBacklogSplitResult struct {
 // backlog sink, the host gets a cross-link comment, and the ledger's item
 // and fingerprint records move to the new issue. Ledger SplitKeys
 // (link-marker key → hosts already split from) make re-runs idempotent.
-func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, audit func(ReviewBacklogSplitEvent)) (*ReviewBacklogSplitResult, error) {
+// One pass files at most opts.MaxActions findings; hosts left unread once
+// the cap is hit are counted in Deferred rather than silently dropped.
+func (c *Client) SweepReviewBacklogSplits(ctx context.Context, opts ReviewBacklogSplitSweepOptions) (*ReviewBacklogSplitResult, error) {
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
 	}
+	maxActions := opts.MaxActions
+	if maxActions <= 0 {
+		maxActions = DefaultReviewBacklogSplitMaxActions
+	}
+	since := opts.Since
 	if since.IsZero() {
 		since = time.Now().Add(-DefaultClosedIssueStageSweepWindow)
 	}
@@ -199,23 +223,30 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 	}
 	sink, labels := c.reviewBacklogSplitTarget()
 	for _, repo := range c.getRepos() {
-		if len(result.Split) >= DefaultReviewBacklogSplitMaxActions {
-			break
-		}
 		repoHosts := hosts[reviewBacklogRepoKey(repo)]
 		if len(repoHosts) == 0 {
 			continue
 		}
+		capped := len(result.Split) >= maxActions
 		owner, repoName := c.splitRepo(repo)
 		issues, err := c.listClosedIssuesSince(ctx, owner, repoName, since)
 		if err != nil {
+			if capped {
+				// Only counting deferred hosts by now; a listing failure
+				// is not worth aborting the pass over.
+				if c.logger != nil {
+					c.logger.Warn("review backlog split: could not count deferred hosts", "repo", repo, "error", err)
+				}
+				continue
+			}
 			return result, err
 		}
 		for _, issue := range issues {
-			if len(result.Split) >= DefaultReviewBacklogSplitMaxActions {
-				break
-			}
 			if issue == nil || issue.IsPullRequest() || !strings.EqualFold(issue.GetState(), "closed") || issue.GetComments() == 0 || !repoHosts[issue.GetNumber()] {
+				continue
+			}
+			if len(result.Split) >= maxActions {
+				result.Deferred++
 				continue
 			}
 			result.Hosts++
@@ -237,14 +268,14 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 			// Load, split and save under the ledger lock, per host, so the
 			// review filing path (fileOutOfScopeReviewBacklog) and this
 			// sweep never overwrite each other's ledger update.
-			events, splitErr, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, DefaultReviewBacklogSplitMaxActions-len(result.Split))
+			events, splitErr, err := c.splitReviewBacklogHostLocked(ctx, sink, labels, repo, issue, bodies, maxActions-len(result.Split))
 			if err != nil {
 				return result, err
 			}
 			for _, ev := range events {
 				result.Split = append(result.Split, ev)
-				if audit != nil {
-					audit(ev)
+				if opts.Audit != nil {
+					opts.Audit(ev)
 				}
 			}
 			if splitErr != nil {
@@ -254,6 +285,9 @@ func (c *Client) SweepReviewBacklogSplits(ctx context.Context, since time.Time, 
 				result.Skipped++
 			}
 		}
+	}
+	if result.Deferred > 0 && c.logger != nil {
+		c.logger.Warn("review backlog split: per-pass cap reached, hosts deferred to a later pass", "max_actions", maxActions, "deferred_hosts", result.Deferred)
 	}
 	return result, nil
 }

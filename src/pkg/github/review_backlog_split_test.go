@@ -276,3 +276,34 @@ func TestReviewBacklogCommentIsOursRejectsHumanAuthoredMarkers(t *testing.T) {
 		})
 	}
 }
+
+// maxActions bounds the findings one host contributes to a pass: with two
+// unchecked folded findings and room for one, exactly one is filed and the
+// other is left for a later pass.
+func TestSplitReviewBacklogHostHonoursMaxActions(t *testing.T) {
+	first, firstKey, _ := splitTestFolded(t, outputschema.Finding{Title: "unused variable", File: "pkg/a.go", Line: 7, Summary: "x is never read"})
+	second, secondKey, _ := splitTestFolded(t, outputschema.Finding{Title: "shadowed err", File: "pkg/b.go", Line: 3, Summary: "err is shadowed"})
+	host := &gh.Issue{Number: gh.Ptr(42), State: gh.Ptr("closed"), StateReason: gh.Ptr("completed"), Title: gh.Ptr("host")}
+	ledger := newReviewBacklogLedger()
+	ledger.Items[firstKey] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, FindingKey: firstKey}
+	ledger.Items[secondKey] = reviewBacklogRecord{Repo: "o/r", PRNumber: 5, IssueNumber: 42, FindingKey: secondKey}
+	sink := &fakeBacklogSink{dest: config.ReviewBacklogGitHubIssue}
+	c := &Client{}
+	day := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+
+	events, err := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
+	if err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	if len(events) != 1 || events[0].Key != firstKey || len(sink.created) != 1 {
+		t.Fatalf("events=%+v created=%d, want exactly one split", events, len(sink.created))
+	}
+	if ledger.splitFrom(secondKey, 42) {
+		t.Errorf("second finding recorded as split despite the cap")
+	}
+
+	rest, err := c.splitReviewBacklogHost(context.Background(), sink, nil, "o/r", host, []string{first, second}, ledger, day, 1)
+	if err != nil || len(rest) != 1 || rest[0].Key != secondKey || len(sink.created) != 2 {
+		t.Fatalf("second pass err=%v events=%+v created=%d, want the remaining finding", err, rest, len(sink.created))
+	}
+}
