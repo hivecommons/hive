@@ -465,17 +465,15 @@ func decidePR(in Input) Decision {
 }
 
 // decideCompeting applies "prefer an adequate contributor PR over a hive
-// duplicate" when the item has a competing PR.
+// duplicate" when the item has a competing PR. Mergeability alone cannot
+// establish adequacy, so closing a hive PR requires a human comparison.
 func decideCompeting(in Input, ref string) (Decision, bool) {
 	for _, other := range in.Competing {
 		switch {
 		case in.HiveAuthored && !other.HiveAuthored && other.Mergeable && other.Current:
-			return Decision{
-				Verdict: VerdictCloseSuperseded, Rule: "prefer-contributor",
-				Text:      fmt.Sprintf("superseded by #%d: the contributor's PR is mergeable and current, so it lands and this hive duplicate closes", other.Number),
-				Rationale: "an adequate contributor PR beats a hive duplicate",
-				Actions:   []Action{{Kind: ActionCloseDuplicate, Target: other.Number, Text: fmt.Sprintf("superseded by #%d", other.Number)}},
-			}, true
+			return recommendOnly("prefer-contributor",
+				"mergeability and an issue reference do not establish that a competing PR adequately replaces the hive's work",
+				fmt.Sprintf("compare #%d with %s for issue coverage, passing checks and review approval; keep %s open until that comparison confirms the contributor's PR is an adequate replacement", other.Number, ref, ref)), true
 		case !in.HiveAuthored && other.HiveAuthored && in.CIGreen && !in.Conflicting:
 			return releasePR("prefer-contributor", "approve "+ref+": the contributor's PR is mergeable and current, so it lands ahead of the hive's duplicate", "an adequate contributor PR beats a hive duplicate"), true
 		case !in.HiveAuthored && other.HiveAuthored:
