@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -72,6 +73,12 @@ func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) 
 		liveStates = s.contributeHub.LiveStates()
 	}
 	for i := range profiles {
+		policy := s.contributorTokenPolicy()
+		if err := policy.migrate(&profiles[i], time.Now().UTC()); err != nil {
+			jsonError(w, "Token migration failed; retry", http.StatusConflict)
+			return
+		}
+		profiles[i].TokenRotationDue = policy.rotationDue(&profiles[i], time.Now().UTC())
 		profiles[i].TokenPlain = ""
 		profiles[i].RegistrationToken = ""
 		profiles[i].EligibleForTrusted = contributorEligibleForTrusted(&profiles[i])
@@ -92,6 +99,12 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Contributor not found", http.StatusNotFound)
 		return
 	}
+	policy := s.contributorTokenPolicy()
+	if err := policy.migrate(p, time.Now().UTC()); err != nil {
+		jsonError(w, "Token migration failed; retry", http.StatusConflict)
+		return
+	}
+	p.TokenRotationDue = policy.rotationDue(p, time.Now().UTC())
 	p.TokenPlain = ""
 	p.RegistrationToken = ""
 	p.EligibleForTrusted = contributorEligibleForTrusted(p)

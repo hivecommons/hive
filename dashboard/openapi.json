@@ -18460,6 +18460,44 @@
         }
       }
     },
+    "/api/contribute/token": {
+      "get": {
+        "tags": [
+          "Contribute"
+        ],
+        "summary": "Get the caller's registration-token lifetime",
+        "description": "Authenticates the contributor registration token sent as `Authorization: Bearer <token>` and returns when it was issued, when it expires, and whether it is past 80% of the configured maximum age (`contribute.token_max_age`, default 2160h). Successful calls record token activity for the optional inactivity cutoff (`contribute.token_idle_max`). An expired token gets 401 with recovery guidance (`hivectl contribute login`, i.e. POST /api/contribute/reissue-token with GitHub authentication).",
+        "responses": {
+          "200": {
+            "description": "Token lifetime",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "issued_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "rotation_due": {
+                      "type": "boolean",
+                      "description": "True once the token is at least 80% of the maximum age old"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked registration token"
+          }
+        }
+      }
+    },
     "/api/contributors/{id}/requeue": {
       "post": {
         "tags": [
@@ -18588,6 +18626,86 @@
           },
           "500": {
             "description": "Failed to save"
+          }
+        }
+      }
+    },
+    "/api/contributors/{id}/token/revoke": {
+      "post": {
+        "tags": [
+          "Contributors"
+        ],
+        "summary": "Revoke one contributor's registration token",
+        "description": "Clears the contributor's registration token and disconnects their live relay sessions. Trust tier and history are preserved; the contributor recovers with `hivectl contribute login` (GitHub-authenticated reissue). Requires owner or read-write role (requireContributorWrite).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Contributor ID or GitHub username"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revoked": {
+                      "type": "integer",
+                      "description": "Number of registration tokens revoked"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write role required"
+          },
+          "404": {
+            "description": "Contributor not found"
+          },
+          "409": {
+            "description": "Token state changed concurrently; retry"
+          }
+        }
+      }
+    },
+    "/api/contributors/tokens/revoke-all": {
+      "post": {
+        "tags": [
+          "Contributors"
+        ],
+        "summary": "Revoke every contributor registration token",
+        "description": "Incident response: clears every contributor's registration token and disconnects all relays. Trust tiers are preserved; contributors recover with `hivectl contribute login`. Requires owner or read-write role (requireContributorWrite). A partial persistence failure returns 409 with the completed count so the call can be retried safely.",
+        "responses": {
+          "200": {
+            "description": "Revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revoked": {
+                      "type": "integer",
+                      "description": "Number of registration tokens revoked"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write role required"
+          },
+          "409": {
+            "description": "Revocation stopped part-way; the message carries the completed count. Retry."
           }
         }
       }

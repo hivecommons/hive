@@ -89,10 +89,12 @@ func wsSameOrigin(r *http.Request) bool {
 }
 
 type ContributorConnection struct {
-	ws         *websocket.Conn
-	connID     string
-	profile    *ContributorProfile
-	cliBackend string
+	ws      *websocket.Conn
+	connID  string
+	profile *ContributorProfile
+	// Immutable handshake credential: profile refreshes must not adopt a rotated token.
+	registrationTokenHash string
+	cliBackend            string
 	// session is the OPTIONAL client-declared session label from auth_response
 	// (multi-session-per-account). Empty for a single-session contributor, which
 	// keeps identityOf() at the bare ContributorID. When set, identityOf()
@@ -2705,10 +2707,10 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 		return true
 	}
 
-	profile := contributorProfileFromRegistrationToken(msg.RegistrationToken)
+	profile, tokenFailure := authenticateContributorToken(msg.RegistrationToken, h.server.contributorTokenPolicy())
 
 	if profile == nil {
-		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: "Invalid registration token"})
+		_ = sendJSON(s.conn, WSMessage{Type: "auth_failed", Reason: tokenFailure})
 		closeWithReason(s.conn, websocket.ClosePolicyViolation, "invalid registration token")
 		return true
 	}
@@ -2860,23 +2862,24 @@ func (s *wsSession) handleAuthResponse(msg WSMessage) (stop bool) {
 	}
 
 	s.contributor = &ContributorConnection{
-		ws:              s.conn,
-		connID:          s.connID,
-		profile:         profile,
-		cliBackend:      msg.CLIBackend,
-		session:         sanitizeSessionLabel(msg.Session),
-		model:           msg.Model,
-		reasoningEffort: msg.ReasoningEffort,
-		knowledgeLoaded: knowledgeLoaded,
-		knowledgeError:  knowledgeError,
-		advisorModel:    advisorModel,
-		advisorEffort:   advisorEffort,
-		role:            requestedRole,
-		clientRole:      clientRole,
-		assignedRole:    assignedRole,
-		connectedAt:     time.Now(),
-		lastPong:        time.Now(),
-		capabilities:    caps,
+		ws:                    s.conn,
+		connID:                s.connID,
+		profile:               profile,
+		registrationTokenHash: sha256Hex(msg.RegistrationToken),
+		cliBackend:            msg.CLIBackend,
+		session:               sanitizeSessionLabel(msg.Session),
+		model:                 msg.Model,
+		reasoningEffort:       msg.ReasoningEffort,
+		knowledgeLoaded:       knowledgeLoaded,
+		knowledgeError:        knowledgeError,
+		advisorModel:          advisorModel,
+		advisorEffort:         advisorEffort,
+		role:                  requestedRole,
+		clientRole:            clientRole,
+		assignedRole:          assignedRole,
+		connectedAt:           time.Now(),
+		lastPong:              time.Now(),
+		capabilities:          caps,
 	}
 
 	// Hand the slot over from the pending counter to h.connections
@@ -4373,6 +4376,11 @@ func (h *ContributeWSHub) heartbeatLoopWithTicks(c *ContributorConnection, ticks
 			return
 		}
 
+		if !h.registrationTokenSessionValid(c) {
+			_ = c.send(WSMessage{Type: "auth_failed", Reason: contributorTokenExpired})
+			closeWithReason(c.ws, websocket.ClosePolicyViolation, "registration token expired or revoked")
+			return
+		}
 		h.maybeRefreshToken(c)
 
 		if err := c.send(WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {

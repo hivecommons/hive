@@ -155,6 +155,8 @@ classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
+contribute.token_idle_max # TODO #11854
+contribute.token_max_age # TODO #11854
 duplicate_sweep.bot_authors[] # TODO #11854
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854

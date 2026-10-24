@@ -2018,7 +2018,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
-			if profile := s.contributorProfileFromAuthorization(r); profile != nil && profile.TrustTier != "revoked" {
+			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
+			if profile == nil && reason == contributorTokenExpired {
+				jsonError(w, reason, http.StatusUnauthorized)
+				return
+			}
+			if profile != nil && profile.TrustTier != "revoked" {
 				trusted = true
 				r.Header.Set("X-Hive-User", profile.GitHubUsername)
 				r.Header.Set("X-Hive-Role", config.RoleRead)
