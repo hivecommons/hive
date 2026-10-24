@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // BackfillReviewBacklogSplits splits review-backlog hosts that closed before
@@ -103,7 +105,43 @@ func loadReviewBacklogBackfillState() (bool, map[string]map[int]bool, error) {
 	if l.SplitBackfilled {
 		return true, nil, nil
 	}
-	return false, reviewBacklogHostIndex(l), nil
+	return false, reviewBacklogBackfillHostIndex(l), nil
+}
+
+// reviewBacklogBackfillHostIndex is reviewBacklogHostIndex without the
+// issues the ledger itself filed by splitting a host: those were created by
+// the sweep or an earlier backfill pass, so they cannot predate the sweep
+// window, and the windowed sweep handles them once they close. Leaving them
+// in would make a budget-capped pass defer its own freshly split issues and
+// never mark the backfill done. An issue is dropped only when every record
+// pointing at it is a split destination, so a host that also holds findings
+// of its own stays in the walk.
+func reviewBacklogBackfillHostIndex(l *reviewBacklogLedger) map[string]map[int]bool {
+	out := reviewBacklogHostIndex(l)
+	splitOnly := map[string]map[int]bool{}
+	for key, rec := range l.Items {
+		if rec.IssueNumber <= 0 || (rec.Destination != "" && rec.Destination != config.ReviewBacklogGitHubIssue) {
+			continue
+		}
+		repoKey := reviewBacklogRepoKey(rec.Repo)
+		if splitOnly[repoKey] == nil {
+			splitOnly[repoKey] = map[int]bool{}
+		}
+		isSplit := len(l.SplitKeys[key]) > 0 && !l.splitFrom(key, rec.IssueNumber)
+		if seen, ok := splitOnly[repoKey][rec.IssueNumber]; ok {
+			splitOnly[repoKey][rec.IssueNumber] = seen && isSplit
+		} else {
+			splitOnly[repoKey][rec.IssueNumber] = isSplit
+		}
+	}
+	for repoKey, numbers := range splitOnly {
+		for n, only := range numbers {
+			if only {
+				delete(out[repoKey], n)
+			}
+		}
+	}
+	return out
 }
 
 // markReviewBacklogSplitBackfilled sets the ledger's SplitBackfilled flag
