@@ -559,6 +559,15 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	grace := adoptionGrace(rec, policy)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
+	canPushInPlace := false
+	if policy.AdoptInPlace && !requested {
+		canPushInPlace = c.canPushToPRBranch(ctx, obs)
+	}
+	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
+	if fence == contributorLaneReasonWorkflowPath && !(policy.AdoptInPlace && canPushInPlace && !dcoRehome) {
+		c.info("stage labels: refusing workflow-path supersession", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+		return 0, nil
+	}
 	// Record the attempt first: whatever happens below, this head is tried once.
 	store.MarkAdopted(key, obs.HeadSHA, 0, now)
 	store.NoteAdoptDiffFence(key, fence)
@@ -569,11 +578,6 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	}
 	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
 
-	canPushInPlace := false
-	if policy.AdoptInPlace && !requested {
-		canPushInPlace = c.canPushToPRBranch(ctx, obs)
-	}
-	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)
 	if policy.AdoptInPlace && canPushInPlace && !dcoRehome {
 		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
 		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline) + adoptionFenceNote(fence)
@@ -606,9 +610,18 @@ func (c *Engine) supersedeAdoptedPR(ctx context.Context, store *stagelabels.Stor
 		// carries the fence the first adoption recorded.
 		rec.AdoptDiffFence = stored.AdoptDiffFence
 	}
+	// Supersession publishes the head in the upstream repository, where
+	// pull_request workflows run with repository context. A manual-merge
+	// marker cannot protect that earlier execution. Re-read evidence here
+	// so every takeover path checks the exact head before any ref mutation.
+	fence, err := c.adoptionDiffRefusal(ctx, obs)
+	if err != nil || adoptionFenceDefers(fence) || fence == contributorLaneReasonWorkflowPath {
+		c.info("stage labels: supersession deferred before publishing unsafe or unreadable head", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "reason", fence, "error", err)
+		return 0, err
+	}
 	branch := adoptBranchPrefix + strconv.Itoa(number)
 	fullRepo := owner + "/" + repo
-	_, err := effects.Execute(ctx, c.mutation, effects.Claim{
+	_, err = effects.Execute(ctx, c.mutation, effects.Claim{
 		Repo: fullRepo, Kind: effects.KindBranchPush, Target: branch, Actor: "stage_labels",
 		Inputs: map[string]string{"pr": strconv.Itoa(number), "head_sha": obs.HeadSHA, "adopt": "true"},
 	}, func(ctx context.Context) (effects.Result, error) {
