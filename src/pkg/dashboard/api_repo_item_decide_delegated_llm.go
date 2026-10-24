@@ -17,7 +17,9 @@ import (
 // reversible default is shown to the owner-delegate decider turn, and its
 // validated {verdict, rationale, actions} goes through the same ApplyRails
 // and executeDelegatedDecision as a rule decision. Any failure keeps the
-// reversible default and is noted on the job.
+// reversible default and is noted on the job. The step is gated by
+// decisions.delegate.llm.enabled (default off) and decisions.delegate.llm.model
+// overrides the reviewer model used for the decider turn.
 
 const (
 	delegatedLLMMaxComments = 50
