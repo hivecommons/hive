@@ -2770,6 +2770,15 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 // auto-merge-on-green sweep. The approval body records who queued the PR so
 // the sweep can re-check the self-merge ban before it squashes anything.
 func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, queuedBy string) error {
+	return c.QueuePRAutoMergeWithNote(ctx, repo, number, queuedBy, "")
+}
+
+// QueuePRAutoMergeWithNote is QueuePRAutoMerge with an extra note appended
+// to the approval body after the queue line the sweep parses (the line is
+// anchored at the start, so the note never changes who the sweep sees as the
+// queuer). The dashboard's delegated decision uses it to carry the
+// owner-delegate audit marker on the review itself.
+func (c *Client) QueuePRAutoMergeWithNote(ctx context.Context, repo string, number int, queuedBy, note string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2800,6 +2809,9 @@ func (c *Client) QueuePRAutoMerge(ctx context.Context, repo string, number int, 
 		return fmt.Errorf("ensuring %s label: %w", label, err)
 	}
 	body := fmt.Sprintf("Approved by @%s for Hive auto-merge on green CI.", queuedBy)
+	if note = strings.TrimSpace(note); note != "" {
+		body += "\n\n" + note
+	}
 	provenance := owner + "/" + repoName + "#" + strconv.Itoa(number)
 	_, err = effects.ExecuteReconciling(ctx, c.mutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + repoName,

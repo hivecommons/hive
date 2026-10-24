@@ -141,6 +141,10 @@ type Config struct {
 	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
 	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
 	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	// Decisions tunes how decisions on needs-human items are recorded; its
+	// `delegate` block gates the activity monitor's "Let hive decide"
+	// action (default on).
+	Decisions DecisionsConfig `yaml:"decisions,omitempty" json:"decisions,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.

@@ -160,6 +160,9 @@ type Server struct {
 	repoRescanLast     ReposRescanResult
 	repoHoldPermMu     sync.Mutex
 	repoHoldPermCache  map[string]repoHoldPermissionCacheEntry
+	// delegatedJobs tracks "Let hive decide" jobs by repo#number
+	// (api_repo_item_decide_delegated.go).
+	delegatedJobs delegatedDecisionJobs
 	// acmmLinearBaseURL overrides the Linear GraphQL endpoint the ACMM
 	// "Open Issue" path posts issueCreate to. Empty = production; tests
 	// point it at an httptest server.
