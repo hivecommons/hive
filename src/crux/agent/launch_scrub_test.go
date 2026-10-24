@@ -115,7 +115,7 @@ func TestSandboxExecutorScrubsLaunchOutput(t *testing.T) {
 }
 
 // agentLaunchScriptPath locates bin/agent-launch.sh relative to this package
-// (src/pkg/agent → repo root → bin).
+// (src/crux/agent → repo root → bin).
 func agentLaunchScriptPath(t *testing.T) string {
 	t.Helper()
 	p, err := filepath.Abs(filepath.Join("..", "..", "..", "bin", "agent-launch.sh"))

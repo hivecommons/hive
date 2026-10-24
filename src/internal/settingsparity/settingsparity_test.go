@@ -86,7 +86,7 @@ func fixtureRepo(t *testing.T) string {
 	writeFile(t, filepath.Join(configDir, "config_test.go"), fixtureConfigTest)
 	writeFile(t, filepath.Join(configDir, "README.md"), "not go")
 	writeFile(t, filepath.Join(root, "src", "pkg", "dashboard", "theme", "theme.go"), fixtureTheme)
-	writeFile(t, filepath.Join(root, "src", "pkg", "crux", "config", "doc.go"), "package config\n")
+	writeFile(t, filepath.Join(root, "src", "crux", "config", "doc.go"), "package config\n")
 	return root
 }
 

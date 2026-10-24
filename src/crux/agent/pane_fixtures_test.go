@@ -17,7 +17,7 @@ import (
 // second `paneTailNonBlank` variant, while Go's paneTail always filtered
 // blanks — the direct root cause of kubestellar/hive#6413.
 //
-// The path is relative to this package directory (src/pkg/agent), three
+// The path is relative to this package directory (src/crux/agent), three
 // levels up to the repo root, then into bin/testdata/pane-fixtures.
 const paneFixturesDir = "../../../bin/testdata/pane-fixtures"
 
