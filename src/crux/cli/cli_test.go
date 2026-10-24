@@ -123,6 +123,17 @@ func (f *fakeRuntime) AllStatuses() map[string]*crux.Process {
 	return out
 }
 
+func (f *fakeRuntime) GetStatus(name string) (*crux.Process, error) {
+	f.record("GetStatus(%s)", name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.procs[name]
+	if !ok {
+		return nil, fmt.Errorf("agent %s not found", name)
+	}
+	return p, nil
+}
+
 func (f *fakeRuntime) ResolveAgent(nameOrID string) string {
 	f.record("ResolveAgent(%s)", nameOrID)
 	f.mu.Lock()

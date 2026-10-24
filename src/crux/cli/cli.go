@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -61,6 +62,10 @@ type globalOptions struct {
 	config  string
 	socket  string
 	local   bool
+	// server and token select remote mode: drive a `crux serve` over the
+	// Crux API instead of an in-process runtime.
+	server string
+	token  string
 }
 
 // runtimeFactory builds the Runtime a command operates on. Production uses
@@ -85,6 +90,8 @@ type Env struct {
 	ticker     tickerFactory
 	// dial connects to a control socket; nil uses the unix dialer.
 	dial dialFunc
+	// newClient builds the API client for --server; nil uses api.NewClient.
+	newClient clientFactory
 }
 
 // Main runs the crux command line and returns its exit code. ctx ending
@@ -106,6 +113,8 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 	fs.StringVar(&opts.config, "config", "", "hive.yaml whose agents define the runtime")
 	fs.StringVar(&opts.socket, "socket", "", "control socket path (default <workdir>/"+controlSocketName+")")
 	fs.BoolVar(&opts.local, "local", false, "never use a running `crux run` control socket; build a fresh runtime")
+	fs.StringVar(&opts.server, "server", "", "drive a `crux serve` at this address (unix socket path, unix:///path, host:port or http://…) instead of an in-process runtime (default $"+config.ServerEnvVar+")")
+	fs.StringVar(&opts.token, "token", "", "bearer token for --server (default $"+config.ServeTokenEnvVar+")")
 	fs.Usage = func() { e.usage(fs) }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -121,6 +130,13 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 	if err := opts.resolve(); err != nil {
 		fmt.Fprintln(e.Stderr, "crux:", err)
 		return ExitError
+	}
+	if opts.remoteSelected() {
+		switch rest[0] {
+		case "help", "-h", "--help":
+		default:
+			return e.remote(ctx, opts, rest[0], rest[1:])
+		}
 	}
 	return e.dispatch(ctx, opts, rest[0], rest[1:], false)
 }
@@ -217,6 +233,9 @@ func (e *Env) defaults() {
 	if e.dial == nil {
 		e.dial = dialControl
 	}
+	if e.newClient == nil {
+		e.newClient = api.NewClient
+	}
 }
 
 // resolve fills the work dir and socket defaults and exports the work dir to
@@ -258,6 +277,9 @@ Commands (each maps onto crux.Runtime):
 While 'crux run' is in the foreground it serves <workdir>/crux.sock; ps, logs,
 kick and stop use that socket when present so they act on the live runtime.
 'crux serve' is the API server other harnesses drive (crux/api, crux/serve).
+With --server ADDR (or CRUX_SERVER set) run, ps, logs, kick and stop drive that
+server over the API instead of an in-process runtime; --token / CRUX_TOKEN
+carries its bearer token, and 'logs -f' follows the agent's output.
 
 Global flags:
 `)

@@ -207,6 +207,11 @@ func (e *Env) cmdPS(rt crux.Runtime, args []string) int {
 	if *asJSON {
 		return e.writeJSON(rows)
 	}
+	return e.printPS(rows)
+}
+
+// printPS writes the ps table; it is shared with remote mode.
+func (e *Env) printPS(rows []processRow) int {
 	tw := tabwriter.NewWriter(e.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tID\tSTATE\tBACKEND\tMODEL\tUPTIME\tLAST KICK\tRESTARTS")
 	now := time.Now()
@@ -290,7 +295,14 @@ func (e *Env) cmdLogs(rt crux.Runtime, args []string) int {
 	if *asJSON {
 		return e.writeJSON(out)
 	}
-	if *full {
+	e.printLogs(out, *full)
+	return ExitOK
+}
+
+// printLogs writes raw log output: header and content for a full capture,
+// otherwise one line per entry. Shared with remote mode.
+func (e *Env) printLogs(out logsOutput, full bool) {
+	if full {
 		if out.Header != "" {
 			fmt.Fprint(e.Stdout, out.Header)
 			if !strings.HasSuffix(out.Header, "\n") {
@@ -301,12 +313,11 @@ func (e *Env) cmdLogs(rt crux.Runtime, args []string) int {
 		if out.Content != "" && !strings.HasSuffix(out.Content, "\n") {
 			fmt.Fprintln(e.Stdout)
 		}
-		return ExitOK
+		return
 	}
 	for _, line := range out.Lines {
 		fmt.Fprintln(e.Stdout, line)
 	}
-	return ExitOK
 }
 
 // cmdKick is `crux kick`: Kicker.SendKick. The message is the remaining
