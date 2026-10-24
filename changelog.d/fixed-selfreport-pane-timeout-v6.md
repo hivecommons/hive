@@ -1,0 +1,1 @@
+- Fleet report: forward-port of #13932 to v6 — 'prompt timeout — dumping pane' and 'pane content at timeout' agent-readiness WARNs (plus 'startup kick dropped' / 'cli never reached input prompt') are now classified as agent_pane_timeout (low severity) instead of unclassified_error_repeated (#14264, #14265).

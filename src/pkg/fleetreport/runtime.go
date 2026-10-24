@@ -55,6 +55,7 @@ const (
 // from their WARN+ log line by the slog feed (see LogFedClass).
 const (
 	ClassTmuxSessionCheckFailed     = "tmux_session_check_failed"
+	ClassAgentPaneTimeout           = "agent_pane_timeout"
 	ClassProxyTLSHandshakeFailed    = "proxy_tls_handshake_failed"
 	ClassAgentDirSetupFailed        = "agent_dir_setup_failed"
 	ClassReviewEvidenceWriteFail    = "review_evidence_write_failed"
@@ -149,6 +150,7 @@ var Classes = map[string]ClassSpec{
 	ClassIssueRequestStuck:          {Component: "github-relay", Severity: "medium", MinCount: 1, Keywords: []string{"issue-request stuck", "issue request stuck", "issue-request watcher", "relay request stuck"}},
 	ClassEffectLedgerOpStuck:        {Component: "mutation-ledger", Severity: "medium", MinCount: 1, Keywords: []string{"effect ledger stuck", "ledger op stuck", "needs reconciliation", "mutation journal unknown"}},
 	ClassTmuxSessionCheckFailed:     {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"tmux has-session failed"}},
+	ClassAgentPaneTimeout:           {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"prompt timeout — dumping pane", "pane content at timeout", "startup kick dropped", "cli never reached input prompt"}},
 	ClassProxyTLSHandshakeFailed:    {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy client tls handshake failed", "transparent proxy tls handshake failed"}},
 	ClassAgentDirSetupFailed:        {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to create per-agent xdg dir", "failed to restore per-agent dir mode", "failed to restore interactive home mode"}},
 	ClassReviewEvidenceWriteFail:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"review evidence: could not write bundle"}},
