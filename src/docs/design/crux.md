@@ -1,8 +1,8 @@
 # Crux: the agent runtime boundary (#13536)
 
-Status: **Stage 1 shipped (v5); Stage 2 module cut done: the ring is the
-nested Go module `github.com/hivecommons/hive/crux` at `src/crux/`, joined
-to the root module by `src/go.work`.** The boundary is named, the inbound and outbound
+Status: **Stage 1 shipped (v5); Stage 2 step 4 shipped: the ring is the
+nested Go module `github.com/hivecommons/hive/crux` at `src/crux/`
+(#13950), joined to the root module by `src/go.work`.** The boundary is named, the inbound and outbound
 architecture ratchets and the tmux funnel are live, `crux.Runtime` exists,
 the dashboard is on it, Crux owns its value types and the hub, spoke,
 dashboard and `cmd/hive` reference them as `crux.<Name>`, CI path filters
@@ -10,10 +10,10 @@ select Crux-only shards for Crux-only PRs, and the `crux` CLI ships. The
 ring's outbound closure, about 55 Hive packages when this record began, is
 now zero, in test code too: the outbound baseline is empty (the ring's tests
 use their own `crux/internal/testutil` copy of `Eventually*` and
-`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). The move
-itself is described under [Step 4: the module cut](#step-4-the-module-cut)
-(the two-module workflow write-up follows in a docs PR). Stage 3 is design
-only.
+`SkipUnlessRequired`); see [Outbound edges](#outbound-edges). What the
+move did and how to work in the two-module tree is under
+[Step 4: the module cut](#step-4-the-module-cut); what is left of Stage 2
+is under [After the cut](#after-the-cut). Stage 3 is design only.
 
 ## What Crux is
 
@@ -246,80 +246,124 @@ cut buys the churn without the benefit. Prerequisites, in order:
 
 ### Step 4: the module cut
 
-The shape, in one PR series on v5, each PR mergeable alone:
+Shipped in #13950 (after the pre-cut #13948), one PR on v5. What it did,
+against the plan this section carried before it:
 
-1. **Decide `pkg/proxy`'s home.** Its 14 inbound `agent.<Symbol>`
-   references are the ring's only intra-ring dependency on the manager from
-   a package that is not the manager, `pkg/crux` or `pkg/crux/cli`. Either
-   it moves with the ring and those references become `crux.<Name>` on the
-   exported surface (`crux.Runtime` already carries the manager; agent mode,
-   capabilities and the UID map would need re-exports), or it stays in the
-   root module as a host-side component that imports the nested module. The
-   proxy is imported by exactly one non-ring package (`cmd/hive`) and the
-   runtime does not import it, so either is consistent; the deciding
-   question is whether a second Crux consumer wants the gateway. Default:
-   it moves, because a runtime without its credential gateway is not a
-   runtime a second consumer can run.
-2. **`src/crux/go.mod`.** Module path `github.com/hivecommons/hive/crux`,
-   same Go version as the root. Its third-party closure today is `cel-go`
-   (and `antlr4-go`, `cel.dev/expr`, `genproto`, `protobuf` under it),
-   `go-qrcode`, OpenTelemetry (`otel`, `otel/trace`, `otel/metric`,
-   `otel/log`, `auto/sdk`), `go.yaml.in/yaml/v3` and `gopkg.in/yaml.v3`,
-   `golang.org/x/exp` and `golang.org/x/text`. Nothing in that list is
-   Hive-specific, which is the point; the versions are pinned to the root's
-   `go.sum` at the cut.
-3. **The move.** `git mv` of every package in `cruxModulePrefixes` to
-   `src/crux/<pkg>` (`pkg/agent` → `crux/agent`, `pkg/crux/types` →
-   `crux/types`, `pkg/crux/cli` → `crux/cli`, and so on; `pkg/crux` itself
-   becomes the module root package), with the import-path rewrite applied
-   by `gofmt -r` or `sed` in the same commit. The alias packages in the
-   root (`pkg/config`, `pkg/effects`, `pkg/jev`, `pkg/outputschema`,
+1. **`pkg/proxy` moved with the ring** (the default). Its 14
+   `agent.<Symbol>` references are now an intra-module import of
+   `crux/agent`; nothing was re-exported through `crux.` for it and no
+   consumer count changed. The inbound ratchet no longer walks `src/crux`,
+   so the `pkg/proxy: 14` row is gone from its baseline. `pkg/tokens`,
+   `pkg/ioscan` and `pkg/github` stay adapted from `cmd/hive` (the
+   prerequisite-3 seams); no thin root-module wiring package was needed.
+2. **`src/crux/go.mod`**: module `github.com/hivecommons/hive/crux`, the
+   root's Go version, direct requires `cel-go`, `go-qrcode`, `otel`,
+   `otel/trace` and `gopkg.in/yaml.v3`; `go.sum` seeded from the root's
+   pins (so `cel-go` stays on the version the root uses rather than the
+   latest, whose rename of a package would have broken the build) and
+   tidied with `GOWORK=off`.
+3. **The move**, with `git mv` so history follows the files:
+
+   | before | after |
+   |---|---|
+   | `pkg/crux/*.go` | `crux/` — the module root package is `crux` |
+   | `pkg/crux/{cli,config,effects,gitidentity,inferencehealth,issueshape,jev,jsonextract,outputschema,types}` | `crux/<same>` |
+   | `pkg/crux/testutil` | `crux/internal/testutil` |
+   | `pkg/{agent,agentmode,agentparse,agentsmd,claude,sandbox,kubejob,toolapprove,skillreg,inference,openrouter,watchdog,trajectory,logscrub,proxy,pushbroker,watsonx}` | `crux/<same>` |
+
+   458 Go files changed import path and nothing else; the alias packages
+   in the root (`pkg/config`, `pkg/effects`, `pkg/jev`, `pkg/outputschema`,
    `pkg/jsonextract`, `pkg/inferencehealth`, `pkg/issueshape`, `pkg/ioscan`,
-   `pkg/github`, `pkg/agentaudit`, `pkg/fleetreport`) are what make this a
-   path swap and not a symbol migration for the 35 non-ring packages that
-   import a ring package today.
-4. **`src/go.work`** listing `.` and `./crux`, and in the root `go.mod` a
-   single `replace github.com/hivecommons/hive/crux => ./crux` with a
-   `require` on a pseudo-version so `go build` works without the workspace
-   (CI caches, `go install`, downstream `go get`). No `replace` in the
-   nested module in the other direction, ever; the outbound ratchet becomes
-   `go list -deps` over the nested module asserting no
-   `github.com/hivecommons/hive/pkg/...` or `.../internal/...` import, which
-   is the same test with the module boundary doing the walk. The two
-   test-only `internal/testutil` rows went first (pre-cut): `Eventually*`
-   (3 helpers, 9 uses) and `SkipUnlessRequired`/`SkipfUnlessRequired` (21
-   uses) copied into `pkg/crux/testutil`, which the move renames to
-   `crux/internal/testutil`.
-5. **CI.** `crux-scope.sh`'s `CRUX_DIRS` becomes the single prefix
-   `src/crux/`; the v2-tests agent slices and the crux-only `go list` run
-   from `src/crux` (`working-directory`) against `./...`; the per-package
-   coverage floors keyed `agent`, `crux`, `proxy`, `watchdog`, … are
-   re-keyed to the new paths with the same values, and the module gets its
-   own floor line in the aggregate. `scripts/check-go-ratchet-completeness.sh`
-   has to learn to walk both modules. `golangci-lint` runs per module.
-6. **Tags.** `crux/vX.Y.Z` tags on the same commits as Hive's, cut by the
-   release workflow alongside, so `go get
-   github.com/hivecommons/hive/crux@crux/v5.N.0` resolves.
+   `pkg/github`, `pkg/agentaudit`, `pkg/fleetreport`) kept every non-ring
+   caller's source unchanged. `cmd/crux` stayed in the root module as the
+   host composition root; the nested module ships no binary.
+4. **`src/go.work`** uses `.` and `./crux`; the root `go.mod` requires the
+   module at the placeholder pseudo-version and carries the single
+   `replace github.com/hivecommons/hive/crux => ./crux`, so `GOWORK=off`
+   builds (the Dockerfiles, `go install`) resolve it too. `src/go.work.sum`
+   is committed. The nested module never requires or replaces the root.
+   The outbound ratchet walks `src/crux` as the module and asserts no
+   `github.com/hivecommons/hive/pkg/...`, `.../cmd/...` or
+   `.../internal/...` import; baseline empty.
+5. **CI** addresses both modules from `src/` as `./... ./crux/...` (see
+   [Working in the two-module tree](#working-in-the-two-module-tree) for
+   why): the v2-tests agent slices run `./crux/agent`; the crux-only
+   `go list` is `./crux/... ./internal/... ./pkg/config ./pkg/rotation`;
+   the rest buckets, warm-build-cache, `existing-pkgs` and `no-test-pkgs`
+   lists add `./crux/...`; the coverage floors are keyed `crux/<pkg>`
+   (`floor_key` gained `*/crux/*` and `*/crux` cases, so `crux/config`
+   can never alias `pkg/config`) with the same values the `pkg/<name>`
+   keys had, and the gate prints an informational `CRUX_TOTAL` and fails a
+   full run whose shards produced no Crux profiles. `coverage-hourly.yml`
+   mirrors the floors; `v2-ci.yml` vets, `go-security-analysis.yml`
+   `govulncheck`s and `golangci-lint`s both modules; `setup-go`'s cache key
+   includes `src/crux/go.sum`. `crux-scope.sh` is `CRUX_DIRS=(src/crux)`
+   with `src/go.work*` and `src/crux/go.{mod,sum}` as fail-safe paths;
+   `affected-go-packages.sh` lists both modules and reads the root module
+   path with `GOWORK=off go list -m`. The Dockerfiles copy
+   `src/crux/go.mod`, `src/crux/go.sum` and `src/go.work` before
+   `go mod download` (the `replace` target has to exist). There is no
+   `scripts/check-go-ratchet-completeness.sh` in the tree; the ratchets
+   themselves assert the directories they walk exist.
+6. **Tags** did not ship with the cut; see [After the cut](#after-the-cut).
 
-Still open before the series starts:
+### Working in the two-module tree
 
-- The proxy decision (1), which also decides whether `pkg/tokens`,
-  `pkg/ioscan` and `pkg/github` are adapted from `cmd/hive` (as now) or
-  from a thin root-module package the proxy's host wiring moves into.
-- The `crux` binary's home. `cmd/crux` is a root-module host (prerequisite
-  3) and keeps building against the nested module, so the nested module
-  ships no binary at the cut. A `crux/cmd/crux` that reads only
-  `crux/config`-shaped definitions (no `hive.yaml`, no Hive presets) is a
-  Stage 3 question, not a step 4 one.
-- The dashboard, hub and spoke import `pkg/agent` for the test-only
-  constructors (`NewManager`, `ProjectContext`, `NewRingBuffer`); they
-  keep working through the `replace`, but a second consumer's `go get`
-  of the nested module should not need them, so they are a reason to
-  finish `crux.Process` as its own type and fold `pkg/crux/types` into the
-  module root in the same series.
-- `go.work` and the module cache in CI: the `setup-go` cache key is the
-  root `go.sum`; it has to include `crux/go.sum` or the agent slices
-  download the closure cold.
+`src/` is a Go workspace. The rules that follow from that, every one of
+which bit a CI script during #13950:
+
+- From `src/`, `./...` is the **root module only**. The Crux module is
+  `./crux/...` (and `./crux/<pkg>`), addressable from `src/` because of
+  `go.work`. Build, vet and test both with one invocation:
+  `go build ./... ./crux/...`, `go vet ./... ./crux/...`,
+  `go test ./... ./crux/...`. `cd crux && go test ./...` is the module on
+  its own.
+- `go list -m` in workspace mode prints both modules. A script that wants
+  the root module path says `GOWORK=off go list -m`.
+- `GOWORK=off` from `src/` is the Docker view: the root builds through the
+  `replace`, the nested module's packages are still reachable as imports,
+  but `./crux/...` is not a pattern the root module can list.
+- `go mod tidy` runs per module, with `GOWORK=off` in each (workspace mode
+  refuses to tidy). Keep the two `go.mod`s on the same Go version.
+- Ring packages import each other and the standard library only; the
+  outbound ratchet (`go test ./internal/testutil/ -run Crux`) fails any
+  ring file that imports `github.com/hivecommons/hive/pkg/...` or
+  `.../internal/...`. Test helpers the ring needs live in
+  `crux/internal/testutil`; `internal/testutil` keeps the canonical copy.
+- Root-module tests that read ring files by path (`internal/settingsparity`
+  walked `src/pkg/crux/config`; the docs citation and link checkers) name
+  `src/crux/...` now. `pkg/<ring>` paths in prose were left alone where
+  they describe history.
+- Relative paths inside ring tests kept their depth (`pkg/agent` and
+  `crux/agent` are both two below `src/`), so `../../../bin` and
+  `../../../config/backends.conf` still resolve.
+
+### After the cut
+
+Still Stage 2, in this order:
+
+- **Tags** (plan item 6). `crux/vX.Y.Z` tags on the same commits as
+  Hive's, cut by the release workflow, so a consumer can pin the module.
+  One caveat the plan did not record: a module at `src/crux` of a
+  repository is only `go get`-able if its module path ends in the
+  directory path from the repo root, which for this tree would be
+  `github.com/hivecommons/hive/src/crux`, not
+  `github.com/hivecommons/hive/crux`. The root module has the same problem
+  (`github.com/hivecommons/hive` lives in `src/`) and has never been
+  fetched by path either, so this is not a regression; it is the thing to
+  settle when the first consumer outside this repository appears
+  (`src/` → repo root, or the Stage 3 move to `hivecommons/crux`, which
+  fixes it by construction).
+- **`crux.Process` as its own type**, so the dashboard, hub and spoke stop
+  importing `crux/agent` for the test-only constructors (`NewManager`,
+  `ProjectContext`, `NewRingBuffer`) and the inbound baseline for
+  `agent.<Symbol>` can go to zero outside `cmd/hive`.
+- **Fold `crux/types` into the module root.** It is a sub-package so that
+  the alias packages in the root could be written against a stdlib-only
+  leaf before the cut; with the ring in its own module the leaf no longer
+  needs to be separate from `crux`.
+- **`crux serve`** is Stage 3, below; nothing in the module layout
+  blocks it.
 
 **Stage 3: platform.** `crux serve` with an API (gRPC or HTTP), tenancy, auth,
 quotas; Hive and hub become clients; the hub-to-runtime contract becomes
@@ -458,22 +502,19 @@ setters or `crux.<Name>` / `pkg/crux/types` re-exports, never new exported
 
 ## Running the Crux set alone
 
-There is no separate module yet, so the ring is tested as a package list
-from `src/` (`./cmd/crux` is a host that builds against it, like
-`./cmd/hive`, and is tested with the rest of the root module):
+The ring is the module at `src/crux`, so it is tested as one:
 
 ```sh
-cd src && go test ./pkg/agent/... ./pkg/crux/... \
-  ./pkg/agentmode ./pkg/agentparse ./pkg/agentsmd ./pkg/claude \
-  ./pkg/sandbox ./pkg/kubejob ./pkg/toolapprove ./pkg/skillreg \
-  ./pkg/inference ./pkg/openrouter ./pkg/watchdog ./pkg/trajectory \
-  ./pkg/logscrub ./pkg/proxy ./pkg/pushbroker ./pkg/watsonx
+cd src && go test ./crux/...      # from the workspace
+cd src/crux && go test ./...      # from inside the module
 ```
 
-Both ratchets live in `./internal/testutil` and run with that package. In
-CI, a PR whose diff is entirely inside the ring gets the `crux-only` verdict
-from `crux-scope.sh` and runs only the agent slices (item 5). Two
-`pkg/agent` tests fail on macOS because the tmux socket path under
+`./cmd/crux` is a host that builds against it, like `./cmd/hive`, and is
+tested with the rest of the root module. Both ratchets live in
+`./internal/testutil` and run with that package. In CI, a PR whose diff is
+entirely under `src/crux/` gets the `crux-only` verdict from
+`crux-scope.sh` and runs only the agent slices (Stage 1 item 5). Two
+`crux/agent` tests fail on macOS because the tmux socket path under
 `$TMPDIR` exceeds `sun_path`; they pass on Linux and in CI.
 
 ## Not doing
@@ -481,7 +522,7 @@ from `crux-scope.sh` and runs only the agent slices (item 5). Two
 - Repo split before Stage 1: the co-change tax lands before any second
   consumer exists and doubles v5/v6 top-up work.
 - Rewriting engines or the proxy. This is a boundary, not a rewrite.
-- Shortening the PR gate by splitting: `pkg/agent` is a 429 s serial test
+- Shortening the PR gate by splitting: `crux/agent` is a 429 s serial test
   monolith already sliced five ways; the gate is bounded by the slowest shard,
   so only path filters (Stage 1, item 5, shipped) change anything, and
   they work in-repo.
