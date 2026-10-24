@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/watchdog"
 )
 
@@ -452,7 +453,9 @@ func paneShowsCopilotQuestionForm(output string) bool {
 		strings.Contains(output, "enter accept · tab next · ctrl+d decline · esc cancel")
 }
 
-func (a *AgentProcess) snapshot() AgentProcess {
+// snapshot copies the agent's observable state into the crux.Process the
+// manager hands out from GetStatus, GetStatusFast and AllStatuses.
+func (a *AgentProcess) snapshot() crux.Process {
 	history := make([]KickRecord, len(a.KickHistory))
 	copy(history, a.KickHistory)
 	a.paneMu.RLock()
@@ -470,7 +473,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	conds := make([]watchdog.Condition, len(a.WatchdogConditions))
 	copy(conds, a.WatchdogConditions)
 	a.paneMu.RUnlock()
-	return AgentProcess{
+	snap := crux.Process{
 		Name:                      a.Name,
 		ID:                        a.ID,
 		Config:                    a.Config,
@@ -525,12 +528,11 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		StartBackoffUntil:         a.StartBackoffUntil,
 		HasLaunched:               a.HasLaunched,
 		LaunchedMode:              a.LaunchedMode,
-		tmuxSession:               a.tmuxSession,
-		tmuxSocket:                a.tmuxSocket,
 		OutputBuffer:              a.OutputBuffer,
-		lastPaneCapture:           pane,
 		SubAgentModels:            subAgentModels,
 	}
+	snap.SetPaneCapture(pane, filterPaneOutput)
+	return snap
 }
 
 // PaneLines returns the last n lines from the most recent tmux pane capture,

@@ -27,7 +27,7 @@ func TestSetAndGetACMMLevel(t *testing.T) {
 
 func TestOperabilityAgentsRequireACMML5(t *testing.T) {
 	for _, name := range []string{"telemetry", "operations"} {
-		for level := 0; level < operabilityAgentMinACMMLevel; level++ {
+		for level := 0; level < 5; level++ {
 			if AgentAvailableAtACMMLevel(name, level) {
 				t.Fatalf("%s should be unavailable at L%d", name, level)
 			}

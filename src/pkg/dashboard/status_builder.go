@@ -15,10 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/paneclass"
+	"github.com/hivecommons/hive/crux/skillreg"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -26,10 +29,8 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/review"
-	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/upstreamwatch"
-	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // skillsConventionalDir is the conventional on-disk location the dashboard
@@ -1067,14 +1068,14 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		const summaryLines = 20
 		var liveSummary string
 		if pane := proc.PaneLines(summaryLines); len(pane) > 0 {
-			liveSummary = redactTokens(crux.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
+			liveSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
 		}
 		var detailSummary string
 		const maxDetailLines = 50
 		if buf := proc.OutputBuffer; buf != nil && buf.Count() > 0 {
-			detailSummary = redactTokens(crux.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
 		} else if pane := proc.FilteredPaneLines(0); len(pane) > 0 {
-			detailSummary = redactTokens(crux.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
+			detailSummary = redactTokens(paneclass.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
 		}
 
 		agentID := proc.ID

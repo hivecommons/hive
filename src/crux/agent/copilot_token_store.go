@@ -2,11 +2,10 @@ package agent
 
 import (
 	"encoding/json"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
 )
 
@@ -276,30 +275,7 @@ func GitHubTokenLogin(token string) string {
 // "" on any failure. Short-timeout, one call — used only on the rare seed path
 // where the config lacks a valid identity and on the model-discovery rejection
 // path. Overridable in tests.
-var githubTokenLogin = func(token string) string {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var body struct {
-		Login string `json:"login"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&body) != nil {
-		return ""
-	}
-	return strings.TrimSpace(body.Login)
-}
+var githubTokenLogin = crux.GitHubTokenLogin
 
 // copilotIdentityKey renders a lastLoggedInUser value — string or
 // {"host","login"} object — as the "<host>:<login>" copilotTokens key the CLI

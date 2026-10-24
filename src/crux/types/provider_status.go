@@ -5,10 +5,11 @@
 // same types a consumer compares against; pkg/crux re-exports them too, so
 // consumers program against crux.<Name> and never see this package.
 //
-// It is a separate leaf package, not pkg/crux itself, because pkg/crux still
-// aliases agent.AgentProcess (crux.Process) and so imports pkg/agent; a
-// package pkg/agent imports cannot be one that imports pkg/agent back. The
-// leaf folds into pkg/crux once Process is its own type.
+// It is a separate leaf package, not pkg/crux itself, for historical
+// reasons: pkg/crux used to alias agent.AgentProcess and so import pkg/agent.
+// crux.Process is now its own type and the root no longer imports crux/agent;
+// the leaf folds into the root once crux/watchdog stops importing it too
+// (#13963).
 package types
 
 import (

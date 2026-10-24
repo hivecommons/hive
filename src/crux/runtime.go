@@ -1,45 +1,33 @@
 // Package crux is the exported surface of Hive's agent runtime
 // (hivecommons/hive#13536, src/docs/design/crux.md).
 //
-// pkg/agent is the runtime's implementation: the manager, kick files, engine
+// crux/agent is the runtime's implementation: the manager, kick files, engine
 // adapters and the tmux funnel. Consumers outside that tree (the dashboard,
 // the hub, cmd/hive) are meant to program against the types in this package
-// rather than against *agent.Manager, so that the runtime can move to its own
-// module (Stage 2 of the design record) without every consumer following its
-// internals. The architecture ratchet in
+// rather than against *agent.Manager, so that they do not follow the
+// runtime's internals. The architecture ratchet in
 // internal/testutil/crux_boundary_ratchet_test.go counts the agent.<Symbol>
 // references each consumer still makes; this package is how that number goes
 // down.
 //
-// Stage 1 keeps this a façade: Process is an alias of agent.AgentProcess, so
-// the adapter is zero-cost and nothing about the runtime's behaviour changes.
-// Every other value type on this surface (process states, kick dispatch and
-// outcome, kick logs, restart events, sub-agent models, start-failure classes,
-// turn loss, the provider-status vocabulary) is DEFINED in the leaf package
-// pkg/crux/types and aliased both here and in pkg/agent: Crux owns them and
-// the runtime implementation re-exports them. The leaf exists because this
-// package imports pkg/agent for Process and so cannot be imported by it. Each
-// interface method is annotated with the consumer that needs it today; a
-// method with no consumer does not belong here.
+// This package does not import crux/agent: crux/agent imports it. Process is
+// its own type, a snapshot the manager copies out of its internal agent
+// record, and ProjectContext and RingBuffer are defined here and aliased by
+// crux/agent, so *agent.Manager implements Runtime directly (agent.AsRuntime
+// adapts a possibly-nil manager). Every other value type on this surface
+// (process states, kick dispatch and outcome, kick logs, restart events,
+// sub-agent models, start-failure classes, turn loss, the provider-status
+// vocabulary) is DEFINED in the leaf package crux/types and aliased both here
+// and in crux/agent. Each interface method is annotated with the consumer
+// that needs it today; a method with no consumer does not belong here.
 package crux
 
 import (
 	"context"
 
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/types"
 )
-
-// Process is the observable snapshot of one agent: state, pins, overrides,
-// kick history, pane-derived conditions. It is what Observer.GetStatus and
-// Observer.AllStatuses return.
-type Process = agent.AgentProcess
-
-// ProjectContext is the host-derived project facts (org, repos, policy dir,
-// pause state) a runtime is built with. It is on the Crux surface so a host
-// such as cmd/crux can build one without naming pkg/agent.
-type ProjectContext = agent.ProjectContext
 
 // ProcessState is the runtime's intent for an agent (running, stopped,
 // paused, …), as distinct from what its pane is observed to be doing.
@@ -117,7 +105,18 @@ type TurnLoss = types.TurnLoss
 // compose prompts echoed into the pane assert their text never contains one
 // (pkg/review's prompt builders; #7553). The slice is a copy.
 func FatalNetworkErrorPatterns() []string {
-	return append([]string(nil), agent.FatalNetworkErrorPatterns...)
+	return append([]string(nil), fatalNetworkErrorPatterns...)
+}
+
+// fatalNetworkErrorPatterns are substrings that indicate a transient TLS or
+// network failure killed the agent at startup. These errors leave the Copilot
+// chrome visible (❯, / commands) so the pane looks ready, but the agent is
+// dead and will never recover without a restart. crux/agent's
+// FatalNetworkErrorPatterns is initialised from this list.
+var fatalNetworkErrorPatterns = []string{
+	"invalid peer certificate",
+	"BadSignature",
+	"fetch failed",
 }
 
 // Lifecycle starts, stops, pauses and restarts agents.
@@ -283,8 +282,8 @@ type Credentials interface {
 }
 
 // Runtime is the full surface a consumer needs to run, observe and control
-// agents. *agent.Manager implements it directly. Consumers that need less
-// should depend on the narrower interfaces above.
+// agents. *agent.Manager implements it directly (asserted in crux/agent).
+// Consumers that need less should depend on the narrower interfaces above.
 type Runtime interface {
 	Lifecycle
 	Observer
@@ -292,15 +291,4 @@ type Runtime interface {
 	Definitions
 	Fleet
 	Credentials
-}
-
-var _ Runtime = (*agent.Manager)(nil)
-
-// FromManager adapts a manager to Runtime, returning a nil interface for a
-// nil manager so consumers' `runtime != nil` checks keep their meaning.
-func FromManager(m *agent.Manager) Runtime {
-	if m == nil {
-		return nil
-	}
-	return m
 }

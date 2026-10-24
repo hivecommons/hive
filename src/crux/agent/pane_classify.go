@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // loginPromptPatterns are substrings that indicate an agent is stuck on a
@@ -55,11 +57,8 @@ var loginPromptPatterns = []string{
 // FatalNetworkErrorPatterns is exported so prompt builders can assert their
 // text never contains one: a prompt echoed into the pane that quotes one of
 // these restarts the agent every time it pauses to think.
-var FatalNetworkErrorPatterns = []string{
-	"invalid peer certificate",
-	"BadSignature",
-	"fetch failed",
-}
+// The list itself is defined in the crux root package.
+var FatalNetworkErrorPatterns = crux.FatalNetworkErrorPatterns()
 
 // paneShowsFatalNetworkError returns true if any line contains a fatal
 // TLS/network error pattern that requires an agent restart.

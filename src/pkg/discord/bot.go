@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/paneclass"
 )
 
 const (
@@ -545,7 +545,7 @@ func (b *Bot) diffAgents(prev, cur *statusSnapshot) {
 }
 
 func (b *Bot) agentCompletionText(agent, old agentSnapshot) string {
-	summary := crux.SanitizePaneText(agent.LiveSummary, 3)
+	summary := paneclass.SanitizePaneText(agent.LiveSummary, 3)
 	work := strings.TrimSpace(agent.Doing)
 	if work == "" {
 		work = strings.TrimSpace(old.Doing)

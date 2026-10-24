@@ -367,11 +367,28 @@ Still Stage 2, in this order:
   `GitHubTokenLogin`) and pane classification (`SanitizePaneText`,
   `RedactPaneTokens`, `PaneShowsBlockingPrompt`, `ClassifyAuthPane`) on
   `crux`, so `pkg/loginscan` no longer imports `crux/agent`. The final
-  `Process` type conversion remains.
+  slice (#13963) made `crux.Process` its own struct: `crux/agent` copies
+  its `AgentProcess` into one when it snapshots an agent (`GetStatus`,
+  `GetStatusFast`, `AllStatuses` return `*crux.Process`), and
+  `ProjectContext`, `RingBuffer`, the Copilot-token constants,
+  `GitHubTokenLogin`, `DefaultAgentMode`, `AgentAvailableAtACMMLevel` and
+  the fatal-network pane patterns are defined in `crux` and aliased or
+  forwarded by `crux/agent`. The root package no longer imports
+  `crux/agent`; the `Runtime` assertion and `agent.AsRuntime` (formerly
+  `crux.FromManager`) live in `crux/agent`. The pane classifiers that share
+  tables with the pane poller (`SanitizePaneText`, `ClassifyAuthPane`,
+  `AuthPaneState`, `PaneShowsBlockingPrompt`) moved to the leaf
+  `crux/paneclass`, which imports `crux/agent` so the root does not have to.
 - **Fold `crux/types` into the module root.** It is a sub-package so that
   the alias packages in the root could be written against a stdlib-only
   leaf before the cut; with the ring in its own module the leaf no longer
-  needs to be separate from `crux`.
+  needs to be separate from `crux`. The root no longer imports
+  `crux/agent`, so the `crux → crux/agent → crux/types` cycle is gone. One
+  edge remains: the root imports `crux/watchdog` for
+  `Process.WatchdogConditions`, and `crux/watchdog` imports `crux/types`
+  (`ConditionReporter`, `ClassAgentCrashLoop`), so `watchdog.Condition`
+  has to move into the root (watchdog aliasing it) in the same change that
+  folds `types` in.
 - **`crux serve`** is Stage 3, below; nothing in the module layout
   blocks it.
 

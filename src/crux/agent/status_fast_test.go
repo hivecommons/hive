@@ -3,6 +3,8 @@ package agent
 import (
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // A restart holds the global m.mu in write mode across the whole tmux relaunch
@@ -38,7 +40,7 @@ func TestGetStatusFastDoesNotBlockOnHeldWriteLock(t *testing.T) {
 	<-held
 	defer close(released)
 
-	done := make(chan *AgentProcess, 1)
+	done := make(chan *crux.Process, 1)
 	go func() {
 		proc, err := m.GetStatusFast("scanner")
 		if err != nil {

@@ -1,54 +1,70 @@
 package crux
 
-import "github.com/hivecommons/hive/crux/agent"
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/crux/logscrub"
+)
 
 // Copilot token sources, as reported by Runtime.CopilotTokenSource. They are
-// operator-facing phrases naming which credential GitHub saw; consumers name
-// them here so they do not import crux/agent.
+// operator-facing phrases naming which credential GitHub saw: they are
+// spliced verbatim into the model-picker notice and the "rejected by
+// upstream" log line, so each one has to read as an answer to "which
+// credential did GitHub just reject?". crux/agent aliases them.
 const (
-	CopilotTokenSourceEnv            = agent.CopilotTokenSourceEnv
-	CopilotTokenSourceDashboardLogin = agent.CopilotTokenSourceDashboardLogin
-	CopilotTokenSourceDurableFile    = agent.CopilotTokenSourceDurableFile
-	CopilotTokenSourceCLIConfig      = agent.CopilotTokenSourceCLIConfig
+	// CopilotTokenSourceEnv: the COPILOT_GITHUB_TOKEN the hive process was
+	// started with (a provisioned/machine token, typically).
+	CopilotTokenSourceEnv = "the COPILOT_GITHUB_TOKEN environment variable"
+	// CopilotTokenSourceDashboardLogin: a device-flow login completed on the
+	// dashboard during this process's lifetime.
+	CopilotTokenSourceDashboardLogin = "the dashboard Copilot login"
+	// CopilotTokenSourceDurableFile: a dashboard login persisted by an earlier
+	// hive process and read back at startup.
+	CopilotTokenSourceDurableFile = "a dashboard Copilot login persisted at " + CopilotUserTokenPath
+	// CopilotTokenSourceCLIConfig: an in-agent `/login` the reconciler promoted
+	// out of the shared Copilot CLI config.
+	CopilotTokenSourceCLIConfig = "an in-agent /login promoted from the shared Copilot CLI config"
 )
 
 // CopilotUserTokenPath is where the dashboard's device-flow login persists
-// the Copilot OAuth token. Dashboard: Copilot auth status and login.
-const CopilotUserTokenPath = agent.CopilotUserTokenPath
+// the Copilot OAuth token; injected into agents as COPILOT_GITHUB_TOKEN.
+// Dashboard: Copilot auth status and login.
+const CopilotUserTokenPath = "/data/copilot-user-token"
 
 // GitHubTokenLogin resolves the GitHub login that owns token via GET /user, or
-// "" on any failure. Dashboard: the model-discovery notice naming the account
-// behind a rejected Copilot credential.
+// "" on any failure. Short-timeout, one call. Dashboard: the model-discovery
+// notice naming the account behind a rejected Copilot credential; crux/agent:
+// the Copilot CLI config seed path.
 func GitHubTokenLogin(token string) string {
-	return agent.GitHubTokenLogin(token)
-}
-
-// AuthPaneState is what ClassifyAuthPane reads off an agent pane: a login
-// prompt (and its URL) or a backend authentication error.
-type AuthPaneState = agent.AuthPaneState
-
-// ClassifyAuthPane classifies captured pane lines for login prompts and
-// backend auth errors. Loginscan: the pane login detector.
-func ClassifyAuthPane(lines []string) AuthPaneState {
-	return agent.ClassifyAuthPane(lines)
-}
-
-// PaneShowsBlockingPrompt reports whether the pane sits on a known
-// startup-blocking modal (folder trust, update prompt, …) for backend, which
-// is not a login problem. Loginscan: the login detector stands down on it.
-func PaneShowsBlockingPrompt(backend, pane string) bool {
-	return agent.PaneShowsBlockingPrompt(backend, pane)
-}
-
-// SanitizePaneText removes terminal/TUI chrome from pane-derived text before
-// it is displayed, keeping at most maxLines lines. Dashboard: live and detail
-// activity summaries.
-func SanitizePaneText(text string, maxLines int) string {
-	return agent.SanitizePaneText(text, maxLines)
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var body struct {
+		Login string `json:"login"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Login)
 }
 
 // RedactPaneTokens masks GitHub tokens, sk- API keys and device-login lines in
 // pane-derived text. Dashboard: activity summaries.
 func RedactPaneTokens(s string) string {
-	return agent.RedactPaneTokens(s)
+	return logscrub.RedactPaneTokens(s)
 }

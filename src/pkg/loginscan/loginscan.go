@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/notify"
 )
@@ -169,10 +170,10 @@ func Match(backend, paneText string, compiled []*regexp.Regexp) *regexp.Regexp {
 	// re-login (hivecommons/hive, 2026-08-22). The watcher answers the modal
 	// within seconds; if a REAL login prompt follows, the next detector tick
 	// sees it on a clean pane.
-	if crux.PaneShowsBlockingPrompt(backend, paneText) {
+	if paneclass.PaneShowsBlockingPrompt(backend, paneText) {
 		return nil
 	}
-	if crux.ClassifyAuthPane(strings.Split(paneText, "\n")).BackendAuthError {
+	if paneclass.ClassifyAuthPane(strings.Split(paneText, "\n")).BackendAuthError {
 		return nil
 	}
 	for _, re := range compiled {

@@ -61,11 +61,10 @@ func NewRuntime(defs map[string]config.AgentConfig, logger *slog.Logger, project
 	return agent.NewManagerWithOptions(defs, logger, project, managerOpts...)
 }
 
-// NewRingBuffer constructs output for a crux.Process fixture. The buffer is
-// still implementation-owned while Process is an alias; keeping construction
-// here lets that ownership change without consumer tests importing crux/agent.
-func NewRingBuffer(capacity int) *agent.RingBuffer {
-	return agent.NewRingBuffer(capacity)
+// NewRingBuffer constructs output for a crux.Process fixture. It is
+// crux.NewRingBuffer; it stays here so existing fixtures keep one import.
+func NewRingBuffer(capacity int) *crux.RingBuffer {
+	return crux.NewRingBuffer(capacity)
 }
 
 // NewUIDMap constructs a persisted UID-map fixture, including the runtime's

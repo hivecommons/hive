@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/types"
 )
@@ -42,18 +43,11 @@ func (m *Manager) ReloadClaudeToken() {
 // "rejected by upstream" log line, so each one has to read as an answer to
 // "which credential did GitHub just reject?".
 const (
-	// CopilotTokenSourceEnv: the COPILOT_GITHUB_TOKEN the hive process was
-	// started with (a provisioned/machine token, typically).
-	CopilotTokenSourceEnv = "the COPILOT_GITHUB_TOKEN environment variable"
-	// CopilotTokenSourceDashboardLogin: a device-flow login completed on the
-	// dashboard during this process's lifetime.
-	CopilotTokenSourceDashboardLogin = "the dashboard Copilot login"
-	// CopilotTokenSourceDurableFile: a dashboard login persisted by an earlier
-	// hive process and read back at startup.
-	CopilotTokenSourceDurableFile = "a dashboard Copilot login persisted at " + CopilotUserTokenPath
-	// CopilotTokenSourceCLIConfig: an in-agent `/login` the reconciler promoted
-	// out of the shared Copilot CLI config.
-	CopilotTokenSourceCLIConfig = "an in-agent /login promoted from the shared Copilot CLI config"
+	// Defined in the crux root package; see crux.CopilotTokenSourceEnv.
+	CopilotTokenSourceEnv            = crux.CopilotTokenSourceEnv
+	CopilotTokenSourceDashboardLogin = crux.CopilotTokenSourceDashboardLogin
+	CopilotTokenSourceDurableFile    = crux.CopilotTokenSourceDurableFile
+	CopilotTokenSourceCLIConfig      = crux.CopilotTokenSourceCLIConfig
 )
 
 // SetCopilotToken updates the cached Copilot token injected into agent

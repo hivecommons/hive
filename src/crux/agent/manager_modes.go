@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -122,39 +123,9 @@ func (m *Manager) agentMode(agent *AgentProcess) AgentMode {
 
 // DefaultAgentMode returns the default mode for a given agent name and ACMM level,
 // ignoring any hive.yaml override. Used by the dashboard to show "(default)" indicators.
+// The table lives in the crux root package (crux.DefaultAgentMode).
 func DefaultAgentMode(agentName string, level int) AgentMode {
-	if agentName == "supervisor" {
-		return ModeAdvisory
-	}
-	switch level {
-	case 1:
-		return ModeAdvisory
-	case 2:
-		return ModeAdvisory
-	case 3:
-		if agentName == "quality" {
-			return ModeIssuesAndPRs
-		}
-		return ModeAdvisory
-	case 4:
-		switch agentName {
-		case "quality", "sec-check", "ci-maintainer":
-			return ModeIssuesAndPRs
-		case "scanner", "guide":
-			return ModeIssuesOnly
-		default:
-			return ModeAdvisory
-		}
-	case 5:
-		return ModeIssuesAndPRs
-	case 6:
-		if agentName == "scanner" {
-			return ModeIssuesPRsMerge
-		}
-		return ModeIssuesAndPRs
-	default:
-		return ModeAdvisory
-	}
+	return crux.DefaultAgentMode(agentName, level)
 }
 
 // AuthorizePROpen enforces the policy for the hive-opens-PR watcher: an agent

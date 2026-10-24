@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/logscrub"
 )
@@ -23,7 +24,7 @@ var (
 
 // CopilotUserTokenPath is where the dashboard's device-flow login persists
 // the Copilot OAuth token; injected into agents as COPILOT_GITHUB_TOKEN.
-const CopilotUserTokenPath = "/data/copilot-user-token"
+const CopilotUserTokenPath = crux.CopilotUserTokenPath
 
 var copilotUserTokenWatchPath = CopilotUserTokenPath
 

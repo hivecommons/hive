@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -23,5 +23,5 @@ const uidMapName = "uid-map.json"
 func newManagerRuntime(defs map[string]config.AgentConfig, project crux.ProjectContext) crux.Runtime {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	uidMap := filepath.Join(os.Getenv(envWorkDir), uidMapName)
-	return crux.FromManager(agent.NewManagerWithOptions(defs, logger, project, agent.WithUIDMapPath(uidMap)))
+	return agent.AsRuntime(agent.NewManagerWithOptions(defs, logger, project, agent.WithUIDMapPath(uidMap)))
 }
