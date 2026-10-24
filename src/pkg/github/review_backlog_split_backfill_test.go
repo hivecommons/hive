@@ -18,7 +18,9 @@ import (
 
 // backfillTestServer serves host #42 closed long before any sweep window
 // with one bot-authored folded finding, host #43 still open, and #44
-// deleted. The closed-issue listing is never consulted by the backfill.
+// deleted. The windowed closed-issue listing (the only listing that carries
+// `since`) is never consulted by the backfill; the dedup and tombstone
+// lookups CreateIssue makes before filing the split are answered empty.
 func backfillTestServer(t *testing.T, comment string, created, hostComments, requests *int32) *httptest.Server {
 	t.Helper()
 	old := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
@@ -27,7 +29,9 @@ func backfillTestServer(t *testing.T, comment string, created, hostComments, req
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
-			t.Errorf("backfill listed issues: %s", r.URL.String())
+			if r.URL.Query().Has("since") {
+				t.Errorf("backfill used the windowed closed-issue listing: %s", r.URL.String())
+			}
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42":
 			_, _ = io.WriteString(w, `{"number":42,"title":"Review backlog (correctness): something","state":"closed","state_reason":"completed","comments":1,"closed_at":"`+old+`","updated_at":"`+old+`","html_url":"https://github.example/o/r/issues/42","user":{"login":"`+testBot+`"}}`)
