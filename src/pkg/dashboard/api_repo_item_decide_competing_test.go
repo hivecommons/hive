@@ -26,6 +26,9 @@ func delegatedCompetitionServer(t *testing.T, routes map[string]string) *Server 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		key := r.URL.Path
+		if !strings.HasPrefix(key, "/repos/o/r/") {
+			t.Errorf("unexpected out-of-scope read: %s", key)
+		}
 		if r.URL.Query().Get("page") == "2" {
 			key += "?page=2"
 		}
@@ -114,6 +117,7 @@ func TestDelegatedContributorPresenceUsesAuthorActivity(t *testing.T) {
 		online           bool
 	}{
 		{"quiet", "", "", false},
+		{"assignee with unrelated update", "/repos/o/r/issues/7", `{"number":7,"state":"open","user":{"login":"reporter"},"assignees":[{"login":"alice"}],"updated_at":"` + stamp + `"}`, false},
 		{"PR comment", "/repos/o/r/issues/8/comments", comment, true},
 		{"issue comment", "/repos/o/r/issues/7/comments", comment, true},
 		{"later page comment", "/repos/o/r/issues/8/comments?page=2", comment, true},
@@ -191,6 +195,45 @@ func TestDelegatedGatherFailsClosedOnMissingEvidence(t *testing.T) {
 				t.Fatal("missing evidence must fail before executing a decision")
 			}
 		})
+	}
+}
+
+func TestDelegatedCompetitionRequiresSameRepoClosingClaims(t *testing.T) {
+	for _, body := range []string{"Fixes other/repo#7", "Part of #7", "Refs #7"} {
+		t.Run(body, func(t *testing.T) {
+			s := delegatedCompetitionServer(t, competitionRoutes())
+			pr := competitionPR(t, "alice", time.Now())
+			pr.Body = gh.Ptr(body)
+			in := delegatedecision.Input{}
+			if err := s.gatherDelegatedCompetition(context.Background(), "o/r", pr, &in, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			if len(in.Competing) != 0 {
+				t.Fatalf("non-closing or foreign reference produced competitors: %+v", in.Competing)
+			}
+		})
+	}
+	for _, body := range []string{"Part of #7", "Refs #7", "Fixes other/repo#7"} {
+		if delegatedSharesIssue(body, "o/r", []ghpkg.ClaimedRef{{Repo: "o/r", Issue: 7}}) {
+			t.Fatalf("non-closing or foreign competitor matched: %s", body)
+		}
+	}
+}
+
+func TestDelegatedCompetitionSkipsMissingIssueAndKeepsRefsAligned(t *testing.T) {
+	routes := competitionRoutes()
+	routes["/repos/o/r/issues/7"] = ""
+	routes["/repos/o/r/issues/10"] = `{"number":10,"state":"open"}`
+	routes["/repos/o/r/issues/10/comments"] = `[]`
+	s := delegatedCompetitionServer(t, routes)
+	pr := competitionPR(t, "alice", time.Now())
+	pr.Body = gh.Ptr("Fixes #7, fixes #10")
+	in := delegatedecision.Input{}
+	if err := s.gatherDelegatedCompetition(context.Background(), "o/r", pr, &in, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if in.ContributorOnline || len(in.Competing) != 0 {
+		t.Fatalf("missing issue should provide no evidence: %+v", in)
 	}
 }
 

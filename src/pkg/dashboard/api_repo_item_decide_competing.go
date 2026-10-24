@@ -3,12 +3,14 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // Use the claim freshness window for reachability too. updated_at is not
@@ -20,28 +22,39 @@ func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr
 	api := client.GoGitHub()
 	owner, name, _ := strings.Cut(repo, "/")
 	refs := ghpkg.ParseClaimedIssues(pr.GetBody(), repo)
-	if len(refs) == 0 {
-		refs = ghpkg.ParseReferencedIssues(pr.GetBody(), repo)
+	// Body text cannot authorize reads outside the decided repository.
+	same := refs[:0]
+	for _, ref := range refs {
+		if strings.EqualFold(ref.Repo, repo) {
+			same = append(same, ref)
+		}
 	}
+	refs = same
+	var kept []ghpkg.ClaimedRef
 	// Claims also cover contributors working under dibs without a PR yet.
 	// They are presence evidence, not synthetic PRs with a zero number.
 	var issues []*gh.Issue
 	claimedOnline := false
 	for _, ref := range refs {
 		o, r, _ := strings.Cut(ref.Repo, "/")
-		issue, _, err := api.Issues.Get(ctx, o, r, ref.Issue)
+		issue, resp, err := api.Issues.Get(ctx, o, r, ref.Issue)
 		if err != nil {
+			if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
+				continue // A missing body reference is not activity evidence.
+			}
 			return fmt.Errorf("reading linked issue %s#%d: %w", ref.Repo, ref.Issue, err)
 		}
 		issues = append(issues, issue)
+		kept = append(kept, ref)
 		claim, live, err := client.LookupLiveIssueClaim(ctx, ref.Repo, issue, now)
 		if err != nil {
 			return fmt.Errorf("reading linked issue claim: %w", err)
 		}
-		if live && strings.EqualFold(claim.Identity, pr.GetUser().GetLogin()) {
+		if live && claim.Source != issueclaim.SourceAssignee && strings.EqualFold(claim.Identity, pr.GetUser().GetLogin()) {
 			claimedOnline = true
 		}
 	}
+	refs = kept
 	if !in.HiveAuthored {
 		online, err := delegatedContributorOnline(ctx, api, owner, name, pr, refs, issues, now)
 		if err != nil {
@@ -90,9 +103,6 @@ func (s *Server) gatherDelegatedCompetition(ctx context.Context, repo string, pr
 
 func delegatedSharesIssue(body, repo string, refs []ghpkg.ClaimedRef) bool {
 	other := ghpkg.ParseClaimedIssues(body, repo)
-	if len(other) == 0 {
-		other = ghpkg.ParseReferencedIssues(body, repo)
-	}
 	for _, a := range refs {
 		for _, b := range other {
 			if a.Issue == b.Issue && strings.EqualFold(a.Repo, b.Repo) {
