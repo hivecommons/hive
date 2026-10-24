@@ -1068,7 +1068,7 @@ func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		logger.Warn("SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
+		warnGitHubFetchOnce(logger, fmt.Sprintf("sha-msg:%s:%d", fullSHA[:7], resp.StatusCode), "SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
 		return ""
 	}
 	var result struct {

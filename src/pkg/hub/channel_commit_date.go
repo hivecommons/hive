@@ -82,7 +82,7 @@ func commitDateForSHA(sha string, logger *slog.Logger) time.Time {
 	d, err := fetchCommitDate(sha, logger)
 	if err != nil {
 		if logger != nil {
-			logger.Warn("channel commit date: fetch failed — the row will render without a timestamp",
+			warnGitHubFetchOnce(logger, "commit-date:"+key, "channel commit date: fetch failed — the row will render without a timestamp",
 				"sha", sha, "error", err)
 		}
 		return time.Time{}
