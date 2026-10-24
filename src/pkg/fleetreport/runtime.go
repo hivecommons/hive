@@ -69,6 +69,8 @@ const (
 	ClassBeadFactIngestFailed       = "bead_fact_ingest_failed"
 	ClassSelfReportClearedFailed    = "selfreport_cleared_comment_failed"
 	ClassGitHubAppRepoNotCovered    = "github_app_repo_not_covered"
+	ClassProxyConnectDialFailed     = "proxy_connect_dial_failed"
+	ClassInferenceUpstreamError     = "inference_upstream_error"
 )
 
 const (
@@ -165,6 +167,8 @@ var Classes = map[string]ClassSpec{
 	ClassBeadFactIngestFailed:       {Component: "knowledge", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to ingest bead fact"}},
 	ClassSelfReportClearedFailed:    {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"fleet report: cleared comment failed"}},
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
+	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
+	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".

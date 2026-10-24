@@ -168,6 +168,9 @@ type Engine struct {
 	gh        *gh.Client
 	logger    *slog.Logger
 
+	selfSkipWarnedMu sync.Mutex
+	selfSkipWarned   map[string]struct{}
+
 	mergerAuthzMu sync.RWMutex
 	mergerAuthz   MergerAuthorizer
 
@@ -1056,7 +1059,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				branchUpdateAttempts++
 			}
 			if err != nil {
-				c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+				c.warnSelfAuthoredSkipOnce(repo, number, reason, err)
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
@@ -2880,6 +2883,28 @@ func (c *Engine) warn(msg string, args ...any) {
 	if c != nil && c.logger != nil {
 		c.logger.Warn(msg, args...)
 	}
+}
+
+// warnSelfAuthoredSkipOnce logs the skip at WARN once per repo#pr+reason+error
+// and at Debug on later ticks, so a PR stuck on the same condition does not
+// repeat the line every sweep.
+func (c *Engine) warnSelfAuthoredSkipOnce(repo string, number int, reason string, err error) {
+	if c == nil {
+		return
+	}
+	key := fmt.Sprintf("%s#%d|%s|%v", repo, number, reason, err)
+	c.selfSkipWarnedMu.Lock()
+	if c.selfSkipWarned == nil || len(c.selfSkipWarned) > 4096 {
+		c.selfSkipWarned = map[string]struct{}{}
+	}
+	_, seen := c.selfSkipWarned[key]
+	c.selfSkipWarned[key] = struct{}{}
+	c.selfSkipWarnedMu.Unlock()
+	if seen {
+		c.debug("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
+		return
+	}
+	c.warn("self-authored automerge sweep skipped PR", "repo", repo, "pr", number, "reason", reason, "error", err)
 }
 
 func (c *Engine) info(msg string, args ...any) {

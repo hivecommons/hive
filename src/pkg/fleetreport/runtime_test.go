@@ -354,6 +354,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassBeadFactIngestFailed, message: "failed to ingest bead fact"},
 		{class: ClassSelfReportClearedFailed, message: "fleet report: cleared comment failed"},
 		{class: ClassGitHubAppRepoNotCovered, message: "github app recheck: installation does not cover every configured repo"},
+		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
+		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -889,6 +891,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"fleet report: cleared comment failed":                                  ClassSelfReportClearedFailed,
 		"copilot sniff: client TLS handshake failed":                            ClassProxyTLSHandshakeFailed,
 		"github app recheck: installation does not cover every configured repo": ClassGitHubAppRepoNotCovered,
+		"proxy: CONNECT dial failed":                                            ClassProxyConnectDialFailed,
+		"inference upstream error":                                              ClassInferenceUpstreamError,
+		"inference upstream failed":                                             ClassInferenceUpstreamError,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
