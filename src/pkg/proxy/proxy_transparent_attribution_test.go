@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
-	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // These tests exercise handleTransparentTLS's attribution and routing branches
@@ -251,7 +250,7 @@ func TestTransparentTLSCopilotSniffGate(t *testing.T) {
 	writeProcNetTable(t, procNetRow{peerPort(t, server), agentUIDFixture})
 
 	p := newAttributionProxy(t, uidMap)
-	p.tokenSink = &tokens.InferenceSink{}
+	p.tokenSink = &memUsageSink{}
 	copilotDialed := make(chan string, 1)
 	p.copilotDial = func(host string) (net.Conn, error) {
 		copilotDialed <- host

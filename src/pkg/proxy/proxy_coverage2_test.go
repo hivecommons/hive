@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // newInferenceTestProxy builds a GitHubProxy with the maps/routers the
@@ -73,9 +71,9 @@ func TestSetTokenSink(t *testing.T) {
 	if p.tokenSink != nil {
 		t.Fatal("expected nil sink before SetTokenSink")
 	}
-	sink := tokens.NewInferenceSink("", slog.Default())
+	sink := &memUsageSink{}
 	p.SetTokenSink(sink)
-	if p.tokenSink != sink {
+	if p.tokenSink != UsageSink(sink) {
 		t.Fatal("SetTokenSink did not wire the sink")
 	}
 }
@@ -596,7 +594,7 @@ func TestJSONEscape(t *testing.T) {
 // port and issuing requests against it.
 func TestStartInferenceTranslator_HandlerBranches(t *testing.T) {
 	p := newInferenceTestProxy()
-	p.SetTokenSink(tokens.NewInferenceSink("", slog.Default()))
+	p.SetTokenSink(&memUsageSink{})
 
 	// Drive the real handler without binding the fixed production port.
 	// Mock upstream vLLM.
@@ -675,7 +673,7 @@ func TestStartInferenceTranslator_HandlerBranches(t *testing.T) {
 // are rerouted through handleAnthropicReroute → handleInferenceRequest.
 func TestHandleAnthropicReroute_NonStreaming(t *testing.T) {
 	p := newInferenceTestProxy()
-	p.SetTokenSink(tokens.NewInferenceSink("", slog.Default()))
+	p.SetTokenSink(&memUsageSink{})
 
 	upstream := startMockVLLM(t)
 	defer upstream.Close()
@@ -874,7 +872,7 @@ func TestLoadOrGenerateCA_UnusablePersistedRegenerates(t *testing.T) {
 // connection (streaming branch), recording usage into the sink.
 func TestHandleInferenceRequest_Streaming(t *testing.T) {
 	p := newInferenceTestProxy()
-	p.SetTokenSink(tokens.NewInferenceSink("", slog.Default()))
+	p.SetTokenSink(&memUsageSink{})
 
 	upstream := startMockVLLM(t)
 	defer upstream.Close()

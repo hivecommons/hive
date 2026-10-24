@@ -34,9 +34,7 @@ import (
 	"github.com/hivecommons/hive/pkg/crux/config"
 	"github.com/hivecommons/hive/pkg/crux/inferencehealth"
 	"github.com/hivecommons/hive/pkg/crux/issueshape"
-	hgithub "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 const (
@@ -264,8 +262,13 @@ type GitHubProxy struct {
 
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
-	// otherwise. May be nil (Record is a safe no-op on a nil sink).
-	tokenSink *tokens.InferenceSink
+	// otherwise. May be nil; the host installs it with SetTokenSink.
+	tokenSink UsageSink
+
+	// restAccounting receives one record per relayed GitHub REST response
+	// and supplies the shared core-bucket snapshot; nil until the host
+	// installs it with SetGitHubRESTAccounting.
+	restAccounting GitHubRESTAccounting
 
 	githubBudget          *agentGitHubBudget
 	githubBudgetCap       func(agentName string) int
@@ -287,8 +290,8 @@ type GitHubProxy struct {
 
 	canariesEnabled  bool
 	canaryFailClosed bool
-	canaryRegistry   *ioscan.CanaryRegistry
-	canaryLeakFunc   func(ioscan.CanaryLeak)
+	canaryRegistry   CanaryScanner
+	canaryLeakFunc   func(types.CanaryLeak)
 
 	// linearCredential resolves the hive's CURRENT Linear write credential
 	// for injection into agent requests to api.linear.app — see
@@ -373,7 +376,7 @@ func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
 
 // SetTokenSink wires the inference token sink so the translator can record
 // per-agent usage from upstream OpenAI responses into the shared token store.
-func (p *GitHubProxy) SetTokenSink(sink *tokens.InferenceSink) {
+func (p *GitHubProxy) SetTokenSink(sink UsageSink) {
 	p.tokenSink = sink
 }
 
@@ -419,7 +422,10 @@ func (p *GitHubProxy) hostNeedsMITM(host string) bool {
 	return p.injectGHAuth && IsGitHubHost(host)
 }
 
-func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
+// SetCanaryScanner installs the host's canary registry and leak handler.
+// enabled gates the scan; failClosed turns a detection (or an unscannable
+// body) into a refusal rather than an audit-only event.
+func (p *GitHubProxy) SetCanaryScanner(enabled, failClosed bool, reg CanaryScanner, onLeak func(types.CanaryLeak)) {
 	p.canariesEnabled = enabled
 	p.canaryFailClosed = failClosed
 	p.canaryRegistry = reg
@@ -487,26 +493,25 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 	}
 
 	p := &GitHubProxy{
-		listenAddr:            fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
-		caCert:                caCert,
-		caX509:                caX509,
-		logger:                logger,
-		uidMap:                uidMap,
-		proxyAdvisoryOK:       advisoryOK,
-		injectGHAuth:          injectGHAuth,
-		allowedRepos:          allowed,
-		violations:            make(map[string]int),
-		certCache:             make(map[string]cachedCert),
-		inference:             newInferenceRouter(),
-		entitlements:          newEntitlementStore(),
-		inferenceAuth:         &inferenceAuthState{},
-		inferenceLastErrors:   newInferenceLastErrorState(),
-		inferenceBudget:       &inferenceBudgetState{},
-		gatewayHealth:         inferencehealth.NewStore(),
-		githubBudget:          newAgentGitHubBudget(time.Now),
-		githubBudgetCap:       func(string) int { return config.DefaultAgentsGitHubAPIHourlyCap },
-		githubReserveFloor:    func() int { return config.DefaultGitHubAgentReserveFloor },
-		githubReserveSnapshot: hgithub.CoreRateLimitSnapshot,
+		listenAddr:          fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
+		caCert:              caCert,
+		caX509:              caX509,
+		logger:              logger,
+		uidMap:              uidMap,
+		proxyAdvisoryOK:     advisoryOK,
+		injectGHAuth:        injectGHAuth,
+		allowedRepos:        allowed,
+		violations:          make(map[string]int),
+		certCache:           make(map[string]cachedCert),
+		inference:           newInferenceRouter(),
+		entitlements:        newEntitlementStore(),
+		inferenceAuth:       &inferenceAuthState{},
+		inferenceLastErrors: newInferenceLastErrorState(),
+		inferenceBudget:     &inferenceBudgetState{},
+		gatewayHealth:       inferencehealth.NewStore(),
+		githubBudget:        newAgentGitHubBudget(time.Now),
+		githubBudgetCap:     func(string) int { return config.DefaultAgentsGitHubAPIHourlyCap },
+		githubReserveFloor:  func() int { return config.DefaultGitHubAgentReserveFloor },
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -1649,11 +1654,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
-		if p.injectGHAuth && agentName != internalCallerName {
-			hgithub.RecordInjectedRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
-		} else {
-			hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
-		}
+		p.recordGitHubREST(agentName, req, resp)
 		p.recordAgentGitHubBudget(agentName, req.URL.Path, resp.StatusCode, p.agentGitHubCap(agentName))
 
 		// Bound the BODY relay too, not just the header read above. The
@@ -3029,7 +3030,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 			}
 			if in > 0 || out > 0 {
-				p.tokenSink.Record(agentName, route.Model, in, out)
+				p.recordUsage(agentName, route.Model, in, out)
 			}
 			return
 		}
@@ -3047,7 +3048,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		)
 
 		if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-			p.tokenSink.Record(agentName, route.Model, in, out)
+			p.recordUsage(agentName, route.Model, in, out)
 		}
 
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
@@ -3226,7 +3227,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 		}
 		if in > 0 || out > 0 {
-			p.tokenSink.Record(agentName, route.Model, in, out)
+			p.recordUsage(agentName, route.Model, in, out)
 		}
 		return
 	}
@@ -3238,7 +3239,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 
 	if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-		p.tokenSink.Record(agentName, route.Model, in, out)
+		p.recordUsage(agentName, route.Model, in, out)
 	}
 
 	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
@@ -3438,7 +3439,7 @@ func (p *GitHubProxy) forwardCopilotAnthropicResponseWithUsage(client net.Conn, 
 			resolvedModel = u.Model
 		}
 		if resolvedModel != "" && resolvedModel != copilotAutoModelSentinel {
-			p.tokenSink.RecordCopilotWithCache(agentName, resolvedModel, u.Input, u.Output, u.CacheRead, u.CacheCreation)
+			p.recordCopilotUsageWithCache(agentName, resolvedModel, u.Input, u.Output, u.CacheRead, u.CacheCreation)
 			p.logger.Info("copilot usage recorded",
 				"agent", agentName,
 				"host", host,
@@ -3477,7 +3478,7 @@ func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *htt
 			}
 		}
 		if resolvedModel != "" && resolvedModel != copilotAutoModelSentinel {
-			p.tokenSink.RecordCopilot(agentName, resolvedModel, in, out)
+			p.recordCopilotUsage(agentName, resolvedModel, in, out)
 			p.logger.Info("copilot usage recorded",
 				"agent", agentName,
 				"host", host,

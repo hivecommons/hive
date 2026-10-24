@@ -94,9 +94,17 @@ import (
 // inference-gateway health store moved whole into pkg/crux/inferencehealth
 // and the issue/comment shape validators into pkg/crux/issueshape (both
 // stdlib-only; pkg/inferencehealth and pkg/issueshape alias every symbol so
-// hub, spoke, dashboard, github and classify keep their import path). What
-// remains — the proxy's canary registry, usage sink and REST accounting, and
-// cmd/crux's definition loading — is the rest of prerequisite 3.
+// hub, spoke, dashboard, github and classify keep their import path). Its
+// three service edges were inverted behind seams in pkg/proxy/host_seams.go:
+// proxy.CanaryScanner (pkg/ioscan's *CanaryRegistry implements it; the leak
+// value is pkg/crux/types.CanaryLeak, which ioscan aliases),
+// proxy.UsageSink (*tokens.InferenceSink implements it) and
+// proxy.GitHubRESTAccounting (cmd/hive's githubRESTAccounting adapts
+// pkg/github's package-level recorders and core-bucket snapshot; a proxy
+// without one records nothing and the agent GitHub budget applies the
+// per-agent cap alone). The proxy's tests drive the seams with in-package
+// fakes. What remains — cmd/crux's definition loading — is the rest of
+// prerequisite 3.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -107,11 +115,6 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/inference": {
 		"internal/testutil (test)",
-	},
-	"pkg/proxy": {
-		"pkg/github",
-		"pkg/ioscan",
-		"pkg/tokens",
 	},
 }
 

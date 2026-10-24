@@ -5,64 +5,101 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/tokens"
 )
 
+// usageRecord is one UsageSink call the test sink captured.
+type usageRecord struct {
+	agent, model                      string
+	in, out, cacheRead, cacheCreation int64
+	copilot                           bool
+}
+
+// memUsageSink stands in for the host's token sink (pkg/tokens): it keeps
+// every record in memory so a test reads back exactly what the proxy
+// attributed, with no file format in between.
+type memUsageSink struct {
+	mu      sync.Mutex
+	records []usageRecord
+}
+
+func (m *memUsageSink) add(r usageRecord) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = append(m.records, r)
+}
+
+func (m *memUsageSink) Record(agent, model string, in, out int64) {
+	m.add(usageRecord{agent: agent, model: model, in: in, out: out})
+}
+
+func (m *memUsageSink) RecordCopilot(agent, model string, in, out int64) {
+	m.add(usageRecord{agent: agent, model: model, in: in, out: out, copilot: true})
+}
+
+func (m *memUsageSink) RecordCopilotWithCache(agent, model string, in, out, cacheRead, cacheCreation int64) {
+	m.add(usageRecord{agent: agent, model: model, in: in, out: out, cacheRead: cacheRead, cacheCreation: cacheCreation, copilot: true})
+}
+
+// forAgent returns the records attributed to agent.
+func (m *memUsageSink) forAgent(agent string) []usageRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []usageRecord
+	for _, r := range m.records {
+		if r.agent == agent {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // newTestProxyWithCA builds a GitHubProxy with a fresh in-memory CA and cert
-// cache, plus a token sink writing to a temp dir. Returns the proxy and the
-// metrics dir for reading back recorded usage.
-func newTestProxyWithCA(t *testing.T) (*GitHubProxy, string) {
+// cache, plus an in-memory usage sink. Returns the proxy and the sink for
+// reading back recorded usage.
+func newTestProxyWithCA(t *testing.T) (*GitHubProxy, *memUsageSink) {
 	t.Helper()
 	caCert, caX509, err := generateCA()
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
+	sink := &memUsageSink{}
 	p := &GitHubProxy{
 		caCert:    caCert,
 		caX509:    caX509,
 		logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		certCache: make(map[string]cachedCert),
-		tokenSink: tokens.NewInferenceSink(dir, slog.Default()),
+		tokenSink: sink,
 	}
-	return p, dir
+	return p, sink
 }
 
-// readInferenceUsage reads back the cumulative usage the sink wrote for an
-// agent (copilot-live-<agent>.jsonl) and returns the model plus total in/out
-// tokens.
-func readInferenceUsage(t *testing.T, dir, agent string) (model string, in, out int64) {
+// readInferenceUsage reads back the cumulative usage the proxy recorded for
+// an agent on the Copilot path and returns the model plus total in/out
+// tokens; it fails the test when nothing was recorded.
+func readInferenceUsage(t *testing.T, sink *memUsageSink, agent string) (model string, in, out int64) {
 	t.Helper()
-	path := filepath.Join(dir, "copilot-live-"+agent+".jsonl")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading usage file %s: %v", path, err)
+	recs := sink.forAgent(agent)
+	if len(recs) == 0 {
+		t.Fatalf("no usage recorded for agent %q", agent)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
+	for _, r := range recs {
+		if !r.copilot {
+			t.Errorf("agent %q: usage recorded through Record, want the Copilot path", agent)
 		}
-		var e tokens.SessionEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			t.Fatalf("bad usage line: %v", err)
+		if r.model != "" {
+			model = r.model
 		}
-		if e.Model != "" {
-			model = e.Model
-		}
-		in += e.InputTokens
-		out += e.OutputTokens
+		in += r.in
+		out += r.out
 	}
 	return model, in, out
 }
@@ -75,7 +112,7 @@ func readInferenceUsage(t *testing.T, dir, agent string) (model string, in, out 
 // We use two net.Pipe pairs: one for client<->proxy (TLS on the client-facing
 // side), one for proxy<->upstream (plain, upstream speaks HTTP/1.1 directly).
 func TestProxyCopilotHTTP_NonStreaming(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	// Upstream: a plain TCP listener speaking HTTP/1.1 with a JSON completion.
 	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -166,14 +203,14 @@ func TestProxyCopilotHTTP_NonStreaming(t *testing.T) {
 
 	<-proxyDone
 
-	model, in, out := readInferenceUsage(t, dir, "worker1")
+	model, in, out := readInferenceUsage(t, sink, "worker1")
 	if model != "gpt-5" || in != 120 || out != 34 {
 		t.Errorf("recorded usage = (%q,%d,%d), want (gpt-5,120,34)", model, in, out)
 	}
 }
 
 func TestProxyCopilotHTTP_Streaming(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -264,7 +301,7 @@ func TestProxyCopilotHTTP_Streaming(t *testing.T) {
 
 	<-proxyDone
 
-	model, in, out := readInferenceUsage(t, dir, "worker2")
+	model, in, out := readInferenceUsage(t, sink, "worker2")
 	if model != "claude-sonnet-4.5" || in != 200 || out != 88 {
 		t.Errorf("recorded usage = (%q,%d,%d), want (claude-sonnet-4.5,200,88)", model, in, out)
 	}
@@ -273,7 +310,7 @@ func TestProxyCopilotHTTP_Streaming(t *testing.T) {
 // TestProxyCopilotHTTP_NonCompletionPassthrough verifies non-completion requests
 // (e.g. /models) pass through without recording usage.
 func TestProxyCopilotHTTP_NonCompletionPassthrough(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -343,8 +380,8 @@ func TestProxyCopilotHTTP_NonCompletionPassthrough(t *testing.T) {
 	<-proxyDone
 
 	// No usage file should have been written.
-	if _, err := os.Stat(filepath.Join(dir, "copilot-live-worker3.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("non-completion request should not record usage; file exists: %v", err)
+	if recs := sink.forAgent("worker3"); len(recs) != 0 {
+		t.Errorf("non-completion request should not record usage; got %+v", recs)
 	}
 }
 
@@ -368,7 +405,7 @@ func TestCopilotSniffRoutingGuard(t *testing.T) {
 // (faked) upstream via the test seam, and records usage. This covers
 // handleCopilotSniff, which in production dials the real Copilot host by name.
 func TestHandleCopilotSniff_EndToEnd(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	// Fake upstream: a plain TCP server answering a completion.
 	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -458,7 +495,7 @@ func TestHandleCopilotSniff_EndToEnd(t *testing.T) {
 
 	<-done
 
-	model, in, out := readInferenceUsage(t, dir, "worker9")
+	model, in, out := readInferenceUsage(t, sink, "worker9")
 	if model != "gpt-5" || in != 11 || out != 4 {
 		t.Errorf("recorded (%q,%d,%d), want (gpt-5,11,4)", model, in, out)
 	}
@@ -551,7 +588,7 @@ func TestDialCopilotUpstream_DefaultErrors(t *testing.T) {
 // TestProxyCopilotHTTP_NonSuccessCompletion covers the branch where a completion
 // request gets a non-2xx response — it must pass through without recording usage.
 func TestProxyCopilotHTTP_NonSuccessCompletion(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	upstreamLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer upstreamLn.Close()
@@ -613,8 +650,8 @@ func TestProxyCopilotHTTP_NonSuccessCompletion(t *testing.T) {
 	resp.Body.Close()
 	<-done
 
-	if _, err := os.Stat(filepath.Join(dir, "copilot-live-w4.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("non-2xx completion must not record usage")
+	if recs := sink.forAgent("w4"); len(recs) != 0 {
+		t.Errorf("non-2xx completion must not record usage; got %+v", recs)
 	}
 }
 
@@ -622,7 +659,7 @@ func TestProxyCopilotHTTP_NonSuccessCompletion(t *testing.T) {
 // continuation (req.Close/resp.Close false) and accumulation across two
 // completions on one connection.
 func TestProxyCopilotHTTP_KeepAliveTwoRequests(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 
 	upstreamLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer upstreamLn.Close()
@@ -690,7 +727,7 @@ func TestProxyCopilotHTTP_KeepAliveTwoRequests(t *testing.T) {
 	clientConn.Close()
 	<-done
 
-	_, in, out := readInferenceUsage(t, dir, "w5")
+	_, in, out := readInferenceUsage(t, sink, "w5")
 	if in != 20 || out != 10 {
 		t.Errorf("keep-alive accumulated usage = (%d,%d), want (20,10)", in, out)
 	}
@@ -699,7 +736,7 @@ func TestProxyCopilotHTTP_KeepAliveTwoRequests(t *testing.T) {
 // TestProxyCopilotHTTP_ZeroUsageNotRecorded covers the branch where a completion
 // response carries no usage — nothing is recorded.
 func TestProxyCopilotHTTP_ZeroUsageNotRecorded(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 	upstreamLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer upstreamLn.Close()
 	go func() {
@@ -754,8 +791,8 @@ func TestProxyCopilotHTTP_ZeroUsageNotRecorded(t *testing.T) {
 		resp.Body.Close()
 	}
 	<-done
-	if _, err := os.Stat(filepath.Join(dir, "copilot-live-w6.jsonl")); !os.IsNotExist(err) {
-		t.Errorf("zero-usage completion must not record")
+	if recs := sink.forAgent("w6"); len(recs) != 0 {
+		t.Errorf("zero-usage completion must not record; got %+v", recs)
 	}
 }
 

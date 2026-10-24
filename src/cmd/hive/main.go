@@ -4213,6 +4213,10 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
+		// REST accounting and the shared core-bucket snapshot the agent
+		// GitHub budget reads live in pkg/github; the proxy takes them through
+		// a seam (#13536).
+		b.githubProxy.SetGitHubRESTAccounting(githubRESTAccounting{})
 		// Per-repo pause (#6203). This is the deterministic refusal the feature
 		// rests on: whatever an agent believes, a write to a paused repo is
 		// answered with a 403 here. The predicate reads live config, so pausing

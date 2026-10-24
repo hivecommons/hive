@@ -5,18 +5,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
-
-	"github.com/hivecommons/hive/pkg/tokens"
 )
 
 // anthropicSSEFixture mirrors the event shapes the Copilot CLI receives from
@@ -207,25 +202,8 @@ func runAnthropicCopilotSniff(t *testing.T, p *GitHubProxy, agentName, reqBody, 
 	return clientGot, <-sawCh
 }
 
-func readCopilotLiveEntries(t *testing.T, dir, agent string) []tokens.SessionEntry {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "copilot-live-"+agent+".jsonl"))
-	if err != nil {
-		t.Fatalf("reading usage file: %v", err)
-	}
-	var out []tokens.SessionEntry
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		var e tokens.SessionEntry
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			t.Fatalf("bad usage line %q: %v", line, err)
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
 func TestProxyCopilotHTTP_AnthropicStreaming(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 	reqBody := `{"model":"claude-sonnet-4.5","stream":true,"max_tokens":1024,"messages":[{"role":"user","content":"hi"}]}`
 	got, saw := runAnthropicCopilotSniff(t, p, "worker1", reqBody, "text/event-stream", anthropicSSEFixture)
 
@@ -239,19 +217,22 @@ func TestProxyCopilotHTTP_AnthropicStreaming(t *testing.T) {
 		t.Errorf("OpenAI stream_options injected into Anthropic request: %s", saw)
 	}
 
-	entries := readCopilotLiveEntries(t, dir, "worker1")
+	recs := sink.forAgent("worker1")
+	if len(recs) == 0 {
+		t.Fatal("no usage recorded for worker1")
+	}
 	var in, out, cr, cc int64
-	for _, e := range entries {
-		if e.Backend != tokens.BackendCopilot {
-			t.Errorf("entry backend = %q, want %q", e.Backend, tokens.BackendCopilot)
+	for _, r := range recs {
+		if !r.copilot {
+			t.Errorf("usage recorded through Record, want the Copilot path: %+v", r)
 		}
-		if e.Role == "assistant" && e.Model != "claude-sonnet-4.5" {
-			t.Errorf("assistant entry model = %q, want claude-sonnet-4.5", e.Model)
+		if r.model != "claude-sonnet-4.5" {
+			t.Errorf("recorded model = %q, want claude-sonnet-4.5", r.model)
 		}
-		in += e.InputTokens
-		out += e.OutputTokens
-		cr += e.CacheRead
-		cc += e.CacheCreation
+		in += r.in
+		out += r.out
+		cr += r.cacheRead
+		cc += r.cacheCreation
 	}
 	if in != 12 || out != 57 || cr != 4000 || cc != 300 {
 		t.Errorf("recorded usage in=%d out=%d cache_read=%d cache_creation=%d, want 12/57/4000/300", in, out, cr, cc)
@@ -259,14 +240,14 @@ func TestProxyCopilotHTTP_AnthropicStreaming(t *testing.T) {
 }
 
 func TestProxyCopilotHTTP_AnthropicJSONAutoModel(t *testing.T) {
-	p, dir := newTestProxyWithCA(t)
+	p, sink := newTestProxyWithCA(t)
 	reqBody := `{"model":"auto","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`
 	got, _ := runAnthropicCopilotSniff(t, p, "worker2", reqBody, "application/json", anthropicJSONFixture)
 	if string(got) != anthropicJSONFixture {
 		t.Errorf("client did not receive the JSON body verbatim: %s", got)
 	}
 
-	model, in, out := readInferenceUsage(t, dir, "worker2")
+	model, in, out := readInferenceUsage(t, sink, "worker2")
 	if model != "claude-opus-4.5" || in != 25 || out != 9 {
 		t.Errorf("recorded usage = (%q,%d,%d), want (claude-opus-4.5,25,9)", model, in, out)
 	}
