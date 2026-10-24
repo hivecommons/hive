@@ -477,7 +477,6 @@ agents.<key>.standby.daily_cap_per_contributor # TODO #11854
 agents.<key>.standby.enabled # TODO #11854
 agents.<key>.standby.min_model_capability # TODO #11854
 agents.<key>.task_mcp.drop_stuffed_context # TODO #11854
-classifier.backend # TODO #11854
 classifier.jev.api_key_env # TODO #11854
 classifier.jev.decisions[] # TODO #11854
 classifier.jev.endpoint # TODO #11854

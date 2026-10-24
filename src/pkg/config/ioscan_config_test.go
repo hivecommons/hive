@@ -170,10 +170,10 @@ func TestIoscanClassifierConfig_CLIDefaults(t *testing.T) {
 	if c.CLIBackend() != "" {
 		t.Fatalf("CLIBackend() = %q, want empty (HTTP path)", c.CLIBackend())
 	}
-	if got := c.CLIBudgetPerEvalOrDefault(); got != ioscan.DefaultCLIClassifierBudgetPerEval || got != 8 {
+	if got := c.CLIBudgetPerEvalOrDefault(); got != ioscan.DefaultCLIClassifierBudgetPerEval || ioscan.DefaultCLIClassifierBudgetPerEval != 8 {
 		t.Fatalf("CLIBudgetPerEvalOrDefault() = %d, want 8", got)
 	}
-	if got := c.CLIDailyQuotaOrDefault(); got != ioscan.DefaultCLIClassifierDailyQuota || got != 500 {
+	if got := c.CLIDailyQuotaOrDefault(); got != ioscan.DefaultCLIClassifierDailyQuota || ioscan.DefaultCLIClassifierDailyQuota != 500 {
 		t.Fatalf("CLIDailyQuotaOrDefault() = %d, want 500", got)
 	}
 	if ioscan.DefaultCLIClassifierBudgetPerEval >= ioscan.DefaultClassifierBudgetPerEval {
