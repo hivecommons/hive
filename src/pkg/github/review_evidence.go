@@ -356,9 +356,9 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 	}
 	if err := writeReviewEvidence(path, b); err != nil {
 		level := slog.LevelWarn
-		// Permission failures are an ownership problem that repeats every poll; warn once per path.
+		// Permission failures are an ownership problem that repeats every poll; warn once per PR directory.
 		if errors.Is(err, fs.ErrPermission) {
-			if _, seen := evidenceWriteDenied.LoadOrStore(path, struct{}{}); seen {
+			if _, seen := evidenceWriteDenied.LoadOrStore(reviewEvidenceCanonicalDir(filepath.Dir(path)), struct{}{}); seen {
 				level = slog.LevelDebug
 			}
 		}
@@ -511,7 +511,8 @@ func containsSentinelFinding(have []evidence.SentinelFinding, f evidence.Sentine
 	return false
 }
 
-// evidenceWriteDenied remembers paths whose write already failed with a permission error.
+// evidenceWriteDenied remembers PR directories whose write already failed with a permission
+// error; every new head SHA is a new path in the same unwritable directory.
 var evidenceWriteDenied sync.Map
 
 // evidenceDirMode is group-writable and setgid so writers running under

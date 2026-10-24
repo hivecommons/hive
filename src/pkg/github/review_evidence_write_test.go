@@ -209,3 +209,14 @@ func TestWriteReviewEvidenceFallbackFromForeignSiblingUsesOwnSibling(t *testing.
 		t.Fatalf("FindReviewEvidence = %+v, %v; want the fallback bundle", lookup, err)
 	}
 }
+
+func TestEvidenceWriteDeniedDedupesPerPRDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "o", "r", "88")
+	key := reviewEvidenceCanonicalDir(filepath.Dir(filepath.Join(dir, "sha1.json")))
+	for _, name := range []string{"sha1.json", "sha2.json"} {
+		got := reviewEvidenceCanonicalDir(filepath.Dir(filepath.Join(dir+".uid5", name)))
+		if got != key {
+			t.Errorf("%s: key %q, want %q", name, got, key)
+		}
+	}
+}
