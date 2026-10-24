@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -1603,5 +1604,63 @@ func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 				t.Fatalf("adopted a %s PR: added=%v comments=%v pulls=%d", tc.name, h.api.added, h.api.comments, len(h.adopt.pulls))
 			}
 		})
+	}
+}
+
+func TestDelegatedSupersedeAdoptsParkedPRWithoutGrace(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	labels := []string{"stage/085-needs-decision", delegatedecision.LabelAdoptSupersede}
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+	if len(h.adopt.pulls) != 1 || h.adopt.refs["refs/heads/hive/adopt-7"] != "aaa" {
+		t.Fatalf("supersede not executed: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	body, _ := h.adopt.pulls[0]["body"].(string)
+	for _, want := range []string{"Supersedes #7", "@mallory", "Closes #12", "fixes #13"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q: %s", want, body)
+		}
+	}
+	h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("duplicate adoption: %v", h.adopt.pulls)
+	}
+}
+
+func TestDelegatedSupersedeHonorsHoldAndDisabledAdoption(t *testing.T) {
+	for _, held := range []bool{true, false} {
+		t.Run(map[bool]string{true: "hold", false: "disabled"}[held], func(t *testing.T) {
+			policy := adoptPolicy()
+			policy.Adoption = held
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+			defer done()
+			labels := []string{delegatedecision.LabelAdoptSupersede}
+			if held {
+				labels = append(labels, "hold")
+			}
+			h.observe(adoptPR(7, "aaa", labels...), contributorLaneReasonNoReviewer)
+			if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+				t.Fatalf("adopted: %v", h.adopt.pulls)
+			}
+		})
+	}
+}
+
+func TestDelegatedSupersedeRehomesInPlaceAdoption(t *testing.T) {
+	policy := adoptPolicy()
+	policy.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, policy)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
+	h.observe(adoptPR(7, "aaa", "stage/085-needs-decision", delegatedecision.LabelAdoptSupersede), "check-failing:unit")
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if len(h.adopt.pulls) != 1 || rec.AdoptMode != stagelabels.AdoptModeSupersede || rec.AdoptedBy != 90 {
+		t.Fatalf("in-place adoption not superseded: record=%+v pulls=%v", rec, h.adopt.pulls)
 	}
 }

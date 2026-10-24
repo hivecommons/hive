@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -528,7 +529,13 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	if !ok || obs.Lane == stageLaneSelf || obs.Author == "" || obs.BaseRef == "" {
 		return 0, nil
 	}
+	requested := hasLabel(obs.Labels, delegatedecision.LabelAdoptSupersede)
 	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
+	if requested && obs.HeadSHA != "" && !(rec.Adopted(obs.HeadSHA) && rec.AdoptedBy > 0) {
+		// An explicit owner-delegate decision bypasses the nudge/grace and
+		// re-homes a stalled in-place adoption through the same supersede path.
+		due, reason = true, AdoptReasonOffline
+	}
 	if !due {
 		return 0, nil
 	}
@@ -563,7 +570,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason, "fence", fence)
 
 	canPushInPlace := false
-	if policy.AdoptInPlace {
+	if policy.AdoptInPlace && !requested {
 		canPushInPlace = c.canPushToPRBranch(ctx, obs)
 	}
 	dcoRehome := adoptionNeedsDCORehome(obs, canPushInPlace)

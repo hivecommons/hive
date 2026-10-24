@@ -448,7 +448,16 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			}
 			notes = append(notes, fmt.Sprintf("cross-linked #%d", a.Target))
 		case delegatedecision.ActionAdoptSupersede:
-			notes = append(notes, "adopt-in-supersede-mode recorded as the decision; the adoption engine picks it up on its next pass")
+			if in.Kind != delegatedecision.KindPR || in.HiveAuthored {
+				return notes, fmt.Errorf("supersede adoption requires a contributor PR")
+			}
+			if err := client.EnsureIssueLabel(ctx, repoFull, delegatedecision.LabelAdoptSupersede, "5319e7", "Owner-delegate request: adopt now in supersede mode"); err != nil {
+				return notes, fmt.Errorf("ensuring adoption request label: %w", err)
+			}
+			if err := client.AddLabels(ctx, repoFull, number, []string{delegatedecision.LabelAdoptSupersede}); err != nil {
+				return notes, fmt.Errorf("queuing supersede adoption: %w", err)
+			}
+			notes = append(notes, "supersede adoption queued for the adoption engine's next pass")
 		case delegatedecision.ActionRecommendOnly:
 			if err := client.CreateIssueComment(ctx, repoFull, number, comment); err != nil {
 				return notes, fmt.Errorf("posting recommendation: %w", err)

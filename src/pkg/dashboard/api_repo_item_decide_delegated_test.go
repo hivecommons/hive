@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -233,5 +234,24 @@ func TestDelegatedLowRiskPath(t *testing.T) {
 		if got := delegatedLowRiskPath(p); got != want {
 			t.Errorf("%s = %v want %v", p, got, want)
 		}
+	}
+}
+
+func TestDelegatedSupersedeQueuesAdoptionForForeignPR(t *testing.T) {
+	mock := &repoItemDecisionMock{prForeign: true}
+	srv := newDelegatedServer(t, mock)
+	in := delegatedecision.Input{Repo: "testorg/testrepo", Number: 8, Kind: delegatedecision.KindPR, AdoptionStalled: true}
+	d := delegatedecision.Run(in)
+	if d.Verdict != delegatedecision.VerdictAdoptSupersede {
+		t.Fatalf("decision: %+v", d)
+	}
+	if _, err := srv.executeDelegatedDecision(context.Background(), in, d, "writer", false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(mock.added, ","), delegatedecision.LabelAdoptSupersede) {
+		t.Fatalf("request not queued: %v", mock.added)
+	}
+	if len(mock.edits) != 0 {
+		t.Fatalf("original PR edited: %v", mock.edits)
 	}
 }
