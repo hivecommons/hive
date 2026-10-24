@@ -355,9 +355,10 @@ until code-owner review is required in branch protection.
 * **Hub registration has no review step.** Any spoke with the derived keys
   can register.
 * **Trust tiers do not decay.**
-* **Trajectory review and the `ioscan` classifier fail open.** The
-  deterministic rules, canaries, proxy and token tiers hold when a model is
-  down.
+* **Trajectory review fails open; the `ioscan` classifier fails open only
+  at L1–L4.** At L5–L6 text is withheld when the classifier cannot answer.
+  The deterministic rules, canaries, proxy and token tiers hold when a model
+  is down.
 
 ## 12. How to audit a running hive
 
