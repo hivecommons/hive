@@ -13,6 +13,8 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"gopkg.in/yaml.v3"
+
+	"github.com/hivecommons/hive/pkg/cistatus"
 )
 
 const (
@@ -701,9 +703,7 @@ func IsDCOContext(name string) bool { return isDCOContext(name) }
 // checks are still running or not yet reported, as opposed to failing.
 func CommitCIReasonIsPending(reason string) bool { return commitCIReasonIsPending(reason) }
 
-func commitCIReasonIsPending(reason string) bool {
-	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ") || strings.HasPrefix(reason, "required-check-missing:")
-}
+func commitCIReasonIsPending(reason string) bool { return cistatus.ReasonIsPending(reason) }
 
 // ExpectedCommitChecksFromRef returns the check-run names that should appear on
 // a candidate commit when the required-checks set is not known. It intentionally
