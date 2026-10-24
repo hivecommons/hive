@@ -12933,6 +12933,21 @@ test('#6951 an exhausted window of an UNRECOGNIZED kind refuses work', () => {
   assert.strictEqual(d.window_id, 'd1');
 });
 
+test('#13946 agy Gemini ignores an exhausted 3p window but Claude/GPT and Gemini pools still hold', () => {
+  const limits = [{ id: '3p-5h', kind: 'short', pct_remaining: 0 }, { id: 'gemini-5h', kind: 'short', pct_remaining: 99 }];
+  const run = (model, lim) => loadRelay({ env: { AGENT_BACKEND: 'agy', AGENT_MODEL: model,
+    HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state: 'available', limits: lim }) } })
+    .evaluateContributorQuota({ title: 'x', complexity: 'medium' });
+  assert.strictEqual(run('gemini-3.8-flash-high', limits).admit, true);
+  const claude = run('claude-opus-5', limits);
+  assert.strictEqual(claude.admit, false);
+  assert.strictEqual(claude.window_id, '3p-5h');
+  const gem = run('gemini-3.8-flash-high', [{ id: 'gemini-5h', kind: 'short', pct_remaining: 0 }]);
+  assert.strictEqual(gem.admit, false);
+  assert.strictEqual(gem.window_id, 'gemini-5h');
+  assert.strictEqual(run('mystery-model', limits).admit, false, 'unknown model stays conservative');
+});
+
 test('#6951 a recognized kind is held as `guarded`, an unrecognized one as `guarded_unknown_window`', () => {
   // The two holds are identical in effect. They are named differently so an
   // operator reading the banner can tell "your weekly quota is low" apart from

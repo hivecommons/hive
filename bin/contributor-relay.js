@@ -1002,6 +1002,19 @@ function warnQuotaGuardAwaitingPublisherOnce() {
     'published for this pool yet — holding until the reading lands or the marker goes stale (kubestellar/hive#6987).');
 }
 
+// agy publishes Claude/GPT (`3p-*`) and Gemini (`gemini-*`) windows in one
+// reading, and the two provider pools are independent. A window whose id names
+// the other family must not hold this contributor. Unknown models and windows
+// outside either family stay evaluated (conservative).
+function quotaWindowAppliesToModel(window, backend = BACKEND, model = MODEL) {
+  if (backend !== 'agy') return true;
+  const m = (model || '').toLowerCase();
+  const id = (window.id || '').toString().toLowerCase();
+  if (/^gemini/.test(m)) return !id.startsWith('3p-');
+  if (/claude|opus|sonnet|haiku|gpt/.test(m)) return !id.startsWith('gemini');
+  return true;
+}
+
 // opts.baseReserveOnly evaluates against the window reserve alone, ignoring the
 // per-complexity tier reserves. #6833 specifies the base window reserve for the
 // `ready` hold; the tier reserves exist to judge a SPECIFIC task, and `ready`
@@ -1032,6 +1045,7 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
     && Number.isInteger(reading.reset_credits_available) && reading.reset_credits_available > 0;
   let usedBankedReset = false;
   for (const window of (reading.limits || [])) {
+    if (!quotaWindowAppliesToModel(window)) continue;
     const kind = (window.kind || '').toString();
     // Every window is evaluated, including kinds this build has never heard of
     // (kubestellar/hive#6951). Skipping unrecognized kinds meant an EXHAUSTED
