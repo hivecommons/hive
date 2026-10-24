@@ -35,6 +35,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/crux/types"
 )
 
 // PredicateExactHeadGreen is the ONE predicate this vertical implements, as
@@ -255,14 +257,9 @@ func (f Fingerprint) keySubject() string {
 
 // Provenance is the bounded replay handle: enough to re-issue the exact
 // observation and audit which runs were counted — deliberately NOT a log
-// archive.
-type Provenance struct {
-	// CheckRunIDs are the check-run IDs counted toward the result, sorted.
-	CheckRunIDs []int64 `json:"check_run_ids,omitempty"`
-	// Query names the observation call shape, e.g.
-	// "ListCheckRunsForRef@<headSHA>".
-	Query string `json:"query"`
-}
+// archive. The type is pkg/crux/types.ProofProvenance because the agent
+// report schema the runtime validates embeds it in a stage receipt.
+type Provenance = types.ProofProvenance
 
 // Record is one durable proof receipt: the complete fingerprint, the
 // producer's classified result, the bounded provenance handle, and the

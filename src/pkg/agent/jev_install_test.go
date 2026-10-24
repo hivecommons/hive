@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/crux/config"
-	"github.com/hivecommons/hive/pkg/jev"
+	"github.com/hivecommons/hive/pkg/crux/jev"
 )
 
 func jevEnv(t *testing.T, mode string) map[string]string {

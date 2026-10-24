@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/jev"
+	"github.com/hivecommons/hive/pkg/crux/jev"
 )
 
 // installJevForAgent seeds the jev-decide skill into the agent's CLI home

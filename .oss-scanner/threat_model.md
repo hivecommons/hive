@@ -149,7 +149,7 @@ Most important, in this order:
    Every `exec.Command` of `git`, `gh`, `tmux`, `podman`, `su-exec` or a
    shell whose arguments include a branch name, repo name, issue title,
    label, login or file path that came from GitHub or from an agent
-   (`pkg/agent`, `pkg/pushbroker`, `pkg/sandbox`, `pkg/gitidentity`,
+   (`pkg/agent`, `pkg/pushbroker`, `pkg/sandbox`, `pkg/crux/gitidentity`,
    `pkg/github`, `pkg/knowledge`, `cmd/hive`). `tmux send-keys` to an agent
    pane with attacker text, `git` option injection (`-c`, `--upload-pack`,
    refspecs starting with `-`), or a path that escapes the intended

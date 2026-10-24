@@ -65,10 +65,21 @@ import (
 // and reaches the ACMM-pack plan gates through Desk.SetPlanPolicy (cmd/hive
 // wires config.PlanAutoApproveForLevel and PlanningConfig.PlanFromLabelEnabled
 // and carries the parity tests), and the two tests that loaded a full
-// hive.yaml moved to cmd/hive. No ring package imports pkg/config any more;
-// what remains is the effects/fleetreport/gitidentity/jev/outputschema/
-// pushbroker cluster, the proxy's GitHub-side helpers and watchdog's
-// fleetreport/rotation edges.
+// hive.yaml moved to cmd/hive. No ring package imports pkg/config any more.
+// The value-type edges went next (Stage 2 prerequisite 2): pkg/effects
+// moved whole into pkg/crux/effects (stdlib-only; pkg/effects aliases every
+// symbol), pkg/gitidentity moved to pkg/crux/gitidentity (its two callers
+// repointed, nothing left to alias), the Jev environment contract and
+// jev-decide skill moved to pkg/crux/jev (pkg/jev aliases them; the
+// endpoint and CLI stay), the agent-report schema and validator moved to
+// pkg/crux/outputschema with the receipt's provenance handle as
+// pkg/crux/types.ProofProvenance (pkg/convergence/proof and
+// pkg/outputschema alias; the report directory and path helpers stay host
+// side), and pkg/jsonextract moved to pkg/crux/jsonextract (pkg/jsonextract
+// aliases it), which also closed pkg/trajectory's only edge. What remains
+// is the fleetreport/pushbroker service cluster, inference's watsonx
+// minter, toolapprove's ioscan call, the proxy's GitHub-side helpers and
+// watchdog's fleetreport/rotation edges.
 var cruxOutboundBaseline = map[string][]string{
 	"cmd/crux": {
 		"pkg/config",
@@ -76,11 +87,7 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/agent": {
 		"internal/testutil (test)",
-		"pkg/effects",
 		"pkg/fleetreport",
-		"pkg/gitidentity",
-		"pkg/jev",
-		"pkg/outputschema",
 		"pkg/pushbroker",
 	},
 	"pkg/inference": {
@@ -96,9 +103,6 @@ var cruxOutboundBaseline = map[string][]string{
 	},
 	"pkg/toolapprove": {
 		"pkg/ioscan",
-	},
-	"pkg/trajectory": {
-		"pkg/jsonextract",
 	},
 	"pkg/watchdog": {
 		"pkg/fleetreport",

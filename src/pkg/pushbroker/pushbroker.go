@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/crux/gitidentity"
 	"github.com/hivecommons/hive/pkg/effects"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/gitidentity"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 

@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/crux/config"
+	"github.com/hivecommons/hive/pkg/crux/gitidentity"
+	"github.com/hivecommons/hive/pkg/crux/jev"
 	"github.com/hivecommons/hive/pkg/crux/types"
-	"github.com/hivecommons/hive/pkg/gitidentity"
-	"github.com/hivecommons/hive/pkg/jev"
 )
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {

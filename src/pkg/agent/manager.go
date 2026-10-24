@@ -14,7 +14,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claude"
 	"github.com/hivecommons/hive/pkg/crux/config"
-	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/crux/effects"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/pushbroker"
 	"github.com/hivecommons/hive/pkg/sandbox"

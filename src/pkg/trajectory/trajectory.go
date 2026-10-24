@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/jsonextract"
+	"github.com/hivecommons/hive/pkg/crux/jsonextract"
 )
 
 const (
