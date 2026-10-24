@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -1652,7 +1653,7 @@ func parseCopilotSDKModels(data []byte) ([]string, error) {
 // copilotToken resolves the Copilot GitHub OAuth token from the agent manager
 // (device-flow login, promoted CLI login, or the token it was started with)
 // or the COPILOT_GITHUB_TOKEN env var, together with a display-safe name for
-// where it came from (one of the agent.CopilotTokenSource* phrases; "" when
+// where it came from (one of the crux.CopilotTokenSource* phrases; "" when
 // there is no token). The token is a secret — never log it; the source is
 // exactly the thing to log.
 func (s *Server) copilotToken() (token, source string) {
@@ -1662,7 +1663,7 @@ func (s *Server) copilotToken() (token, source string) {
 		}
 	}
 	if t := os.Getenv("COPILOT_GITHUB_TOKEN"); t != "" {
-		return t, agent.CopilotTokenSourceEnv
+		return t, crux.CopilotTokenSourceEnv
 	}
 	return "", ""
 }
@@ -1679,7 +1680,7 @@ type copilotLoginCache struct {
 
 // lookupCopilotTokenLogin resolves a token to its GitHub login via GET /user.
 // A package-level seam so tests never reach api.github.com.
-var lookupCopilotTokenLogin = agent.GitHubTokenLogin
+var lookupCopilotTokenLogin = crux.GitHubTokenLogin
 
 // copilotTokenLogin returns the GitHub login that owns token, or "" when it
 // cannot be resolved (GitHub unreachable, token revoked). Only the rejection

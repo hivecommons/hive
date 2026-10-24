@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/cruxtest"
 )
 
@@ -320,9 +319,9 @@ func rejectingCopilotAPI(t *testing.T) {
 func TestDescribeCopilotCredential(t *testing.T) {
 	for _, tc := range []struct{ source, login, want string }{
 		{"", "", ""},
-		{agent.CopilotTokenSourceDashboardLogin, "", agent.CopilotTokenSourceDashboardLogin},
+		{crux.CopilotTokenSourceDashboardLogin, "", crux.CopilotTokenSourceDashboardLogin},
 		{"", "alice", "the Copilot credential of GitHub account @alice"},
-		{agent.CopilotTokenSourceEnv, " alice ", agent.CopilotTokenSourceEnv + " (GitHub account @alice)"},
+		{crux.CopilotTokenSourceEnv, " alice ", crux.CopilotTokenSourceEnv + " (GitHub account @alice)"},
 	} {
 		if got := describeCopilotCredential(tc.source, tc.login); got != tc.want {
 			t.Errorf("describeCopilotCredential(%q, %q) = %q, want %q", tc.source, tc.login, got, tc.want)
@@ -335,7 +334,7 @@ func TestDescribeCopilotCredential(t *testing.T) {
 // leaves a dangling "—".
 func TestCopilotProbeNoticeFor_NamesRejectedCredential(t *testing.T) {
 	err := errors.New("upstream returned 403 (unauthorized: not licensed to use Copilot)")
-	named := agent.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
+	named := crux.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
 
 	n := copilotProbeNoticeFor(err, func() string { return named })
 	if n == nil {
@@ -392,7 +391,7 @@ func TestDiscoverCopilotModels_NoticeNamesCredentialSource(t *testing.T) {
 		s := &Server{cliModels: newCLIModelCache(), logger: testLogger(), deps: &Dependencies{AgentMgr: mgr}}
 
 		r := s.discoverCopilotModels()
-		want := agent.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
+		want := crux.CopilotTokenSourceDashboardLogin + " (GitHub account @alice)"
 		if r.notice == nil || r.notice.Credential != want {
 			t.Fatalf("notice = %+v, want Credential %q", r.notice, want)
 		}
@@ -413,10 +412,10 @@ func TestDiscoverCopilotModels_NoticeNamesCredentialSource(t *testing.T) {
 		s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 
 		r := s.discoverCopilotModels()
-		if r.notice == nil || r.notice.Credential != agent.CopilotTokenSourceEnv {
-			t.Fatalf("notice = %+v, want Credential %q", r.notice, agent.CopilotTokenSourceEnv)
+		if r.notice == nil || r.notice.Credential != crux.CopilotTokenSourceEnv {
+			t.Fatalf("notice = %+v, want Credential %q", r.notice, crux.CopilotTokenSourceEnv)
 		}
-		if !strings.Contains(r.notice.Detail, agent.CopilotTokenSourceEnv) {
+		if !strings.Contains(r.notice.Detail, crux.CopilotTokenSourceEnv) {
 			t.Errorf("Detail = %q, want the env var named", r.notice.Detail)
 		}
 	})
@@ -453,7 +452,7 @@ func TestDiscoverCopilotModels_NoticeNamesCredentialSource(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &backends); err != nil {
 			t.Fatalf("response not JSON: %v", err)
 		}
-		want := agent.CopilotTokenSourceEnv + " (GitHub account @svc-bot)"
+		want := crux.CopilotTokenSourceEnv + " (GitHub account @svc-bot)"
 		for _, b := range backends {
 			if b.ID != "copilot" {
 				continue

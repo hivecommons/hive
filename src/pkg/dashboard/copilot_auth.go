@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux"
 )
 
@@ -54,10 +53,10 @@ var (
 	// copilotAccessTokenURL is polled until the user enters the code.
 	copilotAccessTokenURL = "https://github.com/login/oauth/access_token"
 
-	// copilotUserTokenPath mirrors agent.CopilotUserTokenPath; kept as an
-	// overridable var (test-only seam) rather than referencing the agent
-	// package constant directly everywhere below.
-	copilotUserTokenPath = agent.CopilotUserTokenPath
+	// copilotUserTokenPath mirrors crux.CopilotUserTokenPath; kept as an
+	// overridable var (test-only seam) rather than referencing the crux
+	// constant directly everywhere below.
+	copilotUserTokenPath = crux.CopilotUserTokenPath
 
 	// activateCopilotToken is a test seam around the manager operation that
 	// updates both its injected token and the shared Copilot CLI identity.

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// NOTE: claude.CredentialsPath / agent.CopilotUserTokenPath are package consts
+// NOTE: claude.CredentialsPath / crux.CopilotUserTokenPath are package consts
 // pointing at fixed /data paths, so these handlers read from an absent file in
 // tests (giving the logged-out branch). copilot_auth.go's pollCopilotToken,
 // saveCopilotToken, and handleCopilotAuthStart perform real time.Sleep /

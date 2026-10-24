@@ -362,8 +362,12 @@ Still Stage 2, in this order:
   `crux/cruxtest`, and spoke activity reads behind `crux.ActivityObserver`.
   The second slice routes agent-mode and capability parsing (`AgentMode`,
   `Mode*`, `ParseAgentMode`, `DefaultAgentMode`,
-  `AgentAvailableAtACMMLevel`) through `crux`. Token/pane helpers and the
-  final `Process` type conversion remain in the following slices.
+  `AgentAvailableAtACMMLevel`) through `crux`. The third slice exposes the
+  Copilot-token helpers (`CopilotTokenSource*`, `CopilotUserTokenPath`,
+  `GitHubTokenLogin`) and pane classification (`SanitizePaneText`,
+  `RedactPaneTokens`, `PaneShowsBlockingPrompt`, `ClassifyAuthPane`) on
+  `crux`, so `pkg/loginscan` no longer imports `crux/agent`. The final
+  `Process` type conversion remains.
 - **Fold `crux/types` into the module root.** It is a sub-package so that
   the alias packages in the root could be written against a stdlib-only
   leaf before the cut; with the ring in its own module the leaf no longer

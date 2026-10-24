@@ -1067,14 +1067,14 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		const summaryLines = 20
 		var liveSummary string
 		if pane := proc.PaneLines(summaryLines); len(pane) > 0 {
-			liveSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
+			liveSummary = redactTokens(crux.SanitizePaneText(strings.Join(pane, "\n"), summaryLines))
 		}
 		var detailSummary string
 		const maxDetailLines = 50
 		if buf := proc.OutputBuffer; buf != nil && buf.Count() > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
+			detailSummary = redactTokens(crux.SanitizePaneText(strings.Join(buf.Last(buf.Count()), "\n"), maxDetailLines))
 		} else if pane := proc.FilteredPaneLines(0); len(pane) > 0 {
-			detailSummary = redactTokens(agent.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
+			detailSummary = redactTokens(crux.SanitizePaneText(strings.Join(pane, "\n"), maxDetailLines))
 		}
 
 		agentID := proc.ID
@@ -3274,11 +3274,11 @@ func roundTo(f float64, decimals int) float64 {
 	return math.Round(f*shift) / shift
 }
 
-// redactTokens delegates to agent.RedactPaneTokens (itself a thin seam over
-// pkg/logscrub) so the agent package, which dashboard already imports, applies
-// the identical pane redaction.
+// redactTokens delegates to crux.RedactPaneTokens (itself a thin seam over
+// pkg/logscrub) so dashboard applies the runtime's identical pane redaction
+// without importing pkg/logscrub directly.
 func redactTokens(s string) string {
-	return agent.RedactPaneTokens(s)
+	return crux.RedactPaneTokens(s)
 }
 
 // SetReleaseLineLagProvider registers a function reporting how far the edge
