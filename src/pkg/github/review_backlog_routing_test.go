@@ -600,8 +600,10 @@ func TestGitHubIssueBacklogSinkItemOpen(t *testing.T) {
 
 // The #11578 shape, narrowed by #13906: a review finding that cites the same
 // file and nearby line, in the same category, as an open App-bot issue folds
-// into that issue instead of becoming a second issue. The ledger records the
-// twin's number so later re-raises append there.
+// into that issue instead of becoming a second issue. The twin is not titled
+// "Review backlog (…)", so it is reached as a file-set twin, not a canonical
+// subject match. The ledger records the twin's number so later re-raises
+// append there.
 func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 	withReviewBacklogState(t)
 	var created, labelled int
@@ -615,7 +617,7 @@ func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
 				_, _ = io.WriteString(w, `[]`)
 				return
 			}
-			_, _ = io.WriteString(w, `[{"number":41,"title":"Review backlog (correctness): unchecked Close error","body":"Perspective: correctness\nEvidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"open","html_url":"https://github.example/o/r/issues/41","user":{"login":"`+testBot+`"}}]`)
+			_, _ = io.WriteString(w, `[{"number":41,"title":"[scanner] unchecked Close error in pkg/a.go","body":"Perspective: correctness\nEvidence: `+"`pkg/a.go:5`"+` drops the Close error","state":"open","html_url":"https://github.example/o/r/issues/41","user":{"login":"`+testBot+`"}}]`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/41/labels":

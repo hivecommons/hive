@@ -1143,7 +1143,8 @@ type CreateIssueRequest struct {
 	// same-component twin is folded into only when FoldMatch accepts its
 	// title and body. Sharing a file is not sharing a problem; a refused twin
 	// is reported in CreateIssueResult.SameFileAs and the issue is created
-	// (#13906). Exact and canonical subject matches are unaffected.
+	// (#13906). A canonical-subject match is gated the same way; an exact
+	// title match is unaffected.
 	FoldMatch func(title, body string) bool
 }
 
@@ -1236,13 +1237,24 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	var componentCount, componentClosed int
 	var openComponent map[string]int
 	var openComponentOldest map[string]*gh.Issue
-	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles); err != nil {
+	scan, err := c.scanOpenIssues(ctx, owner, repoName, title, body, wantFiles)
+	// A canonical-subject match is only as specific as the stem left after
+	// stripping: every "Review backlog (<perspective>): …" title canonicalises
+	// to the same stem, so FoldMatch gates it like a file-set or component
+	// twin (#13906). An exact-title match is the same finding and stays
+	// unguarded.
+	if err == nil && scan.subject != nil && req.FoldMatch != nil &&
+		strings.TrimSpace(scan.subject.GetTitle()) != title &&
+		!req.FoldMatch(scan.subject.GetTitle(), scan.subject.GetBody()) {
+		scan.subject = nil
+	}
+	if err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
 		}
 		c.logger.Warn("CreateIssue: dedupe lookup failed with terminal error, creating without dedupe",
 			slog.String("repo", repoName), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
-	} else if existing := found.subject; existing != nil {
+	} else if existing := scan.subject; existing != nil {
 		// A human-filed twin was not created by this hive, so the finding's
 		// detail would otherwise vanish: leave it as a comment (#11576).
 		if consolidateOpen && len(c.hiveBotLogins()) > 0 && !isHiveBotLogin(c.hiveBotLogins(), existing.GetUser().GetLogin()) {
@@ -1257,9 +1269,9 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 			slog.String("existing_title", existing.GetTitle()))
 		return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true}, nil
 	} else {
-		fileSetTwin = found.fileSet
-		componentTwin, componentPath, componentCount = found.component, found.componentPath, found.componentCount
-		openComponent, openComponentOldest = found.componentCounts, found.componentOldest
+		fileSetTwin = scan.fileSet
+		componentTwin, componentPath, componentCount = scan.component, scan.componentPath, scan.componentCount
+		openComponent, openComponentOldest = scan.componentCounts, scan.componentOldest
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
