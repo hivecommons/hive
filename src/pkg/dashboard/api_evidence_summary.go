@@ -106,6 +106,11 @@ type EvidenceSummary struct {
 	// IssueReopenRates always uses the trailing 30 days by closure time,
 	// independent of the PR-open-time window and author filter.
 	IssueReopenRates []evidence.ReopenRate `json:"issue_reopen_rates_30d"`
+	// IssueOpensPRMerges is the "Issue opens : PR merges" card: hive-authored
+	// issue opens ÷ hive-merged PRs over the window, per repo and fleet-wide,
+	// judged against the governor's cadence band, plus a rolling 30-day
+	// series judged against parity (api_evidence_opens_merges.go).
+	IssueOpensPRMerges evidence.OpensMerges `json:"issue_opens_pr_merges"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -717,13 +722,16 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
 	resp.ComplexityByRepo = loadEvidenceComplexity(ghpkg.ReviewEvidenceRoot)
+	balanceEntries := evidenceWorkBalanceEntries(s.audit)
+	repoPRs := evidenceFoldWithHints(bundles, hints, repo, "")
 	resp.WorkBalance, resp.WorkBalanceSources = buildEvidenceWorkBalance(evidenceWorkBalanceInputs{
-		Entries: evidenceWorkBalanceEntries(s.audit),
+		Entries: balanceEntries,
 		Rollup:  loadIssueActivityRollup(issueActivityPath),
 		Series:  evidence.LoadIssueSeries(ghpkg.ReviewEvidenceRoot),
-		PRs:     evidenceFoldWithHints(bundles, hints, repo, ""),
+		PRs:     repoPRs,
 		Buckets: s.evidenceWorkBalanceBuckets(win),
 	}, win, repo)
+	resp.IssueOpensPRMerges = buildEvidenceOpensMerges(evidenceOpensMergesEvents(balanceEntries, repoPRs, repo), s.evidenceGovernorMode(), win, now)
 	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == "" && (resp.WorkBalanceSources.IssueSeriesWeeks == 0 || resp.WorkBalanceSources.AuditOnlyWeeks > 0)
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
 	allPRs := evidenceFoldWithHints(bundles, hints, "", "")

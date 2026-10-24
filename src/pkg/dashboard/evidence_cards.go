@@ -20,6 +20,7 @@ const (
 	evidenceCardCIGate             = "claim-vs-verdict"
 	evidenceCardWorkBalance        = "work-balance"
 	evidenceCardShadow             = "shadow-gates"
+	evidenceCardOpensMerges        = "opens-merges"
 )
 
 // evidenceCards derives the per-card letter grade and plain-English summary
@@ -115,6 +116,9 @@ func evidenceCards(resp *EvidenceSummary, win evidenceWindow, now time.Time) map
 		shadow.PassedReverted += side.Passed.Reverted
 	}
 	cards[evidenceCardShadow] = evidence.Card{Grade: evidence.GradeShadow(shadow), PlainSummary: evidence.SummarizeShadow(shadow)}
+
+	om := resp.IssueOpensPRMerges
+	cards[evidenceCardOpensMerges] = evidence.Card{Grade: evidence.GradeOpensMerges(om), PlainSummary: evidence.SummarizeOpensMerges(om)}
 
 	return cards
 }

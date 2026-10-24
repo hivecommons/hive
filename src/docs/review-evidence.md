@@ -139,6 +139,26 @@ reopen, and an unobserved reopen is missed: this is a comparison, not proof
 that the clarity gate caused an improvement. The existing 14-day PR-level
 change-failure proxy is unchanged.
 
+### Issue opens : PR merges
+
+The Evidence card's **Issue opens : PR merges** panel reports how fast the hive files issues against how fast it lands PRs, per repository and fleet-wide over the selected window, read against the governor's current cadence mode rather than against a flat 1:1 (`pkg/evidence/opens_merges.go`, `/api/evidence/summary` → `issue_opens_pr_merges`, server card `cards["opens-merges"]`).
+
+**Definitions.** A *hive-opened issue* is an issue-create action in the hive's own audit log (`agent_issue_created`, `hive_issue_created`): an issue created through the hive's GitHub App identity, either on behalf of an agent or by hive automation. Issues humans or third-party bots open directly on GitHub never pass through the hive and are not counted — this is the hive's filing pace, not the repository's. A *hive-merged PR* follows the Outcome by author kind card: a folded evidence-bundle PR with a recorded merge where either this hive performed the merge (any author kind) or the author kind is `agent` (a merge the hive only observed through the review-outcome ledger counts when an agent wrote the PR). A human or bot PR merged outside the hive is not counted, and PRs the hive never saw are missing.
+
+**Expected band by mode.** The governor's mode is read at render time (`GetState().Mode`) and mapped to the band the ratio *opens ÷ merges* should fall in. Thresholds are named constants in `pkg/evidence/opens_merges.go` and mirrored as `EV_OM_*` in `index.html` for the explainer; change both together.
+
+| Mode | Expects opens per merge | Why |
+|---|---|---|
+| `surge`, `busy` | ≤ 1 (`OpensMergesDrainMax`) | drain: with a full queue the hive should land more than it files |
+| `quiet`, `idle` | 1–2 (`OpensMergesScoutMin`–`OpensMergesScoutMax`) | scout: with room to spare the hive may file ahead, but bounded so idle does not manufacture backlog |
+| unknown (no governor) | 0.75–1.25 (parity ± `OpensMergesParityTolerance`) | no cadence to lean on; expect parity |
+
+The headline states the ratio, the mode, the band and a verdict: ✓ inside the band; ⚠ *backlog growing* above it (also when there are opens and no merges); ⚠ *scouting below cadence* under the quiet/idle floor. Deviation is shown against the band, not against 1.0, so a 0.8 in surge mode is a tick and a 2.7 in quiet mode is a warning.
+
+**Rolling 30 days.** Independently of the window pills, the panel buckets the last 30 UTC days (`rolling_30d_days`, `OpensMergesRollingDays`) and reports the 30-day ratio against the parity band (`rolling_30d_expected`, `rolling_30d_status`): day to day the mode may push the ratio either way, but over a month it should regress toward 1:1. The sparkline plots a trailing 7-day ratio per day with the parity band shaded and a dashed 1:1 line; days with no hive merges in their trailing week are not plotted.
+
+**Grade.** Needs `GradeMinN` (20) hive opens + merges in the window. Score = 1 − how far the ratio lies outside the band, relative to the nearer edge: inside the band A+; 10% out A-; 20% B-; ≥ 30% out, or opens with no merges, C-. Repeated audit entries for the same issue count once per entry (the audit log writes one per create); nothing is weighted by size, and no open is linked to the merge that closed it. Descriptive, not causal.
+
 ## Change-failure links
 
 A proxy for the change failure rate, not a verdict on any change ([#12067](https://github.com/hivecommons/hive/issues/12067)). When a PR merges, Hive scans its title and body for a keyword followed by `#N` or `owner/repo#N` (optionally `PR #N` / `pull request #N`) in the same repository:
@@ -262,6 +282,7 @@ A grade is a letter from **A+** to **C-** (A band green, B band amber, C band re
 | Boundary enforcement | 20 agent writes (hive-mediated + direct through the proxy) | blocked ÷ writes: 0 blocked → A- ("boundary not yet exercised"); ≤ 1% A+, ≤ 2% A, ≤ 5% B, ≤ 10% C+, above C- |
 | CI gate — integrity + convergence | 20 merged PRs with a known merge-time check state | confirmed breaches (required check red or missing on the merged head, as the merge gate judges): 0 → A+; ≤ 1% C+, ≤ 3% C, above C-. Convergence and CI red at claim are disclosed in the card and popover, not graded |
 | Work balance | 20 issues opened in the window | issues opened ÷ closed: ≤ 0.8 A+, ≤ 0.9 A, ≤ 1.0 A-, ≤ 1.15 B+, ≤ 1.3 B, ≤ 1.5 B-, ≤ 1.75 C+, ≤ 2.0 C, above (or nothing closed) C- |
+| Issue opens : PR merges | 20 hive issue opens + hive PR merges in the window | score = 1 − relative distance of opens ÷ merges outside the current governor mode's band (surge/busy ≤ 1; quiet/idle 1–2; unknown 0.75–1.25); inside the band A+, 10% out A-, 20% B-, ≥ 30% or no merges C-. The rolling 30 d is judged against parity and disclosed, not graded |
 | Shadow gates | 20 PRs observed by the shadow gates | would-have-held ÷ observed: ≤ 5% A+, ≤ 10% A, ≤ 15% A-, ≤ 20% B+, ≤ 30% B, ≤ 40% B-, ≤ 50% C+, ≤ 65% C, above C- (nothing was actually held; the share says how often the gates would have intervened) |
 
 The plain sentence under the header is at most 20 words and is templated from the numbers, for example "Agents: 418 merged, 1 reverted, 0 re-opened (0.2%). Humans: 346 merged, 0 undone. 3 outcomes not recorded yet." (a kind with no change failures is shortened to "0 undone" to stay within the word budget) or "All 58 merged PRs with a known state had green required checks. Agent PRs needed a median 1 CI pass." Zero-data windows get an explicit sentence ("No PRs with a recorded outcome in this window.") rather than a blank.

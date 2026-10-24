@@ -251,8 +251,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	}
 	html := indexHTML(t)
 	var source strings.Builder
-	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "renderEvidenceSummary"} {
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -326,6 +326,30 @@ assert.match(card.innerHTML, /no monthly complexity snapshots/);
 assert.match(card.innerHTML, /<details class="ev-panel" data-ev-panel="issue-reopen" open><summary>Issue reopen rate · rolling 30 days<span class="ev-n"[^>]*>n=0<\/span><span class="ev-letter ev-band-none"/);
 assert.match(card.innerHTML, /<div class="ev-empty">— no captured issue closures in the last 30 days<\/div>/);
 assert.doesNotMatch(card.innerHTML, /<section class="ev-panel">|<h4>Issue reopen rate/);
+// Issue opens : PR merges is an evPanel keyed like its server card; empty
+// summaries render the no-data headline and empty line, never NaN.
+assert.match(card.innerHTML, /<details class="ev-panel" data-ev-panel="opens-merges" open><summary>Issue opens : PR merges<span class="ev-n"[^>]*>n=0<\/span>/);
+assert.match(card.innerHTML, /<b>— opens per merge<\/b> · unknown mode expects —/);
+assert.match(card.innerHTML, /<div class="ev-empty">— no hive issue opens or hive PR merges in this window<\/div>/);
+renderEvidenceSummary({issue_opens_pr_merges: {
+  mode: 'QUIET', expected: {mode: 'quiet', min: 1, max: 2, label: '1–2', why: 'scouting'}, status: 'above',
+  headline: '2.7 opens per merge · quiet mode expects 1–2 ⚠ (backlog growing)', n: 37,
+  total: {opens: 27, merges: 10, ratio: 2.7},
+  repos: [{repo: 'o/<r>', opens: 20, merges: 10, ratio: 2}, {repo: 'o/s', opens: 7, merges: 0}],
+  rolling_30d: {opens: 30, merges: 30, ratio: 1}, rolling_30d_expected: {mode: 'unknown', min: 0.75, max: 1.25, label: '0.75–1.25'}, rolling_30d_status: 'in_band',
+  rolling_30d_days: Array.from({length: 30}, (_, i) => ({day: '2026-10-' + String(i + 1).padStart(2, '0'), opens: i % 3, merges: 1}))
+}});
+assert.match(card.innerHTML, /data-ev-panel="opens-merges" open><summary>Issue opens : PR merges<span class="ev-n"[^>]*>n=37<\/span>/);
+assert.match(card.innerHTML, /<div class="ev-headline ev-om-headline ev-om-above"><b>2.7 opens per merge<\/b> · quiet mode expects 1–2 ⚠ \(backlog growing\)<span class="ev-sub"> · rolling 30 d 1 \(in band, expects 0.75–1.25\)<\/span><\/div>/);
+assert.match(card.innerHTML, /<div class="ev-table-wrap"><table class="ev-table ev-om-table"><thead><tr><th>Repository<\/th><th class="num">Opens<\/th><th class="num">Merges<\/th><th class="num">Ratio<\/th>/);
+assert.match(card.innerHTML, /<td>o\/&lt;r&gt;<\/td><td class="num">20<\/td><td class="num">10<\/td><td class="num">2<\/td><td class="ev-om-barcell"><svg class="ev-om-bar"[^>]*><rect class="ev-om-in_band"/);
+assert.match(card.innerHTML, /<td>o\/s<\/td><td class="num">7<\/td><td class="num">0<\/td><td class="num">∞<\/td>/);
+assert.match(card.innerHTML, /<tr class="ev-om-total"[^>]*><td>Fleet<\/td><td class="num">27<\/td><td class="num">10<\/td><td class="num">2.7<\/td>/);
+assert.match(card.innerHTML, /<svg class="ev-svg ev-spark"[^>]*aria-label="Issue opens per PR merge, trailing 7-day ratio per day over the last 30 days"/);
+assert.match(card.innerHTML, /<rect class="ev-om-band"/);
+assert.match(card.innerHTML, /<polyline class="ev-line"/);
+assert.match(card.innerHTML, /<p class="ev-note">Descriptive, not causal; the ratio says how the hive’s filing pace/);
+assert.doesNotMatch(card.innerHTML, /<r>|NaN|undefined|Infinity/);
 renderEvidenceSummary({issue_reopen_rates_30d: [
   {repo: 'o/<repo>', clarity_gate: true, reopened: 1, closed: 4, rate: 0.25},
   {repo: 'o/<repo>', clarity_gate: false, reopened: 0, closed: 3, rate: 0},

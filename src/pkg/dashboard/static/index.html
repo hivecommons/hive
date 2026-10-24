@@ -2064,6 +2064,20 @@
     .ev-table th { color:var(--muted); font-size:var(--fs-2xs); font-weight:600; border-top:none; }
     .ev-table th:first-child, .ev-table td:first-child { text-align:left; padding-left:0; }
     .ev-table th:last-child, .ev-table td:last-child { padding-right:0; }
+    /* Issue opens : PR merges rows reuse .ev-table; the fleet total row and
+       the per-repo bar cell are the only additions. */
+    .ev-table tr.ev-om-total td { font-weight:600; color:var(--text); }
+    .ev-om-barcell { width:28%; }
+    .ev-om-bar { display:block; width:100%; height:6px; }
+    .ev-om-bar rect { fill:var(--green); }
+    .ev-om-bar rect.ev-om-above { fill:var(--red); }
+    .ev-om-bar rect.ev-om-below { fill:var(--amber); }
+    .ev-om-bar rect.ev-om-no_data { fill:var(--muted); opacity:.4; }
+    .ev-om-headline.ev-om-above b { color:var(--red); }
+    .ev-om-headline.ev-om-below b { color:var(--amber); }
+    .ev-svg .ev-om-band { fill:var(--green); opacity:.12; }
+    .ev-svg .ev-om-parity { stroke:var(--muted); stroke-dasharray:2 2; }
+    .ev-legend i.ev-om-band-key { background:var(--green); opacity:.3; }
     /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
        from/to row that opens under the head when "custom" is active. */
     .ev-window-controls { margin-left:auto; }
@@ -27275,6 +27289,21 @@ function burnAreaChart() {
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent writes` : `${blocked} of ${formatNumber(total)} agent writes blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})`,
         };
       },
+      'opens-merges': (dto) => {
+        const om = dto.issue_opens_pr_merges && typeof dto.issue_opens_pr_merges === 'object' ? dto.issue_opens_pr_merges : {};
+        const total = om.total || {}, band = om.expected || {}, roll = om.rolling_30d || {}, rollBand = om.rolling_30d_expected || {};
+        const repos = Array.isArray(om.repos) ? om.repos : [];
+        const n = Number(om.n) || 0;
+        const grade = n >= EV_GRADE_MIN_N ? (om.status === 'in_band' ? 'strong' : 'weak') : 'none';
+        return {
+          matters: 'A hive that files issues faster than it lands PRs is manufacturing backlog; one that only merges and never scouts runs dry. Neither is a flat 1:1 target: when the queue is busy the hive should drain it (merges ahead of opens), and when it is quiet it may scout ahead (opens ahead of merges) within a bound. This card reads the ratio against what the current cadence mode expects, not against 1.0.',
+          measured: 'Issues the hive itself opened (through its GitHub App identity, for an agent or as hive automation) ÷ PRs the hive merged or wrote, per repository and fleet-wide, in the selected window; the governor’s current cadence mode and the band it expects; and the same ratio over a fixed rolling 30 days, which should regress to parity.',
+          how: `Opens are the hive audit log’s issue-create actions (agent-requested and hive-automation issues) — issues humans or third-party bots open directly on GitHub are not in the log and never count. Merges are evidence-bundle PRs that merged where this hive performed the merge or the author kind is agent (the Outcome by author kind card’s agent-authored set); a human or bot PR merged by someone else does not count. Bands: surge / busy expect ≤ ${EV_OM_DRAIN_MAX} opens per merge (drain), quiet / idle expect ${EV_OM_SCOUT_MIN}–${EV_OM_SCOUT_MAX} (scout, bounded), unknown mode and the rolling 30 d expect parity ±${Math.round(EV_OM_PARITY_TOLERANCE * 100)}%. The sparkline plots a trailing ${EV_OM_SPARK_TRAIL_DAYS}-day ratio per day with the parity band shaded.`,
+          good: `Inside the band for the current mode. Over ${EV_OM_ROLLING_DAYS} days the ratio should sit near 1:1 whatever the mode did day to day: a sustained reading above the band means the backlog is growing faster than it is worked; below it in quiet mode means the hive is not scouting even though it has room.`,
+          ours: `${om.headline || 'No reading yet.'} ${total.opens != null ? `${total.opens} hive issue opens against ${total.merges} hive PR merges across ${repos.length} repo(s) in this window.` : ''} Rolling ${EV_OM_ROLLING_DAYS} d: ${roll.opens || 0} opens / ${roll.merges || 0} merges = ${evOmRatioText(roll)} (${evOmStatusLabel(om.rolling_30d_status)}; expects ${rollBand.label || '—'}).`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} hive issue opens + PR merges in the window` : `${evOmRatioText(total)} opens per merge, ${om.status === 'in_band' ? 'inside' : om.status === 'above' ? 'above' : 'below'} the ${band.mode || 'unknown'} band ${band.label || ''}`,
+        };
+      },
     };
 
     // Detail text that used to sit inline under a chart (denominators, policy,
@@ -27661,6 +27690,78 @@ function burnAreaChart() {
       return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Sentinel hits per ISO week"><g class="ev-c3">${weeks.length > 1 ? `<polyline class="ev-line" points="${pts}"/>` : ''}${dots}</g><text x="${l}" y="${h - 3}">${escapeHtml(first)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(last)}</text></svg><div class="ev-legend"><span class="ev-c3"><i class="dot"></i>sentinel hits per ISO week (UTC Monday) · ${total} in ${weeks.length} week(s) · peak ${maxHits}</span></div>`;
     }
 
+    // Issue opens : PR merges — hive-authored issue opens ÷ hive-merged PRs,
+    // read against the governor's cadence band rather than a flat 1.0. The
+    // server (pkg/evidence/opens_merges.go) owns the counts, the band and the
+    // verdict; the constants below mirror its thresholds for the explainer.
+    const EV_OM_DRAIN_MAX = 1;            // surge / busy: opens per merge ≤ this (drain)
+    const EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2; // quiet / idle: scouting, bounded
+    const EV_OM_PARITY_TOLERANCE = 0.25;  // unknown mode and rolling 30 d: parity ± this
+    const EV_OM_ROLLING_DAYS = 30;
+    const EV_OM_SPARK_TRAIL_DAYS = 7;     // the sparkline plots a trailing 7-day ratio per day
+    const EV_OM_BAR_MAX_RATIO = 3;        // the per-repo bar is full at this many opens per merge
+    const EV_OM_SPARK_MAX_RATIO = 3;      // the sparkline's y axis tops out here; higher is clipped
+    const EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };
+    function evOmStatusLabel(status) { return EV_OM_STATUS[status] || 'no data'; }
+    // evOmRatioText: "—" with nothing to count, "∞" with opens but no merges.
+    function evOmRatioText(row) {
+      row = row || {};
+      if (row.ratio != null) return String(Math.round(Number(row.ratio) * 100) / 100);
+      return Number(row.opens) > 0 ? '∞' : '—';
+    }
+    function evOmVerdict(row, band) {
+      const opens = Number(row && row.opens) || 0, merges = Number(row && row.merges) || 0;
+      if (!opens && !merges) return 'no_data';
+      if (!merges) return 'above';
+      const r = opens / merges;
+      if (r > Number(band.max)) return 'above';
+      if (Number(band.min) > 0 && r < Number(band.min)) return 'below';
+      return 'in_band';
+    }
+    function evOmSparkline(days, band) {
+      const rows = (Array.isArray(days) ? days : []).map((d) => ({ day: String((d && d.day) || ''), opens: Number(d && d.opens) || 0, merges: Number(d && d.merges) || 0 }));
+      if (!rows.length) return '';
+      const w = EV_SVG_W, h = 56, l = 22, r = 4, t = 6, b = 14;
+      const pw = w - l - r, ph = h - t - b;
+      const x = (i) => l + (rows.length > 1 ? (i * pw) / (rows.length - 1) : pw / 2);
+      const y = (v) => t + ph - (Math.min(v, EV_OM_SPARK_MAX_RATIO) / EV_OM_SPARK_MAX_RATIO) * ph;
+      const pts = [];
+      rows.forEach((row, i) => {
+        let opens = 0, merges = 0;
+        for (let k = Math.max(0, i - EV_OM_SPARK_TRAIL_DAYS + 1); k <= i; k++) { opens += rows[k].opens; merges += rows[k].merges; }
+        if (merges > 0) pts.push({ i, ratio: opens / merges, opens, merges, day: row.day });
+      });
+      const bandMin = Number(band && band.min) || 0, bandMax = Number(band && band.max) || 0;
+      const shade = bandMax > bandMin ? `<rect class="ev-om-band" x="${l}" y="${y(bandMax).toFixed(1)}" width="${pw}" height="${(y(bandMin) - y(bandMax)).toFixed(1)}"><title>${escapeHtml(`rolling ${EV_OM_ROLLING_DAYS} d expects ${band.label || ''}`)}</title></rect>` : '';
+      const parity = `<line class="ev-axis ev-om-parity" x1="${l}" x2="${w - r}" y1="${y(1).toFixed(1)}" y2="${y(1).toFixed(1)}"/><text x="${l - 4}" y="${(y(1) + 3).toFixed(1)}" text-anchor="end">1:1</text><text x="${l - 4}" y="${(y(EV_OM_SPARK_MAX_RATIO) + 3).toFixed(1)}" text-anchor="end">${EV_OM_SPARK_MAX_RATIO}+</text>`;
+      const line = pts.length > 1 ? `<polyline class="ev-line" points="${pts.map((p) => `${x(p.i).toFixed(1)},${y(p.ratio).toFixed(1)}`).join(' ')}"/>` : '';
+      const dots = pts.map((p) => `<circle class="ev-pt" cx="${x(p.i).toFixed(1)}" cy="${y(p.ratio).toFixed(1)}" r="2"><title>${escapeHtml(`${p.day}: trailing ${EV_OM_SPARK_TRAIL_DAYS} d ${p.opens} opens / ${p.merges} merges = ${Math.round(p.ratio * 100) / 100}`)}</title></circle>`).join('');
+      const empty = pts.length ? '' : `<text x="${(l + pw / 2).toFixed(1)}" y="${(t + ph / 2 + 3).toFixed(1)}" text-anchor="middle">no hive merges in the last ${EV_OM_ROLLING_DAYS} days</text>`;
+      return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Issue opens per PR merge, trailing ${EV_OM_SPARK_TRAIL_DAYS}-day ratio per day over the last ${EV_OM_ROLLING_DAYS} days"><g class="ev-c0">${shade}${parity}${line}${dots}${empty}</g><text x="${l}" y="${h - 3}">${escapeHtml(rows[0].day)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(rows[rows.length - 1].day)}</text></svg>`;
+    }
+    function evOpensMergesHtml(om) {
+      om = om && typeof om === 'object' ? om : {};
+      const total = om.total || {}, band = om.expected || {}, roll = om.rolling_30d || {}, rollBand = om.rolling_30d_expected || {};
+      const repos = Array.isArray(om.repos) ? om.repos : [];
+      const status = om.status || 'no_data';
+      const mark = status === 'in_band' ? '✓' : status === 'no_data' ? '' : `⚠ (${evOmStatusLabel(status)})`;
+      const headline = `<div class="ev-headline ev-om-headline ev-om-${escapeHtml(status)}"><b>${escapeHtml(evOmRatioText(total))} opens per merge</b> · ${escapeHtml(band.mode || 'unknown')} mode expects ${escapeHtml(band.label || '—')} ${escapeHtml(mark)}<span class="ev-sub"> · rolling ${EV_OM_ROLLING_DAYS} d ${escapeHtml(evOmRatioText(roll))} (${escapeHtml(evOmStatusLabel(om.rolling_30d_status))}, expects ${escapeHtml(rollBand.label || '—')})</span></div>`;
+      evDetails['opens-merges'] = `Current governor mode ${band.mode || 'unknown'} (${band.why || 'parity'}): ${band.label || '—'} opens per merge expected. Fleet ${Number(total.opens) || 0} opens / ${Number(total.merges) || 0} merges in this window; rolling ${EV_OM_ROLLING_DAYS} d ${Number(roll.opens) || 0} / ${Number(roll.merges) || 0}.`;
+      const row = (r, cls) => {
+        const ratio = r.ratio != null ? Number(r.ratio) : (Number(r.opens) > 0 ? Infinity : null);
+        const verdict = evOmVerdict(r, band);
+        const width = ratio == null ? 0 : Math.min(1, Math.min(ratio, EV_OM_BAR_MAX_RATIO) / EV_OM_BAR_MAX_RATIO) * 100;
+        const tip = `${r.repo || 'fleet'}: ${Number(r.opens) || 0} hive issue opens / ${Number(r.merges) || 0} hive PR merges = ${evOmRatioText(r)} · ${evOmStatusLabel(verdict)} vs ${band.mode || 'unknown'} band ${band.label || ''}`;
+        return `<tr class="${cls}" title="${escapeHtml(tip)}"><td>${escapeHtml(r.repo || 'Fleet')}</td><td class="num">${Number(r.opens) || 0}</td><td class="num">${Number(r.merges) || 0}</td><td class="num">${escapeHtml(evOmRatioText(r))}</td><td class="ev-om-barcell"><svg class="ev-om-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="ev-om-${verdict}" x="0" y="0" width="${width.toFixed(0)}" height="6" rx="3"/></svg></td></tr>`;
+      };
+      const table = repos.length || Number(total.opens) || Number(total.merges)
+        ? `<div class="ev-table-wrap"><table class="ev-table ev-om-table"><thead><tr><th>Repository</th><th class="num">Opens</th><th class="num">Merges</th><th class="num">Ratio</th><th aria-label="Opens per merge, bar"></th></tr></thead><tbody>${repos.map((r) => row(r, '')).join('')}${row(total, 'ev-om-total')}</tbody></table></div>`
+        : '<div class="ev-empty">— no hive issue opens or hive PR merges in this window</div>';
+      const spark = evOmSparkline(om.rolling_30d_days, rollBand);
+      const legend = spark ? `<div class="ev-legend"><span class="ev-c0"><i class="dot"></i>trailing ${EV_OM_SPARK_TRAIL_DAYS} d opens per merge</span><span><i class="ev-om-band-key"></i>parity band ${escapeHtml(rollBand.label || '')}</span></div>` : '';
+      return `${headline}${table}${spark}${legend}<p class="ev-note">Descriptive, not causal; the ratio says how the hive’s filing pace compares with its landing pace, not whether either was right. Opens count hive-filed issues only (humans and third-party bots excluded); merges count PRs this hive merged or an agent wrote. A merge is not a closed issue and an open is not a commitment to work.</p>`;
+    }
+
     // Panel 5 (#12365): claim vs verdict, read as CI recovery. Headline strip:
     // red-at-claim agent PRs by what happened next (recovered and merged ·
     // green but open · abandoned · still red/pending · outcome unknown).
@@ -27910,6 +28011,7 @@ function burnAreaChart() {
       const issueSourceNote = balanceSrc.issue_series_weeks ? `${balanceSrc.issue_series_weeks} historical repository-week(s) use backfilled GitHub issue history; ${balanceSrc.audit_only_weeks || 0} week(s) include audit fallback, where human and third-party bot opens may be missing. Collector-covered weeks keep the collector data.` : balanceSrc.issues_github_since ? `Issue opens and closes are GitHub-truth (all authors) from ${balanceSrc.issues_github_since}${balanceSrc.audit_only_weeks ? `; the ${balanceSrc.audit_only_weeks} earlier week(s) are audit-log only, where issues humans or third-party bots open directly on GitHub are not observed` : ''}.` : 'GitHub issue history has not been fetched yet, so issue opens and closes are audit-log only: issues humans or third-party bots open directly on GitHub are not observed and the human column is a floor.';
       const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
       const recGate = rec.gate || {}, recConv = rec.convergence || {};
+      const opensMerges = dto.issue_opens_pr_merges && typeof dto.issue_opens_pr_merges === 'object' ? dto.issue_opens_pr_merges : {};
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
@@ -27929,6 +28031,8 @@ function burnAreaChart() {
           `Gate integrity covers every merged PR in the window (any author) whose check state on the merged head is on record; a review-time snapshot that was red is only suspected until GitHub confirms it${recGate.suspected ? ` (${recGate.suspected})` : ''}, and merged PRs with no snapshot on the merged head and no GitHub trail${recGate.unknown ? ` (${recGate.unknown})` : ''} are unknown — neither is green and neither is a breach. Convergence covers agent-authored PRs only: a pass is one CI evaluation of a new head SHA, read from GitHub’s commit trail where it has arrived and from this hive’s own snapshots otherwise (which can miss heads nobody reviewed); in-flight${recConv.in_flight ? ` (${recConv.in_flight})` : ''} and unknown${recConv.unknown ? ` (${recConv.unknown})` : ''} PRs are in no rate. This hive hands off to CI by policy (agents do not wait for CI; a red check holds the PR), so CI red at claim is by design and is disclosed, not graded. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or still-running checks at claim${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column. A non-approve verdict is not proof the agent was wrong.`)
         + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),
           `${issueSourceNote} PR opens, merges and closes come from evidence bundles for PRs opened in the window (live and backfilled), so PRs never seen by this hive are missing. Week-end queue depth is the governor’s actionable open issues / PRs (held items excluded) from its last snapshot of the week, kept ${balanceSrc.queue_retention_days || 30} days${balanceSrc.queue_samples === 0 ? ' — no snapshot in this window' : ''}. Nothing is weighted by size, and an opened issue counts whether or not anyone acted on it. ${throttleNote}`)
+        + evPanel('opens-merges', 'Issue opens : PR merges', opensMerges.n, evOpensMergesHtml(opensMerges),
+          `Opens are hive-filed issues from the audit log only: an issue a human or a third-party bot opened directly on GitHub is not counted, so this is the hive’s own filing pace, not the repo’s. Merges follow the Outcome by author kind card: a PR this hive merged (any author) or an agent-authored PR merged by anyone; a human or bot PR merged outside the hive is not counted, and PRs never seen by this hive are missing. The band is the governor’s mode right now, not the mode when each open or merge happened; the rolling ${EV_OM_ROLLING_DAYS} d is judged against parity for that reason. Issue opens and PR merges are not the same unit of work — nothing here is weighted by size or links an open to the merge that closed it.`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records and the review-outcome ledger; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
