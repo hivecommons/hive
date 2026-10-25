@@ -52,7 +52,7 @@ hub read that store and nothing else (`src/pkg/dashboard/stage_tracker.go:957-96
    the issue path uses `Client.StageLabeler` + `Enforce`
    (`src/pkg/github/stage_labeler.go:63`); the claim relay and ledger hooks
    write `stage/020` / `stage/030` directly as a side effect of a claim
-   (`src/cmd/hive/claimswire.go:196-201`, `src/cmd/hive/claimswire.go:158-171`,
+   (`src/cmd/hive/claimswire.go:236-238`, `src/cmd/hive/claimswire.go:176-178`,
    `src/pkg/github/issue_inprogress.go:126-141`, `src/pkg/github/issue_inprogress.go:186`,
    `src/pkg/github/stage_labeler.go:114`); the PR-claim sync writes 040
    (`src/pkg/github/prclaims.go:1777`, `src/pkg/github/prclaims.go:2037`) and so

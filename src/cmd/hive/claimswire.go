@@ -49,36 +49,45 @@ const claimsGitHubTimeout = 15 * time.Second
 // seconds after the release had finished. The orphaned label kept the
 // issue out of every lane until a person noticed (hivecommons/hive#14201).
 type claimEffectQueue struct {
-	mu    sync.Mutex
-	tails map[string]chan struct{}
+	mu      sync.Mutex
+	pending map[string][]func()
 }
 
 // run schedules fn for key after every fn previously scheduled for key has
-// returned. It never blocks the caller (the ledger fires hooks on the
-// claimant's path).
+// returned. It never waits for GitHub (the ledger fires hooks on the
+// claimant's path). One worker drains each active key; a slow GitHub call
+// must not turn claim/release churn into a chain of waiting goroutines.
+// Pending effects are retained, not dropped: losing a release could leave
+// the preceding claim's labels behind. This bounds goroutines per key, not
+// pending work or the number of distinct active keys.
 func (q *claimEffectQueue) run(key string, fn func()) {
-	done := make(chan struct{})
 	q.mu.Lock()
-	if q.tails == nil {
-		q.tails = map[string]chan struct{}{}
+	if q.pending == nil {
+		q.pending = map[string][]func(){}
 	}
-	prev := q.tails[key]
-	q.tails[key] = done
+	_, running := q.pending[key]
+	q.pending[key] = append(q.pending[key], fn)
 	q.mu.Unlock()
-	go func() {
-		defer func() {
-			close(done)
-			q.mu.Lock()
-			if q.tails[key] == done {
-				delete(q.tails, key)
-			}
+	if !running {
+		go q.drain(key)
+	}
+}
+
+func (q *claimEffectQueue) drain(key string) {
+	for {
+		q.mu.Lock()
+		pending := q.pending[key]
+		if len(pending) == 0 {
+			delete(q.pending, key)
 			q.mu.Unlock()
-		}()
-		if prev != nil {
-			<-prev
+			return
 		}
+		fn := pending[0]
+		pending[0] = nil // Do not retain completed claims in the backing array.
+		q.pending[key] = pending[1:]
+		q.mu.Unlock()
 		fn()
-	}()
+	}
 }
 
 // buildClaimsLedger constructs the ledger from config, or returns nil when

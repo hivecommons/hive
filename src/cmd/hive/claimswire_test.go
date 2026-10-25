@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -503,8 +504,7 @@ func TestClaimEffectQueue_OrdersPerKey(t *testing.T) {
 		close(otherRan)
 	})
 	<-firstDone
-	// The tail is deleted in a deferred cleanup after fn returns, so wait
-	// for both the work and the cleanup rather than checking tails once.
+	// Wait for both the work and the worker's idle-key cleanup.
 	testutil.Eventually(t, 5*time.Second, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
@@ -513,11 +513,72 @@ func TestClaimEffectQueue_OrdersPerKey(t *testing.T) {
 		}
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		return len(q.tails) == 0
-	}, "queued work never finished or tails were retained")
+		return len(q.pending) == 0
+	}, "queued work never finished or idle keys were retained")
 	mu.Lock()
 	defer mu.Unlock()
 	if order[0] != "b1" || order[1] != "a1" || order[2] != "a2" {
 		t.Fatalf("order = %v, want [b1 a1 a2]", order)
+	}
+}
+
+func TestClaimEffectQueue_ChurnDoesNotSpawnWaitingGoroutines(t *testing.T) {
+	q := &claimEffectQueue{}
+	blocked := make(chan struct{})
+	started := make(chan struct{})
+	var unblock sync.Once
+	release := func() { unblock.Do(func() { close(blocked) }) }
+	defer release()
+	q.run("busy", func() {
+		close(started)
+		<-blocked
+	})
+	<-started
+
+	before := runtime.NumGoroutine()
+	const transitions = 2048
+	var mu sync.Mutex
+	var order []int
+	for i := 0; i < transitions; i++ {
+		q.run("busy", func() {
+			mu.Lock()
+			order = append(order, i)
+			mu.Unlock()
+		})
+	}
+	// Allow unrelated runtime/HTTP goroutines some headroom. The old
+	// goroutine chain adds one waiting goroutine for every transition.
+	if growth := runtime.NumGoroutine() - before; growth > 32 {
+		t.Errorf("one blocked issue added %d goroutines for %d transitions", growth, transitions)
+	}
+	release()
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		return len(q.pending) == 0
+	}, "churn worker did not drain and remove its idle key")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != transitions {
+		t.Fatalf("executed %d transitions, want %d (including the final release)", len(order), transitions)
+	}
+	for i, got := range order {
+		if got != i {
+			t.Fatalf("transition %d = %d, want FIFO order", i, got)
+		}
+	}
+}
+
+func TestClaimEffectQueue_RestartsAfterIdle(t *testing.T) {
+	q := &claimEffectQueue{}
+	for i := 0; i < 20; i++ {
+		done := make(chan struct{})
+		q.run("same", func() { close(done) })
+		<-done
+		testutil.Eventually(t, 5*time.Second, func() bool {
+			q.mu.Lock()
+			defer q.mu.Unlock()
+			return len(q.pending) == 0
+		}, "idle key was retained")
 	}
 }
