@@ -379,6 +379,8 @@ project.repo_policies[].acmm_level # TODO #11854
 project.repo_policies[].acmm_pinned # TODO #11854
 project.repo_policies[].auto_merge # TODO #11854
 project.repo_policies[].companion_repos[] # TODO #11854
+project.repo_policies[].forge # TODO #11854
+project.repo_policies[].forge_url # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
 project.repo_policies[].label_driven_supersede_park_actors[] # TODO #11854
