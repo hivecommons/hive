@@ -1976,6 +1976,27 @@ func TestAdoptionPermissionFailureDefersWithoutAttempt(t *testing.T) {
 	}
 }
 
+func TestAdoptionPermissionFailureKeepsLiveSupersede(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
+	h.adopt.permissionStatus = http.StatusInternalServerError
+	h.clock.advance(adoptCheckInterval + time.Minute)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/clanker"), "check-failing:unit", false, nil)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("permission failure was not surfaced")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedHead != "aaa" || rec.AdoptedBy != 90 || rec.AdoptMode != stagelabels.AdoptModeSupersede {
+		t.Fatalf("transient permission failure released a live supersede adoption: %+v", rec)
+	}
+	if len(h.adopt.pulls) != 0 || h.adopt.refAttempts != 0 || len(adoptionComments(h.api)) != 0 {
+		t.Fatalf("permission failure mutated the repository: pulls=%v refs=%d", h.adopt.pulls, h.adopt.refAttempts)
+	}
+}
+
 func TestSupersedeMaintainerRefusesBeforeMutation(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
 	defer done()

@@ -586,17 +586,20 @@ func (c *Engine) adoptionAuthorPermission(ctx context.Context, obs stageObservat
 }
 
 // guardAdoption releases ownership before any further adoption side effects.
-// Unreadable permission also releases ownership: no takeover is safe without it.
+// Unreadable permission blocks the pass without changing the record: a fresh
+// takeover is not safe without evidence, and releasing a live adoption on
+// none would orphan its superseding PR (AdoptedBy) and let the original be
+// adopted a second time once the error ages out of the cache.
 func (c *Engine) guardAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (bool, int, error) {
 	maintainer, err := c.adoptionAuthorPermission(ctx, obs, now)
 	if !maintainer && err == nil {
 		return false, 0, nil
 	}
-	store.ClearAdoption(key)
 	if err != nil {
 		c.warn("stage labels: adoption deferred, author permission unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return true, 0, err
 	}
+	store.ClearAdoption(key)
 	rec, ok := store.Get(key)
 	if !ok || obs.HeadSHA == "" || rec.AdoptionMaintainerNotedHead == obs.HeadSHA {
 		return true, 0, nil
