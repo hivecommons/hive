@@ -27,6 +27,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -76,7 +77,11 @@ func removeLegacyDecisionLabels(ctx context.Context, client *Client, in IssueSta
 // It is housekeeping, so it stands down while the shared rate-limit caution
 // window is engaged and its calls are bounded by legacyDecisionRetireTimeout:
 // a paced ListByRepo with no deadline once stalled the governor run loop
-// (hivecommons/hive#12983). Either way the retirement retries next cycle.
+// (hivecommons/hive#12983). A deadline or cancellation — the 30s bound, the
+// caller's sync deadline, or a pacing slot that would miss either — is the
+// same stand-down, logged at Debug: it is expected under pacing pressure and
+// once warned 42 times in ten minutes (hivecommons/hive#14171). Either way
+// the retirement retries next cycle.
 func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo string, logger *slog.Logger) int {
 	if c == nil || c.client == nil {
 		return 0
@@ -92,12 +97,23 @@ func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo 
 		}
 		return 0
 	}
+	if ctx.Err() != nil {
+		// The caller's sync deadline is already spent; a request would only
+		// fail. Nothing is marked, so the next cycle retries.
+		return 0
+	}
 	ctx, cancel := context.WithTimeout(ctx, legacyDecisionRetireTimeout)
 	defer cancel()
 	deleted := 0
 	for _, label := range legacyDecisionLabels {
 		items, _, err := c.client.Issues.ListByRepo(ctx, owner, name, &gh.IssueListByRepoOptions{State: "open", Labels: []string{label}, ListOptions: gh.ListOptions{PerPage: 1}})
 		if err != nil {
+			if isLegacyDecisionDeferral(err) {
+				if logger != nil {
+					logger.Debug("legacy decision label: retirement deferred by deadline", "repo", repo, "label", label, "error", err)
+				}
+				return deleted
+			}
 			if logger != nil {
 				logger.Warn("legacy decision label: listing open carriers failed", "repo", repo, "label", label, "error", err)
 			}
@@ -110,6 +126,12 @@ func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo 
 		}
 		ok, err := c.deleteLabelDefinition(ctx, owner, name, label)
 		if err != nil {
+			if isLegacyDecisionDeferral(err) {
+				if logger != nil {
+					logger.Debug("legacy decision label: retirement deferred by deadline", "repo", repo, "label", label, "error", err)
+				}
+				return deleted
+			}
 			if logger != nil {
 				logger.Warn("legacy decision label: deleting definition failed", "repo", repo, "label", label, "error", err)
 			}
@@ -124,4 +146,11 @@ func (c *Client) retireLegacyDecisionLabelDefinitions(ctx context.Context, repo 
 	}
 	c.legacyDecisionLabels.mark(key)
 	return deleted
+}
+
+// isLegacyDecisionDeferral reports whether a retirement call failed only
+// because its context ran out (directly, or via the pacing transport's
+// slot-would-miss-deadline fail-fast, which wraps context.DeadlineExceeded).
+func isLegacyDecisionDeferral(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
