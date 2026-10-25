@@ -26629,7 +26629,7 @@ function burnAreaChart() {
       return previous ? `previous ${label}` : `last ${label}`;
     }
     function prtActorDefinition() {
-      return "Hive means this hive's sweep/queue/relay or hive/App bot actor; human means a non-bot login; other automation means a non-hive bot. Unknown actors are excluded.";
+      return "Hive means this hive's sweep/queue/relay/forge or hive/App bot actor; human means a non-bot login; other automation means a non-hive bot. Unknown actors are excluded.";
     }
     function prtTrendStats(dto) {
       const series = Array.isArray(dto.series) ? dto.series : [];
@@ -26692,7 +26692,7 @@ function burnAreaChart() {
       const slaReport = prtSLAReport();
       const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})${prtSLASummary(slaReport)}`;
       setSectionSummary('pr-throughput-section', summary, `Merged and opened PRs in the selected window; ${hiveMergedPct}% hive-attributed merged share`);
-      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
+      const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', forge: 'forge adapter', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
         .map((k) => `${Number(byPath[k])} ${escapeHtml(pathLabels[k] || k)}`);
       const pathsHtml = pathParts.length ? `<div class="prt-paths">Merged by: ${pathParts.join(' · ')}</div>` : '';

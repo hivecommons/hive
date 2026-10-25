@@ -379,7 +379,17 @@ type MergePRResult struct {
 // defaults to "squash" when empty. When expectSHA is non-empty it is passed as
 // the required head SHA, so the merge fails cleanly (409) instead of merging an
 // unexpected commit if the head moved after eligibility was computed.
+//
+// MergePR is the hive-merge relay's entry point and audits the merge as
+// path=relay; other callers name their own path through MergePRVia.
 func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMethod, expectSHA string) (MergePRResult, error) {
+	return c.MergePRVia(ctx, repo, number, mergeMethod, expectSHA, PRAuditPathRelay)
+}
+
+// MergePRVia is MergePR with the pr_merged audit path= named by the caller
+// (one of the PRAuditPath* values), so a merge is attributed to the code path
+// that asked for it rather than always to the relay.
+func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeMethod, expectSHA, auditPath string) (MergePRResult, error) {
 	if c == nil || c.client == nil {
 		return MergePRResult{}, ErrNoGitHubClient
 	}
@@ -396,8 +406,8 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
 	}
-	// Forward-merges keep ancestry no matter which caller (sweep or the
-	// hive-merge relay) asked for the merge. A failed lookup falls through to
+	// Forward-merges keep ancestry no matter which caller (sweep, the
+	// hive-merge relay or the forge adapter) asked for the merge. A failed lookup falls through to
 	// the requested method.
 	if mergeMethod != "merge" {
 		restCtx := WithRESTCaller(ctx, "hive:merge_pr")
@@ -452,9 +462,10 @@ func (c *Client) MergePR(ctx context.Context, repo string, number int, mergeMeth
 	// Audit the merge UNCONDITIONALLY so the dashboard audit log shows the full
 	// create→merge loop. The merge is performed by the hive itself (not a single
 	// coding agent), so it is attributed to the governor flow, mirroring the
-	// hive-issue-created attribution in advisory.go. MergePR's only caller is
-	// the merge-request watcher (the hive-merge relay), hence path=relay.
-	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, PRAuditPathRelay)
+	// hive-issue-created attribution in advisory.go. path= is the caller's:
+	// relay for the merge-request watcher (MergePR), forge for the forge
+	// adapter.
+	c.RecordPRMergedAudit(owner+"/"+repo, number, mergeMethod, sha, auditPath)
 	return MergePRResult{SHA: sha, Merged: merged, Message: res.GetMessage()}, nil
 }
 

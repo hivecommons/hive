@@ -4341,7 +4341,7 @@ func (c *Client) IsHeldLabels(labels []string) bool {
 
 // RecordPRMergedAudit records the standard PR-merged audit event. path names
 // the code path that performed the merge (PRAuditPathSweep, PRAuditPathQueue,
-// PRAuditPathRelay).
+// PRAuditPathRelay, PRAuditPathForge).
 func (c *Client) RecordPRMergedAudit(repo string, number int, method, sha, path string) {
 	if c == nil {
 		return

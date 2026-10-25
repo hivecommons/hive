@@ -136,6 +136,10 @@ const (
 	// MergePR from the hive-merge relay, or a PR close from the issue-request
 	// watcher.
 	PRAuditPathRelay = "relay"
+	// PRAuditPathForge marks a merge the forge adapter (pkg/forge's GitHub
+	// Merge) carried out through MergePRVia, so forge-driven merges are not
+	// counted as relay merges.
+	PRAuditPathForge = "forge"
 )
 
 // System "agent" names recorded for creations no single coding agent

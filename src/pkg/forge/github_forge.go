@@ -52,11 +52,12 @@ type githubPullReader interface {
 }
 
 // githubMerger is the merge primitive of *github.Client. The adapter delegates
-// to MergePR rather than calling the REST endpoint itself, so a forge merge
+// to MergePRVia rather than calling the REST endpoint itself, so a forge merge
 // inherits exactly what the hive's own merge relay has: the mutation boundary
-// and its reconciliation, the forward-merge guard, and the merge audit record.
+// and its reconciliation, the forward-merge guard, and the merge audit record
+// (attributed path=forge, not path=relay).
 type githubMerger interface {
-	MergePR(ctx context.Context, repo string, number int, mergeMethod, expectSHA string) (github.MergePRResult, error)
+	MergePRVia(ctx context.Context, repo string, number int, mergeMethod, expectSHA, auditPath string) (github.MergePRResult, error)
 }
 
 // githubRefDeleter is the subset of go-github's *gh.GitService the merge path
@@ -81,7 +82,7 @@ const markerLookupPerPage = 100
 // It is deliberately thin: read operations delegate to the underlying client
 // and translate its already-neutralized types (github.Issue/PullRequest) into
 // the forge-neutral types; write and merge operations delegate to go-github's
-// services and to *github.Client.MergePR. No forge logic is duplicated here.
+// services and to *github.Client.MergePRVia. No forge logic is duplicated here.
 type gitHubForge struct {
 	client githubReader
 	writer githubWriter
@@ -368,10 +369,10 @@ var gitHubMergeMethods = map[string]string{
 // endpoint — and GitHub's own refusals map onto the same sentinels every
 // adapter reports.
 //
-// The merge itself delegates to *github.Client.MergePR rather than calling the
-// REST endpoint here, so a forge merge inherits what the hive's merge relay
-// has: the mutation boundary and its reconciliation, the forward-merge guard,
-// and the merge audit record.
+// The merge itself delegates to *github.Client.MergePRVia rather than calling
+// the REST endpoint here, so a forge merge inherits what the hive's merge
+// relay has: the mutation boundary and its reconciliation, the forward-merge
+// guard, and the merge audit record, which it attributes path=forge.
 func (f *gitHubForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	if strings.TrimSpace(repo) == "" {
 		return fmt.Errorf("github: merge: repo is required")
@@ -411,7 +412,7 @@ func (f *gitHubForge) Merge(ctx context.Context, repo string, number int, opts M
 	// expect is passed through so GitHub enforces the pin server-side too: a
 	// push landing between the read above and the merge is refused by the
 	// forge (409) instead of merging work nobody reviewed.
-	if _, err := f.merger.MergePR(ctx, slug, number, method, expect); err != nil {
+	if _, err := f.merger.MergePRVia(ctx, slug, number, method, expect, github.PRAuditPathForge); err != nil {
 		return gitHubMergeRefusal(slug, number, err)
 	}
 	if opts.DeleteBranch {

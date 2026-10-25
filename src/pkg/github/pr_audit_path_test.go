@@ -58,8 +58,48 @@ func TestMergeRequestWatcher_AuditsPRMergedWithRelayPath(t *testing.T) {
 	}
 }
 
+// MergePRVia records the caller's path= rather than MergePR's relay default,
+// so a merge from another caller is not attributed to the relay (#14139).
+func TestMergePRViaAuditsCallerPath(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		via  bool
+		want string
+	}{
+		{name: "MergePR is the relay", want: PRAuditPathRelay},
+		{name: "MergePRVia forge", via: true, want: PRAuditPathForge},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newMergeMockServer(t, 0, nil)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+			var trail []prAuditRec
+			c.SetAttributionAudit(func(action, detail, agent string) {
+				if action == AuditActionPRMerged {
+					trail = append(trail, prAuditRec{action, detail, agent})
+				}
+			})
+			var err error
+			if tt.via {
+				_, err = c.MergePRVia(context.Background(), "o/r", 42, "squash", "", PRAuditPathForge)
+			} else {
+				_, err = c.MergePR(context.Background(), "o/r", 42, "squash", "")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(trail) != 1 {
+				t.Fatalf("trail = %#v, want one pr_merged", trail)
+			}
+			if !strings.Contains(trail[0].detail, "path="+tt.want) {
+				t.Errorf("detail %q missing path=%s", trail[0].detail, tt.want)
+			}
+		})
+	}
+}
+
 func TestRecordPRMergedAuditCarriesPath(t *testing.T) {
-	for _, path := range []string{PRAuditPathSweep, PRAuditPathQueue, PRAuditPathRelay} {
+	for _, path := range []string{PRAuditPathSweep, PRAuditPathQueue, PRAuditPathRelay, PRAuditPathForge} {
 		t.Run(path, func(t *testing.T) {
 			c := &Client{}
 			var trail []prAuditRec
