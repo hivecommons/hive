@@ -535,3 +535,81 @@ func TestDecisionEntryRepostsWhenCauseChanges(t *testing.T) {
 		t.Fatalf("cause list grew: %+v", rec)
 	}
 }
+
+// TestNeedsHumanCauseNamesSupersessionPark: an 085 re-park of a PR wearing
+// the supersession sweep's `needs-human` names that cause and how to release
+// it instead of a bare lane condition (hivecommons/hive#14155).
+func TestNeedsHumanCauseNamesSupersessionPark(t *testing.T) {
+	const app = "hive-app[bot]"
+	sweep := hgithub.SupersessionSweepMarker + "\nSupersession sweep found that this PR's claimed issue is already closed by another merged PR.\n\n- Claimed issue: hive#13536\n- Closing PR: [#13586](https://github.com/hivecommons/hive/pull/13586)\n\n**Decision needed:** keep open or close.\n"
+	comment := func(login, body string) *gh.IssueComment {
+		return &gh.IssueComment{User: &gh.User{Login: gh.Ptr(login)}, Body: gh.Ptr(body)}
+	}
+	comments := []*gh.IssueComment{
+		comment(app, sweep),
+		comment(app, "<!-- hive:human-071-note head=abc -->\n@author this PR is held at `stage/071-needs-author`."),
+		comment("author", "Pushed a fix."),
+	}
+	cause, ok := needsHumanCauseFromComments(comments, app)
+	if !ok {
+		t.Fatal("supersession marker by the hive app must resolve a cause")
+	}
+	if !strings.Contains(cause.Reason, "claimed issue hive#13536 was already closed by merged PR #13586") {
+		t.Fatalf("reason = %q", cause.Reason)
+	}
+
+	generic := stagelabels.RouteHuman(stagelabels.Evidence{Head: "sha", Verdict: stagelabels.VerdictApproved, Cause: stagelabels.CauseDecision, Checks: stagelabels.CheckSummary{Total: 1, Green: 1, Known: true}})
+	if generic.Stage != stagelabels.NeedsDecision || !slices.Contains(generic.Reasons, stagelabels.DecisionReasonLaneUnattended) {
+		t.Fatalf("generic route = %+v", generic)
+	}
+	generic.Actions, _ = decisionActions(stageObservation{Reason: "label:needs-human"}, stagelabels.Evidence{Verdict: stagelabels.VerdictApproved})
+	body := stagelabels.DecisionComment(applyNeedsHumanCause(generic, cause))
+	if strings.Contains(body, stagelabels.DecisionReasonLaneUnattended) || strings.Contains(body, "lane condition named above") {
+		t.Fatalf("085 comment still carries the generic cause:\n%s", body)
+	}
+	if !strings.Contains(body, cause.Reason) || !strings.Contains(body, cause.Action) {
+		t.Fatalf("085 comment does not name the cause:\n%s", body)
+	}
+	if again := applyNeedsHumanCause(applyNeedsHumanCause(generic, cause), cause); len(again.Reasons) != len(generic.Reasons) || len(again.Actions) != len(generic.Actions) {
+		t.Fatalf("applying the cause twice duplicated it: %+v", again)
+	}
+
+	plain := comment(app, hgithub.SupersessionSweepMarker+"\nSupersession sweep found something.")
+	if cause, ok := needsHumanCauseFromComments([]*gh.IssueComment{plain}, app); !ok || !strings.Contains(cause.Reason, "supersession sweep") {
+		t.Fatalf("marker without issue lines = %+v, %v", cause, ok)
+	}
+}
+
+// TestNeedsHumanCauseNotFoundKeepsGenericText: with no hive cause marker
+// (none posted, posted by someone else, or the app login unknown) the 085
+// comment keeps its generic lane-condition wording.
+func TestNeedsHumanCauseNotFoundKeepsGenericText(t *testing.T) {
+	const app = "hive-app[bot]"
+	sweep := hgithub.SupersessionSweepMarker + "\n- Claimed issue: hive#1\n- Closing PR: [#2](https://example.invalid/2)\n"
+	comment := func(login, body string) *gh.IssueComment {
+		return &gh.IssueComment{User: &gh.User{Login: gh.Ptr(login)}, Body: gh.Ptr(body)}
+	}
+	for name, tc := range map[string]struct {
+		comments []*gh.IssueComment
+		app      string
+	}{
+		"no marker":         {comments: []*gh.IssueComment{comment(app, "<!-- hive:human-071-note head=abc -->"), comment("maintainer", "needs-human please")}, app: app},
+		"marker by someone": {comments: []*gh.IssueComment{comment("someone", sweep)}, app: app},
+		"app login unknown": {comments: []*gh.IssueComment{comment(app, sweep)}, app: ""},
+		"no comments":       {app: app},
+	} {
+		if cause, ok := needsHumanCauseFromComments(tc.comments, tc.app); ok {
+			t.Fatalf("%s: unexpected cause %+v", name, cause)
+		}
+	}
+	actions, _ := decisionActions(stageObservation{Reason: "label:needs-human"}, stagelabels.Evidence{Verdict: stagelabels.VerdictApproved})
+	route := stagelabels.Route{Stage: stagelabels.NeedsDecision, Reasons: []string{stagelabels.DecisionReasonLaneUnattended}, Actions: actions}
+	var e *Engine
+	got := e.withNeedsHumanCause(context.Background(), stageObservation{Labels: []string{"needs-human"}}, route)
+	if !reflect.DeepEqual(got, route) {
+		t.Fatalf("engine without an app login changed the route: %+v", got)
+	}
+	if body := stagelabels.DecisionComment(got); !strings.Contains(body, stagelabels.DecisionReasonLaneUnattended) || !strings.Contains(body, "lane condition named above") {
+		t.Fatalf("generic 085 text lost:\n%s", body)
+	}
+}

@@ -14,6 +14,11 @@ const (
 	supersessionSweepMarker            = "<!-- hive:pr-supersession-sweep -->"
 )
 
+// SupersessionSweepMarker opens the sweep's one comment on a PR it parked
+// with `needs-human`, so the automerge lane's 085 entry can name that cause
+// (hivecommons/hive#14155).
+const SupersessionSweepMarker = supersessionSweepMarker
+
 // Supersession sweep audit actions the dashboard replays from the audit log
 // (recorded as SupersessionSweepAuditPrefix + action), so producer and
 // consumer share one name per action.

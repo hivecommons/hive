@@ -250,7 +250,7 @@ func RouteHuman(e Evidence) Route {
 	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" {
 		decide = append(decide, e.CauseReason)
 	} else if e.Cause == CauseDecision {
-		decide = append(decide, "the automerge lane will not merge this unattended")
+		decide = append(decide, DecisionReasonLaneUnattended)
 	}
 	if len(decide) > 0 {
 		return Route{Stage: NeedsDecision, Reasons: decide, Summary: summary, Head: e.Head, SelfAuthored: e.SelfAuthored, Verdict: e.Verdict}
@@ -359,6 +359,10 @@ func PreMergeSoakSummary(soak, elapsed time.Duration) string {
 	}
 	return fmt.Sprintf("soaking: admitted, %s of %s elapsed", elapsed.Round(time.Minute), soak.Round(time.Minute))
 }
+
+// DecisionReasonLaneUnattended is the 085 reason when a lane named no cause
+// of its own; a caller that knows the cause replaces it.
+const DecisionReasonLaneUnattended = "the automerge lane will not merge this unattended"
 
 // Entry-comment markers for the two human stages.
 const (

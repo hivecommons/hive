@@ -11,6 +11,7 @@ package automerge
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -174,10 +175,14 @@ func decisionActions(obs stageObservation, e stagelabels.Evidence) ([]string, bo
 		actions = append(actions, "Resolve the reason for `"+label+"`, then have a maintainer remove that label; `/hive approve` does not remove it.")
 	}
 	if len(actions) == 0 {
-		actions = append(actions, "A maintainer must resolve the lane condition named above or review and merge manually; `/hive approve` does not override that condition.")
+		actions = append(actions, decisionActionLaneCondition)
 	}
 	return actions, false
 }
+
+// decisionActionLaneCondition is the release step when no specific cause is
+// known.
+const decisionActionLaneCondition = "A maintainer must resolve the lane condition named above or review and merge manually; `/hive approve` does not override that condition."
 
 // trustCause renders the trust reason for the 090 comment.
 func trustCause(reason string, role stagelabels.Role) string {
@@ -262,7 +267,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	case stagelabels.ReadyForHumanMerge:
 		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
-		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
+		body = stagelabels.DecisionComment(c.withNeedsHumanCause(ctx, obs, route)) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
 	}
@@ -296,4 +301,115 @@ func (c *Engine) workflowApprovalSnippet(reason string) string {
 	b.WriteString(strings.TrimRight(workflow, "\n"))
 	b.WriteString("\n```\n\n</details>")
 	return b.String()
+}
+
+// needsHumanCause is the hive step that put `needs-human` on a PR, read back
+// from that step's marker comment so an 085 park names it instead of a bare
+// lane condition (hivecommons/hive#14155).
+type needsHumanCause struct {
+	Reason string
+	Action string
+}
+
+var (
+	supersessionClaimedIssueLine = regexp.MustCompile(`(?m)^- Claimed issue: (\S+)\s*$`)
+	supersessionClosingPRLine    = regexp.MustCompile(`(?m)^- Closing PR: \[?([^\]\s]+)`)
+)
+
+// needsHumanCauseFromComments returns the cause recorded by the newest
+// hive-authored marker comment that accompanies a `needs-human` park. Only
+// comments by appLogin count, so nobody else can put words in the 085 note.
+func needsHumanCauseFromComments(comments []*gh.IssueComment, appLogin string) (needsHumanCause, bool) {
+	appLogin = strings.TrimSpace(appLogin)
+	if appLogin == "" {
+		return needsHumanCause{}, false
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		comment := comments[i]
+		if comment == nil || !strings.EqualFold(hgithub.SafeGetLogin(comment.GetUser()), appLogin) {
+			continue
+		}
+		if body := comment.GetBody(); strings.Contains(body, hgithub.SupersessionSweepMarker) {
+			return supersessionNeedsHumanCause(body), true
+		}
+	}
+	return needsHumanCause{}, false
+}
+
+// supersessionNeedsHumanCause summarises the supersession sweep's park
+// (parkSupersededPR) in one line.
+func supersessionNeedsHumanCause(body string) needsHumanCause {
+	reason := "the supersession sweep added `needs-human`: this PR's claimed issue was already closed by another merged PR"
+	issue, closer := "", ""
+	if m := supersessionClaimedIssueLine.FindStringSubmatch(body); m != nil {
+		issue = m[1]
+	}
+	if m := supersessionClosingPRLine.FindStringSubmatch(body); m != nil {
+		closer = m[1]
+	}
+	if issue != "" && closer != "" {
+		reason = "the supersession sweep added `needs-human`: claimed issue " + issue + " was already closed by merged PR " + closer + "; decide whether to keep this PR or close it as superseded"
+	}
+	return needsHumanCause{
+		Reason: reason,
+		Action: "Read the supersession sweep comment above and decide: to keep this PR, a maintainer removes `needs-human` and the hive re-evaluates on its next pass; otherwise close it as superseded. A new head does not clear this park.",
+	}
+}
+
+// withNeedsHumanCause names the cause of a hive-applied `needs-human` in an
+// 085 route that would otherwise read as a bare lane condition. Without a
+// recognised marker comment the route is returned unchanged.
+func (c *Engine) withNeedsHumanCause(ctx context.Context, obs stageObservation, route stagelabels.Route) stagelabels.Route {
+	if route.Stage != stagelabels.NeedsDecision || !hasLabelFold(obs.Labels, "needs-human") {
+		return route
+	}
+	appLogin := ""
+	if c != nil && c.transport != nil {
+		appLogin = strings.TrimSpace(c.transport.AppBotLogin())
+	}
+	if appLogin == "" {
+		return route
+	}
+	comments, err := c.listIssueComments(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: reading needs-human cause failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return route
+	}
+	cause, ok := needsHumanCauseFromComments(comments, appLogin)
+	if !ok {
+		return route
+	}
+	return applyNeedsHumanCause(route, cause)
+}
+
+// applyNeedsHumanCause swaps the generic 085 reason and release step for
+// the cause's own, adding them when the generic ones are absent.
+func applyNeedsHumanCause(route stagelabels.Route, cause needsHumanCause) stagelabels.Route {
+	route.Reasons = replaceOrAppend(route.Reasons, stagelabels.DecisionReasonLaneUnattended, cause.Reason)
+	route.Actions = replaceOrAppend(route.Actions, decisionActionLaneCondition, cause.Action)
+	return route
+}
+
+// replaceOrAppend returns a copy of list with generic replaced by specific,
+// or specific appended when generic is absent and specific is not present.
+func replaceOrAppend(list []string, generic, specific string) []string {
+	out := make([]string, 0, len(list)+1)
+	replaced := false
+	for _, item := range list {
+		if item == generic {
+			if !replaced {
+				out = append(out, specific)
+				replaced = true
+			}
+			continue
+		}
+		if item == specific {
+			replaced = true
+		}
+		out = append(out, item)
+	}
+	if !replaced {
+		out = append(out, specific)
+	}
+	return out
 }
