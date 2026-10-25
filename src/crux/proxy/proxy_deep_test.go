@@ -355,6 +355,10 @@ func TestForwardPlainDirectSuccess(t *testing.T) {
 	defer upstream.Close()
 
 	p := newTestProxy()
+	// The httptest upstream listens on loopback, which the plain-forward
+	// destination guard refuses by default (#14082). This case is about the
+	// successful relay, so it runs with the operator opt-in lifted.
+	p.allowPrivateForward = true
 	clientConn, proxyClient := net.Pipe()
 	defer clientConn.Close()
 
@@ -471,6 +475,10 @@ func TestProxyHTTPGitPath(t *testing.T) {
 
 func TestHandleConnHTTPRequest(t *testing.T) {
 	p := newTestProxy()
+	// Loopback upstream: this case covers handleConn's routing of a
+	// non-CONNECT request, not the destination guard (#14082), so the guard is
+	// lifted and the forward must actually succeed.
+	p.allowPrivateForward = true
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -491,10 +499,8 @@ func TestHandleConnHTTPRequest(t *testing.T) {
 		t.Fatalf("read response: %v", err)
 	}
 	defer resp.Body.Close()
-	// The forwardPlainDirect will attempt to RoundTrip
-	// Status could be 200 or 502 depending on host resolution
-	if resp.StatusCode != 200 && resp.StatusCode != 502 {
-		t.Errorf("unexpected status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 — handleConn must route a non-CONNECT request to forwardPlainDirect", resp.StatusCode)
 	}
 }
 

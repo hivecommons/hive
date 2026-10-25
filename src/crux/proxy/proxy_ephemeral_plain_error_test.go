@@ -70,6 +70,10 @@ func TestForwardPlainDirectUpstreamError(t *testing.T) {
 	_ = l.Close()
 
 	p := newTestProxy()
+	// A reserved-then-closed port is only reachable on loopback, which the
+	// destination guard refuses before dialling (#14082). This case is about
+	// the 502 the DIAL failure must produce, so the guard is lifted.
+	p.allowPrivateForward = true
 	clientConn, proxyClient := net.Pipe()
 	defer clientConn.Close()
 
