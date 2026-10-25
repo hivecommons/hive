@@ -119,6 +119,10 @@ jobs:
           git config user.name "hive-release[bot]"
           git config user.email "hive-release@hive.kubestellar.io"
           git add -A
+          # .hive-sync carries a timestamp, so it alone is not a change worth a commit.
+          if [ "$(git diff --cached --name-only)" = ".hive-sync" ]; then
+            git restore --staged --worktree .hive-sync
+          fi
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Publish tree already matches hive@${HIVE_SHA:0:12}; nothing to commit." | tee -a "$GITHUB_STEP_SUMMARY"
