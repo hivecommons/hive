@@ -140,6 +140,46 @@ the floor, T2 adds confinement, T1 adds the unattended-credential story.
 The bar for T3 is honesty about posture, not confinement. A backend with no
 sandbox, no deny-list, and no unattended-credential story still lands here.
 
+### Omnigent: how its policy composes with Hive's
+
+`omnigent` is a T3 meta-harness: it drives Claude Code, Codex, Cursor, and Pi
+and has its own policy engine (ALLOW / DENY / ASK verdicts at tool-call
+checkpoints). Hive treats that engine as an extra layer on top of its own, never
+a replacement. Facts about Omnigent below are the ones the backend integration
+([#14094](https://github.com/hivecommons/hive/issues/14094)) records; anything
+else is a Hive *requirement* to be verified by #14119, not an observed behaviour.
+
+**Precedence.** A call must pass both layers, and the stricter answer wins.
+
+1. **Hive wins on GitHub writes.** Every GitHub write goes through Hive's
+   proxy, and the write gate is unchanged for an `omnigent` agent: `POST
+   /repos/{owner}/{repo}/pulls` and `PUT /repos/{owner}/{repo}/pulls/{n}/merge`
+   stay denied, as does the rest of the write gate. An Omnigent policy that
+   allows a write (for example its `github_policy`) does not open it; the proxy
+   still answers 403. Omnigent can only narrow what Hive permits.
+2. **Hive's tool-denial list still applies.** Hive requires that the denials it
+   applies to other backends are handed to Omnigent as DENY rules, or enforced
+   below it at the proxy. The integration does not yet establish the handoff
+   mechanism; until #14119 verifies one, the proxy is the only enforcement point
+   Hive relies on, and the backend stays T3.
+3. **Omnigent's ASK never replaces Hive's gate.** An approval given inside
+   Omnigent satisfies Omnigent only. Unattended runs must not depend on an ASK
+   being answered.
+
+**Sandbox is additive.** Omnigent's `enforce_sandbox` policy and any remote
+sandbox it drives are credited as extra defence in depth. They are not wired by
+Hive launch flags, so Hive cannot assert they are on. The local-path posture
+therefore stays the T3 refusal gate (`HIVE_OMNIGENT_DANGEROUSLY_RUN_UNCONFINED=1`),
+and container mode stays the default boundary. See the `omnigent` row in the
+[confinement matrix](sandbox-isolation.md#per-backend-confinement-on-the-contributor-local-path).
+
+**Credentials stay Hive-managed.** The harnesses Omnigent drives (Claude Code,
+Codex, Cursor, Pi) take model credentials the way they do under their own
+backends. GitHub access stays on Hive's proxied, short-lived path. Omnigent must
+not need, store, or be given a separate GitHub credential; an integration that
+requires one does not meet the bar. Its own provider or server credentials
+(`~/.omnigent`) are separate from GitHub access and gain no GitHub reach.
+
 ### T2 - supported, additionally
 
 9. **Confinement floor wired and tested.** One of:
