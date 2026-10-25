@@ -105,12 +105,14 @@ func (s *Server) gatherDelegatedPRContext(ctx context.Context, repo string, pr *
 		mergeable := other.GetMergeable() && !other.GetDraft() && (state == "clean" || state == "has_hooks")
 		if other.GetMergeable() && !other.GetDraft() && state == "blocked" {
 			// GitHub says "blocked" for a missing review and for red required
-			// checks alike; only the former is a mergeable competitor.
+			// checks alike; only the former is a mergeable competitor. A head
+			// whose checks never ran (an untrusted fork awaiting ok-to-test)
+			// or are still pending has not proven anything yet.
 			summary, err := github.SummarizeCommitChecks(ctx, api, owner, name, other.GetHead().GetSHA())
 			if err != nil {
 				return fmt.Errorf("reading checks for competing PR %s#%d: %w", repo, number, err)
 			}
-			mergeable = len(summary.Red) == 0
+			mergeable = len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0
 		}
 		in.Competing = append(in.Competing, delegatedecision.CompetingPR{
 			Number: number, HiveAuthored: s.deps.GHClient.IsHiveAuthorLogin(other.GetUser().GetLogin()),

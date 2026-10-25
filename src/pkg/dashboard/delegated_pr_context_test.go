@@ -85,18 +85,19 @@ func TestDelegatedContributorActivity(t *testing.T) {
 
 func TestGatherDelegatedRealPRContext(t *testing.T) {
 	for _, tc := range []struct {
-		name, state, mergeState string
-		mergeable, draft, redCI bool
-		want                    int
+		name, state, mergeState       string
+		mergeable, draft, redCI, noCI bool
+		want                          int
 	}{
-		{"adequate contributor", "open", "clean", true, false, false, 1},
-		{"approval blocked contributor", "open", "blocked", true, false, false, 1},
-		{"red checks blocked contributor", "open", "blocked", true, false, true, 1},
-		{"blocked but conflicting", "open", "blocked", false, false, false, 1},
-		{"behind", "open", "behind", true, false, false, 1},
-		{"unknown", "open", "unknown", false, false, false, 1},
-		{"draft", "open", "clean", true, true, false, 1},
-		{"closed since snapshot", "closed", "clean", true, false, false, 0},
+		{"adequate contributor", "open", "clean", true, false, false, false, 1},
+		{"approval blocked contributor", "open", "blocked", true, false, false, false, 1},
+		{"red checks blocked contributor", "open", "blocked", true, false, true, false, 1},
+		{"checks never ran blocked contributor", "open", "blocked", true, false, false, true, 1},
+		{"blocked but conflicting", "open", "blocked", false, false, false, false, 1},
+		{"behind", "open", "behind", true, false, false, false, 1},
+		{"unknown", "open", "unknown", false, false, false, false, 1},
+		{"draft", "open", "clean", true, true, false, false, 1},
+		{"closed since snapshot", "closed", "clean", true, false, false, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,11 +110,14 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/pulls/9"):
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "state": tc.state, "user": map[string]string{"login": "alice"}, "base": map[string]string{"ref": "v5"}, "head": map[string]string{"sha": "abc123"}, "mergeable": tc.mergeable, "mergeable_state": tc.mergeState, "draft": tc.draft})
 				case strings.HasSuffix(r.URL.Path, "/commits/abc123/status"):
-					if tc.redCI {
+					switch {
+					case tc.redCI:
 						_, _ = w.Write([]byte(`{"state":"failure","statuses":[{"context":"ci/test","state":"failure"}]}`))
-						return
+					case tc.noCI:
+						_, _ = w.Write([]byte(`{"state":"pending","statuses":[]}`))
+					default:
+						_, _ = w.Write([]byte(`{"state":"success","statuses":[{"context":"ci/test","state":"success"}]}`))
 					}
-					_, _ = w.Write([]byte(`{"state":"pending","statuses":[]}`))
 				case strings.HasSuffix(r.URL.Path, "/commits/abc123/check-runs"):
 					_, _ = w.Write([]byte(`{"total_count":0,"check_runs":[]}`))
 				default:
@@ -133,7 +137,7 @@ func TestGatherDelegatedRealPRContext(t *testing.T) {
 				t.Fatalf("input = %+v", in)
 			}
 			if tc.want > 0 {
-				adequate := (tc.mergeState == "clean" || tc.mergeState == "blocked") && tc.mergeable && !tc.draft && !tc.redCI
+				adequate := (tc.mergeState == "clean" || (tc.mergeState == "blocked" && !tc.redCI && !tc.noCI)) && tc.mergeable && !tc.draft
 				if in.Competing[0].Mergeable != adequate {
 					t.Fatalf("competing = %+v", in.Competing)
 				}
