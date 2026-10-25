@@ -403,6 +403,23 @@ review.verdict_labels.approve # TODO #13833
 review.verdict_labels.changes_requested # TODO #13833
 review.verdict_labels.requires_human # TODO #13833
 review.verdict_labels.reviewing # TODO #13833
+runs.external.claude_managed_agents.agent_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.agent_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_env # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.api_key_file # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.daily_budget_cents # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.direct_github_write # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.enabled # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.endpoint # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_id # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.environment_type # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.github_write_path # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.mode # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.model # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.network_policy # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.state_dir # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.toolset_version # prototype hosted backend; yaml-only (#14214)
+runs.external.claude_managed_agents.workflow_version # prototype hosted backend; yaml-only (#14214)
 runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
 runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
 runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854
