@@ -323,7 +323,11 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		}
 		state := strings.ToLower(pr.GetMergeableState())
 		in.Conflicting = state == "dirty" || (pr.Mergeable != nil && !pr.GetMergeable())
-		in.CIGreen = !in.Conflicting && state != "unstable"
+		green, err := delegatedHeadCIGreen(ctx, api, owner, repoName, pr, in.Conflicting, state)
+		if err != nil {
+			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, err)
+		}
+		in.CIGreen = green
 		if files, _, err := api.PullRequests.ListFiles(ctx, owner, repoName, number, &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}); err == nil && len(files) > 0 {
 			in.LowRiskPaths = true
 			for _, f := range files {
@@ -354,6 +358,33 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.ReporterTrustHold = strings.Contains(lowerReason, "reporter-trust") || strings.Contains(lowerReason, "reporter trust")
 	in.DCOMissing = strings.Contains(lowerReason, "dco")
 	return in, nil
+}
+
+// delegatedHeadCIGreen decides Input.CIGreen for the PR under decision.
+// mergeable_state alone cannot carry it: GitHub reports "blocked" both for a
+// missing required review and for red required checks, and "unknown" /
+// "behind" / "" say nothing about the head at all. Only "clean" and
+// "has_hooks" assert a green head; "unstable" and a conflict deny it; every
+// other state is settled from the head's combined status and check runs the
+// way gatherDelegatedPRContext settles a competing PR — no red, nothing
+// pending, and at least one green result, so a head whose checks never ran
+// is not read as green either.
+func delegatedHeadCIGreen(ctx context.Context, api *gh.Client, owner, repoName string, pr *gh.PullRequest, conflicting bool, state string) (bool, error) {
+	switch {
+	case conflicting, state == "unstable":
+		return false, nil
+	case state == "clean", state == "has_hooks":
+		return true, nil
+	}
+	sha := strings.TrimSpace(pr.GetHead().GetSHA())
+	if sha == "" {
+		return false, nil
+	}
+	summary, err := ghpkg.SummarizeCommitChecks(ctx, api, owner, repoName, sha)
+	if err != nil {
+		return false, err
+	}
+	return len(summary.Red) == 0 && summary.Pending == 0 && summary.Green > 0, nil
 }
 
 // delegatedLowRiskPath reports a file whose change the policy calls low-risk:

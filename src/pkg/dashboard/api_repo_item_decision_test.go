@@ -27,6 +27,12 @@ type repoItemDecisionMock struct {
 	edits       []map[string]any
 	// prForeign makes PR #8 look like a human opened it.
 	prForeign bool
+	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
+	// prNoCI shape the head's combined status when the state alone does not
+	// settle CI (e.g. "blocked").
+	prMergeState string
+	prRedCI      bool
+	prNoCI       bool
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -54,7 +60,22 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if m.prForeign {
 				author = map[string]any{"login": "someone", "type": "User"}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "user": author, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
+			mergeState := m.prMergeState
+			if mergeState == "" {
+				mergeState = "clean"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 8, "state": "open", "labels": []any{}, "user": author, "mergeable": true, "mergeable_state": mergeState, "head": map[string]any{"sha": "feedfacefeedfacefeedfacefeedfacefeedface"}})
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/status"):
+			switch {
+			case m.prRedCI:
+				_, _ = io.WriteString(w, `{"state":"failure","statuses":[{"context":"ci/test","state":"failure"}]}`)
+			case m.prNoCI:
+				_, _ = io.WriteString(w, `{"state":"pending","statuses":[]}`)
+			default:
+				_, _ = io.WriteString(w, `{"state":"success","statuses":[{"context":"ci/test","state":"success"}]}`)
+			}
+		case r.Method == http.MethodGet && strings.HasSuffix(path, "/commits/feedfacefeedfacefeedfacefeedfacefeedface/check-runs"):
+			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
 		case r.Method == http.MethodGet && strings.Contains(path, "/timeline"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/comments"):

@@ -170,6 +170,51 @@ func TestDelegatedDecisionPRHiveAuthoredQueuesApproval(t *testing.T) {
 	}
 }
 
+// GitHub says "blocked" for a missing required review and for red required
+// checks alike; the delegate must read the head's checks before calling it
+// green, and never submit an approval on a red or unproven head.
+func TestDelegatedDecisionPRBlockedStateReadsHeadChecks(t *testing.T) {
+	cases := []struct {
+		name        string
+		mergeState  string
+		redCI, noCI bool
+		wantVerdict delegatedecision.Verdict
+		wantRule    string
+	}{
+		{"blocked by red required checks", "blocked", true, false, delegatedecision.VerdictDirection, "fix-then-merge"},
+		{"blocked with checks never run", "blocked", false, true, delegatedecision.VerdictDirection, "fix-then-merge"},
+		{"unknown state with checks never run", "unknown", false, true, delegatedecision.VerdictDirection, "fix-then-merge"},
+		{"unstable head", "unstable", false, false, delegatedecision.VerdictDirection, "fix-then-merge"},
+		{"blocked by missing review only", "blocked", false, false, delegatedecision.VerdictApprove, "default-release"},
+		{"clean head", "clean", false, false, delegatedecision.VerdictApprove, "default-release"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &repoItemDecisionMock{prMergeState: tc.mergeState, prRedCI: tc.redCI, prNoCI: tc.noCI}
+			srv := newDelegatedServer(t, mock)
+
+			w := postDelegated(t, srv, 8, "writer", `{"type":"pr"}`, nil)
+			job := decodeDelegatedJob(t, w)
+			if w.Code != http.StatusOK || job.Status != delegatedJobStatusDone {
+				t.Fatalf("code=%d job=%+v", w.Code, job)
+			}
+			if job.Decision.Verdict != tc.wantVerdict || job.Decision.Rule != tc.wantRule {
+				t.Fatalf("verdict=%s rule=%s, want %s/%s", job.Decision.Verdict, job.Decision.Rule, tc.wantVerdict, tc.wantRule)
+			}
+			all := strings.Join(mock.comments, "\n")
+			approved := strings.Contains(all, "/approve")
+			if tc.wantVerdict == delegatedecision.VerdictApprove && !approved {
+				t.Fatalf("expected approval on a green head; comments = %v", mock.comments)
+			}
+			if tc.wantVerdict != delegatedecision.VerdictApprove {
+				if approved || !strings.Contains(all, "make CI green") {
+					t.Fatalf("a red or unproven head must get direction, not approval; comments = %v", mock.comments)
+				}
+			}
+		})
+	}
+}
+
 func TestDelegatedDecisionAuthAndSetting(t *testing.T) {
 	mock := &repoItemDecisionMock{issueLabels: []string{"stage/045-needs-decision"}}
 	srv := newDelegatedServer(t, mock)
