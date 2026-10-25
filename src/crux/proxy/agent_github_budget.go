@@ -1,8 +1,10 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -192,11 +194,17 @@ func (p *GitHubProxy) writeAgentGitHubBudget429(client netWriterConn, st agentGi
 	if st.RetryAfter <= 0 {
 		st.RetryAfter = 1
 	}
-	if p.githubBudget != nil && p.githubBudget.markNudged(st.Agent) && p.githubBudgetNudge != nil {
+	first := p.githubBudget != nil && p.githubBudget.markNudged(st.Agent)
+	if first && p.githubBudgetNudge != nil {
 		p.githubBudgetNudge(st.Agent, "Stop polling GitHub. gh returned 429 hourly cap reached; stop all GitHub reads for this session and finish with local work.")
 	}
 	if p.logger != nil {
-		p.logger.Warn("agent GitHub API hourly cap reached",
+		// Warn once per agent per cap window; repeats are expected and self-limiting.
+		level := slog.LevelDebug
+		if first {
+			level = slog.LevelWarn
+		}
+		p.logger.Log(context.Background(), level, "agent GitHub API hourly cap reached",
 			"agent", st.Agent, "count", st.Count, "cap", st.Cap, "retry_after", st.RetryAfter, "reason", st.Reason)
 	}
 	payload, _ := json.Marshal(map[string]string{
