@@ -585,11 +585,17 @@ func (c *Engine) adoptionAuthorPermission(ctx context.Context, obs stageObservat
 	return entry.maintainer, entry.err
 }
 
+// AdoptionMaintainerSupersederMarker is stamped on the note that closes the
+// hive's superseding PR when the original turns out to be a maintainer's.
+const AdoptionMaintainerSupersederMarker = "<!-- hive:adoption-maintainer-superseder -->"
+
 // guardAdoption releases ownership before any further adoption side effects.
 // Unreadable permission blocks the pass without changing the record: a fresh
 // takeover is not safe without evidence, and releasing a live adoption on
 // none would orphan its superseding PR (AdoptedBy) and let the original be
-// adopted a second time once the error ages out of the cache.
+// adopted a second time once the error ages out of the cache. A maintainer's
+// live supersede adoption closes its still-open superseder first, so the
+// release never leaves a hive duplicate of the maintainer's PR mergeable.
 func (c *Engine) guardAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, now time.Time) (bool, int, error) {
 	maintainer, err := c.adoptionAuthorPermission(ctx, obs, now)
 	if !maintainer && err == nil {
@@ -599,16 +605,60 @@ func (c *Engine) guardAdoption(ctx context.Context, store *stagelabels.Store, ke
 		c.warn("stage labels: adoption deferred, author permission unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return true, 0, err
 	}
+	comments := 0
+	closedSuperseder := 0
+	if rec, ok := store.Get(key); ok && rec.AdoptedBy > 0 {
+		closed, n, err := c.closeMaintainerSuperseder(ctx, obs, rec.AdoptedBy)
+		comments += n
+		if err != nil {
+			// Keep the record: the superseder is still tracked and the
+			// close retries on the next sweep instead of orphaning it.
+			return true, comments, err
+		}
+		if closed {
+			closedSuperseder = rec.AdoptedBy
+		}
+	}
 	store.ClearAdoption(key)
 	rec, ok := store.Get(key)
 	if !ok || obs.HeadSHA == "" || rec.AdoptionMaintainerNotedHead == obs.HeadSHA {
-		return true, 0, nil
+		return true, comments, nil
 	}
-	body := fmt.Sprintf("%s head=%s -->\n@%s the hive will not take over a repository maintainer's PR. Any live adoption has been released; this PR stays with you for fixes and merge.", AdoptionMaintainerMarker, obs.HeadSHA, obs.Author)
+	released := "Any live adoption has been released"
+	if closedSuperseder > 0 {
+		released = fmt.Sprintf("The hive's superseding PR #%d has been closed and the adoption released", closedSuperseder)
+	}
+	body := fmt.Sprintf("%s head=%s -->\n@%s the hive will not take over a repository maintainer's PR. %s; this PR stays with you for fixes and merge.", AdoptionMaintainerMarker, obs.HeadSHA, obs.Author, released)
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-		return true, 0, err
+		return true, comments, err
 	}
 	store.NoteAdoptionMaintainer(key, obs.HeadSHA)
+	return true, comments + 1, nil
+}
+
+// closeMaintainerSuperseder closes the hive's still-open superseding PR with
+// a note pointing back at the maintainer's original. Reports whether it
+// closed the PR and how many comments it posted; a merged or already-closed
+// superseder is left alone.
+func (c *Engine) closeMaintainerSuperseder(ctx context.Context, obs stageObservation, superseding int) (bool, int, error) {
+	sup, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, superseding)
+	if err != nil {
+		c.warn("stage labels: maintainer adoption superseder lookup failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", superseding, "error", err)
+		return false, 0, err
+	}
+	if sup.GetMerged() || strings.EqualFold(sup.GetState(), "closed") {
+		return false, 0, nil
+	}
+	body := fmt.Sprintf("%s\nClosing: #%d is a repository maintainer's PR, which the hive does not take over. Fixes and merge stay with @%s there.", AdoptionMaintainerSupersederMarker, obs.Number, obs.Author)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, superseding, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		c.warn("stage labels: maintainer adoption superseder note failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", superseding, "error", err)
+		return false, 0, err
+	}
+	if _, _, err := c.gh.PullRequests.Edit(ctx, obs.Owner, obs.Repo, superseding, &gh.PullRequest{State: gh.Ptr("closed")}); err != nil {
+		c.warn("stage labels: closing maintainer adoption superseder failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", superseding, "error", err)
+		return false, 1, err
+	}
+	c.info("stage labels: closed superseder of maintainer PR", "repo", obs.Display, "pr", obs.Number, "superseded_by", superseding)
 	return true, 1, nil
 }
 

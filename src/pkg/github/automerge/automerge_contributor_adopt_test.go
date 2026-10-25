@@ -1912,7 +1912,7 @@ func TestAdoptionAuthorPermission(t *testing.T) {
 }
 
 func TestMaintainerAdoptionStaysReturnedAndReleasesLiveAdoption(t *testing.T) {
-	for _, mode := range []string{"fresh", "in-place", "supersede"} {
+	for _, mode := range []string{"fresh", "in-place", "supersede", "supersede-open"} {
 		for _, permission := range []string{"admin", "maintain"} {
 			t.Run(permission+"/"+mode, func(t *testing.T) {
 				p := adoptPolicy()
@@ -1928,9 +1928,13 @@ func TestMaintainerAdoptionStaysReturnedAndReleasesLiveAdoption(t *testing.T) {
 				labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker", stagelabels.NoDCOLabel}
 				if mode != "fresh" {
 					h.e.stageStoreOrShared().MarkAdoptedInPlace(key, "aaa", AdoptReasonOffline, h.clock.at)
-					if mode == "supersede" {
+					switch mode {
+					case "supersede":
 						h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
 						h.adopt.setSuperseder(90, "closed", true)
+					case "supersede-open":
+						h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
+						h.adopt.setSuperseder(90, "open", false)
 					}
 					labels[0] = "stage/074-adopted-by-hive"
 				}
@@ -1939,24 +1943,94 @@ func TestMaintainerAdoptionStaysReturnedAndReleasesLiveAdoption(t *testing.T) {
 					h.api.reset()
 					h.observe(adoptPR(7, "aaa", labels...), "check-failing:DCO")
 					rec, _ := h.e.stageStoreOrShared().Get(key)
-					if rec.Stage != stagelabels.ReturnedToContributor || rec.AdoptionLive("aaa") || rec.AdoptedHead != "" {
+					if rec.Stage != stagelabels.ReturnedToContributor || rec.AdoptionLive("aaa") || rec.AdoptedHead != "" || rec.AdoptedBy != 0 {
 						t.Fatalf("maintainer adopted: %+v", rec)
 					}
-					notes := 0
+					notes, supersederNotes := 0, 0
 					for _, comment := range h.api.comments {
 						if strings.HasPrefix(comment, AdoptionMaintainerMarker) {
 							notes++
+						}
+						if strings.HasPrefix(comment, AdoptionMaintainerSupersederMarker) {
+							supersederNotes++
 						}
 					}
 					if notes != 1-i {
 						t.Fatalf("pass %d: refusal notes=%d comments=%v", i, notes, h.api.comments)
 					}
-					if len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 || len(h.adopt.prEdits) != 0 {
-						t.Fatalf("maintainer takeover: comments=%v refs=%v pulls=%v edits=%v", h.api.comments, h.adopt.refs, h.adopt.pulls, h.adopt.prEdits)
+					// An open hive superseder is closed with a note on the
+					// first pass only; the original PR is never edited.
+					wantEdits, wantSuperseder := []string(nil), 0
+					if mode == "supersede-open" {
+						wantSuperseder = 1
+						wantEdits = []string{"90:closed"}
+						if notes == 1 && !strings.Contains(h.api.comments[len(h.api.comments)-1], "#90 has been closed") {
+							t.Fatalf("refusal note does not name the closed superseder: %v", h.api.comments)
+						}
+					}
+					if supersederNotes != wantSuperseder || !slices.Equal(h.adopt.prEdits, wantEdits) {
+						t.Fatalf("pass %d: superseder notes=%d edits=%v comments=%v", i, supersederNotes, h.adopt.prEdits, h.api.comments)
+					}
+					h.adopt.prEdits = nil
+					if len(adoptionComments(h.api)) != 0 || len(h.adopt.refs) != 0 || len(h.adopt.pulls) != 0 {
+						t.Fatalf("maintainer takeover: comments=%v refs=%v pulls=%v", h.api.comments, h.adopt.refs, h.adopt.pulls)
 					}
 				}
 			})
 		}
+	}
+}
+
+func TestMaintainerSupersederCloseFailureKeepsAdoption(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+	defer done()
+	h.adopt.permission = "admin"
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	key := stageKey("acme", "widget", 7)
+	h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
+	// No scripted superseder: GET pulls/90 is 404, so the release must wait.
+	h.clock.advance(adoptCheckInterval + time.Minute)
+	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/clanker"), "check-failing:unit", false, nil)
+	if _, err := h.e.ApplyStageLabels(context.Background()); err == nil {
+		t.Fatal("superseder lookup failure was not surfaced")
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(key)
+	if rec.AdoptedHead != "aaa" || rec.AdoptedBy != 90 {
+		t.Fatalf("release orphaned the superseder: %+v", rec)
+	}
+	for _, comment := range h.api.comments {
+		if strings.HasPrefix(comment, AdoptionMaintainerMarker) {
+			t.Fatalf("refusal note posted while the superseder is still tracked: %v", h.api.comments)
+		}
+	}
+}
+
+func TestMaintainerTerminalObservationPostsNoRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		merged bool
+		reason string
+	}{{name: "merged", merged: true}, {name: "closed", reason: "closed"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{}, adoptPolicy())
+			defer done()
+			h.adopt.permission = "admin"
+			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+			key := stageKey("acme", "widget", 7)
+			h.e.stageStoreOrShared().MarkAdopted(key, "aaa", 90, h.clock.at)
+			h.adopt.setSuperseder(90, "open", false)
+			h.api.reset()
+			h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/clanker"), tc.reason, tc.merged, nil)
+			if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := h.e.stageStoreOrShared().Get(key); ok {
+				t.Fatal("terminal item still tracked")
+			}
+			if len(h.api.comments) != 0 || len(h.adopt.prEdits) != 0 || h.adopt.permissionReads != 0 {
+				t.Fatalf("terminal observation touched the maintainer's PR: comments=%v edits=%v permission reads=%d", h.api.comments, h.adopt.prEdits, h.adopt.permissionReads)
+			}
+		})
 	}
 }
 

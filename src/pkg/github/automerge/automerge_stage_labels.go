@@ -744,7 +744,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			obs.Reason = verdict.Reason
 		}
 		prevRec, hadPrev := store.Get(key)
-		if hadPrev && (prevRec.AdoptedInPlace() || prevRec.AdoptedHead != "") {
+		// A merged/closed/gone PR is forgotten below; a maintainer who
+		// finished their own adopted PR must not get the refusal note.
+		if hadPrev && !verdict.Terminal && (prevRec.AdoptedInPlace() || prevRec.AdoptedHead != "") {
 			_, n, err := c.guardAdoption(ctx, store, key, obs, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
