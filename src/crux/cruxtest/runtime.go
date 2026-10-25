@@ -4,12 +4,12 @@
 package cruxtest
 
 import (
-	"context"
 	"log/slog"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 // Runtime adds fixture controls to the production runtime surface. Consumer
@@ -18,6 +18,9 @@ import (
 // rather than widening crux.Runtime with test-only setup methods.
 type Runtime interface {
 	crux.Runtime
+	// Host is the in-process wiring surface cmd/hive installs after
+	// construction; consumer tests that exercise a boot path need it too.
+	crux.Host
 	crux.ActivityObserver
 	RecordKickDispatchForTest(crux.KickDispatch)
 	SetKickLogDir(dir string)
@@ -26,9 +29,10 @@ type Runtime interface {
 	SetInferenceCallbacks(setRoute func(name, backend, model string), clearRoute func(name string))
 	SetSandboxConfig(config.AgentSandboxConfig)
 
-	// Login-scanner tests pass the runtime through their credential interface.
-	AgentHasValidCredential(name string) bool
-	RefreshAgentTokenFor(ctx context.Context, name string) error
+	// Boot tests read back the sandbox wiring they installed and inject
+	// sandbox audit rows.
+	SandboxGitHubWiring() (crux.PRCreator, pushbroker.TokenMinter)
+	SandboxAuditForTest(agent, action, detail string)
 }
 
 // Option configures a test runtime's construction.

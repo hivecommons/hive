@@ -4,9 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 )
 
@@ -74,7 +75,7 @@ func TestIsHiveAgentAuthorRecognizesEffectiveAppBotAuthor(t *testing.T) {
 // leave all three empty so the hub reads no-signal exactly like a legacy spoke.
 func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	since := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 
 	failing := &crux.Process{BackendAuth: crux.BackendAuthState{
@@ -106,7 +107,7 @@ func TestAgentActivityForBackendAuthOnlyCarriesFailures(t *testing.T) {
 // never-started process is asserted in TestAgentActivityForRidesPauseProvenance).
 func TestAgentActivityForCarriesStartedAt(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	started := time.Date(2026, 9, 10, 6, 30, 0, 0, time.UTC)
 	proc := &crux.Process{StartedAt: &started}
 	act := agentActivityFor(mgr, cfg, governor.State{}, "busy", "scanner", proc, nil)
@@ -120,7 +121,7 @@ func TestAgentActivityForCarriesStartedAt(t *testing.T) {
 // crash-loop detection sees the same numbers the spoke recorded.
 func TestAgentActivityForCarriesRestartTelemetry(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	mgr := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	lastAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	mgr.SeedRestartTelemetry("scanner", 5,
 		[]crux.RestartEvent{{At: lastAt, Reason: "pane stall"}}, "seed fallback")

@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
-	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -44,7 +45,7 @@ func newBootProxyFake() *bootProxyFake {
 			f.proxy = p
 			return p, err
 		},
-		installInferenceCallbacks: func(_ *agent.Manager, set func(string, string, string), clear func(string)) {
+		installInferenceCallbacks: func(_ crux.Host, set func(string, string, string), clear func(string)) {
 			f.setRoute, f.clearRoute = set, clear
 		},
 		setInferenceRoute: func(_ *proxy.GitHubProxy, agentName string, r *proxy.InferenceRoute) {
@@ -78,10 +79,10 @@ func newBootProxyBoot(t *testing.T, f *bootProxyFake, cfg *config.Config) *boot 
 		ctx:                      ctx,
 		cfg:                      cfg,
 		logger:                   logger,
-		agentMgr:                 agent.NewManager(cfg.Agents, logger, crux.ProjectContext{}),
+		agentMgr:                 cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:                  dashboard.NewServer(0, logger),
 		tokenCollector:           tokens.NewCollector(t.TempDir(), logger),
-		linearCredentialResolver: func() agent.LinearCredential { return agent.LinearCredential{} },
+		linearCredentialResolver: func() crux.LinearCredential { return crux.LinearCredential{} },
 	}
 	b.wireBootClosures()
 	return b

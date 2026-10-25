@@ -246,6 +246,12 @@ type Engine struct {
 	// a REST merge that cannot succeed (hivecommons/hive#14068).
 	mergeQueueBasesMu sync.Mutex
 	mergeQueueBases   map[string]time.Time
+	// mergeRefusals remembers merges GitHub refused because an approving
+	// review is required (per PR head) or the merge method is disabled (per
+	// repository and method), so no sweep re-issues them every pass
+	// (automerge_merge_refusal.go).
+	mergeRefusalsMu sync.Mutex
+	mergeRefusals   map[string]mergeRefusal
 
 	stageLabelPolicy  func() StageLabelPolicy
 	stageTracker      *StageTracker
@@ -1102,7 +1108,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.UpdatedBranches++
 			}
 			if reason != "" {
-				if isTerminalRequiredCheckHold(reason) || reason == autoMergeReasonMergeQueueRequired {
+				if isTerminalRequiredCheckHold(reason) || isPermanentMergeRefusal(reason) {
 					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
 						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
 					}
@@ -1130,7 +1136,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonMergeQueueRequired}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
@@ -1766,9 +1772,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	}
 
 	// The App has no merge-queue enqueue path, and the direct merge on a
-	// merge-queue-only base is refused every time (hivecommons/hive#14068).
-	if c.mergeQueueBaseKnown(owner, repo, baseBranch) {
-		return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+	// merge-queue-only base is refused every time (hivecommons/hive#14068);
+	// so is one that needs an approving review or a disabled merge method.
+	attempt := mergeAttempt{owner: owner, repo: repo, base: baseBranch, number: number, head: evaluatedHeadSHA, state: current.GetMergeableState(), method: method}
+	if refused := c.knownMergeRefusal(attempt); refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
 	}
 
 	var mergeResult *gh.PullRequestMergeResult
@@ -1790,9 +1798,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			}
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "required-checks-expected", c.isForkPR(pr))
 		}
-		if mergeQueueRequiredMergeError(err) {
-			c.noteMergeQueueBase(owner, repo, baseBranch)
-			return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+		if refused := c.refusedMerge(attempt, err); refused != "" {
+			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}
@@ -2158,6 +2165,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, stageLaneTrusted, number, current, headSHA, priorApprover, priorChecked); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
+	attempt := mergeAttempt{owner: owner, repo: repo, base: baseBranch, number: number, head: headSHA, state: current.GetMergeableState(), method: method}
+	if refused := c.knownMergeRefusal(attempt); refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
@@ -2175,8 +2186,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		if requiredChecksExpectedMergeError(err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", c.isForkPR(pr))
 		}
-		if mergeQueueRequiredMergeError(err) {
-			return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+		if refused := c.refusedMerge(attempt, err); refused != "" {
+			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}
@@ -2502,6 +2513,11 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return AutoMergeSweepEvent{}, deskReason, nil
 	}
 
+	attempt := mergeAttempt{owner: owner, repo: repo, base: baseBranch, number: number, head: headSHA, state: pr.GetMergeableState(), method: method}
+	if refused := c.knownMergeRefusal(attempt); refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
+
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
@@ -2515,8 +2531,8 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
-		if mergeQueueRequiredMergeError(err) {
-			return AutoMergeSweepEvent{}, autoMergeReasonMergeQueueRequired, nil
+		if refused := c.refusedMerge(attempt, err); refused != "" {
+			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err
 	}

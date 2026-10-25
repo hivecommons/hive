@@ -9,12 +9,11 @@ boundary is named, the inbound and outbound architecture ratchets and the
 tmux funnel are live, `crux.Runtime` exists, the dashboard is on it, Crux
 owns its value types and the hub, spoke, dashboard and `cmd/hive`
 reference them as `crux.<Name>`, CI path filters select Crux-only shards
-for Crux-only PRs, and the `crux` CLI ships. The inbound ratchet has one
-row left, `cmd/hive` 12, and every one of those twelve is the in-process
-manager or the host wiring it is handed (see
-[After the cut](#after-the-cut)); `pkg/dashboard`, `pkg/hub`,
-`pkg/hub/spoke`, `pkg/loginscan`, `pkg/ioscan` and `pkg/discord` no longer
-import `crux/agent` at all. The ring's outbound closure, about 55 Hive
+for Crux-only PRs, and the `crux` CLI ships. The inbound ratchet is
+empty: `cmd/hive` holds `crux.Runtime` and constructs it through
+`crux/runtime.New` (#14138 stage 1, see
+[Stage 1: the Runtime seam](#stage-1-the-runtime-seam)), so no package in
+the root module imports `crux/agent` any more. The ring's outbound closure, about 55 Hive
 packages when this record began, is now zero, in test code too: the
 outbound baseline is empty (the ring's tests use their own
 `crux/internal/testutil` copy of `Eventually*` and `SkipUnlessRequired`);
@@ -54,9 +53,11 @@ The name is "the point everything turns on". Hive turns on Crux.
 The same list, as directories, is `CRUX_DIRS` in
 `.github/scripts/crux-scope.sh` (CI path filter) and `cruxModulePrefixes` in
 `src/internal/testutil/crux_outbound_ratchet_test.go`; the two must agree.
-`cmd/crux`, the `crux` binary's `main`, is a host in the root module like
-`cmd/hive` (Stage 2, prerequisite 3): it holds the Hive-backed
-`cli.DefinitionLoader` and reaches the runtime only through `pkg/crux`.
+`cmd/crux`, the Hive-hosted `crux` binary's `main`, is a host in the root
+module like `cmd/hive` (Stage 2, prerequisite 3): it holds the Hive-backed
+`cli.DefinitionLoader` and reaches the runtime only through `pkg/crux`. The
+module ships its own binary too, `crux/cmd/crux`, wired to `crux/defs`
+(#14138; see [Definition loaders](#definition-loaders)).
 
 The RFC's claim that Crux's outbound coupling is "one `pkg/github` symbol and
 two `pkg/config` fields" was wrong. Measured on v5 at `437843c` (Oct 23,
@@ -419,13 +420,14 @@ Still Stage 2, in this order:
   `Manager`, `NewManager`, `LinearCredential`, `AgentMintIssuer`,
   `StartPermissionsWatcher`, `WatchdogFleet`, `RunAgyTurn`,
   `ResumeHandle`, `ResolveReasoningEffort`, `ErrResumeBusy`,
-  `ErrResumeSessionGone`, `PRCreator`. Each is the in-process manager
+  `ErrResumeSessionGone`, `PRCreator`. Each was the in-process manager
   itself or a value `cmd/hive` hands it (credential resolvers, the token
-  minter, the PR creator, the fleet watchdog, the agy-turn subcommand);
-  none has an observation-side equivalent to re-export, and they go away
-  only if `cmd/hive` becomes a client of `crux serve` rather than the
-  process that constructs the manager. That is the open decision in
-  #14138, not a ratchet item. The `AgentProcess` method split (13 methods,
+  minter, the PR creator, the fleet watchdog, the agy-turn subcommand).
+  #14138 decided the sidecar plan, and its stage 1 took the row to zero:
+  `cmd/hive` holds `crux.Runtime` plus `crux.Host`, the capability types
+  are `crux.<Name>`, construction goes through `crux/runtime.New`, and the
+  fleet watchdog through `crux/runtime.NewWatchdogFleet`. The baseline map
+  is empty and the ratchet stays armed. The `AgentProcess` method split (13 methods,
   one mutex) that this record proposed is moot for the same reason: no
   consumer outside `crux/agent` names `AgentProcess` any more; they hold
   `*crux.Process` snapshots or build fixtures through `crux/cruxtest`.
@@ -433,12 +435,34 @@ Still Stage 2, in this order:
   CLI remote mode (`crux --server` / `CRUX_SERVER`, #14090) and the serve
   docs ([crux-serve.md](../crux-serve.md)); the Stage 3 status block below
   has the detail. What remains of this record's list, in #14138's order:
-  the in-process-vs-sidecar decision for `cmd/hive` (the last twelve
-  inbound rows hang on it); `crux/vX.Y.Z` tags and the `go get` path
-  caveat above; moving `cmd/crux` into the nested module once config and
-  `defsrc` loading are injected; a generic tool policy for the MITM proxy
-  (the rules are GitHub-shaped today); and keeping this status section
-  current.
+  the sidecar stages after the seam (credential direction, the missing
+  endpoint families, supervision, the flip); `crux/vX.Y.Z` tags and the
+  `go get` path caveat above; a generic tool policy for the MITM proxy (the rules are
+  GitHub-shaped today); and keeping this status section current.
+- **Done: move `cmd/crux` into the nested module** (#14138). The module now
+  ships `crux/cmd/crux`, buildable with `GOWORK=off` from `src/crux` alone
+  (`make build` / `make smoke` there), with the same verbs, `--server`
+  remote mode and `--version`. The root `cmd/crux` remains as a thin host
+  wrapper: same `cli.Env`, Hive's loader. See
+  [Definition loaders](#definition-loaders) for the split.
+
+### Definition loaders
+
+`crux/cli` programs against `cli.DefinitionLoader` (`LoadConfig`,
+`LoadDefinitionFile`); two hosts implement it and nothing else in the module
+knows which one it got:
+
+| Host | Loader | Reads | Stays where |
+|---|---|---|---|
+| `crux/cmd/crux` (module) | `crux/defs.Loader` | `--defs` / `$CRUX_DEFS`: a directory of `*.yaml` or one file; each file a portable `AgentDefinition` (`kind: AgentDefinition`, merged through the same field allow-list as `pkg/defsrc`) or a bare `AgentConfig` overlay named by the file; defaults from `crux/config` (`id`, `role`, one replica, `enabled`, `clear_on_kick`) | in the module: stdlib + `yaml.v3` + `crux/config`, so the outbound ratchet stays empty |
+| `cmd/crux` (root) | `hiveLoader` | `--config hive.yaml` through `pkg/config.Load` (enabled agents, `ProjectContext` from the project/github/policies blocks, well-known-agent defaults); the portable format through `pkg/defsrc` | in the root module: everything about *where* a Hive's definitions come from (repo-tree definition sources, the dashboard overlay, `agents_dir`) is host knowledge |
+
+The root loader borrows the module's name rule and import defaults
+(`defs.ValidateName`, `defs.DefaultBackend`, `defs.DefaultRestartStrategy`),
+so a definition file loads to the same agent under either binary; the only
+intentional difference is the Hive-only presentation table
+(`applyKnownAgentDefaults`) and the `ProjectContext`, which a bare crux has
+no source for.
 
 **Stage 3: platform.** `crux serve` with an API, tenancy, auth, quotas; Hive
 and hub become clients; the hub-to-runtime contract becomes explicit and
@@ -488,6 +512,305 @@ services).
   `crux/types`* (Stage 2 leftovers above). *Tags* (`crux/vX.Y.Z`, above).
   *Tenancy, quotas, the hub contract, the move to `hivecommons/crux`*:
   when the second consumer exists.
+
+### Hive as a client: the staged sidecar plan
+
+Decided in #14138 ("/hive decision A"): `cmd/hive` consumes its own
+`crux serve` API, in six stages so that no stage breaks a hosted hive and
+in-process stays the default until parity is proven. The stages are (1) a
+`Runtime` seam with two implementations selected by config, (2) the
+credential direction, recorded before coding, (3) the endpoint families
+the API lacks with a parity test, (4) failure semantics and supervision,
+(5) the dashboard through the client, (6) the flip. The inbound ratchet
+shrinks only when a stage flips; the outbound ratchet stays empty
+throughout; no stage merges without its parity test green.
+
+#### Stage 1: the Runtime seam
+
+*Status: shipped.* The inventory below is what the host calls on the
+runtime, by family. Each family is an
+interface in the `crux` root; `crux.Runtime` composes them, so a consumer
+depends on the narrowest one that serves it. `*agent.Manager` satisfies
+`Runtime` (asserted in `crux/agent`); dashboard and hub were already on
+the six dashboard families and gained nothing new to call.
+
+| Family | Methods | Consumer today |
+|---|---|---|
+| `Lifecycle` | `Start`, `Stop`, `Restart`, `RestartWithBootstrap`, `Pause`, `PauseBy`, `Resume`, `IsPaused`, `ResetRestartCount` | dashboard, cmd/hive |
+| `Observer` | `GetStatus`, `GetStatusFast`, `AllStatuses`, `ResolveAgent`, `GetOutput`, `GetBufferOutput`, `CaptureFullLog`, `FullLogHeader` | dashboard, cmd/hive, `crux` CLI |
+| `Kicker` | `SendKick`, `SendKickAsync`, `ValidateKick`, `KickDispatchState`, `ListKickLogs`, `ReadKickLog`, `SetKickObserver` | dashboard, cmd/hive, CLI |
+| `Definitions` | `AddAgent`, `RemoveAgent`, `UpdateConfig`, `ReconcileAgents`, `SetModelOverride`, `SetBackendOverride`, `PinCLI`, `PinModel`, `UnpinCLI`, `UnpinModel`, `ClearModeOverrides`, `SyncModeFiles`, `RefreshInferenceRoutes` | dashboard, cmd/hive |
+| `Fleet` | `BreakerState`, `EngageBreaker`, `ReleaseBreaker`, `SetACMMLevel`, `GetACMMLevel`, `RelaunchBobAgentsAwaitingKey`, `SharedDevUID` | dashboard, cmd/hive |
+| `Credentials` | `SubmitLoginCode`, `CopilotToken`, `CopilotTokenSource`, `SetCopilotToken`, `ActivateCopilotToken`, `ReloadClaudeToken`, `ClaudeCredentialCandidatePaths` | dashboard |
+| `Resumer` (new) | `ResumeHandle`, `SendResumeKick`, `SessionID`, `SessionMissing`; sentinels `ErrResumeBusy`, `ErrResumeSessionGone`, `ErrResumeUnsupported`; value `ResumeHandle` | cmd/hive (PR follow-up) |
+| `Supervisor` (new) | `GovernorMayStart`, `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `ConsentWedgedAgents`, `RefreshAgentTokens`, `RefreshAgentTokenFor`, `AgentCredentialRefreshable`, `AgentHasValidCredential`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `PauseByCause`, `ArchiveAllKickLogs`, `CountAgentsWithModel`, `CrashOOMSuspected`, `BackendAuthAvailable`, `AgentAuthAvailable`, `SendGitHubAPIBudgetNudge`, `RecordAudit`, `TrajectoryAgents` | cmd/hive (governor, heartbeat, rotation, login scan, trajectory) |
+| `Restorer` (new) | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory`, `RestoreBreaker` | cmd/hive (snapshot restore) |
+| `Background` (new) | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | cmd/hive (boot) |
+| `Authorizer` (new) | `AuthorizePROpen`, `AuthorizePushBranch`, `AuthorizeIssueOpen`, `AuthorizeMerge`, `AuthorizeReviewRequest` | cmd/hive (request relays; method values handed to the watchers at boot) |
+
+Two things `cmd/hive` calls are **not** runtime-instance methods and are
+re-exported by the new `crux/runtime` package rather than put on the
+interface: `RunAgyTurn` (the `hive agy-turn` subprocess; a sidecar runs it
+as a `crux` subcommand) and `StartPermissionsWatcher` (a process-lifetime
+loop over the agent home directories). `WatchdogFleet`, which reads the
+manager's agent table under its lock, is built by
+`crux/runtime.NewWatchdogFleet(rt, hooks)` and returns `ErrNotInProcess`
+for any other implementation; its API shape is a stage 3 endpoint family.
+
+**Hive-provided capabilities, deliberately not in `Runtime`.** The
+runtime is handed these; it does not implement them, and a sidecar
+runtime will receive them over a hive-side callback endpoint (stage 2
+decides the shape) or publish them as API events (stage 3). The *types*
+moved to the `crux` root so a host names them without importing
+`crux/agent` (`crux/agent` aliases each): `AppTokenMinter`,
+`AgentMintIssuer`, `LinearCredential`, `PRCreator`, `SpanStarter`. The
+*installation* of them is `crux.Host`, a separate interface only the
+in-process implementation satisfies (`crux/runtime.HostOf`), grouped by
+what replaces it: credential capabilities (`SetAppAuth`, `SetAgentMint`,
+`SetLinearCredentialResolver`, `SetBobAPIKeyResolver`,
+`SetBobKeySourceResolver`, `SetSandboxPushMinter`, `SetSandboxPRClient`)
+→ callback endpoint; launch-time resolvers (`SetBuildInfo`,
+`SetGatewayBackendChecker`, `SetExplainModeDefaultResolver`,
+`SetRepoAutoMergeEnabledResolver`, `SetKickLogSourceResolver`,
+`SetInferenceCallbacks`, `SetSandboxConfig`, `SetSandboxMutationBoundary`,
+`SetDeadSessionRecoveryOwner`) → definition fields or a callback;
+observers (`SetKickOutcomeObserver`, `SetPauseTransitionObserver`,
+`SetRelaunchObserver`, `SetPersistPauseCallback`,
+`SetRecordPromptCallback`, `SetSandboxAuditCallback`, `SetAuditSink`,
+`SetConditionReporter`, `SetSpanStarter`) → `/v1/events`.
+`ResolveReasoningEffort` turned out to be pure (it reads only
+`config.ReasoningEffortsByBackend`), so it moved to `crux/config` with
+`AgyLaunchEffort` and `AgyDefaultEffort`; `crux/agent` forwards to it.
+
+**Selection by config.** `crux/config.Mode` is `inprocess` (default) or
+`sidecar`; `config.RuntimeConfig{Mode, Server, Token}` is read from
+`CRUX_MODE`, `CRUX_SERVER`, `CRUX_TOKEN` by `RuntimeConfigFromEnv` and
+validated at construction, so a typo fails boot rather than silently
+running in-process. Like `ServeConfig` it is a process-level setting, not a
+`hive.yaml` key; the key lands with stage 4, when an operator first has
+supervision to configure. `crux/runtime.New(cfg, opts...)` returns the
+in-process `*agent.Manager` as `crux.Runtime` for `inprocess` (options:
+`WithDefinitions`, `WithLogger`, `WithProject`, `WithUIDMapPath`) and
+`ErrModeUnavailable` for `sidecar` until stage 3 ships the client. The
+package is the one place outside `crux/agent` that names the manager on
+the construction path; `crux/cli` and `crux/cruxtest` keep their own
+constructors for now. `cmd/hive` holds the result as a local
+`hostedRuntime` (`crux.Runtime` + `crux.Host`), fails boot if the selected
+mode cannot provide the `Host` half, and passes the narrowest family on
+(`crux.Host` to the installers, `crux.Runtime` elsewhere); its tests build
+runtimes through `cruxtest.NewRuntime`. The inbound ratchet's `cmd/hive`
+row went 12 → 0 and the baseline map is empty.
+
+**Parity test.** `crux/cli.RuntimeVerbs` maps each CLI verb (`run`,
+`ps`, `logs`, `kick`, `stop`) to the `Runtime` methods it calls;
+`crux/cli`'s tests assert every listed method exists on `crux.Runtime`,
+every verb the dispatcher routes to a runtime is listed, and the listed
+methods are exactly the `rt.<Method>` selectors in each command body
+(following helpers such as `stream`). Stage 3 adds the other half, every
+verb and every `Runtime` method against an API route.
+
+**What stage 3 needs from the API** to serve `Runtime` in full, from the
+table above: the `Resumer` family (handle capture, resume kick with the
+busy / gone / unsupported distinction as status codes); the `Authorizer`
+gates, which sit on the relay request path and so need a synchronous
+endpoint with a latency budget; the `Supervisor` reads and actions; `Restorer` as a bulk seed on connect; `Background` as
+server-side loops (a no-op for the client); the `Fleet` watchdog
+observe/restart and the dashboard's `Credentials` family; `/v1/events` for
+the observer half of `Host`; and a `crux agy-turn` subcommand so the
+`hive agy-turn` subprocess does not need the runtime linked in.
+
+## Credentials and hive-provided capabilities
+
+Status: **Stage 2 of the #14138 sidecar plan (decision A): done.** Design
+in #14197; the callback contract (`crux/api/callback`), the runtime-side
+adapters (`crux/hivecap`) and the hive-side mount (`pkg/cruxhost`) in
+#14222 (coverage 94.8% / 99.1% / 100%, default floors). Nothing is wired
+into `cmd/hive` or `crux serve` yet; that is stage 3 (see "What stage 3
+wires" below).
+
+The decision this section records: **the runtime never holds the GitHub
+App private key, or any other hive-owned credential.** When hive runs the
+runtime as a sidecar (`crux serve`), the runtime obtains short-lived scoped
+tokens and every other hive-owned capability by calling back into hive over
+a hive-side endpoint. In-process, the same capabilities are the direct
+function calls `cmd/hive` already installs today. The seam interfaces the
+Stage 2 inversions left behind are the contract in both modes; the sidecar
+adds one implementation of each, not a second contract.
+
+### Inventory
+
+Every interface the ring defines for something the host supplies, measured
+on v5 at `8bce0b0` (Oct 25, 2026) with
+`grep -rn 'interface {' src/crux --include='*.go' | grep -v _test`. The
+last column is the classification this stage settles: a *capability* is
+something hive owns (a credential, a registry, an accounting ledger, a
+forge client) that the runtime asks for; a *runtime feature* is behaviour
+the runtime owns and only lets the host observe or tune.
+
+| Seam | Defined in | Hive implementation today | What crosses the boundary | Sensitivity | Class |
+|---|---|---|---|---|---|
+| `pushbroker.TokenScoper` (`ScopedTokenForRepos(ctx, tier, repos)`) | `crux/pushbroker` | `*github.AppAuth` via `cmd/hive`'s `appMinter` | tier + repo names in; an installation token out | **credential**: the token is a live GitHub write credential | capability |
+| `pushbroker.TokenMinter` (`MintPushToken(ctx, repo)`) | `crux/pushbroker` | `pushbroker.GitHubAppMinter{Auth: TokenScoper}` (ring code over the seam above) | same | same | capability (derived from `TokenScoper`) |
+| `agent.AppTokenMinter` (`WriteAgentToken(ctx, agent, tier, uid)`) | `crux/agent` | `*github.AppAuth` (`Manager.SetAppAuth`) | agent, tier, uid in; hive **writes the agent's token cache file** as a side effect | **credential**, plus a filesystem write into the agents' tree | capability, but mis-shaped for a process boundary (see below) |
+| `agent.AgentMintIssuer` (`Enabled`, `MintAgentToken(agent, tier)`) | `crux/agent` | `mint.AgentMinter` (`cmd/hive` `buildMinter`) | agent + tier in; an OIDC/JWT out | **credential** (opt-in, additional) | capability |
+| `agent.LinearCredential` + `SetLinearCredentialResolver(func() LinearCredential)` | `crux/agent`, used by `crux/proxy` | closure in `cmd/hive` over hub OAuth / `hive.yaml` | a Linear access token or API key out | **credential** | capability |
+| `agent.PRCreator` (`CreatePR(ctx, repo, head, base, title, body)`) | `crux/agent` | `*github.Client` (`SetSandboxPRClient`) | PR fields in; `crux.PRResult` out; hive authors as the App bot | hive's forge identity acts; no secret crosses | capability |
+| `proxy.GitHubRESTAccounting` (`RecordRESTRequest`, `RecordInjectedRESTRequest`, `CoreRateLimitSnapshot`) | `crux/proxy` | `cmd/hive`'s `githubRESTAccounting{}` over `pkg/github` package state | caller, method, path, status and the rate-limit response headers in; the shared core-bucket snapshot out | telemetry; the snapshot feeds the per-agent GitHub budget's reserve floor | capability (hive owns the ledger) |
+| `proxy.UsageSink` (`Record`, `RecordCopilot`, `RecordCopilotWithCache`) | `crux/proxy` | `*tokens.InferenceSink` | per-agent inference token counts in | telemetry (billing) | capability |
+| `proxy.CanaryScanner` (`Scan(agent, text, source)`) | `crux/proxy` | `*ioscan.CanaryRegistry` | a GitHub write body in; "leaked" + which agent/source out | the body may hold agent work product; the registry holds the planted canaries, which **must not** be shipped to the runtime | capability |
+| `toolapprove.TextScanner` (`ScanInput`, `ScanOutput`) | `crux/toolapprove` | `ioscan.ToolApproveScanner` (`SetDefaultTextScanner` in `cmd/hive`'s `init`) | tool payload text in; a verdict with masked snippets out | payload may hold secrets the scanner is there to catch | capability (hive owns the rule set) |
+| `watchdog.UsageProber` (`Provider`, `ProbeError`) | `crux/watchdog` | `cmd/hive`'s `usageProber` over `pkg/rotation` | provider name in; sanitised probe error out | hive holds the provider credentials the probe uses | capability (deferred; stays with the rotation watchdog until stage 3 moves it) |
+| `crux.ConditionReporter` (`Observe`, `Clear`) | `crux` root, used by `crux/agent`, `crux/watchdog` | `fleetreport.DefaultReporter{}` | class, key, message, scrubbed diagnostics out | diagnostics are already scrubbed at the call site | capability (hive owns the fleet report) |
+| `agent.SpanStarter` | `crux/agent` | `tracing.StartSpan` | a live `trace.Span` | none | **runtime feature**: not remotable, see below |
+| `crux.AuditSink` (`Record(actor, action, agent, fields)`) | `crux` root, used by `crux/agent` | the dashboard's agent-audit recorder, injected by `cmd/hive` | lifecycle audit entries out | none (already scrubbed) | capability (deferred with `UsageProber`; must not block, so it becomes a batched route, not a per-call one) |
+| `watchdog.Alerter`, `watchdog.AuthProbe`, `watchdog.KickPeriodReporter`, `watchdog.KickSuppressionReporter`, `trajectory.Sink` | `crux/watchdog`, `crux/trajectory` | `cmd/hive` adapters over Discord/Slack, `pkg/rotation`, `pkg/fleetreport` | alerts and observations out | none | observers; they ride the `api.Event` stream in stage 3, not callbacks |
+| `Kicker.SetKickObserver`, `proxy.SetAgentTokenSource`, `SetRepoPausedFunc`, `SetAgentRepoScopeFunc`, `SetWriteSurfaceEnforceFunc`, `SetWriteRefusedAuditFunc`, `SetAgentGitHubBudgetConfig`, … | `crux/agent`, `crux/proxy` | `cmd/hive` closures over `pkg/config` | policy answers (bools, caps) and observer callbacks | none | runtime features configured by the host; they become API routes or config in stage 3, not callbacks |
+
+Two of the capability rows are not callback-shaped as they stand:
+
+- `AppTokenMinter.WriteAgentToken` has hive write a file into the agents'
+  token-cache directory as the agent's uid. Across a process boundary the
+  runtime owns that directory and those uids, so the capability collapses
+  onto *mint a scoped token* and the runtime writes the cache file itself.
+  Stage 3 replaces `SetAppAuth` in sidecar mode with a writer built over the
+  mint callback; the in-process path keeps `*github.AppAuth`.
+- `SpanStarter` returns an in-process `trace.Span` whose `End` must be
+  called by the runtime; there is no sensible remote form. The runtime's
+  default (the OpenTelemetry global tracer) is the sidecar answer, with the
+  usual W3C context propagation on the API requests, and hive's
+  per-component reach bookkeeping stays a hive concern. This is why span
+  start is **not** in the callback contract.
+
+### Direction
+
+Runtime → hive. The runtime is the caller for every capability; hive never
+pushes a credential into the runtime, and the runtime never receives the
+App private key, the installation JWT, the canary registry, the Linear
+OAuth refresh token or the rotation providers' credentials. Tokens are
+minted per request, scoped to a tier and to the named repositories
+(`ScopedTokenForRepos`' existing contract), attributed to an agent, and
+carry an expiry the runtime must honour (GitHub installation tokens expire
+in an hour; the response says when). The runtime keeps a token only as long
+as the operation that asked for it (`pushbroker` holds it for one push, and
+already keeps it out of `argv` and logs) or, for the per-agent cache file,
+until the expiry the response carried.
+
+Trust boundary: the runtime process is trusted to attribute requests to
+the right agent, because it is the enforcement point that identifies the
+agent today (the proxy's per-agent routing, the broker's `AgentName`). The
+callback endpoint authenticates *the runtime*, not individual agents, and
+hive keeps the authority to refuse (an agent not in its fleet, a repo not
+in the installation, a tier the agent is not entitled to). An agent cannot
+reach the hive socket: it lives in hive's private runtime directory, mode
+`0600`, and agents run as their own uids.
+
+### Transport
+
+The callback endpoint reuses `crux/api`'s conventions: HTTP+JSON, routes
+under `/v1`, `api.Error` bodies with stable `code`s, a `0600` unix socket in
+a uid-owned `0700` directory, optional TCP only behind a bearer token, and
+a token-less server that answers only requests it saw arrive on its own
+socket. The contract is the stdlib-only package `crux/api/callback`; a
+hive that mounts it links nothing of the runtime, and a runtime that calls
+it links nothing of hive.
+
+- **Hive serves.** Bidirectional means two listeners: `crux serve` keeps
+  its socket for hive's commands, and hive opens a second one for the
+  runtime's callbacks. Default location: `hive.sock` next to the runtime's
+  socket, so `$CRUX_HIVE_SOCKET` if set, else
+  `$XDG_RUNTIME_DIR/crux/hive.sock`, else `<tmp>/crux-<uid>/hive.sock`.
+  The two processes run as one uid in one container by default (stage 4
+  supervision), so the file mode is the credential, exactly as for
+  `crux.sock`. `$CRUX_HIVE_TOKEN` adds a bearer token; `$CRUX_HIVE_LISTEN`
+  (TCP, for the k8s sidecar-container option) requires one.
+- **Routes** (`callback.Path*`), one per capability, request and response
+  bodies as the `callback.<Name>Request/Response` types:
+
+  | Capability | Route | In | Out |
+  |---|---|---|---|
+  | Health | `GET /v1/health` | — | `{version}` plus which capabilities are configured |
+  | Mint scoped token | `POST /v1/tokens` | agent, repo (`owner/name`) or repos (names), tier, requested TTL | token, `expires_at` |
+  | GitHub REST accounting | `POST /v1/github/rest` | caller, method, path, status, injected (bool), the `X-RateLimit-*` response headers | `204` |
+  | Core rate-limit snapshot | `GET /v1/github/rate-limit` | — | remaining, reset, ok |
+  | Inference usage | `POST /v1/usage` | agent, model, kind (`gateway` / `copilot` / `copilot_cache`), input, output, cache read, cache creation | `204` |
+  | Canary scan | `POST /v1/scan/canary` | agent, text, source | detected, agent, source (**never the canary token**) |
+  | Text scan | `POST /v1/scan/text` | direction (`input` / `output`), text | blocked, critical_injection, findings (kind, masked snippet, rule, high) |
+  | Condition | `POST /v1/conditions` | action (`observe` / `clear`), class, key, message, diagnostics | `204` |
+  | Linear credential | `GET /v1/linear/credential` | — | access_token or api_key |
+  | Create PR | `POST /v1/pulls` | repo, head, base, title, body | `crux.PRResult`'s fields |
+
+  A capability hive does not have (no GitHub App, no canary registry, no
+  Linear) answers `404 not_configured`, which the runtime treats exactly as
+  the nil seam it stands in for today (no App → the push fails; no registry
+  → nothing is scanned; no Linear → no injection). A hive-side failure of a
+  configured capability (GitHub refused the mint) is `502 upstream_error`
+  with the message; a bug is `500 hive_error`. Both are refusals to the
+  caller.
+- **Both ends in Go.** `callback.Capabilities` is the one interface set,
+  with wire types on both sides. `*callback.Client` implements it over
+  HTTP; the hive-side `pkg/cruxhost` implements it directly over hive's
+  packages (`*github.AppAuth`, `*ioscan.CanaryRegistry`,
+  `*tokens.InferenceSink`, `fleetreport`, `*github.Client`, the Linear
+  resolver) and `callback.NewServer(caps)` serves either. `crux/hivecap`
+  turns any `Capabilities` into the ring's seam interfaces
+  (`pushbroker.TokenScoper`, `proxy.GitHubRESTAccounting`,
+  `proxy.UsageSink`, `proxy.CanaryScanner`, `toolapprove.TextScanner`,
+  `crux.ConditionReporter`, `agent.PRCreator`) so the runtime's existing
+  setters take them unchanged.
+- **In-process mode: no socket.** `cmd/hive` keeps installing its
+  implementations into the seams directly, as it does now; that path is
+  not changed by this stage and is deleted only in stage 6. Because
+  `crux/hivecap` is written against `callback.Capabilities` rather than
+  `*callback.Client`, a hive that wants one wiring path for both modes can
+  hand `pkg/cruxhost`'s `Capabilities` value to `hivecap` in-process and a
+  `*callback.Client` in sidecar mode; the parity test in `crux/hivecap`
+  asserts the two produce identical seam behaviour. Stage 3 selects between
+  them on `crux.mode`.
+
+### Failure semantics: fail closed
+
+When hive is unreachable, every capability refuses rather than degrades
+into a less-safe answer. The runtime already has a refusal path for each
+seam, and the callback adapters return the value that takes it:
+
+| Seam | Hive unreachable / unauthorized | Effect |
+|---|---|---|
+| `TokenScoper` | error wrapping `callback.ErrUnavailable` | `pushbroker` fails the push ("minting push token"); the agent's branch stays local. The per-agent cache file is not rewritten, so the proxy's token source has no token and `rewriteGitHubAuth` forwards the write **without credentials** → upstream 401. The agent continues read-only on public repos. |
+| `CanaryScanner` | reports a detection with an empty token and the source suffixed ` (hive callback unavailable)` | with `canaryFailClosed` the proxy refuses the write; without it the write is audited as a leak. Both are what an unscannable body does today. |
+| `TextScanner` | a `Blocked` verdict with one finding (`kind=callback`, `rule=hive_unavailable`) | `toolapprove` denies, as `ErrNoTextScanner` does with no scanner. |
+| `GitHubRESTAccounting` | records are dropped; `CoreRateLimitSnapshot` returns `ok=false` | the agent GitHub budget applies the per-agent cap alone, the documented behaviour when no snapshot is installed. |
+| `UsageSink` | records are dropped | billing undercounts for the outage; counted in `Client.Status()`. |
+| `ConditionReporter` | reports are dropped | the fleet report misses the window; counted in `Client.Status()`. |
+| `LinearCredential` | empty credential | the proxy injects nothing; the agent's Linear call fails upstream. |
+| `PRCreator` | error wrapping `callback.ErrUnavailable` | the sandbox executor reports the kick as failed, same as a forge error. |
+
+`401` from hive (token mismatch) is `callback.ErrUnauthorized` and takes
+the same rows; it is never retried with a different credential. The client
+has no logger and its errors never contain the bearer token, a minted
+token, or a request body; `MintTokenResponse` prints with the token
+redacted so an accidental `%v` cannot leak it.
+
+The outage is a runtime condition. `callback.Client.Status()` reports
+`Reachable`, the last error, when it began and how many calls failed
+closed; the class name `hive_callback_unavailable` is reserved for it.
+Stage 4 surfaces it on `GET /v1/health` and as an `api.Event`, and defines
+the governor's reaction (no new dispatch, holds kept) alongside the other
+"socket is gone" cases. Recovery is per call: the next successful callback
+clears the condition; there is no circuit breaker, because the fail-closed
+answers are already cheap and the per-call timeout
+(`callback.DefaultTimeout`, 5 s) bounds the cost of a dead socket.
+
+### What stage 3 wires
+
+- `cmd/hive`: `cruxhost.New(cruxhost.Deps{...})` over the values it already
+  constructs, served on `callback.Listen(callback.DefaultSocket())` next to
+  the runtime socket, in sidecar mode only.
+- `crux serve`: a `--hive-callback` address (or `$CRUX_HIVE_SOCKET`),
+  `callback.NewClient`, `hivecap.New(client)`, and the manager and proxy
+  setters fed from it instead of nil.
+- `AppTokenMinter` → a mint-callback-backed cache writer in `crux/agent`;
+  `AgentMintIssuer` and `UsageProber` follow the same route pattern when
+  the watchdog's rotation probe moves.
 
 ## CLI
 
@@ -635,7 +958,9 @@ cd src/crux && go test ./...      # from inside the module
 ```
 
 `./cmd/crux` is a host that builds against it, like `./cmd/hive`, and is
-tested with the rest of the root module. Both ratchets live in
+tested with the rest of the root module; `./crux/cmd/crux` is the module's
+own host and builds standalone (`cd src/crux && GOWORK=off go build
+./cmd/crux`; `make smoke` there exercises `crux serve` end to end). Both ratchets live in
 `./internal/testutil` and run with that package. In CI, a PR whose diff is
 entirely under `src/crux/` gets the `crux-only` verdict from
 `crux-scope.sh` and runs only the agent slices (Stage 1 item 5). Two

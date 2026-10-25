@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -79,7 +80,7 @@ func newBootCollectorsBoot(t *testing.T, cfg *config.Config) *boot {
 	b, _ := newDepsTestBoot(t, cfg)
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.beadStores = map[string]*beads.Store{}

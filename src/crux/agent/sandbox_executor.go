@@ -40,9 +40,8 @@ func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name
 	return cmd.CombinedOutput()
 }
 
-type PRCreator interface {
-	CreatePR(ctx context.Context, repo, head, base, title, body string) (crux.PRResult, error)
-}
+// PRCreator is crux.PRCreator, the host-provided pull-request capability.
+type PRCreator = crux.PRCreator
 
 type SandboxKickSpec struct {
 	Agent        string

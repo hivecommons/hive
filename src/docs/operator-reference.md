@@ -1229,7 +1229,15 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   `dashboard.stage_tracker.webhook_refresh: false` turns the re-read off
   (deliveries then still invalidate caches and wake the loop, and wake
   cycles fall back to a full enumeration because nothing else patches the
-  snapshot).
+  snapshot). Independently of the re-read, the one payload fact the tracker
+  trusts without a confirming read is a closed or merged `state` on the
+  issue or pull request the delivery embeds: on *any* action (`labeled`,
+  `unlabeled`, `created`, not only `closed`) that row leaves at once, so a
+  refused or failed re-read cannot leave a closed item listed open. As a
+  backstop for deliveries that never arrived, on each status publish it
+  also lists each repo's items closed since its last look every
+  `dashboard.stage_tracker.closed_sweep_interval_s` (default `300`; one
+  list call per repo; negative disables) and evicts any still shown.
 
 #### Polling cadence vs webhook patch vs reconcile
 
@@ -1389,6 +1397,7 @@ dashboard:
     webhook_refresh: true          # re-read the PR/issue a delivery names
     webhook_refresh_debounce_ms: 2000
     webhook_refresh_replay_window_s: 1800   # re-apply re-reads to snapshots published meanwhile
+    closed_sweep_interval_s: 300   # list items closed since the last look and evict rows still shown; -1 disables
 ```
 
 ## `HIVE_GITHUB_TOKEN` permissions

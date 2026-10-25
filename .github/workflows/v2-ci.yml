@@ -161,6 +161,25 @@ jobs:
       - name: Build
         run: go build ./cmd/hive/
 
+      # The crux binary builds twice (#14138): the root-module host
+      # (./cmd/crux, Hive's hive.yaml loader) and the nested module's own
+      # ./crux/cmd/crux, which must build with GOWORK=off so a checkout of
+      # src/crux alone (or a downstream repo consuming the module) can
+      # `go build ./cmd/crux` without the workspace or the root module.
+      - name: Build crux (root host and standalone module)
+        run: |
+          go build -o /dev/null ./cmd/crux
+          (cd crux && GOWORK=off go build -o /dev/null ./cmd/crux)
+
+      # crux/scripts/smoke.sh (`make -C crux smoke` locally; the self-hosted
+      # runners have no make) starts `crux serve` on a private unix socket
+      # with an empty runtime, drives it with `crux --server … ps` and GET
+      # /v1/health, then stops it. No agents or tmux involved; it fails the
+      # PR if the server stops starting, listening or shutting down cleanly.
+      - name: Crux module smoke (crux serve over a unix socket)
+        working-directory: src/crux
+        run: GOWORK=off bash scripts/smoke.sh
+
       - name: CI install tool apt cache tests
         working-directory: .
         run: bash .github/scripts/test-ci-install-tool-apt-cache.sh
@@ -176,6 +195,10 @@ jobs:
       - name: Runner cache prune tests
         working-directory: .
         run: python3 .github/scripts/test-runner-cache-prune.py
+
+      - name: Patch coverage script tests
+        working-directory: .
+        run: bash .github/scripts/test-patch-coverage.sh
 
       # Runner-infra classifier, rerun-once guard and rate alert (#9664):
       # hermetic, real 2026-09-29 log excerpts as fixtures, about a second.

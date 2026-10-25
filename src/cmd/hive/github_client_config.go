@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -264,7 +265,7 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 				// Same resolver the Manager uses, not a second copy of the
 				// rule: a hardcoded default here would drift silently the
 				// moment agy's default effort changed.
-				effort = agent.ResolveReasoningEffort(backend, model, ac.ReasoningEffort)
+				effort = cruxconfig.ResolveReasoningEffort(backend, model, ac.ReasoningEffort)
 			}
 		}
 		tool, toolVersion := github.ResolveToolVersion(backend)

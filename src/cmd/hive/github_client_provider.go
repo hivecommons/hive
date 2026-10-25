@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/crux/pushbroker"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // githubClientRef boxes the live client so the provider can tell "never

@@ -571,6 +571,11 @@ func TestWebhookRefreshHandsItemsToGovernorAndFlushesOnDemand(t *testing.T) {
 // The delivery payload is a hint, never state: an `issues` "closed" delivery
 // whose confirming GET says the issue is open leaves the row open, and the
 // delivery id rides on the re-read for audit.
+// The payload's open-side fields are never applied: title, labels and
+// bucket come from the confirming GET only. Its closed state, however, is
+// trusted at once (the conservative direction, hivecommons/hive#14159): the
+// row leaves on the delivery, and the GET that then says "open" cannot
+// bring it back with the payload's title — the next enumeration relists it.
 func TestWebhookRefreshIgnoresPayloadStateAndTagsDelivery(t *testing.T) {
 	const secret = "s3cr3t"
 	t.Setenv(githubWebhookSecretEnvVar, secret)
@@ -614,28 +619,30 @@ func TestWebhookRefreshIgnoresPayloadStateAndTagsDelivery(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"tracker_refresh":1`) {
 		t.Fatalf("delivery not queued: %s", rec.Body.String())
 	}
-	// Nothing applied before the confirming GET.
-	if gets.Load() != 0 || len(handed) != 0 {
-		t.Fatal("payload applied before re-read")
+	// The payload's "closed" is applied at once, before (and whether or not)
+	// the confirming GET runs; nothing else of the payload is.
+	if gets.Load() != 0 {
+		t.Fatal("GET made before the debounce window closed")
+	}
+	if len(handed) != 1 || handed[0].Open() || handed[0].Title != "" || handed[0].DeliveryID != "delivery-123" {
+		t.Fatalf("governor received %+v, want the payload's closed state only, tagged with the delivery id", handed)
+	}
+	for _, it := range s.buildStageTracker(s.status, s.stageStore, now).Items {
+		if it.Kind == "issue" && it.Number == 8 {
+			t.Fatalf("a delivery saying closed must drop the row at once: %+v", it)
+		}
 	}
 	timers.last().fire()
 	if gets.Load() != 1 {
 		t.Fatalf("GETs = %d, want the one confirming read", gets.Load())
 	}
-	if len(handed) != 1 || !handed[0].Open() || handed[0].Title != "Flaky test (still open)" || handed[0].DeliveryID != "delivery-123" {
+	if len(handed) != 2 || !handed[1].Open() || handed[1].Title != "Flaky test (still open)" || handed[1].DeliveryID != "delivery-123" {
 		t.Fatalf("governor received %+v, want the GET's state tagged with the delivery id", handed)
 	}
-	found := false
 	for _, it := range s.buildStageTracker(s.status, s.stageStore, now).Items {
-		if it.Kind == "issue" && it.Number == 8 {
-			found = true
-			if strings.Contains(it.Title, "PAYLOAD") {
-				t.Fatalf("payload title leaked into the row: %+v", it)
-			}
+		if it.Kind == "issue" && it.Number == 8 && strings.Contains(it.Title, "PAYLOAD") {
+			t.Fatalf("payload title leaked into the row: %+v", it)
 		}
-	}
-	if !found {
-		t.Fatal("open issue removed on the strength of the payload alone")
 	}
 }
 

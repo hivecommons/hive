@@ -6,6 +6,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // spanInstrumentationName is the instrumentation scope the runtime's spans
@@ -16,7 +18,7 @@ const spanInstrumentationName = "github.com/hivecommons/hive/crux/agent"
 // so the host can install that function and keep its per-component reach
 // bookkeeping, while the runtime itself depends only on the OpenTelemetry
 // API (hivecommons/hive#13536).
-type SpanStarter func(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span)
+type SpanStarter = crux.SpanStarter
 
 // SetSpanStarter installs the function that opens the runtime's trace spans.
 // Safe to call at any time; nil restores the default, which starts spans on

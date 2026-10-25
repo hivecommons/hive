@@ -3,10 +3,11 @@ package agent
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // PR follow-up session resume (hivecommons/hive#9583).
@@ -45,20 +46,13 @@ func newSessionBootNonce() string {
 	return hex.EncodeToString(b)
 }
 
-// ErrResumeBusy means the authoring session still exists but cannot take a
-// follow-up right now (mid-turn, provider backoff, restart hold). It is
-// transient: the caller keeps the follow-up queued and retries.
-var ErrResumeBusy = errors.New("agent session busy; follow-up deferred")
-
-// ErrResumeSessionGone means the session that authored the PR no longer
-// exists, or the agent has moved on to other work since (a newer kick, a
-// restart, a relaunch). The caller must fall back to a fresh dispatch.
-var ErrResumeSessionGone = errors.New("authoring session no longer live")
-
-// ErrResumeUnsupported means this agent's execution mode has no resumable
-// conversation to type into (sandbox jobs, the headless agy runner) or the
-// operator paused it. The caller falls back to a fresh dispatch.
-var ErrResumeUnsupported = errors.New("agent cannot resume a session")
+// The resume sentinels are defined in the crux root so hosts can match them
+// without importing this package; see crux.ErrResumeBusy and friends.
+var (
+	ErrResumeBusy        = crux.ErrResumeBusy
+	ErrResumeSessionGone = crux.ErrResumeSessionGone
+	ErrResumeUnsupported = crux.ErrResumeUnsupported
+)
 
 // sessionIDLocked renders the identity of the conversation the agent's CLI
 // currently holds. It changes whenever that conversation could have been

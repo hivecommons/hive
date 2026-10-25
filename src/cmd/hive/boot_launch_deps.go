@@ -5,7 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/discord"
@@ -27,7 +28,7 @@ type bootLaunchDeps struct {
 	// waitStagger blocks for the launch stagger; it returns false when ctx
 	// ended first so the loop aborts instead of launching into a shutdown.
 	waitStagger func(ctx context.Context) bool
-	startAgent  func(ctx context.Context, mgr *agent.Manager, name string) error
+	startAgent  func(ctx context.Context, mgr crux.Runtime, name string) error
 	serve       func(srv *dashboard.Server) error
 }
 
@@ -48,7 +49,7 @@ func defaultBootLaunchDeps() bootLaunchDeps {
 				return false
 			}
 		},
-		startAgent: func(ctx context.Context, mgr *agent.Manager, name string) error { return mgr.Start(ctx, name) },
+		startAgent: func(ctx context.Context, mgr crux.Runtime, name string) error { return mgr.Start(ctx, name) },
 		serve:      (*dashboard.Server).Start,
 	}
 }

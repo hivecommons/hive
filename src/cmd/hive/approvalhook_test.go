@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/pkg/hooks"
 )
 
 func hookApprovalRequest() hooks.ApprovalRequest {

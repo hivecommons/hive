@@ -5,7 +5,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
+
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
@@ -40,7 +41,7 @@ type bootKnowledgeDeps struct {
 	ensureNousDirs        func(logger *slog.Logger)
 	loadNousState         func(logger *slog.Logger) *dashboard.NousState
 	newInceptionEngine    func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
-	restartBrainstorm     func(ctx context.Context, mgr *agent.Manager, msg string) error
+	restartBrainstorm     func(ctx context.Context, mgr crux.Runtime, msg string) error
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
 	// nil leaves it built but not started.
 	startConnectorSyncer func(ctx context.Context, s *connector.Syncer)
@@ -76,7 +77,7 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(inceptionDataDir, api, logger)
 		},
-		restartBrainstorm: func(ctx context.Context, mgr *agent.Manager, msg string) error {
+		restartBrainstorm: func(ctx context.Context, mgr crux.Runtime, msg string) error {
 			return mgr.RestartWithBootstrap(ctx, "brainstorm", msg)
 		},
 		startConnectorSyncer: func(ctx context.Context, s *connector.Syncer) { go s.Run(ctx) },

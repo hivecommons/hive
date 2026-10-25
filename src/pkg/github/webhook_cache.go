@@ -57,6 +57,29 @@ type WebhookEventResult struct {
 	// reported on; a reader with its own PR set (forgestate) resolves it to
 	// a PR the detail cache may not hold (hivecommons/hive#13377).
 	HeadSHA string `json:"head_sha,omitempty"`
+	// Item is the payload's own view of the issue or pull request the
+	// delivery named (every `issues`, `issue_comment` and `pull_request*`
+	// payload embeds the full object with its state), nil for deliveries
+	// that name none. Readers trust it in the conservative direction only:
+	// a closed or merged state drops the row at once, whatever the action,
+	// so a stage tracker whose confirming GET is refused or lost cannot keep
+	// showing a closed item as open (hivecommons/hive#14159, #14064).
+	Item *WebhookItemHint `json:"item,omitempty"`
+}
+
+// WebhookItemHint is the state a webhook payload reports for the item it
+// names, as of the event.
+type WebhookItemHint struct {
+	Number    int       `json:"number"`
+	IsPR      bool      `json:"is_pr"`
+	State     string    `json:"state"`
+	Merged    bool      `json:"merged,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+}
+
+// Closed reports whether the payload says the item is no longer open.
+func (h *WebhookItemHint) Closed() bool {
+	return h != nil && (h.Merged || strings.EqualFold(h.State, "closed"))
 }
 
 // webhookTracker records webhook liveness per repository and the set of PRs a
@@ -387,17 +410,21 @@ type webhookEventPayload struct {
 	Number      int    `json:"number"`
 	Action      string `json:"action"`
 	PullRequest *struct {
-		Number   int        `json:"number"`
-		Title    string     `json:"title"`
-		Body     string     `json:"body"`
-		Merged   bool       `json:"merged"`
-		MergedAt *time.Time `json:"merged_at"`
-		Head     struct {
+		Number    int        `json:"number"`
+		Title     string     `json:"title"`
+		Body      string     `json:"body"`
+		State     string     `json:"state"`
+		Merged    bool       `json:"merged"`
+		MergedAt  *time.Time `json:"merged_at"`
+		UpdatedAt *time.Time `json:"updated_at"`
+		Head      struct {
 			SHA string `json:"sha"`
 		} `json:"head"`
 	} `json:"pull_request"`
 	Issue *struct {
 		Number      int              `json:"number"`
+		State       string           `json:"state"`
+		UpdatedAt   *time.Time       `json:"updated_at"`
 		PullRequest *json.RawMessage `json:"pull_request"`
 	} `json:"issue"`
 	CheckSuite *struct {
@@ -443,6 +470,7 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	if n, ok := webhookTouchedIssue(event, p); ok {
 		res.TouchedIssues = []int{n}
 	}
+	res.Item = webhookItemHint(event, p)
 	if reviewRequestWakeEvent(event, p) {
 		c.reviewWake.wake()
 		res.WokeReviewWatcher = true
@@ -507,6 +535,34 @@ func webhookIssueLabelTarget(event string, p webhookEventPayload) (int, bool) {
 		return p.Issue.Number, true
 	}
 	return 0, false
+}
+
+// webhookItemHint is the payload's state for the issue or pull request an
+// `issues`, `issue_comment` or `pull_request*` delivery embeds; nil when the
+// event carries neither object.
+func webhookItemHint(event string, p webhookEventPayload) *WebhookItemHint {
+	switch event {
+	case "pull_request", "pull_request_review", "pull_request_review_comment", "pull_request_review_thread":
+		if p.PullRequest == nil || p.PullRequest.Number <= 0 {
+			return nil
+		}
+		h := &WebhookItemHint{Number: p.PullRequest.Number, IsPR: true, State: p.PullRequest.State,
+			Merged: p.PullRequest.Merged || (p.PullRequest.MergedAt != nil && !p.PullRequest.MergedAt.IsZero())}
+		if p.PullRequest.UpdatedAt != nil {
+			h.UpdatedAt = *p.PullRequest.UpdatedAt
+		}
+		return h
+	case "issues", "issue_comment":
+		if p.Issue == nil || p.Issue.Number <= 0 {
+			return nil
+		}
+		h := &WebhookItemHint{Number: p.Issue.Number, IsPR: p.Issue.PullRequest != nil, State: p.Issue.State}
+		if p.Issue.UpdatedAt != nil {
+			h.UpdatedAt = *p.Issue.UpdatedAt
+		}
+		return h
+	}
+	return nil
 }
 
 // webhookTouchedIssue returns the number of the non-PR issue an `issues` or

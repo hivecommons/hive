@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/crux/trajectory"
@@ -113,7 +112,7 @@ type boot struct {
 	repoTargetIssueMessage        func() string
 	advisoryIssues                map[string]int
 	advisoryStore                 *advisory.Store
-	agentMgr                      *agent.Manager
+	agentMgr                      hostedRuntime
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
 	issueClaims                   *claims.Ledger
@@ -178,7 +177,7 @@ type boot struct {
 	mutationStats     *effects.Recorder
 
 	// bootAgents
-	agentMinter agent.AgentMintIssuer
+	agentMinter crux.AgentMintIssuer
 
 	// bootState
 	saved *snapshot.PersistedState
@@ -201,7 +200,7 @@ type boot struct {
 
 	// bootSupervision
 	quotaReadingPublisher    *rotation.Manager
-	linearCredentialResolver func() agent.LinearCredential
+	linearCredentialResolver func() crux.LinearCredential
 
 	// bootWatchers
 	configWatcher *config.Watcher

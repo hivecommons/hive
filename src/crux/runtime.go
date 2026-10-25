@@ -25,6 +25,9 @@ package crux
 
 import (
 	"context"
+	"time"
+
+	"github.com/hivecommons/hive/crux/trajectory"
 
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -210,9 +213,140 @@ type Credentials interface {
 	ClaudeCredentialCandidatePaths() []string
 }
 
+// Resumer is backend-native session resume: naming the conversation that
+// authored a PR and typing a follow-up into it later (hivecommons/hive#9606).
+// Errors are the crux.ErrResume* sentinels.
+type Resumer interface {
+	// ResumeHandle captures the agent's current resumable conversation.
+	// cmd/hive: prfollowupwire.go (PR-opened hook).
+	ResumeHandle(name string) (ResumeHandle, bool)
+	// SendResumeKick types message into the session sessionID names, or
+	// returns ErrResumeBusy / ErrResumeSessionGone / ErrResumeUnsupported.
+	// cmd/hive: prfollowupwire.go.
+	SendResumeKick(name, message, sessionID string) error
+	// SessionID is the agent's live session id, if it has one. cmd/hive:
+	// prfollowupwire.go.
+	SessionID(name string) (string, bool)
+	// SessionMissing reports an agent whose session is gone (dead pane).
+	// cmd/hive: eval cycle resume-kick hold.
+	SessionMissing(name string) bool
+}
+
+// Supervisor is what the governor asks the runtime while scheduling work:
+// may it start an agent, what is each agent launched as, which agents have
+// crashed, which credentials can be refreshed. These reads and actions sit
+// between Lifecycle and the host's scheduler.
+type Supervisor interface {
+	// GovernorMayStart reports whether the runtime will accept a Start for
+	// name right now (not blocked by a start-failure hold). cmd/hive.
+	GovernorMayStart(name string) bool
+	// MarkStartupLaunchQueued records that the host has queued the named
+	// agents for its staggered boot launch. cmd/hive: boot.
+	MarkStartupLaunchQueued(names []string)
+	// CheckAndRestartCrashedAgents relaunches crashed agents and returns
+	// their names. cmd/hive: run loop.
+	CheckAndRestartCrashedAgents(ctx context.Context) []string
+	// ConsentWedgedAgents lists agents stuck on a consent prompt. cmd/hive.
+	ConsentWedgedAgents() []string
+	// RefreshAgentTokens rewrites every agent's scoped GitHub token.
+	// cmd/hive: watchers, GitHub client refresh.
+	RefreshAgentTokens(ctx context.Context)
+	// AgentCredentialRefreshable reports whether the host can refresh the
+	// agent's credential. cmd/hive: heartbeat.
+	AgentCredentialRefreshable(agentName string) (refreshable, known bool)
+	// AgentCapabilities is the agent's GitHub capability bits. cmd/hive.
+	AgentCapabilities(agentName string) (canOpenIssue, canOpenPR, canMerge, ok bool)
+	// EffectiveBackend is the backend the agent runs on after overrides.
+	// cmd/hive: rotation.
+	EffectiveBackend(agentName string) (backend string, ok bool)
+	// InvocationMetadata is what the agent was launched as. cmd/hive:
+	// attribution trailers.
+	InvocationMetadata(agentName string) (backend, model, effort string, ok bool)
+	// RestartTelemetry is the agent's restart counters. cmd/hive: heartbeat.
+	RestartTelemetry(name string) (total, last24h int, lastRestartAt time.Time, lastReason string, ok bool)
+	// StartFailureState is the agent's start-failure record. cmd/hive.
+	StartFailureState(name string) (StartFailureSnapshot, bool)
+	// ProviderErrorBackoffRemaining reports an active provider-error backoff:
+	// remaining time, provider, reason. cmd/hive: eval cycle.
+	ProviderErrorBackoffRemaining(name string) (time.Duration, string, string, bool)
+	// PauseByCause is PauseBy with the machine-readable causation recorded.
+	// cmd/hive: fleet breaker, escalations.
+	PauseByCause(name, trigger, reason, by string, cause PauseCausation) error
+	// ArchiveAllKickLogs rotates every agent's kick log. cmd/hive: mode
+	// change.
+	ArchiveAllKickLogs(reason string)
+	// CountAgentsWithModel reports how many agents launched with an explicit
+	// model, for the hourly spoke metrics. cmd/hive.
+	CountAgentsWithModel() int
+	// CrashOOMSuspected reports whether the agent's last crash looks like an
+	// OOM kill, so a held resume kick is explained correctly. cmd/hive.
+	CrashOOMSuspected(name string) bool
+	// BackendAuthAvailable and AgentAuthAvailable report whether credentials
+	// for a backend / an agent are present; known is false when the runtime
+	// cannot tell. The dashboard's auth badges read them. cmd/hive.
+	BackendAuthAvailable(backend string) (available, known bool)
+	AgentAuthAvailable(agentName string) (available, known bool)
+	// SendGitHubAPIBudgetNudge tells an agent its GitHub API budget is
+	// nearly spent; a nudge, not a kick, so it never counts against the kick
+	// limits. cmd/hive: egress proxy.
+	SendGitHubAPIBudgetNudge(name, message string)
+	// RecordAudit appends a host-side action against an agent to the
+	// runtime's audit trail. cmd/hive.
+	RecordAudit(action, agentName string, fields map[string]any)
+	// AgentHasValidCredential and RefreshAgentTokenFor back the login-prompt
+	// scanner: an agent sitting on a login prompt with a valid credential is
+	// re-minted rather than paused. cmd/hive.
+	AgentHasValidCredential(agentName string) bool
+	RefreshAgentTokenFor(ctx context.Context, name string) error
+	// TrajectoryAgents snapshots the running agents with intent and
+	// transcript for the trajectory lane. cmd/hive.
+	TrajectoryAgents() []trajectory.AgentView
+}
+
+// Restorer seeds the runtime with state the host persisted across a restart
+// (pkg/snapshot). Each call replaces the record for one agent and is only
+// meaningful before that agent runs.
+type Restorer interface {
+	SeedPauseState(name string, pausedAt time.Time, trigger, reason, by string)
+	SeedRestartTelemetry(name string, count int, events []RestartEvent, lastReason string)
+	SeedTurnLoss(name string, loss TurnLoss)
+	SeedLastKick(name string, t time.Time)
+	SeedKickHistory(name string, records []KickRecord)
+	// RestoreBreaker re-engages the fleet breaker as it was persisted.
+	RestoreBreaker(engaged bool, paused []string)
+}
+
+// Background are the runtime's long-running maintenance loops. Each blocks
+// until ctx ends; the host runs them as goroutines after boot. In a sidecar
+// they run inside the serving process and this interface is a no-op.
+type Background interface {
+	StartAgentTokenRefresh(ctx context.Context)
+	StartCredentialWatchdog(ctx context.Context)
+	StartCopilotSessionRefresh(ctx context.Context)
+	StartTranscriptActivityRefresh(ctx context.Context)
+}
+
+// Authorizer is the per-request gate the host's relay watchers consult
+// before acting on an agent's request (open a PR, open an issue, request a
+// review, merge, push a branch): is the request from the agent it claims
+// (fileUID), and does that agent's ACMM level permit the action. The five
+// are method values handed to the relays at boot, so they are the one
+// family a sidecar must answer synchronously on the request path.
+type Authorizer interface {
+	AuthorizePROpen(agentName string, fileUID int) error
+	AuthorizePushBranch(agentName string, fileUID int) error
+	AuthorizeIssueOpen(agentName string, fileUID int, kind string) error
+	AuthorizeMerge(agentName string, fileUID int, repo string) error
+	AuthorizeReviewRequest(agentName string, fileUID int) error
+}
+
 // Runtime is the full surface a consumer needs to run, observe and control
 // agents. *agent.Manager implements it directly (asserted in crux/agent).
 // Consumers that need less should depend on the narrower interfaces above.
+//
+// Resumer, Supervisor, Restorer, Background and Authorizer are the families cmd/hive
+// uses beyond the dashboard's six (hivecommons/hive#14138, stage 1); a
+// sidecar runtime serves each over the API before the default flips.
 type Runtime interface {
 	Lifecycle
 	Observer
@@ -220,4 +354,9 @@ type Runtime interface {
 	Definitions
 	Fleet
 	Credentials
+	Resumer
+	Supervisor
+	Restorer
+	Background
+	Authorizer
 }

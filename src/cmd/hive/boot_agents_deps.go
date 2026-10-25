@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"log/slog"
+	"os"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -14,7 +18,7 @@ import (
 // bootAgentsDeps carries the effects of bootAgents that outlive the call
 // (#7571, step 2): every goroutine the phase starts and the two collaborators
 // that touch /data or a signing key. The manager itself is constructed for
-// real — agent.NewManager is pure — so a test can assert on the wiring the
+// real — in-process construction is pure — so a test can assert on the wiring the
 // phase installs on it (resolvers, hooks, App auth, minter) while the loops
 // that would otherwise poll tmux, token caches and request directories for
 // the rest of the test binary's life are recorded instead of started.
@@ -23,7 +27,7 @@ type bootAgentsDeps struct {
 	// watchdog and the Copilot session refresh. All three are unconditional
 	// (see the comments at the call site for why each must not gate on App
 	// state at boot).
-	startAgentLoops func(ctx context.Context, mgr *agent.Manager)
+	startAgentLoops func(ctx context.Context, mgr crux.Runtime)
 	// prepareRequestDirs creates the agent-facing request queues;
 	// startTokenAccessAudit folds the per-UID wrapper events into the audit
 	// log. Both run regardless of App state.
@@ -39,9 +43,16 @@ type bootAgentsDeps struct {
 	// its channel closes once the sweep loop has exited.
 	startSelfAuthoredSweep func(ctx context.Context, c *github.Client, maxMerges int, acmmAllowed bool, acmmLevel *int, opts automerge.Options) <-chan struct{}
 	// buildMinter is buildAgentMinter; only consulted when mint.enabled.
-	buildMinter func(cfg *config.Config, logger *slog.Logger) (agent.AgentMintIssuer, error)
-	// startPermissionsWatcher is agent.StartPermissionsWatcher.
+	buildMinter func(cfg *config.Config, logger *slog.Logger) (crux.AgentMintIssuer, error)
+	// startPermissionsWatcher is cruxruntime.StartPermissionsWatcher.
 	startPermissionsWatcher func(logger *slog.Logger)
+	// newRuntime is newHostedRuntime: the runtime selected by CRUX_MODE.
+	// Fakes keep the real in-process runtime (construction is pure) and
+	// substitute only when asserting the unavailable-mode exit.
+	newRuntime func(cfg cruxconfig.RuntimeConfig, opts ...cruxruntime.Option) (hostedRuntime, error)
+	// exit terminates the process when no runtime can be built. os.Exit in
+	// production; fakes record it.
+	exit func(code int)
 }
 
 // requestRelays is the authorization the five request watchers are started
@@ -66,7 +77,7 @@ type requestRelays struct {
 
 func defaultBootAgentsDeps() bootAgentsDeps {
 	return bootAgentsDeps{
-		startAgentLoops: func(ctx context.Context, mgr *agent.Manager) {
+		startAgentLoops: func(ctx context.Context, mgr crux.Runtime) {
 			go mgr.StartAgentTokenRefresh(ctx)
 			go mgr.StartCredentialWatchdog(ctx)
 			go mgr.StartCopilotSessionRefresh(ctx)
@@ -93,13 +104,15 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 		startSelfAuthoredSweep: func(ctx context.Context, c *github.Client, maxMerges int, acmmAllowed bool, acmmLevel *int, opts automerge.Options) <-chan struct{} {
 			return automerge.StartSelfAuthoredAutoMergeSweep(ctx, c, maxMerges, acmmAllowed, acmmLevel, opts)
 		},
-		buildMinter: func(cfg *config.Config, logger *slog.Logger) (agent.AgentMintIssuer, error) {
+		buildMinter: func(cfg *config.Config, logger *slog.Logger) (crux.AgentMintIssuer, error) {
 			m, err := buildAgentMinter(cfg, logger)
 			if err != nil {
 				return nil, err
 			}
 			return m, nil
 		},
-		startPermissionsWatcher: func(logger *slog.Logger) { go agent.StartPermissionsWatcher(logger) },
+		startPermissionsWatcher: func(logger *slog.Logger) { go cruxruntime.StartPermissionsWatcher(logger) },
+		newRuntime:              newHostedRuntime,
+		exit:                    os.Exit,
 	}
 }

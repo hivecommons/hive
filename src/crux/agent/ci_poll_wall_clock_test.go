@@ -119,9 +119,10 @@ func TestNudgeIfPollingCIWallClockSecondNudgeSuppressed(t *testing.T) {
 	}
 }
 
-// TestNudgeIfPollingCISkipsMonitoringLanes pins #13860 and #13898: reviewers
-// and CI maintainers read check status as evidence for the PRs and repositories
-// they monitor, so that work must not be mistaken for polling their own PR.
+// TestNudgeIfPollingCISkipsMonitoringLanes pins #13860, #13898 and #14188:
+// reviewers, CI maintainers and quality agents read check status as evidence
+// for the PRs and repositories they monitor, so that work must not be mistaken
+// for polling their own PR.
 func TestNudgeIfPollingCISkipsMonitoringLanes(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
@@ -133,6 +134,8 @@ func TestNudgeIfPollingCISkipsMonitoringLanes(t *testing.T) {
 		{name: "reviewer name only", agentName: "code-reviewer-sonnet-1", role: "", wantNudged: false},
 		{name: "CI maintainer role", agentName: "worker", role: "ci-maintainer", wantNudged: false},
 		{name: "CI maintainer name only", agentName: "ci-maintainer", role: "", wantNudged: false},
+		{name: "quality role", agentName: "worker", role: "quality", wantNudged: false},
+		{name: "quality name only", agentName: "quality", role: "", wantNudged: false},
 		{name: "developer", agentName: "scanner", role: "developer", wantNudged: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

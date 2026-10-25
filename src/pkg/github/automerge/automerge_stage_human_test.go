@@ -278,6 +278,13 @@ func TestTrustAndDecisionCauseProse(t *testing.T) {
 	if got := decisionCause("something-new"); got != "the lane reported `something-new`" {
 		t.Fatalf("fallback = %q", got)
 	}
+	// The 085 comment names the rule GitHub refused the merge on.
+	if got := decisionCause(autoMergeReasonMergeRefusedReview); !strings.Contains(got, "approving review") {
+		t.Fatalf("review required = %q", got)
+	}
+	if got := decisionCause(autoMergeReasonMergeRefusedMethod); !strings.Contains(got, "merge method") || !strings.Contains(got, stagelabels.MergeCommitLabel) {
+		t.Fatalf("method not allowed = %q", got)
+	}
 	checks, asks, _ := nudgeDiagnosisRouted("check-failing:lint", stageDetail{}, &stagelabels.Route{Reasons: []string{"red checks: lint, unit", "DCO sign-off missing", "merge conflict with the base branch", "verdict changes_requested @sha"}})
 	if !reflect.DeepEqual(checks, []string{"lint", "unit"}) {
 		t.Fatalf("routed checks = %v", checks)

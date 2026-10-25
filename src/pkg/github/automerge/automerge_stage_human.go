@@ -231,6 +231,10 @@ func decisionCause(reason string) string {
 		return "GitHub Actions is waiting for workflow approval. Hive posted `" + workflowApprovalCommand + "`; install `" + oktotest.WorkflowPath + "` (`hivectl ok-to-test-template`) if the runs do not start, or manually approve them from the PR checks banner."
 	case reason == "approval-desk-withheld":
 		return "the approval desk withheld this merge"
+	case reason == autoMergeReasonMergeRefusedReview:
+		return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. A GitHub **Approve** review on this head (or an App bypass in the branch rules) lets the hive merge it; the hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+	case reason == autoMergeReasonMergeRefusedMethod:
+		return "GitHub refused the merge: the repository does not allow the merge method the hive chose for this PR. The hive does not switch methods on its own: a forward merge or a `" + stagelabels.MergeCommitLabel + "` PR must never be squashed. Merge it by hand with an allowed method, or allow the method in the repository settings and the hive retries within 30 minutes"
 	case reason == "":
 		return ""
 	}

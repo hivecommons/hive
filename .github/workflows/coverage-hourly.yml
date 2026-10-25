@@ -315,7 +315,7 @@ jobs:
             # 90 default (#7407).
             [cmd/hivectl]=97  # 100.0% on 2026-09-17; was exempt as an untested main
             [cmd/flue-fixture]=75 # 80.0% on 2026-09-22 (#8361): main() is the single uncovered statement; run() and signalContext() are tested in-process and the binary is smoke-tested as a child process, which yields no profile
-            [cmd/crux]=75     # 80.0% on 2026-10-23 (#13536): same shape as flue-fixture; main() is the one uncovered statement, run() and signalContext() are tested in-process
+            [cmd/crux]=75     # 80.0% on 2026-10-23 (#13536): same shape as flue-fixture; main() is the one uncovered statement, run() is tested in-process. floor_key maps BOTH ./cmd/crux (root host) and ./crux/cmd/crux (the module's own binary, #14138) here; the module one measured 80.0% on 2026-10-25
             [crux/cli]=92     # 97.8% on 2026-10-23 (#13536): the crux CLI against a fake crux.Runtime plus a real unix control socket; the residue is Main() and write-error branches
           )
 

@@ -309,19 +309,12 @@ func (m *Manager) startFailureBackoffRemainingLocked(agent *AgentProcess, now ti
 	return agent.StartBackoffUntil.Sub(now)
 }
 
-// StartFailureState reports an agent's current start-failure record for callers
-// outside the package (the dashboard status builder, the heartbeat). blocked is
-// the fleet-visible bit: it means the agent has failed the same way
+// StartFailureSnapshot is crux.StartFailureSnapshot; StartFailureState
+// reports it for callers outside the package (the dashboard status builder,
+// the heartbeat). Blocked means the agent has failed the same way
 // startFailureBlockThreshold times and is no longer being relaunched on the
 // tick.
-type StartFailureSnapshot struct {
-	Reason       string
-	Count        int
-	LastAt       time.Time
-	LastExitCode *int
-	LastSignal   string
-	Blocked      bool
-}
+type StartFailureSnapshot = crux.StartFailureSnapshot
 
 func (m *Manager) StartFailureState(name string) (StartFailureSnapshot, bool) {
 	m.mu.RLock()

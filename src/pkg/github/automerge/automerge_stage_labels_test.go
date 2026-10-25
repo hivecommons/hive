@@ -348,6 +348,11 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "no claim but needs-rebase", obs: stageObservation{AuthorKind: authorkind.Clanker, Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
 		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
 		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		// A merge GitHub refuses for a missing approving review or a
+		// disabled merge method is not imminent: a person acts (085).
+		{name: "merge refused review required", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonMergeRefusedReview, Detail: approve}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "merge refused method not allowed", obs: stageObservation{Lane: stageLaneContributor, Reason: autoMergeReasonMergeRefusedMethod, Detail: approve}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "merge queue required stays merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: autoMergeReasonMergeQueueRequired, Detail: approve}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "approved green unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
 		{name: "approved green lane error", obs: stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
 		{name: "unapproved unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new"}},

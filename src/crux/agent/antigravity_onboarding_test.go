@@ -1,14 +1,23 @@
 package agent
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 func TestEntrypointRepairsAgyOnboardingFastPath(t *testing.T) {
 	body, err := os.ReadFile("../../deploy/entrypoint.sh")
+	if errors.Is(err, fs.ErrNotExist) {
+		// deploy/ belongs to the hive root module; absent when the crux module
+		// is built standalone (hivecommons/crux). The parity is hive's to keep.
+		testutil.SkipUnlessRequired(t, "deploy/entrypoint.sh is not part of the crux module (standalone build)")
+	}
 	if err != nil {
 		t.Fatalf("read entrypoint: %v", err)
 	}

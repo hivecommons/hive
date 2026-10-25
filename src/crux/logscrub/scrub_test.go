@@ -1,11 +1,15 @@
 package logscrub
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 func TestScrubStringCredentialPatterns(t *testing.T) {
@@ -117,8 +121,16 @@ func TestBearerRegressionMarkedMode(t *testing.T) {
 }
 
 func TestRelayAndGoSecretPatternCategoriesAgree(t *testing.T) {
+	// The relay lives in the hive root module, outside src/crux. When this
+	// package is built standalone (the published hivecommons/crux copy,
+	// #14138) the file is absent and the parity it asserts is hive's to keep,
+	// so skip rather than fail there; inside hive the behavioural flag turns
+	// a missing file back into a failure.
 	const relayPath = "../../../bin/contributor-relay.js"
 	body, err := os.ReadFile(relayPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		testutil.SkipUnlessRequired(t, "relay script "+relayPath+" is not part of the crux module (standalone build)")
+	}
 	if err != nil {
 		t.Fatalf("read relay secret patterns from %s: %v", relayPath, err)
 	}

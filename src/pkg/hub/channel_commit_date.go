@@ -17,9 +17,17 @@ import (
 // cache next door: re-deriving an entry is one cheap GET.
 const commitDateCacheMax = 512
 
+// commitDateBackoff is how long a SHA whose commit-date fetch failed (e.g.
+// HTTP 403 from an exhausted rate limit) is left alone before it is fetched
+// again. Every channel render would otherwise re-hit GitHub for it, spending
+// the budget that caused the failure; the row renders without a timestamp
+// meanwhile.
+const commitDateBackoff = 10 * time.Minute
+
 var (
-	commitDateMu    sync.RWMutex
-	commitDateBySHA = map[string]time.Time{}
+	commitDateMu           sync.RWMutex
+	commitDateBySHA        = map[string]time.Time{}
+	commitDateBackoffUntil = map[string]time.Time{}
 )
 
 // fetchCommitDate reads one commit's committer date from GitHub. A var so
@@ -77,10 +85,20 @@ func commitDateForSHA(sha string, logger *slog.Logger) time.Time {
 		commitDateMu.RUnlock()
 		return d
 	}
+	until, backedOff := commitDateBackoffUntil[key]
 	commitDateMu.RUnlock()
+	if backedOff && githubWarnNow().Before(until) {
+		return time.Time{}
+	}
 
 	d, err := fetchCommitDate(sha, logger)
 	if err != nil {
+		commitDateMu.Lock()
+		if len(commitDateBackoffUntil) >= commitDateCacheMax {
+			commitDateBackoffUntil = map[string]time.Time{}
+		}
+		commitDateBackoffUntil[key] = githubWarnNow().Add(commitDateBackoff)
+		commitDateMu.Unlock()
 		if logger != nil {
 			warnGitHubFetchOnce(logger, "commit-date:"+key, "channel commit date: fetch failed — the row will render without a timestamp",
 				"sha", sha, "error", err)
@@ -89,6 +107,7 @@ func commitDateForSHA(sha string, logger *slog.Logger) time.Time {
 	}
 
 	commitDateMu.Lock()
+	delete(commitDateBackoffUntil, key)
 	if len(commitDateBySHA) >= commitDateCacheMax {
 		commitDateBySHA = map[string]time.Time{}
 	}

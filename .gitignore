@@ -36,3 +36,8 @@ _inline.js
 # committed — see #5423.
 src/docs/design/_out/
 .gomod/
+
+# src/crux `make build` / `make smoke` outputs: the module binary and the
+# smoke test's socket + work dir. Build products, never source.
+src/crux/bin/
+src/crux/.smoke/

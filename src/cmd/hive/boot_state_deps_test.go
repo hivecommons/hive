@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/snapshot"
@@ -58,7 +59,7 @@ func newBootStateBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	return b
 }

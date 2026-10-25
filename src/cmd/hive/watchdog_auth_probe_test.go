@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/crux/watchdog"
+	"github.com/hivecommons/hive/pkg/rotation"
 )
 
 // These two tests used to live in pkg/watchdog against rotation.ClaudeProber

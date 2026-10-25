@@ -1,34 +1,34 @@
-// Command crux runs, observes and controls agents through crux.Runtime
-// (hivecommons/hive#13536; src/docs/crux-cli.md), serves that runtime over
-// the Crux API (`crux serve`; src/docs/crux-serve.md) and, with --server or
-// CRUX_SERVER, drives such a server instead of an in-process runtime. All
-// behaviour lives in crux/cli; this package is the process boundary:
-// signals, exit code and the Hive-backed definition loader (definitions.go)
-// the CLI programs against through cli.DefinitionLoader.
+// Command crux is the Hive-hosted build of the crux binary: it runs,
+// observes and controls agents through crux.Runtime (hivecommons/hive#13536;
+// src/docs/crux-cli.md), serves that runtime over the Crux API (`crux serve`;
+// src/docs/crux-serve.md) and, with --server or CRUX_SERVER, drives such a
+// server instead of an in-process runtime. All behaviour lives in crux/cli;
+// this package is a thin host in the root module whose one job is the
+// Hive-backed definition loader (definitions.go: hive.yaml through pkg/config,
+// the portable AgentDefinition through pkg/defsrc) the CLI programs against
+// through cli.DefinitionLoader. The same binary built from the nested module
+// alone is crux/cmd/crux, which wires crux/defs (plain definition files)
+// instead; verbs and flags are identical.
 package main
 
 import (
 	"context"
 	"io"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/hivecommons/hive/crux/cli"
 )
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, signalContext))
-}
+// version is what --version reports; set with -ldflags "-X main.version=…".
+var version = cli.DefaultVersion
 
-// signalContext ends on SIGINT or SIGTERM so a foreground `crux run` stops
-// its agent before exiting.
-func signalContext() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, cli.SignalContext))
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, ctxFn func() (context.Context, context.CancelFunc)) int {
 	ctx, stop := ctxFn()
 	defer stop()
-	return cli.Main(ctx, args, stdin, stdout, stderr, hiveLoader{})
+	env := &cli.Env{Stdin: stdin, Stdout: stdout, Stderr: stderr, Loader: hiveLoader{}, Version: version}
+	return env.Run(ctx, args)
 }
