@@ -129,8 +129,8 @@ var ForgeRulesContract = []ForgeRuleContract{
 	},
 }
 
-// allModes lists the agent modes in ascending autonomy order.
-var allModes = []agent.AgentMode{
+// forgeAllModes lists the agent modes in ascending autonomy order.
+var forgeAllModes = []agent.AgentMode{
 	agent.ModeAdvisory,
 	agent.ModeIssuesOnly,
 	agent.ModeIssuesAndPRs,
@@ -171,7 +171,7 @@ func RunForgeRulesContractTest(t *testing.T) {
 					if rule.HardDeny {
 						// Hard-denied operations MUST be refused at EVERY agent mode,
 						// and MUST return a directive message pointing to the request-file path.
-						for _, mode := range allModes {
+						for _, mode := range forgeAllModes {
 							if AllowedByMode(mode, ep.Method, ep.Path) {
 								t.Errorf("%s %s: hard-deny %s must be refused at mode %v",
 									f.name, rule.Name, ep.Path, mode)
@@ -186,7 +186,7 @@ func RunForgeRulesContractTest(t *testing.T) {
 					}
 
 					// Standard mode-ladder enforcement.
-					for _, mode := range allModes {
+					for _, mode := range forgeAllModes {
 						allowed := AllowedByMode(mode, ep.Method, ep.Path)
 						want := mode >= rule.MinMode
 						if allowed != want {
@@ -235,7 +235,7 @@ func RunForgeRulesContractTest(t *testing.T) {
 		for _, tc := range unmatchedPaths {
 			name := fmt.Sprintf("%s_%s_%s", tc.forge, tc.method, strings.TrimPrefix(tc.path, "/"))
 			t.Run(name, func(t *testing.T) {
-				for _, mode := range allModes {
+				for _, mode := range forgeAllModes {
 					if AllowedByMode(mode, tc.method, tc.path) {
 						t.Errorf("%s: unmatched route %s %s must be denied at mode %v",
 							tc.forge, tc.method, tc.path, mode)
@@ -274,14 +274,14 @@ func RunForgeRulesContractTest(t *testing.T) {
 		for _, v := range variations {
 			t.Run(v.name, func(t *testing.T) {
 				if v.hardDeny {
-					for _, mode := range allModes {
+					for _, mode := range forgeAllModes {
 						if AllowedByMode(mode, v.method, v.path) {
 							t.Errorf("%s: hard deny failed for %s %s at mode %v", v.name, v.method, v.path, mode)
 						}
 					}
 					return
 				}
-				for _, mode := range allModes {
+				for _, mode := range forgeAllModes {
 					allowed := AllowedByMode(mode, v.method, v.path)
 					want := mode >= v.minMode
 					if allowed != want {
