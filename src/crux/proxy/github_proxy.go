@@ -2345,7 +2345,7 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	resp, err := plainHTTPClient.Transport.RoundTrip(r)
 	if err != nil {
 		if isLoopbackHost(r.URL.Host) {
-			p.logger.Debug("proxy: plain HTTP forward to loopback failed (client should bypass the proxy for loopback; NO_PROXY)", "url", r.URL.String(), "error", err)
+			p.logger.Debug("proxy: plain HTTP forward to loopback failed", "url", r.URL.String(), "error", err, "hint", "client should bypass the proxy for loopback; NO_PROXY")
 		} else {
 			p.logger.Warn("proxy: plain HTTP forward failed", "url", r.URL.String(), "error", err)
 		}

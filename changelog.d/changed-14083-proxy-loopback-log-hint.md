@@ -1,0 +1,1 @@
+- proxy: carry loopback remediation guidance as a structured 'hint' attribute on debug log failures instead of embedded prose (#14083)

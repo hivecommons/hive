@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"log/slog"
 	"net"
@@ -70,6 +71,8 @@ func TestForwardPlainDirectUpstreamError(t *testing.T) {
 	_ = l.Close()
 
 	p := newTestProxy()
+	var logBuf bytes.Buffer
+	p.logger = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	clientConn, proxyClient := net.Pipe()
 	defer clientConn.Close()
 
@@ -98,5 +101,12 @@ func TestForwardPlainDirectUpstreamError(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "upstream request failed") {
 		t.Errorf("body = %q, want upstream failure message", string(body))
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "proxy: plain HTTP forward to loopback failed") {
+		t.Errorf("logs = %q, want loopback failure message", logs)
+	}
+	if !strings.Contains(logs, `hint="client should bypass the proxy for loopback; NO_PROXY"`) {
+		t.Errorf("logs = %q, want loopback hint attribute", logs)
 	}
 }
