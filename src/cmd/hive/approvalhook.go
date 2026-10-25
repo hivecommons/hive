@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/pkg/hooks"
 )
 
 // hookApprovalAdapter satisfies hooks.ApprovalQueue over toolapprove.Inbox.

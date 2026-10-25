@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -141,7 +141,7 @@ func mergeResumeKicks(agentsDue, restartedAgents []string, allow func(string) (b
 	return agentsDue, held
 }
 
-// resumeKickStatusSource is the subset of *agent.Manager the resume-kick-held
+// resumeKickStatusSource is the subset of crux.Runtime the resume-kick-held
 // reconcile reads.
 type resumeKickStatusSource interface {
 	GetStatusFast(name string) (*crux.Process, error)

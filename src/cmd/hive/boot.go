@@ -7,9 +7,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -30,7 +33,6 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/questionclose"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -38,9 +40,6 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/crux/toolapprove"
-	"github.com/hivecommons/hive/crux/trajectory"
-	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // boot is the state main() used to keep in ~40 local variables, made explicit
@@ -113,7 +112,7 @@ type boot struct {
 	repoTargetIssueMessage        func() string
 	advisoryIssues                map[string]int
 	advisoryStore                 *advisory.Store
-	agentMgr                      *agent.Manager
+	agentMgr                      hostedRuntime
 	approvalDesk                  *toolapprove.Desk
 	approvalInbox                 *toolapprove.Inbox
 	issueClaims                   *claims.Ledger
@@ -178,7 +177,7 @@ type boot struct {
 	mutationStats     *effects.Recorder
 
 	// bootAgents
-	agentMinter agent.AgentMintIssuer
+	agentMinter crux.AgentMintIssuer
 
 	// bootState
 	saved *snapshot.PersistedState
@@ -201,7 +200,7 @@ type boot struct {
 
 	// bootSupervision
 	quotaReadingPublisher    *rotation.Manager
-	linearCredentialResolver func() agent.LinearCredential
+	linearCredentialResolver func() crux.LinearCredential
 
 	// bootWatchers
 	configWatcher *config.Watcher

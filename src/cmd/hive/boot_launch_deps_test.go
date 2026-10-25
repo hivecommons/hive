@@ -11,8 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/discord"
@@ -52,7 +53,7 @@ func (h *launchHarness) deps() bootLaunchDeps {
 			h.waits++
 			return ctx.Err() == nil
 		},
-		startAgent: func(_ context.Context, _ *agent.Manager, name string) error {
+		startAgent: func(_ context.Context, _ crux.Runtime, name string) error {
 			h.started = append(h.started, name)
 			return h.startErr[name]
 		},
@@ -65,7 +66,7 @@ func newLaunchBoot(t *testing.T, agents map[string]config.AgentConfig) *boot {
 	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: agents}}
 	cfg.Dashboard.Port = 8080
 	b, _ := newDepsTestBoot(t, cfg)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	return b
 }
@@ -208,7 +209,7 @@ func TestBootLaunchWithAbortsLaunchOnShutdown(t *testing.T) {
 	h := &launchHarness{}
 	deps := h.deps()
 	orig := deps.startAgent
-	deps.startAgent = func(ctx context.Context, mgr *agent.Manager, name string) error {
+	deps.startAgent = func(ctx context.Context, mgr crux.Runtime, name string) error {
 		cancel()
 		return orig(ctx, mgr, name)
 	}

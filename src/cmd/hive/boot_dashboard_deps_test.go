@@ -6,8 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -61,7 +62,7 @@ func newBootDashboardBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	b.beadStores = map[string]*beads.Store{}
 	return b
@@ -295,8 +296,8 @@ func TestBootDashboardWithSandboxAuditCreatesRejectionBead(t *testing.T) {
 
 	b.bootDashboardWith(f.deps)
 
-	b.agentMgr.SandboxAuditForTest("scanner", "sandbox_broker_rejected", "push to main refused")
-	b.agentMgr.SandboxAuditForTest("scanner", "sandbox_failed", "oom")
+	b.agentMgr.(cruxtest.Runtime).SandboxAuditForTest("scanner", "sandbox_broker_rejected", "push to main refused")
+	b.agentMgr.(cruxtest.Runtime).SandboxAuditForTest("scanner", "sandbox_failed", "oom")
 
 	if recent := f.srv.GetAudit().Recent(2); len(recent) != 2 {
 		t.Fatalf("audit ring = %+v", recent)

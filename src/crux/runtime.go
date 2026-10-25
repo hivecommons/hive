@@ -27,6 +27,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/hivecommons/hive/crux/trajectory"
+
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -273,6 +275,32 @@ type Supervisor interface {
 	// ArchiveAllKickLogs rotates every agent's kick log. cmd/hive: mode
 	// change.
 	ArchiveAllKickLogs(reason string)
+	// CountAgentsWithModel reports how many agents launched with an explicit
+	// model, for the hourly spoke metrics. cmd/hive.
+	CountAgentsWithModel() int
+	// CrashOOMSuspected reports whether the agent's last crash looks like an
+	// OOM kill, so a held resume kick is explained correctly. cmd/hive.
+	CrashOOMSuspected(name string) bool
+	// BackendAuthAvailable and AgentAuthAvailable report whether credentials
+	// for a backend / an agent are present; known is false when the runtime
+	// cannot tell. The dashboard's auth badges read them. cmd/hive.
+	BackendAuthAvailable(backend string) (available, known bool)
+	AgentAuthAvailable(agentName string) (available, known bool)
+	// SendGitHubAPIBudgetNudge tells an agent its GitHub API budget is
+	// nearly spent; a nudge, not a kick, so it never counts against the kick
+	// limits. cmd/hive: egress proxy.
+	SendGitHubAPIBudgetNudge(name, message string)
+	// RecordAudit appends a host-side action against an agent to the
+	// runtime's audit trail. cmd/hive.
+	RecordAudit(action, agentName string, fields map[string]any)
+	// AgentHasValidCredential and RefreshAgentTokenFor back the login-prompt
+	// scanner: an agent sitting on a login prompt with a valid credential is
+	// re-minted rather than paused. cmd/hive.
+	AgentHasValidCredential(agentName string) bool
+	RefreshAgentTokenFor(ctx context.Context, name string) error
+	// TrajectoryAgents snapshots the running agents with intent and
+	// transcript for the trajectory lane. cmd/hive.
+	TrajectoryAgents() []trajectory.AgentView
 }
 
 // Restorer seeds the runtime with state the host persisted across a restart
@@ -298,11 +326,25 @@ type Background interface {
 	StartTranscriptActivityRefresh(ctx context.Context)
 }
 
+// Authorizer is the per-request gate the host's relay watchers consult
+// before acting on an agent's request (open a PR, open an issue, request a
+// review, merge, push a branch): is the request from the agent it claims
+// (fileUID), and does that agent's ACMM level permit the action. The five
+// are method values handed to the relays at boot, so they are the one
+// family a sidecar must answer synchronously on the request path.
+type Authorizer interface {
+	AuthorizePROpen(agentName string, fileUID int) error
+	AuthorizePushBranch(agentName string, fileUID int) error
+	AuthorizeIssueOpen(agentName string, fileUID int, kind string) error
+	AuthorizeMerge(agentName string, fileUID int, repo string) error
+	AuthorizeReviewRequest(agentName string, fileUID int) error
+}
+
 // Runtime is the full surface a consumer needs to run, observe and control
 // agents. *agent.Manager implements it directly (asserted in crux/agent).
 // Consumers that need less should depend on the narrower interfaces above.
 //
-// Resumer, Supervisor, Restorer and Background are the families cmd/hive
+// Resumer, Supervisor, Restorer, Background and Authorizer are the families cmd/hive
 // uses beyond the dashboard's six (hivecommons/hive#14138, stage 1); a
 // sidecar runtime serves each over the API before the default flips.
 type Runtime interface {
@@ -316,4 +358,5 @@ type Runtime interface {
 	Supervisor
 	Restorer
 	Background
+	Authorizer
 }

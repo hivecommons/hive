@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
@@ -28,7 +29,7 @@ func restoreTestLogger() *slog.Logger {
 
 // wireGatewayChecker mirrors main()'s (post-fix) wiring: the predicate is
 // attached right after the manager is built, BEFORE any state replay.
-func wireGatewayChecker(m *agent.Manager, cfg *config.Config) {
+func wireGatewayChecker(m crux.Host, cfg *config.Config) {
 	m.SetGatewayBackendChecker(func(backend string) bool {
 		return cfg.Governor.ResolveGateway(backend) != nil && backend != ""
 	})
@@ -77,7 +78,7 @@ func TestRestoreAgentRuntimeState_SurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState: %v", err)
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	restoreAgentRuntimeState(saved, cfg, m, restoreTestLogger())
@@ -114,7 +115,7 @@ func TestRestoreAgentRuntimeState_CLIBackendOverride(t *testing.T) {
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	restoreAgentRuntimeState(&snapshot.PersistedState{
@@ -144,7 +145,7 @@ func TestRestoreAgentRuntimeState_DeletedGatewayNotRestored(t *testing.T) {
 		// No gateways configured: "corp-litellm" is unresolvable. (Deliberately
 		// NOT a CLI backend name — those pass validation without any gateway.)
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	restoreAgentRuntimeState(&snapshot.PersistedState{

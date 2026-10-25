@@ -10,8 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -58,7 +59,7 @@ type evalCycleFixture struct {
 	gh       *github.Client
 	gov      *governor.Governor
 	sched    *scheduler.Scheduler
-	agentMgr *agent.Manager
+	agentMgr cruxtest.Runtime
 	dashSrv  *dashboard.Server
 	last     *atomic.Pointer[github.ActionableResult]
 	hits     []string
@@ -84,7 +85,7 @@ func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 	f.gh = github.NewClientForTest(api.URL, "testorg", []string{"widget"}, logger)
 	f.gov = governor.New(f.cfg.Governor, f.cfg.Agents, logger)
 	f.sched = scheduler.New(f.cfg, logger)
-	f.agentMgr = agent.NewManager(f.cfg.Agents, logger, crux.ProjectContext{})
+	f.agentMgr = cruxtest.NewRuntime(f.cfg.Agents, logger, crux.ProjectContext{})
 	f.dashSrv = dashboard.NewServer(0, logger)
 	return f
 }

@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // githubRESTAccounting adapts pkg/github's package-level REST accounting to

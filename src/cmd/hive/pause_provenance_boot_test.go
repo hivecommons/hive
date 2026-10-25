@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
-	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/snapshot"
 )
 
@@ -47,7 +48,7 @@ func TestRestoreAgentRuntimeState_ReplaysPausedBy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState: %v", err)
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
+	m := cruxtest.NewRuntime(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	restoreAgentRuntimeState(saved, cfg, m, restoreTestLogger())
 
 	proc, err := m.GetStatus("scanner")

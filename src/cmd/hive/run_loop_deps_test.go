@@ -7,12 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/cruxtest"
+
 	"github.com/hivecommons/hive/crux"
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/governor"
-	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 // fakeTicker is a loopTicker the test fires by hand.
@@ -68,7 +69,7 @@ func (h *loopHarness) deps() runLoopDeps {
 				h.persisted <- struct{}{}
 			}
 		},
-		restartCrashed: func(context.Context, *agent.Manager) []string {
+		restartCrashed: func(context.Context, crux.Runtime) []string {
 			out := h.crashed
 			h.crashed = nil
 			return out
@@ -88,7 +89,7 @@ func newLoopBoot(t *testing.T, evalS, agentPollS int) (*boot, *strings.Builder, 
 	t.Cleanup(cancel)
 	b.ctx = ctx
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
+	b.agentMgr = cruxtest.NewRuntime(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	return b, &sb, cancel
 }

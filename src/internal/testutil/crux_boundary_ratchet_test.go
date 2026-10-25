@@ -83,11 +83,15 @@ import (
 // twelve left (Manager, NewManager, LinearCredential, AgentMintIssuer,
 // StartPermissionsWatcher, WatchdogFleet, RunAgyTurn, ResumeHandle,
 // ResolveReasoningEffort, ErrResumeBusy, ErrResumeSessionGone, PRCreator)
-// are the in-process manager and the host wiring it is handed; they go when
-// cmd/hive consumes the serve API instead of constructing the manager.
-var cruxSymbolBaseline = map[string]int{
-	"cmd/hive": 12,
-}
+// were the in-process manager and the host wiring it is handed. The Runtime
+// seam (#14138 stage 1) took them: cmd/hive holds crux.Runtime (plus
+// crux.Host for the Set* wiring), constructs through crux/runtime.New,
+// builds the watchdog fleet through crux/runtime.NewWatchdogFleet, names the
+// capability types as crux.<Name>, and its tests use cruxtest.NewRuntime:
+// cmd/hive 12 → 0 and the table is empty. crux/runtime is the only place
+// outside crux/agent (and crux/cli, crux/cruxtest) that names the manager.
+// The ratchet stays so a new consumer-side agent.<Symbol> reference fails.
+var cruxSymbolBaseline = map[string]int{}
 
 // cruxTmuxBaseline is the per-package count of non-test files that invoke
 // tmux outside the Crux module (see above). The RFC's larger "dashboard 17,

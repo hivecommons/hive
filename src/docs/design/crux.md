@@ -9,12 +9,11 @@ boundary is named, the inbound and outbound architecture ratchets and the
 tmux funnel are live, `crux.Runtime` exists, the dashboard is on it, Crux
 owns its value types and the hub, spoke, dashboard and `cmd/hive`
 reference them as `crux.<Name>`, CI path filters select Crux-only shards
-for Crux-only PRs, and the `crux` CLI ships. The inbound ratchet has one
-row left, `cmd/hive` 12, and every one of those twelve is the in-process
-manager or the host wiring it is handed (see
-[After the cut](#after-the-cut)); `pkg/dashboard`, `pkg/hub`,
-`pkg/hub/spoke`, `pkg/loginscan`, `pkg/ioscan` and `pkg/discord` no longer
-import `crux/agent` at all. The ring's outbound closure, about 55 Hive
+for Crux-only PRs, and the `crux` CLI ships. The inbound ratchet is
+empty: `cmd/hive` holds `crux.Runtime` and constructs it through
+`crux/runtime.New` (#14138 stage 1, see
+[Stage 1: the Runtime seam](#stage-1-the-runtime-seam)), so no package in
+the root module imports `crux/agent` any more. The ring's outbound closure, about 55 Hive
 packages when this record began, is now zero, in test code too: the
 outbound baseline is empty (the ring's tests use their own
 `crux/internal/testutil` copy of `Eventually*` and `SkipUnlessRequired`);
@@ -421,13 +420,14 @@ Still Stage 2, in this order:
   `Manager`, `NewManager`, `LinearCredential`, `AgentMintIssuer`,
   `StartPermissionsWatcher`, `WatchdogFleet`, `RunAgyTurn`,
   `ResumeHandle`, `ResolveReasoningEffort`, `ErrResumeBusy`,
-  `ErrResumeSessionGone`, `PRCreator`. Each is the in-process manager
+  `ErrResumeSessionGone`, `PRCreator`. Each was the in-process manager
   itself or a value `cmd/hive` hands it (credential resolvers, the token
-  minter, the PR creator, the fleet watchdog, the agy-turn subcommand);
-  none has an observation-side equivalent to re-export, and they go away
-  only if `cmd/hive` becomes a client of `crux serve` rather than the
-  process that constructs the manager. That is the open decision in
-  #14138, not a ratchet item. The `AgentProcess` method split (13 methods,
+  minter, the PR creator, the fleet watchdog, the agy-turn subcommand).
+  #14138 decided the sidecar plan, and its stage 1 took the row to zero:
+  `cmd/hive` holds `crux.Runtime` plus `crux.Host`, the capability types
+  are `crux.<Name>`, construction goes through `crux/runtime.New`, and the
+  fleet watchdog through `crux/runtime.NewWatchdogFleet`. The baseline map
+  is empty and the ratchet stays armed. The `AgentProcess` method split (13 methods,
   one mutex) that this record proposed is moot for the same reason: no
   consumer outside `crux/agent` names `AgentProcess` any more; they hold
   `*crux.Process` snapshots or build fixtures through `crux/cruxtest`.
@@ -435,9 +435,9 @@ Still Stage 2, in this order:
   CLI remote mode (`crux --server` / `CRUX_SERVER`, #14090) and the serve
   docs ([crux-serve.md](../crux-serve.md)); the Stage 3 status block below
   has the detail. What remains of this record's list, in #14138's order:
-  the in-process-vs-sidecar decision for `cmd/hive` (the last twelve
-  inbound rows hang on it); `crux/vX.Y.Z` tags and the `go get` path
-  caveat above; a generic tool policy for the MITM proxy (the rules are
+  the sidecar stages after the seam (credential direction, the missing
+  endpoint families, supervision, the flip); `crux/vX.Y.Z` tags and the
+  `go get` path caveat above; a generic tool policy for the MITM proxy (the rules are
   GitHub-shaped today); and keeping this status section current.
 - **Done: move `cmd/crux` into the nested module** (#14138). The module now
   ships `crux/cmd/crux`, buildable with `GOWORK=off` from `src/crux` alone
@@ -527,8 +527,8 @@ throughout; no stage merges without its parity test green.
 
 #### Stage 1: the Runtime seam
 
-*Status: the seam is in; `cmd/hive` is next.* The inventory below is what
-the host calls on the runtime today, by family. Each family is an
+*Status: shipped.* The inventory below is what the host calls on the
+runtime, by family. Each family is an
 interface in the `crux` root; `crux.Runtime` composes them, so a consumer
 depends on the narrowest one that serves it. `*agent.Manager` satisfies
 `Runtime` (asserted in `crux/agent`); dashboard and hub were already on
@@ -543,9 +543,10 @@ the six dashboard families and gained nothing new to call.
 | `Fleet` | `BreakerState`, `EngageBreaker`, `ReleaseBreaker`, `SetACMMLevel`, `GetACMMLevel`, `RelaunchBobAgentsAwaitingKey`, `SharedDevUID` | dashboard, cmd/hive |
 | `Credentials` | `SubmitLoginCode`, `CopilotToken`, `CopilotTokenSource`, `SetCopilotToken`, `ActivateCopilotToken`, `ReloadClaudeToken`, `ClaudeCredentialCandidatePaths` | dashboard |
 | `Resumer` (new) | `ResumeHandle`, `SendResumeKick`, `SessionID`, `SessionMissing`; sentinels `ErrResumeBusy`, `ErrResumeSessionGone`, `ErrResumeUnsupported`; value `ResumeHandle` | cmd/hive (PR follow-up) |
-| `Supervisor` (new) | `GovernorMayStart`, `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `ConsentWedgedAgents`, `RefreshAgentTokens`, `AgentCredentialRefreshable`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `PauseByCause`, `ArchiveAllKickLogs` | cmd/hive (governor, heartbeat, rotation) |
+| `Supervisor` (new) | `GovernorMayStart`, `MarkStartupLaunchQueued`, `CheckAndRestartCrashedAgents`, `ConsentWedgedAgents`, `RefreshAgentTokens`, `RefreshAgentTokenFor`, `AgentCredentialRefreshable`, `AgentHasValidCredential`, `AgentCapabilities`, `EffectiveBackend`, `InvocationMetadata`, `RestartTelemetry`, `StartFailureState`, `ProviderErrorBackoffRemaining`, `PauseByCause`, `ArchiveAllKickLogs`, `CountAgentsWithModel`, `CrashOOMSuspected`, `BackendAuthAvailable`, `AgentAuthAvailable`, `SendGitHubAPIBudgetNudge`, `RecordAudit`, `TrajectoryAgents` | cmd/hive (governor, heartbeat, rotation, login scan, trajectory) |
 | `Restorer` (new) | `SeedPauseState`, `SeedRestartTelemetry`, `SeedTurnLoss`, `SeedLastKick`, `SeedKickHistory`, `RestoreBreaker` | cmd/hive (snapshot restore) |
 | `Background` (new) | `StartAgentTokenRefresh`, `StartCredentialWatchdog`, `StartCopilotSessionRefresh`, `StartTranscriptActivityRefresh` | cmd/hive (boot) |
+| `Authorizer` (new) | `AuthorizePROpen`, `AuthorizePushBranch`, `AuthorizeIssueOpen`, `AuthorizeMerge`, `AuthorizeReviewRequest` | cmd/hive (request relays; method values handed to the watchers at boot) |
 
 Two things `cmd/hive` calls are **not** runtime-instance methods and are
 re-exported by the new `crux/runtime` package rather than put on the
@@ -593,7 +594,12 @@ in-process `*agent.Manager` as `crux.Runtime` for `inprocess` (options:
 `ErrModeUnavailable` for `sidecar` until stage 3 ships the client. The
 package is the one place outside `crux/agent` that names the manager on
 the construction path; `crux/cli` and `crux/cruxtest` keep their own
-constructors for now.
+constructors for now. `cmd/hive` holds the result as a local
+`hostedRuntime` (`crux.Runtime` + `crux.Host`), fails boot if the selected
+mode cannot provide the `Host` half, and passes the narrowest family on
+(`crux.Host` to the installers, `crux.Runtime` elsewhere); its tests build
+runtimes through `cruxtest.NewRuntime`. The inbound ratchet's `cmd/hive`
+row went 12 → 0 and the baseline map is empty.
 
 **Parity test.** `crux/cli.RuntimeVerbs` maps each CLI verb (`run`,
 `ps`, `logs`, `kick`, `stop`) to the `Runtime` methods it calls;
@@ -605,8 +611,9 @@ verb and every `Runtime` method against an API route.
 
 **What stage 3 needs from the API** to serve `Runtime` in full, from the
 table above: the `Resumer` family (handle capture, resume kick with the
-busy / gone / unsupported distinction as status codes); the `Supervisor`
-reads and actions; `Restorer` as a bulk seed on connect; `Background` as
+busy / gone / unsupported distinction as status codes); the `Authorizer`
+gates, which sit on the relay request path and so need a synchronous
+endpoint with a latency budget; the `Supervisor` reads and actions; `Restorer` as a bulk seed on connect; `Background` as
 server-side loops (a no-op for the client); the `Fleet` watchdog
 observe/restart and the dashboard's `Credentials` family; `/v1/events` for
 the observer half of `Host`; and a `crux agy-turn` subcommand so the

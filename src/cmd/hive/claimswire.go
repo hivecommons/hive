@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
+
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -372,7 +373,7 @@ func ledgerClaimLookup(ledger func() *claims.Ledger) func(repo string, number in
 // (hivecommons/hive, 2026-10-20): the scanner claimed #13083 at 14:21Z, two
 // image rollouts relaunched every agent by 15:35Z, and the issue sat
 // claimed-by-scanner with nothing working it until the 16:21Z until=.
-func releaseClaimsOnAgentRelaunch(mgr *agent.Manager, ledger func() *claims.Ledger, logger *slog.Logger) {
+func releaseClaimsOnAgentRelaunch(mgr crux.Host, ledger func() *claims.Ledger, logger *slog.Logger) {
 	if mgr == nil || ledger == nil {
 		return
 	}
