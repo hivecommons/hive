@@ -1149,7 +1149,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				"updated_branches", result.UpdatedBranches,
 				"skipped", repoSkipped,
 			}
-			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, "not-mergeable", autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod}
+			skipReasonOrder := []string{"label:hold", "label:needs-human", "label:needs-rebase", "held", "exempt-label", "draft", "closed", "not-app-authored", "missing-head-sha", "updated-branch", autoMergeReasonBehindBudgetExhausted, "conflicting", autoMergeReasonForkNotEditable, autoMergeReasonWorkflowPermission, "not-mergeable", autoMergeReasonMergeQueueRequired, autoMergeReasonMergeRefusedReview, autoMergeReasonMergeRefusedMethod}
 			if sentinelLabel := c.sentinelLabelName(); sentinelLabel != "" {
 				skipReasonOrder = append([]string{sentinelLabel}, skipReasonOrder...)
 			}
