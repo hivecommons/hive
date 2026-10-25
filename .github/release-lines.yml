@@ -147,6 +147,10 @@ pinned:
   # where `crux/vX.Y.Z` tags are made. v4 is feature-frozen and has no
   # src/crux; publishing from two lines would race on hivecommons/crux main.
   crux-sync.yml: [-v4]
+  # Nightly + path-filtered Forgejo smoke (#14116). Its push/pull_request
+  # filters name v5 only: the forge.Merger it exercises lives on v5, and v4 is
+  # feature-frozen.
+  forgejo-smoke.yml: [-v4]
 
 # Workflows that deliberately do NOT pin to the release lines. Each must keep a
 # wildcard branch filter; if one is ever narrowed to a fixed list, the guard
