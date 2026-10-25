@@ -281,7 +281,6 @@ func TestClientErrors(t *testing.T) {
 	}
 
 	// A JSON body that is not the expected shape.
-	c = startUnix(t, &fakeServer{}, "")
 	srvBad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("[not an object"))
 	}))
