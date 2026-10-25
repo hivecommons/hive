@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"path"
 	"regexp"
 	"sort"
@@ -405,6 +407,14 @@ func closeOnMergePRRefsIssue(pr *gh.PullRequest, prRepo, issueRepo string, issue
 	return false
 }
 
+// closeOnMergeIssueNotFound reports whether reading the referenced issue
+// failed because GitHub does not know it (404), as opposed to a transient
+// API error worth retrying on the next sweep.
+func closeOnMergeIssueNotFound(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
 func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions) CloseOnMergeResult {
 	return c.closeIssueForMergedPRClaimWithIssue(ctx, issueRepo, issueNumber, pr, claimMetadata, opts, nil)
 }
@@ -450,6 +460,17 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		var err error
 		issue, _, err = c.client.Issues.Get(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber)
 		if err != nil {
+			if closeOnMergeIssueNotFound(err) {
+				// The referenced issue does not exist (or is not visible to the
+				// App): a verdict, not a failed step. Re-reading it every sweep
+				// cannot change the answer, and WARN would turn the repeats
+				// into an unclassified fleet self-report.
+				res.Action, res.Reason = CloseOnMergeSkipped, "issue_not_found"
+				if opts.Logger != nil {
+					opts.Logger.Info("close-on-merge: referenced issue not found; skipping", "repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber())
+				}
+				return res
+			}
 			res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
 			if opts.Logger != nil {
 				opts.Logger.Warn("close-on-merge: reading issue failed", "repo", issueRepo, "issue", issueNumber, "error", err)
