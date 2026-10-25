@@ -241,6 +241,9 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
+		if c.stageArchived.has(strings.ToLower(owner + "/" + repoName)) {
+			continue
+		}
 		labelDriven := opts.LabelDriven != nil && opts.LabelDriven(repo)
 		var policy LabelApprovalPolicy
 		labelApproval := false
@@ -307,6 +310,13 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 			result.Seen++
 			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, result, opts.Audit, opts.ClosedAudit)
 			if err != nil {
+				if c.noteArchivedWrite(strings.ToLower(owner+"/"+repoName), err) {
+					if c.logger != nil {
+						c.logger.Info("unpark sweep: repository is archived and read-only, skipping it until restart", "repo", repo)
+					}
+					result.Skipped++
+					break
+				}
 				if c.logger != nil {
 					c.logger.Warn("unpark sweep skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
 				}

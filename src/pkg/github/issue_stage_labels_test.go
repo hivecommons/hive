@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -1149,4 +1151,26 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+func TestNoteArchivedWrite(t *testing.T) {
+	c := NewClientForTest("http://127.0.0.1:0", "acme", []string{"widgets"}, testLogger())
+	forbidden := func(msg string) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}, Message: msg}
+	}
+	if c.noteArchivedWrite("acme/widgets", forbidden("Resource not accessible by integration")) {
+		t.Fatal("unrelated 403 treated as archived")
+	}
+	if c.noteArchivedWrite("acme/widgets", &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}, Message: "Repository was archived so is read-only."}) {
+		t.Fatal("non-403 treated as archived")
+	}
+	if c.stageArchived.has("acme/widgets") {
+		t.Fatal("repo memoised without an archived refusal")
+	}
+	if !c.noteArchivedWrite("acme/widgets", forbidden("Repository was archived so is read-only.")) {
+		t.Fatal("archived refusal not recognised")
+	}
+	if !c.stageArchived.has("acme/widgets") {
+		t.Fatal("archived repo not memoised")
+	}
 }

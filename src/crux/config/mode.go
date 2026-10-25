@@ -18,12 +18,10 @@ type Mode string
 
 const (
 	// ModeInProcess links crux/agent into the host and constructs the
-	// manager directly. The default, and the only mode with a working
-	// implementation until stage 3 ships the client.
+	// manager directly. The default.
 	ModeInProcess Mode = "inprocess"
-	// ModeSidecar drives a `crux serve` process over the Crux API. Reserved:
-	// New returns ErrModeUnavailable for it until the client implementation
-	// lands.
+	// ModeSidecar drives a `crux serve` process at RuntimeConfig.Server over
+	// the Crux API through crux/api/client (stage 3 of hivecommons/hive#14138).
 	ModeSidecar Mode = "sidecar"
 
 	// ModeEnvVar names the environment variable RuntimeConfigFromEnv reads

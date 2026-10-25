@@ -180,6 +180,14 @@ func (c *Client) Events(ctx context.Context, fn func(Event) error) error {
 	})
 }
 
+// Do sends one JSON request to a route and decodes the JSON response into
+// out (when non-nil). Non-2xx is a *StatusError. It is the generic call the
+// typed crux.Runtime client (crux/api/client) builds every method on; the
+// CLI-shaped methods above are conveniences over it.
+func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
+	return c.do(ctx, method, path, in, out)
+}
+
 // do sends one JSON request and decodes a JSON response into out (when
 // non-nil). Non-2xx is a *StatusError.
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
