@@ -20,7 +20,6 @@ import (
 // pkg/cruxhost (hivecommons/hive#14138 stage 2). A runtime that is not the
 // manager (a test fake) is left alone.
 type hiveCapTarget interface {
-	SetConditionReporter(crux.ConditionReporter)
 	SetSandboxPRClient(agent.PRCreator)
 	SetLinearCredentialResolver(func() agent.LinearCredential)
 	SetSandboxPushMinter(pushbroker.TokenMinter)
@@ -52,10 +51,14 @@ func dialHiveCallback(addr, token string) (*hiveCallback, error) {
 // manager and one that is not.
 func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.Server, w io.Writer) {
 	srv.HiveCallback = h.health
+	// Conditions go through the server's tee, not the manager setter: Serve
+	// installs its own reporter on a Host runtime (so conditions reach the
+	// event stream) and forwards to srv.ConditionReporter; setting the
+	// manager directly would be overwritten when Serve starts.
+	srv.ConditionReporter = h.set.Conditions
 	toolapprove.SetDefaultTextScanner(h.set.Text)
-	seams := "text scanner"
+	seams := "text scanner, conditions"
 	if m, ok := rt.(hiveCapTarget); ok {
-		m.SetConditionReporter(h.set.Conditions)
 		m.SetSandboxPRClient(h.set.PullRequest)
 		linear := h.set.Linear
 		m.SetLinearCredentialResolver(func() agent.LinearCredential {
@@ -63,10 +66,12 @@ func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.
 			return agent.LinearCredential{AccessToken: tok, APIKey: key}
 		})
 		m.SetSandboxPushMinter(pushbroker.GitHubAppMinter{Auth: h.set.TokenScoper("", 0)})
-		seams += ", conditions, pull requests, Linear credential, push tokens"
+		seams += ", pull requests, Linear credential, push tokens"
 	}
 	fmt.Fprintf(w, "hive callback %s: %s\n", addressString(h.client.Address()), seams)
-	go hivecap.Watch(ctx, h.client.Status, srv.Conditions(), 0)
+	// hive_callback_unavailable describes the callback being down, so it
+	// goes to the stream only and never over the callback.
+	go hivecap.Watch(ctx, h.client.Status, srv.StreamConditions(), 0)
 }
 
 // health is the status Health reports.

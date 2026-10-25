@@ -13,7 +13,9 @@ import (
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/crux/pushbroker"
+	"github.com/hivecommons/hive/crux/serve"
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
 
@@ -21,17 +23,10 @@ import (
 // feeds; it records what it was handed.
 type managerLike struct {
 	*fakeRuntime
-	mu         sync.Mutex
-	conditions crux.ConditionReporter
-	prs        agent.PRCreator
-	linear     func() agent.LinearCredential
-	minter     pushbroker.TokenMinter
-}
-
-func (m *managerLike) SetConditionReporter(r crux.ConditionReporter) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.conditions = r
+	mu     sync.Mutex
+	prs    agent.PRCreator
+	linear func() agent.LinearCredential
+	minter pushbroker.TokenMinter
 }
 
 func (m *managerLike) SetSandboxPRClient(c agent.PRCreator) {
@@ -74,10 +69,10 @@ func TestServeHiveCallbackFeedsTheManagerSeams(t *testing.T) {
 	waitForSocket(t, socket)
 
 	m.mu.Lock()
-	linear, prs, minter, conds := m.linear, m.prs, m.minter, m.conditions
+	linear, prs, minter := m.linear, m.prs, m.minter
 	m.mu.Unlock()
-	if linear == nil || prs == nil || minter == nil || conds == nil {
-		t.Fatalf("seams not fed: linear=%v prs=%v minter=%v conds=%v", linear != nil, prs != nil, minter != nil, conds != nil)
+	if linear == nil || prs == nil || minter == nil {
+		t.Fatalf("seams not fed: linear=%v prs=%v minter=%v", linear != nil, prs != nil, minter != nil)
 	}
 	if toolapprove.DefaultTextScanner() == nil {
 		t.Fatal("text scanner not installed")
@@ -131,7 +126,7 @@ func TestServeHiveCallbackOnAPlainRuntime(t *testing.T) {
 	if code := <-done; code != ExitOK {
 		t.Fatalf("exit %d stderr %q", code, h.stderr)
 	}
-	if out := h.stdout.String(); !strings.Contains(out, "hive callback http://127.0.0.1:1: text scanner\n") {
+	if out := h.stdout.String(); !strings.Contains(out, "hive callback http://127.0.0.1:1: text scanner, conditions\n") {
 		t.Fatalf("stdout = %q", out)
 	}
 }
@@ -144,5 +139,44 @@ func TestServeHiveCallbackBadAddress(t *testing.T) {
 	}
 	if !strings.Contains(h.stderr.String(), "hive callback ftp://nope") {
 		t.Fatalf("stderr = %q", h.stderr.String())
+	}
+}
+
+// Conditions reach hive through the server's tee, which Serve installs on a
+// Host runtime and which forwards to srv.ConditionReporter; the manager
+// setter would be overwritten when Serve starts. The watch's own
+// hive_callback_unavailable goes to the stream only, never over the
+// callback it describes.
+func TestHiveCallbackInstallRoutesConditionsThroughTheServerTee(t *testing.T) {
+	t.Cleanup(func() { toolapprove.SetDefaultTextScanner(nil) })
+	hiveSocket := filepath.Join(shortSocketDir(t), "hive.sock")
+	h, err := dialHiveCallback(hiveSocket, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := cruxtest.NewRecorder()
+	srv := serve.New(rec)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var out strings.Builder
+	h.install(ctx, rec, srv, &out)
+
+	if srv.ConditionReporter != h.set.Conditions {
+		t.Fatalf("srv.ConditionReporter = %T, want the hivecap reporter", srv.ConditionReporter)
+	}
+	if !strings.Contains(out.String(), "conditions") {
+		t.Fatalf("banner does not list conditions: %q", out.String())
+	}
+	// Through the tee, a runtime condition is attempted over the (dead)
+	// callback: fails closed and counts as a failed call.
+	before := h.client.Status().FailedCalls
+	srv.Conditions().Observe("stall", "scanner", "m", "d")
+	if after := h.client.Status().FailedCalls; after != before+1 {
+		t.Fatalf("condition not forwarded over the callback: failed calls %d → %d", before, after)
+	}
+	// The stream-only reporter never touches the callback.
+	srv.StreamConditions().Observe(callback.ConditionClassUnavailable, "endpoint", "down", "")
+	if after := h.client.Status().FailedCalls; after != before+1 {
+		t.Fatalf("stream-only condition travelled over the callback: failed calls %d", after)
 	}
 }

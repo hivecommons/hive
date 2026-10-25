@@ -1034,6 +1034,23 @@ type conditionTee struct{ s *Server }
 // hive_callback_unavailable).
 func (s *Server) Conditions() crux.ConditionReporter { return conditionTee{s} }
 
+// StreamConditions reports only to the event stream, never to
+// ConditionReporter. It is for a condition that must not travel over the
+// forwarding path because it describes that path being down
+// (hivecap.Watch's hive_callback_unavailable, when ConditionReporter is the
+// hive callback itself).
+func (s *Server) StreamConditions() crux.ConditionReporter { return streamConditions{s} }
+
+type streamConditions struct{ s *Server }
+
+func (t streamConditions) Observe(class, key, message, diagnostics string) {
+	t.s.publishData(api.EventCondition, "", api.ConditionEvent{Action: api.ConditionObserve, Class: class, Key: key, Message: message, Diagnostics: diagnostics})
+}
+
+func (t streamConditions) Clear(class, key string) {
+	t.s.publishData(api.EventCondition, "", api.ConditionEvent{Action: api.ConditionClear, Class: class, Key: key})
+}
+
 func (t conditionTee) Observe(class, key, message, diagnostics string) {
 	t.s.publishData(api.EventCondition, "", api.ConditionEvent{Action: api.ConditionObserve, Class: class, Key: key, Message: message, Diagnostics: diagnostics})
 	if t.s.ConditionReporter != nil {
