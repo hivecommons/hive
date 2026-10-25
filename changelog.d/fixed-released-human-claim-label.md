@@ -1,0 +1,1 @@
+- New agent claims clear stale `hive/claimed-by-human` labels when trusted claim and release comments confirm the prior human claim was released ([#14231](https://github.com/hivecommons/hive/issues/14231)).

@@ -23,9 +23,10 @@ import (
 // when absent. Other parties' labels are left alone — a person's label
 // survives a contributor's claim, matching healBackendClaimedByLabels and
 // RemoveClaimedByLabel. An agent claim also clears the generic human label
-// when the latest human-principal marker has a matching release; a missing
-// or unreleased marker is not evidence that another party's label is stale.
-// A claim with no usable holder (claims.ClaimedByLabel == "") only
+// when trusted App comments show the latest human-principal marker has a
+// matching release; a missing or unreleased marker is not evidence that
+// another party's label is stale. A claim with no usable holder
+// (claims.ClaimedByLabel == "") only
 // strips backend-named labels. Returns the labels it removed and whether it
 // added one.
 func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number int, claim claims.Claim) (removed []string, added bool, err error) {
@@ -43,24 +44,14 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 	if err != nil {
 		return nil, false, err
 	}
-	removeReleasedHuman := false
+	// Do not infer a release from the new agent claim or from TTL expiry:
+	// another party's label is only stale with explicit release evidence.
+	staleHuman := false
 	if claim.Kind == claims.KindAgent && want != "" && issueHasLabel(current, claims.ClaimedByHumanLabel) {
-		// Read comments fresh: the new agent's marker may already be the
-		// latest overall, and the claim cache may predate the human release.
-		comments, readErr := c.listIssueComments(ctx, owner, name, number)
-		if readErr != nil {
-			return nil, false, readErr
+		staleHuman, err = c.humanClaimReleased(ctx, owner, name, number)
+		if err != nil {
+			return nil, false, err
 		}
-		var bodies []string
-		for _, comment := range comments {
-			body := comment.GetBody()
-			if marker, ok := issueclaim.ParseMarker(body); ok && strings.EqualFold(marker.Kind, string(claims.KindAgent)) {
-				continue
-			}
-			bodies = append(bodies, body)
-		}
-		previous, found := issueclaim.Latest(bodies, issueclaim.DefaultTTL)
-		removeReleasedHuman = found && previous.Released
 	}
 	have := false
 	for _, l := range current {
@@ -71,7 +62,8 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 			have = true
 			continue
 		}
-		if !claims.ClaimedByLabelIsBackend(l) && !(legacy != "" && strings.EqualFold(l, legacy)) && !(removeReleasedHuman && claims.IsClaimedByHumanLabel(l)) {
+		if !claims.ClaimedByLabelIsBackend(l) && !(legacy != "" && strings.EqualFold(l, legacy)) &&
+			!(staleHuman && claims.IsClaimedByHumanLabel(l)) {
 			continue
 		}
 		if rerr := labeler.RemoveLabel(ctx, owner, name, number, l); rerr != nil {
@@ -86,6 +78,37 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 		return removed, false, err
 	}
 	return removed, true, nil
+}
+
+// humanClaimReleased reads fresh evidence rather than the live-claim cache:
+// the agent's new marker may already be the latest claim overall, hiding the
+// previous human claim and its release. Keep human claims and release markers
+// in forge order so Latest still rejects stale or unrelated releases and a
+// newer human re-claim supersedes an earlier release. Only our trusted App's
+// comments can authorize removing a human label.
+func (c *Client) humanClaimReleased(ctx context.Context, owner, repo string, number int) (bool, error) {
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return false, err
+	}
+	var bodies []string
+	for _, comment := range comments {
+		if !c.isTrustedAppBotCommentAuthor(comment) {
+			continue
+		}
+		body := comment.GetBody()
+		if _, ok := issueclaim.ParseReleaseMarker(body); ok {
+			bodies = append(bodies, body)
+			continue
+		}
+		if marker, ok := issueclaim.ParseMarker(body); ok &&
+			(strings.EqualFold(marker.Kind, string(claims.KindHuman)) ||
+				strings.EqualFold(marker.Kind, string(claims.KindContributor)) || strings.EqualFold(marker.Kind, string(claims.KindExternal))) {
+			bodies = append(bodies, body)
+		}
+	}
+	latest, found := issueclaim.Latest(bodies, 0)
+	return found && latest.Released, nil
 }
 
 // RemoveClaimedByLabel removes the claimed-by label(s) derived from claim:

@@ -1163,7 +1163,9 @@ writers all go through the helper — the claim relay (`hive-open-issue claim`,
 (`src/cmd/hive/claimswire.go`, `Client.ApplyClaimedByLabel`), which add the
 claim's own label and strip only backend-named `hive/claimed-by-*` labels
 and the claim holder's own retired per-login label when a claim lands
-(another party's label is kept), and remove the holder's labels — only the
+(another party's label is kept unless a new agent claim finds trusted App
+comments proving the latest human-principal claim was explicitly released;
+then its stale `hive/claimed-by-human` label is cleared), and remove the holder's labels — only the
 holder's, generic plus legacy per-login — when the ledger releases or hands
 the claim over. The ledger maintains at most one live claim per (repo,
 issue); thus, co-party `hive/claimed-by-*` labels on the same issue arise

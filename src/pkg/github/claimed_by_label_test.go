@@ -2,6 +2,9 @@ package github
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -116,53 +119,85 @@ func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
 	}
 }
 
-// A new agent claim heals a missed human-label release, even after posting
-// its own newer marker. Absence, expiry, and unrelated releases are not
-// sufficient evidence to remove a co-party's label (#14239).
-func TestApplyClaimedByLabel_ReleasedHuman(t *testing.T) {
-	const human = "<!-- hive:claim who=ann kind=contributor at=2026-10-25T12:00:00Z until=2026-10-25T12:30:00Z -->"
-	const release = "<!-- hive:release who=ann kind=contributor reason=lease_revoked at=2026-10-25T12:01:00Z -->"
-	const agent = "<!-- hive:claim who=scanner kind=agent at=2026-10-25T12:02:00Z until=2026-10-25T12:32:00Z -->"
-	for _, tc := range []struct {
-		name   string
-		bodies []string
-		remove bool
+// A new lane claim heals a released human's orphaned label, but never
+// treats an agent claim, an unrelated/stale release, or untrusted text as
+// permission to clear a human claim.
+func TestApplyClaimedByLabel_HealsReleasedHuman(t *testing.T) {
+	human := "<!-- hive:claim who=alice kind=contributor at=2026-10-25T12:00:00Z until=2026-10-25T13:00:00Z -->"
+	release := "<!-- hive:release who=alice kind=contributor at=2026-10-25T12:01:00Z -->"
+	agent := "<!-- hive:claim who=scanner kind=agent at=2026-10-25T12:02:00Z until=2026-10-25T14:00:00Z -->"
+	for _, tt := range []struct {
+		name      string
+		bodies    []string
+		untrusted bool
+		fetchFail bool
+		wantHeal  bool
 	}{
-		{"matching release then agent", []string{human, release, agent}, true},
-		{"matching release without agent comment", []string{human, release}, true},
-		{"legacy release", []string{human, "<!-- hive:release who=ann -->", agent}, true},
-		{"no evidence", nil, false},
-		{"release alone", []string{release, agent}, false},
-		{"unreleased even if expired", []string{human, agent}, false},
-		{"different holder", []string{human, "<!-- hive:release who=bob at=2026-10-25T12:01:00Z -->", agent}, false},
-		{"older release", []string{"<!-- hive:release who=ann at=2026-10-25T11:59:00Z -->", human, agent}, false},
-		{"legacy release before claim", []string{"<!-- hive:release who=ann -->", human, agent}, false},
-		{"renewed human", []string{human, release, "<!-- hive:claim who=ann kind=human at=2026-10-25T12:01:30Z until=2026-10-25T12:31:30Z -->", agent}, false},
-		{"another human", []string{human, release, "<!-- hive:claim who=bob kind=human at=2026-10-25T12:01:30Z until=2026-10-25T12:31:30Z -->", agent}, false},
+		{name: "released contributor then agent", bodies: []string{human, release, agent}, wantHeal: true},
+		{name: "released contributor without agent comment", bodies: []string{human, release}, wantHeal: true},
+		{name: "released human", bodies: []string{strings.ReplaceAll(human, "kind=contributor", "kind=human"), release, agent}, wantHeal: true},
+		{name: "released external", bodies: []string{strings.ReplaceAll(human, "kind=contributor", "kind=external"), release, agent}, wantHeal: true},
+		{name: "legacy release", bodies: []string{human, "<!-- hive:release who=alice -->", agent}, wantHeal: true},
+		{name: "active human", bodies: []string{human, agent}},
+		{name: "no evidence", bodies: []string{agent}},
+		{name: "release without claim", bodies: []string{release, agent}},
+		{name: "other holder release", bodies: []string{human, strings.ReplaceAll(release, "who=alice", "who=bob"), agent}},
+		{name: "stale release", bodies: []string{human, strings.ReplaceAll(release, "12:01:00Z", "11:59:00Z"), agent}},
+		{name: "release before claim", bodies: []string{strings.ReplaceAll(release, "12:01:00Z", "11:59:00Z"), human, agent}},
+		{name: "legacy release before claim", bodies: []string{"<!-- hive:release who=alice -->", human, agent}},
+		{name: "another human claimed", bodies: []string{human, release, strings.ReplaceAll(strings.ReplaceAll(human, "who=alice", "who=bob"), "12:00:00Z", "12:03:00Z"), agent}},
+		{name: "human reclaimed", bodies: []string{human, release, strings.ReplaceAll(human, "12:00:00Z", "12:03:00Z"), agent}},
+		{name: "untrusted release", bodies: []string{human, release, agent}, untrusted: true},
+		{name: "unreadable comments", fetchFail: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			fake := newIssueStageServer(t)
-			c := issueStageTestClient(t, fake.srv, true)
-			fake.truth[7] = []string{"bug", claims.ClaimedByHumanLabel, "hive/claimed-by-reviewer"}
-			fake.commentBodies[7] = tc.bodies
+			fake.truth[7] = []string{claims.ClaimedByHumanLabel, "help wanted", "hive/claimed-by-reviewer"}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
+					if tt.fetchFail {
+						http.Error(w, "unavailable", http.StatusForbidden)
+						return
+					}
+					comments := []map[string]any{}
+					for i, body := range tt.bodies {
+						login := "hive[bot]"
+						if tt.untrusted && i == 1 {
+							login = "someone-else"
+						}
+						comments = append(comments, map[string]any{"body": body, "user": map[string]string{"login": login}})
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(comments)
+					return
+				}
+				fake.srv.Config.Handler.ServeHTTP(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			c := issueStageTestClient(t, srv, true)
+			c.appBotLogin = "hive[bot]"
 			removed, added, err := c.ApplyClaimedByLabel(context.Background(), "acme/widgets", 7, claims.Claim{Holder: "scanner", Kind: claims.KindAgent})
-			if err != nil || !added {
+			if tt.fetchFail {
+				if err == nil {
+					t.Fatal("expected comment fetch error")
+				}
+			} else if err != nil || !added {
 				t.Fatalf("added=%v err=%v", added, err)
 			}
-			wantRemoved := ""
-			if tc.remove {
-				wantRemoved = claims.ClaimedByHumanLabel
+			want := ""
+			if tt.wantHeal {
+				want = claims.ClaimedByHumanLabel
 			}
-			if got := strings.Join(removed, ","); got != wantRemoved {
-				t.Fatalf("removed=%q, want %q", got, wantRemoved)
+			if strings.Join(removed, ",") != want {
+				t.Fatalf("removed %v, want %q", removed, want)
 			}
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
-			if got := strings.Join(fake.removed[7], ","); got != wantRemoved {
-				t.Fatalf("label writes removed=%q, want %q", got, wantRemoved)
+			if strings.Join(fake.removed[7], ",") != want {
+				t.Fatalf("label writes removed %v, want %q", fake.removed[7], want)
 			}
-			if got := strings.Join(fake.added[7], ","); got != "hive/claimed-by-scanner" {
-				t.Fatalf("added=%q", got)
+			if !tt.fetchFail && strings.Join(fake.added[7], ",") != "hive/claimed-by-scanner" {
+				t.Fatalf("added %v, want hive/claimed-by-scanner", fake.added[7])
 			}
 		})
 	}
