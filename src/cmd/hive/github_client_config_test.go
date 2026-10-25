@@ -62,6 +62,10 @@ var clientSetterAllowlist = map[string]string{
 		"it on whichever client the relays run on, and every rebuilt client re-arms the relays " +
 		"(armRequestRelays in github_client_provider.go), so the gate is reinstalled alongside the " +
 		"merge authorizer it extends",
+	"SetForgeMergeSelector": "owned by the request-relay supervisor, like SetMergeRequestPolicyGate: " +
+		"startRequestRelays installs the per-repo forge router on whichever client the merge relay " +
+		"runs on, and every rebuilt client re-arms the relays (armRequestRelays), so the selector is " +
+		"reinstalled alongside the merge authorizer it routes (#14113)",
 	"SetStageFactSink": "test seam: production uses the client's own default stage FactSink " +
 		"(enforce-mode reconciler over stagelabels.Shared()), which every rebuilt client " +
 		"constructs lazily on first use (ADR-0025, #13009)",
