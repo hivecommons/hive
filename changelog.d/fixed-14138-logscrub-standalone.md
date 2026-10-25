@@ -1,0 +1,1 @@
+- `crux/logscrub`'s relay/Go secret-pattern parity test skips instead of failing when `bin/contributor-relay.js` is absent, so the Crux module's tests pass when it is built standalone (the published `hivecommons/crux` copy); inside hive, `HIVE_TEST_REQUIRE_BEHAVIOURAL=1` still turns a missing relay into a failure (#14138).
