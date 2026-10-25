@@ -177,6 +177,10 @@ jobs:
         working-directory: .
         run: python3 .github/scripts/test-runner-cache-prune.py
 
+      - name: Patch coverage script tests
+        working-directory: .
+        run: bash .github/scripts/test-patch-coverage.sh
+
       # Runner-infra classifier, rerun-once guard and rate alert (#9664):
       # hermetic, real 2026-09-29 log excerpts as fixtures, about a second.
       - name: CI infra classifier tests

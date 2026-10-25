@@ -2084,9 +2084,28 @@ jobs:
             [ -n "$FAILED" ] && echo -e "${FAILED}"
             exit 1
           fi
-
           echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Patch coverage on changed Go lines (advisory)
+        if: ${{ steps.cov-scope.outputs.score == 'true' && github.event_name == 'pull_request' && !cancelled() }}
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF" || true
+          if [ -d shards ]; then
+            awk 'FNR == 1 { next } { key=$1 " " $2; hits[key]+=$3 }
+              END { print "mode: atomic"; for (key in hits) print key, hits[key] }' \
+              shards/coverage-*.out > shards/coverage-merged.out 2>/dev/null || true
+          fi
+          bash .github/scripts/patch-coverage.sh \
+            --base "origin/$BASE_REF" \
+            --profile shards/coverage-merged.out \
+            --min-percent 80 --min-uncovered 5 \
+            --pr "$PR_NUMBER" \
+            --advisory
   create-issue-on-failure:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
