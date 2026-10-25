@@ -302,9 +302,7 @@ func resetSHACaches(t *testing.T) {
 }
 
 func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {
-	commitMsgBackoffMu.Lock()
-	commitMsgBackoffUntil = map[string]time.Time{}
-	commitMsgBackoffMu.Unlock()
+	resetSHACaches(t)
 	githubWarnMu.Lock()
 	githubWarnLast = map[string]time.Time{}
 	githubWarnMu.Unlock()
@@ -326,6 +324,10 @@ func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {
 		if got := fetchCommitMessage(c, "abcdef1234567", logger); got != "" {
 			t.Fatalf("got %q, want empty", got)
 		}
+	}
+	// The backfill path passes the short SHA; it must share the full-SHA entry.
+	if got := fetchCommitMessage(c, shortSHA("abcdef1234567"), logger); got != "" {
+		t.Fatalf("short-SHA fetch got %q, want empty", got)
 	}
 	if hits != 1 {
 		t.Errorf("fetches within back-off = %d, want 1", hits)
