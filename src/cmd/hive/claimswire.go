@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -36,6 +37,49 @@ var claimsLedgerPath = "/data/issue-claims.json"
 
 // claimsGitHubTimeout bounds each best-effort GitHub side effect.
 const claimsGitHubTimeout = 15 * time.Second
+
+// claimEffectQueue runs the GitHub side effects of one issue's ledger
+// transitions in the order the ledger fired them, one transition at a time
+// per issue; different issues still run concurrently. The hooks used to
+// spawn a free goroutine per transition, so a claim's side effects and the
+// release of that same claim raced: on hivecommons/hive#14065 the release
+// (26s after the claim) re-read the issue, found no `hive/claimed-by-human`
+// yet, posted its release marker — and the claim's goroutine, slowed by the
+// stage write ahead of it, then applied the label at 12:23:55Z, four
+// seconds after the release had finished. The orphaned label kept the
+// issue out of every lane until a person noticed (hivecommons/hive#14201).
+type claimEffectQueue struct {
+	mu    sync.Mutex
+	tails map[string]chan struct{}
+}
+
+// run schedules fn for key after every fn previously scheduled for key has
+// returned. It never blocks the caller (the ledger fires hooks on the
+// claimant's path).
+func (q *claimEffectQueue) run(key string, fn func()) {
+	done := make(chan struct{})
+	q.mu.Lock()
+	if q.tails == nil {
+		q.tails = map[string]chan struct{}{}
+	}
+	prev := q.tails[key]
+	q.tails[key] = done
+	q.mu.Unlock()
+	go func() {
+		defer func() {
+			close(done)
+			q.mu.Lock()
+			if q.tails[key] == done {
+				delete(q.tails, key)
+			}
+			q.mu.Unlock()
+		}()
+		if prev != nil {
+			<-prev
+		}
+		fn()
+	}()
+}
 
 // buildClaimsLedger constructs the ledger from config, or returns nil when
 // `claims.enabled: false`. A corrupt ledger file is logged and the ledger
@@ -81,6 +125,8 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 // githubClaimHooks returns the hooks that mirror ledger transitions onto the
 // GitHub issue. Every call is best-effort: a failed comment or label never
 // affects the ledger, which is authoritative for the hub's own decisions.
+// Per issue, the side effects run in ledger order (claimEffectQueue): a
+// release only reads the issue once the claim it ends has finished writing.
 //
 // client is resolved per call because the GitHub client is (re)built after
 // boot when App auth completes (see the ghClient swap in main); capturing the
@@ -91,6 +137,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	}
 	comment := cfg.Governor.Claims.CommentEnabled()
 	label := cfg.Governor.Claims.LabelEnabled()
+	queue := &claimEffectQueue{}
 	run := func(what string, c claims.Claim, fn func(ctx context.Context, gh *github.Client) error) {
 		gh := client()
 		if gh == nil {
@@ -104,7 +151,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	}
 	return claims.Hooks{
 		OnClaimed: func(c claims.Claim, outcome claims.Outcome) {
-			go func() {
+			queue.run(c.Key(), func() {
 				if comment && outcome == claims.OutcomeClaimed {
 					run("claim comment", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
@@ -128,10 +175,10 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						return err
 					})
 				}
-			}()
+			})
 		},
 		OnTakenOver: func(now, previous claims.Claim) {
-			go func() {
+			queue.run(now.Key(), func() {
 				if comment {
 					run("takeover comment", now, func(ctx context.Context, gh *github.Client) error {
 						return gh.CreateIssueComment(ctx, now.Repo, now.Issue, claims.TakeoverComment(now, previous))
@@ -152,10 +199,10 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						return err
 					})
 				}
-			}()
+			})
 		},
 		OnReleased: func(c claims.Claim, reason string) {
-			go func() {
+			queue.run(c.Key(), func() {
 				if label {
 					// One fresh read, then only the "who" labels still present
 					// come off, journaled against that read: the plain remove
@@ -197,7 +244,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ReleaseComment(c, reason))
 					})
 				}
-			}()
+			})
 		},
 	}
 }

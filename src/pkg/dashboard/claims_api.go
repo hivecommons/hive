@@ -173,7 +173,6 @@ func (h *ContributeWSHub) releaseClaimForLease(identity, key, reason string) {
 	}
 	for _, c := range l.ReleaseByHolderID(identity, reason, key) {
 		h.logger.Info("[claims] contributor claim released with lease", "issue", c.Key(), "holder", c.Holder, "reason", reason)
-		h.removeLegacyClaimLabelForLease(identity, c.Key())
 	}
 }
 
