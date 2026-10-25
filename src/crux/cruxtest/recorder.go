@@ -880,6 +880,14 @@ func (r *Recorder) StartTranscriptActivityRefresh(ctx context.Context) {
 	r.background(ctx, "StartTranscriptActivityRefresh")
 }
 
+// Background lists the Background loops that have been started, in order;
+// safe to call while they run.
+func (r *Recorder) Background() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.BackgroundRuns...)
+}
+
 func (r *Recorder) background(ctx context.Context, name string) {
 	r.record(name)
 	r.mu.Lock()

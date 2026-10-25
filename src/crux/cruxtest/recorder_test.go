@@ -294,7 +294,7 @@ func TestRecorderState(t *testing.T) {
 	bctx, cancel := context.WithCancel(ctx)
 	cancel()
 	r.StartAgentTokenRefresh(bctx)
-	if len(r.BackgroundRuns) != 1 || r.BackgroundRuns[0] != "StartAgentTokenRefresh" {
+	if got := r.Background(); len(got) != 1 || got[0] != "StartAgentTokenRefresh" {
 		t.Fatal("background")
 	}
 

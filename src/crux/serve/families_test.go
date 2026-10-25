@@ -774,7 +774,7 @@ func TestHostObserversReachTheEventStream(t *testing.T) {
 		return resp
 	}
 
-	waitUntil(t, "background loops started", func() bool { return len(rt.BackgroundRuns) == 4 })
+	waitUntil(t, "background loops started", func() bool { return len(rt.Background()) == 4 })
 	var h api.Health
 	resp := get(api.PathHealth)
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
@@ -881,7 +881,7 @@ func TestServeWithoutHostOrBackground(t *testing.T) {
 		t.Fatal("observers installed on a non-Host")
 	}
 	srv.startBackground(context.Background())
-	if len(rt.BackgroundRuns) != 0 {
+	if len(rt.Background()) != 0 {
 		t.Fatal("background loops started while disabled")
 	}
 	var h api.Health
