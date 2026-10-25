@@ -1,0 +1,1 @@
+- The `ci_poll_nudge` self-report now lists the repeated CI-status commands (with counts) in its diagnostics, so the fleet issue is triageable instead of showing only an idle pane summary (#14289).

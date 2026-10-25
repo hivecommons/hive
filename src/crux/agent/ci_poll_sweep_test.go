@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +188,17 @@ func TestCIPollSweep(t *testing.T) {
 		if got := ciPollSweep(tt.polls, tt.repeats); got != tt.want {
 			t.Errorf("ciPollSweep(%d, %d) = %v, want %v", tt.polls, tt.repeats, got, tt.want)
 		}
+	}
+}
+
+func TestRepeatedCIPollCommandLines(t *testing.T) {
+	pane := "hive-gh pr checks 7\ngh pr checks 8\ngh pr checks 9\nhive-gh pr checks 7\ngh pr checks 9\nhive-gh pr checks 7\ngh pr view 1"
+	got := repeatedCIPollCommandLines(pane, nil)
+	want := []string{"3× hive-gh pr checks 7", "2× gh pr checks 9"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := repeatedCIPollCommandLines("gh pr checks 1\ngh pr checks 2", nil); len(got) != 0 {
+		t.Fatalf("sweep listed as repeated: %q", got)
 	}
 }

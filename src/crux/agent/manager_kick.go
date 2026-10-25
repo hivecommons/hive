@@ -1415,6 +1415,33 @@ func countRepeatedCIPollCommands(pane string, baseline []string) int {
 	return n
 }
 
+// repeatedCIPollCommandLines lists each command line run more than once since
+// baseline as "<count>× <command>", most-repeated first then by command, so a
+// ci_poll_nudge report shows which reads repeated (#14289).
+func repeatedCIPollCommandLines(pane string, baseline []string) []string {
+	counts := map[string]int{}
+	for _, cmd := range ciPollCommandsSinceBaseline(ciPollCommands(pane), baseline) {
+		counts[cmd]++
+	}
+	var cmds []string
+	for cmd, c := range counts {
+		if c > 1 {
+			cmds = append(cmds, cmd)
+		}
+	}
+	slices.SortFunc(cmds, func(a, b string) int {
+		if counts[a] != counts[b] {
+			return counts[b] - counts[a]
+		}
+		return strings.Compare(a, b)
+	})
+	lines := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		lines = append(lines, fmt.Sprintf("%d× %s", counts[cmd], RedactPaneTokens(cmd)))
+	}
+	return lines
+}
+
 // reviewLaneAgent mirrors the review swarm's own admission rule
 // (review.hasReviewCapability): a name or role carrying "review" is a
 // reviewer. pkg/review is not imported here (cycle risk); the token is tiny.
@@ -1518,10 +1545,13 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	// read each of several PRs is a sweep, so only repeated polling of the
 	// same target reaches the fleet; the in-session nudge is unchanged.
 	if ciPollReportWorthy(newRepeats) {
+		m.mu.Lock()
+		repeated := repeatedCIPollCommandLines(scrollback, agent.ciPollCommandBaseline)
+		m.mu.Unlock()
 		m.observeCondition(crux.ClassCIPollNudge, agent.Name,
 			fmt.Sprintf("agent kept polling CI on its own PR after the kick: stop-polling nudge sent (%d poll command(s) since the kick, %s after it; %d nudge(s) since boot)", newPolls, roundDurationForHumans(sinceKick), totalCIPollNudges),
-			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s",
-				agent.Name, lane, len(cmds), newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines)))
+			fmt.Sprintf("agent=%s lane=%s polls_total=%d polls_since_kick=%d repeated_since_kick=%d threshold=%d wall_clock=%s report_min_polls=%d\n--- pane tail (%d lines) ---\n%s\n--- repeated poll commands ---\n%s",
+				agent.Name, lane, len(cmds), newPolls, newRepeats, ciPollNudgeThreshold, ciPollNudgeWallClock, ciPollReportMinPolls, stallNudgeTailLines, paneTail(visible, stallNudgeTailLines), strings.Join(repeated, "\n")))
 	}
 
 	m.logger.Warn("agent is polling CI, sending stop-polling nudge", "name", agent.Name, "polls", len(cmds))
