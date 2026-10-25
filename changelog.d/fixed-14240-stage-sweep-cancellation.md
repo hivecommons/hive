@@ -1,0 +1,1 @@
+- Issue stage-label sweeps stop cleanly when their best-effort budget expires instead of reporting a write failure for every unattempted issue; genuine request failures still warn and unfinished work retries next cycle.

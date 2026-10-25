@@ -56,6 +56,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -361,6 +362,14 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	if client == nil || result == nil {
 		return res
 	}
+	// Expiry of the best-effort sweep budget is not an item write failure.
+	// Report it once, without feeding a warning per unattempted issue into
+	// the repeated-error self-reporter. The next enumeration retries it.
+	defer func() {
+		if err := ctx.Err(); err != nil && logger != nil {
+			logger.Debug("issue stage labels: sweep interrupted; retrying next cycle", "error", err)
+		}
+	}()
 	policy := client.issueStagePolicy()
 	if !policy.Enabled {
 		return res
@@ -387,6 +396,9 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	reposSeen := map[string]bool{}
 	var pending []issueStagePending
 	for _, in := range IssueStageInputs(result) {
+		if ctx.Err() != nil {
+			return res
+		}
 		owner, name := client.splitRepo(in.Repo)
 		key := stagelabels.Key(owner+"/"+name, in.Number)
 		if seen[key] {
@@ -468,6 +480,9 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			continue
 		}
 		if err := client.ensureStageLabelFamily(ctx, in.Repo); err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return res
+			}
 			if logger != nil {
 				if client.stageArchived.has(strings.ToLower(owner + "/" + name)) {
 					logger.Warn("issue stage labels: repository is archived and read-only, skipping it until restart; remove it from the configured repos", "repo", in.Repo, "error", err)
@@ -497,13 +512,15 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
-		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
-		var out stagelabels.Outcome
-		err := ctx.Err()
-		if i < len(transitions) {
-			out, err = transitions[i].Outcome, transitions[i].Err
+		// ReconcileBatch stops on cancellation and returns only attempted
+		// items. Never invent write failures for its unattempted tail.
+		if i >= len(transitions) {
+			break
 		}
-		if err != nil && logger != nil {
+		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
+		out, err := transitions[i].Outcome, transitions[i].Err
+		interrupted := ctx.Err() != nil && errors.Is(err, ctx.Err())
+		if err != nil && !interrupted && logger != nil {
 			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
 		}
 		res.Writes += len(out.Removed)
@@ -515,6 +532,11 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		}
 		if out.Stage == stagelabels.IssueNeedsDecision && slices.Contains(out.Removed, legacyIssueNeedsDecisionStageLabel) {
 			res.NeedsDecisionRestaged++
+		}
+		// Keep successful/partial write counts, but do not start follow-up
+		// writes or comments with an expired sweep context.
+		if ctx.Err() != nil {
+			continue
 		}
 		if err == nil && out.Stage == stagelabels.IssueNeedsDecision {
 			// 045 is on the issue (written or confirmed); the retired park
@@ -542,6 +564,9 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 				}
 			}
 		}
+	}
+	if ctx.Err() != nil {
+		return res
 	}
 	for repo := range reposSeen {
 		if legacyCarriers[repo] <= 0 {

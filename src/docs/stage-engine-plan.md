@@ -39,7 +39,7 @@ Scope: freeze today's behaviour. No production code changes.
   by a `go test -run TestStageGoldens -update` flag; checked in.
 - `src/pkg/github/testdata/issue_stage_goldens/*.json`: one per bucket ×
   claim kind × park label × likely-done × covering-PR stage for
-  `IssueStageFor` (`src/pkg/github/issue_stage_labels.go:145`).
+  `IssueStageFor` (`src/pkg/github/issue_stage_labels.go:205`).
 - `src/pkg/github/automerge/stage_goldens_test.go`,
   `src/pkg/github/issue_stage_goldens_test.go`: replay fixtures; fail on any
   diff.
