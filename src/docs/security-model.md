@@ -176,6 +176,18 @@ process cannot forge. Only `api.github.com` is inspected; other hosts are
 tunnelled without inspection. See
 [net-admin-requirement.md](net-admin-requirement.md).
 
+**Plain-HTTP forwards.** The redirect covers port 443 only, so plain HTTP
+reaches the proxy through its explicit proxy port. Those forwards are
+identified like any other request and dialled only when the resolved address
+is globally routable: loopback services beside the proxy, the link-local
+metadata endpoint, RFC 1918/CGNAT cluster addresses and multicast are refused
+with `403` and counted as violations (loopback excepted — agents are handed
+`NO_PROXY` for it, so it is logged as the client misconfiguration it is). The
+check runs at dial time on the resolved address, so a hostname pointed inward
+is refused on the same evidence as a literal IP. Set
+`HIVE_PROXY_ALLOW_PRIVATE_FORWARD=true` only where a private-network plain-HTTP
+destination is intended.
+
 **Hub-to-spoke channel.** Heartbeats carry a per-hive bearer key derived from
 the hub master secret and are compared in constant time. The payload is
 telemetry only: health, version, agent and governor summaries and 24-hour

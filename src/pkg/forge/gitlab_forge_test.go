@@ -2,6 +2,9 @@ package forge
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -892,5 +895,387 @@ func TestGitLabWriteNoToken(t *testing.T) {
 	}
 	if sawHeader {
 		t.Error("PRIVATE-TOKEN header should be absent with empty token")
+	}
+}
+
+// --- Merge-path tests ---
+
+func TestGitLabMerge_SatisfiesMerger(t *testing.T) {
+	var f Forge = &gitLabForge{}
+	if _, ok := f.(Merger); !ok {
+		t.Fatal("expected gitLabForge to satisfy Merger interface")
+	}
+}
+
+func TestGitLabMerge_URLAndAuth(t *testing.T) {
+	var gotMethod, gotAuth, gotCT, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"iid":42,"state":"opened","labels":[]}`))
+			return
+		}
+		gotMethod = r.Method
+		gotAuth = r.Header.Get(gitLabTokenHeader)
+		gotCT = r.Header.Get("Content-Type")
+		gotPath = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"iid":42,"state":"merged"}`))
+	}))
+	defer srv.Close()
+
+	f := newTestGitLab(t, srv.URL, "myorg")
+	if err := f.Merge(context.Background(), "myorg/subgroup/project", 42, MergeOptions{}); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotAuth != "test-token" {
+		t.Errorf("PRIVATE-TOKEN = %q, want test-token", gotAuth)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", gotCT)
+	}
+	if !strings.Contains(gotPath, "/api/v4/projects/myorg%2Fsubgroup%2Fproject/merge_requests/42/merge") {
+		t.Errorf("path = %q, want URL-encoded project path with /merge_requests/42/merge", gotPath)
+	}
+}
+
+func TestGitLabMerge_StrategyMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       MergeOptions
+		wantSquash *bool
+		wantDel    bool
+		wantSHA    string
+		wantRebase bool
+	}{
+		{
+			name:       "default options",
+			opts:       MergeOptions{},
+			wantSquash: nil,
+			wantDel:    false,
+			wantSHA:    "",
+			wantRebase: false,
+		},
+		{
+			name:       "squash strategy",
+			opts:       MergeOptions{Strategy: "squash"},
+			wantSquash: new(true),
+			wantDel:    false,
+			wantSHA:    "",
+			wantRebase: false,
+		},
+		{
+			name:       "merge strategy",
+			opts:       MergeOptions{Strategy: "merge"},
+			wantSquash: new(false),
+			wantDel:    false,
+			wantSHA:    "",
+			wantRebase: false,
+		},
+		{
+			name:       "rebase strategy",
+			opts:       MergeOptions{Strategy: "rebase"},
+			wantSquash: nil,
+			wantDel:    false,
+			wantSHA:    "",
+			wantRebase: true,
+		},
+		{
+			name: "all options combined",
+			opts: MergeOptions{
+				Strategy:     "squash",
+				HeadSHA:      "commit-abc-123",
+				DeleteBranch: true,
+			},
+			wantSquash: new(true),
+			wantDel:    true,
+			wantSHA:    "commit-abc-123",
+			wantRebase: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sawRebase bool
+			var mergeBody map[string]any
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"iid":7,"state":"opened","labels":[]}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/rebase") {
+					sawRebase = true
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"rebase_in_progress":false}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					_ = json.NewDecoder(r.Body).Decode(&mergeBody)
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"iid":7,"state":"merged"}`))
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+
+			f := newTestGitLab(t, srv.URL, "hivecommons")
+			if err := f.Merge(context.Background(), "hive", 7, tt.opts); err != nil {
+				t.Fatalf("Merge: %v", err)
+			}
+
+			if sawRebase != tt.wantRebase {
+				t.Errorf("sawRebase = %v, want %v", sawRebase, tt.wantRebase)
+			}
+
+			if tt.wantSquash == nil {
+				if _, ok := mergeBody["squash"]; ok {
+					t.Errorf("squash should be omitted from payload, got %v", mergeBody["squash"])
+				}
+			} else {
+				sq, ok := mergeBody["squash"].(bool)
+				if !ok || sq != *tt.wantSquash {
+					t.Errorf("squash = %v, want %v", mergeBody["squash"], *tt.wantSquash)
+				}
+			}
+
+			if tt.wantDel {
+				del, ok := mergeBody["should_remove_source_branch"].(bool)
+				if !ok || !del {
+					t.Errorf("should_remove_source_branch = %v, want true", mergeBody["should_remove_source_branch"])
+				}
+			} else {
+				if del, ok := mergeBody["should_remove_source_branch"].(bool); ok && del {
+					t.Errorf("should_remove_source_branch = true, want false or omitted")
+				}
+			}
+
+			if tt.wantSHA != "" {
+				sha, _ := mergeBody["sha"].(string)
+				if sha != tt.wantSHA {
+					t.Errorf("sha = %q, want %q", sha, tt.wantSHA)
+				}
+			}
+		})
+	}
+}
+
+func TestGitLabMerge_HoldLabelVariants(t *testing.T) {
+	tests := []struct {
+		name      string
+		labels    []string
+		wantBlock bool
+	}{
+		{name: "exact hold", labels: []string{"hold"}, wantBlock: true},
+		{name: "uppercase HOLD", labels: []string{"HOLD"}, wantBlock: true},
+		{name: "mixed case Hold", labels: []string{"Hold"}, wantBlock: true},
+		{name: "hold with whitespace", labels: []string{" hold "}, wantBlock: true},
+		{name: "hold among multiple labels", labels: []string{"bug", "priority/p1", "hold"}, wantBlock: true},
+		{name: "unrelated labels", labels: []string{"bug", "priority/p1"}, wantBlock: false},
+		{name: "partial match prefix should not block", labels: []string{"hold-review"}, wantBlock: false},
+		{name: "empty labels", labels: []string{}, wantBlock: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mergeCalled bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					labelsJSON, _ := json.Marshal(tt.labels)
+					fmt.Fprintf(w, `{"iid":7,"state":"opened","labels":%s}`, string(labelsJSON))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					mergeCalled = true
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"iid":7,"state":"merged"}`))
+					return
+				}
+			}))
+			defer srv.Close()
+
+			f := newTestGitLab(t, srv.URL, "hivecommons")
+			err := f.Merge(context.Background(), "hive", 7, MergeOptions{})
+			if tt.wantBlock {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				if !errors.Is(err, ErrHoldActive) {
+					t.Fatalf("expected ErrHoldActive, got: %v", err)
+				}
+				if mergeCalled {
+					t.Fatal("merge endpoint should not be called when hold label is active")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected nil error, got: %v", err)
+				}
+				if !mergeCalled {
+					t.Fatal("merge endpoint should have been called")
+				}
+			}
+		})
+	}
+}
+
+func TestGitLabMerge_AlreadyMergedState(t *testing.T) {
+	var mergeCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"iid":7,"state":"merged","labels":[]}`))
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+			mergeCalled = true
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	err := f.Merge(context.Background(), "hive", 7, MergeOptions{})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrAlreadyMerged) {
+		t.Fatalf("expected ErrAlreadyMerged, got: %v", err)
+	}
+	if mergeCalled {
+		t.Fatal("merge endpoint should not be called when state is already merged")
+	}
+}
+
+func TestGitLabMerge_ErrorCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		response   string
+		wantErr    error
+	}{
+		{
+			name:       "405 Method Not Allowed",
+			statusCode: http.StatusMethodNotAllowed,
+			response:   `{"message":"405 Method Not Allowed: Branch cannot be merged"}`,
+			wantErr:    ErrNotMergeable,
+		},
+		{
+			name:       "406 Not Acceptable",
+			statusCode: http.StatusNotAcceptable,
+			response:   `{"message":"406 Not Acceptable: Merge request already merged"}`,
+			wantErr:    ErrAlreadyMerged,
+		},
+		{
+			name:       "409 Conflict",
+			statusCode: http.StatusConflict,
+			response:   `{"message":"409 Conflict: SHA does not match HEAD"}`,
+			wantErr:    ErrConflict,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"iid":7,"state":"opened","labels":[]}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					w.WriteHeader(tt.statusCode)
+					_, _ = w.Write([]byte(tt.response))
+					return
+				}
+			}))
+			defer srv.Close()
+
+			f := newTestGitLab(t, srv.URL, "hivecommons")
+			err := f.Merge(context.Background(), "hive", 7, MergeOptions{})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected errors.Is(err, %v), got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestGitLabMerge_RebaseFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantErr    error
+	}{
+		{
+			name:       "rebase 409 conflict",
+			statusCode: http.StatusConflict,
+			wantErr:    ErrConflict,
+		},
+		{
+			name:       "rebase 405 not mergeable",
+			statusCode: http.StatusMethodNotAllowed,
+			wantErr:    ErrNotMergeable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mergeCalled bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"iid":7,"state":"opened","labels":[]}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/rebase") {
+					w.WriteHeader(tt.statusCode)
+					_, _ = w.Write([]byte(`{"message":"rebase failed"}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					mergeCalled = true
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+			defer srv.Close()
+
+			f := newTestGitLab(t, srv.URL, "hivecommons")
+			err := f.Merge(context.Background(), "hive", 7, MergeOptions{Strategy: "rebase"})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected errors.Is(err, %v), got %v", tt.wantErr, err)
+			}
+			if mergeCalled {
+				t.Fatal("merge endpoint should not be called when rebase fails")
+			}
+		})
+	}
+}
+
+func TestGitLabMerge_Validation(t *testing.T) {
+	f := &gitLabForge{baseURL: "https://gitlab.com", http: &http.Client{}}
+
+	if err := f.Merge(context.Background(), "", 1, MergeOptions{}); err == nil {
+		t.Error("expected error with empty repo, got nil")
+	}
+	if err := f.Merge(context.Background(), "repo", 0, MergeOptions{}); err == nil {
+		t.Error("expected error with number 0, got nil")
+	}
+	if err := f.Merge(context.Background(), "repo", -5, MergeOptions{}); err == nil {
+		t.Error("expected error with negative number, got nil")
+	}
+	if err := f.Merge(context.Background(), "repo", 1, MergeOptions{Strategy: "unsupported-strategy"}); err == nil {
+		t.Error("expected error with unsupported strategy, got nil")
 	}
 }

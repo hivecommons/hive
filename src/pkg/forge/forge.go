@@ -6,20 +6,15 @@
 //
 // The read path (enumerate open issues / merge requests, get a repo) and the
 // core write path (comment on an issue/CR, add/remove labels, set a hold gate)
-// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. The merge
-// primitive is the OPTIONAL Merger extension: MergeOptions neutralizes the
-// parts that diverge sharply across forges (strategy names, the expected head
-// commit, the label gate), and every adapter implementing it must pass the
-// shared contract in merge_contract_test.go. GitHub and Gitea implement
-// Merger today; GitLab does not yet, and a caller type-asserts for Merger
-// rather than assuming it.
+// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. The optional
+// Merger extension interface defines the merge primitive; concrete adapters
+// implement it as their forge-specific merge semantics are integrated.
 package forge
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -39,6 +34,24 @@ const (
 	// holdLabel is the forge-neutral label used by SetHold to gate a change from
 	// merging. It matches the "hold" convention already used by the GitHub client.
 	holdLabel = "hold"
+)
+
+var (
+	// ErrHoldActive is returned when a change request carries the hold gate label.
+	ErrHoldActive = errors.New("forge: merge refused: hold label is active")
+
+	// ErrNotMergeable is returned when the forge refuses to merge because the
+	// change request is not in a mergeable state (HTTP 405: e.g. conflicts,
+	// draft/WIP, pending approvals or CI checks).
+	ErrNotMergeable = errors.New("forge: change request is not mergeable")
+
+	// ErrAlreadyMerged is returned when the change request has already been
+	// merged (HTTP 406 on GitLab; or inspected state).
+	ErrAlreadyMerged = errors.New("forge: change request is already merged")
+
+	// ErrConflict is returned when the merge encounters a conflict or head SHA
+	// mismatch (HTTP 409).
+	ErrConflict = errors.New("forge: merge conflict or head SHA mismatch")
 )
 
 // Repo is a forge-neutral description of a repository / project.
@@ -93,103 +106,36 @@ type ChangeRequest struct {
 	HeadSHA string `json:"head_sha,omitempty"`
 }
 
-// MergeStrategy is the forge-neutral name of HOW a change request is
-// integrated. Adapters map these onto their own forge's vocabulary (GitHub's
-// merge_method, GitLab's squash/ff flags, Gitea's merge style) and refuse a
-// value they cannot express with ErrMergeStrategyUnsupported, so a caller
-// never silently gets a different history shape than it asked for.
+// MergeStrategy represents a forge-neutral merge strategy.
 type MergeStrategy string
 
 const (
-	// MergeStrategyDefault leaves the shape to the adapter's forge default.
-	MergeStrategyDefault MergeStrategy = ""
-	// MergeStrategySquash collapses the change into a single commit.
-	MergeStrategySquash MergeStrategy = "squash"
-	// MergeStrategyMerge records a merge commit, keeping the change's own
-	// history — what a forward-merge between release lines requires.
+	// MergeStrategyMerge creates a merge commit preserving full branch history.
 	MergeStrategyMerge MergeStrategy = "merge"
-	// MergeStrategyRebase replays the change's commits onto the target branch.
+	// MergeStrategySquash combines all commits in the change request into a single commit.
+	MergeStrategySquash MergeStrategy = "squash"
+	// MergeStrategyRebase rebases the change request commits onto the target branch.
 	MergeStrategyRebase MergeStrategy = "rebase"
 )
 
-// Merge refusals every adapter reports with the SAME sentinel, so a caller
-// distinguishes "the gate says no" from "the head moved" from a transport
-// failure without parsing forge-specific messages. Each is wrapped with the
-// concrete repo/number/label detail; match with errors.Is.
-var (
-	// ErrMergeGated means a gate label on the change refuses the merge: the
-	// hold label SetHold writes, or one of MergeOptions.BlockingLabels.
-	ErrMergeGated = errors.New("forge: merge refused by a gate label")
-	// ErrMergeHeadMismatch means the change's head is not the commit the
-	// caller decided on — either seen before the merge or reported by the
-	// forge when the head moved underneath it.
-	ErrMergeHeadMismatch = errors.New("forge: change head is not the expected commit")
-	// ErrMergeStrategyUnsupported means Strategy is not a MergeStrategy this
-	// forge can express.
-	ErrMergeStrategyUnsupported = errors.New("forge: merge strategy unsupported by this forge")
-	// ErrMergeConflict means the change request cannot be integrated due to
-	// merge conflicts.
-	ErrMergeConflict = errors.New("forge: change request has merge conflicts")
-	// ErrMergeNotMergeable means the forge refuses to merge because the change
-	// request is not in a mergeable state (e.g. conflicts or failing checks).
-	ErrMergeNotMergeable = errors.New("forge: change request is not mergeable")
-)
-
-// MergeOptions is the forge-neutral input to Merger.Merge: what shape to
-// integrate in, which commit the caller decided on, and which labels gate it.
-// A zero value is valid — forge-default strategy, no head pin, and the hold
-// gate still enforced.
+// MergeOptions configures a change-request merge operation.
+//
+// Semantics are forge-neutral: concrete adapters translate these options into
+// their native wire parameters (e.g. GitHub merge_method, GitLab squash/rebase,
+// Gitea Do).
 type MergeOptions struct {
-	// Strategy is the forge-neutral merge strategy; empty uses the forge
-	// default. An unknown value is refused, never silently defaulted.
-	Strategy MergeStrategy
-	// ExpectedHeadSHA, when non-empty, pins the commit the caller's decision
-	// was made against. The adapter refuses with ErrMergeHeadMismatch when the
-	// change's head has moved, and passes the pin to forges that enforce it
-	// server-side, so a push racing the merge can never land unreviewed work.
-	ExpectedHeadSHA string
-	// BlockingLabels are EXTRA gate labels that refuse the merge, on top of
-	// the hold label SetHold writes (which is always enforced — a forge where
-	// hold did not mean hold would not be forge-neutral). Matching is
-	// case-insensitive and whitespace-trimmed; an empty entry is ignored.
-	BlockingLabels []string
-	// DeleteBranch, when true, requests that the head/source branch be deleted
-	// after a successful merge on forges that support it.
+	// Strategy is the forge-neutral merge strategy (MergeStrategyMerge,
+	// MergeStrategySquash, MergeStrategyRebase). Empty string uses the forge
+	// or repository default.
+	Strategy string
+
+	// HeadSHA, when non-empty, specifies the expected commit SHA at the tip of
+	// the change request. If the head has moved since eligibility was checked,
+	// the merge fails cleanly with ErrConflict.
+	HeadSHA string
+
+	// DeleteBranch requests removing the source branch after merging.
 	DeleteBranch bool
-}
-
-// MergeResult is the forge-neutral outcome of a merge.
-type MergeResult struct {
-	// Merged reports that the change is merged on the forge after this call,
-	// whether this call performed the merge or found it already done.
-	Merged bool
-	// SHA is the resulting merge commit, when the forge reports one.
-	SHA string
-	// AlreadyMerged reports that the change was ALREADY merged, so this call
-	// performed no merge. The merge intent still holds, so it is success:
-	// a retried merge request must not fail on its second pass.
-	AlreadyMerged bool
-}
-
-// gateLabel returns the first label on a change that refuses the merge, or ""
-// when none does. Every adapter evaluates the gate here rather than in its own
-// merge method, so "hold means hold" cannot drift between forges.
-func (o MergeOptions) gateLabel(labels []string) string {
-	for _, have := range labels {
-		have = strings.TrimSpace(have)
-		if have == "" {
-			continue
-		}
-		if strings.EqualFold(have, holdLabel) {
-			return have
-		}
-		for _, blocked := range o.BlockingLabels {
-			if blocked = strings.TrimSpace(blocked); blocked != "" && strings.EqualFold(have, blocked) {
-				return have
-			}
-		}
-	}
-	return ""
 }
 
 // IssueWriter is the narrow write seam production callers are typed against.
@@ -230,9 +176,9 @@ type IssueWriter interface {
 //   - RemoveLabel
 //   - SetHold (add/remove the hold gate label — a forge-neutral merge gate)
 //
-// Merge is deliberately NOT on this interface: it is the OPTIONAL Merger
-// extension, so an adapter that can only read and label still satisfies Forge.
-// See Merger, MergeOptions and MergeResult below.
+// A full Merge primitive is kept off this core interface: callers that need to
+// merge type-assert against the optional Merger interface. See MergeOptions
+// and Merger below.
 type Forge interface {
 	// The forge-neutral write seam (CreateIssueComment, AddLabels). Embedded so
 	// any Forge can be handed to a caller typed against IssueWriter alone.
@@ -301,28 +247,12 @@ type IssueSeam interface {
 	IssueFinder
 }
 
-// Merger is the OPTIONAL extension interface for the merge primitive. It is
-// kept off the core Forge interface because not every adapter implements it:
-// a caller type-asserts (`m, ok := f.(Merger)`) and refuses cleanly when the
-// forge it was handed cannot merge.
-//
-// Implemented by: GitHub, Gitea. Pending: GitLab.
-//
-// Every implementation MUST pass the shared contract in merge_contract_test.go
-// — one table of forge-neutral cases run against an httptest fake per forge —
-// so the behaviour below is identical on every forge rather than per-adapter
-// folklore:
-//
-//   - the strategy map is honoured, and an unknown MergeStrategy is refused
-//     with ErrMergeStrategyUnsupported rather than silently defaulted;
-//   - ExpectedHeadSHA is enforced: a moved head refuses with
-//     ErrMergeHeadMismatch and merges nothing;
-//   - a gate label (hold, or MergeOptions.BlockingLabels) refuses with
-//     ErrMergeGated and merges nothing;
-//   - an already-merged change is idempotent success (AlreadyMerged), not an
-//     error, so a retried merge request never fails on its second pass.
+// Merger is an OPTIONAL extension interface for the merge primitive. It is kept
+// off the core Forge interface so callers that only need read/write operations
+// do not require every adapter to support merging. Adapters that support
+// merging implement this interface.
 type Merger interface {
-	Merge(ctx context.Context, repo string, number int, opts MergeOptions) (MergeResult, error)
+	Merge(ctx context.Context, repo string, number int, opts MergeOptions) error
 }
 
 // Options configures a forge at construction time. All fields are optional; a

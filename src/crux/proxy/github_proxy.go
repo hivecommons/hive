@@ -206,6 +206,13 @@ type GitHubProxy struct {
 	// header as an agent's identity.
 	proxyAdvisoryOK bool
 
+	// allowPrivateForward snapshots HIVE_PROXY_ALLOW_PRIVATE_FORWARD at
+	// construction (a boot-time deployment choice like proxyAdvisoryOK). The
+	// zero value keeps the plain-HTTP forward guard ON: non-routable
+	// destinations (loopback, link-local/metadata, RFC 1918, CGNAT, multicast)
+	// are refused on the plain path. See plain_forward_guard.go.
+	allowPrivateForward bool
+
 	// injectGHAuth snapshots config.ProxyInjectGHAuth() at construction (#1861,
 	// opt-in, default off — a boot-time deployment choice like proxyAdvisoryOK).
 	// When true, the proxy is the ONLY holder of usable GitHub credentials on
@@ -492,6 +499,15 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 			"env", config.ProxyInjectGHAuthEnv)
 	}
 
+	// Plain-HTTP forward guard: on by default, lifted only by an explicit
+	// operator opt-in, and announced when lifted so the log says the proxy may
+	// dial the private estate on an agent's behalf.
+	allowPrivateForward := plainForwardAllowPrivate()
+	if allowPrivateForward {
+		logger.Warn("proxy: plain-HTTP forwards to non-routable destinations are ALLOWED — agents can reach loopback, link-local (cloud metadata) and private-network services through this proxy",
+			"env", plainForwardAllowPrivateEnv)
+	}
+
 	p := &GitHubProxy{
 		listenAddr:          fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
 		caCert:              caCert,
@@ -499,6 +515,7 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 		logger:              logger,
 		uidMap:              uidMap,
 		proxyAdvisoryOK:     advisoryOK,
+		allowPrivateForward: allowPrivateForward,
 		injectGHAuth:        injectGHAuth,
 		allowedRepos:        allowed,
 		violations:          make(map[string]int),
@@ -2133,6 +2150,14 @@ const internalCallerName = "hive-internal"
 
 func (p *GitHubProxy) recordViolation(agentName, method, path string) {
 	p.logger.Warn("proxy request blocked", "agent", agentName, "method", method, "path", path)
+	p.countViolation(agentName)
+}
+
+// countViolation increments the per-agent refusal counter without logging, for
+// callers that have already logged the refusal with their own detail (see
+// refusePlainForward). The map is bounded by maxViolationLog so an
+// unidentified or churning caller set cannot grow it without limit.
+func (p *GitHubProxy) countViolation(agentName string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if _, exists := p.violations[agentName]; exists || len(p.violations) < maxViolationLog {
@@ -2335,25 +2360,71 @@ func transfer(dst, src net.Conn) {
 	_, _ = io.Copy(dst, src)
 }
 
-// forwardPlainDirect handles non-CONNECT (plain HTTP) requests on a raw connection.
-var plainHTTPClient = &http.Client{
-	Transport: http.DefaultTransport,
-	Timeout:   httpWriteTimeout,
-}
-
+// forwardPlainDirect handles non-CONNECT (plain HTTP) requests on a raw
+// connection.
+//
+// Two policies apply here that the CONNECT path has always applied and this
+// one did not: the caller is identified from the connection, and the
+// destination must be globally routable (see plain_forward_guard.go). Before
+// that, any process that could reach the proxy port could have it open a
+// connection, from the proxy's own uid, to any address it named — including
+// the hive's loopback services, the cloud metadata endpoint and the
+// cluster-internal estate — and nothing in the log said who asked.
 func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
-	resp, err := plainHTTPClient.Transport.RoundTrip(r)
+	// Identify from the connection, NOT from r.RemoteAddr: this request came
+	// from http.ReadRequest, which leaves RemoteAddr empty (see
+	// identifyAgentFromConn). "" means the caller could not be attributed,
+	// which is logged as such rather than guessed at.
+	agentName := p.identifyAgentFromConn(conn, r)
+
+	// Proxy-* hop headers address THIS proxy and must not travel further: the
+	// identity they assert is the one identifyAgentFromConn just decided
+	// whether to believe, and forwarding it would hand an agent's claimed name
+	// (and, in the Basic form, whatever it put in the password field) to every
+	// plain-HTTP host it can name.
+	r.Header.Del("Proxy-Authorization")
+	r.Header.Del("Proxy-Connection")
+
+	resp, err := p.plainForwardTransport().RoundTrip(r)
 	if err != nil {
+		var denied *plainForwardDenied
+		if errors.As(err, &denied) {
+			p.refusePlainForward(conn, r, agentName, denied)
+			return
+		}
 		if isLoopbackHost(r.URL.Host) {
-			p.logger.Debug("proxy: plain HTTP forward to loopback failed", "url", r.URL.String(), "error", err, "hint", "client should bypass the proxy for loopback; NO_PROXY")
+			p.logger.Debug("proxy: plain HTTP forward to loopback failed", "agent", agentName, "url", r.URL.String(), "error", err, "hint", "client should bypass the proxy for loopback; NO_PROXY")
 		} else {
-			p.logger.Warn("proxy: plain HTTP forward failed", "url", r.URL.String(), "error", err)
+			p.logger.Warn("proxy: plain HTTP forward failed", "agent", agentName, "url", r.URL.String(), "error", err)
 		}
 		_, _ = fmt.Fprintf(conn, "HTTP/1.1 502 Bad Gateway\r\n\r\nupstream request failed\n")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_ = resp.Write(conn)
+}
+
+// refusePlainForward answers a destination the guard barred.
+//
+// Loopback is treated as the misconfiguration it almost always is rather than
+// as an attack: agents are handed NO_PROXY=127.0.0.1,localhost,::1 (#14076),
+// so a loopback request arriving here means a client ignored it. It is logged
+// at Debug with the same hint as the failure path and does NOT count as a
+// violation. Every other class — link-local (cloud metadata), private, CGNAT,
+// multicast — is an attempt to reach the estate behind the proxy and is
+// counted against the caller.
+func (p *GitHubProxy) refusePlainForward(conn net.Conn, r *http.Request, agentName string, denied *plainForwardDenied) {
+	if denied.reason == plainForwardReasonLoopback {
+		p.logger.Debug("proxy: plain HTTP forward to loopback refused (clients must bypass the proxy for loopback; NO_PROXY)",
+			"agent", agentName, "url", r.URL.String(), "target", denied.target)
+	} else {
+		p.logger.Warn("proxy: plain HTTP forward refused — destination is not globally routable",
+			"agent", agentName, "method", r.Method, "url", r.URL.String(), "target", denied.target, "class", denied.reason)
+		p.countViolation(agentName)
+	}
+	_, _ = fmt.Fprintf(conn, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
+		"the hive proxy does not forward plain HTTP to %s addresses (%s); set %s=true to allow it\n",
+		denied.reason, denied.target, plainForwardAllowPrivateEnv)
 }
 
 // isLoopbackHost reports whether a host or host:port refers to the loopback interface.

@@ -427,8 +427,12 @@ func decidePR(in Input) Decision {
 			Actions:   []Action{decisionComment(text), {Kind: ActionApproveReview}},
 		}
 	}
-	if d, ok := decideCompeting(in, ref); ok {
-		return d
+	// A head parked on DCO or the reporter-trust gate must clear that gate
+	// before a competing-PR rule can release or supersede it.
+	if !in.DCOMissing && !in.ReporterTrustHold {
+		if d, ok := decideCompeting(in, ref); ok {
+			return d
+		}
 	}
 	if !in.HiveAuthored && !in.ContributorOnline && (in.AdoptionStalled || in.Conflicting || !in.CIGreen || in.DCOMissing) {
 		text := "supersede now: adopt " + ref + " in supersede mode, preserving the author's commits and sign-off; do not wait for the grace deadline"
