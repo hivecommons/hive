@@ -20,6 +20,26 @@ the other three.
 
 Hosted and dashboard-managed hives can configure the same block from **Settings → Work source**; self-hosted operators can also edit `governor.work_source` in `hive.yaml`. Custom CA bundles and TLS trust overrides for Jira Data Center are not documented here because they are still in progress and are not part of v5.
 
+## Trackers and forges
+
+`work_source` picks the **tracker**: where work items are read from. The
+**forge** — where the repositories, branches and change requests live — is a
+separate, hive-wide setting, `project.forge`:
+
+| Forge (`project.forge`) | Instance setting | Token | Status |
+| --- | --- | --- | --- |
+| `github` (default) | `github.base_url` / `github.api_url` | GitHub App | Supported |
+| `gitlab` | `gitlab.gitlab_url` (default `https://gitlab.com`) | env var named by `gitlab.token_env` (default `GITLAB_TOKEN`) | Adapter only |
+| `gitea` (Gitea and Forgejo) | `gitea.gitea_url` (required) | env var named by `gitea.token_env` (default `GITEA_TOKEN`) | Adapter only |
+
+The GitLab and Gitea/Forgejo adapters read repos, issues and change requests,
+and can comment, label and set the `hold` gate; GitLab can also merge. A hive
+still cannot run on them, because enumeration, the merge gate and the agents'
+`gh` path are GitHub-only. Every work source above therefore still targets a
+GitHub repository. See [Forges: GitLab, Gitea and
+Forgejo](integrations/forges.md) for the operation list and what runs through
+the adapters today, and [Forge setup](forge-app-setup.md) for the reasons.
+
 ## Run stages (`run_stages: true`)
 
 Run stages let the governor offer a pending run stage such as `spec`, `plan`,

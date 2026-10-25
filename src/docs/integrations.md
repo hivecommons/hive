@@ -58,7 +58,9 @@ The governor reads work through one provider contract. The adapters live in
 
 GitHub is the only forge agents can work against today. The GitLab and
 Gitea/Forgejo adapters in `src/pkg/forge/` cover reads and core writes
-(comment, label, hold) and are tested, but no running path calls them yet.
+(comment, label, hold), and GitLab's can merge. Two governor writes use them,
+but the GitHub-only enumeration that feeds those writes means they never fire
+on a non-GitHub hive. See [Forges](integrations/forges.md).
 
 <table>
 <tr><th>Logo</th><th>Integration</th><th>Status</th><th>Docs</th></tr>
@@ -95,6 +97,7 @@ per-backend confinement matrix.
 
 - [Landscape and positioning](landscape.md) — how Hive compares to nearby tools.
 - [Work-source provider contract](integrations/work-source-providers.md).
+- [Forges: GitLab, Gitea and Forgejo](integrations/forges.md).
 - [Logo sources and licenses](assets/logos/SOURCES.md).
 
 Logos are trademarks of their respective owners. They are used here for

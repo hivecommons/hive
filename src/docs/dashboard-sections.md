@@ -336,6 +336,7 @@ One card per repository Hive looks after, listing its open issues and pull reque
 **How the numbers are worked out.**
 
 - The cards use the same bands as the Overview charts. See the Overview entry for each band's meaning.
+- The small label above each repository name is its code hosting service. On GitHub it is the host, such as `github.com`, with `· Enterprise` on GitHub Enterprise. On GitLab or Gitea/Forgejo (`project.forge`) it names the service and its host, such as `🦊 GitLab · gitlab.example.com`. The card's links then go to that host, and the badge in the section header says the same. Each repository in `/api/status` carries this as `forge` (`github`, `gitlab` or `gitea`) and, for GitLab and Gitea, `forgeUrl`. See [Forges](integrations/forges.md).
 - Small pills on each item show signals, such as a hold, a failing check or no recent activity.
 - A `🔗` pill on an issue means Hive has verified an open or merged pull request covers it. Hover it: "closes via PR #N" means merging the PR closes the issue; "covered by PR #N (partial)" means the PR says `Refs #N` and merging it does not close the issue. The pill comes from Hive's own PR-claim evidence, so it appears on every issue labelled `🐝 covered by PR` — including ones Hive has parked in the "covered by PR" group because an outside PR already fixes them — and never depends on GitHub having a closing link.
 - A red pull-request pill means the sentinel flagged it for a possible security override, privilege escalation or codebase damage. Hive will not merge it until a maintainer reviews it and removes the sentinel label. Pull requests from trusted authors usually get a sentinel comment instead of the label, so they are usually not red.
@@ -353,6 +354,7 @@ One card per repository Hive looks after, listing its open issues and pull reque
 **Settings that change it.**
 
 - The repositories Hive watches are set in **Settings → Projects**.
+- `project.forge` and the `gitlab:` or `gitea:` instance URL set the host label and links. See [Forges](integrations/forges.md).
 - The `dashboard.issue_bands` settings change the band rules.
 - See [Repository card legend, issue bands, and PR bands](dashboard.md#repository-card-legend-issue-bands-and-pr-bands).
 
@@ -750,4 +752,4 @@ This section exists on the v6 line only. On v5 the same facts are in the Diagnos
 
 **When it appears.** On v6 only, when the hive reports platform data.
 
-**Settings that change it.** Your code hosting settings and optional service settings change it.
+**Settings that change it.** Your code hosting settings and optional service settings change it. The code hosting service is `project.forge`; a self-managed GitLab or a Gitea/Forgejo instance also shows its URL. See [Forges](integrations/forges.md).

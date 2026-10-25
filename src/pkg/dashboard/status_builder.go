@@ -2251,6 +2251,21 @@ func earliestRFC3339(a, b string) string {
 	}
 }
 
+// repoForge returns the forge kind every repo card carries and, for GitLab and
+// Gitea/Forgejo, the instance web root its links point at. project.forge is
+// hive-wide, so every repo in a hive shares one forge. GitHub reports no URL:
+// the SPA takes the GitHub host from /api/config, as it always has.
+func repoForge(cfg *config.Config) (kind, url string) {
+	kind = cfg.Project.ForgeKind()
+	switch kind {
+	case config.ForgeGitLab:
+		url = cfg.GitLab.InstanceURL()
+	case config.ForgeGitea:
+		url = cfg.Gitea.InstanceURL()
+	}
+	return kind, strings.TrimRight(url, "/")
+}
+
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	return buildReposWithForge(cfg, actionable, govState, nil)
 }
@@ -2266,6 +2281,8 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 		repoRows[repoName] = repoName
 		repoRows[full] = repoName
 	}
+
+	forgeKind, forgeURL := repoForge(cfg)
 
 	var watchState upstreamwatch.State
 	if len(cfg.UpstreamWatch.Repos) > 0 {
@@ -2361,6 +2378,8 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			NonActionableIssues: nonActionableIssuesByRepo[repoName],
 			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
+			Forge:               forgeKind,
+			ForgeURL:            forgeURL,
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a
 		// paused repo keeps its card and its counts. Dropping it here would

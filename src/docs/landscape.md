@@ -80,7 +80,7 @@ Symphony's `WORKFLOW.md` or Codex app-server contracts.
 
 | Dimension | Symphony | Hive |
 | --- | --- | --- |
-| Work source | Linear in the demo; the spec defines a tracker-neutral adapter. | GitHub Issues, GitHub Projects, Linear and Jira (see Work sources below). |
+| Work source | Linear in the demo; the spec defines a tracker-neutral adapter. | Trackers: GitHub Issues, GitHub Projects, Linear and Jira. Forge: GitHub; GitLab and Gitea/Forgejo adapters are not yet end-to-end (see Work sources below). |
 | Pre-agent gating | Config preflight, state checks, labels, claims and concurrency limits. | Shell-level listing, classification and merge checks before any kick, plus ACMM and proxy write checks. |
 | Agents | Codex app-server is the runner protocol. | Many CLI backends; isolation depends on backend and deployment. |
 | Scale model | One workspace per issue, bounded runs, retry. | Queue-depth cadence, long-lived agents, hub/spoke, convergence audits. |
@@ -191,8 +191,15 @@ Projects, Linear or Jira through one
 [provider contract](integrations/work-source-providers.md); Hive Commons
 itself runs on it. Symphony is Linear-first; Fullsend, gh-aw and Agent HQ
 are forge-first. Hive states this as a differentiator: the same fleet,
-policy and dashboard apply whichever tracker holds the work. The
-[integrations page](integrations.md) lists every tracker, forge and backend
+policy and dashboard apply whichever tracker holds the work.
+
+That claim covers **trackers**, not **forges**. The code still has to live on
+GitHub.com or GitHub Enterprise. Hive has GitLab and Gitea/Forgejo adapters
+(`project.forge`) that read, comment, label and hold, and GitLab's can merge,
+but the governor, merge gate and agent `gh` path are not yet forge-neutral
+([#14096](https://github.com/hivecommons/hive/issues/14096)). Fullsend
+already ships GitHub, GitLab and Forgejo. See [Forges](integrations/forges.md).
+The [integrations page](integrations.md) lists every tracker, forge and backend
 with its status.
 
 ## Related projects and vendors
