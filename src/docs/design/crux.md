@@ -438,7 +438,9 @@ Still Stage 2, in this order:
   the sidecar stages after the seam (credential direction, the missing
   endpoint families, supervision, the flip); `crux/vX.Y.Z` tags and the
   `go get` path caveat above; a generic tool policy for the MITM proxy (the rules are
-  GitHub-shaped today); and keeping this status section current.
+  GitHub-shaped today; design record
+  [crux-tool-policy.md](crux-tool-policy.md), #14228); and keeping this
+  status section current.
 - **Done: move `cmd/crux` into the nested module** (#14138). The module now
   ships `crux/cmd/crux`, buildable with `GOWORK=off` from `src/crux` alone
   (`make build` / `make smoke` there), with the same verbs, `--server`
@@ -1001,3 +1003,4 @@ Comb, Hum, Osmia, Apis.
 - Prior extractions from Hive: pluk, promptargs, rationguard, hotshot,
   spektacular, dibs
 - Related: #13532 (control arm)
+- Generic MITM tool policy: [crux-tool-policy.md](crux-tool-policy.md) (#14228)
