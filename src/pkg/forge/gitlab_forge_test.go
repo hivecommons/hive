@@ -1154,6 +1154,81 @@ func TestGitLabMerge_AlreadyMergedState(t *testing.T) {
 	}
 }
 
+func TestGitLabMerge_ClosedIsNotMergeable(t *testing.T) {
+	var mergeCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"iid":7,"state":"closed","labels":[]}`))
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+			mergeCalled = true
+			w.WriteHeader(http.StatusNotAcceptable)
+		}
+	}))
+	defer srv.Close()
+
+	f := newTestGitLab(t, srv.URL, "hivecommons")
+	err := f.Merge(context.Background(), "hive", 7, MergeOptions{})
+	if !errors.Is(err, ErrNotMergeable) {
+		t.Fatalf("expected ErrNotMergeable for a closed MR, got: %v", err)
+	}
+	if errors.Is(err, ErrAlreadyMerged) {
+		t.Fatalf("a closed MR must not report ErrAlreadyMerged: %v", err)
+	}
+	if mergeCalled {
+		t.Fatal("merge endpoint should not be called when state is closed")
+	}
+}
+
+// GitLab answers 406 for both "already merged" and "closed"; only a re-read
+// that says merged may surface as ErrAlreadyMerged.
+func TestGitLabMerge_406ResolvedAgainstState(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		stateAfter string
+		wantErr    error
+		notErr     error
+	}{
+		{name: "merged during accept", stateAfter: "merged", wantErr: ErrAlreadyMerged},
+		{name: "closed during accept", stateAfter: "closed", wantErr: ErrNotMergeable, notErr: ErrAlreadyMerged},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gets int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					gets++
+					state := "opened"
+					if gets > 1 {
+						state = tt.stateAfter
+					}
+					_, _ = w.Write([]byte(`{"iid":7,"state":"` + state + `","labels":[]}`))
+					return
+				}
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					w.WriteHeader(http.StatusNotAcceptable)
+					_, _ = w.Write([]byte(`{"message":"406 Not Acceptable"}`))
+				}
+			}))
+			defer srv.Close()
+
+			f := newTestGitLab(t, srv.URL, "hivecommons")
+			err := f.Merge(context.Background(), "hive", 7, MergeOptions{})
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("expected %v, got: %v", tt.wantErr, err)
+			}
+			if tt.notErr != nil && errors.Is(err, tt.notErr) {
+				t.Fatalf("must not be %v: %v", tt.notErr, err)
+			}
+			if gets != 2 {
+				t.Fatalf("expected the MR state to be re-read after 406, got %d GETs", gets)
+			}
+		})
+	}
+}
+
 func TestGitLabMerge_ErrorCodes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1183,13 +1258,20 @@ func TestGitLabMerge_ErrorCodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var accepted bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodGet {
+					// After a 406 the adapter re-reads the MR; report merged.
+					if accepted && tt.statusCode == http.StatusNotAcceptable {
+						_, _ = w.Write([]byte(`{"iid":7,"state":"merged","labels":[]}`))
+						return
+					}
 					_, _ = w.Write([]byte(`{"iid":7,"state":"opened","labels":[]}`))
 					return
 				}
 				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/merge") {
+					accepted = true
 					w.WriteHeader(tt.statusCode)
 					_, _ = w.Write([]byte(tt.response))
 					return

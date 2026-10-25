@@ -165,12 +165,25 @@ func (a *gitLabContractAdapter) Setup(t *testing.T, scenario MergeContractScenar
 		reqURL = "contract-org/contract-repo"
 	)
 
+	// The already-merged scenario races the accept call: the first read says
+	// opened, the accept endpoint answers 406, the re-read says merged.
+	var mergeAccepted bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		// Route: GET MR details
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/projects/") && strings.Contains(r.URL.Path, fmt.Sprintf("/merge_requests/%d", mrIID)) {
 			switch scenario {
+			case ScenarioAlreadyMerged:
+				state := "opened"
+				if mergeAccepted {
+					state = "merged"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"iid":    mrIID,
+					"state":  state,
+					"labels": []string{"kind/bug"},
+				})
 			case ScenarioHoldLabelRefuses:
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"iid":    mrIID,
@@ -228,6 +241,7 @@ func (a *gitLabContractAdapter) Setup(t *testing.T, scenario MergeContractScenar
 				return
 
 			case ScenarioAlreadyMerged:
+				mergeAccepted = true
 				w.WriteHeader(http.StatusNotAcceptable)
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": "406 Not Acceptable: Merge request already merged"})
 				return

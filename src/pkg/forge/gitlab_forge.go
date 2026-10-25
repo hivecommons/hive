@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -301,7 +302,11 @@ type glMergePayload struct {
 // Error mapping:
 //   - If the MR carries the "hold" label: returns ErrHoldActive.
 //   - HTTP 405 (Method Not Allowed): returns ErrNotMergeable (e.g. conflicts, draft, CI blocked).
-//   - HTTP 406 (Not Acceptable): returns ErrAlreadyMerged (already merged or closed).
+//   - A closed (not merged) MR: returns ErrNotMergeable before any write.
+//   - HTTP 406 (Not Acceptable): GitLab sends it for both "already merged" and
+//     "closed", so the MR state is re-read: merged returns ErrAlreadyMerged,
+//     anything else ErrNotMergeable. A closed MR must never be reported as
+//     merged (the relay records ErrAlreadyMerged as success).
 //   - HTTP 409 (Conflict): returns ErrConflict (head SHA mismatch or concurrent merge).
 func (f *gitLabForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	if strings.TrimSpace(repo) == "" {
@@ -335,6 +340,9 @@ func (f *gitLabForge) Merge(ctx context.Context, repo string, number int, opts M
 	if strings.EqualFold(mr.State, "merged") {
 		return ErrAlreadyMerged
 	}
+	if strings.EqualFold(mr.State, "closed") {
+		return fmt.Errorf("%w: gitlab merge request %q#%d is closed", ErrNotMergeable, slug, number)
+	}
 
 	// Step 2: Handle rebase-then-merge if strategy is "rebase".
 	if strategy == string(MergeStrategyRebase) {
@@ -356,8 +364,25 @@ func (f *gitLabForge) Merge(ctx context.Context, repo string, number int, opts M
 		payload.Squash = new(false)
 	}
 
-	return f.doAcceptMerge(ctx, mergeEndpoint, payload)
+	err := f.doAcceptMerge(ctx, mergeEndpoint, payload)
+	if !errors.Is(err, errGitLabNotAcceptable) {
+		return err
+	}
+	// 406 is ambiguous (merged or closed): only a re-read that says "merged"
+	// may surface as ErrAlreadyMerged.
+	var after glMergeRequest
+	if gerr := f.getJSON(ctx, mrEndpoint, nil, &after); gerr != nil {
+		return fmt.Errorf("%w: gitlab 406 and re-check failed: %v", ErrNotMergeable, gerr)
+	}
+	if strings.EqualFold(after.State, "merged") {
+		return fmt.Errorf("%w: %v", ErrAlreadyMerged, err)
+	}
+	return fmt.Errorf("%w: gitlab merge request %q#%d is %s: %v", ErrNotMergeable, slug, number, after.State, err)
 }
+
+// errGitLabNotAcceptable marks a 406 from the accept endpoint; Merge resolves
+// it against the MR state because GitLab uses 406 for merged and closed alike.
+var errGitLabNotAcceptable = errors.New("gitlab 406")
 
 func (f *gitLabForge) doRebase(ctx context.Context, endpoint string) error {
 	u := f.baseURL + gitLabAPIPath + endpoint
@@ -418,7 +443,7 @@ func (f *gitLabForge) doAcceptMerge(ctx context.Context, endpoint string, payloa
 	case http.StatusMethodNotAllowed:
 		return fmt.Errorf("%w: gitlab 405: %s", ErrNotMergeable, truncate(string(data), 200))
 	case http.StatusNotAcceptable:
-		return fmt.Errorf("%w: gitlab 406: %s", ErrAlreadyMerged, truncate(string(data), 200))
+		return fmt.Errorf("%w: %s", errGitLabNotAcceptable, truncate(string(data), 200))
 	case http.StatusConflict:
 		return fmt.Errorf("%w: gitlab 409: %s", ErrConflict, truncate(string(data), 200))
 	default:
