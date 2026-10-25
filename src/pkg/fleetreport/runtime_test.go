@@ -360,6 +360,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
 		{class: ClassAgentLoginRequired, message: "login required detected"},
 		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed closed; text withheld"},
+		{class: ClassIOScanClassifierUnavail, message: "ioscan fail-closed blocked kick"},
 		{class: ClassGitHubFetchTransient, message: "channel commit date: fetch failed — the row will render without a timestamp"},
 		{class: ClassLabelProvisioningFailed, message: "issue stage labels: provisioning failed"},
 		{class: ClassAgentCLIRestartLoop, message: "agent CLI crashed or stuck on consent screen, restarting before kick"},
@@ -921,6 +922,7 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"SHA poll: commit message fetch non-200":                                      ClassSHAPollCommitMsgUnavail,
 		"login required detected":                                                     ClassAgentLoginRequired,
 		"ioscan classifier failed closed; text withheld":                              ClassIOScanClassifierUnavail,
+		"ioscan fail-closed blocked kick":                                             ClassIOScanClassifierUnavail,
 		"proxy client TLS handshake failed":                                           ClassProxyTLSHandshakeFailed,
 		"transparent proxy TLS handshake failed":                                      ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":                                        ClassAgentDirSetupFailed,
@@ -939,7 +941,6 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: CONNECT dial failed":                                                  ClassProxyConnectDialFailed,
 		"inference upstream error":                                                    ClassInferenceUpstreamError,
 		"inference upstream failed":                                                   ClassInferenceUpstreamError,
-		"SHA poll: commit message fetch non-200":                                      ClassSHAPollCommitMsgUnavail,
 	}
 	for msg, want := range fed {
 		if got := LogFedClass(msg); got != want {
