@@ -22,7 +22,9 @@ type fakeServer struct {
 	token    string
 	requests []string
 	bodies   []string
-	// streamHold, when set, keeps SSE handlers open until closed.
+	// streamHold, when set, keeps SSE handlers open until closed. Guarded
+	// by mu: a handler from an earlier stream may still be running when a
+	// test sets it.
 	streamHold chan struct{}
 }
 
@@ -93,9 +95,9 @@ func (f *fakeServer) handler() http.Handler {
 			fl.Flush()
 			return
 		}
-		if f.streamHold != nil {
+		if hold := f.hold(); hold != nil {
 			select {
-			case <-f.streamHold:
+			case <-hold:
 			case <-r.Context().Done():
 			}
 		}
@@ -126,14 +128,20 @@ func (f *fakeServer) handler() http.Handler {
 			_, _ = w.Write([]byte("event: x\ndata: {\n\n"))
 		}
 		fl.Flush()
-		if f.streamHold != nil {
+		if hold := f.hold(); hold != nil {
 			select {
-			case <-f.streamHold:
+			case <-hold:
 			case <-r.Context().Done():
 			}
 		}
 	}))
 	return mux
+}
+
+func (f *fakeServer) hold() chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.streamHold
 }
 
 func (f *fakeServer) seen() []string {
@@ -344,8 +352,11 @@ func TestClientStreams(t *testing.T) {
 	}
 
 	// Cancelling the context ends a held stream without an error.
-	f.streamHold = make(chan struct{})
-	t.Cleanup(func() { close(f.streamHold) })
+	hold := make(chan struct{})
+	f.mu.Lock()
+	f.streamHold = hold
+	f.mu.Unlock()
+	t.Cleanup(func() { close(hold) })
 	cctx, cancel := context.WithCancel(ctx)
 	got := make(chan struct{}, 1)
 	done := make(chan error, 1)
