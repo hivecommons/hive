@@ -680,6 +680,13 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 		return false, false
 	}
 	if err := client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment); err != nil {
+		owner, name := client.splitRepo(in.Repo)
+		if client.noteArchivedWrite(strings.ToLower(owner+"/"+name), err) {
+			if logger != nil {
+				logger.Debug("issue stage labels: repository is archived and read-only, skipping PR link stage comment", "repo", in.Repo, "issue", in.Number)
+			}
+			return false, false
+		}
 		if logger != nil {
 			logger.Warn("issue stage labels: PR link stage comment failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}
@@ -743,7 +750,16 @@ func (c *Client) ensureStageLabelFamily(ctx context.Context, repo string) error 
 // create or edit because the repository is archived and read-only
 // (hivecommons/hive#14026), so later sweeps skip it instead of retrying.
 func (c *Client) noteArchivedLabelRefusal(key string, err error) {
+	c.noteArchivedWrite(key, err)
+}
+
+// noteArchivedWrite memoises the repo when err is GitHub's 403 refusal of a
+// write to an archived, read-only repository and reports whether it was one
+// (hivecommons/hive#14177, #14213).
+func (c *Client) noteArchivedWrite(key string, err error) bool {
 	if githubStatusError(err, http.StatusForbidden) && strings.Contains(strings.ToLower(err.Error()), "archived") {
 		c.stageArchived.mark(key)
+		return true
 	}
+	return false
 }
