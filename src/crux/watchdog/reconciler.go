@@ -11,16 +11,34 @@ import (
 	"github.com/hivecommons/hive/crux"
 )
 
-// Fleet is the reconciler's window onto the agent manager. Implemented by
-// pkg/agent's watchdog adapter so every observation and action reuses the
-// manager's existing pane-capture, restart, and pause machinery — the
-// watchdog never grows a second uncoordinated control loop.
-type Fleet interface {
+// Source is the half of Fleet only the runtime can answer: which agents to
+// reconcile, what each one's pane and session look like, when it last
+// produced, and where to publish the verdict. crux/agent's WatchdogFleet
+// implements it over the manager's tables; `crux serve` exposes it over the
+// API (hivecommons/hive#14138, stage 3) so a sidecar fleet is Source over
+// the wire plus crux.Lifecycle for the actions.
+type Source interface {
 	// AgentNames lists the agents to reconcile.
 	AgentNames() []string
 	// Observe gathers one agent's observed truth. An error means the agent
 	// could not be observed at all (removed mid-tick).
 	Observe(name string) (Observation, error)
+	// LastProduction returns the newest production evidence timestamp for
+	// the agent (state-file mtimes, pane activity). ok=false means no
+	// evidence source is readable — reported as Producing=Unknown, never
+	// silently as healthy or as failed.
+	LastProduction(name string) (time.Time, bool)
+	// SetConditions publishes the agent's observed conditions so the
+	// dashboard renders truth instead of the state echo.
+	SetConditions(name string, conds []Condition)
+}
+
+// Fleet is the reconciler's window onto the agent manager. Implemented by
+// pkg/agent's watchdog adapter so every observation and action reuses the
+// manager's existing pane-capture, restart, and pause machinery — the
+// watchdog never grows a second uncoordinated control loop.
+type Fleet interface {
+	Source
 	// IsPaused reports the operator/escalation pause state; paused agents
 	// are observed but never acted on.
 	IsPaused(name string) bool
@@ -31,11 +49,6 @@ type Fleet interface {
 	// Pause pauses the agent, recording the trigger/reason (crash-loop
 	// escalation).
 	Pause(name, trigger, reason string) error
-	// LastProduction returns the newest production evidence timestamp for
-	// the agent (state-file mtimes, pane activity). ok=false means no
-	// evidence source is readable — reported as Producing=Unknown, never
-	// silently as healthy or as failed.
-	LastProduction(name string) (time.Time, bool)
 	// QueuedWork reports how much actionable work is waiting for this agent,
 	// and whether the count is known at all. An agent producing nothing while
 	// nothing is queued is CORRECT, not unhealthy, so Producing=False requires
@@ -44,9 +57,6 @@ type Fleet interface {
 	// assumed empty (which would silence a real fault) or assumed full (which
 	// would manufacture one).
 	QueuedWork(name string) (count int, known bool)
-	// SetConditions publishes the agent's observed conditions so the
-	// dashboard renders truth instead of the state echo.
-	SetConditions(name string, conds []Condition)
 }
 
 // KickSuppressionReporter is an optional Fleet extension. A fleet that

@@ -408,3 +408,11 @@ func newestMtimeBounded(root string, maxDepth int) (time.Time, bool) {
 	scan(root, 0)
 	return newest, !newest.IsZero()
 }
+
+// WatchdogSource is the runtime-owned half of the watchdog fleet
+// (watchdog.Source) over this manager, with no governor hooks. `crux serve`
+// exposes it over the API; crux/runtime.NewWatchdogFleet composes it with
+// the hooks for a sidecar (hivecommons/hive#14138, stage 3).
+func (m *Manager) WatchdogSource() watchdog.Source {
+	return WatchdogFleet{M: m}
+}

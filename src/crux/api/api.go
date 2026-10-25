@@ -12,8 +12,8 @@
 // text/event-stream, one JSON object per `data:` line, `event:` naming the
 // type.
 //
-// Each endpoint mirrors one `crux` CLI verb and the crux.Runtime methods that
-// verb maps onto:
+// The CLI-shaped endpoints mirror one `crux` CLI verb each and the
+// crux.Runtime methods that verb maps onto:
 //
 //	GET  /v1/health                        server is up; agent count
 //	GET  /v1/agents                        ps        Observer.AllStatuses
@@ -26,6 +26,10 @@
 //	GET  /v1/events                        —         runtime events as SSE
 //
 // {name} is a name or ID; the server resolves it with Observer.ResolveAgent.
+//
+// The rest of crux.Runtime (hivecommons/hive#14138, stage 3) is in
+// runtime.go: one route per family or read, and RuntimeRoutes, the table that
+// maps every Runtime method to its route.
 package api
 
 import (
@@ -88,6 +92,9 @@ type Health struct {
 	Version string `json:"version"`
 	// Agents is how many definitions the runtime holds.
 	Agents int `json:"agents"`
+	// Background lists the crux.Background loops the server runs in-process
+	// (the Background method names); empty when it runs none.
+	Background []string `json:"background,omitempty"`
 }
 
 // Process is the wire projection of one agent: what `crux ps --json` prints,
@@ -143,16 +150,21 @@ type RunRequest struct {
 	Definition json.RawMessage `json:"definition,omitempty"`
 }
 
-// KickRequest is the body of POST /v1/agents/{name}/kick.
+// KickRequest is the body of POST /v1/agents/{name}/kick. Async selects
+// Kicker.SendKickAsync; the response's Started then says whether delivery
+// began, and GET /v1/agents/{name}/kick reports the dispatch.
 type KickRequest struct {
 	Message string `json:"message"`
+	Async   bool   `json:"async,omitempty"`
 }
 
-// AgentResponse is the body of a successful run, kick or stop: the resolved
-// agent name and its snapshot after the action.
+// AgentResponse is the body of a successful run, kick, stop or other
+// per-agent action: the resolved agent name and its snapshot after the
+// action. Started is set only for an async kick.
 type AgentResponse struct {
 	Agent   string   `json:"agent"`
 	Process *Process `json:"process,omitempty"`
+	Started *bool    `json:"started,omitempty"`
 }
 
 // Logs is the body of GET /v1/agents/{name}/logs without follow. Lines is
@@ -174,13 +186,16 @@ type LogChunk struct {
 
 // Event is one `data:` record of GET /v1/events. Type is one of the Event*
 // constants; Agent is empty for runtime-wide events. State carries the new
-// state for EventState; Detail is free text for the kick relay.
+// state for EventState; Detail is free text for the kick relay. Data is the
+// typed payload of the observer events in runtime.go (KickOutcome,
+// PauseTransition, ...), absent for the lifecycle events.
 type Event struct {
-	Time   time.Time `json:"time"`
-	Type   string    `json:"type"`
-	Agent  string    `json:"agent,omitempty"`
-	State  string    `json:"state,omitempty"`
-	Detail string    `json:"detail,omitempty"`
+	Time   time.Time       `json:"time"`
+	Type   string          `json:"type"`
+	Agent  string          `json:"agent,omitempty"`
+	State  string          `json:"state,omitempty"`
+	Detail string          `json:"detail,omitempty"`
+	Data   json.RawMessage `json:"data,omitempty"`
 }
 
 // Event types. The lifecycle ones are emitted by the server for actions it

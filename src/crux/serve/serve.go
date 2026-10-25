@@ -84,12 +84,23 @@ type Server struct {
 	// lifetime to it. Serve sets it; a caller using Handler directly sets it
 	// or gets context.Background.
 	LaunchContext context.Context
+	// Background, when set, makes Serve run the crux.Background loops
+	// (token refresh, credential watchdog, Copilot session refresh,
+	// transcript activity) in this process; Health lists them. A sidecar
+	// host's own Background methods are then no-ops.
+	Background bool
+	// AuditSink and ConditionReporter, when set, receive the runtime's
+	// audit records and conditions in addition to the event stream, which
+	// always carries them (EventAudit, EventCondition).
+	AuditSink         crux.AuditSink
+	ConditionReporter crux.ConditionReporter
 
 	now func() time.Time
 
 	mu          sync.Mutex
 	subscribers map[chan api.Event]struct{}
 	lastStates  map[string]string
+	background  []string
 }
 
 // New returns a Server for rt with the defaults filled in.
@@ -132,6 +143,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/kick", s.handleKick)
 	mux.HandleFunc("POST "+api.PathAgents+"/{name}/stop", s.handleStop)
 	mux.HandleFunc("GET "+api.PathEvents, s.handleEvents)
+	s.registerFamilies(mux)
 	return s.authenticate(mux)
 }
 
@@ -284,6 +296,8 @@ func (s *Server) Serve(ctx context.Context, ls *Listeners) error {
 		s.publish(api.Event{Type: api.EventKick, Agent: agentName, State: event, Detail: detail})
 	})
 	defer s.Runtime.SetKickObserver(nil)
+	defer s.installHostObservers()()
+	s.startBackground(ctx)
 	go s.watchStates(ctx)
 
 	handler := s.Handler()
@@ -330,7 +344,10 @@ func (s *Server) Serve(ctx context.Context, ls *Listeners) error {
 // ---- handlers ----
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	s.writeJSON(w, http.StatusOK, api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses())})
+	s.mu.Lock()
+	background := append([]string(nil), s.background...)
+	s.mu.Unlock()
+	s.writeJSON(w, http.StatusOK, api.Health{Version: api.Version, Agents: len(s.Runtime.AllStatuses()), Background: background})
 }
 
 func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
@@ -528,6 +545,17 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.Message) == "" {
 		s.writeError(w, http.StatusBadRequest, api.CodeBadRequest, "message is empty")
+		return
+	}
+	if req.Async {
+		started, err := s.Runtime.SendKickAsync(name, req.Message)
+		if err != nil {
+			s.writeRuntimeError(w, name, "kick", err)
+			return
+		}
+		resp := s.agentResponse(name)
+		resp.Started = &started
+		s.writeJSON(w, http.StatusAccepted, resp)
 		return
 	}
 	if err := s.Runtime.SendKick(name, req.Message); err != nil {
