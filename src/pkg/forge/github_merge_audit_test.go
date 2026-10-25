@@ -46,7 +46,7 @@ func TestGitHubForgeMerge_AuditsForgePath(t *testing.T) {
 		}
 	})
 
-	if err := f.Merge(context.Background(), "o/r", 7, MergeOptions{Strategy: MergeStrategySquash}); err != nil {
+	if err := f.Merge(context.Background(), "o/r", 7, MergeOptions{Strategy: string(MergeStrategySquash)}); err != nil {
 		t.Fatalf("Merge: %v", err)
 	}
 	if len(details) != 1 {
