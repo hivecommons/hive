@@ -414,9 +414,13 @@ Hive's proxy, no server-side spend cap, and hosted-tool charges are missing
 from `usage`. Its SDK-in-pod shape is already the `codex` backend.
 
 The prototype is [#14124](https://github.com/hivecommons/hive/issues/14124).
-That issue's scope names the CLI registry files (`config/backends.conf`,
-`CLIBackends`, and the parity and posture tests). Under this decision the
-prototype is an `extwork` adapter (H1) and does not touch those files.
+It is implemented as the `claude-managed-agents` `pkg/extwork` adapter:
+`runs.external.claude_managed_agents` is default off, `shadow` when enabled
+without a mode, and dispatches only in explicit `report-only` mode. The adapter
+is linked only with `-tags extwork_claude_managed_agents`, requires a
+`self_hosted` environment and `forced-egress` or `proxy-only` policy, and
+stores vendor session bindings under the extwork record directory. It does not
+touch `KNOWN_BACKENDS`, `CLIBackends`, or CLI parity/posture tests.
 
 ### Follow-ups
 
@@ -427,23 +431,23 @@ These are filed as #14124 completes, as its checklist requires:
 - **Tier promotion.** The write-capable `pkg/extwork` mode and the live
   evidence that the promotion criteria above call for.
 
-### Rows this tier implies in agent-configuration.md
+### Rows shipped for the hosted prototype
 
-None of these are added until a hosted backend ships. Each one is part of
-H6 for the PR that ships it:
+The first hosted row is now present in
+[`agent-configuration.md`](agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference):
 
-- **Methods table** ([Methods: subscription CLIs vs self-hosted inference](agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference)):
-  a third family, `hosted`, with one row per engine. Auth is a vendor API key
-  held as a reference into `/data/secrets/`, with no CLI login. The model
-  comes from the pinned agent version (Managed Agents) or the request
-  (OpenAI), not from live discovery.
-- **Engine block** ([Engine — what powers it](agent-configuration.md#engine--what-powers-it)):
-  a note that a hosted engine is not a `backend:` value. It is selected under
-  `runs.external.<engine>`.
-- **Per-engine block**: the `runs.external.<engine>` keys (`enabled`, `mode`,
-  `workflow_version`, plus the environment ID or container policy), the
-  advisory ceiling for a direct-path setup, and the metered, partly-metered or
-  unmetered status from H5.
+- **Methods table:** `hosted / claude-managed-agents`, authenticated by an API
+  key reference (`api_key_env` or `api_key_file`) and pinned agent/model
+  metadata. There is no CLI login or model discovery.
+- **Engine block:** a hosted engine is not a `backend:` value. It is selected
+  under `runs.external.claude_managed_agents`.
+- **Per-engine block:** the endpoint, workflow/agent/toolset versions, pinned
+  `self_hosted` environment, forced-egress policy, report-only mode, state
+  directory, and USD 25 daily ledger cap are documented. Token events are
+  metered in `pkg/tokens`; cumulative session list cost, runtime, and web
+  search usage are persisted in the managed-agents ledger. The adapter stops
+  at the ledger cap and the vendor session budget is set to the remaining
+  cents, so the hosted path is not treated as unmetered.
 
 ## Metering coverage and budget-gated hives
 
@@ -462,6 +466,7 @@ Metered sources today are the scanner and sink implementations in `pkg/tokens`:
 | `copilot_scanner.go` | Copilot CLI `events.jsonl` | Reads `session.shutdown.modelMetrics` and avoids double-counting live proxy captures. |
 | `bob_scanner.go` | Bob CLI chat recordings | Uses Bob's explicit token fields, falling back to content-size estimates only when a recording lacks token data. |
 | `inference_sink.go` | vLLM, llm-d, LiteLLM, live Copilot proxy usage | Hive-written JSONL under the metrics directory. |
+| `managed_agents_ledger.go` | Claude Managed Agents self_hosted sessions | Deduplicates `span.model_request_end` IDs into collector JSONL and persists cumulative USD list cost, active seconds, and web searches with a hard USD 25 daily cap. |
 
 ### Tagging Bob sessions for Bobalytics
 

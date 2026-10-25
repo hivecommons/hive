@@ -556,7 +556,9 @@ Config validation accepts only `off`, `assist`, or empty; the dashboard and
 
 ## Methods: subscription CLIs vs self-hosted inference
 
-`backend:` picks one of two families. They differ in how you authenticate and where model lists come from:
+`backend:` picks one of the CLI or inference families below. Hosted execution
+is a separate `runs.external.<engine>` binding and is never a `backend:` value:
+it has no local binary, CLI login, or live model discovery.
 
 | Method | Family | Auth | Model discovery |
 |---|---|---|---|
@@ -568,6 +570,7 @@ Config validation accepts only `off`, `assist`, or empty; the dashboard and
 | `llm-d` | inference | endpoint + optional key — no login | **live** — `/v1/models` |
 | `litellm` | inference | endpoint + API key — no login | **live** — `/v1/models`, entitlement-filtered per key |
 | `openrouter` (gateway name) | inference | Model Gateway key or scan-to-fund flow — no CLI login | **live** — OpenRouter `/v1/models`, plus curated fallback |
+| `claude-managed-agents` | hosted | API key reference (`api_key_env` or `/data/secrets` `api_key_file`) — no CLI login | pinned agent/model version; no discovery |
 
 Two rules of thumb:
 
@@ -577,6 +580,48 @@ Two rules of thumb:
   Only `POST /v1/messages` is translated into an OpenAI `/v1/chat/completions` call. The Claude CLI also talks to its Anthropic host for housekeeping — telemetry batches (`/api/event_logging/...`), error reports, `POST /v1/messages/count_tokens` — and none of that has a meaning to an OpenAI-compatible gateway; forwarding it used to cost a gateway `400 Missing required parameter: 'messages'` per call, charged against the provider's request rate limit (roughly two failures per real completion in practice). The translator and the MITM reroute now answer those locally: `count_tokens` returns a chars-based estimate, anything under `/api/` returns `{}`, and any other path is a 404 in Anthropic error shape with a `WARN` log line naming the method and path, so a new CLI endpoint shows up in the hive log rather than as gateway noise. Inference-routed `claude` sessions are additionally launched with `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and `CLAUDE_CODE_AUTO_MODE_SERVER=0`; subscription sessions are not. The last one matters for Claude Code's [auto-mode classifier](https://code.claude.com/docs/en/auto-mode-classifier-billing): the CLI otherwise asks the inference host for a server-side safety verdict (`safeguards` field in, `safeguard_results` out) that an OpenAI-compatible gateway can never return, then halts the session on an interactive "this session isn't eligible because your requests go through 127.0.0.1:18444 … Enter to continue" notice. With the variable set the CLI runs its own classifier requests through the translator like any other call. Should the notice still appear (for example from a settings file that re-enables the server check), the lifetime prompt watcher presses Enter for it.
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
+
+### Claude Managed Agents hosted execution
+
+Claude Managed Agents is an external hosted engine, not a `backend:` value.
+The prototype is linked only with `extwork_claude_managed_agents` and is
+selected under `runs.external.claude_managed_agents`. It requires a Claude
+`self_hosted` environment in the contributor-private spoke with
+`forced-egress` or `proxy-only` policy. The worker receives its environment key
+and per-session work secret; it never receives `ANTHROPIC_API_KEY`.
+
+```yaml
+runs:
+  external:
+    claude_managed_agents:
+      enabled: false
+      mode: shadow                         # report-only is the dispatch posture
+      endpoint: https://api.anthropic.com
+      workflow_version: claude-managed/2026-04-01
+      agent_id: agt_private
+      agent_version: 1
+      toolset_version: hive-tools/1
+      environment_id: env_private
+      environment_type: self_hosted
+      network_policy: forced-egress
+      api_key_env: ANTHROPIC_API_KEY       # reference only; never the value
+      model: claude-sonnet-4-6
+      state_dir: /data/extwork/claude-managed-agents
+      daily_budget_cents: 2500             # hard USD 25/day maximum
+      github_write_path: none
+```
+
+The adapter performs an authenticated `GET /v1/environments/{id}` before
+creating a session, pins the agent/toolset versions, sends the bounded prompt
+and repository workspace, and records `span.model_request_end` token events in
+`data.metrics_dir`. Event IDs are deduplicated across restarts. Session
+`list_cost`, active seconds, and web-search counts are kept in the durable
+managed-agents ledger; the session budget is the remaining daily cents. Set
+`github_write_path` to `none` or `proxy` for a report-only spoke. Values
+representing a direct GitHub resource, vaulted secret, or GitHub MCP path
+(`github_repository`, `vaulted_secret`, `github_mcp`) are accepted for
+configuration visibility but refused for write-capable stages. The existing
+proxy denials remain unchanged.
 
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
 

@@ -666,6 +666,9 @@
       },
       "vibe_kanban": {
         "enabled": false
+      },
+      "claude_managed_agents": {
+        "enabled": false
       }
     }
   },

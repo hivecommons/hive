@@ -167,14 +167,14 @@ has no counterpart).
 
 | # | Criterion | Status | Reason |
 | --- | --- | --- | --- |
-| 1 | List parity (`KNOWN_BACKENDS`, `backend_binary`, `backend_perm_flag`, `CLIBackends`) | **N/A** | There is no binary to launch or flag to pass. Adding a name to `KNOWN_BACKENDS` would make the shell launch path try to exec it. The counterpart is registering an engine adapter with `pkg/extwork` (`registry.go`), which is not wired for this engine yet. |
-| 2 | Declared local posture (`localBackendPostures`) | **N/A** for `cloud`, **gap** for `self_hosted` | A `cloud` session has no contributor-local path. A `self_hosted` worker does run on Hive's side; its posture is the posture of the container it runs in, and no test pins that yet. |
-| 3 | Flag-honoring proof | **gap** | The safety controls are API fields, not flags: `networking.type` and `allowed_hosts`, per-tool `enabled`, `permission_policy`, `budget`. The docs say several bad values are refused with a 400 (for example a `limited` session whose agent declares MCP servers that are not allowed, or a bad budget amount). The equivalent of a "rejects an invalid value" transcript has not been captured. Note that the agent toolset defaults to `always_allow`, so the adapter must set the policy explicitly rather than rely on defaults. |
-| 4 | Honest credential detection (`detect_cli`) | **gap** | Credentials are `ANTHROPIC_API_KEY`, an OAuth profile, or workload identity federation; a self-hosted worker uses `ANTHROPIC_ENVIRONMENT_KEY`. An authenticated read such as `GET /v1/environments/{id}` proves the key works, which is the `codex_is_authenticated` pattern. Not written. |
-| 5 | Documentation rows | **gap** | The three tables named (`docs/backend-setup.md`, the confinement matrix, the `AGENT_BACKEND` row) all describe CLIs. A hosted backend needs its own rows: auth mechanism, where the credential lives, environment type, and the GitHub egress verdict from the table above. |
-| 6 | Pinned install | **N/A** for `cloud`, **met by construction** for `self_hosted` | Nothing is installed for `cloud`. The pinning that matters is the agent version (`{type: "agent", id, version}`) and the toolset version (`agent_toolset_20260401`), both explicit. A Go `self_hosted` worker would come in as a Go module dependency, pinned by `go.sum`. |
-| 7 | Changelog fragment | **met by construction** | Any PR that wires the adapter adds one. |
-| 8 | T3 refusal gate (`HIVE_<NAME>_DANGEROUSLY_RUN_UNCONFINED`) | **gap** | The env-var gate is about launching an unconfined local CLI and does not transfer. The counterpart is that the binding defaults off: `pkg/extwork` already defaults to `off` and admits only `shadow` and `report-only`. What is missing is a per-repo opt-in for this engine and code that refuses a session config with a direct GitHub write path (any row marked "advisory ceiling" above) when the mode would allow writes. |
+| 1 | List parity (`KNOWN_BACKENDS`, `backend_binary`, `backend_perm_flag`, `CLIBackends`) | **N/A** | There is no binary to launch or flag to pass. The `claude-managed-agents` engine is registered through `pkg/extwork` only under `extwork_claude_managed_agents`; it deliberately never enters the CLI registry. |
+| 2 | Declared local posture (`localBackendPostures`) | **met** for the selected `self_hosted` shape | The prototype pins a `self_hosted` environment and requires `forced-egress` or `proxy-only`. The worker runs in the Hive pod and the direct-path refusal test covers the write boundary. |
+| 3 | Flag-honoring proof | **partial** | The safety controls are API/config fields, not flags. Adapter validation rejects cloud environments, unsupported network policies, over-cap budgets, and unrecognised write paths; tests exercise the direct-path refusal. No live vendor invalid-policy transcript is claimed, so the promotion evidence remains open. |
+| 4 | Honest credential detection (`detect_cli`) | **met** for the hosted contract | The adapter resolves only an API-key environment-variable or `/data/secrets`/`/secrets` file reference, authenticates with `GET /v1/environments/{id}` before dispatch, and never puts `ANTHROPIC_API_KEY` in the worker bundle. |
+| 5 | Documentation rows | **met** for the hosted tier | Hosted rows now live in `agent-configuration.md`, `sandbox-isolation.md`, `contributor-relay.md`, `backend-support-tiers.md`, and the external-admission design. `backend-setup.md` and the `AGENT_BACKEND` CLI row remain unchanged because this is not a CLI backend. |
+| 6 | Pinned install | **N/A** for `cloud`, **met by construction** for `self_hosted` | Nothing is installed for `cloud`. The pinned runtime identity is the explicit agent version and toolset version in the session request; the adapter itself is selected by a build tag. |
+| 7 | Changelog fragment | **met** | `changelog.d/added-hosted-managed-agents.md` records the shipped prototype. |
+| 8 | T3 refusal gate (`HIVE_<NAME>_DANGEROUSLY_RUN_UNCONFINED`) | **met for the hosted counterpart** | The binding defaults off, resolves enabled-without-mode to `shadow`, dispatches only in explicit `report-only`, and refuses write-capable stages for direct GitHub resource, vaulted-secret, and GitHub-MCP paths. |
 
 The T1 criteria are outside this note's scope, but they are not where the gap
 is. An API is headless by nature (criterion 10), and an API key or workload
@@ -204,8 +204,9 @@ here the agent loop is not Hive's to confine.
   both environment types and are not limited by a self-hosted worker's egress.
   Disable them unless a task needs them.
 - **Spend.** The API key owner pays: tokens at list price, plus run time and
-  searches. On a contributor-private spoke that is the contributor's key. This
-  is why #14124 is parked for a maintainer decision (risk: spend).
+  searches. On a contributor-private spoke that is the contributor's key. The
+  prototype persists those fields in its ledger, reserves the remaining
+  per-day budget before dispatch, and hard-caps the spoke at USD 25 per UTC day.
 
 ## Recommendation
 
@@ -237,8 +238,7 @@ Suggested acceptance criteria for that tier, for #14111 to adopt or change:
 4. A session `budget` is set at dispatch whenever the hive is budget-gated.
 
 Of the two shapes above, **self-hosted** is closer to how Hive already confines
-agents, since tool egress goes through Hive's own proxy, and needs no new
-custody argument for GitHub tokens. **Cloud, credential-less** needs no worker
-but depends on file resources or a read-only token held by Anthropic, plus
-custom tools for every write. Whether this backend has the smaller gap than the
-OpenAI Agents API is for #14111 to decide once the #14108 note exists.
+agents, since tool egress goes through Hive's own proxy and needs no new
+custody argument for GitHub tokens. The accepted hosted-tier decision in #14111
+selected that shape for #14124; the OpenAI Agents API remains a separate
+credential-less adapter proposal under #14108.

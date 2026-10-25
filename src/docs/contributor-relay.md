@@ -1641,17 +1641,26 @@ there. A relay that is offered staged run work must declare `run-stage` in
 `capabilities.relay_capabilities`; otherwise the hub refuses that staged item
 instead of silently downgrading it to an unstaged task.
 
-External-execution items add engine-scoped tokens: `ext-exec/flue` and
-`ext-exec/omp` ([#8361](https://github.com/hivecommons/hive/issues/8361)). A
-run-stage item that names an external engine (`ext_exec: flue` or
-`ext_exec: omp`) is offered only while the operator has enabled that engine's
-binding (`runs.external.flue`, `runs.external.omp`) AND the relay declares
-that engine's token in `capabilities.relay_capabilities`. A relay without the
-token, or a hub with the binding off, refuses that item; it is never handed
-out as ordinary local work, and declaring one token grants nothing for the
-other engine. The token grants nothing by itself: the engine still receives
-only a bounded context bundle, and the hub still decides acceptance of its
-receipt.
+External-execution items add engine-scoped tokens: `ext-exec/flue`,
+`ext-exec/omp`, and `ext-exec/claude-managed-agents`
+([#8361](https://github.com/hivecommons/hive/issues/8361),
+[#14124](https://github.com/hivecommons/hive/issues/14124)). A run-stage item
+that names an external engine (`ext_exec: flue`, `ext_exec: omp`, or
+`ext_exec: claude-managed-agents`) is offered only while the operator has
+enabled that engine's binding AND the relay declares that engine's token in
+`capabilities.relay_capabilities`. A relay without the token, or a hub with
+the binding off, refuses that item; it is never handed out as ordinary local
+work, and declaring one token grants nothing for another engine. The token
+grants nothing by itself: each engine receives only a bounded context bundle,
+and the hub still decides acceptance of its receipt.
+
+**Claude Managed Agents self-hosted host.** The
+`ext-exec/claude-managed-agents` token is an opt-in for the private-spoke
+hosted adapter. The relay sends no vendor key, GitHub token, or dashboard
+credential; Hive sends the bounded prompt/repository context only after the
+normal lease authority is durable. The adapter keeps the session in advisory
+`shadow` or `report-only` mode, refuses direct GitHub write paths, and records
+token and list-cost metering in the spoke ledger with a hard USD 25 daily cap.
 
 **OMP workbench as a contributor host** ([#6899](https://github.com/hivecommons/hive/issues/6899)).
 An already-running OMP workbench does not embed the relay; it registers as a

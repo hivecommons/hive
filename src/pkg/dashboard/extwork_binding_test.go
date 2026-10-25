@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/extwork/flue"
+	"github.com/hivecommons/hive/pkg/extwork/managedagents"
 	"github.com/hivecommons/hive/pkg/extwork/omp"
 	"github.com/hivecommons/hive/pkg/extwork/vibekanban"
 )
@@ -53,11 +54,17 @@ func TestCapabilityTokenMatchesAdapter(t *testing.T) {
 	if extExecEngineVibeKanban != vibekanban.Engine {
 		t.Fatalf("dashboard engine %q must equal vibekanban.Engine %q", extExecEngineVibeKanban, vibekanban.Engine)
 	}
+	if capExtExecClaudeManagedAgents != managedagents.Capability {
+		t.Fatalf("dashboard token %q must equal managedagents.Capability %q", capExtExecClaudeManagedAgents, managedagents.Capability)
+	}
+	if extExecEngineClaudeManagedAgents != managedagents.Engine {
+		t.Fatalf("dashboard engine %q must equal managedagents.Engine %q", extExecEngineClaudeManagedAgents, managedagents.Engine)
+	}
 	advertised := map[string]bool{}
 	for _, c := range serverCapabilities() {
 		advertised[c] = true
 	}
-	for _, want := range []string{capExtExecFlue, capExtExecOMP, capExtExecVibeKanban} {
+	for _, want := range []string{capExtExecFlue, capExtExecOMP, capExtExecVibeKanban, capExtExecClaudeManagedAgents} {
 		if !advertised[want] {
 			t.Fatalf("hub must advertise the %s token", want)
 		}

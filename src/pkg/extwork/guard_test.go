@@ -7,17 +7,19 @@ import (
 )
 
 const (
-	modulePrefix     = "github.com/hivecommons/hive/"
-	flueAdapterPkg   = modulePrefix + "pkg/extwork/flue"
-	ompAdapterPkg    = modulePrefix + "pkg/extwork/omp"
-	vibeAdapterPkg   = modulePrefix + "pkg/extwork/vibekanban"
-	extworkPkg       = modulePrefix + "pkg/extwork"
-	hiveBinary       = "./cmd/hive"
-	flueBuildTag     = "extwork_flue"
-	ompBuildTag      = "extwork_omp"
-	vibeBuildTag     = "extwork_vibekanban"
-	minClosurePkgs   = 50
-	moduleRootFromPk = "../.."
+	modulePrefix            = "github.com/hivecommons/hive/"
+	flueAdapterPkg          = modulePrefix + "pkg/extwork/flue"
+	ompAdapterPkg           = modulePrefix + "pkg/extwork/omp"
+	vibeAdapterPkg          = modulePrefix + "pkg/extwork/vibekanban"
+	managedAgentsAdapterPkg = modulePrefix + "pkg/extwork/managedagents"
+	extworkPkg              = modulePrefix + "pkg/extwork"
+	hiveBinary              = "./cmd/hive"
+	flueBuildTag            = "extwork_flue"
+	ompBuildTag             = "extwork_omp"
+	vibeBuildTag            = "extwork_vibekanban"
+	managedAgentsBuildTag   = "extwork_claude_managed_agents"
+	minClosurePkgs          = 50
+	moduleRootFromPk        = "../.."
 )
 
 func goListDeps(t *testing.T, tags string) map[string]bool {
@@ -106,5 +108,21 @@ func TestVibeKanbanAdapterNotLinkedUnlessEnabled(t *testing.T) {
 	}
 	if tagged[flueAdapterPkg] || tagged[ompAdapterPkg] {
 		t.Fatalf("-tags %s linked unrelated adapters: flue=%v omp=%v", vibeBuildTag, tagged[flueAdapterPkg], tagged[ompAdapterPkg])
+	}
+}
+func TestClaudeManagedAgentsAdapterNotLinkedUnlessEnabled(t *testing.T) {
+	plain := goListDeps(t, "")
+	if plain[managedAgentsAdapterPkg] {
+		t.Fatalf("%s is linked into %s without the %s build tag; the adapter must be opt-in at build time", managedAgentsAdapterPkg, hiveBinary, managedAgentsBuildTag)
+	}
+	if !plain[extworkPkg] {
+		t.Fatalf("%s is not reachable from %s; the engine-neutral seams must be wired regardless of engine", extworkPkg, hiveBinary)
+	}
+	tagged := goListDeps(t, managedAgentsBuildTag)
+	if !tagged[managedAgentsAdapterPkg] {
+		t.Fatalf("positive control failed: %s is not linked even with -tags %s", managedAgentsAdapterPkg, managedAgentsBuildTag)
+	}
+	if tagged[flueAdapterPkg] || tagged[ompAdapterPkg] || tagged[vibeAdapterPkg] {
+		t.Fatalf("-tags %s linked unrelated adapters: flue=%v omp=%v vibe=%v", managedAgentsBuildTag, tagged[flueAdapterPkg], tagged[ompAdapterPkg], tagged[vibeAdapterPkg])
 	}
 }

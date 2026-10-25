@@ -10,7 +10,11 @@ The collector starts from `data.metrics_dir` and rescans every 30 seconds. It me
 - Claude Code session JSONL under `data.claude_sessions_dir` when configured. It reads assistant `message.usage` blocks from recent files (30-day mtime window).
 - Copilot CLI `events.jsonl` under `data.copilot_sessions_dir` when configured. It reads `session.shutdown.modelMetrics` and avoids double-counting sessions already captured live by the proxy.
 - Bob CLI chat recordings under `data.bob_sessions_dir` (default `/data/home/.bob`) when configured. It reads `tmp/*/chats/*.json`, maps Bob project hashes back to trusted agent folders, and records explicit `tokens` fields (falling back to content-size estimates only when a recording has no token data).
-- Inference usage files written by `InferenceSink` as `inference-<agent>.jsonl` under `data.metrics_dir` for `vllm`, `llm-d`, `litellm`, and live Copilot proxy usage.
+- In the optional Claude Managed Agents hosted path, `pkg/tokens/managed_agents_ledger.go`
+  writes `managed-agents-*.jsonl` after deduplicating vendor
+  `span.model_request_end` IDs. Its `managed-agents-ledger.json` sidecar keeps
+  cumulative USD list cost, active seconds, and web-search counts and enforces
+  the private-spoke USD 25/day cap.
 
 A flat session entry can include `role`, `agent`, `model`, `input_tokens`, `output_tokens`, `cache_read`, and `cache_creation`. When `agent` is absent, Hive infers the agent from session path or configured detection keywords.
 
