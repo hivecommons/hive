@@ -197,13 +197,10 @@ const (
 	tmuxWheelBindingElse = "copy-mode -eH"
 )
 
-// BreakerTrigger is the distinct PausedTrigger stamped on every pause the fleet
-// breaker performs. It serves two jobs: the audit log attributes the pause to
-// the breaker, and ReleaseBreaker uses it as the guard that distinguishes a
-// pause the breaker still owns (safe to auto-resume) from one an operator
-// re-applied during the breaker window (must stay paused). Anything whose
-// current PausedTrigger != BreakerTrigger was last paused by something else.
-const BreakerTrigger = "fleet-breaker"
+// BreakerTrigger is crux.BreakerTrigger, the PausedTrigger stamped on every
+// pause the fleet breaker performs; ReleaseBreaker uses it as the guard that
+// distinguishes a pause the breaker still owns from one an operator re-applied.
+const BreakerTrigger = crux.BreakerTrigger
 
 type AgentProcess struct {
 	Name      string

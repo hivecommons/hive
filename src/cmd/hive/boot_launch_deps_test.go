@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -64,7 +65,7 @@ func newLaunchBoot(t *testing.T, agents map[string]config.AgentConfig) *boot {
 	cfg := &config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: agents}}
 	cfg.Dashboard.Port = 8080
 	b, _ := newDepsTestBoot(t, cfg)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	return b
 }

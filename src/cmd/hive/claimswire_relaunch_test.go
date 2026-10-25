@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/internal/testutil"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -23,7 +24,7 @@ import (
 // stage/020-claimed by the scanner for two hours across two rollouts).
 func TestReleaseClaimsOnAgentRelaunch_ReleasesOnlyThatAgentsClaims(t *testing.T) {
 	cfg := activityTestConfig()
-	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	mgr := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	var mu sync.Mutex
 	var released []string
 	l, err := claims.New("", claims.DefaultPolicy(), claims.Hooks{OnReleased: func(c claims.Claim, reason string) {

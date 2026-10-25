@@ -47,7 +47,7 @@ func TestRestoreAgentRuntimeState_ReplaysPausedBy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadState: %v", err)
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	restoreAgentRuntimeState(saved, cfg, m, restoreTestLogger())
 
 	proc, err := m.GetStatus("scanner")

@@ -76,8 +76,17 @@ import (
 // and the dashboard's backend check uses config.IsInferenceBackend:
 // dashboard 3 → 0. cmd/hive is the only consumer left; what it names is the
 // manager, its constructors and the host wiring it injects.
+// The pause vocabulary (BreakerTrigger, PauseCausation, PauseTransitionEvent)
+// moved to crux, ProjectContext and DefaultAgentMode are named as crux.<Name>,
+// and the agent-named loop variable in initAgentConfigDrivenSystems that this
+// walk counted as five false positives was renamed: cmd/hive 22 → 12. The
+// twelve left (Manager, NewManager, LinearCredential, AgentMintIssuer,
+// StartPermissionsWatcher, WatchdogFleet, RunAgyTurn, ResumeHandle,
+// ResolveReasoningEffort, ErrResumeBusy, ErrResumeSessionGone, PRCreator)
+// are the in-process manager and the host wiring it is handed; they go when
+// cmd/hive consumes the serve API instead of constructing the manager.
 var cruxSymbolBaseline = map[string]int{
-	"cmd/hive": 22,
+	"cmd/hive": 12,
 }
 
 // cruxTmuxBaseline is the per-package count of non-test files that invoke

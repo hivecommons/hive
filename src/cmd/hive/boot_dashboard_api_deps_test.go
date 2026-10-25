@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -72,7 +73,7 @@ func newBootDashboardAPIBoot(t *testing.T, f *bootDashboardAPIFake, cfg *config.
 		logger:         logger,
 		gov:            governor.New(cfg.Governor, cfg.Agents, logger),
 		sched:          scheduler.New(cfg, logger),
-		agentMgr:       agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+		agentMgr:       agent.NewManager(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:        dashboard.NewServer(0, logger),
 		advisoryIssues: map[string]int{},
 		appAuthFailure: "no App credentials in test",

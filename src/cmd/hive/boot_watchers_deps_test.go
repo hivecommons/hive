@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -75,7 +76,7 @@ func newBootWatchersBoot(t *testing.T, f *bootWatchersFake, cfg *config.Config) 
 		logger:           logger,
 		configPath:       filepath.Join(t.TempDir(), "hive.yaml"),
 		gov:              governor.New(cfg.Governor, cfg.EnabledAgents(), logger),
-		agentMgr:         agent.NewManager(cfg.EnabledAgents(), logger, agent.ProjectContext{}),
+		agentMgr:         agent.NewManager(cfg.EnabledAgents(), logger, crux.ProjectContext{}),
 		dashSrv:          dashboard.NewServer(0, logger),
 		refreshDashboard: func() { refreshes++ },
 	}

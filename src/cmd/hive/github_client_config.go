@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -187,7 +188,7 @@ func (b *boot) prRepoPolicyGate(agentName, repo string) error {
 	if level <= 0 {
 		level = b.cfg.ACMMLevelOrZero()
 	}
-	if !agent.DefaultAgentMode(agentName, level).CanPush() {
+	if !crux.DefaultAgentMode(agentName, level).CanPush() {
 		return fmt.Errorf("repo %s effective ACMM L%d does not allow %s to open PRs", repo, level, agentName)
 	}
 	return nil

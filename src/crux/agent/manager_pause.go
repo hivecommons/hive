@@ -5,26 +5,16 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
-// PauseCausation is hook causation metadata carried in agent pause/resume
-// events without making pkg/agent import pkg/hooks.
-type PauseCausation struct {
-	Depth            int
-	HookName         string
-	OriginTransition string
-}
-
-// PauseTransitionEvent describes a durable agent pause/resume transition.
-type PauseTransitionEvent struct {
-	Agent     string
-	Paused    bool
-	Trigger   string
-	Reason    string
-	By        string
-	Causation PauseCausation
-	At        time.Time
-}
+// PauseCausation and PauseTransitionEvent are defined in crux so the host
+// observes pause transitions without importing the runtime.
+type (
+	PauseCausation       = crux.PauseCausation
+	PauseTransitionEvent = crux.PauseTransitionEvent
+)
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
 // state to config (called on pause/resume). Idempotent saves are the

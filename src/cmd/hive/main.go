@@ -2105,7 +2105,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		b.logger.Warn("failed to seed default policies", "path", b.policyDirPath, "error", err)
 	}
 
-	b.projectCtx = agent.ProjectContext{
+	b.projectCtx = crux.ProjectContext{
 		Org: b.cfg.Project.Org,
 		// Repos stays the full watched set; the functions below narrow it at
 		// read time — RepoPaused to the repos open for work (#6203), AgentRepos
@@ -11053,24 +11053,24 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	discordIdentities := make(map[string]discord.AgentIdentity)
 	discordAliases := make(map[string]string)
 
-	for name, agent := range cfg.Agents {
-		if len(agent.LaneKeywords) > 0 {
+	for name, ac := range cfg.Agents {
+		if len(ac.LaneKeywords) > 0 {
 			lanes = append(lanes, classify.LaneConfig{
 				Name:     name,
-				Keywords: agent.LaneKeywords,
+				Keywords: ac.LaneKeywords,
 			})
 		}
-		if len(agent.DetectKeywords) > 0 {
-			detectKeywords[name] = agent.DetectKeywords
+		if len(ac.DetectKeywords) > 0 {
+			detectKeywords[name] = ac.DetectKeywords
 		}
-		if agent.Emoji != "" || agent.Color != "" {
+		if ac.Emoji != "" || ac.Color != "" {
 			discordIdentities[name] = discord.AgentIdentity{
-				Emoji: agent.Emoji,
-				Color: parseColorInt(agent.Color),
+				Emoji: ac.Emoji,
+				Color: parseColorInt(ac.Color),
 			}
 		}
 		sort.Slice(lanes, func(i, j int) bool { return lanes[i].Name < lanes[j].Name })
-		for _, alias := range agent.Aliases {
+		for _, alias := range ac.Aliases {
 			discordAliases[alias] = name
 		}
 	}

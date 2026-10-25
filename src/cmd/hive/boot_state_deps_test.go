@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -57,7 +58,7 @@ func newBootStateBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	return b
 }
@@ -106,7 +107,7 @@ func TestBootStateWithRestoresGovernorAndAgents(t *testing.T) {
 	lvl := 4
 	saved := &snapshot.PersistedState{
 		Agents: map[string]snapshot.AgentState{
-			"scanner": {Paused: true, PausedReason: "fleet breaker", PausedTrigger: agent.BreakerTrigger},
+			"scanner": {Paused: true, PausedReason: "fleet breaker", PausedTrigger: crux.BreakerTrigger},
 			"fixer":   {Paused: true, PausedReason: "operator hold"},
 			"ghost":   {Paused: true},
 		},
