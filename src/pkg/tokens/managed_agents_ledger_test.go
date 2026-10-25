@@ -113,3 +113,28 @@ func TestManagedAgentsLedgerRejectsBudgetAboveGuardrail(t *testing.T) {
 		t.Fatal("budget above the USD 25 guardrail was accepted")
 	}
 }
+
+func TestManagedAgentsLedgerSessionSpanningMidnightAddsOnlyDelta(t *testing.T) {
+	clock := time.Date(2026, 9, 24, 23, 59, 0, 0, time.UTC)
+	ledger, err := NewManagedAgentsLedger(t.TempDir(), DefaultManagedAgentsDailyBudgetCents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger.now = func() time.Time { return clock }
+	if _, err := ledger.RecordSessionUsage("ses_1", "USD", 100, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(2 * time.Minute)
+	if _, err := ledger.RecordSessionUsage("ses_1", "USD", 130, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := ledger.DailySpendCents(); got != 30 {
+		t.Fatalf("next-day spend = %d, want 30", got)
+	}
+	if _, err := ledger.RecordSessionUsage("ses_1", "USD", 130, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := ledger.DailySpendCents(); got != 30 {
+		t.Fatalf("next-day spend after repeat = %d, want 30", got)
+	}
+}

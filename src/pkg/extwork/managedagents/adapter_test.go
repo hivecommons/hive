@@ -3,7 +3,6 @@ package managedagents
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -203,35 +202,81 @@ func TestObserveMetersTokensDeduplicatesEventsAndStopsAtDailyBudget(t *testing.T
 	}
 }
 
-func TestAdmitRefusesDirectGitHubWritesOnlyForWriteStages(t *testing.T) {
-	for _, path := range []string{"direct", "github_repository", "vaulted_secret", "github_mcp"} {
+func TestNewRefusesDirectGitHubWritePaths(t *testing.T) {
+	for _, path := range []string{"direct", "github_repository", "vaulted_secret", "github_mcp", "bogus"} {
 		t.Run(path, func(t *testing.T) {
-			adapter := newTestAdapterWithConfig(t, Config{
-				Endpoint:        "http://127.0.0.1:1",
-				WorkflowVersion: "hosted/1",
-				AgentID:         "agt_private",
-				AgentVersion:    1,
-				ToolsetVersion:  "tools/1",
-				EnvironmentID:   "env_private",
-				EnvironmentType: "self_hosted",
-				NetworkPolicy:   "forced-egress",
-				APIKeyEnv:       "MANAGED_AGENTS_TEST_KEY",
-				Model:           "claude-sonnet-4-6",
-				StateDir:        t.TempDir(),
-				MetricsDir:      t.TempDir(),
-				GitHubWritePath: path,
-			})
-			for _, stage := range []string{"publish", "merge", "release", "deploy", "push"} {
-				adm, _ := hostedAdmission(t, stage)
-				if err := adapter.Admit(adm); !errors.Is(err, extwork.ErrRefused) {
-					t.Errorf("stage %q admitted with %v", stage, err)
-				}
-			}
-			adm, _ := hostedAdmission(t, "implement")
-			if err := adapter.Admit(adm); err != nil {
-				t.Fatalf("implement refused: %v", err)
+			if _, err := New(testConfig("http://127.0.0.1:1", t.TempDir(), t.TempDir(), path)); err == nil {
+				t.Fatalf("write path %q accepted", path)
 			}
 		})
+	}
+	cfg := testConfig("http://127.0.0.1:1", t.TempDir(), t.TempDir(), "")
+	cfg.DirectGitHubWrite = true
+	if _, err := New(cfg); err == nil {
+		t.Fatal("direct_github_write accepted")
+	}
+	for _, path := range []string{"", "none", "proxy"} {
+		adapter := newTestAdapterWithConfig(t, testConfig("http://127.0.0.1:1", t.TempDir(), t.TempDir(), path))
+		adm, _ := hostedAdmission(t, "implement")
+		if err := adapter.Admit(adm); err != nil {
+			t.Fatalf("path %q implement refused: %v", path, err)
+		}
+	}
+}
+
+func TestNewRequiresTLSForNonLoopbackEndpoint(t *testing.T) {
+	if _, err := New(testConfig("http://api.example.com", t.TempDir(), t.TempDir(), "")); err == nil {
+		t.Fatal("plaintext remote endpoint accepted")
+	}
+	if _, err := New(testConfig("https://api.example.com", t.TempDir(), t.TempDir(), "")); err != nil {
+		t.Fatalf("https endpoint refused: %v", err)
+	}
+	for _, host := range []string{"http://localhost:1", "http://127.0.0.1:1", "http://[::1]:1"} {
+		if _, err := New(testConfig(host, t.TempDir(), t.TempDir(), "")); err != nil {
+			t.Fatalf("loopback %s refused: %v", host, err)
+		}
+	}
+}
+
+func TestObserveAfterStateWipeUsesEnvironmentIncarnation(t *testing.T) {
+	t.Setenv("MANAGED_AGENTS_TEST_KEY", "test-secret")
+	adm, payload := hostedAdmission(t, "implement")
+	meta := `"metadata":{"hive_execution_key":"` + string(adm.ExecutionKey()) + `","hive_request_digest":"` + adm.RequestDigest + `"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/environments/env_private":
+			_, _ = w.Write([]byte(`{"id":"env_private","type":"self_hosted","version":"spoke-1"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions":
+			_, _ = w.Write([]byte(`{"data":[{"id":"ses_private","status":"running","environment_id":"env_private",` + meta + `}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/ses_private":
+			_, _ = w.Write([]byte(`{"id":"ses_private","status":"running","environment_id":"env_private",` + meta + `}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/ses_private/events":
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestAdapter(t, server.URL, t.TempDir(), t.TempDir())
+	result, err := adapter.Start(context.Background(), extwork.StartRequest{Admission: adm, Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Deduplicated || result.RemoteIncarnation != "env_private@spoke-1" {
+		t.Fatalf("start result = %+v", result)
+	}
+	// Fresh state dir simulates a crash that lost the local binding.
+	adapter = newTestAdapter(t, server.URL, t.TempDir(), t.TempDir())
+	for _, pinned := range []string{"", "env_private@spoke-1"} {
+		obs, err := adapter.Observe(context.Background(), adm.ExecutionKey(), pinned)
+		if err != nil {
+			t.Fatalf("observe pinned=%q: %v", pinned, err)
+		}
+		if obs.RemoteIncarnation != "env_private@spoke-1" {
+			t.Fatalf("observed incarnation = %q", obs.RemoteIncarnation)
+		}
 	}
 }
 
@@ -274,7 +319,12 @@ func hostedAdmission(t *testing.T, stage string) (extwork.Admission, []byte) {
 
 func newTestAdapter(t *testing.T, endpoint, stateDir, metricsDir string) *Adapter {
 	t.Helper()
-	return newTestAdapterWithConfig(t, Config{
+	return newTestAdapterWithConfig(t, testConfig(endpoint, stateDir, metricsDir, ""))
+}
+
+func testConfig(endpoint, stateDir, metricsDir, writePath string) Config {
+	return Config{
+		GitHubWritePath: writePath,
 		Endpoint:        endpoint,
 		WorkflowVersion: "hosted/1",
 		AgentID:         "agt_private",
@@ -288,7 +338,7 @@ func newTestAdapter(t *testing.T, endpoint, stateDir, metricsDir string) *Adapte
 		StateDir:        stateDir,
 		MetricsDir:      metricsDir,
 		Now:             func() time.Time { return time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC) },
-	})
+	}
 }
 
 func newTestAdapterWithConfig(t *testing.T, cfg Config) *Adapter {

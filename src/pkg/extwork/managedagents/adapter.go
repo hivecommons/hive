@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -66,23 +67,23 @@ var ErrBudgetExceeded = errors.New("managed agents: daily budget exceeded")
 // Config contains only secret references and pinned hosted-runtime identity;
 // it never contains an API key value.
 type Config struct {
-	Endpoint        string
-	WorkflowVersion string
-	AgentID         string
-	AgentVersion    int
-	ToolsetVersion  string
-	EnvironmentID   string
-	EnvironmentType string
-	NetworkPolicy   string
-	APIKeyEnv       string
-	APIKeyFile      string
-	Model           string
-	StateDir        string
-	MetricsDir      string
+	Endpoint         string
+	WorkflowVersion  string
+	AgentID          string
+	AgentVersion     int
+	ToolsetVersion   string
+	EnvironmentID    string
+	EnvironmentType  string
+	NetworkPolicy    string
+	APIKeyEnv        string
+	APIKeyFile       string
+	Model            string
+	StateDir         string
+	MetricsDir       string
+	DailyBudgetCents int64
 	// GitHubWritePath is "none" for the private spoke prototype. "proxy" is
-	// accepted for a future Hive-owned write broker; the named direct-path rows
-	// ("github_repository", "vaulted_secret", and "github_mcp") are retained
-	// for policy visibility and refused for write-capable stages by Admit.
+	// accepted for a future Hive-owned write broker; every other value,
+	// including direct_github_write, is refused by New.
 	GitHubWritePath   string
 	DirectGitHubWrite bool
 
@@ -118,6 +119,9 @@ func New(cfg Config) (*Adapter, error) {
 	base, err := url.Parse(strings.TrimSpace(cfg.Endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("managed agents endpoint: %w", err)
+	}
+	if base.Scheme == "http" && !loopbackHost(base.Hostname()) {
+		return nil, errors.New("managed agents endpoint must use https unless the host is loopback")
 	}
 	if (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
 		return nil, errors.New("managed agents endpoint must be an http(s) URL with a host and no user info, query, or fragment")
@@ -177,10 +181,8 @@ func New(cfg Config) (*Adapter, error) {
 	if cfg.DirectGitHubWrite {
 		writePath = "direct"
 	}
-	switch writePath {
-	case "none", "proxy", "direct", "github_repository", "github_resource", "vault", "vaulted_secret", "mcp", "github_mcp":
-	default:
-		return nil, fmt.Errorf("managed agents github_write_path %q is not a recognised path", writePath)
+	if writePath != "none" && writePath != "proxy" {
+		return nil, fmt.Errorf("managed agents github_write_path %q is refused: only none or proxy is allowed", writePath)
 	}
 	stateDir := strings.TrimSpace(cfg.StateDir)
 	if stateDir == "" {
@@ -248,7 +250,7 @@ func Factory(settings map[string]string) (extwork.Adapter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("managed agents direct_github_write: %w", err)
 	}
-	return New(Config{
+	adapter, err := New(Config{
 		Endpoint:          settings[SettingEndpoint],
 		WorkflowVersion:   settings[SettingWorkflowVersion],
 		AgentID:           settings[SettingAgentID],
@@ -265,7 +267,11 @@ func Factory(settings map[string]string) (extwork.Adapter, error) {
 		DailyBudgetCents:  budgetCents,
 		DirectGitHubWrite: direct,
 		GitHubWritePath:   settings[SettingGitHubWritePath],
-	}), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return adapter, nil
 }
 
 func parsePositiveInt(raw string) (int, error) {
@@ -324,19 +330,7 @@ func (a *Adapter) Admit(adm extwork.Admission) error {
 	if adm.Authority.Mode != extwork.ModeShadow && adm.Authority.Mode != extwork.ModeReportOnly {
 		return fmt.Errorf("%w: mode %q is not a hosted report-only posture", extwork.ErrRefused, adm.Authority.Mode)
 	}
-	if a.githubWritePath != "none" && a.githubWritePath != "proxy" && writeCapableStage(adm.Stage) {
-		return fmt.Errorf("%w: direct GitHub write path %q is forbidden for stage %q", extwork.ErrRefused, a.githubWritePath, adm.Stage)
-	}
 	return nil
-}
-
-func writeCapableStage(stage string) bool {
-	switch strings.ToLower(strings.TrimSpace(stage)) {
-	case "publish", "merge", "release", "deploy", "push", "write", "pr", "pull-request":
-		return true
-	default:
-		return false
-	}
 }
 
 // Incarnation implements extwork.Pinner. The authenticated environment read is
@@ -465,8 +459,8 @@ func (a *Adapter) Start(ctx context.Context, req extwork.StartRequest) (extwork.
 	if err != nil {
 		return extwork.StartResult{}, err
 	}
-	if existing, err := a.lookup(ctx, adm.ExecutionKey(), "", adm.RequestDigest); err == nil {
-		return extwork.StartResult{RemoteRunID: existing.ID, RemoteIncarnation: environmentIncarnationForSession(existing, incarnation), Deduplicated: true}, nil
+	if existing, err := a.lookup(ctx, adm.ExecutionKey(), incarnation, adm.RequestDigest); err == nil {
+		return extwork.StartResult{RemoteRunID: existing.ID, RemoteIncarnation: incarnation, Deduplicated: true}, nil
 	} else if !errors.Is(err, extwork.ErrNotFound) {
 		return extwork.StartResult{}, err
 	}
@@ -514,6 +508,13 @@ func (a *Adapter) Start(ctx context.Context, req extwork.StartRequest) (extwork.
 }
 
 func (a *Adapter) lookup(ctx context.Context, key extwork.ExecutionKey, incarnation, requestDigest string) (sessionView, error) {
+	if incarnation == "" {
+		live, err := a.Incarnation(ctx)
+		if err != nil {
+			return sessionView{}, err
+		}
+		incarnation = live
+	}
 	binding, ok := a.state.get(key)
 	if ok {
 		if requestDigest != "" && binding.RequestDigest != requestDigest {
@@ -552,7 +553,7 @@ func (a *Adapter) lookup(ctx context.Context, key extwork.ExecutionKey, incarnat
 		binding := sessionBinding{
 			RequestDigest: requestDigest,
 			SessionID:     view.ID,
-			Incarnation:   environmentIncarnationForSession(view, incarnation),
+			Incarnation:   incarnation,
 		}
 		if requestDigest == "" {
 			binding.RequestDigest = sessionMetadata(view, "hive_request_digest")
@@ -704,16 +705,6 @@ func sessionMetadata(view sessionView, key string) string {
 	return fmt.Sprint(value)
 }
 
-func environmentIncarnationForSession(view sessionView, fallback string) string {
-	if view.EnvironmentID == "" {
-		return fallback
-	}
-	if view.EnvironmentVersion != "" {
-		return view.EnvironmentID + "@" + view.EnvironmentVersion
-	}
-	return view.EnvironmentID
-}
-
 func safeID(value string) bool {
 	return value != "" && !strings.ContainsAny(value, "/\\") && value != "." && value != ".."
 }
@@ -723,16 +714,14 @@ func safeID(value string) bool {
 // the same ledger. A budget hit turns the run visibly waiting and interrupts a
 // still-running session.
 func (a *Adapter) Observe(ctx context.Context, key extwork.ExecutionKey, incarnation string) (extwork.Observation, error) {
-	if incarnation != "" {
-		live, err := a.Incarnation(ctx)
-		if err != nil {
-			return extwork.Observation{State: extwork.StateUnknown}, err
-		}
-		if live != incarnation {
-			return extwork.Observation{State: extwork.StateUnknown}, fmt.Errorf("%w: environment incarnation %q, pinned %q", extwork.ErrIncarnationMismatch, live, incarnation)
-		}
+	live, err := a.Incarnation(ctx)
+	if err != nil {
+		return extwork.Observation{State: extwork.StateUnknown}, err
 	}
-	view, err := a.lookup(ctx, key, incarnation, "")
+	if incarnation != "" && live != incarnation {
+		return extwork.Observation{State: extwork.StateUnknown}, fmt.Errorf("%w: environment incarnation %q, pinned %q", extwork.ErrIncarnationMismatch, live, incarnation)
+	}
+	view, err := a.lookup(ctx, key, live, "")
 	if err != nil {
 		return extwork.Observation{State: extwork.StateUnknown}, err
 	}
@@ -760,7 +749,7 @@ func (a *Adapter) Observe(ctx context.Context, key extwork.ExecutionKey, incarna
 	return extwork.Observation{
 		State:             state,
 		RemoteRunID:       view.ID,
-		RemoteIncarnation: environmentIncarnationForSession(view, incarnation),
+		RemoteIncarnation: live,
 		Stage:             sessionMetadata(view, "hive_stage"),
 		ResultClass:       view.ResultClass,
 		Receipt:           receiptFromSession(view),
@@ -1256,4 +1245,12 @@ func atomicWriteFile(path string, raw []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func loopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

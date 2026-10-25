@@ -617,11 +617,13 @@ and repository workspace, and records `span.model_request_end` token events in
 `data.metrics_dir`. Event IDs are deduplicated across restarts. Session
 `list_cost`, active seconds, and web-search counts are kept in the durable
 managed-agents ledger; the session budget is the remaining daily cents. Set
-`github_write_path` to `none` or `proxy` for a report-only spoke. Values
-representing a direct GitHub resource, vaulted secret, or GitHub MCP path
-(`github_repository`, `vaulted_secret`, `github_mcp`) are accepted for
-configuration visibility but refused for write-capable stages. The existing
-proxy denials remain unchanged.
+`github_write_path` to `none` or `proxy` for a report-only spoke. Any other
+value (a direct GitHub resource, vaulted secret, GitHub MCP path, or
+`direct_github_write`) is rejected when the adapter is built. `endpoint` must
+be `https` unless its host is loopback, because the vendor API key is sent on
+every request. The hosted worker has no GitHub path in this prototype; the
+`POST /pulls` and `PUT /pulls/{n}/merge` proxy denial tests from #14124 are not
+yet covered.
 
 Kubernetes manifests for deploying inference backends (vllm Deployment, EPP RBAC, kustomization) are in [`deploy/inference/`](../deploy/inference/).
 

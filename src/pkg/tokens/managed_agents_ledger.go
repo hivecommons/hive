@@ -363,8 +363,18 @@ func (l *ManagedAgentsLedger) RecordSessionUsage(sessionID, currency string, lis
 		newDay.Sessions[key] = value
 	}
 	previous := newDay.Sessions[sessionID]
+	// The cumulative baseline spans days so a session that crosses UTC
+	// midnight only adds its increase to the new day.
+	baseline := previous.ListCostCents
+	for _, day := range l.data.Days {
+		if use, ok := day.Sessions[sessionID]; ok && use.ListCostCents > baseline {
+			baseline = use.ListCostCents
+		}
+	}
+	if listCostCents > baseline {
+		newDay.SpendCents += listCostCents - baseline
+	}
 	if listCostCents > previous.ListCostCents {
-		newDay.SpendCents += listCostCents - previous.ListCostCents
 		previous.ListCostCents = listCostCents
 	}
 	if activeSeconds > previous.ActiveSeconds {
