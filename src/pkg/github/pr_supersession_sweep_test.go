@@ -753,6 +753,9 @@ func TestSweepSupersededOpenPRs_AuditsDetectionWithoutAutoClose(t *testing.T) {
 			if len(events) == 0 || events[0].Action != "detected-contributor" || events[0].Number != 12 || events[0].CloserPR != 22 {
 				t.Fatalf("missing detection: %+v", events)
 			}
+			if events[0].Outcome != SupersessionOutcomeSubset || len(events[0].ExtraFiles) != 0 {
+				t.Fatalf("subset detection outcome = %q %v, want %q", events[0].Outcome, events[0].ExtraFiles, SupersessionOutcomeSubset)
+			}
 			if len(res.Closed) != 0 || len(obs.closed) != 0 || len(obs.labels[12]) != 0 {
 				t.Fatalf("detection must not close or label: result=%+v observations=%+v", res, obs)
 			}

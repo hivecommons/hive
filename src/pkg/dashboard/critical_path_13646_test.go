@@ -305,3 +305,37 @@ func TestTrendHistoryCarriesYourTurnRootCauses13646(t *testing.T) {
 		t.Errorf("root history = %+v", got)
 	}
 }
+
+// GitHub's "blocked" and "draft" map to MergeableNo but are not fixed by a
+// rebase: only "dirty" and "behind" are (hivecommons/hive#14175).
+func TestCriticalActionMergeableState14175(t *testing.T) {
+	state := func(s string) func(*github.PullRequest) {
+		return func(pr *github.PullRequest) { pr.Mergeable, pr.MergeableState = github.MergeableNo, s }
+	}
+	red := func(pr *github.PullRequest) { pr.CIStatus = "failure" }
+	cases := []struct {
+		name   string
+		pr     github.PullRequest
+		action string
+	}{
+		{"blocked green CI, empty review decision", cpPR13646(1, state("blocked"), func(pr *github.PullRequest) {
+			pr.Protection = &github.ProtectionFacts{}
+		}), "approve"},
+		{"blocked red CI", cpPR13646(2, state("blocked"), red), "rerun"},
+		{"dirty", cpPR13646(3, state("dirty")), "rebase"},
+		{"behind", cpPR13646(4, state("behind")), "rebase"},
+		{"draft", cpPR13646(5, state("draft")), "merge"},
+		{"draft review required", cpPR13646(6, state("draft"), func(pr *github.PullRequest) {
+			pr.Protection = &github.ProtectionFacts{ReviewDecision: github.ReviewDecisionReviewRequired}
+		}), "approve"},
+		{"raw-bool fallback, no state", cpPR13646(7, state("")), "rebase"},
+		{"unknown state", cpPR13646(8, state("unknown")), "rebase"},
+	}
+	for _, tc := range cases {
+		pr := tc.pr
+		action, ref := criticalAction(&cpNode{pr: &pr})
+		if action != tc.action || ref != "" {
+			t.Errorf("%s: action = %q %q, want %q", tc.name, action, ref, tc.action)
+		}
+	}
+}

@@ -108,6 +108,16 @@ func supersededGraceStates(entries []AuditEntry, org string, grace time.Duration
 			CloserRepo: repo,
 			CloserPR:   closerPR,
 		}
+		// Records written before the sweep recorded its outcome carry no
+		// reason and keep the close recommendation (hivecommons/hive#14176).
+		if fields["reason"] == ghpkg.SupersessionOutcomeExtraFiles {
+			info.Reason = ghpkg.ReviewQueueSupersededExtraFilesReason
+			for _, f := range strings.Split(fields["extra_files"], ";") {
+				if f = strings.TrimSpace(f); f != "" {
+					info.ExtraFiles = append(info.ExtraFiles, f)
+				}
+			}
+		}
 		if issueRepo, _, ok := strings.Cut(fields["issue"], "#"); ok && issueRepo != "" {
 			info.CloserRepo = supersessionQualifyRepo(issueRepo, org)
 		}
@@ -181,6 +191,9 @@ func (s *Server) annotateSupersededReviewQueue(queue []ghpkg.ReviewQueueEntry, o
 
 func supersededReason(info ghpkg.ReviewQueueSuperseded, now time.Time) string {
 	closer := fmt.Sprintf("%s#%d", info.CloserRepo, info.CloserPR)
+	if info.Reason == ghpkg.ReviewQueueSupersededExtraFilesReason {
+		return fmt.Sprintf("%s: by %s; this PR adds files it did not touch (%s); review the extra change, keep open recommended", info.Reason, closer, supersededExtraFilesSummary(info.ExtraFiles))
+	}
 	if info.GraceEndsAt.IsZero() {
 		return fmt.Sprintf("%s: by %s; close as superseded or keep open", info.Reason, closer)
 	}
@@ -188,6 +201,21 @@ func supersededReason(info ghpkg.ReviewQueueSuperseded, now time.Time) string {
 		return fmt.Sprintf("%s: by %s; grace window ended %s, the sweep closes it on its next pass", info.Reason, closer, info.GraceEndsAt.Format(time.RFC3339))
 	}
 	return fmt.Sprintf("%s: by %s; the sweep closes it at %s unless someone replies", info.Reason, closer, info.GraceEndsAt.Format(time.RFC3339))
+}
+
+// supersededExtraFilesShown caps the extra files named in one line of text.
+const supersededExtraFilesShown = 3
+
+// supersededExtraFilesSummary names the files a superseded PR adds beyond the
+// merged PR, e.g. "CONTRIBUTING.md" or "a.go, b.go, c.go and 2 more".
+func supersededExtraFilesSummary(files []string) string {
+	if len(files) == 0 {
+		return "files not recorded"
+	}
+	if len(files) <= supersededExtraFilesShown {
+		return strings.Join(files, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(files[:supersededExtraFilesShown], ", "), len(files)-supersededExtraFilesShown)
 }
 
 // supersededActionTarget validates a superseded-PR action request and

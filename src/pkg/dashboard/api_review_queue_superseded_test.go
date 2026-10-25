@@ -458,3 +458,58 @@ func TestReviewQueue_SweepDetectionWithoutAutoClose(t *testing.T) {
 		t.Fatalf("notice writes = %d, want 1", writes)
 	}
 }
+
+// The sweep's subset/extra-files outcome reaches the queue and the inbox: an
+// extra-files detection is a REVIEW with keep-open recommended, a subset (or
+// a record written before the outcome field) stays a CLOSE
+// (hivecommons/hive#14176).
+func TestSupersededExtraFilesOutcome14176(t *testing.T) {
+	at := time.Date(2026, 10, 25, 9, 9, 46, 0, time.UTC).Format(time.RFC3339)
+	detail := func(pr int, extra string) string {
+		return "repo=repo1, pr=" + strconv.Itoa(pr) + ", issue=myorg/repo1#437, closer_pr=438, action=detected-contributor" + extra
+	}
+	entries := []AuditEntry{
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 439, Detail: detail(439, ", reason=extra-files, extra_files=CONTRIBUTING.md;docs/a.md")},
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 440, Detail: detail(440, ", reason=subset")},
+		{Timestamp: at, Action: supersessionDetectedAuditAction, Repo: "repo1", Target: 441, Detail: detail(441, "")},
+	}
+	states := supersededGraceStates(entries, "myorg", 24*time.Hour)
+	cases := []struct {
+		pr         int
+		reason     string
+		extraFiles string
+		verb       string
+		code       string
+		text       string
+	}{
+		{439, ghpkg.ReviewQueueSupersededExtraFilesReason, "CONTRIBUTING.md,docs/a.md", OwnershipVerbReview, OwnershipReasonSupersededExtraFilesReview, "adds files it did not (CONTRIBUTING.md, docs/a.md) — review the extra change (keep open recommended)"},
+		{440, ghpkg.ReviewQueueSupersededReason, "", OwnershipVerbClose, OwnershipReasonSupersededRecommendedClose, "close as superseded or keep open"},
+		{441, ghpkg.ReviewQueueSupersededReason, "", OwnershipVerbClose, OwnershipReasonSupersededRecommendedClose, "close as superseded or keep open"},
+	}
+	for _, tc := range cases {
+		info, ok := states[ghpkg.ReviewQueueKey("myorg/repo1", tc.pr)]
+		if !ok || info.Reason != tc.reason || strings.Join(info.ExtraFiles, ",") != tc.extraFiles || info.CloserPR != 438 {
+			t.Fatalf("#%d state = %+v present=%t, want reason %q files %q", tc.pr, info, ok, tc.reason, tc.extraFiles)
+		}
+		env := ownershipEnv{supersededPR: func(repo string, number int) (ghpkg.ReviewQueueSuperseded, bool) {
+			got, ok := states[ghpkg.ReviewQueueKey(repo, number)]
+			return got, ok
+		}}
+		pr := ghpkg.PullRequest{Repo: "myorg/repo1", Number: tc.pr}
+		got := decidePROwnership(pr, false, env)
+		if !got.YourTurn || got.Verb != tc.verb || got.ReasonCode != tc.code || !strings.Contains(got.Reason, "myorg/repo1#438") || !strings.Contains(got.Reason, tc.text) {
+			t.Fatalf("#%d ownership = %+v, want %s/%s with %q", tc.pr, got, tc.verb, tc.code, tc.text)
+		}
+		pr.Labels = []string{ghpkg.SupersessionKeepOpenLabel}
+		if got := decidePROwnership(pr, false, env); got.ReasonCode == tc.code {
+			t.Fatalf("#%d keep-open label ignored: %+v", tc.pr, got)
+		}
+	}
+	extra := states[ghpkg.ReviewQueueKey("myorg/repo1", 439)]
+	if got := supersededReason(extra, time.Now()); !strings.Contains(got, "keep open recommended") || !strings.Contains(got, "CONTRIBUTING.md") || strings.Contains(got, "close as superseded") {
+		t.Fatalf("queue reason = %q", got)
+	}
+	if got := supersededExtraFilesSummary([]string{"a", "b", "c", "d", "e"}); got != "a, b, c and 2 more" {
+		t.Fatalf("summary = %q", got)
+	}
+}

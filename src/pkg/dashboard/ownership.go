@@ -67,6 +67,7 @@ const (
 	OwnershipReasonAdjudicatorWaitElapsed      = "adjudicator_wait_elapsed"
 	OwnershipReasonReviewerUnavailable         = "reviewer_unavailable"
 	OwnershipReasonSupersededRecommendedClose  = "superseded_recommended_close"
+	OwnershipReasonSupersededExtraFilesReview  = "superseded_extra_files_review"
 	OwnershipReasonAdjudicatorRecommendedClose = "adjudicator_recommended_close"
 	OwnershipReasonAdjudicatorReescalated      = "adjudicator_reescalated"
 	OwnershipReasonAdjudicatorHandedOff        = "adjudicator_handed_off"
@@ -96,6 +97,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonReviewerUnavailable:         OwnershipVerbReview,
 	OwnershipReasonAdjudicatorRecommendedClose: OwnershipVerbClose,
 	OwnershipReasonSupersededRecommendedClose:  OwnershipVerbClose,
+	OwnershipReasonSupersededExtraFilesReview:  OwnershipVerbReview,
 	OwnershipReasonAdjudicatorReescalated:      OwnershipVerbReview,
 	OwnershipReasonAdjudicatorHandedOff:        OwnershipVerbReview,
 	OwnershipReasonPersonPRNeedsHuman:          OwnershipVerbReview,
@@ -639,6 +641,11 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	if env.supersededPR != nil && !labels[github.SupersessionKeepOpenLabel] {
 		if info, ok := env.supersededPR(pr.Repo, pr.Number); ok {
 			out := yourTurn(OwnershipReasonSupersededRecommendedClose, fmt.Sprintf("Superseded by %s#%d — close as superseded or keep open", info.CloserRepo, info.CloserPR))
+			if info.Reason == github.ReviewQueueSupersededExtraFilesReason {
+				// The PR still carries files the merged PR did not touch: the
+				// sweep recommends keeping it open (hivecommons/hive#14176).
+				out = yourTurn(OwnershipReasonSupersededExtraFilesReview, fmt.Sprintf("%s#%d closed its issue, but this PR adds files it did not (%s) — review the extra change (keep open recommended)", info.CloserRepo, info.CloserPR, supersededExtraFilesSummary(info.ExtraFiles)))
+			}
 			out.Link = "#section-review-queue-section"
 			return out
 		}

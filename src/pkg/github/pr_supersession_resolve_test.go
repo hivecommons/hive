@@ -245,6 +245,9 @@ func TestSupersessionResolve_ContributorExtraFilesEscalatesWithFiles(t *testing.
 	if len(res.Commented) != 1 || res.Commented[0].Action != SupersessionActionEscalated {
 		t.Fatalf("result = %+v, want escalation", res)
 	}
+	if ev := res.Commented[0]; ev.Outcome != SupersessionOutcomeExtraFiles || strings.Join(ev.ExtraFiles, ",") != "changelog.d/changed-needs-human-facet.md,pkg/dashboard/label_facets.test.js" {
+		t.Fatalf("extra-files outcome = %q %v", ev.Outcome, ev.ExtraFiles)
+	}
 	if len(parked) != 1 || parked[0] != 13782 {
 		t.Fatalf("parked = %v, want #13782 at 085", parked)
 	}

@@ -9933,6 +9933,12 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			}
 			detail := fmt.Sprintf("repo=%s, pr=%d, issue=%s#%d, closer_pr=%d, action=%s",
 				event.Repo, event.Number, event.IssueRepo, event.Issue, event.CloserPR, event.Action)
+			if event.Outcome != "" {
+				detail += ", reason=" + event.Outcome
+			}
+			if len(event.ExtraFiles) > 0 {
+				detail += ", extra_files=" + strings.Join(event.ExtraFiles, ";")
+			}
 			dashSrv.AuditLogRecord("system", github.SupersessionSweepAuditPrefix+event.Action, detail, "", event.Repo, event.Number)
 		},
 	})

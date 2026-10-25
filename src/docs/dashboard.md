@@ -577,6 +577,7 @@ so the reason text can change without breaking them.
 | `adjudicator_wait_elapsed`, `reviewer_unavailable` | `REVIEW` |
 | `adjudicator_recommended_close` | `CLOSE` |
 | `superseded_recommended_close` | `CLOSE` |
+| `superseded_extra_files_review` | `REVIEW` |
 | `adjudicator_reescalated` | `REVIEW` |
 | `adjudicator_handed_off` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
@@ -609,6 +610,7 @@ means the situation cannot occur at that level.
 | Hive PR with `needs-human`, adjudicator recommended close, PR still open | — | — (no adjudicator lane below L5) | Yours — `CLOSE` | same |
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
 | Contributor PR the supersession sweep detected as superseded by a merged PR, without `hive/keep-open` | Yours — `CLOSE` (`superseded_recommended_close`: close as superseded or keep open, whether or not `supersession_sweep.close_contributor_prs` is on) | same | same | same |
+| Same, but the PR touches files the merged PR did not | Yours — `REVIEW` (`superseded_extra_files_review`: names the extra files; keep open recommended until the extra change is reviewed) | same | same | same |
 | Hive PR with `needs-human` the adjudicator handed to a maintainer (`reviewer-handoff`) | — | — | Yours — `REVIEW` (`adjudicator_handed_off`) | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
 | PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
@@ -627,7 +629,9 @@ means the situation cannot occur at that level.
 decides: (1) a hold whose sources include `person` or `dashboard_pause` → Not
 yours; (2) sentinel-flagged → `INSPECT`; (3) a pull request the supersession
 sweep detected as superseded by a merged PR, without `hive/keep-open` →
-`CLOSE` (`superseded_recommended_close`), ahead of any other hold source; (4)
+`CLOSE` (`superseded_recommended_close`), or `REVIEW`
+(`superseded_extra_files_review`) when it touches files the merged PR did not,
+ahead of any other hold source; (4)
 covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
 in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
 → `REVIEW`, `STEER`, `DECIDE`, `SPEC`; (6) untrusted reporter awaiting
@@ -824,7 +828,9 @@ are untouched.
   expandable row under it ("8 PRs waiting on #255 (dakota-iso)").
 - **The named action.** Each row names one of `merge`, `release-hold`,
   `rebase` (conflicting or behind, or after the PR it depends on), `rerun`
-  (after the red-main fix) or `approve`, shown next to the queue-auto-merge
+  (after the red-main fix) or `approve` (including a PR GitHub reports
+  `blocked` — a required review or status missing — which a rebase would not
+  fix; a draft is never told to rebase), shown next to the queue-auto-merge
   button on the cards and before "Options" on the strip.
 - **Red main.** The repository card's red-main banner says "main red since …
   on `<check>`; fix #N is waiting on you" when the fix PR is your turn.

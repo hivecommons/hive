@@ -100,7 +100,10 @@ Where it shows up:
   the sweep's audit entries, even when `close_contributor_prs` is off.
   `grace_started_at` and `grace_ends_at` are present only for an active
   auto-close countdown. The inbox recommends `CLOSE` with reason code
-  `superseded_recommended_close`. Owners act on it with
+  `superseded_recommended_close`; when the PR touches files the merged PR
+  did not, `superseded.reason` is `superseded_extra_files` with
+  `extra_files[]`, and the inbox shows `REVIEW` with reason code
+  `superseded_extra_files_review` (keep open recommended). Owners act on it with
   `POST /api/review/queue/{owner}/{repo}/{number}/superseded/close` or
   `.../superseded/keep-open`.
 - **`last-actionable.json`** - each PR in `prs.items` and `prs.held` carries

@@ -34305,7 +34305,13 @@ function burnAreaChart() {
         : closerRef;
       var ends = sup.grace_ends_at ? new Date(sup.grace_ends_at) : null;
       var endsText = 'close as superseded or keep open';
-      if (ends && !isNaN(ends.getTime())) {
+      var extraFiles = sup.reason === 'superseded_extra_files';
+      if (extraFiles) {
+        var files = Array.isArray(sup.extra_files) ? sup.extra_files : [];
+        var named = files.slice(0, 3).map(function (f) { return esc(String(f)); }).join(', ');
+        if (files.length > 3) named += ' and ' + (files.length - 3) + ' more';
+        endsText = 'adds files it did not touch' + (named ? ' (' + named + ')' : '') + '; review the extra change, keep open recommended';
+      } else if (ends && !isNaN(ends.getTime())) {
         endsText = ends.getTime() <= Date.now()
           ? 'grace window ended ' + esc(formatDashboardDateTime(ends)) + '; closes on the next sweep'
           : 'auto-closes ' + esc(formatDashboardDateTime(ends)) + ' unless someone replies';
@@ -34318,7 +34324,7 @@ function burnAreaChart() {
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="reviewQueueSupersededKeepOpen"' + args + ' title="Keep this PR open; the sweep will not auto-close it">Keep open</button>' +
           '</span>';
       }
-      return '<div class="review-queue-superseded" data-reason="superseded">' +
+      return '<div class="review-queue-superseded" data-reason="' + (extraFiles ? 'superseded_extra_files' : 'superseded') + '">' +
         '<span class="review-queue-superseded-badge">superseded</span> by ' + closerHtml + ' · ' + endsText + actions +
       '</div>';
     }

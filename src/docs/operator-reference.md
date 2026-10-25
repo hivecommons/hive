@@ -819,7 +819,12 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 - Every human-authored PR the sweep detects as superseded — whether or not
   automatic closure is on — is tagged `superseded` in the dashboard Review
   Queue with a link to the merged PR, and the inbox recommends **CLOSE**
-  (reason code `superseded_recommended_close`). When auto-close is active the
+  (reason code `superseded_recommended_close`). A PR that also touches files
+  the merged PR did not is shown as **REVIEW** instead (reason code
+  `superseded_extra_files_review`, Review Queue reason
+  `superseded_extra_files`), naming the extra files and recommending keep
+  open; the sweep records which case it found as `reason=subset` or
+  `reason=extra-files` (with `extra_files=`) in its audit detail. When auto-close is active the
   entry also shows when the grace window ends; otherwise there is no
   countdown. An owner can **Close now** (same comment, label and close as the
   sweep) or **Keep open**, which adds `hive/keep-open`; the sweep never

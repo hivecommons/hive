@@ -502,8 +502,8 @@ func TestOwnershipSafetyNet11565(t *testing.T) {
 }
 
 func TestOwnershipFixedSets11565(t *testing.T) {
-	if len(ownershipReasonVerbs) != 30+len(operatorWaitReasonVerbs) {
-		t.Fatalf("reason codes = %d, want the 20 of #11507, review_requires_human (#12329), blocked_unexplained (#12376), the three review-hold codes of #12377, the three PR gates of #12378, superseded_recommended_close (#13114), adjudicator_handed_off (#13183) and the run and approval waits (#12380)", len(ownershipReasonVerbs))
+	if len(ownershipReasonVerbs) != 31+len(operatorWaitReasonVerbs) {
+		t.Fatalf("reason codes = %d, want the 20 of #11507, review_requires_human (#12329), blocked_unexplained (#12376), the three review-hold codes of #12377, the three PR gates of #12378, superseded_recommended_close (#13114), superseded_extra_files_review (#14176), adjudicator_handed_off (#13183) and the run and approval waits (#12380)", len(ownershipReasonVerbs))
 	}
 	verbs := map[string]bool{}
 	for _, verb := range ownershipVerbOrder {

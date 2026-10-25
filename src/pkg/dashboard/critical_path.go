@@ -435,7 +435,7 @@ func criticalAction(n *cpNode) (string, string) {
 	if len(n.dependsOnPR) > 0 {
 		return criticalActionRebase, n.dependsOnPR[0]
 	}
-	if pr.Mergeable == github.MergeableNo || pr.MergeableState == "dirty" || pr.MergeableState == "behind" {
+	if prNeedsRebase(*pr) {
 		return criticalActionRebase, ""
 	}
 	if len(pr.BaseRedChecks) > 0 || pr.CIStatus == "failure" {
@@ -447,10 +447,26 @@ func criticalAction(n *cpNode) (string, string) {
 		}
 		return criticalActionRerun, ""
 	}
-	if prNeedsApproval(*pr) {
+	if prNeedsApproval(*pr) || pr.MergeableState == "blocked" {
 		return criticalActionApprove, ""
 	}
 	return criticalActionMerge, ""
+}
+
+// prNeedsRebase reports a PR whose branch must be updated against its base.
+// Only "dirty" (conflicts) and "behind" (base moved) need a rebase:
+// mergeableFromState also maps "blocked" (a required review or status is
+// missing) and "draft" to MergeableNo, and neither is fixed by a rebase
+// (hivecommons/hive#14175). MergeableNo with no recognised state is the
+// raw-bool fallback, which keeps the rebase hint.
+func prNeedsRebase(pr github.PullRequest) bool {
+	switch pr.MergeableState {
+	case "dirty", "behind":
+		return true
+	case "blocked", "draft":
+		return false
+	}
+	return pr.Mergeable == github.MergeableNo
 }
 
 // mayConflictWith lists the other open PRs of n's repository that touch a

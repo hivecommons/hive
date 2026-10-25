@@ -25,6 +25,18 @@ const (
 	SupersessionActionCommentedGrace       = "commented-grace"
 )
 
+// Supersession outcomes, recorded in the audit detail as reason=… so the
+// dashboard can tell a redundant PR from one that still carries extra files
+// (hivecommons/hive#14176).
+const (
+	// SupersessionOutcomeSubset: every file the open PR touches was also
+	// touched by the merged PR; closing it is recommended.
+	SupersessionOutcomeSubset = "subset"
+	// SupersessionOutcomeExtraFiles: the open PR touches files the merged PR
+	// did not; keeping it open until the extra change is reviewed is recommended.
+	SupersessionOutcomeExtraFiles = "extra-files"
+)
+
 type SupersessionSweepOptions struct {
 	MaxActions       int
 	ACMMLevelForRepo func(repo string) int
@@ -48,6 +60,10 @@ type SupersessionSweepEvent struct {
 	Issue     int
 	CloserPR  int
 	Action    string
+	// Outcome is SupersessionOutcomeSubset or SupersessionOutcomeExtraFiles;
+	// ExtraFiles names the files the merged PR did not touch.
+	Outcome    string
+	ExtraFiles []string
 }
 
 type SupersessionSweepResult struct {
@@ -215,8 +231,10 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	extra := supersessionExtraFiles(openFiles, closerFiles)
 	subset := len(extra) == 0
+	event.Outcome = SupersessionOutcomeSubset
 	if !subset {
 		reason = supersessionReasonExtraFiles
+		event.Outcome, event.ExtraFiles = SupersessionOutcomeExtraFiles, extra
 	}
 
 	level := 0

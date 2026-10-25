@@ -270,8 +270,13 @@ func reviewQueueStage(store *stagelabels.Store, full string, number int, opts Re
 	return out
 }
 
-// ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason.
+// ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason when the PR is
+// a subset of the merged PR (or the audit record predates the outcome field).
 const ReviewQueueSupersededReason = "superseded"
+
+// ReviewQueueSupersededExtraFilesReason is ReviewQueueSuperseded.Reason when
+// the PR touches files the merged PR did not, so keeping it open is recommended.
+const ReviewQueueSupersededExtraFilesReason = "superseded_extra_files"
 
 // ReviewQueueSuperseded describes a PR whose claimed issue was closed by a
 // different merged PR. Grace timestamps are present only for automatic closure.
@@ -281,6 +286,7 @@ type ReviewQueueSuperseded struct {
 	CloserRepo     string    `json:"closer_repo,omitempty"`
 	CloserPR       int       `json:"closer_pr"`
 	CloserURL      string    `json:"closer_url,omitempty"`
+	ExtraFiles     []string  `json:"extra_files,omitempty"`
 	GraceStartedAt time.Time `json:"grace_started_at,omitzero"`
 	GraceEndsAt    time.Time `json:"grace_ends_at,omitzero"`
 }
