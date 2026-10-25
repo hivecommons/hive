@@ -330,7 +330,7 @@ func TestAdoptionBodyCauseAndBlockerText(t *testing.T) {
 		AdoptReasonSignoffRehome:  "squash-safe sign-off",
 		AdoptReasonInPlaceStalled: "sat unaddressed past the stage dwell",
 	} {
-		if got := adoptionBodyCause(reason); !strings.Contains(got, want) {
+		if got := adoptionBodyCause(reason, adoptionWait{red: true}); !strings.Contains(got, want) {
 			t.Fatalf("adoptionBodyCause(%q)=%q, want %q", reason, got, want)
 		}
 	}

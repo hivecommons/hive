@@ -170,8 +170,35 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 	}
 }
 
+// adoptionWait is what the nudge asked for and never got: red checks, review
+// asks, or both. It is read with the nudge's own diagnosis, so the adoption
+// note cannot blame CI for a PR the nudge returned for a review.
+type adoptionWait struct {
+	red  bool
+	asks []string
+}
+
+func adoptionWaitFor(obs stageObservation) adoptionWait {
+	checks, asks, _ := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
+	return adoptionWait{red: len(checks) > 0, asks: asks}
+}
+
+// stayed is what stayed unresolved after the nudge.
+func (w adoptionWait) stayed() string {
+	asks := strings.Join(w.asks, "; ")
+	switch {
+	case w.red && len(w.asks) > 0:
+		return "CI stayed red and the review asks stayed open (" + asks + ")"
+	case len(w.asks) > 0:
+		return "the review asks stayed open (" + asks + ")"
+	case w.red:
+		return "CI stayed red"
+	}
+	return "the head did not change"
+}
+
 // adoptReasonText is the human-readable half of the adoption note.
-func adoptReasonText(reason string, grace time.Duration, online bool) string {
+func adoptReasonText(reason string, grace time.Duration, online bool, wait adoptionWait) string {
 	switch reason {
 	case AdoptReasonOffline:
 		return "your hive has been offline since the nudge"
@@ -183,9 +210,9 @@ func adoptReasonText(reason string, grace time.Duration, online bool) string {
 		return "the review swarm's finding on this head went unaddressed past the stage dwell and the in-place fix lane only repairs CI"
 	}
 	if online {
-		return fmt.Sprintf("CI stayed red for %s after the nudge and the relay nudge went unanswered", formatGrace(grace))
+		return fmt.Sprintf("%s for %s after the nudge and the relay nudge went unanswered", wait.stayed(), formatGrace(grace))
 	}
-	return fmt.Sprintf("CI stayed red for %s after the nudge and no relay session was reachable", formatGrace(grace))
+	return fmt.Sprintf("%s for %s after the nudge and no relay session was reachable", wait.stayed(), formatGrace(grace))
 }
 
 // adoptionBlocked reports a label that forbids adoption (the hive must not
@@ -319,7 +346,7 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 		b.WriteString(CarriedFenceMarker(rec.AdoptDiffFence, obs.Number))
 		b.WriteString("\n")
 	}
-	fmt.Fprintf(&b, "Supersedes #%d (%s; original commits by @%s preserved).\n\n", obs.Number, adoptionBodyCause(rec.AdoptReason), obs.Author)
+	fmt.Fprintf(&b, "Supersedes #%d (%s; original commits by @%s preserved).\n\n", obs.Number, adoptionBodyCause(rec.AdoptReason, adoptionWaitFor(obs)), obs.Author)
 	for _, c := range adoptionCloses(obs.Body) {
 		b.WriteString(c)
 		b.WriteString("\n")
@@ -360,7 +387,7 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record, dcoRehome bool
 }
 
 // adoptionBodyCause is the parenthetical opening the superseding PR body.
-func adoptionBodyCause(reason string) string {
+func adoptionBodyCause(reason string, wait adoptionWait) string {
 	switch reason {
 	case AdoptReasonSignoffRehome:
 		return "adopted in place, re-homed because a hive commit on the contributor branch cannot carry a squash-safe sign-off"
@@ -369,7 +396,15 @@ func adoptionBodyCause(reason string) string {
 	case AdoptReasonDCORehome:
 		return "adopted in place, re-homed for DCO repair"
 	}
-	return "adopted after CI went red and the contributor was unavailable"
+	switch {
+	case wait.red && len(wait.asks) > 0:
+		return "adopted after CI went red and review asks went unaddressed, and the contributor was unavailable"
+	case len(wait.asks) > 0:
+		return "adopted after review asks went unaddressed and the contributor was unavailable"
+	case wait.red:
+		return "adopted after CI went red and the contributor was unavailable"
+	}
+	return "adopted after the contributor was unavailable"
 }
 
 // AdoptionStalledComment is the one note left on an adopted PR handed to a
@@ -444,19 +479,35 @@ func adoptionBlockerText(obs stageObservation, rec stagelabels.Record) string {
 // AdoptionComment is the one note left on the original PR when adopted by
 // supersession.
 func AdoptionComment(obs stageObservation, hiveID string, superseding int, reason string, grace time.Duration, online bool) string {
+	wait := adoptionWaitFor(obs)
+	finish := "rebase and fix CI there"
+	if !wait.red {
+		finish = "finish it there"
+	}
 	return fmt.Sprintf("%s by=%s reason=%s mode=%s superseded_by=%d head=%s -->\n@%s the hive has adopted this PR (`%s`): %s. "+
-		"It is being finished as #%d, which carries your commits (and sign-off) unchanged; the hive will rebase and fix CI there. "+
+		"It is being finished as #%d, which carries your commits (and sign-off) unchanged; the hive will %s. "+
 		"This PR is closed automatically once #%d merges. If you would rather finish it yourself, push a new head here and say so on #%d.",
-		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), superseding, superseding, superseding)
+		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online, wait), superseding, finish, superseding, superseding)
 }
 
 // AdoptionInPlaceComment is the one note left when the hive adopts the PR on
 // its own branch.
+// The in-place fix lane repairs CI only; a blocking review verdict is taken
+// up when inPlaceRehomeReason re-homes the stalled head, so the note says so.
 func AdoptionInPlaceComment(obs stageObservation, hiveID, reason string, grace time.Duration, online bool) string {
+	wait := adoptionWaitFor(obs)
+	fix := " and fix CI"
+	if !wait.red {
+		fix = ""
+	}
+	review := ""
+	if verdictBlocks(obs.Detail) {
+		review = " The fix here repairs CI only: if the review swarm's finding is still open on this head after the stage dwell, the hive moves the work to a superseding PR that carries the finding."
+	}
 	return fmt.Sprintf("%s by=%s reason=%s mode=%s head=%s -->\n@%s the hive has adopted this PR (`%s`): %s. "+
-		"The hive will rebase this branch on `%s` and fix CI here; your commits and sign-off stay. "+
+		"The hive will rebase this branch on `%s`%s here; your commits and sign-off stay.%s "+
 		"Push a new head yourself at any time and the hive yields it back to you.",
-		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeInPlace, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), nonEmpty(obs.BaseRef, "the base branch"))
+		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeInPlace, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online, wait), nonEmpty(obs.BaseRef, "the base branch"), fix, review)
 }
 
 // AdoptionYieldMarker opens the note posted when the contributor pushes over
