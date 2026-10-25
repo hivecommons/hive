@@ -35,8 +35,8 @@ const PolicyName = "owner-delegate"
 // MarkerPrefix opens the HTML comment stamped on every delegated decision.
 const MarkerPrefix = "<!-- hive:delegated-decision"
 
-// PolicyText is the delegate's operating policy, including the proposed
-// contributor-adequacy safety rail (subject to policy review): the single
+// PolicyText is the owner's standing operating rules, verbatim, including
+// the contributor-adequacy rail adopted in hivecommons/hive#13998: the single
 // place the delegate's policy lives. The docs
 // (src/docs/dashboard-sections.md, "Let hive decide") quote it from here and
 // the rules in Decide implement it one clause at a time.
