@@ -281,6 +281,15 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 // behavior for callers that do not scope by repo). Like ScopedToken, the token is
 // NOT cached — each call mints fresh.
 func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
+	// installation_id 0 means the App is not installed on the hive's org (or
+	// auto-discovery never found it). GitHub answers
+	// POST /app/installations/0/access_tokens with a 404, which the repo-scope
+	// classifier reads as "that repository is unmintable" and the hub then
+	// tells contributors to fix the repo list (hivecommons/hive#14002). Say
+	// what is actually missing before any request leaves.
+	if a.installationID <= 0 {
+		return "", fmt.Errorf("%w: creating scoped token for tier %s: installation_id is 0", ErrAppNotInstalled, tier)
+	}
 	jwtToken, err := a.generateJWT()
 	if err != nil {
 		return "", fmt.Errorf("generating JWT: %w", err)

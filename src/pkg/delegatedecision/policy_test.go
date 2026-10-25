@@ -207,6 +207,16 @@ func TestDecidePRRules(t *testing.T) {
 			verdict: VerdictCloseSuperseded, rule: "prefer-contributor", textHas: "with credit",
 		},
 		{
+			name:    "competing hive duplicate does not release a PR missing DCO",
+			in:      Input{Kind: KindPR, Number: 52, Title: "Add filter", CIGreen: true, DCOMissing: true, ContributorOnline: true, Competing: []CompetingPR{{Number: 53, HiveAuthored: true}}},
+			verdict: VerdictDirection, rule: "fix-then-merge", kinds: []ActionKind{ActionCommentDecision}, textHas: "add the DCO sign-off",
+		},
+		{
+			name:    "competing hive duplicate does not bypass the reporter-trust gate",
+			in:      Input{Kind: KindPR, Number: 52, Title: "Add filter", CIGreen: true, ReporterTrustHold: true, ContributorOnline: true, Competing: []CompetingPR{{Number: 53, HiveAuthored: true}}},
+			verdict: VerdictApprove, rule: "reporter-trust",
+		},
+		{
 			name:    "two hive PRs competing fall through",
 			in:      Input{Kind: KindPR, Number: 52, Title: "Add filter", HiveAuthored: true, CIGreen: true, Competing: []CompetingPR{{Number: 53, HiveAuthored: true}}},
 			verdict: VerdictApprove, rule: "default-release",

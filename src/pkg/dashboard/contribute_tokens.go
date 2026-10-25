@@ -339,6 +339,40 @@ func (h *ContributeWSHub) mintScopedToken(tier, repo string) (string, error) {
 	return "", nil
 }
 
+// appOrgAndInstallURL returns the org this hive serves and the GitHub App
+// install link for it, for the app_not_installed negative-ack (#14002).
+// Either may be empty when the server or its config is not wired.
+func (h *ContributeWSHub) appOrgAndInstallURL() (org, installURL string) {
+	if h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return "", ""
+	}
+	cfg := h.server.deps.Config
+	return strings.TrimSpace(cfg.Project.Org), cfg.GitHub.AppInstallURL()
+}
+
+// appNotInstalledMessage is the contributor-facing text carried on an
+// app_not_installed task_unavailable. It says what is missing and who can fix
+// it, so the contributor does not reset credentials or re-register.
+func appNotInstalledMessage(org, installURL string) string {
+	var b strings.Builder
+	b.WriteString("This hive's GitHub App is not installed on ")
+	if org != "" {
+		b.WriteString("the ")
+		b.WriteString(org)
+		b.WriteString(" org")
+	} else {
+		b.WriteString("its org")
+	}
+	b.WriteString(", so no task token can be minted. Nothing is wrong on your side. ")
+	b.WriteString("The hive operator (or an org admin) must install the App")
+	if installURL != "" {
+		b.WriteString(" at ")
+		b.WriteString(installURL)
+	}
+	b.WriteString(" and select the hive's repositories; work resumes on the next request after that.")
+	return b.String()
+}
+
 // repoNameOnly returns the bare repository name from an "owner/repo" (or already
 // bare) value, for the GitHub App installation-token Repositories option, which is
 // keyed on the repo name within the installation's org (hivecommons/hive C4). An

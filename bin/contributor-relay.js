@@ -8961,6 +8961,10 @@ function handleMessage(data, hub) {
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      // #14002: some refusals carry a plain-language explanation (for example
+      // app_not_installed names the org and the install link the operator must
+      // use). Print it so the contributor knows whether the fix is theirs.
+      if (msg.message) console.log(sanitizeHubText(msg.message));
       scheduleReadyRetry(hub, 'task_unavailable');
       break;
 

@@ -59,6 +59,14 @@ type githubMerger interface {
 	MergePR(ctx context.Context, repo string, number int, mergeMethod, expectSHA string) (github.MergePRResult, error)
 }
 
+// githubRefDeleter is the subset of go-github's *gh.GitService the merge path
+// uses to honour MergeOptions.DeleteBranch. GitHub has no "delete the source
+// branch" flag on its merge call — unlike GitLab's
+// should_remove_source_branch — so the adapter deletes the ref itself.
+type githubRefDeleter interface {
+	DeleteRef(ctx context.Context, owner, repo, ref string) (*gh.Response, error)
+}
+
 // markerLookupMaxPages bounds FindIssueByMarker to the most recent pages of
 // open issues, matching the bounded dedupe scan pkg/github.CreateIssue uses:
 // publisher-filed issues are recent by construction and an unbounded scan of
@@ -79,6 +87,7 @@ type gitHubForge struct {
 	writer githubWriter
 	pulls  githubPullReader
 	merger githubMerger
+	refs   githubRefDeleter
 	org    string
 
 	// consolidator, when set, routes CreateIssue through the consolidating
@@ -102,6 +111,7 @@ func newGitHubForge(token string, opts Options) *gitHubForge {
 		writer: client.GoGitHub().Issues,
 		pulls:  client.GoGitHub().PullRequests,
 		merger: client,
+		refs:   client.GoGitHub().Git,
 		org:    opts.Org,
 	}
 }
@@ -120,6 +130,9 @@ func newGitHubForgeWithReader(r githubReader, org string) *gitHubForge {
 	}
 	if m, ok := r.(githubMerger); ok {
 		f.merger = m
+	}
+	if d, ok := r.(githubRefDeleter); ok {
+		f.refs = d
 	}
 	return f
 }
@@ -338,79 +351,112 @@ func (f *gitHubForge) FindIssueByMarker(ctx context.Context, repo, marker string
 }
 
 // gitHubMergeMethods maps the forge-neutral strategies onto GitHub's
-// merge_method. It is also the membership test: a MergeStrategy absent from
-// this map is refused, never defaulted into a different history shape.
-// GitHub's own default is squash, matching pkg/github.MergePR.
-var gitHubMergeMethods = map[MergeStrategy]string{
-	MergeStrategyDefault: "squash",
-	MergeStrategySquash:  "squash",
-	MergeStrategyMerge:   "merge",
-	MergeStrategyRebase:  "rebase",
+// merge_method. It is also the membership test: a strategy absent from this
+// map is refused, never defaulted into a different history shape. The empty
+// strategy leaves the method to pkg/github.MergePR, whose default is squash.
+var gitHubMergeMethods = map[string]string{
+	"":                          "",
+	string(MergeStrategySquash): "squash",
+	string(MergeStrategyMerge):  "merge",
+	string(MergeStrategyRebase): "rebase",
 }
 
-// Merge integrates a pull request, honouring the forge-neutral gate: an
-// already-merged PR is idempotent success, a hold/blocking label or a moved
-// head refuses WITHOUT calling the merge endpoint, and only then does the
-// merge delegate to *github.Client.MergePR (mutation boundary, forward-merge
-// guard, merge audit). See Merger for the contract every adapter shares.
-func (f *gitHubForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) (MergeResult, error) {
-	if number <= 0 {
-		return MergeResult{}, fmt.Errorf("forge: merge %s: change number is required", repo)
+// Merge integrates a pull request under the shared Merger contract
+// (merge_contract_test.go): an already-merged change reports ErrAlreadyMerged,
+// the hold gate refuses with ErrHoldActive and a head that is not the commit
+// the caller pinned refuses with ErrConflict — both WITHOUT calling the merge
+// endpoint — and GitHub's own refusals map onto the same sentinels every
+// adapter reports.
+//
+// The merge itself delegates to *github.Client.MergePR rather than calling the
+// REST endpoint here, so a forge merge inherits what the hive's merge relay
+// has: the mutation boundary and its reconciliation, the forward-merge guard,
+// and the merge audit record.
+func (f *gitHubForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
+	if strings.TrimSpace(repo) == "" {
+		return fmt.Errorf("github: merge: repo is required")
 	}
-	method, ok := gitHubMergeMethods[opts.Strategy]
+	if number <= 0 {
+		return fmt.Errorf("github: merge: change number must be > 0 (got %d)", number)
+	}
+	method, ok := gitHubMergeMethods[strings.ToLower(strings.TrimSpace(opts.Strategy))]
 	if !ok {
-		return MergeResult{}, fmt.Errorf("%w: %q (github accepts %q, %q, %q)",
-			ErrMergeStrategyUnsupported, opts.Strategy,
-			MergeStrategySquash, MergeStrategyMerge, MergeStrategyRebase)
+		return fmt.Errorf("github: unsupported merge strategy %q", opts.Strategy)
 	}
 	if f.pulls == nil || f.merger == nil {
-		return MergeResult{}, fmt.Errorf("forge: merge %s#%d: adapter was built without a merge client", repo, number)
+		return fmt.Errorf("github: merge %s#%d: adapter was built without a merge client", repo, number)
 	}
 	owner, name := splitRepo(repo, f.org)
 	slug := owner + "/" + name
+
+	// One read answers all three gates at once: already merged?, held?, still
+	// the commit the caller decided on?
 	pr, _, err := f.pulls.Get(ctx, owner, name, number)
 	if err != nil {
-		return MergeResult{}, fmt.Errorf("forge: reading %s#%d before merge: %w", slug, number, err)
+		return fmt.Errorf("github: check pull request %s#%d: %w", slug, number, err)
 	}
 	if pr.GetMerged() {
-		return MergeResult{Merged: true, AlreadyMerged: true, SHA: pr.GetMergeCommitSHA()}, nil
+		return fmt.Errorf("%w: %s#%d", ErrAlreadyMerged, slug, number)
 	}
-	if label := opts.gateLabel(gitHubLabelNames(pr.Labels)); label != "" {
-		return MergeResult{}, fmt.Errorf("%w: %s#%d carries %q", ErrMergeGated, slug, number, label)
-	}
-	expect := strings.TrimSpace(opts.ExpectedHeadSHA)
-	if have := pr.GetHead().GetSHA(); expect != "" && have != "" && have != expect {
-		return MergeResult{}, fmt.Errorf("%w: %s#%d head is %s, caller decided on %s", ErrMergeHeadMismatch, slug, number, have, expect)
-	}
-	res, err := f.merger.MergePR(ctx, slug, number, method, expect)
-	if err != nil {
-		// GitHub answers 409 when the head moved past the SHA we pinned
-		// between the read above and the merge — the same refusal, reported
-		// by the forge instead of seen locally, so callers match one sentinel.
-		if isGitHubHeadMovedRefusal(err) {
-			return MergeResult{}, fmt.Errorf("%w: %s#%d: %w", ErrMergeHeadMismatch, slug, number, err)
-		}
-		return MergeResult{}, fmt.Errorf("forge: merging %s#%d: %w", slug, number, err)
-	}
-	return MergeResult{Merged: res.Merged, SHA: res.SHA}, nil
-}
-
-// gitHubLabelNames flattens go-github labels to their names for the gate.
-func gitHubLabelNames(labels []*gh.Label) []string {
-	out := make([]string, 0, len(labels))
-	for _, l := range labels {
-		if n := l.GetName(); n != "" {
-			out = append(out, n)
+	for _, label := range pr.Labels {
+		if strings.EqualFold(strings.TrimSpace(label.GetName()), holdLabel) {
+			return fmt.Errorf("%w: %s#%d carries %q", ErrHoldActive, slug, number, label.GetName())
 		}
 	}
-	return out
+	expect := strings.TrimSpace(opts.HeadSHA)
+	if have := pr.GetHead().GetSHA(); expect != "" && have != "" && !strings.EqualFold(have, expect) {
+		return fmt.Errorf("%w: %s#%d head is %s, caller decided on %s", ErrConflict, slug, number, have, expect)
+	}
+
+	// expect is passed through so GitHub enforces the pin server-side too: a
+	// push landing between the read above and the merge is refused by the
+	// forge (409) instead of merging work nobody reviewed.
+	if _, err := f.merger.MergePR(ctx, slug, number, method, expect); err != nil {
+		return gitHubMergeRefusal(slug, number, err)
+	}
+	if opts.DeleteBranch {
+		if err := f.deleteHeadBranch(ctx, owner, name, pr.GetHead().GetRef()); err != nil {
+			return fmt.Errorf("github: merged %s#%d but deleting its head branch: %w", slug, number, err)
+		}
+	}
+	return nil
 }
 
-// isGitHubHeadMovedRefusal reports whether err is GitHub's 409 "head branch
-// was modified" answer to a SHA-pinned merge.
-func isGitHubHeadMovedRefusal(err error) bool {
+// gitHubMergeRefusal maps GitHub's merge refusals onto the forge-neutral
+// sentinels: 405 is "not in a mergeable state" (conflicts, draft, required
+// checks), 422 is a merge GitHub will not perform for this change, and 409 is
+// the head having moved past the SHA the caller pinned.
+func gitHubMergeRefusal(slug string, number int, err error) error {
 	var ghErr *gh.ErrorResponse
-	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusConflict
+	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		switch ghErr.Response.StatusCode {
+		case http.StatusMethodNotAllowed, http.StatusUnprocessableEntity:
+			return fmt.Errorf("%w: %s#%d: %w", ErrNotMergeable, slug, number, err)
+		case http.StatusConflict:
+			return fmt.Errorf("%w: %s#%d: %w", ErrConflict, slug, number, err)
+		}
+	}
+	return fmt.Errorf("github: merge %s#%d: %w", slug, number, err)
+}
+
+// deleteHeadBranch removes the merged change's source branch. A branch that is
+// already gone — the repo's own auto-delete setting usually wins the race — is
+// the desired end state, not a failure.
+func (f *gitHubForge) deleteHeadBranch(ctx context.Context, owner, name, ref string) error {
+	if f.refs == nil {
+		return fmt.Errorf("adapter was built without a git ref client")
+	}
+	if ref = strings.TrimSpace(ref); ref == "" {
+		return fmt.Errorf("the pull request reports no head branch")
+	}
+	resp, err := f.refs.DeleteRef(ctx, owner, name, "heads/"+ref)
+	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // Compile-time assertion that the adapter satisfies the interface.

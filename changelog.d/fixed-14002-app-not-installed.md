@@ -1,0 +1,1 @@
+- Contributor hubs whose GitHub App has no installation on the org (`installation_id: 0`) now refuse work with `app_not_installed` and a message naming the org and the App install link, instead of `repo_unmintable`; no GitHub request is made and no repository is excluded ([#14002](https://github.com/hivecommons/hive/issues/14002)).
