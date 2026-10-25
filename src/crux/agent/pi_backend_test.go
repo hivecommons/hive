@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 const piIdlePane = `╭──────────────────────────────────────────────╮
@@ -34,6 +38,11 @@ func TestDockerfileInstallsPiCLI(t *testing.T) {
 	}
 	dockerfile := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "Dockerfile"))
 	body, err := os.ReadFile(dockerfile)
+	if errors.Is(err, fs.ErrNotExist) {
+		// src/Dockerfile belongs to the hive root module; absent when the crux
+		// module is built standalone (hivecommons/crux).
+		testutil.SkipUnlessRequired(t, "src/Dockerfile is not part of the crux module (standalone build)")
+	}
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
