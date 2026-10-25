@@ -138,6 +138,7 @@ func TestFetchImageBuildStatusConnError(t *testing.T) {
 }
 
 func TestFetchCommitMessage(t *testing.T) {
+	resetSHACaches(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"commit":{"message":"first line\nsecond line"}}`))
 	}))
@@ -149,6 +150,7 @@ func TestFetchCommitMessage(t *testing.T) {
 }
 
 func TestFetchCommitMessageErrors(t *testing.T) {
+	resetSHACaches(t)
 	// non-200
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
@@ -158,9 +160,10 @@ func TestFetchCommitMessageErrors(t *testing.T) {
 		t.Errorf("non-200 should return empty, got %q", got)
 	}
 
-	// conn error
+	// conn error — a distinct SHA so the 403 back-off above does not
+	// short-circuit before the dial.
 	c := &http.Client{Transport: &rewriteTransport{target: mustURL(t, "http://127.0.0.1:1")}}
-	if got := fetchCommitMessage(c, "abcdef1234567", slog.Default()); got != "" {
+	if got := fetchCommitMessage(c, "fedcba7654321", slog.Default()); got != "" {
 		t.Errorf("conn error should return empty, got %q", got)
 	}
 }
@@ -290,6 +293,12 @@ func resetSHACaches(t *testing.T) {
 		delete(commitMsgBySHA, k)
 	}
 	latestSHAMu.Unlock()
+	// The per-SHA fetch back-off is a package-global keyed by SHA; a test that
+	// provoked a non-200 for a SHA must not park it for a later test under
+	// -shuffle=on.
+	commitMsgBackoffMu.Lock()
+	commitMsgBackoffUntil = map[string]time.Time{}
+	commitMsgBackoffMu.Unlock()
 }
 
 func TestFetchCommitMessageBacksOffPerSHA(t *testing.T) {

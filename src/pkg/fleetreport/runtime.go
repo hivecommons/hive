@@ -170,7 +170,7 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubAppRepoNotCovered:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassProxyConnectDialFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed"}},
 	ClassInferenceUpstreamError:     {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed"}},
-	ClassSHAPollCommitMsgUnavail:    {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
+	ClassSHAPollCommitMsgUnavail:    {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 }
 
 // LogFedClass returns the LogFed class whose Keyword msg contains, or "".
