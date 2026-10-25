@@ -340,6 +340,8 @@ func TestIssueRequestWatcherBlockedOnPRComment(t *testing.T) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/12":
 			_, _ = io.WriteString(w, `{"number":12,"state":"open","labels":[{"name":"help wanted"}]}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/5":
+			_, _ = io.WriteString(w, `{"number":5,"state":"open"}`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/12/comments":
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/12/comments":
@@ -546,5 +548,294 @@ func TestReconcileBlockedIssuesRecheckAfter(t *testing.T) {
 	}
 	if got := len(comments["/repos/o/r/issues/63/comments"]); got != 1 {
 		t.Errorf("issue 63 comments = %d, want the existing note only", got)
+	}
+}
+func TestParseSupersededBy(t *testing.T) {
+	tests := []struct {
+		text string
+		want int
+		ok   bool
+	}{
+		{
+			text: "<!-- hive:adopted by=hosted-available-oke-11-placeholder-r05x reason=contributor-offline mode=supersede superseded_by=13989 head=b94e9f0e1cc59cc12c71932db39d3824881b129e -->",
+			want: 13989,
+			ok:   true,
+		},
+		{
+			text: "Superseded by #13989.",
+			want: 13989,
+			ok:   true,
+		},
+		{
+			text: "Superseded by #90: re-authored by the hive App so the required pull_request checks can run.",
+			want: 90,
+			ok:   true,
+		},
+		{
+			text: "Superseded by 14001",
+			want: 14001,
+			ok:   true,
+		},
+		{
+			text: "<!-- hive:adopted by=x reason=y mode=in-place head=z -->",
+			want: 0,
+			ok:   false,
+		},
+		{
+			text: "plain comment about #123",
+			want: 0,
+			ok:   false,
+		},
+	}
+	for _, tt := range tests {
+		got, ok := ParseSupersededBy(tt.text)
+		if ok != tt.ok || got != tt.want {
+			t.Errorf("ParseSupersededBy(%q) = (%d, %v), want (%d, %v)", tt.text, got, ok, tt.want, tt.ok)
+		}
+	}
+}
+
+// Issue 14194: when writing hive:blocked-on pr=X, if X is already merged or closed,
+// the relation is NOT written, blocked label is NOT added, and notice is posted.
+func TestIssueRequestWatcherBlockedOnPR_TargetAlreadySettled(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		prState   string
+		merged    bool
+		wantState string
+	}{
+		{name: "merged PR", prState: "closed", merged: true, wantState: "merged"},
+		{name: "closed unmerged PR", prState: "closed", merged: false, wantState: "closed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var commentBody string
+			var labelsAdded []string
+			var labelsRemoved []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/10":
+					data, _ := json.Marshal(map[string]any{"number": 10, "state": tc.prState, "merged": tc.merged})
+					_, _ = w.Write(data)
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/12":
+					_, _ = io.WriteString(w, `{"number":12,"state":"open","labels":[{"name":"help wanted"}]}`)
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/12/comments":
+					_, _ = io.WriteString(w, `[]`)
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/12/comments":
+					var payload struct {
+						Body string `json:"body"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&payload)
+					mu.Lock()
+					commentBody = payload.Body
+					mu.Unlock()
+					_, _ = io.WriteString(w, `{"id":9}`)
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/12/labels":
+					var payload []string
+					_ = json.NewDecoder(r.Body).Decode(&payload)
+					mu.Lock()
+					labelsAdded = append(labelsAdded, payload...)
+					mu.Unlock()
+					_, _ = io.WriteString(w, `[]`)
+				case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/12/labels/"):
+					mu.Lock()
+					labelsRemoved = append(labelsRemoved, r.URL.Path)
+					mu.Unlock()
+					_, _ = io.WriteString(w, `[]`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			dir := withIssueDir(t)
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "comment", Repo: "o/r", Number: 12, Agent: "scanner", BlockedOnPR: 10,
+				Body: "Parking until #10 lands.",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+			if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+				t.Fatalf("request not consumed")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if strings.Contains(commentBody, "hive:blocked-on") {
+				t.Fatalf("comment must NOT contain blocked-on marker: %q", commentBody)
+			}
+			if !strings.Contains(commentBody, "Target PR o/r#10 is already "+tc.wantState+" — not parking as blocked.") {
+				t.Fatalf("comment lacks notice: %q", commentBody)
+			}
+			if !strings.Contains(commentBody, "Verify this finding on current base branch; close this issue without a PR if it is already fixed") {
+				t.Fatalf("comment lacks verify instruction: %q", commentBody)
+			}
+			if issueHasLabel(labelsAdded, BlockedLabel) {
+				t.Fatalf("blocked label must not be added when target is settled: %v", labelsAdded)
+			}
+			if len(labelsRemoved) != 0 {
+				t.Fatalf("help wanted must not be removed: %v", labelsRemoved)
+			}
+		})
+	}
+}
+
+// Issue 14194: when blocker PR X is superseded by PR Y:
+// - If Y is merged, unblock immediately naming Y (superseding X).
+// - If Y is open, re-target the relation to Y.
+func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	var commentBodies = map[string][]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		// Blocker PR 100 closed unmerged, superseded by #101
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/100":
+			_, _ = io.WriteString(w, `{"number":100,"state":"closed","merged":false}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/100/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"Superseded by #101."}]`)
+		// Superseder PR 101 is still open
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/101":
+			_, _ = io.WriteString(w, `{"number":101,"state":"open"}`)
+
+		// Blocker PR 200 closed unmerged, superseded by #201
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/200":
+			_, _ = io.WriteString(w, `{"number":200,"state":"closed","merged":false}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/200/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"<!-- hive:adopted by=x reason=offline mode=supersede superseded_by=201 head=abc -->"}]`)
+		// Superseder PR 201 is closed and merged
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/201":
+			_, _ = io.WriteString(w, `{"number":201,"state":"closed","merged":true}`)
+
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/1/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/2/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			var payload struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&payload)
+			mu.Lock()
+			commentBodies[r.URL.Path] = append(commentBodies[r.URL.Path], payload.Body)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			// Issue 1: blocked on #100. #100 superseded by #101 (open) -> re-target to #101!
+			{Repo: "o/r", Number: 1, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#100"},
+			// Issue 2: blocked on #200. #200 superseded by #201 (merged) -> unblock!
+			{Repo: "o/r", Number: 2, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#200"},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 2 || res.Retargeted != 1 || res.Unblocked != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=2 Retargeted=1 Unblocked=1 Errors=0", res)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Issue 1 should have received a re-target comment pointing to #101
+	c1 := commentBodies["/repos/o/r/issues/1/comments"]
+	if len(c1) != 1 || !strings.Contains(c1[0], BlockedOnMarker("o/r", 101)) || !strings.Contains(c1[0], "Re-targeted: blocker #100 was superseded by #101.") {
+		t.Fatalf("issue 1 comment = %v", c1)
+	}
+
+	// Issue 2 should have been unblocked naming #201 (superseding #200)
+	c2 := commentBodies["/repos/o/r/issues/2/comments"]
+	if len(c2) != 1 || !strings.Contains(c2[0], blockedUnblockedMarker) || !strings.Contains(c2[0], "o/r#201 (superseding #200) is no longer open") {
+		t.Fatalf("issue 2 comment = %v", c2)
+	}
+}
+
+// Issue 14194: when an issue's body has an older blocker marker (#50, settled)
+// but a comment has a newer blocker marker (#60, still open), the comment marker wins
+// and the issue stays blocked.
+func TestReconcileBlockedIssuesCommentMarkerOverridesBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/50":
+			_, _ = io.WriteString(w, `{"number":50,"state":"closed","merged":true}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/60":
+			_, _ = io.WriteString(w, `{"number":60,"state":"open"}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/5/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"`+BlockedOnMarker("o/r", 60)+`\nRe-blocked on #60"}]`)
+		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/5/labels/help wanted"):
+			_, _ = io.WriteString(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{
+		"o/r": {Issues: []RepoWorkIssue{
+			{Repo: "o/r", Number: 5, Labels: []string{"blocked", "help wanted"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#50"},
+		}},
+	}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != 1 || res.Unblocked != 0 || res.Stripped != 1 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=1 Unblocked=0 Stripped=1 Errors=0", res)
+	}
+}
+
+// Issue 14194: SweepBlockedIssues lists open issues with `blocked` label directly
+// and reconciles them.
+func TestSweepBlockedIssues(t *testing.T) {
+	var mu sync.Mutex
+	var unblocked bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues" && strings.Contains(r.URL.RawQuery, "labels=blocked"):
+			_, _ = io.WriteString(w, `[{"number":10,"state":"open","labels":[{"name":"blocked"}],"body":"`+BlockedOnMarker("o/r", 1)+`\nBlocked on #1"}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/10/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/1":
+			_, _ = io.WriteString(w, `{"number":1,"state":"closed","merged":true}`)
+		case r.Method == "DELETE" && r.URL.Path == "/repos/o/r/issues/10/labels/blocked":
+			mu.Lock()
+			unblocked = true
+			mu.Unlock()
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/10/comments":
+			_, _ = io.WriteString(w, `{"id":1}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	res, err := c.SweepBlockedIssues(context.Background(), BlockedSweepOptions{Repos: []string{"o/r"}})
+	if err != nil {
+		t.Fatalf("SweepBlockedIssues failed: %v", err)
+	}
+	if res.Items != 1 || res.Unblocked != 1 || res.Errors != 0 {
+		t.Fatalf("res = %+v, want Items=1 Unblocked=1 Errors=0", res)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !unblocked {
+		t.Fatal("blocked label was not removed from issue 10")
 	}
 }

@@ -22,8 +22,16 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux/inference"
+	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/proxy"
+	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/crux/trajectory"
+	"github.com/hivecommons/hive/crux/watchdog"
+	"github.com/hivecommons/hive/crux/watsonx"
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/apphealth"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/celtrigger"
@@ -32,7 +40,6 @@ import (
 	convergenceaudit "github.com/hivecommons/hive/pkg/convergence/audit"
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/defsrc"
@@ -50,19 +57,16 @@ import (
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/crux/inference"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/loginscan"
-	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/policies"
 	"github.com/hivecommons/hive/pkg/promptsrc"
-	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rfccoverage"
@@ -74,11 +78,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/tracing"
-	"github.com/hivecommons/hive/crux/trajectory"
-	"github.com/hivecommons/hive/crux/watchdog"
-	"github.com/hivecommons/hive/crux/watsonx"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"go.opentelemetry.io/otel/attribute"
@@ -9447,6 +9447,35 @@ func runSharedCIRerunSweepIfDue(ctx context.Context, ghClient *github.Client, cf
 	}
 	if len(result.Rerun) > 0 {
 		logger.Info("shared-ci rerun sweep complete", "incidents", result.Incidents, "seen", result.Seen, "rerun", len(result.Rerun), "skipped", result.Skipped)
+	}
+}
+
+// blockedIssuesSweepInterval is how often the periodic sweep reconciles open
+// issues carrying the `blocked` label.
+const blockedIssuesSweepInterval = 5 * time.Minute
+
+func runBlockedIssuesSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < blockedIssuesSweepInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	var repos []string
+	if cfg != nil {
+		repos = cfg.Project.Repos
+	}
+	res, err := ghClient.SweepBlockedIssues(ctx, github.BlockedSweepOptions{Repos: repos})
+	if err != nil {
+		logger.Warn("blocked issues reconciliation sweep failed", "error", err)
+		return
+	}
+	if res.Unblocked+res.Retargeted+res.Stripped+res.Errors > 0 {
+		logger.Info("blocked issues reconciliation sweep complete", "items", res.Items, "unblocked", res.Unblocked, "retargeted", res.Retargeted, "help_wanted_stripped", res.Stripped, "errors", res.Errors)
 	}
 }
 

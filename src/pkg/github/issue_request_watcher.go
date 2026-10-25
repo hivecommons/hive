@@ -16,11 +16,11 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
-	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -615,15 +615,28 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				break
 			}
 		}
+		var parkBlocked bool
 		if req.BlockedOnPR > 0 {
-			body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
+			if pErr != nil {
+				if !githubStatusError(pErr, http.StatusNotFound) {
+					err = pErr
+					break
+				}
+				body = blockedTargetNotFoundNote(req.Repo, req.BlockedOnPR, body)
+			} else if settled {
+				body = blockedTargetSettledNote(req.Repo, req.BlockedOnPR, merged, body)
+			} else {
+				body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
+				parkBlocked = true
+			}
 		}
 		err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
 		if errors.Is(err, ErrIssueCommentBudget) {
 			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 			return
 		}
-		if err == nil && req.BlockedOnPR > 0 {
+		if err == nil && parkBlocked {
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
 			if err == nil {
 				err = c.RemoveLabel(ctx, req.Repo, req.Number, helpWantedLabel)

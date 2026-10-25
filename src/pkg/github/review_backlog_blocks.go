@@ -214,6 +214,52 @@ func ReconcileReviewBacklogBlocks(ctx context.Context, c *Client, logger *slog.L
 					res.Lifted++
 				}
 			case reviewBacklogPRClosed:
+				if supersededBy, isSuperseded := c.pullRequestSupersededBy(ctx, repo, rec.BlockedOnPR); isSuperseded && supersededBy > 0 && supersededBy != rec.BlockedOnPR {
+					yOutcome, yErr := c.reviewBacklogPROutcome(ctx, repo, supersededBy)
+					if yErr == nil {
+						switch yOutcome {
+						case reviewBacklogPRMerged:
+							note := reviewBacklogLiftNote(repo, supersededBy)
+							if canResolve {
+								actErr = resolver.LiftBlock(ctx, repo, ref, note)
+							} else {
+								actErr = sink.AppendToItem(ctx, repo, ref, note)
+							}
+							if actErr == nil {
+								rec.BlockState = reviewBacklogBlockLifted
+								rec.BlockedOnPR = supersededBy
+								res.Lifted++
+							}
+						case reviewBacklogPRClosed:
+							note := reviewBacklogRetriageNote(repo, supersededBy)
+							if canResolve {
+								actErr = resolver.LiftBlock(ctx, repo, ref, note)
+							} else {
+								actErr = sink.AppendToItem(ctx, repo, ref, note)
+							}
+							if actErr == nil {
+								rec.BlockState = reviewBacklogBlockRetriage
+								rec.BlockedOnPR = supersededBy
+								res.Retriaged++
+							}
+						case reviewBacklogPROpen:
+							oldPR := rec.BlockedOnPR
+							rec.BlockedOnPR = supersededBy
+							retargetNote := fmt.Sprintf("%s\nRe-targeted: blocker #%d was superseded by #%d.", BlockedOnMarker(repo, supersededBy), oldPR, supersededBy)
+							actErr = sink.AppendToItem(ctx, repo, ref, retargetNote)
+						}
+						if actErr != nil {
+							res.Errors++
+							logger.Warn("review backlog block sweep: item supersede resolution failed", "item", rec.ItemKey, "old_pr", rec.BlockedOnPR, "new_pr", supersededBy, "error", actErr)
+							continue
+						}
+						rec.UpdatedAt = now
+						ledger.Fingerprints[repo][fp] = rec
+						changed = true
+						logger.Info("review backlog block sweep: item supersede resolved", "item", rec.ItemKey, "old_pr", prKey, "new_pr", repo+"#"+strconv.Itoa(supersededBy), "state", rec.BlockState)
+						continue
+					}
+				}
 				// Never auto-close: unblock, comment, and leave the item to
 				// normal triage (maintainer decision on #13849).
 				note := reviewBacklogRetriageNote(repo, rec.BlockedOnPR)

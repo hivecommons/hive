@@ -162,6 +162,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "agentNowAgo"),
 		jsFunc(t, html, "agentNowClockTime"),
 		jsFunc(t, html, "stageTrackerHeadline"),
+		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),
+		jsFunc(t, html, "stageTrackerOpenSince"),
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),
@@ -400,6 +402,12 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'issue', st
 assert.ok(/>blocked · re-check at [^<]*03:04[^<]*<\/span>/.test(row), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'issue', stage: 0, modifiers: ['blocked'], bucket: 'filtered', bucket_reason: 'blocked' }, stages, ctx);
 assert.ok(row.includes('>blocked</span>') && !row.includes('re-check'), row);
+// A blocked issue shows age in the chevron and since column when created_at or stage_since is present.
+const blockedWithAge = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'issue', stage: 0, modifiers: ['blocked'], bucket: 'filtered', bucket_reason: 'blocked', created_at: new Date(now - 3 * 86400000).toISOString() }, stages, ctx);
+assert.ok(blockedWithAge.includes('>blocked</span>'), blockedWithAge);
+assert.ok(blockedWithAge.includes('Blocked · since 3d'), blockedWithAge);
+assert.ok(blockedWithAge.includes('ham-open-stale'), 'stale past 2 days: ' + blockedWithAge);
+assert.ok(blockedWithAge.includes('<span class="ham-since">3d</span>'), blockedWithAge);
 // An ISSUE parked on a person wears 045 (owner decision: 085 is PR-only)
 // before any PR exists: it lights Actionable (the issue side) as a detour,
 // not the merge gate, and its headline carries no "(its PR)" suffix. A

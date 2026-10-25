@@ -306,3 +306,72 @@ func TestBlockedOnReviewedPRNote(t *testing.T) {
 		}
 	}
 }
+func TestReconcileReviewBacklogBlocksSupersede(t *testing.T) {
+	withReviewBacklogState(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		// PR 10 closed, superseded by #11 (open)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/10":
+			_, _ = io.WriteString(w, `{"number":10,"state":"closed","merged":false}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/10/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"Superseded by #11."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/11":
+			_, _ = io.WriteString(w, `{"number":11,"state":"open"}`)
+
+		// PR 20 closed, superseded by #21 (merged)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/20":
+			_, _ = io.WriteString(w, `{"number":20,"state":"closed","merged":false}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/20/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"Superseded by #21."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/21":
+			_, _ = io.WriteString(w, `{"number":21,"state":"closed","merged":true}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	sink := &fakeResolverSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}}
+	c := reviewTestClient(t, srv.URL)
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear}, Sink: sink}
+	})
+	now := time.Now().UTC()
+	ledger := newReviewBacklogLedger()
+	ledger.setFingerprint("o/r", "fp-superseded-open", reviewBacklogFingerprintRecord{
+		Destination: config.ReviewBacklogLinear, ItemID: "id-1", ItemKey: "ENG-1", BlockedOnPR: 10, BlockState: reviewBacklogBlockBlocked,
+	})
+	ledger.setFingerprint("o/r", "fp-superseded-merged", reviewBacklogFingerprintRecord{
+		Destination: config.ReviewBacklogLinear, ItemID: "id-2", ItemKey: "ENG-2", BlockedOnPR: 20, BlockState: reviewBacklogBlockBlocked,
+	})
+	if err := ledger.save("", now); err != nil {
+		t.Fatal(err)
+	}
+
+	res := ReconcileReviewBacklogBlocks(context.Background(), c, nil)
+	if res.Checked != 2 || res.Lifted != 1 || res.Retriaged != 0 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Checked=2 Lifted=1 Retriaged=0 Errors=0", res)
+	}
+
+	// ENG-2 should have been lifted
+	if len(sink.lifted) != 1 || sink.lifted[0] != "ENG-2" {
+		t.Fatalf("lifted = %v, want [ENG-2]", sink.lifted)
+	}
+
+	saved, err := loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// fp-superseded-open should now be re-targeted to PR 11 in the ledger and stay blocked
+	rec1 := saved.Fingerprints["o/r"]["fp-superseded-open"]
+	if rec1.BlockedOnPR != 11 || rec1.BlockState != reviewBacklogBlockBlocked {
+		t.Fatalf("rec1 = %+v, want BlockedOnPR=11 BlockState=blocked", rec1)
+	}
+	// fp-superseded-merged should now be lifted and record PR 21
+	rec2 := saved.Fingerprints["o/r"]["fp-superseded-merged"]
+	if rec2.BlockedOnPR != 21 || rec2.BlockState != reviewBacklogBlockLifted {
+		t.Fatalf("rec2 = %+v, want BlockedOnPR=21 BlockState=lifted", rec2)
+	}
+}
