@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -363,8 +364,15 @@ func ExtractRepo(path string) string {
 	}
 	if m := gitLabProjectPathPrefix.FindStringSubmatch(path); len(m) > 1 {
 		raw := m[1]
-		if unescaped, err := url.PathUnescape(raw); err == nil && strings.Contains(unescaped, "/") {
+		first, _, _ := strings.Cut(raw, "/")
+		// URL-encoded "org%2Frepo" is a single path segment; the second
+		// captured segment is then the resource ("issues"), not the repo.
+		if unescaped, err := url.PathUnescape(first); err == nil && strings.Contains(unescaped, "/") {
 			return unescaped
+		}
+		// A bare numeric project id carries no namespace to scope on.
+		if _, err := strconv.Atoi(first); err == nil {
+			return ""
 		}
 		if strings.Contains(raw, "/") {
 			return raw
