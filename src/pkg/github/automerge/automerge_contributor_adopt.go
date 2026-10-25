@@ -541,7 +541,9 @@ func shortSHA(sha string) string {
 
 // AdoptionMaintainerMarker identifies the once-per-head refusal to take over a
 // repository maintainer's PR, independently of author kind or relay presence.
-const AdoptionMaintainerMarker = "<!-- hive:adoption-maintainer"
+// It is deliberately not a prefix of AdoptionMaintainerSupersederMarker so a
+// prefix match on either never counts the other note.
+const AdoptionMaintainerMarker = "<!-- hive:adoption-maintainer-refusal"
 
 // Cache both verdicts and read failures for a sweep window, keyed by repository
 // and login. Expired entries are pruned on a miss so the cache stays bounded.
