@@ -133,7 +133,9 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 	}
 	if opts.remoteSelected() {
 		switch rest[0] {
-		case "help", "-h", "--help":
+		case "help", "-h", "--help", "serve":
+			// serve is where the runtime lives; a CRUX_SERVER left in a shell
+			// profile must not stop a local server from starting.
 		default:
 			return e.remote(ctx, opts, rest[0], rest[1:])
 		}
@@ -279,7 +281,8 @@ kick and stop use that socket when present so they act on the live runtime.
 'crux serve' is the API server other harnesses drive (crux/api, crux/serve).
 With --server ADDR (or CRUX_SERVER set) run, ps, logs, kick and stop drive that
 server over the API instead of an in-process runtime; --token / CRUX_TOKEN
-carries its bearer token, and 'logs -f' follows the agent's output.
+carries its bearer token, and 'logs -f' follows the agent's output. 'serve'
+itself always runs locally, whatever CRUX_SERVER says.
 
 Global flags:
 `)

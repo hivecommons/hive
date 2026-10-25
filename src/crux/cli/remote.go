@@ -18,7 +18,8 @@ type clientFactory func(server, token string) (*api.Client, error)
 
 // remoteSelected reports whether this invocation drives a `crux serve`
 // instead of an in-process runtime: --server was given or CRUX_SERVER is
-// set. The token comes from --token, then CRUX_TOKEN.
+// set. The token comes from --token, then CRUX_TOKEN. `help` and `serve`
+// ignore the selection; everything else goes through remote.
 func (o *globalOptions) remoteSelected() bool {
 	if o.server == "" {
 		o.server = os.Getenv(config.ServerEnvVar)

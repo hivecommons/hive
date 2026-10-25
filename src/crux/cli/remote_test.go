@@ -335,7 +335,7 @@ func TestRemoteErrors(t *testing.T) {
 		{[]string{"--server", "", "ps"}, ExitOK, ""}, // empty --server is not remote mode
 		{[]string{"--server", "::bad::", "ps"}, ExitUsage, "--server"},
 		{[]string{"--server", socket, "ps"}, ExitError, "bearer token"},
-		{[]string{"--server", socket, "--token", "tok", "serve"}, ExitUsage, "not available with --server"},
+		{[]string{"--server", socket, "--token", "tok", "serve", "-h"}, ExitOK, ""}, // serve always runs locally
 		{[]string{"--server", socket, "--token", "tok", "stop", "ghost"}, ExitError, "agent ghost not found"},
 		{[]string{"--server", socket, "--token", "tok", "kick", "ghost", "hi"}, ExitError, "agent ghost not found"},
 		{[]string{"--server", socket, "--token", "tok", "logs", "ghost"}, ExitError, "agent ghost not found"},
