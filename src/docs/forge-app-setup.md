@@ -155,6 +155,21 @@ Notes that will save you a wrong guess:
 - The instance URL is the **bare instance root**. The adapters append `/api/v4`
   (GitLab) and `/api/v1` (Gitea) themselves; adding the suffix yourself produces
   a doubled path.
+- A single repo can live on a different forge from the rest of the project with
+  `project.repo_policies[].forge` and `forge_url` (bare instance root; inherits
+  `gitlab_url` / `gitea_url` when omitted). Unlike `project.forge`, these keys
+  are validated at load: an unknown kind, a non-http(s) URL, or a Gitea repo with
+  no URL anywhere is a config error. The governor's escalation writes and its
+  repo-scoped kicks follow the per-repo value; the token still comes from the
+  forge-wide `token_env`.
+
+```yaml
+project:
+  repo_policies:
+    - repo: mirror
+      forge: gitea
+      forge_url: https://codeberg.org
+```
 
 ### Do not confuse `project.forge` with `github.forge`
 

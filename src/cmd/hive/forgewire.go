@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -12,7 +14,8 @@ import (
 // governorForge returns the forge-neutral write seam the governor path should
 // use for this config, or nil when no forge can be reached at all.
 //
-// Selection follows project.forge:
+// Selection follows project.forge, or per repo when any
+// project.repo_policies[] entry sets forge/forge_url (see repoForgeRouter):
 //
 //   - "github" (and unset, the default): ghClient itself. No adapter is
 //     interposed, so the GitHub path is byte-for-byte what it was before.
@@ -31,6 +34,19 @@ import (
 // which is why this is called per governor cycle instead of being memoized: a
 // hot config reload takes effect on the next tick with no invalidation logic.
 func governorForge(cfg *config.Config, ghClient *github.Client, logger *slog.Logger) forge.IssueWriter {
+	// Per-repo forge overrides (project.repo_policies[].forge / forge_url,
+	// hivecommons/hive#14112) need a writer that picks the forge per call. A
+	// hive with none keeps the single project-wide writer below, unchanged.
+	if cfg.HasRepoForgeOverrides() {
+		return &repoForgeRouter{cfg: cfg, ghClient: ghClient, logger: logger}
+	}
+	return forgeForRepo(cfg, "", ghClient, logger)
+}
+
+// forgeForRepo is governorForge for one repo: the writer for the forge repo
+// lives on (its repo_policies override, else project.forge). An empty repo
+// resolves the project-wide forge. Fallback rules are governorForge's.
+func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logger *slog.Logger) forge.IssueWriter {
 	// A typed-nil *github.Client stored in an interface is NOT == nil, and the
 	// callers' "no client, do nothing" guards test the interface. Normalize it
 	// to an untyped nil here so those guards keep working.
@@ -49,16 +65,16 @@ func governorForge(cfg *config.Config, ghClient *github.Client, logger *slog.Log
 		baseURL string
 		tokenID string
 	)
-	switch k := cfg.Project.ForgeKind(); k {
+	switch k := cfg.ForgeKindForRepo(repo); k {
 	case config.ForgeGitHub:
 		return fallback()
 	case config.ForgeGitLab:
-		kind, baseURL, tokenID = forge.KindGitLab, cfg.GitLab.InstanceURL(), cfg.GitLab.TokenEnvName()
+		kind, baseURL, tokenID = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.TokenEnvName()
 	case config.ForgeGitea:
-		kind, baseURL, tokenID = forge.KindGitea, cfg.Gitea.InstanceURL(), cfg.Gitea.TokenEnvName()
+		kind, baseURL, tokenID = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.TokenEnvName()
 	default:
 		logger.Warn("unknown project.forge; falling back to the GitHub client",
-			"forge", k, "known", []string{config.ForgeGitHub, config.ForgeGitLab, config.ForgeGitea})
+			"forge", k, "repo", repo, "known", config.KnownForgeKinds)
 		return fallback()
 	}
 
@@ -73,8 +89,40 @@ func governorForge(cfg *config.Config, ghClient *github.Client, logger *slog.Log
 	})
 	if err != nil {
 		logger.Warn("forge adapter unavailable; falling back to the GitHub client",
-			"forge", kind, "token_env", tokenID, "error", err)
+			"forge", kind, "repo", repo, "token_env", tokenID, "error", err)
 		return fallback()
 	}
 	return f
+}
+
+// repoForgeRouter is the governor's writer on a hive whose repos do not all
+// live on one forge: each write goes to the forge its repo argument names.
+type repoForgeRouter struct {
+	cfg      *config.Config
+	ghClient *github.Client
+	logger   *slog.Logger
+}
+
+func (r *repoForgeRouter) writerFor(repo string) (forge.IssueWriter, error) {
+	w := forgeForRepo(r.cfg, repo, r.ghClient, r.logger)
+	if w == nil {
+		return nil, fmt.Errorf("forge: no writer reachable for repo %q (%s)", repo, r.cfg.ForgeKindForRepo(repo))
+	}
+	return w, nil
+}
+
+func (r *repoForgeRouter) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	w, err := r.writerFor(repo)
+	if err != nil {
+		return err
+	}
+	return w.CreateIssueComment(ctx, repo, number, body)
+}
+
+func (r *repoForgeRouter) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	w, err := r.writerFor(repo)
+	if err != nil {
+		return err
+	}
+	return w.AddLabels(ctx, repo, number, labels)
 }

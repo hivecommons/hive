@@ -30,6 +30,16 @@ type RepoPolicy struct {
 	// told to clone them alongside the primary checkout instead of parking
 	// when a repo-local tool reports the path missing.
 	CompanionRepos []string `yaml:"companion_repos,omitempty" json:"companion_repos,omitempty"`
+	// Forge overrides project.forge for this repo: "github", "gitlab" or
+	// "gitea" (hivecommons/hive#14112). Empty inherits project.forge, so a
+	// config that never sets it behaves exactly as before. Read it through
+	// Config.ForgeKindForRepo.
+	Forge string `yaml:"forge,omitempty" json:"forge,omitempty"`
+	// ForgeURL is the instance root of this repo's forge, e.g.
+	// "https://gitlab.example.com" or "https://codeberg.org". Empty inherits
+	// gitlab.gitlab_url / gitea.gitea_url / github's base URL for the repo's
+	// forge kind. Read it through Config.ForgeURLForRepo.
+	ForgeURL string `yaml:"forge_url,omitempty" json:"forge_url,omitempty"`
 }
 
 type AutonomyLevelChange struct {
