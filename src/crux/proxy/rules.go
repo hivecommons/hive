@@ -337,13 +337,26 @@ var repoPathPrefix = regexp.MustCompile(`^(?:/api/v1)?/repos/([^/]+/[^/]+)`)
 
 var gitPathPrefix = regexp.MustCompile(`^/([^/]+/[^/]+)\.git/`)
 
-// gitLabProjectPathPrefix captures the project segment of a GitLab API path.
-// GitLab addresses a project either by its URL-encoded "namespace%2Fproject"
-// path (one segment) or by its numeric id; the optional second group only
-// matters for the unencoded "namespace/project" spelling, so ExtractRepo must
-// decide which form it is looking at before it consumes a second segment —
-// otherwise a sub-resource such as /issues is mistaken for the project name.
-var gitLabProjectPathPrefix = regexp.MustCompile(`^(?:/api/v4)?/projects/([^/]+)(?:/([^/]+))?`)
+// gitLabProjectPathPrefix captures everything after /projects/ in a GitLab API
+// path. GitLab addresses a project either by its URL-encoded "namespace%2Fproject"
+// path (one segment) or by its numeric id. The proxy sees the %2F-decoded path,
+// so a project may span any number of segments (nested groups); ExtractRepo
+// takes segments up to the first project sub-resource in gitLabProjectResources.
+var gitLabProjectPathPrefix = regexp.MustCompile(`^(?:/api/v4)?/projects/(.+)$`)
+
+// gitLabProjectResources are the segments that follow a project path in the
+// GitLab REST API (and "-" for its /-/ routes); they end the project path.
+var gitLabProjectResources = map[string]bool{
+	"-": true, "access_tokens": true, "approvals": true, "archive": true, "badges": true,
+	"boards": true, "branches": true, "cluster_agents": true, "commits": true, "deploy_keys": true,
+	"deploy_tokens": true, "deployments": true, "discussions": true, "environments": true,
+	"events": true, "fork": true, "forks": true, "hooks": true, "issues": true, "jobs": true,
+	"labels": true, "members": true, "merge_requests": true, "milestones": true, "notes": true,
+	"packages": true, "pipelines": true, "protected_branches": true, "protected_tags": true,
+	"releases": true, "repository": true, "runners": true, "search": true, "share": true,
+	"snippets": true, "star": true, "statuses": true, "tags": true, "unarchive": true,
+	"unstar": true, "variables": true, "wikis": true,
+}
 
 var gitLabNumericProjectID = regexp.MustCompile(`^\d+$`)
 
@@ -369,8 +382,9 @@ func ExtractRepo(path string) string {
 	if m := gitPathPrefix.FindStringSubmatch(path); len(m) > 1 {
 		return m[1]
 	}
-	if m := gitLabProjectPathPrefix.FindStringSubmatch(path); len(m) > 2 {
-		first := m[1]
+	if m := gitLabProjectPathPrefix.FindStringSubmatch(path); len(m) > 1 {
+		segs := strings.Split(m[1], "/")
+		first := segs[0]
 		if unescaped, err := url.PathUnescape(first); err == nil && strings.Contains(unescaped, "/") {
 			return unescaped
 		}
@@ -378,8 +392,12 @@ func ExtractRepo(path string) string {
 			// Numeric project id: the repo slug is not recoverable from the path.
 			return ""
 		}
-		if m[2] != "" {
-			return first + "/" + m[2]
+		n := 0
+		for n < len(segs) && segs[n] != "" && !gitLabProjectResources[segs[n]] {
+			n++
+		}
+		if n >= 2 {
+			return strings.Join(segs[:n], "/")
 		}
 	}
 	return ""

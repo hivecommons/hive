@@ -1,0 +1,1 @@
+- Fixed GitLab proxy repo scoping so nested group project paths (`group/sub/repo`) are no longer truncated to `group/sub` (#14250)
