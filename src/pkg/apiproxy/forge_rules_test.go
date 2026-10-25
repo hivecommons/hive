@@ -3,19 +3,20 @@ package apiproxy
 import (
 	"testing"
 
-	"github.com/hivecommons/hive/crux/agent"
+	"github.com/hivecommons/hive/crux"
 )
 
 // TestForgeRulesWrappers verifies the apiproxy façade delegates to the shared
 // crux/proxy forge rule table: MR/PR creation and merge are hard-denied at
 // every tier, while issue comments are allowed from ISSUES_ONLY up. The
-// exhaustive table-driven contract lives in crux/proxy/forge_contract_test.go.
+// exhaustive table-driven contract, including capability grants, lives in
+// crux/proxy/forge_contract_test.go.
 func TestForgeRulesWrappers(t *testing.T) {
-	modes := []agent.AgentMode{
-		agent.ModeAdvisory,
-		agent.ModeIssuesOnly,
-		agent.ModeIssuesAndPRs,
-		agent.ModeIssuesPRsMerge,
+	modes := []crux.AgentMode{
+		crux.ModeAdvisory,
+		crux.ModeIssuesOnly,
+		crux.ModeIssuesAndPRs,
+		crux.ModeIssuesPRsMerge,
 	}
 	denied := []struct{ method, path string }{
 		{"POST", "/repos/org/repo/pulls"},
@@ -30,9 +31,6 @@ func TestForgeRulesWrappers(t *testing.T) {
 			if AllowedByMode(mode, d.method, d.path) {
 				t.Errorf("%s %s should be denied at mode %v", d.method, d.path, mode)
 			}
-			if AllowedByModeCaps(mode, agent.AgentCapabilities{Converse: true}, d.method, d.path) {
-				t.Errorf("%s %s should be denied at mode %v with Converse", d.method, d.path, mode)
-			}
 			if msg, ok := DeniedMessage(d.method, d.path); !ok || msg == "" {
 				t.Errorf("DeniedMessage(%s %s) = (%q,%v), want hard-deny directive", d.method, d.path, msg, ok)
 			}
@@ -40,10 +38,10 @@ func TestForgeRulesWrappers(t *testing.T) {
 	}
 
 	comment := "/api/v4/projects/org%2Frepo/issues/1/notes"
-	if AllowedByMode(agent.ModeAdvisory, "POST", comment) {
+	if AllowedByMode(crux.ModeAdvisory, "POST", comment) {
 		t.Errorf("POST %s should be denied at ADVISORY", comment)
 	}
-	if !AllowedByMode(agent.ModeIssuesOnly, "POST", comment) {
+	if !AllowedByMode(crux.ModeIssuesOnly, "POST", comment) {
 		t.Errorf("POST %s should be allowed at ISSUES_ONLY", comment)
 	}
 	if _, ok := DeniedMessage("POST", comment); ok {
