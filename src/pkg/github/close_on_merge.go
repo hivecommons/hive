@@ -117,6 +117,7 @@ type CloseOnMergeResult struct {
 	Repo        string
 	Issue       int
 	PR          int
+	PRRepo      string // set when the PR lives in a different repo than the issue
 	Action      CloseOnMergeAction
 	Reason      string
 	WrongRefs   bool
@@ -241,6 +242,11 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 		return nil
 	}
 	var out []CloseOnMergeResult
+	watched := map[string]bool{}
+	for _, repo := range c.activeRepos() {
+		o, n := c.splitRepo(repo)
+		watched[strings.ToLower(o+"/"+n)] = true
+	}
 	for _, repo := range c.activeRepos() {
 		if !opts.onGitHub(repo) {
 			continue
@@ -269,25 +275,41 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 				if !closeOnMergeBackfillCandidate(issue) {
 					continue
 				}
+				issueRepo := owner + "/" + repoName
 				prs := c.closeOnMergeLinkedPRs(ctx, owner, repoName, issue)
-				for _, prNum := range prs {
-					pr, err := c.getPullRequestForCloseOnMerge(ctx, repo, prNum)
+				for _, ref := range prs {
+					prNum := ref.Number
+					prRepo := ""
+					sameRepo := strings.EqualFold(ref.Repo, issueRepo)
+					if !sameRepo {
+						prRepo = ref.Repo
+						if !watched[strings.ToLower(ref.Repo)] {
+							// Not a repo this hive watches: reading it can only fail,
+							// and the answer never changes between sweeps.
+							out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, PRRepo: prRepo, Action: CloseOnMergeSkipped, Reason: "pr_repo_not_watched"})
+							if opts.Logger != nil {
+								opts.Logger.Info("close-on-merge backfill: linked PR is in an unwatched repo; skipping", "repo", repo, "issue", issue.GetNumber(), "pr_repo", ref.Repo, "pr", prNum)
+							}
+							continue
+						}
+					}
+					pr, err := c.getPullRequestForCloseOnMerge(ctx, ref.Repo, prNum)
 					if err != nil {
 						if opts.Logger != nil {
-							opts.Logger.Warn("close-on-merge backfill: reading linked PR failed", "repo", repo, "issue", issue.GetNumber(), "pr", prNum, "error", err)
+							opts.Logger.Warn("close-on-merge backfill: reading linked PR failed", "repo", repo, "issue", issue.GetNumber(), "pr_repo", ref.Repo, "pr", prNum, "error", err)
 						}
 						continue
 					}
 					if pr.GetMergedAt().Time.IsZero() && !pr.GetMerged() {
-						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, Action: CloseOnMergeNoop, Reason: "pr_not_merged"})
+						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, PRRepo: prRepo, Action: CloseOnMergeNoop, Reason: "pr_not_merged"})
 						continue
 					}
-					claimed := closeOnMergePRClaimsIssue(pr, repo, repo, issue.GetNumber())
-					if !claimed && closeOnMergeIssueCommentsLinkPR(ctx, c, owner, repoName, issue.GetNumber(), prNum) {
+					claimed := closeOnMergePRClaimsIssue(pr, ref.Repo, issueRepo, issue.GetNumber())
+					if !claimed && sameRepo && closeOnMergeIssueCommentsLinkPR(ctx, c, owner, repoName, issue.GetNumber(), prNum) {
 						claimed = true
 					}
 					if !claimed {
-						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, Action: CloseOnMergeSkipped, Reason: "no_closing_or_claim_metadata"})
+						out = append(out, CloseOnMergeResult{Repo: repo, Issue: issue.GetNumber(), PR: prNum, PRRepo: prRepo, Action: CloseOnMergeSkipped, Reason: "no_closing_or_claim_metadata"})
 						continue
 					}
 					res := c.closeIssueForMergedPRClaimWithIssue(ctx, repo, issue.GetNumber(), pr, true, opts, issue)
@@ -314,15 +336,28 @@ func closeOnMergeBackfillCandidate(issue *gh.Issue) bool {
 		labelPresent(labels, claims.LegacyLabelClaimed)
 }
 
-func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, issue *gh.Issue) []int {
-	seen := map[int]bool{}
-	var out []int
-	add := func(n int) {
-		if n <= 0 || seen[n] {
+// closeOnMergePRRef names a linked PR together with the repo it lives in,
+// which differs from the issue's repo for cross-repo references.
+type closeOnMergePRRef struct {
+	Repo   string
+	Number int
+}
+
+func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, issue *gh.Issue) []closeOnMergePRRef {
+	issueRepo := owner + "/" + repo
+	seen := map[closeOnMergePRRef]bool{}
+	var out []closeOnMergePRRef
+	add := func(prRepo string, n int) {
+		if prRepo == "" {
+			prRepo = issueRepo
+		}
+		ref := closeOnMergePRRef{Repo: prRepo, Number: n}
+		key := closeOnMergePRRef{Repo: strings.ToLower(prRepo), Number: n}
+		if n <= 0 || seen[key] {
 			return
 		}
-		seen[n] = true
-		out = append(out, n)
+		seen[key] = true
+		out = append(out, ref)
 	}
 	commentOpts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: closeOnMergeCommentPageSize}}
 	for {
@@ -332,7 +367,7 @@ func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, 
 		}
 		for _, comment := range comments {
 			for _, n := range parseCoveredByPRComments(comment.GetBody()) {
-				add(n)
+				add(issueRepo, n)
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -351,7 +386,7 @@ func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, 
 				continue
 			}
 			if src := event.GetSource(); src != nil && src.Issue != nil && src.Issue.IsPullRequest() {
-				add(src.Issue.GetNumber())
+				add(src.Issue.GetRepository().GetFullName(), src.Issue.GetNumber())
 			}
 		}
 		if resp == nil || resp.NextPage == 0 {
@@ -359,7 +394,12 @@ func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, 
 		}
 		timelineOpts.Page = resp.NextPage
 	}
-	sort.Ints(out)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Repo != out[j].Repo {
+			return out[i].Repo < out[j].Repo
+		}
+		return out[i].Number < out[j].Number
+	})
 	return out
 }
 
