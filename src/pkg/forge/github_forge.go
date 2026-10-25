@@ -2,14 +2,16 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // githubReader is the subset of *github.Client the GitHub adapter needs for the
@@ -41,6 +43,22 @@ type githubIssueConsolidator interface {
 	CreateIssue(ctx context.Context, req github.CreateIssueRequest) (github.CreateIssueResult, error)
 }
 
+// githubPullReader is the subset of go-github's *gh.PullRequestsService the
+// merge path reads through. One PR fetch answers all three gate questions at
+// once — already merged?, gate label?, still the expected head? — so the
+// adapter spends a single extra call before a merge.
+type githubPullReader interface {
+	Get(ctx context.Context, owner, repo string, number int) (*gh.PullRequest, *gh.Response, error)
+}
+
+// githubMerger is the merge primitive of *github.Client. The adapter delegates
+// to MergePR rather than calling the REST endpoint itself, so a forge merge
+// inherits exactly what the hive's own merge relay has: the mutation boundary
+// and its reconciliation, the forward-merge guard, and the merge audit record.
+type githubMerger interface {
+	MergePR(ctx context.Context, repo string, number int, mergeMethod, expectSHA string) (github.MergePRResult, error)
+}
+
 // markerLookupMaxPages bounds FindIssueByMarker to the most recent pages of
 // open issues, matching the bounded dedupe scan pkg/github.CreateIssue uses:
 // publisher-filed issues are recent by construction and an unbounded scan of
@@ -54,12 +72,13 @@ const markerLookupPerPage = 100
 //
 // It is deliberately thin: read operations delegate to the underlying client
 // and translate its already-neutralized types (github.Issue/PullRequest) into
-// the forge-neutral types. The write path is not implemented here — callers that
-// need writes continue to use *github.Client directly until the Forge write
-// path (see TODOs on the Forge interface) lands.
+// the forge-neutral types; write and merge operations delegate to go-github's
+// services and to *github.Client.MergePR. No forge logic is duplicated here.
 type gitHubForge struct {
 	client githubReader
 	writer githubWriter
+	pulls  githubPullReader
+	merger githubMerger
 	org    string
 
 	// consolidator, when set, routes CreateIssue through the consolidating
@@ -78,16 +97,29 @@ func newGitHubForge(token string, opts Options) *gitHubForge {
 	// client's own hold/comment helpers are private and log-and-swallow errors,
 	// which the Forge write path must surface). GoGitHub() exposes the same
 	// underlying client those helpers use, so no logic is duplicated.
-	return &gitHubForge{client: client, writer: client.GoGitHub().Issues, org: opts.Org}
+	return &gitHubForge{
+		client: client,
+		writer: client.GoGitHub().Issues,
+		pulls:  client.GoGitHub().PullRequests,
+		merger: client,
+		org:    opts.Org,
+	}
 }
 
 // newGitHubForgeWithReader is a test seam: it builds the adapter over an
 // arbitrary githubReader (e.g. a stub), bypassing real client construction. The
-// same stub may also satisfy githubWriter, so it is used for both seams.
+// same stub may also satisfy githubWriter, githubPullReader or githubMerger, so
+// it is used for every seam it covers.
 func newGitHubForgeWithReader(r githubReader, org string) *gitHubForge {
 	f := &gitHubForge{client: r, org: org}
 	if w, ok := r.(githubWriter); ok {
 		f.writer = w
+	}
+	if p, ok := r.(githubPullReader); ok {
+		f.pulls = p
+	}
+	if m, ok := r.(githubMerger); ok {
+		f.merger = m
 	}
 	return f
 }
@@ -305,6 +337,83 @@ func (f *gitHubForge) FindIssueByMarker(ctx context.Context, repo, marker string
 	return IssueRef{}, false, nil
 }
 
+// gitHubMergeMethods maps the forge-neutral strategies onto GitHub's
+// merge_method. It is also the membership test: a MergeStrategy absent from
+// this map is refused, never defaulted into a different history shape.
+// GitHub's own default is squash, matching pkg/github.MergePR.
+var gitHubMergeMethods = map[MergeStrategy]string{
+	MergeStrategyDefault: "squash",
+	MergeStrategySquash:  "squash",
+	MergeStrategyMerge:   "merge",
+	MergeStrategyRebase:  "rebase",
+}
+
+// Merge integrates a pull request, honouring the forge-neutral gate: an
+// already-merged PR is idempotent success, a hold/blocking label or a moved
+// head refuses WITHOUT calling the merge endpoint, and only then does the
+// merge delegate to *github.Client.MergePR (mutation boundary, forward-merge
+// guard, merge audit). See Merger for the contract every adapter shares.
+func (f *gitHubForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) (MergeResult, error) {
+	if number <= 0 {
+		return MergeResult{}, fmt.Errorf("forge: merge %s: change number is required", repo)
+	}
+	method, ok := gitHubMergeMethods[opts.Strategy]
+	if !ok {
+		return MergeResult{}, fmt.Errorf("%w: %q (github accepts %q, %q, %q)",
+			ErrMergeStrategyUnsupported, opts.Strategy,
+			MergeStrategySquash, MergeStrategyMerge, MergeStrategyRebase)
+	}
+	if f.pulls == nil || f.merger == nil {
+		return MergeResult{}, fmt.Errorf("forge: merge %s#%d: adapter was built without a merge client", repo, number)
+	}
+	owner, name := splitRepo(repo, f.org)
+	slug := owner + "/" + name
+	pr, _, err := f.pulls.Get(ctx, owner, name, number)
+	if err != nil {
+		return MergeResult{}, fmt.Errorf("forge: reading %s#%d before merge: %w", slug, number, err)
+	}
+	if pr.GetMerged() {
+		return MergeResult{Merged: true, AlreadyMerged: true, SHA: pr.GetMergeCommitSHA()}, nil
+	}
+	if label := opts.gateLabel(gitHubLabelNames(pr.Labels)); label != "" {
+		return MergeResult{}, fmt.Errorf("%w: %s#%d carries %q", ErrMergeGated, slug, number, label)
+	}
+	expect := strings.TrimSpace(opts.ExpectedHeadSHA)
+	if have := pr.GetHead().GetSHA(); expect != "" && have != "" && have != expect {
+		return MergeResult{}, fmt.Errorf("%w: %s#%d head is %s, caller decided on %s", ErrMergeHeadMismatch, slug, number, have, expect)
+	}
+	res, err := f.merger.MergePR(ctx, slug, number, method, expect)
+	if err != nil {
+		// GitHub answers 409 when the head moved past the SHA we pinned
+		// between the read above and the merge — the same refusal, reported
+		// by the forge instead of seen locally, so callers match one sentinel.
+		if isGitHubHeadMovedRefusal(err) {
+			return MergeResult{}, fmt.Errorf("%w: %s#%d: %w", ErrMergeHeadMismatch, slug, number, err)
+		}
+		return MergeResult{}, fmt.Errorf("forge: merging %s#%d: %w", slug, number, err)
+	}
+	return MergeResult{Merged: res.Merged, SHA: res.SHA}, nil
+}
+
+// gitHubLabelNames flattens go-github labels to their names for the gate.
+func gitHubLabelNames(labels []*gh.Label) []string {
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if n := l.GetName(); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// isGitHubHeadMovedRefusal reports whether err is GitHub's 409 "head branch
+// was modified" answer to a SHA-pinned merge.
+func isGitHubHeadMovedRefusal(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusConflict
+}
+
 // Compile-time assertion that the adapter satisfies the interface.
 var _ Forge = (*gitHubForge)(nil)
 var _ IssueSeam = (*gitHubForge)(nil)
+var _ Merger = (*gitHubForge)(nil)

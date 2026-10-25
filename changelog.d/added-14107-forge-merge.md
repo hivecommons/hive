@@ -1,0 +1,1 @@
+- Forge-neutral merge seam: `forge.MergeOptions` (strategy, expected head SHA, gate labels) and `forge.Merger`, implemented by the GitHub adapter and held to a shared contract every forge adapter must pass (#14107)
