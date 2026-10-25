@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
@@ -173,7 +174,7 @@ type boot struct {
 	githubAppState    github.AppAuthState
 	githubAppRequired bool
 	policyDirPath     string
-	projectCtx        agent.ProjectContext
+	projectCtx        crux.ProjectContext
 	mutationStats     *effects.Recorder
 
 	// bootAgents

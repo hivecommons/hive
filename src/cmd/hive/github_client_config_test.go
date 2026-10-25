@@ -34,6 +34,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -85,7 +86,7 @@ const (
 	rebuildTestOpenRepo  = "acme/open"
 	rebuildTestLockedRep = "acme/locked"
 	// rebuildTestHiveLevel lets "quality" open PRs; rebuildTestLockedLevel
-	// (advisory) does not. See agent.DefaultAgentMode.
+	// (advisory) does not. See crux.DefaultAgentMode.
 	rebuildTestHiveLevel   = 5
 	rebuildTestLockedLevel = 2
 	rebuildTestAgent       = "quality"
@@ -225,7 +226,7 @@ func TestConfigureGitHubClientTiersWaitForDependencies(t *testing.T) {
 		t.Fatal("App policy tier (no dependencies) was not applied")
 	}
 
-	b.agentMgr = agent.NewManager(map[string]config.AgentConfig{}, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(map[string]config.AgentConfig{}, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.configureGitHubClient(client)
 	b.configureGitHubClient(client)

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -306,7 +307,7 @@ func TestPRLifecycleState(t *testing.T) {
 }
 
 func TestPRFollowUpResumer_AdaptsManager(t *testing.T) {
-	mgr := agent.NewManager(map[string]config.AgentConfig{}, discardLogger(), agent.ProjectContext{})
+	mgr := agent.NewManager(map[string]config.AgentConfig{}, discardLogger(), crux.ProjectContext{})
 	r := prFollowUpResumer{mgr: mgr}
 	if _, ok := r.SessionID("ghost"); ok {
 		t.Fatal("unknown agent must have no session")

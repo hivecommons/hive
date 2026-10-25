@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -60,7 +61,7 @@ func newBootDashboardBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.ghClient = fakeGitHubClient(t)
 	b.beadStores = map[string]*beads.Store{}
 	return b

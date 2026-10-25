@@ -297,6 +297,7 @@ func TestCloseOnMergeResultSettles(t *testing.T) {
 		{CloseOnMergeResult{Action: CloseOnMergeAwaiting, Reason: "needs_confirmation_or_human"}, true},
 		{CloseOnMergeResult{Action: CloseOnMergeSkipped, Reason: "untrusted_author"}, true},
 		{CloseOnMergeResult{Action: CloseOnMergeSkipped, Reason: "reopened_after_merge"}, true},
+		{CloseOnMergeResult{Action: CloseOnMergeSkipped, Reason: "issue_not_found"}, true},
 		{CloseOnMergeResult{Action: CloseOnMergeNoop, Reason: "pr_not_merged"}, true},
 		{CloseOnMergeResult{Action: CloseOnMergeSkipped, Reason: "timeline_read_failed"}, false},
 		{CloseOnMergeResult{Action: CloseOnMergeNoop, Reason: "issue_read_failed"}, false},

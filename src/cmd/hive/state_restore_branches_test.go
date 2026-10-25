@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/snapshot"
@@ -27,7 +28,7 @@ func TestRestoreAgentRuntimeState_SkipsAgentNotInConfig(t *testing.T) {
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	restoreAgentRuntimeState(&snapshot.PersistedState{
@@ -56,7 +57,7 @@ func TestRestoreAgentRuntimeState_DefaultPauseProvenance(t *testing.T) {
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	pausedAt := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
@@ -95,7 +96,7 @@ func TestRestoreAgentRuntimeState_PinsAndTelemetry(t *testing.T) {
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	lastKick := time.Now().Add(-time.Hour).Truncate(time.Second)
@@ -187,7 +188,7 @@ func TestRestoreAgentRuntimeState_ConfigFieldMerge(t *testing.T) {
 			},
 		},
 	}
-	m := agent.NewManager(cfg.Agents, restoreTestLogger(), agent.ProjectContext{})
+	m := agent.NewManager(cfg.Agents, restoreTestLogger(), crux.ProjectContext{})
 	wireGatewayChecker(m, cfg)
 
 	enabled := false

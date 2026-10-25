@@ -164,6 +164,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateUpstreamWatch(); err != nil {
 		return err
 	}
+	if err := c.validateRepoForges(); err != nil {
+		return err
+	}
 	if err := ValidateKnowledgeConnectors(c.Knowledge.Connectors); err != nil {
 		return err
 	}

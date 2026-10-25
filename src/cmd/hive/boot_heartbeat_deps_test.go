@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -97,7 +98,7 @@ func newBootHeartbeatBoot(t *testing.T, f *bootHeartbeatFake, cfg *config.Config
 		repoTargetMisconfigured: func() bool { return false },
 		repoTargetIssueMessage:  func() string { return "" },
 		gov:                     governor.New(cfg.Governor, cfg.Agents, logger),
-		agentMgr:                agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+		agentMgr:                agent.NewManager(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:                 dashboard.NewServer(0, logger),
 		onDemandFromPack:        map[string]bool{},
 	}

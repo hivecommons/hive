@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -77,7 +78,7 @@ func newBootProxyBoot(t *testing.T, f *bootProxyFake, cfg *config.Config) *boot 
 		ctx:                      ctx,
 		cfg:                      cfg,
 		logger:                   logger,
-		agentMgr:                 agent.NewManager(cfg.Agents, logger, agent.ProjectContext{}),
+		agentMgr:                 agent.NewManager(cfg.Agents, logger, crux.ProjectContext{}),
 		dashSrv:                  dashboard.NewServer(0, logger),
 		tokenCollector:           tokens.NewCollector(t.TempDir(), logger),
 		linearCredentialResolver: func() agent.LinearCredential { return agent.LinearCredential{} },

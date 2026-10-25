@@ -282,7 +282,13 @@ func (a *AppAuth) InstallationAccountLogin(ctx context.Context, installationID i
 func (a *AppAuth) AppID() int64 { return a.appID }
 
 // InstallationID returns the installation ID this auth currently uses.
-func (a *AppAuth) InstallationID() int64 { return a.installationID }
+// It takes a.mu because AdoptInstallationID can rewrite the ID concurrently;
+// callers already holding a.mu must read the field directly instead.
+func (a *AppAuth) InstallationID() int64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.installationID
+}
 
 // APIURL returns the GitHub API base URL this auth targets ("" = public).
 func (a *AppAuth) APIURL() string { return a.apiURL }

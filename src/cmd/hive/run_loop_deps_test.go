@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -87,7 +88,7 @@ func newLoopBoot(t *testing.T, evalS, agentPollS int) (*boot, *strings.Builder, 
 	t.Cleanup(cancel)
 	b.ctx = ctx
 	b.gov = governor.New(cfg.Governor, cfg.EnabledAgents(), b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	return b, &sb, cancel
 }

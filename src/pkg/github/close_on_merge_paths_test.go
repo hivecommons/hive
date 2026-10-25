@@ -202,6 +202,7 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 		{name: "refs-only claim flagged wrong refs but still closes", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantWrongRefs: true},
 		{name: "refs-only claim for closed issue remains informational", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open", wantWrongRefs: true},
 		{name: "issue read failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusInternalServerError, wantAction: CloseOnMergeNoop, wantReason: "issue_read_failed"},
+		{name: "missing issue skipped without warn", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusNotFound, wantAction: CloseOnMergeSkipped, wantReason: "issue_not_found"},
 		{name: "closed issue already done", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open"},
 		{name: "close comment failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, commentStatus: http.StatusForbidden, wantAction: CloseOnMergeNoop, wantReason: "close_comment_failed"},
 		{name: "close patch failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, patchStatus: http.StatusForbidden, wantAction: CloseOnMergeNoop, wantReason: "close_failed"},
@@ -285,6 +286,14 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 			}
 			if tc.wantReason == "issue_read_failed" && (len(observed) != 1 || observed[0] != "close-on-merge: reading issue failed") {
 				t.Fatalf("issue read failure must still feed runtime self-reports: %v", observed)
+			}
+			if tc.wantReason == "issue_not_found" {
+				if !strings.Contains(logBuf.String(), "referenced issue not found") {
+					t.Fatalf("missing issue not logged: %s", logBuf.String())
+				}
+				if len(observed) != 0 {
+					t.Fatalf("missing issue is a verdict and must not feed runtime self-reports: %v", observed)
+				}
 			}
 		})
 	}

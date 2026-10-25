@@ -504,7 +504,7 @@ func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, key
 	}
 
 	jwtClient := newJWTClient(jwtToken, a.apiURL)
-	inst, resp, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
+	inst, resp, err := jwtClient.Apps.GetInstallation(ctx, d.InstallationID)
 	if err != nil {
 		d.State = classifyAPIError(err, resp)
 		d.Err = err

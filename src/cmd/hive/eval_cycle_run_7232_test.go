@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -83,7 +84,7 @@ func newEvalCycleFixture(t *testing.T) *evalCycleFixture {
 	f.gh = github.NewClientForTest(api.URL, "testorg", []string{"widget"}, logger)
 	f.gov = governor.New(f.cfg.Governor, f.cfg.Agents, logger)
 	f.sched = scheduler.New(f.cfg, logger)
-	f.agentMgr = agent.NewManager(f.cfg.Agents, logger, agent.ProjectContext{})
+	f.agentMgr = agent.NewManager(f.cfg.Agents, logger, crux.ProjectContext{})
 	f.dashSrv = dashboard.NewServer(0, logger)
 	return f
 }

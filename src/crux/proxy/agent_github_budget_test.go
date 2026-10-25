@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -113,5 +115,36 @@ func TestAgentGitHubBudget429ShapeAndNudge(t *testing.T) {
 	}
 	if nudges != 1 {
 		t.Fatalf("nudge repeated in same window: %d", nudges)
+	}
+}
+
+func TestAgentGitHubBudgetCapWarnOncePerWindow(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+	p := &GitHubProxy{
+		logger:       slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		githubBudget: newAgentGitHubBudget(func() time.Time { return now }),
+	}
+	refuse := func() {
+		server, client := net.Pipe()
+		defer server.Close()
+		defer client.Close()
+		go func() { _, _ = io.Copy(io.Discard, client) }()
+		p.writeAgentGitHubBudget429(server, agentGitHubBudgetStatus{Agent: "scanner", Count: 3, Cap: 3, RetryAfter: 5, Reason: "cap"})
+	}
+	warns := func() int { return strings.Count(buf.String(), "level=WARN") }
+	for i := 0; i < 5; i++ {
+		refuse()
+	}
+	if got := warns(); got != 1 {
+		t.Fatalf("WARNs in first window = %d, want 1\n%s", got, buf.String())
+	}
+	if got := strings.Count(buf.String(), "level=DEBUG"); got != 4 {
+		t.Fatalf("DEBUG repeats = %d, want 4", got)
+	}
+	now = now.Add(time.Hour + time.Second)
+	refuse()
+	if got := warns(); got != 2 {
+		t.Fatalf("WARNs after window reset = %d, want 2", got)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -189,7 +190,7 @@ func installAgentPauseEmitter(mgr *agent.Manager) {
 	if mgr == nil {
 		return
 	}
-	mgr.SetPauseTransitionObserver(func(event agent.PauseTransitionEvent) {
+	mgr.SetPauseTransitionObserver(func(event crux.PauseTransitionEvent) {
 		transition := hooks.TransitionAgentResumed
 		if event.Paused {
 			transition = hooks.TransitionAgentPaused
@@ -290,7 +291,7 @@ func (a *pauserAdapter) PauseAgent(ctx context.Context, agentName, reason string
 	// identity is the HOOK, not a person — PauseBy's contract is "never
 	// fabricate" a human actor, so hookPauseActor is an explicitly
 	// non-human identity that cannot be mistaken for a dashboard user.
-	return a.mgr.PauseByCause(agentName, hookPauseTriggerFor(cause), reason, hookPauseActor(cause), agent.PauseCausation{
+	return a.mgr.PauseByCause(agentName, hookPauseTriggerFor(cause), reason, hookPauseActor(cause), crux.PauseCausation{
 		Depth:            cause.Depth,
 		HookName:         cause.HookName,
 		OriginTransition: string(cause.OriginTransition),

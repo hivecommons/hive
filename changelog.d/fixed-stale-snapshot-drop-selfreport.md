@@ -1,0 +1,1 @@
+- Demote the stale status snapshot drop to Info; warn only after repeated consecutive drops (#14117)

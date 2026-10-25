@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
@@ -91,7 +92,7 @@ func newBootKnowledgeBoot(t *testing.T, cfg *config.Config) *boot {
 	t.Helper()
 	b, _ := newDepsTestBoot(t, cfg)
 	b.sched = scheduler.New(cfg, b.logger)
-	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, agent.ProjectContext{})
+	b.agentMgr = agent.NewManager(cfg.Agents, b.logger, crux.ProjectContext{})
 	b.dashSrv = dashboard.NewServer(0, b.logger)
 	b.beadStores = map[string]*beads.Store{}
 	return b

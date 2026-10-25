@@ -456,6 +456,14 @@ jobs:
           else
             status=1
           fi
+          # The test binary runs under test2json, not the `go test` driver, so
+          # nothing prints the `ok <pkg>` / `FAIL <pkg>` summary line the
+          # coverage scorer classifies packages by (#14135). Append it.
+          if [ "$status" -eq 0 ]; then
+            printf 'ok  \t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-hub-"$IDX".log
+          else
+            printf 'FAIL\t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-hub-"$IDX".log
+          fi
           # Sum first-pass counters for identical blocks; never count reruns.
           # Do this even after test failure so the coverage gate has evidence.
           awk 'FNR == 1 { next } { key=$1 " " $2; hits[key]+=$3 }
@@ -706,6 +714,14 @@ jobs:
             :
           else
             status=1
+          fi
+          # The test binary runs under test2json, not the `go test` driver, so
+          # nothing prints the `ok <pkg>` / `FAIL <pkg>` summary line the
+          # coverage scorer classifies packages by (#14135). Append it.
+          if [ "$status" -eq 0 ]; then
+            printf 'ok  \t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-agent-"$IDX".log
+          else
+            printf 'FAIL\t%s\t(slice %s/%s)\n' "$TEST_PACKAGE" "$IDX" "$TOTAL" >> test-agent-"$IDX".log
           fi
           # Sum first-pass counters for identical blocks; never count reruns.
           # Do this even after test failure so the coverage gate has evidence.

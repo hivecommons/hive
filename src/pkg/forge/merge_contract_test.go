@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -286,10 +287,186 @@ func TestMergeContract_GitLab(t *testing.T) {
 	RunMergeContract(t, &gitLabContractAdapter{})
 }
 
+// gitHubContractAdapter adapts gitHubForge to the shared contract harness.
+//
+// The fake serves only what the adapter actually calls: the PR read that
+// answers the gates, the merge endpoint, and the ref delete DeleteBranch
+// needs. Anything else (the forward-merge guard's history lookups) falls
+// through to 404, which that guard treats as "could not tell" and leaves the
+// requested strategy alone — so the strategy cases still assert the method
+// this adapter put on the wire.
+type gitHubContractAdapter struct{}
+
+func (a *gitHubContractAdapter) Name() string { return "github" }
+
+func (a *gitHubContractAdapter) Setup(t *testing.T, scenario MergeContractScenario) (Merger, string, int, func()) {
+	t.Helper()
+	const (
+		org     = "contract-org"
+		name    = "contract-repo"
+		slug    = org + "/" + name
+		prNum   = 42
+		headSHA = "feedfacefeedfacefeedfacefeedfacefeedface"
+		headRef = "contract-head"
+	)
+	prPath := fmt.Sprintf("/repos/%s/%s/pulls/%d", org, name, prNum)
+
+	var deletedRef string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Route: GET the pull request (gate read + forward-merge guard).
+		if r.Method == http.MethodGet && r.URL.Path == prPath {
+			labels := []map[string]any{{"name": "kind/bug"}}
+			if scenario == ScenarioHoldLabelRefuses {
+				labels = append(labels, map[string]any{"name": "hold"})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"number": prNum,
+				"state":  "open",
+				"merged": scenario == ScenarioAlreadyMerged,
+				"labels": labels,
+				"head":   map[string]any{"sha": headSHA, "ref": headRef},
+				"base":   map[string]any{"ref": "main"},
+			})
+			return
+		}
+
+		// Route: PUT the merge.
+		if r.Method == http.MethodPut && r.URL.Path == prPath+"/merge" {
+			switch scenario {
+			case ScenarioHoldLabelRefuses, ScenarioHeadSHAGuard, ScenarioAlreadyMerged:
+				t.Errorf("merge endpoint called in scenario %q — the gate must refuse before the merge", scenario)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+				t.Errorf("decode merge body: %v", err)
+			}
+			if want, ok := map[MergeContractScenario]string{
+				ScenarioStrategySquash: "squash",
+				ScenarioStrategyMerge:  "merge",
+				ScenarioStrategyRebase: "rebase",
+			}[scenario]; ok {
+				if got, _ := body["merge_method"].(string); got != want {
+					t.Errorf("merge_method = %q, want %q", got, want)
+				}
+			}
+			if scenario == ScenarioNotMergeable {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				_ = json.NewEncoder(w).Encode(map[string]string{"message": "Pull Request is not mergeable"})
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge-commit-sha"})
+			return
+		}
+
+		// Route: DELETE the head ref (MergeOptions.DeleteBranch).
+		if r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/git/refs/", org, name)) {
+			deletedRef = strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/repos/%s/%s/git/refs/", org, name))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+
+	// go-github requires the base URL to end in a slash.
+	f := newGitHubForge("contract-token", Options{BaseURL: srv.URL + "/", Org: org})
+	cleanup := func() {
+		if scenario == ScenarioDeleteBranch && deletedRef != "heads/"+headRef {
+			t.Errorf("deleted ref = %q, want %q — DeleteBranch must remove the merged head branch", deletedRef, "heads/"+headRef)
+		}
+		srv.Close()
+	}
+	return f, slug, prNum, cleanup
+}
+
 func TestMergeContract_GitHub(t *testing.T) {
-	t.Skip("GitHub adapter does not implement Merger yet (pending #14107)")
+	RunMergeContract(t, &gitHubContractAdapter{})
+}
+
+// giteaContractAdapter adapts giteaForge to the shared contract harness.
+//
+// Gitea carries the strategy, the head pin and the branch deletion in ONE
+// merge payload (Do / head_commit_id / delete_branch_after_merge), so the fake
+// asserts on that body rather than on a sequence of calls.
+type giteaContractAdapter struct{}
+
+func (a *giteaContractAdapter) Name() string { return "gitea" }
+
+func (a *giteaContractAdapter) Setup(t *testing.T, scenario MergeContractScenario) (Merger, string, int, func()) {
+	t.Helper()
+	const (
+		org   = "contract-org"
+		name  = "contract-repo"
+		slug  = org + "/" + name
+		prNum = 42
+		head  = "feedfacefeedfacefeedfacefeedfacefeedface"
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, fmt.Sprintf("/pulls/%d", prNum)) {
+			pr := map[string]any{
+				"number": prNum,
+				"state":  "open",
+				"merged": scenario == ScenarioAlreadyMerged,
+				"head":   map[string]any{"ref": "contract-head", "sha": head},
+				"base":   map[string]any{"ref": "main"},
+			}
+			if scenario == ScenarioHoldLabelRefuses {
+				pr["labels"] = []map[string]any{{"name": "kind/bug"}, {"name": "hold"}}
+			}
+			_ = json.NewEncoder(w).Encode(pr)
+			return
+		}
+
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, fmt.Sprintf("/pulls/%d/merge", prNum)) {
+			switch scenario {
+			case ScenarioHoldLabelRefuses, ScenarioHeadSHAGuard, ScenarioAlreadyMerged:
+				t.Errorf("merge endpoint called in scenario %q — the gate must refuse before the merge", scenario)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			var p giteaMergePayload
+			if err := json.NewDecoder(r.Body).Decode(&p); err != nil && err != io.EOF {
+				t.Errorf("decode merge body: %v", err)
+			}
+			if want, ok := map[MergeContractScenario]string{
+				ScenarioStrategySquash: "squash",
+				ScenarioStrategyMerge:  "merge",
+				ScenarioStrategyRebase: "rebase",
+			}[scenario]; ok && p.Do != want {
+				t.Errorf("Do = %q, want %q", p.Do, want)
+			}
+			if scenario == ScenarioDeleteBranch && !p.DeleteBranchAfterMerge {
+				t.Errorf("delete_branch_after_merge = false, want true")
+			}
+			if scenario == ScenarioNotMergeable {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				_ = json.NewEncoder(w).Encode(map[string]string{"message": "Please check your email address"})
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+
+		http.NotFound(w, r)
+	}))
+
+	f, err := newGiteaForge("contract-token", Options{BaseURL: srv.URL, Org: org})
+	if err != nil {
+		srv.Close()
+		t.Fatalf("newGiteaForge: %v", err)
+	}
+	return f, slug, prNum, srv.Close
 }
 
 func TestMergeContract_Gitea(t *testing.T) {
-	t.Skip("Gitea adapter does not implement Merger yet (pending #14110)")
+	RunMergeContract(t, &giteaContractAdapter{})
 }
