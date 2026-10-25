@@ -1424,7 +1424,8 @@ func ciPollNudgeExemptAgent(agent *AgentProcess) bool {
 		return true
 	}
 	for _, f := range []string{agent.Name, agent.Config.Role} {
-		if strings.EqualFold(strings.TrimSpace(f), "ci-maintainer") {
+		lane := strings.TrimSpace(f)
+		if strings.EqualFold(lane, "ci-maintainer") || strings.EqualFold(lane, "quality") {
 			return true
 		}
 	}
@@ -1449,9 +1450,10 @@ func (m *Manager) nudgeIfPollingCI(agent *AgentProcess, scrollback, visible stri
 	if agent.kickDelivering.Load() || agent.LastKick == nil {
 		return
 	}
-	// Reviewers and CI maintainers read check status as evidence for the PRs
-	// and repositories they inspect. Those reads are not an own-PR wait loop,
-	// which this guard cannot identify from pane text alone (#13860, #13898).
+	// Reviewers, CI maintainers and quality agents read check status as evidence
+	// for the PRs and repositories they inspect. Those reads are not an own-PR
+	// wait loop, which this guard cannot identify from pane text alone
+	// (#13860, #13898, #14188).
 	if ciPollNudgeExemptAgent(agent) {
 		return
 	}
