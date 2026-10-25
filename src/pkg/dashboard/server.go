@@ -21,10 +21,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
@@ -36,7 +37,6 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
-	"github.com/hivecommons/hive/crux/watchdog"
 )
 
 //go:embed static
@@ -131,8 +131,11 @@ type Server struct {
 	// governor built from an older enumeration (webhook_tracker_refresh.go).
 	// Guarded by statusMu.
 	webhookPatches map[string]webhookPatchEntry
-	sidebar        interface{}
-	sidebarMu      sync.RWMutex
+	// closedSweep is the tracker's closed-item backstop
+	// (stage_tracker_closed_sweep.go).
+	closedSweep closedSweepState
+	sidebar     interface{}
+	sidebarMu   sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.

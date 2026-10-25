@@ -226,7 +226,7 @@ func (s *Server) trackerRefresher() *webhookTrackerRefresher {
 			}
 		}
 		if r.apply == nil {
-			r.apply = s.applyWebhookItemSnapshots
+			r.apply = func(snaps []github.WebhookItemSnapshot) { s.applyWebhookItemSnapshots(snaps) }
 		}
 		if r.ctx == nil {
 			r.ctx = func() context.Context {
@@ -247,6 +247,7 @@ func (s *Server) trackerRefresher() *webhookTrackerRefresher {
 // the delivery is a hint to re-read, and the GET is the state. It reports
 // how many items were queued.
 func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, deliveryID string) int {
+	s.evictClosedWebhookItem(res, deliveryID, time.Now())
 	if !s.webhookTrackerRefreshEnabled() {
 		return 0
 	}
@@ -257,6 +258,34 @@ func (s *Server) scheduleWebhookTrackerRefresh(res github.WebhookEventResult, de
 	s.invalidateStageTrackerForWebhook()
 	s.trackerRefresher().enqueue(keys, deliveryID)
 	return len(keys)
+}
+
+// evictClosedWebhookItem applies the one payload fact the tracker trusts
+// without a confirming read: the item the delivery embeds is closed or
+// merged. Every `issues`, `issue_comment` and `pull_request*` payload carries
+// the full object with its state, so a `labeled`, `unlabeled` or `created`
+// delivery for an already-closed item says closed too, and the row leaves
+// on whichever delivery arrives — not only on `closed`. Dropping a row is
+// the conservative direction (it can only stop the hive acting on the
+// item); the open fields (title, labels, bucket) are still only ever taken
+// from the GET the refresher makes next. Without this, a confirming GET that
+// the budget or rate-limit guards refused, or that failed, left the row
+// listed open until the next full enumeration: hivecommons/hive#14159 and
+// #14064 sat on the tracker twenty minutes after they closed, through the
+// close, a bot comment and the stage-label sweep's unlabel, each of which
+// had said "closed". It reports whether a row was dropped.
+func (s *Server) evictClosedWebhookItem(res github.WebhookEventResult, deliveryID string, now time.Time) bool {
+	if s == nil || !res.KnownRepo || !res.Item.Closed() {
+		return false
+	}
+	repo := res.ConfiguredRepo
+	if repo == "" {
+		repo = res.Repo
+	}
+	h := res.Item
+	snap := github.WebhookItemSnapshot{Repo: repo, Number: h.Number, IsPR: h.IsPR, State: "closed", Merged: h.Merged,
+		UpdatedAt: h.UpdatedAt, FetchedAt: now, DeliveryID: deliveryID}
+	return s.applyWebhookItemSnapshots([]github.WebhookItemSnapshot{snap}) > 0
 }
 
 // invalidateStageTrackerForWebhook drops the tracker cache on a webhook's
@@ -287,10 +316,17 @@ func (s *Server) FlushWebhookTrackerRefresh() {
 // snapshot with them and republishes it (copy-on-write: readers holding the
 // old pointer are unaffected). An item that closed or merged leaves its
 // list; an item the status snapshot never listed is left for the next
-// cycle. The tracker cache is dropped when anything changed.
-func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
+// cycle. The tracker cache is dropped when anything changed. It reports how
+// many list entries changed.
+//
+// Ordering: an open read whose updated_at is older than the listed copy's
+// (two deliveries' reads landing out of order, or a stale read after a
+// close) is dropped, so the row never moves backwards; a closed read is
+// applied whatever its timestamp — a row may only stay open while the
+// newest word on it says open.
+func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) int {
 	if len(snaps) == 0 {
-		return
+		return 0
 	}
 	if s.deps != nil && s.deps.ApplyWebhookItems != nil {
 		s.deps.ApplyWebhookItems(snaps)
@@ -299,7 +335,7 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 	cur := s.status
 	if cur == nil {
 		s.statusMu.Unlock()
-		return
+		return 0
 	}
 	// Remembered before the lists are patched: a snapshot the governor is
 	// building right now (from the enumeration its cycle began with) still
@@ -316,6 +352,9 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 			if !strings.EqualFold(snap.Repo, name) && !strings.EqualFold(snap.Repo, repo.Name) {
 				continue
 			}
+			if snap.Open() && snapshotOlderThanListed(*repo, snap) {
+				continue
+			}
 			repoChanged += patchFrontendRepoItem(repo, snap)
 		}
 		if repoChanged > 0 {
@@ -330,6 +369,17 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) {
 	if changed > 0 {
 		s.invalidateStageTrackerForWebhook()
 	}
+	return changed
+}
+
+// snapshotOlderThanListed reports whether the listed copy of the snapshot's
+// item carries a later updated_at than the read: the read is stale.
+func snapshotOlderThanListed(repo FrontendRepo, snap github.WebhookItemSnapshot) bool {
+	if snap.UpdatedAt.IsZero() {
+		return false
+	}
+	held := frontendRepoItemUpdatedAt(repo, snap.Number, snap.IsPR)
+	return !held.IsZero() && held.After(snap.UpdatedAt)
 }
 
 // webhookPatchEntry is one remembered webhook re-read: the snapshot the GET
@@ -352,8 +402,11 @@ func (s *Server) webhookPatchReplayWindow() time.Duration {
 }
 
 // rememberWebhookPatchesLocked records snaps for replay (statusMu held).
-// The newest read of an item replaces the previous one, so a reopen after a
-// close is replayed as open; entries past the window or over the cap go.
+// The newest read of an item by GitHub's updated_at replaces the previous
+// one, so a reopen after a close is replayed as open, while an open read
+// that is older than the remembered one (a `labeled` delivery's read landing
+// after the `closed` delivery's) cannot un-remember the close; a closed read
+// always replaces. Entries past the window or over the cap go.
 func (s *Server) rememberWebhookPatchesLocked(snaps []github.WebhookItemSnapshot, now time.Time) {
 	if s.webhookPatches == nil {
 		s.webhookPatches = map[string]webhookPatchEntry{}
@@ -362,7 +415,11 @@ func (s *Server) rememberWebhookPatchesLocked(snaps []github.WebhookItemSnapshot
 		if snap.Number <= 0 || snap.Repo == "" {
 			continue
 		}
-		s.webhookPatches[github.ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)] = webhookPatchEntry{snap: snap, appliedAt: now}
+		key := github.ItemPatchKey(snap.Repo, snap.Number, snap.IsPR)
+		if prev, ok := s.webhookPatches[key]; ok && snap.Open() && !snap.UpdatedAt.IsZero() && prev.snap.UpdatedAt.After(snap.UpdatedAt) {
+			continue
+		}
+		s.webhookPatches[key] = webhookPatchEntry{snap: snap, appliedAt: now}
 	}
 	s.pruneWebhookPatchesLocked(now)
 }
