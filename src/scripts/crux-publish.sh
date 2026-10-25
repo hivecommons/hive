@@ -43,7 +43,7 @@ OLD_MODULE="github.com/hivecommons/hive/crux"
 NEW_MODULE="github.com/hivecommons/crux"
 
 # Hand-maintained in hivecommons/crux; never touched by a sync.
-KEEP=(.git .github .goreleaser.yaml Dockerfile LICENSE README.md .gitignore .golangci.yml .dockerignore)
+KEEP=(.git .github .goreleaser.yaml Dockerfile Dockerfile.goreleaser LICENSE README.md .gitignore .golangci.yml .dockerignore)
 
 [ -f "$SRC/go.mod" ] || { echo "::error::$SRC/go.mod not found" >&2; exit 1; }
 [ -d "$DEST" ] || { echo "::error::$DEST is not a directory" >&2; exit 1; }

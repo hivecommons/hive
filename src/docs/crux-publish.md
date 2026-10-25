@@ -40,7 +40,7 @@ and fast-forward only; `git log` there is a list of hive shas.
 
 ### What is preserved in `hivecommons/crux`
 
-`.git`, `.github/`, `.goreleaser.yaml`, `Dockerfile`, `.dockerignore`,
+`.git`, `.github/`, `.goreleaser.yaml`, `Dockerfile`, `Dockerfile.goreleaser`, `.dockerignore`,
 `LICENSE`, `README.md`, `.gitignore`, `.golangci.yml`. Everything else is
 replaced on each sync. The module's own `src/crux/README.md` lands as
 `docs/MODULE.md`; the repository `README.md` (positioning, install, quick
