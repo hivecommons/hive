@@ -291,3 +291,36 @@ func TestFeedLogFedPath(t *testing.T) {
 		})
 	}
 }
+
+func TestStartupKickInterruptedFeedThresholdAndClear(t *testing.T) {
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	const msg = "startup kick dropped: agent restarted or stopped while waiting"
+	// One normal stop must not report a fault; repeated interruptions should
+	// carry their own attribution rather than a timeout or restart storm.
+	for i := 0; i < 4; i++ {
+		logger.Warn(msg, "name", "scanner", "trigger", "startup")
+		now = now.Add(time.Minute)
+		if ev := tr.Evidence(); len(ev) != 0 {
+			t.Fatalf("below threshold produced evidence: %+v", ev)
+		}
+	}
+	logger.Warn(msg, "name", "scanner", "trigger", "startup")
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassStartupKickInterrupted || ev[0].Count != 5 || ev[0].Severity != "low" {
+		t.Fatalf("repeated interruptions = %+v", ev)
+	}
+	if !strings.Contains(ev[0].Diagnostics, "scanner") || !strings.Contains(ev[0].Diagnostics, "startup") {
+		t.Fatalf("interruption diagnostics = %q", ev[0].Diagnostics)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle interruptions still reported: %+v", ev)
+	}
+	cleared := tr.TakeCleared()
+	if len(cleared) != 1 || cleared[0].Class != fleetreport.ClassStartupKickInterrupted {
+		t.Fatalf("cleared interruptions = %+v", cleared)
+	}
+}

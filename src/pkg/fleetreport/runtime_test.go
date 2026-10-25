@@ -347,6 +347,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassIssueRequestStuck, message: "issue-request stuck: issue request failed 3 attempts over 7m"},
 		{class: ClassTmuxSessionCheckFailed, message: "tmux has-session failed"},
 		{class: ClassAgentPaneTimeout, message: "pane content at timeout"},
+		{class: ClassStartupKickInterrupted, message: "startup kick dropped: agent restarted or stopped while waiting"},
 		{class: ClassProxyTLSHandshakeFailed, message: "proxy client TLS handshake failed"},
 		{class: ClassAgentDirSetupFailed, message: "failed to create per-agent XDG dir"},
 		{class: ClassReviewEvidenceWriteFail, message: "review evidence: could not write bundle"},
@@ -911,6 +912,7 @@ func TestUnclassifiedRepeatedHonoursWindowAndIdleClear(t *testing.T) {
 
 func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 	fed := map[string]string{
+		"startup kick dropped: agent restarted or stopped while waiting": ClassStartupKickInterrupted,
 		"tmux has-session failed":                                                     ClassTmuxSessionCheckFailed,
 		"pane content at timeout":                                                     ClassAgentPaneTimeout,
 		"prompt timeout — dumping pane":                                               ClassAgentPaneTimeout,
