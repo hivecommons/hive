@@ -789,6 +789,77 @@ func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
 	}
 }
 
+// A re-target leaves the body naming the superseded blocker X and records Y
+// only in a comment. On a later pass whose comment budget ran out before the
+// issue, the sweep sees X from the body, re-detects the supersede, and must
+// read the comments before posting: the newest marker already names Y, so
+// nothing is re-posted and Retargeted stays 0.
+func TestReconcileBlockedIssuesSupersededNotRepostedWhenBudgetExhausted(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	var posts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch {
+		// Blocker PR 100 closed unmerged, superseded by #101 (still open).
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/100":
+			_, _ = io.WriteString(w, `{"number":100,"state":"closed","merged":false}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/100/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"Superseded by #101."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/101":
+			_, _ = io.WriteString(w, `{"number":101,"state":"open"}`)
+		// Issue 1 already carries the re-target comment from an earlier pass.
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/1/comments":
+			_, _ = fmt.Fprintf(w, `[{"id":1,"body":%q}]`, BlockedOnMarker("o/r", 101)+"\nRe-targeted: blocker #100 was superseded by #101.")
+		// Filler blocker PR 400 is open; filler issues have no comments.
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/400":
+			_, _ = io.WriteString(w, `{"number":400,"state":"open"}`)
+		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/comments"):
+			mu.Lock()
+			posts = append(posts, r.URL.Path)
+			mu.Unlock()
+			_, _ = io.WriteString(w, `{"id":9}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.appBotLogin = testBot
+	// Exhaust the per-pass comment budget with filler issues on an open
+	// blocker so issue 1 is reconciled from its body marker alone.
+	var rows []RepoWorkIssue
+	for i := 0; i < blockedSweepCommentLookups; i++ {
+		rows = append(rows, RepoWorkIssue{Repo: "o/r", Number: 1000 + i, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#400"})
+	}
+	rows = append(rows, RepoWorkIssue{Repo: "o/r", Number: 1, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#100"})
+	result := &ActionableResult{WorkDetailsByRepo: map[string]RepoWorkDetails{"o/r": {Issues: rows}}}
+	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
+	if res.Items != blockedSweepCommentLookups+1 || res.Retargeted != 0 || res.Unblocked != 0 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=%d Retargeted=0 Unblocked=0 Errors=0", res, blockedSweepCommentLookups+1)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(posts) != 0 {
+		t.Fatalf("no comment may be posted when the newest marker already names the superseder; posts = %v", posts)
+	}
+	read := false
+	for _, call := range calls {
+		if call == "GET /repos/o/r/issues/1/comments" {
+			read = true
+		}
+	}
+	if !read {
+		t.Fatalf("issue 1 comments must be read before re-targeting; calls = %v", calls)
+	}
+}
+
 // Issue 14194: when an issue's body has an older blocker marker (#50, settled)
 // but a comment has a newer blocker marker (#60, still open), the comment marker wins
 // and the issue stays blocked.

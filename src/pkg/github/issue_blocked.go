@@ -448,7 +448,24 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 					logger.Info("blocked sweep: issue unblocked", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(supersededBy), "superseded", prNumber)
 					continue
 				}
-				// Superseding PR is still open: re-target relation to Y.
+				// Superseding PR is still open: re-target relation to Y. The
+				// re-target lives in a comment while the body still names X,
+				// so a pass whose comment budget ran out before this issue
+				// re-detects the supersede from the body every cycle; read
+				// the comments now and skip when the newest marker already
+				// moved off X.
+				if !scanned {
+					scan, scanErr := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
+					if scanErr != nil {
+						res.Errors++
+						logger.Warn("blocked sweep: comment lookup before re-target failed", "repo", t.repo, "issue", t.number, "error", scanErr)
+						continue
+					}
+					if scan.ok && (scan.prRepo != prRepo || scan.pr != prNumber) {
+						stripBlockedHelpWanted(ctx, c, t, &res, logger)
+						continue
+					}
+				}
 				note := fmt.Sprintf("%s\nRe-targeted: blocker #%d was superseded by #%d.", BlockedOnMarker(prRepo, supersededBy), prNumber, supersededBy)
 				if err := c.CreateIssueCommentBudgeted(ctx, t.repo, t.number, note); err != nil {
 					logger.Warn("blocked sweep: re-target note not posted", "repo", t.repo, "issue", t.number, "error", err)

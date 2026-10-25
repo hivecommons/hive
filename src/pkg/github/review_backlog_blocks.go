@@ -250,7 +250,7 @@ func ReconcileReviewBacklogBlocks(ctx context.Context, c *Client, logger *slog.L
 						}
 						if actErr != nil {
 							res.Errors++
-							logger.Warn("review backlog block sweep: item supersede resolution failed", "item", rec.ItemKey, "old_pr", rec.BlockedOnPR, "new_pr", supersededBy, "error", actErr)
+							logger.Warn("review backlog block sweep: item supersede resolution failed", "item", rec.ItemKey, "old_pr", prKey, "new_pr", repo+"#"+strconv.Itoa(supersededBy), "error", actErr)
 							continue
 						}
 						rec.UpdatedAt = now
