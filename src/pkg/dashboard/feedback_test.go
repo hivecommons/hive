@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -636,5 +638,58 @@ func TestFeedbackReportInvalidRequestReturnsSpecificError(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "description is required") {
 		t.Fatalf("body = %s, want specific validation error", rr.Body.String())
+	}
+}
+
+func TestFetchFeedbackIssueStatusClassifiesHTMLResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   string
+	}{
+		{"html 200", http.StatusOK, "non-JSON response (status 200"},
+		{"html 503", http.StatusServiceUnavailable, "answered 503: <html>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte("<html>sign in</html>"))
+			}))
+			defer srv.Close()
+			_, err := fetchFeedbackIssueStatus(context.Background(), srv.Client(), srv.URL, "", "hivecommons", "hive", 1)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "invalid character") {
+				t.Fatalf("err = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestFeedbackBackoffGrowsAndResets(t *testing.T) {
+	var b feedbackBackoff
+	now := time.Now()
+	if b.blocked(now) {
+		t.Fatal("fresh backoff must not block")
+	}
+	prev := time.Duration(0)
+	for i := 0; i < 3; i++ {
+		d := b.fail(now)
+		if d <= prev {
+			t.Fatalf("failure %d: delay %v did not grow past %v", i, d, prev)
+		}
+		prev = d
+		if !b.blocked(now) || b.blocked(now.Add(d)) {
+			t.Fatalf("failure %d: blocked window wrong for %v", i, d)
+		}
+	}
+	for i := 0; i < 20; i++ {
+		prev = b.fail(now)
+	}
+	if prev != feedbackRefreshBackoffMax {
+		t.Fatalf("delay = %v, want cap %v", prev, feedbackRefreshBackoffMax)
+	}
+	b.succeed()
+	if b.blocked(now) || b.fail(now) != feedbackRefreshBackoffBase {
+		t.Fatal("success must reset backoff")
 	}
 }
