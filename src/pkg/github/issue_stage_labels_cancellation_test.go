@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,8 @@ func TestIssueStageSweepCancellationDoesNotReportUnattemptedWrites(t *testing.T)
 		result.Issues.Items = append(result.Issues.Items, Issue{Repo: "acme/widgets", Number: n})
 	}
 	fake.seed(result)
-	store := stagelabels.NewStore("", stageNow)
+	path := filepath.Join(t.TempDir(), "stage-labels.json")
+	store := stagelabels.NewStore(path, stageNow)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
@@ -52,6 +54,20 @@ func TestIssueStageSweepCancellationDoesNotReportUnattemptedWrites(t *testing.T)
 	}
 	if strings.Count(logs.String(), "sweep interrupted") != 1 {
 		t.Fatalf("want one interruption diagnostic: %s", &logs)
+	}
+	// A restart must retain observations (and their dwell timers), even
+	// though cancellation skipped the sweep's legacy-cleanup tail.
+	reloaded := stagelabels.NewStore(path, stageNow)
+	if err := reloaded.Load(); err != nil {
+		t.Fatal(err)
+	}
+	for n := 1; n <= 3; n++ {
+		key := stagelabels.Key("acme/widgets", n)
+		want, _ := store.Get(key)
+		got, ok := reloaded.Get(key)
+		if !ok || got.Stage != want.Stage || !got.EnteredAt.Equal(want.EnteredAt) {
+			t.Fatalf("persisted observation %s: got %+v (present=%t), want %+v", key, got, ok, want)
+		}
 	}
 	// Cancellation leaves the remaining issues eligible for the next pass.
 	res = SyncIssueStageLabelsWith(context.Background(), c, result, store, stageNow(), logger, opts)

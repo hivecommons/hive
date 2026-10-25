@@ -377,6 +377,13 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	if store == nil {
 		store = stagelabels.Shared()
 	}
+	// Persist observations even when the sweep expires before reconciliation
+	// or legacy cleanup. Saving local state does not need the sweep context.
+	defer func() {
+		if err := store.Save(); err != nil && logger != nil {
+			logger.Warn("issue stage labels: persisting state failed", "error", err)
+		}
+	}()
 	reconciler := client.StageReconciler(store, engine, logger)
 	ctx = WithRESTCaller(ctx, issueStageRESTCaller)
 	// The closes this pass may perform (decomposed parent, merged full-fix
@@ -572,9 +579,6 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		if legacyCarriers[repo] <= 0 {
 			res.LegacyDecisionDefinitionsDeleted += client.retireLegacyDecisionLabelDefinitions(ctx, repo, logger)
 		}
-	}
-	if err := store.Save(); err != nil && logger != nil {
-		logger.Warn("issue stage labels: persisting state failed", "error", err)
 	}
 	return res
 }
