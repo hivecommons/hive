@@ -1,0 +1,1 @@
+- Classify the login-required, ioscan classifier fail-closed and startup-kick-dropped WARNs as named fleet-report classes instead of `unclassified_error_repeated` (#14262, #14263, #14266)

@@ -358,6 +358,8 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassProxyConnectDialFailed, message: "proxy: CONNECT dial failed"},
 		{class: ClassInferenceUpstreamError, message: "inference upstream error"},
 		{class: ClassSHAPollCommitMsgUnavail, message: "SHA poll: commit message fetch non-200"},
+		{class: ClassAgentLoginRequired, message: "login required detected"},
+		{class: ClassIOScanClassifierUnavail, message: "ioscan classifier failed closed; text withheld"},
 		{class: ClassEffectLedgerOpStuck, message: "effect ledger op stuck: issue_create has been Unknown for 31m; retries refused pending reconciliation"},
 	}
 	seen := map[string]bool{}
@@ -908,6 +910,9 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"tmux has-session failed":                                               ClassTmuxSessionCheckFailed,
 		"pane content at timeout":                                               ClassAgentPaneTimeout,
 		"prompt timeout — dumping pane":                                         ClassAgentPaneTimeout,
+		"startup kick dropped: CLI never reached input prompt":                  ClassAgentPaneTimeout,
+		"login required detected":                                               ClassAgentLoginRequired,
+		"ioscan classifier failed closed; text withheld":                        ClassIOScanClassifierUnavail,
 		"proxy client TLS handshake failed":                                     ClassProxyTLSHandshakeFailed,
 		"transparent proxy TLS handshake failed":                                ClassProxyTLSHandshakeFailed,
 		"failed to restore per-agent dir mode":                                  ClassAgentDirSetupFailed,
