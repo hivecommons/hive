@@ -8,7 +8,6 @@
 # seam or be added here with PR justification; removed imports must be
 # deleted so the ratchet tightens. Entries are sorted.
 github.com/hivecommons/hive/crux
-github.com/hivecommons/hive/crux/agent
 github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
 github.com/hivecommons/hive/crux/paneclass
