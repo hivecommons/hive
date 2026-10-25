@@ -23,7 +23,8 @@ type guardPR struct {
 	Draft  bool
 	Files  []string
 	Labels []string
-	// MergeableState is reported as mergeable_state when non-empty.
+	// MergeableState is reported as mergeable_state on the single-PR GET only,
+	// mirroring GitHub, which omits it from list-pulls responses.
 	MergeableState string
 }
 
@@ -41,6 +42,9 @@ type guardServer struct {
 	failPath   string
 	failStatus int
 	failMethod string
+	// failExact, when set, requires the path to equal failPath suffix-wise
+	// (after the /repos/o/r prefix) instead of merely containing it.
+	failExact bool
 
 	mu       sync.Mutex
 	created  int
@@ -72,17 +76,48 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 			}
 			m["labels"] = labels
 		}
-		if p.MergeableState != "" {
-			m["mergeable_state"] = p.MergeableState
-		}
 		return m
+	}
+	// singlePR matches GET /repos/o/r/pulls/<n> (not /files, /pulls or
+	// /pulls?head=…) and returns the number.
+	singlePR := func(r *http.Request) (int, bool) {
+		if r.Method != "GET" {
+			return 0, false
+		}
+		rest := strings.TrimPrefix(r.URL.Path, "/repos/o/r/pulls/")
+		if rest == r.URL.Path || rest == "" || strings.Contains(rest, "/") {
+			return 0, false
+		}
+		var num int
+		if _, err := fmt.Sscanf(rest, "%d", &num); err != nil {
+			return 0, false
+		}
+		return num, true
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if g.failStatus != 0 && g.failPath != "" && strings.Contains(path+"?"+r.URL.RawQuery, g.failPath) &&
+		failHit := strings.Contains(path+"?"+r.URL.RawQuery, g.failPath)
+		if g.failExact {
+			failHit = strings.TrimPrefix(path, "/repos/o/r") == g.failPath
+		}
+		if g.failStatus != 0 && g.failPath != "" && failHit &&
 			(g.failMethod == "" || g.failMethod == r.Method) {
 			w.WriteHeader(g.failStatus)
 			_, _ = io.WriteString(w, `{"message":"injected"}`)
+			return
+		}
+		if num, ok := singlePR(r); ok {
+			for _, p := range append(append([]guardPR{}, g.open...), g.closed...) {
+				if p.Number == num {
+					m := prJSON(p)
+					if p.MergeableState != "" {
+						m["mergeable_state"] = p.MergeableState
+					}
+					enc(w, m)
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 		switch {
@@ -200,6 +235,28 @@ func TestCreatePR_DuplicateGuard(t *testing.T) {
 		{
 			name:       "dirty bot PR does not absorb the head",
 			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, MergeableState: "dirty"}}, headFiles: []string{"a.go"}},
+			body:       "no keyword",
+			wantNumber: 99,
+		},
+		{
+			name:         "failed single-PR GET does not hide an overlapping PR",
+			g:            &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, MergeableState: "dirty"}}, headFiles: []string{"a.go"}, failPath: "/pulls/8", failStatus: 500, failExact: true},
+			body:         "no keyword",
+			wantReason:   DuplicateReasonOverlappingFiles,
+			wantNumber:   8,
+			wantComments: 1,
+		},
+		{
+			name:         "label merely containing hold still overlaps",
+			g:            &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"area/stakeholder"}}}, headFiles: []string{"a.go"}},
+			body:         "no keyword",
+			wantReason:   DuplicateReasonOverlappingFiles,
+			wantNumber:   8,
+			wantComments: 1,
+		},
+		{
+			name:       "do-not-merge/hold bot PR does not absorb the head",
+			g:          &guardServer{open: []guardPR{{Number: 8, Ref: "b", User: bot, Files: []string{"a.go", "b.go"}, Labels: []string{"do-not-merge/hold"}}}, headFiles: []string{"a.go"}},
 			body:       "no keyword",
 			wantNumber: 99,
 		},
