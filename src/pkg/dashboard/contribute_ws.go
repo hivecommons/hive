@@ -2345,6 +2345,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				code, reason, source := websocketCloseErrorDetails(err)
+				// 1006 is synthesised by gorilla when the peer's TCP connection
+				// ends without a close frame (relay killed, laptop slept, NAT
+				// timeout). That is the contributor's network, not a hub
+				// defect, and the relay reconnects on its own; logging it at
+				// WARN fed the fleet selfreport as a repeated runtime error
+				// (hivecommons/hive#14163). Keep WARN for close codes that name
+				// a protocol or policy problem.
+				if code == websocket.CloseAbnormalClosure {
+					h.logger.Info("[contribute-ws] contributor connection dropped without close frame",
+						"id", connID,
+						"username", contributorUsername(s.contributor),
+						"close_source", source,
+						"close_code", code,
+						"close_reason", reason,
+						"error", err)
+					return
+				}
 				h.logger.Warn("[contribute-ws] read error",
 					"id", connID,
 					"username", contributorUsername(s.contributor),
