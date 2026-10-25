@@ -365,8 +365,13 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	// Expiry of the best-effort sweep budget is not an item write failure.
 	// Report it once, without feeding a warning per unattempted issue into
 	// the repeated-error self-reporter. The next enumeration retries it.
+	var batchErr error
 	defer func() {
-		if err := ctx.Err(); err != nil && logger != nil {
+		err := ctx.Err()
+		if err == nil && (errors.Is(batchErr, context.DeadlineExceeded) || errors.Is(batchErr, context.Canceled)) {
+			err = batchErr
+		}
+		if err != nil && logger != nil {
 			logger.Debug("issue stage labels: sweep interrupted; retrying next cycle", "error", err)
 		}
 	}()
@@ -516,7 +521,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 	}
 	var transitions []stageengine.Transition
 	if len(facts) > 0 {
-		transitions, _ = reconciler.ReconcileBatch(ctx, facts)
+		transitions, batchErr = reconciler.ReconcileBatch(ctx, facts)
 	}
 	for i, p := range pending {
 		// ReconcileBatch stops on cancellation and returns only attempted
@@ -526,7 +531,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		}
 		in, key, want, tr, covered, reason := p.in, p.key, p.want, p.tr, p.covered, p.reason
 		out, err := transitions[i].Outcome, transitions[i].Err
-		interrupted := ctx.Err() != nil && errors.Is(err, ctx.Err())
+		interrupted := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 		if err != nil && !interrupted && logger != nil {
 			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
 		}
@@ -540,8 +545,11 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		if out.Stage == stagelabels.IssueNeedsDecision && slices.Contains(out.Removed, legacyIssueNeedsDecisionStageLabel) {
 			res.NeedsDecisionRestaged++
 		}
-		// Keep successful/partial write counts, but do not start follow-up
-		// writes or comments with an expired sweep context.
+		// Keep partial write counts, but stop on pacer fail-fast as well as
+		// actual sweep expiry; follow-up writes need the same budget.
+		if interrupted {
+			return res
+		}
 		if ctx.Err() != nil {
 			continue
 		}

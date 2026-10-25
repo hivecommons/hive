@@ -3,6 +3,8 @@ package github
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -94,21 +96,34 @@ func TestIssueStageExpiredSweepDoesNotProvision(t *testing.T) {
 	}
 }
 
-func TestIssueStageRequestDeadlineStillWarnsWhenSweepIsLive(t *testing.T) {
-	fake := newIssueStageServer(t)
-	c := issueStageTestClient(t, fake.srv, true)
-	result := &ActionableResult{}
-	result.Issues.Items = []Issue{{Repo: "acme/widgets", Number: 1}, {Repo: "acme/widgets", Number: 2}}
-	fake.seed(result)
-	calls := 0
-	writer := issueStageWriterFunc(func(context.Context, stageengine.Ref, []string, stagelabels.Desired) (stagelabels.Outcome, error) {
-		calls++
-		return stagelabels.Outcome{}, context.DeadlineExceeded
-	})
-	var logs bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logs, nil))
-	SyncIssueStageLabelsWith(context.Background(), c, result, stagelabels.NewStore("", stageNow), stageNow(), logger, &stageengine.Options{Writer: writer})
-	if calls != 2 || strings.Count(logs.String(), "issue stage labels: write failed") != 2 {
-		t.Fatalf("request-local timeouts must still warn and allow later items: calls=%d logs=%s", calls, &logs)
+func TestIssueStageWriterErrorsWhenSweepIsLive(t *testing.T) {
+	for _, tt := range []struct {
+		name                           string
+		err                            error
+		calls, warnings, interruptions int
+	}{
+		{"pacer deadline", fmt.Errorf("github pacing: slot would miss request deadline: %w", context.DeadlineExceeded), 1, 0, 1},
+		{"request cancellation", fmt.Errorf("request: %w", context.Canceled), 1, 0, 1},
+		{"ordinary failure", errors.New("permission denied"), 2, 2, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			c := issueStageTestClient(t, fake.srv, true)
+			result := &ActionableResult{}
+			result.Issues.Items = []Issue{{Repo: "acme/widgets", Number: 1}, {Repo: "acme/widgets", Number: 2}}
+			fake.seed(result)
+			calls := 0
+			writer := issueStageWriterFunc(func(context.Context, stageengine.Ref, []string, stagelabels.Desired) (stagelabels.Outcome, error) {
+				calls++
+				return stagelabels.Outcome{Added: []string{"partial-write"}}, tt.err
+			})
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			ctx := context.Background()
+			res := SyncIssueStageLabelsWith(ctx, c, result, stagelabels.NewStore("", stageNow), stageNow(), logger, &stageengine.Options{Writer: writer})
+			if ctx.Err() != nil || calls != tt.calls || res.Writes != tt.calls || strings.Count(logs.String(), "issue stage labels: write failed") != tt.warnings || strings.Count(logs.String(), "sweep interrupted") != tt.interruptions {
+				t.Fatalf("calls=%d writes=%d ctx.Err=%v logs=%s", calls, res.Writes, ctx.Err(), &logs)
+			}
+		})
 	}
 }
