@@ -23,7 +23,7 @@ here.
 | Piece | Where | What it does |
 |---|---|---|
 | `src/scripts/crux-publish.sh` | hive | Builds the publish tree: clears a `hivecommons/crux` checkout except its hand-maintained scaffolding, copies `src/crux` in, rewrites `github.com/hivecommons/hive/crux` → `github.com/hivecommons/crux` in `go.mod` and every import, writes `.hive-sync` (hive sha, ref, date), then proves the tree builds with `GOWORK=off go build ./... && go vet ./...`. A failing build aborts the sync; nothing is committed. |
-| `.github/workflows/crux-sync.yml` | hive | Runs the script on every push to `v5` touching `src/crux/**`, on tags `crux/v*`, and on `workflow_dispatch`; commits the result on top of `hivecommons/crux` `main` (fast-forward, one commit per sync) and, for a `crux/vX.Y.Z` tag, pushes tag `vX.Y.Z` to `hivecommons/crux` at the synced commit. |
+| `.github/workflows/crux-sync.yml` | hive | Runs the script on every push to `v5` touching `src/crux/**`, on tags `crux/v*`, and on `workflow_dispatch`; commits the result on top of `hivecommons/crux` `main` (fast-forward, one commit per sync) and, for a `crux/vX.Y.Z` tag, pushes tag `vX.Y.Z` to `hivecommons/crux` at the already-synced commit whose tree matches (tag runs never move `main`). |
 | `.github/workflows/ci.yml` | hivecommons/crux | Build, vet, test (`-race`), lint, and a `crux serve` smoke on linux + macOS. |
 | `.github/workflows/sync-guard.yml` | hivecommons/crux | Fails any pull request from a non-sync actor that touches `*.go`, `go.mod` or `go.sum`, with a message pointing at `src/crux` here. |
 | `.github/workflows/release.yml` + `.goreleaser.yaml` | hivecommons/crux | On tag `v*`: darwin/linux × amd64/arm64 binaries, checksums, cosign-signed, GitHub release, multi-arch `ghcr.io/hivecommons/crux` image. |
@@ -77,7 +77,13 @@ cd crux-publish && git add -A && git commit -s -m "🌱 sync: hive@$(git -C .. r
 
 ## Releasing
 
-Tag hive: `git tag crux/v0.2.0 <v5-sha> && git push origin crux/v0.2.0`. The
-sync workflow publishes that commit and pushes `v0.2.0` to
-`hivecommons/crux`; its release workflow does the rest. Then bump
-`Formula/crux.rb` in `hivecommons/homebrew-hive` (Prow: `/lgtm` `/approve`).
+Tag hive: `git tag crux/v0.2.0 <v5-sha> && git push origin crux/v0.2.0`. A tag
+run never moves `hivecommons/crux` `main`: it rebuilds the publish tree for
+the tagged hive commit, finds the commit already on `main` whose tree matches
+(the push trigger synced it when the commit landed on `v5`), and pushes
+`v0.2.0` there; if nothing on `main` matches it fails and tells you to sync
+first. The crux release workflow does the rest. Then bump `Formula/crux.rb`
+in `hivecommons/homebrew-hive` (Prow: `/lgtm` `/approve`).
+
+`v0.1.0` was tagged directly on `hivecommons/crux` (at the first hand-run
+sync of hive `1e02ec49d331`) before the tag path was exercised.

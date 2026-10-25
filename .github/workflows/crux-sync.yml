@@ -108,44 +108,6 @@ jobs:
       - name: Build the publish tree
         run: src/scripts/crux-publish.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/crux-publish"
 
-      - name: Commit
-        id: commit
-        working-directory: crux-publish
-        env:
-          HIVE_SHA: ${{ github.sha }}
-          HIVE_REF: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          git config user.name "hive-release[bot]"
-          git config user.email "hive-release@hive.kubestellar.io"
-          git add -A
-          # .hive-sync carries a timestamp, so it alone is not a change worth a commit.
-          if [ "$(git diff --cached --name-only)" = ".hive-sync" ]; then
-            git restore --staged --worktree .hive-sync
-          fi
-          if git diff --cached --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Publish tree already matches hive@${HIVE_SHA:0:12}; nothing to commit." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          git commit -q -s \
-            -m "🌱 sync: hive@${HIVE_SHA:0:12} (src/crux)" \
-            -m "Source: https://github.com/hivecommons/hive/tree/${HIVE_SHA}/src/crux" \
-            -m "Ref: ${HIVE_REF}" \
-            -m "Module path rewritten github.com/hivecommons/hive/crux -> github.com/hivecommons/crux by src/scripts/crux-publish.sh. File issues and pull requests in hivecommons/hive."
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          git --no-pager show --shortstat --format="%H %s" HEAD
-
-      - name: Upload publish tree
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: crux-publish-tree
-          path: |
-            crux-publish
-            !crux-publish/.git
-          retention-days: 7
-
       - name: Resolve release tag
         id: tag
         env:
@@ -166,12 +128,73 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Commit
+        id: commit
+        working-directory: crux-publish
+        env:
+          HIVE_SHA: ${{ github.sha }}
+          HIVE_REF: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "hive-release[bot]"
+          git config user.email "hive-release@hive.kubestellar.io"
+          git add -A
+          if [ -n "$TAG" ]; then
+            # Release mode: never move main from a tag run (the tag may point
+            # at a hive commit older than what the push trigger has already
+            # synced, and a commit here would roll main back). Tag the commit
+            # already on main whose tree matches this hive commit instead.
+            target=""
+            for c in $(git rev-list -n 200 HEAD); do
+              if git diff --cached --quiet "$c" -- . ':!.hive-sync'; then target="$c"; break; fi
+            done
+            if [ -z "$target" ]; then
+              echo "::error::no commit on $CRUX_REPO main matches the publish tree of hive@${HIVE_SHA:0:12}; sync it first (push to v5 or workflow_dispatch without a tag), then re-run the tag." >&2
+              exit 1
+            fi
+            git reset -q --hard HEAD
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "target=$target" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG → existing synced commit $target (tree of hive@${HIVE_SHA:0:12})." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # .hive-sync carries a timestamp, so it alone is not a change worth a commit.
+          if [ "$(git diff --cached --name-only)" = ".hive-sync" ]; then
+            git restore --staged --worktree .hive-sync
+          fi
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Publish tree already matches hive@${HIVE_SHA:0:12}; nothing to commit." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git commit -q -s \
+            -m "🌱 sync: hive@${HIVE_SHA:0:12} (src/crux)" \
+            -m "Source: https://github.com/hivecommons/hive/tree/${HIVE_SHA}/src/crux" \
+            -m "Ref: ${HIVE_REF}" \
+            -m "Module path rewritten github.com/hivecommons/hive/crux -> github.com/hivecommons/crux by src/scripts/crux-publish.sh. File issues and pull requests in hivecommons/hive."
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "target=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git --no-pager show --shortstat --format="%H %s" HEAD
+
+      - name: Upload publish tree
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crux-publish-tree
+          path: |
+            crux-publish
+            !crux-publish/.git
+          retention-days: 7
+
       - name: Push
         if: github.event.inputs.dry_run != 'true' && (steps.commit.outputs.changed == 'true' || steps.tag.outputs.tag != '')
         working-directory: crux-publish
         env:
           TOKEN_SOURCE: ${{ steps.token.outputs.source }}
           TAG: ${{ steps.tag.outputs.tag }}
+          TARGET: ${{ steps.commit.outputs.target }}
+          CHANGED: ${{ steps.commit.outputs.changed }}
           HIVE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -187,22 +210,27 @@ jobs:
             echo "::error::no push token configured for $CRUX_REPO (CRUX_SYNC_TOKEN)"
             exit 1
           fi
-          # Fast-forward only: the sync is one commit on top of whatever main
-          # is; if main moved under us the concurrency group has already
-          # serialised the other run, so a rejected push means a hand edit
-          # landed in the published repo and should be reconciled there.
-          if ! git push origin HEAD:main 2>push.err; then
-            cat push.err >&2
-            if grep -qi "403\|permission\|denied" push.err; then
-              echo "::error::push to $CRUX_REPO rejected (token source: $TOKEN_SOURCE lacks Contents: write on $CRUX_REPO?)"
-              echo "## Crux sync: push rejected (token source: $TOKEN_SOURCE)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CHANGED" = true ]; then
+            # Fast-forward only: the sync is one commit on top of whatever main
+            # is; if main moved under us the concurrency group has already
+            # serialised the other run, so a rejected push means a hand edit
+            # landed in the published repo and should be reconciled there.
+            if ! git push origin HEAD:main 2>push.err; then
+              cat push.err >&2
+              if grep -qi "403\|permission\|denied" push.err; then
+                echo "::error::push to $CRUX_REPO rejected (token source: $TOKEN_SOURCE lacks Contents: write on $CRUX_REPO?)"
+                echo "## Crux sync: push rejected (token source: $TOKEN_SOURCE)" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              exit 1
             fi
-            exit 1
+            echo "Pushed $(git rev-parse HEAD) to $CRUX_REPO main (hive ${HIVE_SHA:0:12})" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-          synced="$(git rev-parse HEAD)"
-          echo "Pushed $synced to $CRUX_REPO main (hive ${HIVE_SHA:0:12})" | tee -a "$GITHUB_STEP_SUMMARY"
           if [ -n "$TAG" ]; then
-            git tag -a "$TAG" -m "crux $TAG (hive ${HIVE_SHA})" "$synced"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+              echo "::error::tag $TAG already exists on $CRUX_REPO; delete it there first if this is a re-cut." >&2
+              exit 1
+            fi
+            git tag -a "$TAG" -m "crux $TAG (hive ${HIVE_SHA})" "$TARGET"
             git push origin "refs/tags/$TAG"
-            echo "Pushed tag $TAG → https://github.com/$CRUX_REPO/releases/tag/$TAG" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Pushed tag $TAG at $TARGET → https://github.com/$CRUX_REPO/releases/tag/$TAG" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
