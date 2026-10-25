@@ -162,8 +162,6 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "agentNowAgo"),
 		jsFunc(t, html, "agentNowClockTime"),
 		jsFunc(t, html, "stageTrackerHeadline"),
-		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),
-		jsFunc(t, html, "stageTrackerOpenSince"),
 		jsFunc(t, html, "stageTrackerAnchor"),
 		jsFunc(t, html, "stageTrackerSegments"),
 		jsConstLine(t, html, "STAGE_TRACKER_OPEN_STALE_DAYS"),

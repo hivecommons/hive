@@ -714,9 +714,20 @@ func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/201":
 			_, _ = io.WriteString(w, `{"number":201,"state":"closed","merged":true}`)
 
+		// Blocker PR 300 MERGED, but a comment still says "Superseded by #301"
+		// (open). Merged means landed: the supersede text must be ignored.
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/300":
+			_, _ = io.WriteString(w, `{"number":300,"state":"closed","merged":true}`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/300/comments":
+			_, _ = io.WriteString(w, `[{"id":1,"body":"Superseded by #301."}]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/301":
+			_, _ = io.WriteString(w, `{"number":301,"state":"open"}`)
+
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/1/comments":
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/2/comments":
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/3/comments":
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
 			_, _ = io.WriteString(w, `[]`)
@@ -743,11 +754,13 @@ func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
 			{Repo: "o/r", Number: 1, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#100"},
 			// Issue 2: blocked on #200. #200 superseded by #201 (merged) -> unblock!
 			{Repo: "o/r", Number: 2, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#200"},
+			// Issue 3: blocked on #300. #300 merged (supersede text ignored) -> unblock, not re-target!
+			{Repo: "o/r", Number: 3, Labels: []string{"blocked"}, Bucket: workBucketFiltered, Reason: "blocked on o/r#300"},
 		}},
 	}}
 	res := ReconcileBlockedIssues(context.Background(), c, result, nil)
-	if res.Items != 2 || res.Retargeted != 1 || res.Unblocked != 1 || res.Errors != 0 {
-		t.Fatalf("result = %+v, want Items=2 Retargeted=1 Unblocked=1 Errors=0", res)
+	if res.Items != 3 || res.Retargeted != 1 || res.Unblocked != 2 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want Items=3 Retargeted=1 Unblocked=2 Errors=0", res)
 	}
 
 	mu.Lock()
@@ -762,6 +775,17 @@ func TestReconcileBlockedIssuesSuperseded(t *testing.T) {
 	c2 := commentBodies["/repos/o/r/issues/2/comments"]
 	if len(c2) != 1 || !strings.Contains(c2[0], blockedUnblockedMarker) || !strings.Contains(c2[0], "o/r#201 (superseding #200) is no longer open") {
 		t.Fatalf("issue 2 comment = %v", c2)
+	}
+
+	// Issue 3's blocker merged: unblocked, and never re-targeted to #301.
+	c3 := commentBodies["/repos/o/r/issues/3/comments"]
+	if len(c3) != 1 || !strings.Contains(c3[0], blockedUnblockedMarker) || strings.Contains(c3[0], BlockedOnMarker("o/r", 301)) {
+		t.Fatalf("issue 3 comment = %v", c3)
+	}
+	for _, call := range calls {
+		if call == "GET /repos/o/r/pulls/301" {
+			t.Fatalf("merged blocker #300 must not consult superseder #301; calls = %v", calls)
+		}
 	}
 }
 

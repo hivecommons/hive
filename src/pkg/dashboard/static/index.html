@@ -13857,20 +13857,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return STAGE_TRACKER_PATH.indexOf(from) >= 0 ? from : 0;
     }
 
-    // An Open or blocked item is tinted stale once it has sat unlabelled or blocked this long.
-    const STAGE_TRACKER_OPEN_STALE_DAYS = 2;
-    // When an item entered its current (Open / Blocked) state: the payload's
-    // stage_since — the value the since column draws — else the time it was
-    // opened. fromCreated marks the fallback so the tooltip can say so.
-    function stageTrackerOpenSince(item) {
-      if (!item) return null;
-      const since = Date.parse(item.stage_since || '');
-      if (!isNaN(since) && since > 0) return { ms: since, fromCreated: false };
-      const created = Date.parse(item.created_at || '');
-      if (!isNaN(created) && created > 0) return { ms: created, fromCreated: true };
-      return null;
-    }
-
     // Segment list for one item: path segments with done/active state plus a
     // detour badge when the item sits on a side stage, and the merged end-cap.
     function stageTrackerSegments(item, stages, nowMs) {

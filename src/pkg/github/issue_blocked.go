@@ -414,14 +414,19 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 			stripBlockedHelpWanted(ctx, c, t, &res, logger)
 			continue
 		}
-		settled, _, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
+		settled, merged, err := c.pullRequestSettledDetails(ctx, prRepo, prNumber)
 		if err != nil {
 			res.Errors++
 			logger.Warn("blocked sweep: tracked PR lookup failed", "repo", t.repo, "issue", t.number, "pr", prRepo+"#"+strconv.Itoa(prNumber), "error", err)
 			continue
 		}
 		if settled {
-			supersededBy, isSuperseded := c.pullRequestSupersededBy(ctx, prRepo, prNumber)
+			// Only a closed-unmerged blocker can be superseded: a merged
+			// blocker landed, so its issue is unblocked, never re-targeted.
+			supersededBy, isSuperseded := 0, false
+			if !merged {
+				supersededBy, isSuperseded = c.pullRequestSupersededBy(ctx, prRepo, prNumber)
+			}
 			if isSuperseded && supersededBy > 0 && supersededBy != prNumber {
 				ySettled, _, yErr := c.pullRequestSettledDetails(ctx, prRepo, supersededBy)
 				if yErr != nil {
@@ -648,13 +653,6 @@ func (c *Client) pullRequestSettledDetails(ctx context.Context, repo string, num
 	merged := pr.GetMerged()
 	closed := strings.EqualFold(pr.GetState(), "closed")
 	return merged || closed, merged, nil
-}
-
-// pullRequestSettled reports whether the PR is merged or closed. A 404 is
-// reported as an error: not found is not settled.
-func (c *Client) pullRequestSettled(ctx context.Context, repo string, number int) (bool, error) {
-	settled, _, err := c.pullRequestSettledDetails(ctx, repo, number)
-	return settled, err
 }
 
 // pullRequestSupersededBy checks whether a PR was closed as superseded
